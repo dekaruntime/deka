@@ -152,13 +152,18 @@ fn preprocess_phpx_source(source: &str) -> String {
             masked = true;
         } else if trimmed.starts_with("export {") {
             masked = true;
-        } else if trimmed.starts_with("export ") && !trimmed.starts_with("export function") {
+        } else if trimmed.starts_with("export ")
+            && !trimmed.starts_with("export function")
+            && !trimmed.starts_with("export async function")
+        {
             masked = true;
         }
 
         if masked {
             output.push_str(&mask_segment(segment));
-        } else if trimmed.starts_with("export function") {
+        } else if trimmed.starts_with("export function")
+            || trimmed.starts_with("export async function")
+        {
             output.push_str(&mask_export_keyword(segment));
         } else {
             output.push_str(segment);

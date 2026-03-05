@@ -180,6 +180,17 @@ fn export_ok() {
 }
 
 #[test]
+fn export_async_ok() {
+    let path = fixtures_root().join("exports/async_ok.phpx");
+    let result = compile_fixture(&path);
+    assert!(
+        result.errors.is_empty(),
+        "unexpected errors: {:?}",
+        result.errors
+    );
+}
+
+#[test]
 fn export_undefined_reports_error() {
     let path = fixtures_root().join("exports/undefined.phpx");
     let result = compile_fixture(&path);
