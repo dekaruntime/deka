@@ -200,15 +200,15 @@ fn default_deka_lock_json() -> String {
 }
 
 fn default_app_page_phpx() -> &'static str {
-    "export function Page(): string {\n    return '<section class=\"p-8\"><h1>Deka App</h1><p>Project initialized. Edit <code>app/page.phpx</code>.</p></section>';\n}\n"
+    "export function Page(): string {\n    return \"<section class=\\\"p-8\\\">\\n  <h1>Deka App</h1>\\n  <p>Project initialized. Edit <code>app/page.phpx</code>.</p>\\n</section>\";\n}\n"
 }
 
 fn default_main_phpx() -> &'static str {
-    "import { Layout } from './app/layout.phpx';\nimport { Page } from './app/page.phpx';\n\nfunction request_path($req: mixed): string {\n    if (isset($_SERVER['PATH_INFO'])) {\n        return normalize_path($_SERVER['PATH_INFO']);\n    }\n    if (isset($_SERVER['REQUEST_URI'])) {\n        return normalize_path($_SERVER['REQUEST_URI']);\n    }\n    if (is_array($req) && array_key_exists('url', $req)) {\n        return normalize_path($req['url']);\n    }\n    if (is_object($req) && isset($req.url)) {\n        return normalize_path($req.url);\n    }\n    return '/';\n}\n\nfunction normalize_path($value: mixed): string {\n    $path = '' . $value;\n    $parts = explode('?', $path, 2);\n    $path = $parts[0];\n    if (strpos($path, '://') !== false) {\n        $segments = explode('/', $path, 4);\n        $path = count($segments) >= 4 ? '/' . $segments[3] : '/';\n    }\n    if ($path === '') return '/';\n    return $path;\n}\n\nfunction App($req: mixed) {\n    $path = request_path($req);\n    if ($path !== '/') {\n        return {\n            status: 404,\n            headers: { 'content-type': 'text/plain; charset=utf-8' },\n            body: 'Not Found',\n        };\n    }\n    return {\n        status: 200,\n        headers: { 'content-type': 'text/html; charset=utf-8' },\n        body: '<!doctype html>\\n' . Layout({ children: Page() }),\n    };\n}\n\n$app = App;\n"
+    "import { Layout } from './app/layout.phpx';\nimport { Page } from './app/page.phpx';\n\nfunction request_path($req: mixed): string {\n    if (isset($_SERVER['PATH_INFO'])) {\n        return normalize_path($_SERVER['PATH_INFO']);\n    }\n    if (isset($_SERVER['REQUEST_URI'])) {\n        return normalize_path($_SERVER['REQUEST_URI']);\n    }\n    if (is_array($req) && array_key_exists('url', $req)) {\n        return normalize_path($req['url']);\n    }\n    if (is_object($req) && isset($req.url)) {\n        return normalize_path($req.url);\n    }\n    return '/';\n}\n\nfunction normalize_path($value: mixed): string {\n    $path = '' . $value;\n    $parts = explode('?', $path, 2);\n    $path = $parts[0];\n    if (strpos($path, '://') !== false) {\n        $segments = explode('/', $path, 4);\n        $path = count($segments) >= 4 ? '/' . $segments[3] : '/';\n    }\n    if ($path === '') return '/';\n    return $path;\n}\n\nfunction App($req: mixed) {\n    $path = request_path($req);\n    if ($path !== '/') {\n        return {\n            status: 404,\n            headers: { 'content-type': 'text/plain; charset=utf-8' },\n            body: 'Not Found',\n        };\n    }\n    return {\n        status: 200,\n        headers: { 'content-type': 'text/html; charset=utf-8' },\n        body: \"<!doctype html>\\n\" . Layout({ children: Page() }),\n    };\n}\n\n$app = App;\n"
 }
 
 fn default_app_layout_phpx() -> &'static str {
-    "export function Layout($props: mixed): string {\n    $children = '';\n    if (is_array($props) && array_key_exists('children', $props)) {\n        $children = '' . $props['children'];\n    } else if (is_object($props) && isset($props.children)) {\n        $children = '' . $props.children;\n    }\n\n    return '<html lang=\"en\"><head><meta charset=\"utf-8\" /><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" /><title>Deka App</title></head><body><main id=\"app\">' . $children . '</main></body></html>';\n}\n"
+    "export function Layout($props: mixed): string {\n    $children = '';\n    if (is_array($props) && array_key_exists('children', $props)) {\n        $children = '' . $props['children'];\n    } else if (is_object($props) && isset($props.children)) {\n        $children = '' . $props.children;\n    }\n\n    return \"<html lang=\\\"en\\\">\\n<head>\\n  <meta charset=\\\"utf-8\\\" />\\n  <meta name=\\\"viewport\\\" content=\\\"width=device-width, initial-scale=1\\\" />\\n  <title>Deka App</title>\\n</head>\\n<body>\\n  <main id=\\\"app\\\">\" . $children . \"</main>\\n</body>\\n</html>\";\n}\n"
 }
 
 fn default_public_index_html() -> &'static str {
@@ -225,6 +225,7 @@ mod tests {
         assert!(template.contains("import { Layout } from './app/layout.phpx';"));
         assert!(template.contains("import { Page } from './app/page.phpx';"));
         assert!(template.contains("Layout({ children: Page() })"));
+        assert!(template.contains("body: \"<!doctype html>\\n\""));
         assert!(template.contains("if ($path !== '/')"));
         assert!(!template.contains("component/router"));
     }
