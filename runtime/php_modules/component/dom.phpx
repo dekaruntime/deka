@@ -55,10 +55,9 @@ export function render($node) {
     return renderToString($node);
 }
 
-export async function renderToStringAsync($node): Promise<string> {
-    __component_reset_node_id()
-    __component_reset_island_id()
-    return await __component_render_node_async($node)
+export function renderToStringAsync($node) {
+    // Runtime currently executes synchronously here; keep async alias for compatibility.
+    return renderToString($node)
 }
 
 /// docid: phpx/component/renderToStream()
@@ -553,7 +552,7 @@ export function Hydration($props = false) {
     }
     $script = __component_build_hydration_script($config);
     $inner = { __html: $script };
-    return <script nonce={$nonce !== '' ? false $nonce} dangerouslySetInnerHTML={$inner}></script>;
+    return <script nonce={$nonce !== '' ? $nonce : false} dangerouslySetInnerHTML={$inner}></script>;
 }
 
 /// docid: phpx/component/isPartialRequest()
@@ -575,60 +574,9 @@ export function isPartialRequest() {
 }
 
 
-export async function handleServerIslandRequestAsync($registry = false): Promise<bool> {
-    if (!isset($_GET['__deka_server_island']) || $_GET['__deka_server_island'] !== '1') {
-        return false;
-    }
-
-    $component = isset($_GET['component']) ? '' . $_GET['component'] : '';
-    if ($component === '') {
-        return false;
-    }
-
-    $props_json = '{}';
-    if (isset($_GET['props'])) {
-        $raw = '' . $_GET['props'];
-        $raw = str_replace(' ', '+', $raw);
-        $decoded = base64_decode($raw);
-        if ($decoded !== false && $decoded !== '') {
-            $props_json = $decoded;
-        }
-    }
-
-    $props = json_decode($props_json, true);
-    if (!is_array($props) && !is_object($props)) {
-        $props = {};
-    }
-    $props = __component_assoc_to_object($props);
-
-    $callable = false;
-    if (is_array($registry) && array_key_exists($component, $registry)) {
-        $callable = $registry[$component];
-    } else if (is_object($registry) && isset($registry->{$component})) {
-        $callable = $registry->{$component};
-    } else if (function_exists($component)) {
-        $callable = $component;
-    }
-
-    if ($callable === false || !is_callable($callable)) {
-        if (function_exists('header')) {
-            header('HTTP/1.1 404 Not Found');
-            header('Content-Type: text/plain; charset=utf-8');
-        }
-        echo 'server island component not found';
-        return true;
-    }
-
-    $node = $callable($props);
-    if (__component_is_promise($node)) {
-        $node = await $node;
-    }
-
-    if (function_exists('header')) {
-        header('Content-Type: text/html; charset=utf-8');
-    }
-    echo await renderToStringAsync($node);
-    return true;
+export function handleServerIslandRequestAsync($registry = false) {
+    // Keep async alias for compatibility while current runtime path remains sync.
+    return handleServerIslandRequest($registry)
 }
 /// docid: phpx/component/handleServerIslandRequest()
 /// <Function name="handleServerIslandRequest">

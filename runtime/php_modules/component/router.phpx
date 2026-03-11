@@ -108,20 +108,23 @@ export function resolve($request = false, $root = '.', $opts = false) {
 export function Router($props = false) {
     $root = '.';
     $path = '';
+    $request = false;
     $not_found = null;
 
     if (is_array($props)) {
         if (array_key_exists('root', $props)) $root = '' . $props['root'];
         if (array_key_exists('path', $props)) $path = '' . $props['path'];
+        if (array_key_exists('request', $props)) $request = $props['request'];
         if (array_key_exists('notFound', $props)) $not_found = $props['notFound'];
     } else if (is_object($props)) {
         if (isset($props.root)) $root = '' . $props.root;
         if (isset($props.path)) $path = '' . $props.path;
+        if (isset($props.request)) $request = $props.request;
         if (isset($props.notFound)) $not_found = $props.notFound;
     }
 
     if ($path === '') {
-        $path = request_path(false);
+        $path = request_path($request);
     }
 
     $resolved = resolve_path($path, $root);
@@ -518,6 +521,20 @@ function parse_route_token($segment) {
 function normalize_root($root) {
     $root = '' . $root;
     if ($root === '' || $root === '.') {
+        $handler = getenv('HANDLER_PATH');
+        if ($handler !== false && $handler !== '') {
+            $handler_path = '' . $handler;
+            if (ends_with($handler_path, '.phpx')) {
+                return path_dirname($handler_path);
+            }
+            return $handler_path;
+        }
+        if (function_exists('getcwd')) {
+            $cwd = getcwd();
+            if ($cwd !== false && $cwd !== '') {
+                return '' . $cwd;
+            }
+        }
         if (isset($_SERVER) && is_array($_SERVER)) {
             if (isset($_SERVER['PWD']) && $_SERVER['PWD'] !== '') {
                 return '' . $_SERVER['PWD'];
@@ -650,6 +667,16 @@ function request_path($request) {
 function clean_path($value) {
     $path = '' . $value;
     if ($path === '') return '/';
+    if (strpos($path, '://') !== false) {
+        $scheme = strpos($path, '://');
+        $rest = substr($path, $scheme + 3);
+        $slash = strpos($rest, '/');
+        if ($slash === false) {
+            $path = '/';
+        } else {
+            $path = substr($rest, $slash);
+        }
+    }
     if (strpos($path, '?') !== false) {
         $path = explode('?', $path, 2)[0];
     }
