@@ -3055,13 +3055,29 @@ fn set_request_globals(
     deno_core::scope!(scope, runtime);
     let context = scope.get_current_context();
     let global = context.global(scope);
+    let handler_path = std::env::var("HANDLER_PATH").unwrap_or_default();
+    let cwd = std::env::current_dir()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_else(|_| ".".to_string());
 
     if let Some(parts) = request_parts {
+        let (request_uri, request_pathname) = split_request_url(&parts.url);
         let obj = v8::Object::new(scope);
 
         let url_key = v8::String::new(scope, "url").ok_or_else(|| "url key".to_string())?;
         let url_val = v8::String::new(scope, &parts.url).ok_or_else(|| "url val".to_string())?;
         obj.set(scope, url_key.into(), url_val.into());
+
+        let path_key = v8::String::new(scope, "path").ok_or_else(|| "path key".to_string())?;
+        let path_val =
+            v8::String::new(scope, &request_uri).ok_or_else(|| "path val".to_string())?;
+        obj.set(scope, path_key.into(), path_val.into());
+
+        let pathname_key =
+            v8::String::new(scope, "pathname").ok_or_else(|| "pathname key".to_string())?;
+        let pathname_val = v8::String::new(scope, &request_pathname)
+            .ok_or_else(|| "pathname val".to_string())?;
+        obj.set(scope, pathname_key.into(), pathname_val.into());
 
         let method_key =
             v8::String::new(scope, "method").ok_or_else(|| "method key".to_string())?;
@@ -3091,6 +3107,37 @@ fn set_request_globals(
         let request_key = v8::String::new(scope, "__requestData")
             .ok_or_else(|| "request data key".to_string())?;
         global.set(scope, request_key.into(), obj.into());
+
+        let server = v8::Object::new(scope);
+        let request_uri_key =
+            v8::String::new(scope, "REQUEST_URI").ok_or_else(|| "request uri key".to_string())?;
+        let request_uri_val = v8::String::new(scope, &request_uri)
+            .ok_or_else(|| "request uri val".to_string())?;
+        server.set(scope, request_uri_key.into(), request_uri_val.into());
+
+        let path_info_key =
+            v8::String::new(scope, "PATH_INFO").ok_or_else(|| "path info key".to_string())?;
+        let path_info_val = v8::String::new(scope, &request_pathname)
+            .ok_or_else(|| "path info val".to_string())?;
+        server.set(scope, path_info_key.into(), path_info_val.into());
+
+        let pwd_key = v8::String::new(scope, "PWD").ok_or_else(|| "pwd key".to_string())?;
+        let pwd_val = v8::String::new(scope, &cwd).ok_or_else(|| "pwd val".to_string())?;
+        server.set(scope, pwd_key.into(), pwd_val.into());
+
+        if !handler_path.is_empty() {
+            let script_key = v8::String::new(scope, "SCRIPT_FILENAME")
+                .ok_or_else(|| "script filename key".to_string())?;
+            let script_val = v8::String::new(scope, &handler_path)
+                .ok_or_else(|| "script filename val".to_string())?;
+            server.set(scope, script_key.into(), script_val.into());
+        }
+
+        let server_key = v8::String::new(scope, "_SERVER").ok_or_else(|| "_SERVER key".to_string())?;
+        global.set(scope, server_key.into(), server.into());
+
+        let get_key = v8::String::new(scope, "_GET").ok_or_else(|| "_GET key".to_string())?;
+        global.set(scope, get_key.into(), v8::Object::new(scope).into());
     } else {
         let request_key = v8::String::new(scope, "__requestData")
             .ok_or_else(|| "request data key".to_string())?;
@@ -3133,6 +3180,27 @@ fn set_request_globals(
     Ok(())
 }
 
+fn split_request_url(url: &str) -> (String, String) {
+    let mut path = url.trim().to_string();
+    if let Some(scheme_idx) = path.find("://") {
+        let after_scheme = &path[(scheme_idx + 3)..];
+        path = match after_scheme.find('/') {
+            Some(slash_idx) => after_scheme[slash_idx..].to_string(),
+            None => "/".to_string(),
+        };
+    }
+    if path.is_empty() {
+        path = "/".to_string();
+    }
+    let pathname = path
+        .split('?')
+        .next()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("/")
+        .to_string();
+    (path, pathname)
+}
+
 fn now_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -3172,4 +3240,23 @@ fn handler_is_unsupported_script(name: &str) -> bool {
         || lower.ends_with(".jsx")
         || lower.ends_with(".mjs")
         || lower.ends_with(".cjs")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_request_url;
+
+    #[test]
+    fn split_request_url_handles_absolute_urls() {
+        let (request_uri, pathname) = split_request_url("http://localhost:8530/users?id=1");
+        assert_eq!(request_uri, "/users?id=1");
+        assert_eq!(pathname, "/users");
+    }
+
+    #[test]
+    fn split_request_url_handles_relative_paths() {
+        let (request_uri, pathname) = split_request_url("/docs/getting-started?tab=init");
+        assert_eq!(request_uri, "/docs/getting-started?tab=init");
+        assert_eq!(pathname, "/docs/getting-started");
+    }
 }

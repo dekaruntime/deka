@@ -2,6 +2,7 @@ use std::path::Path as FsPath;
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
+use std::{io, net::TcpListener};
 
 use crate::env::init_env;
 use crate::extensions::extensions_for_mode;
@@ -33,6 +34,7 @@ pub fn serve(context: &Context) {
 
     if let Err(err) = rt.block_on(serve_async(context)) {
         stdio_log::error("serve", &err);
+        std::process::exit(1);
     }
 }
 
@@ -77,6 +79,7 @@ async fn serve_async(context: &Context) -> Result<(), String> {
     if matches!(resolved.mode, runtime_config::ServeMode::Php) {
         let mut env_set = |key: &str, value: &str| {
             let _ = platform.env().set(key, value);
+            unsafe { std::env::set_var(key, value) };
         };
         ensure_phpx_module_root_env_with(
             &handler_path,
@@ -135,7 +138,9 @@ async fn serve_async(context: &Context) -> Result<(), String> {
             .unwrap_or(&handler_path),
     );
 
+    let handler_path_is_file = FsPath::new(&handler_path).is_file();
     let use_esm = matches!(resolved.mode, runtime_config::ServeMode::Php)
+        && handler_path_is_file
         && std::env::var("DEKA_RUNTIME_ESM")
             .map(|value| value != "0" && value != "false")
             .unwrap_or(true);
@@ -145,7 +150,7 @@ async fn serve_async(context: &Context) -> Result<(), String> {
         build_handler_code(&handler_path, &resolved)?
     };
     let handler_entry = match resolved.mode {
-        runtime_config::ServeMode::Php => Some(handler_path.clone()),
+        runtime_config::ServeMode::Php if handler_path_is_file => Some(handler_path.clone()),
         _ => None,
     };
 
@@ -298,7 +303,21 @@ fn build_handler_code(
     resolved: &runtime_config::ResolvedHandler,
 ) -> Result<String, String> {
     match resolved.mode {
-        runtime_config::ServeMode::Php => build_phpx_handler_bundle(handler_path),
+        runtime_config::ServeMode::Php => {
+            let path = std::path::Path::new(handler_path);
+            if path.is_dir() {
+                let encoded = serde_json::to_string(handler_path)
+                    .map_err(|err| format!("failed to encode app root path: {}", err))?;
+                return Ok(format!(
+                    "if (!(globalThis.__dekaPhp && typeof globalThis.__dekaPhp.servePhp === 'function')) {{\n\
+  throw new Error('PHP serve adapter is not available');\n\
+}}\n\
+globalThis.app = globalThis.__dekaPhp.servePhp({});\n",
+                    encoded
+                ));
+            }
+            build_phpx_handler_bundle(handler_path)
+        }
         runtime_config::ServeMode::Static => {
             let listing = resolved.config.directory_listing.unwrap_or(true);
             let static_path = std::path::Path::new(handler_path);
@@ -631,6 +650,7 @@ async fn serve_listeners(
         .port
         .or_else(|| std::env::var("PORT").ok().and_then(|p| p.parse().ok()))
         .unwrap_or(8530);
+    ensure_http_port_available(port)?;
     let listeners = server_pool_workers.max(1);
 
     stdio_log::log("listen", &format!("http://localhost:{}", port));
@@ -644,6 +664,25 @@ async fn serve_listeners(
     )
     .await?;
     Ok(())
+}
+
+fn ensure_http_port_available(port: u16) -> Result<(), String> {
+    match TcpListener::bind(("0.0.0.0", port)) {
+        Ok(listener) => {
+            drop(listener);
+            Ok(())
+        }
+        Err(err) => {
+            let message = match err.kind() {
+                io::ErrorKind::AddrInUse => format!(
+                    "port {} is already in use. `deka serve` refuses to share ports between processes; stop the existing server or pass --port <n>.",
+                    port
+                ),
+                _ => format!("failed to verify HTTP port {} availability: {}", port, err),
+            };
+            Err(message)
+        }
+    }
 }
 
 fn spawn_archive_task(state: &Arc<RuntimeState>, archive: Option<engine::IntrospectArchive>) {
@@ -767,8 +806,10 @@ fn should_ignore_watch_path(path: &FsPath) -> bool {
 #[cfg(test)]
 mod tests {
     use super::flag_or_env_truthy_with;
+    use super::ensure_http_port_available;
     use runtime_core::env::is_truthy;
     use std::collections::HashMap;
+    use std::net::TcpListener;
 
     #[test]
     fn truthy_parser_matches_expected_values() {
@@ -802,5 +843,13 @@ mod tests {
             "DEKA_WATCH",
             &|_| None,
         ));
+    }
+
+    #[test]
+    fn rejects_occupied_http_port() {
+        let listener = TcpListener::bind(("0.0.0.0", 0)).expect("bind ephemeral port");
+        let port = listener.local_addr().expect("local addr").port();
+        let err = ensure_http_port_available(port).expect_err("port should be rejected");
+        assert!(err.contains("already in use"), "unexpected error: {}", err);
     }
 }

@@ -73,6 +73,32 @@ Adopt one primary model:
 - File-based routing is framework behavior implemented in userland through `component/router`.
 - `app/` and `api/` are conventions consumed by `component/router`, not hidden runtime behavior.
 
+## Security Constraint
+
+While implementing this, a fresh `deka init` project exposed an important boundary issue:
+
+- The generated `main.phpx` imported `component/router`.
+- `component/router` scanned `app/` via the userland `fs` module.
+- Fresh init projects now ship with empty `security.allow` rules.
+- Those reads were therefore denied under default-deny security.
+
+That means the old default template was not just miswired. It also depended on privileged filesystem access from userland framework code.
+
+## Immediate Implementation Decision
+
+For the default init path:
+
+- Keep the explicit entry contract.
+- Do not make fresh projects depend on `component/router`.
+- Make `main.phpx` self-contained and explicit:
+  - read the request path
+  - render `app/page.phpx` inside `app/layout.phpx`
+  - return `404 Not Found` for unmatched paths
+
+This keeps the default project compatible with empty security rules.
+
+`component/router` remains the longer-term framework router, but it should only become the default again once it can obtain route metadata through a dedicated internal/runtime boundary instead of raw userland filesystem reads.
+
 ## Target Wiring
 
 ### Runtime
@@ -97,12 +123,13 @@ Adopt one primary model:
 
 ## Tasks
 
-- [ ] Document this routing contract and commit it.
-- [ ] Fix the default init entry so it matches the runtime request-handler contract exactly.
-- [ ] Remove default dependence on runtime-owned app-directory routing.
-- [ ] Add regression coverage for `deka init -> deka serve -> GET /`.
-- [ ] Verify with a release CLI build.
-- [ ] Summarize the final runtime/init wiring in docs or task notes.
+- [x] Document this routing contract and commit it.
+- [x] Fix the default init entry so it matches the runtime request-handler contract exactly.
+- [x] Remove default dependence on `component/router` in fresh init projects.
+- [x] Remove default dependence on runtime-owned app-directory routing.
+- [x] Add regression coverage for the generated explicit-entry template and request-path plumbing.
+- [x] Verify with a release CLI build and a fresh `deka init -> deka serve`.
+- [x] Summarize the final runtime/init wiring in docs or task notes.
 
 ## Implementation Notes
 
@@ -110,3 +137,21 @@ Adopt one primary model:
 - Avoid runtime magic for framework routing.
 - Prefer visible userland code over hidden runtime heuristics.
 - If runtime-owned app-directory mode remains temporarily for compatibility, it must not be the path used by `deka init`.
+- Do not broaden default project security rules just to make framework routing work.
+
+## Final Wiring
+
+Fresh `deka init` projects now work like this:
+
+- `deka.json` points to `main.phpx`.
+- `main.phpx` is the explicit runtime entry.
+- `main.phpx` reads the request path directly.
+- `/` renders `app/page.phpx` inside `app/layout.phpx`.
+- any other path returns an explicit `404` response object.
+
+Two supporting fixes were required:
+
+- `serve` now mirrors detected `PHPX_MODULE_ROOT` into the process environment before PHPX module validation runs.
+- the default init template no longer depends on `component/router`, `component/dom`, or privileged framework filesystem scans.
+
+This is intentionally narrower than the long-term framework direction. It gives fresh projects a working, security-compatible default today while keeping router/framework work separate.

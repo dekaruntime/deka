@@ -87,6 +87,7 @@ async fn run_async(context: &Context) -> Result<(), String> {
     }
     let mut env_set = |key: &str, value: &str| {
         let _ = platform.env().set(key, value);
+        unsafe { std::env::set_var(key, value) };
     };
     ensure_phpx_module_root_env_with(
         &normalized,
