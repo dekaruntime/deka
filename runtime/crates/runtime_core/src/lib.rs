@@ -1,4 +1,5 @@
 pub mod env;
+pub mod framework;
 pub mod handler;
 pub mod module_spec;
 pub mod modules;
