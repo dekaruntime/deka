@@ -4568,6 +4568,15 @@ fn op_php_parse_wit(
 
 #[op2]
 #[serde]
+fn op_redis_call(
+    #[string] action: String,
+    #[serde] args: serde_json::Value,
+) -> Result<serde_json::Value, deno_core::error::CoreError> {
+    Ok(super::redis_mod::redis_call(&action, &args))
+}
+
+#[op2]
+#[serde]
 fn op_neo4j_call(
     #[string] action: String,
     #[serde] args: serde_json::Value,
@@ -4602,6 +4611,7 @@ deno_core::extension!(
         op_php_read_dir,
         op_php_parse_wit,
         op_neo4j_call,
+        op_redis_call,
     ],
     esm_entry_point = "ext:php_core/php.js",
     esm = [dir "src/modules/php", "php.js"],

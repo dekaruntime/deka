@@ -2064,6 +2064,12 @@ impl WorkerThread {
                             }
                             return { ok: false, error: 'neo4j bridge op unavailable' };
                         }
+                        if (kind === 'redis') {
+                            if (typeof ops.op_redis_call === 'function') {
+                                return ops.op_redis_call(String(action || ''), payload || {});
+                            }
+                            return { ok: false, error: 'redis bridge op unavailable' };
+                        }
                         if (kind === 'net') {
                             if (typeof ops.op_php_net_call_proto === 'function' && typeof ops.op_php_net_proto_encode === 'function' && typeof ops.op_php_net_proto_decode === 'function') {
                                 const request = ops.op_php_net_proto_encode(String(action || ''), payload || {});

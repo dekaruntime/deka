@@ -25,6 +25,7 @@ stdio = { path = "../stdio" }
 native-tls = "0.2"
 getrandom = "0.2"
 neo4rs = { workspace = true }
+redis = { workspace = true }
 tokio = { workspace = true }
 
 [build-dependencies]
