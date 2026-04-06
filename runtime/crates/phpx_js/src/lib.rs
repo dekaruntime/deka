@@ -1670,6 +1670,37 @@ impl<'a> JsSubsetEmitter<'a> {
             Expr::VariadicPlaceholder { .. } => {
                 Err("variadic placeholder is not supported in JS subset emitter".to_string())
             }
+            Expr::Cql {
+                name,
+                cypher,
+                params,
+                span,
+            } => {
+                let cypher_text = std::str::from_utf8(cypher.as_str(self.source))
+                    .unwrap_or("")
+                    .trim();
+                let name_text = std::str::from_utf8(name.text(self.source)).unwrap_or("_cql");
+
+                // Build the params object: { param_name: param_name, ... }
+                let mut param_entries = Vec::new();
+                for p in params.iter() {
+                    let pname = std::str::from_utf8(p.name).unwrap_or("_");
+                    param_entries.push(format!("{0}: {0}", pname));
+                }
+                let params_obj = if param_entries.is_empty() {
+                    "{}".to_string()
+                } else {
+                    format!("{{ {} }}", param_entries.join(", "))
+                };
+
+                // Escape backticks in the cypher text for template literal
+                let escaped = cypher_text.replace('\\', "\\\\").replace('`', "\\`");
+
+                Ok(format!(
+                    "const {} = {{ __type: \"cql\", query: `{}`, params: {} }}",
+                    name_text, escaped, params_obj
+                ))
+            }
             Expr::Error { .. } => {
                 Err("parser error expression reached JS subset emitter".to_string())
             }
