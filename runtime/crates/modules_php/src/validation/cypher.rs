@@ -243,6 +243,43 @@ cql broken = MATCH (n:Person RETURN n;
             "expected cypher syntax error for unclosed node pattern"
         );
     }
+
+    #[test]
+    fn error_has_correct_line_and_column() {
+        let source = "$x = 1\ncql q = MATCH (n) WHERE n.id = $typo RETURN n;\n";
+        let arena = Bump::new();
+        let result = compile_phpx(source, "test.phpx", &arena);
+        let cypher_errors: Vec<_> = result
+            .errors
+            .iter()
+            .filter(|e| e.kind == super::super::ErrorKind::CypherError)
+            .collect();
+        assert_eq!(cypher_errors.len(), 1);
+        // $typo is on line 2
+        assert_eq!(cypher_errors[0].line, 2, "error should be on line 2");
+        assert!(cypher_errors[0].message.contains("typo"));
+    }
+
+    #[test]
+    fn formatted_error_output_is_readable() {
+        let source = "$customer_id = 42\ncql q = MATCH (c) WHERE c.id = $cusomer_id RETURN c;\n";
+        let arena = Bump::new();
+        let result = compile_phpx(source, "test.phpx", &arena);
+        let cypher_errors: Vec<_> = result
+            .errors
+            .iter()
+            .filter(|e| e.kind == super::super::ErrorKind::CypherError)
+            .collect();
+        assert_eq!(cypher_errors.len(), 1);
+
+        let formatted = super::super::format_validation_error(source, "test.phpx", cypher_errors[0]);
+        // Should contain the file path
+        assert!(formatted.contains("test.phpx"), "should contain file path");
+        // Should contain the error kind
+        assert!(formatted.contains("Cypher Error"), "should contain 'Cypher Error'");
+        // Should contain the suggestion
+        assert!(formatted.contains("customer_id"), "should contain suggestion 'customer_id'");
+    }
 }
 
 /// Simple Levenshtein distance for "did you mean?" suggestions.
