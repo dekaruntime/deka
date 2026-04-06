@@ -16,17 +16,32 @@ thread_local! {
     static NEXT_HANDLE: RefCell<u64> = const { RefCell::new(1) };
 }
 
-fn with_runtime<F, T>(f: F) -> T
+/// Run an async operation, handling the case where we may already be inside a tokio runtime.
+fn block_on_async<F, T>(f: F) -> T
 where
-    F: FnOnce(&Runtime) -> T,
+    F: std::future::Future<Output = T> + Send + 'static,
+    T: Send + 'static,
 {
-    RT.with(|cell: &RefCell<Option<Runtime>>| {
-        let mut rt = cell.borrow_mut();
-        if rt.is_none() {
-            *rt = Some(Runtime::new().expect("failed to create tokio runtime"));
-        }
-        f(rt.as_ref().unwrap())
-    })
+    // If we're already in a tokio runtime (e.g., Deka's isolate pool),
+    // spawn on a separate thread to avoid "cannot start runtime within runtime".
+    if tokio::runtime::Handle::try_current().is_ok() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let rt = Runtime::new().expect("failed to create tokio runtime");
+            let result = rt.block_on(f);
+            let _ = tx.send(result);
+        });
+        rx.recv().expect("neo4j worker thread panicked")
+    } else {
+        // Not inside a runtime — create one and block directly
+        RT.with(|cell: &RefCell<Option<Runtime>>| {
+            let mut rt = cell.borrow_mut();
+            if rt.is_none() {
+                *rt = Some(Runtime::new().expect("failed to create tokio runtime"));
+            }
+            rt.as_ref().unwrap().block_on(f)
+        })
+    }
 }
 
 /// Main dispatch function — called from the JS bridge router via op_neo4j_call.
@@ -45,30 +60,31 @@ fn neo4j_connect(args: &Value) -> Value {
         .get("uri")
         .or_else(|| args.get("url"))
         .and_then(|v| v.as_str())
-        .unwrap_or("bolt://localhost:7687");
+        .unwrap_or("bolt://localhost:7687")
+        .to_string();
     let user = args
         .get("user")
         .and_then(|v| v.as_str())
-        .unwrap_or("neo4j");
+        .unwrap_or("neo4j")
+        .to_string();
     let password = args
         .get("password")
         .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let db = args.get("db").and_then(|v| v.as_str()).unwrap_or("neo4j");
+        .unwrap_or("")
+        .to_string();
+    let db = args.get("db").and_then(|v| v.as_str()).unwrap_or("neo4j").to_string();
 
-    let result = with_runtime(|rt| {
-        rt.block_on(async {
-            let config = neo4rs::ConfigBuilder::default()
-                .uri(uri)
-                .user(user)
-                .password(password)
-                .db(db)
-                .build()
-                .map_err(|e| format!("{}", e))?;
-            Graph::connect(config)
-                .await
-                .map_err(|e| format!("{}", e))
-        })
+    let result = block_on_async(async move {
+        let config = neo4rs::ConfigBuilder::default()
+            .uri(&uri)
+            .user(&user)
+            .password(&password)
+            .db(&*db)
+            .build()
+            .map_err(|e| format!("{}", e))?;
+        Graph::connect(config)
+            .await
+            .map_err(|e| format!("{}", e))
     });
 
     match result {
@@ -95,6 +111,11 @@ fn neo4j_query(args: &Value) -> Value {
         None => return json!({ "ok": false, "error": "missing 'cypher' field" }),
     };
     let params = args.get("params").cloned().unwrap_or(json!({}));
+    let columns: Vec<String> = if let Some(cols) = args.get("columns").and_then(|v| v.as_array()) {
+        cols.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
+    } else {
+        Vec::new()
+    };
 
     let graph = CONNECTIONS.with(|c: &RefCell<HashMap<u64, Arc<Graph>>>| c.borrow().get(&handle).cloned());
     let graph = match graph {
@@ -102,47 +123,34 @@ fn neo4j_query(args: &Value) -> Value {
         None => return json!({ "ok": false, "error": format!("invalid connection handle {}", handle) }),
     };
 
-    let result = with_runtime(|rt| {
-        rt.block_on(async {
-            let mut q = query(&cypher);
+    let result = block_on_async(async move {
+        let mut q = query(&cypher);
 
-            // Bind parameters from the params object
-            if let Some(obj) = params.as_object() {
-                for (key, val) in obj {
-                    q = bind_param(q, key, val);
-                }
+        if let Some(obj) = params.as_object() {
+            for (key, val) in obj {
+                q = bind_param(q, key, val);
             }
+        }
 
-            let mut result = graph.execute(q).await.map_err(|e| format!("{}", e))?;
-            let mut rows = Vec::new();
+        let mut result = graph.execute(q).await.map_err(|e| format!("{}", e))?;
+        let mut rows = Vec::new();
 
-            // Get column names from the query's RETURN clause if provided,
-            // otherwise try to deserialize the row as a map
-            let columns: Vec<String> = if let Some(cols) = args.get("columns").and_then(|v| v.as_array()) {
-                cols.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
+        while let Some(row) = result.next().await.map_err(|e| format!("{}", e))? {
+            let mut row_obj = serde_json::Map::new();
+            if columns.is_empty() {
+                if let Ok(v) = row.get::<String>("") {
+                    row_obj.insert("_".to_string(), json!(v));
+                }
             } else {
-                Vec::new()
-            };
-
-            while let Some(row) = result.next().await.map_err(|e| format!("{}", e))? {
-                let mut row_obj = serde_json::Map::new();
-                if columns.is_empty() {
-                    // Try to deserialize the whole row as a BoltMap via get
-                    // If no columns specified, return a single "result" field
-                    if let Ok(v) = row.get::<String>("") {
-                        row_obj.insert("_".to_string(), json!(v));
-                    }
-                } else {
-                    for key in &columns {
-                        let val = row_to_json(&row, key);
-                        row_obj.insert(key.clone(), val);
-                    }
+                for key in &columns {
+                    let val = row_to_json(&row, key);
+                    row_obj.insert(key.clone(), val);
                 }
-                rows.push(Value::Object(row_obj));
             }
+            rows.push(Value::Object(row_obj));
+        }
 
-            Ok::<Vec<Value>, String>(rows)
-        })
+        Ok::<Vec<Value>, String>(rows)
     });
 
     match result {
@@ -166,16 +174,14 @@ fn neo4j_execute(args: &Value) -> Value {
         None => return json!({ "ok": false, "error": format!("invalid connection handle {}", handle) }),
     };
 
-    let result = with_runtime(|rt| {
-        rt.block_on(async {
-            let mut q = query(&cypher);
-            if let Some(obj) = params.as_object() {
-                for (key, val) in obj {
-                    q = bind_param(q, key, val);
-                }
+    let result = block_on_async(async move {
+        let mut q = query(&cypher);
+        if let Some(obj) = params.as_object() {
+            for (key, val) in obj {
+                q = bind_param(q, key, val);
             }
-            graph.run(q).await.map_err(|e| format!("{}", e))
-        })
+        }
+        graph.run(q).await.map_err(|e| format!("{}", e))
     });
 
     match result {

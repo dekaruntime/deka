@@ -1,126 +1,109 @@
----
 import { bridge } from 'core/bridge'
-export { connect, get, set, del, exists, expire, ttl, incr, decr }
-export { hget, hset, hgetall, hdel }
-export { lpush, rpush, lpop, rpop, lrange, llen }
-export { sadd, smembers, srem, sismember }
-export { keys, flush, close }
----
 
-function connect($url = 'redis://localhost:6379') {
+export function connect($url = 'redis://localhost:6379') {
     return bridge('redis', 'connect', { url: $url })
 }
 
-// ─── Strings ───────────────────────────────────
-
-function get($handle, $key) {
+export function get($handle, $key) {
     return bridge('redis', 'get', { handle: $handle, key: $key })
 }
 
-function set($handle, $key, $value, $ttl = null) {
+export function set($handle, $key, $value, $ttl = null) {
     $payload = { handle: $handle, key: $key, value: $value }
     if ($ttl !== null) {
-        $payload.ttl = $ttl
+        $payload['ttl'] = $ttl
     }
     return bridge('redis', 'set', $payload)
 }
 
-function del($handle, $key) {
+export function del($handle, $key) {
     return bridge('redis', 'del', { handle: $handle, key: $key })
 }
 
-function exists($handle, $key) {
+export function exists($handle, $key) {
     return bridge('redis', 'exists', { handle: $handle, key: $key })
 }
 
-function expire($handle, $key, $seconds) {
+export function expire($handle, $key, $seconds) {
     return bridge('redis', 'expire', { handle: $handle, key: $key, seconds: $seconds })
 }
 
-function ttl($handle, $key) {
+export function ttl($handle, $key) {
     return bridge('redis', 'ttl', { handle: $handle, key: $key })
 }
 
-function incr($handle, $key, $by = 1) {
+export function incr($handle, $key, $by = 1) {
     return bridge('redis', 'incr', { handle: $handle, key: $key, by: $by })
 }
 
-function decr($handle, $key, $by = 1) {
+export function decr($handle, $key, $by = 1) {
     return bridge('redis', 'decr', { handle: $handle, key: $key, by: $by })
 }
 
-// ─── Hashes ────────────────────────────────────
-
-function hget($handle, $key, $field) {
+export function hget($handle, $key, $field) {
     return bridge('redis', 'hget', { handle: $handle, key: $key, field: $field })
 }
 
-function hset($handle, $key, $field, $value) {
+export function hset($handle, $key, $field, $value) {
     return bridge('redis', 'hset', { handle: $handle, key: $key, field: $field, value: $value })
 }
 
-function hgetall($handle, $key) {
+export function hgetall($handle, $key) {
     return bridge('redis', 'hgetall', { handle: $handle, key: $key })
 }
 
-function hdel($handle, $key, $field) {
+export function hdel($handle, $key, $field) {
     return bridge('redis', 'hdel', { handle: $handle, key: $key, field: $field })
 }
 
-// ─── Lists ─────────────────────────────────────
-
-function lpush($handle, $key, $value) {
+export function lpush($handle, $key, $value) {
     return bridge('redis', 'lpush', { handle: $handle, key: $key, value: $value })
 }
 
-function rpush($handle, $key, $value) {
+export function rpush($handle, $key, $value) {
     return bridge('redis', 'rpush', { handle: $handle, key: $key, value: $value })
 }
 
-function lpop($handle, $key) {
+export function lpop($handle, $key) {
     return bridge('redis', 'lpop', { handle: $handle, key: $key })
 }
 
-function rpop($handle, $key) {
+export function rpop($handle, $key) {
     return bridge('redis', 'rpop', { handle: $handle, key: $key })
 }
 
-function lrange($handle, $key, $start = 0, $stop = -1) {
+export function lrange($handle, $key, $start = 0, $stop = -1) {
     return bridge('redis', 'lrange', { handle: $handle, key: $key, start: $start, stop: $stop })
 }
 
-function llen($handle, $key) {
+export function llen($handle, $key) {
     return bridge('redis', 'llen', { handle: $handle, key: $key })
 }
 
-// ─── Sets ──────────────────────────────────────
-
-function sadd($handle, $key, $member) {
+export function sadd($handle, $key, $member) {
     return bridge('redis', 'sadd', { handle: $handle, key: $key, member: $member })
 }
 
-function smembers($handle, $key) {
+export function smembers($handle, $key) {
     return bridge('redis', 'smembers', { handle: $handle, key: $key })
 }
 
-function srem($handle, $key, $member) {
+export function srem($handle, $key, $member) {
     return bridge('redis', 'srem', { handle: $handle, key: $key, member: $member })
 }
 
-function sismember($handle, $key, $member) {
+export function sismember($handle, $key, $member) {
     return bridge('redis', 'sismember', { handle: $handle, key: $key, member: $member })
 }
 
-// ─── Utility ───────────────────────────────────
-
-function keys($handle, $pattern = '*') {
+export function keys($handle, $pattern = '*') {
     return bridge('redis', 'keys', { handle: $handle, pattern: $pattern })
 }
 
-function flush($handle) {
+export function flush($handle) {
     return bridge('redis', 'flush', { handle: $handle })
 }
 
-function close($handle) {
+export function close($handle) {
     return bridge('redis', 'close', { handle: $handle })
 }
