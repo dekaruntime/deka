@@ -25,6 +25,7 @@ members = [
     "crates/pm",
     "examples/wasm_hello_rust",
     "crates/phpx_lsp",
+    "crates/cypher",
 ]
 
 [workspace.dependencies]
@@ -56,6 +57,9 @@ swc_ecma_parser = { version = "31.0.0", features = ["typescript"] }
 swc_ecma_ast = "19.0.0"
 swc_common = "18.0.1"
 swc_ecma_visit = "19.0.0"
+
+# Parser combinators
+nom = "7.1"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
