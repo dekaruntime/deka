@@ -1,3 +1,4 @@
+pub mod cypher;
 pub mod exports;
 pub mod generics;
 pub mod imports;
@@ -42,6 +43,7 @@ pub enum ErrorKind {
     StructError,
     EnumError,
     PatternError,
+    CypherError,
 }
 
 impl ErrorKind {
@@ -65,6 +67,7 @@ impl ErrorKind {
             ErrorKind::StructError => "Struct Error",
             ErrorKind::EnumError => "Enum Error",
             ErrorKind::PatternError => "Pattern Error",
+            ErrorKind::CypherError => "Cypher Error",
         }
     }
 }
@@ -179,6 +182,7 @@ fn docs_link_for_kind(kind: ErrorKind) -> Option<String> {
         ErrorKind::TypeError | ErrorKind::TypeMismatch | ErrorKind::UnknownType => {
             "docs/phpx/types"
         }
+        ErrorKind::CypherError => return None,
     };
     Some(path.to_string())
 }

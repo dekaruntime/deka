@@ -18,6 +18,7 @@ use crate::validation::modules::{
     resolve_modules_root, validate_module_resolution, validate_target_capabilities,
     validate_wasm_imports,
 };
+use crate::validation::cypher::validate_cypher;
 use crate::validation::patterns::validate_match_exhaustiveness;
 use crate::validation::phpx_rules::{
     validate_no_exceptions, validate_no_namespace, validate_no_null, validate_no_oop,
@@ -109,6 +110,7 @@ fn compile_phpx_with_mode<'a>(
     errors.extend(validate_wasm_imports(source, file_path));
 
     errors.extend(validate_match_exhaustiveness(&program, source));
+    errors.extend(validate_cypher(&program, source));
 
     if has_parse_errors {
         wasm_functions.clear();
