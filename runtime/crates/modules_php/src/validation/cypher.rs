@@ -280,6 +280,30 @@ cql broken = MATCH (n:Person RETURN n;
         // Should contain the suggestion
         assert!(formatted.contains("customer_id"), "should contain suggestion 'customer_id'");
     }
+
+    #[test]
+    fn cql_binding_registered_in_type_checker() {
+        // After `cql q = ...`, $q should be usable without "unknown variable" type errors
+        let source = r#"
+function test() {
+    $id = 42
+    cql q = MATCH (n) WHERE n.id = $id RETURN n;
+    $x = $q
+}
+"#;
+        let arena = Bump::new();
+        let result = compile_phpx(source, "test.phpx", &arena);
+        let type_errors: Vec<_> = result
+            .errors
+            .iter()
+            .filter(|e| e.message.contains("Unknown variable") && e.message.contains("$q"))
+            .collect();
+        assert!(
+            type_errors.is_empty(),
+            "cql binding $q should be recognized as a variable, got errors: {:?}",
+            type_errors
+        );
+    }
 }
 
 /// Simple Levenshtein distance for "did you mean?" suggestions.

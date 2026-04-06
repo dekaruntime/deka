@@ -69,6 +69,14 @@ async fn serve_async(context: &Context) -> Result<(), String> {
     let resolved = runtime_config::resolve_handler_path(&context.handler.input)
         .map_err(|err| format!("Failed to resolve handler path: {}", err))?;
 
+    // Load neo4j/redis config from deka.json into env vars
+    let config_dir = if resolved.path.is_dir() {
+        &resolved.path
+    } else {
+        resolved.path.parent().unwrap_or(&resolved.path)
+    };
+    runtime_config::load_database_config(config_dir);
+
     let handler_path = resolved.path.to_string_lossy().to_string();
     if handler_is_unsupported_script(&handler_path) {
         return Err(format!(

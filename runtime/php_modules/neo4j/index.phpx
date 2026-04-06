@@ -9,7 +9,7 @@ export function connect($uri = 'bolt://localhost:7687', $user = 'neo4j', $passwo
     })
 }
 
-export function cypher_query($handle, $cypher, $params = {}, $columns = []) {
+export function query($handle, $cypher, $params = {}, $columns = []) {
     return bridge('neo4j', 'query', {
         handle: $handle,
         cypher: $cypher,
@@ -34,5 +34,5 @@ export function run_cql($handle, $cql_value) {
     if (!is_array($cql_value) || !array_key_exists('__type', $cql_value) || $cql_value['__type'] !== 'cql') {
         return { ok: false, error: 'run_cql expects a cql value (produced by the cql keyword)', rows: [] }
     }
-    return cypher_query($handle, $cql_value['query'], $cql_value['params'])
+    return query($handle, $cql_value['query'], $cql_value['params'])
 }
