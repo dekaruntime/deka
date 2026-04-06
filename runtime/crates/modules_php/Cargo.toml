@@ -24,6 +24,8 @@ runtime_core = { path = "../runtime_core" }
 stdio = { path = "../stdio" }
 native-tls = "0.2"
 getrandom = "0.2"
+neo4rs = { workspace = true }
+tokio = { workspace = true }
 
 [build-dependencies]
 prost-build = "0.13"

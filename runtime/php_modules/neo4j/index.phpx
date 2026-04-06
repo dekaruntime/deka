@@ -1,0 +1,52 @@
+---
+import { bridge } from 'core/bridge'
+export { connect, query, execute, close, run_cql }
+---
+
+function connect($uri = 'bolt://localhost:7687', $user = 'neo4j', $password = '', $db = 'neo4j') {
+    $result = bridge('neo4j', 'connect', {
+        uri: $uri,
+        user: $user,
+        password: $password,
+        db: $db
+    })
+    if (!$result.ok) {
+        return { ok: false, error: $result.error }
+    }
+    return { ok: true, handle: $result.handle }
+}
+
+function query($handle, $cypher, $params = {}, $columns = []) {
+    $result = bridge('neo4j', 'query', {
+        handle: $handle,
+        cypher: $cypher,
+        params: $params,
+        columns: $columns
+    })
+    if (!$result.ok) {
+        return { ok: false, error: $result.error, rows: [] }
+    }
+    return { ok: true, rows: $result.rows, count: $result.count }
+}
+
+function execute($handle, $cypher, $params = {}) {
+    $result = bridge('neo4j', 'execute', {
+        handle: $handle,
+        cypher: $cypher,
+        params: $params
+    })
+    return $result
+}
+
+function close($handle) {
+    return bridge('neo4j', 'close', { handle: $handle })
+}
+
+/// Execute a cql value (produced by the cql keyword) against a connection.
+/// Extracts the query string and params from the cql object.
+function run_cql($handle, $cql_value) {
+    if (!$cql_value || $cql_value.__type !== 'cql') {
+        return { ok: false, error: 'run_cql expects a cql value (produced by the cql keyword)', rows: [] }
+    }
+    return query($handle, $cql_value.query, $cql_value.params)
+}

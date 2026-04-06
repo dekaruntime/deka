@@ -2530,7 +2530,11 @@ fn patch_for_suggestion(capability: &str, suggestion: &str) -> Option<String> {
 }
 
 fn update_deka_json_allow(capability: &str, target: Option<&str>) -> Result<(), String> {
-    let target = target.ok_or("missing target")?.trim();
+    let target = target
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| default_allow_target_for_capability(capability))
+        .ok_or("missing target")?;
     if target.is_empty() {
         return Err("empty target".to_string());
     }
@@ -2608,6 +2612,14 @@ fn update_deka_json_allow(capability: &str, target: Option<&str>) -> Result<(), 
     std::fs::write(&path, payload)
         .map_err(|err| format!("failed to write {}: {}", path.display(), err))?;
     Ok(())
+}
+
+fn default_allow_target_for_capability(capability: &str) -> Option<&'static str> {
+    match capability {
+        // Scope-less capability requests should persist as wildcard allows.
+        "env" | "net" | "run" | "db" | "wasm" => Some("*"),
+        _ => None,
+    }
 }
 
 fn rule_items_for_request(capability: &str, target: &str, project_kind: ProjectKind) -> Vec<String> {
@@ -4554,6 +4566,15 @@ fn op_php_parse_wit(
     })
 }
 
+#[op2]
+#[serde]
+fn op_neo4j_call(
+    #[string] action: String,
+    #[serde] args: serde_json::Value,
+) -> Result<serde_json::Value, deno_core::error::CoreError> {
+    Ok(super::neo4j::neo4j_call(&action, &args))
+}
+
 deno_core::extension!(
     php_core,
     ops = [
@@ -4580,6 +4601,7 @@ deno_core::extension!(
         op_php_path_resolve,
         op_php_read_dir,
         op_php_parse_wit,
+        op_neo4j_call,
     ],
     esm_entry_point = "ext:php_core/php.js",
     esm = [dir "src/modules/php", "php.js"],
@@ -4611,6 +4633,17 @@ mod tests {
             "expected ok response, got: {}",
             value
         );
+    }
+
+    #[test]
+    fn default_allow_target_uses_wildcard_for_scope_less_capabilities() {
+        assert_eq!(default_allow_target_for_capability("env"), Some("*"));
+        assert_eq!(default_allow_target_for_capability("net"), Some("*"));
+        assert_eq!(default_allow_target_for_capability("run"), Some("*"));
+        assert_eq!(default_allow_target_for_capability("db"), Some("*"));
+        assert_eq!(default_allow_target_for_capability("wasm"), Some("*"));
+        assert_eq!(default_allow_target_for_capability("read"), None);
+        assert_eq!(default_allow_target_for_capability("write"), None);
     }
 
     #[test]
