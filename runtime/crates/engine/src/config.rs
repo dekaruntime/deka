@@ -128,9 +128,11 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
 
     let (handler_dir, serve_config) = if is_dir {
         let config = ServeConfig::load(&abs_path);
+        load_database_config(&abs_path);
         (abs_path.clone(), config)
     } else if let Some(parent) = abs_path.parent() {
         let config = ServeConfig::load(parent);
+        load_database_config(parent);
         (parent.to_path_buf(), config)
     } else {
         (PathBuf::from("."), ServeConfig::default())
@@ -398,5 +400,58 @@ mod tests {
         let resolved = resolve_handler_path(dir.to_str().expect("path")).expect("resolve");
         assert!(resolved.path.is_dir());
         assert!(matches!(resolved.mode, ServeMode::Php));
+    }
+}
+
+/// Load database configuration from deka.json and set environment variables.
+/// Called during handler initialization so the neo4j/redis modules pick up config.
+///
+/// Example deka.json:
+/// ```json
+/// {
+///   "neo4j": { "uri": "bolt://localhost:7687", "user": "neo4j", "password": "secret", "db": "neo4j" },
+///   "redis": { "url": "redis://localhost:6379" }
+/// }
+/// ```
+pub fn load_database_config(directory: &std::path::Path) {
+    let deka_json = directory.join("deka.json");
+    if !deka_json.exists() {
+        return;
+    }
+
+    let contents = match std::fs::read_to_string(&deka_json) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let root: serde_json::Value = match serde_json::from_str(&contents) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    // SAFETY: called once during single-threaded init before handler threads start.
+    unsafe {
+        // Neo4j config
+        if let Some(neo4j) = root.get("neo4j") {
+            if let Some(uri) = neo4j.get("uri").and_then(|v| v.as_str()) {
+                std::env::set_var("DEKA_NEO4J_URI", uri);
+            }
+            if let Some(user) = neo4j.get("user").and_then(|v| v.as_str()) {
+                std::env::set_var("DEKA_NEO4J_USER", user);
+            }
+            if let Some(password) = neo4j.get("password").and_then(|v| v.as_str()) {
+                std::env::set_var("DEKA_NEO4J_PASSWORD", password);
+            }
+            if let Some(db) = neo4j.get("db").and_then(|v| v.as_str()) {
+                std::env::set_var("DEKA_NEO4J_DB", db);
+            }
+        }
+
+        // Redis config
+        if let Some(redis) = root.get("redis") {
+            if let Some(url) = redis.get("url").or_else(|| redis.get("uri")).and_then(|v| v.as_str()) {
+                std::env::set_var("DEKA_REDIS_URL", url);
+            }
+        }
     }
 }

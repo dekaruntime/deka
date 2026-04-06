@@ -56,23 +56,28 @@ pub fn neo4j_call(action: &str, args: &Value) -> Value {
 }
 
 fn neo4j_connect(args: &Value) -> Value {
+    // Config priority: explicit args > env vars > defaults
     let uri = args
         .get("uri")
         .or_else(|| args.get("url"))
         .and_then(|v| v.as_str())
-        .unwrap_or("bolt://localhost:7687")
-        .to_string();
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| std::env::var("DEKA_NEO4J_URI").unwrap_or_else(|_| "bolt://localhost:7687".to_string()));
     let user = args
         .get("user")
         .and_then(|v| v.as_str())
-        .unwrap_or("neo4j")
-        .to_string();
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| std::env::var("DEKA_NEO4J_USER").unwrap_or_else(|_| "neo4j".to_string()));
     let password = args
         .get("password")
         .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let db = args.get("db").and_then(|v| v.as_str()).unwrap_or("neo4j").to_string();
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| std::env::var("DEKA_NEO4J_PASSWORD").unwrap_or_default());
+    let db = args
+        .get("db")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| std::env::var("DEKA_NEO4J_DB").unwrap_or_else(|_| "neo4j".to_string()));
 
     let result = block_on_async(async move {
         let config = neo4rs::ConfigBuilder::default()

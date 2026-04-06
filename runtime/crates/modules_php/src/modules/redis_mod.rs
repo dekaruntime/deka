@@ -67,7 +67,9 @@ fn redis_connect(args: &Value) -> Value {
         .get("url")
         .or_else(|| args.get("uri"))
         .and_then(|v| v.as_str())
-        .unwrap_or("redis://localhost:6379");
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| std::env::var("DEKA_REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string()));
+    let url = url.as_str();
 
     let client = match Client::open(url) {
         Ok(c) => c,
