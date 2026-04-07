@@ -16,32 +16,40 @@ thread_local! {
     static NEXT_HANDLE: RefCell<u64> = const { RefCell::new(1) };
 }
 
-/// Run an async operation, handling the case where we may already be inside a tokio runtime.
+/// Persistent background tokio runtime for neo4j async operations.
+/// Lives in a dedicated thread, shared across all neo4j calls.
+use std::sync::OnceLock;
+static NEO4J_RT: OnceLock<tokio::runtime::Handle> = OnceLock::new();
+
+fn neo4j_runtime_handle() -> &'static tokio::runtime::Handle {
+    NEO4J_RT.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("neo4j-runtime".into())
+            .spawn(move || {
+                let rt = Runtime::new().expect("failed to create neo4j tokio runtime");
+                tx.send(rt.handle().clone()).unwrap();
+                // Park this thread forever — the runtime stays alive
+                std::thread::park();
+            })
+            .expect("failed to spawn neo4j runtime thread");
+        rx.recv().expect("neo4j runtime thread failed to start")
+    })
+}
+
+/// Run an async operation synchronously on the dedicated neo4j runtime.
 fn block_on_async<F, T>(f: F) -> T
 where
     F: std::future::Future<Output = T> + Send + 'static,
     T: Send + 'static,
 {
-    // If we're already in a tokio runtime (e.g., Deka's isolate pool),
-    // spawn on a separate thread to avoid "cannot start runtime within runtime".
-    if tokio::runtime::Handle::try_current().is_ok() {
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let rt = Runtime::new().expect("failed to create tokio runtime");
-            let result = rt.block_on(f);
-            let _ = tx.send(result);
-        });
-        rx.recv().expect("neo4j worker thread panicked")
-    } else {
-        // Not inside a runtime — create one and block directly
-        RT.with(|cell: &RefCell<Option<Runtime>>| {
-            let mut rt = cell.borrow_mut();
-            if rt.is_none() {
-                *rt = Some(Runtime::new().expect("failed to create tokio runtime"));
-            }
-            rt.as_ref().unwrap().block_on(f)
-        })
-    }
+    let handle = neo4j_runtime_handle();
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    handle.spawn(async move {
+        let result = f.await;
+        let _ = tx.send(result);
+    });
+    rx.recv().expect("neo4j async task panicked")
 }
 
 /// Main dispatch function — called from the JS bridge router via op_neo4j_call.
