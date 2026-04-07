@@ -5,51 +5,66 @@
 
 use neo4rs::{Graph, query};
 use serde_json::{Value, json};
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
 
-thread_local! {
-    static RT: RefCell<Option<Runtime>> = RefCell::new(None);
-    static CONNECTIONS: RefCell<HashMap<u64, Arc<Graph>>> = RefCell::new(HashMap::new());
-    static NEXT_HANDLE: RefCell<u64> = const { RefCell::new(1) };
+/// Global connection store — shared across all threads, protected by mutex.
+/// Connections live here so they stay on the neo4j runtime's context.
+use std::sync::OnceLock;
+static CONNECTIONS: OnceLock<Mutex<HashMap<u64, Arc<Graph>>>> = OnceLock::new();
+static NEXT_HANDLE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn connections() -> &'static Mutex<HashMap<u64, Arc<Graph>>> {
+    CONNECTIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Persistent background tokio runtime for neo4j async operations.
-/// Lives in a dedicated thread, shared across all neo4j calls.
-use std::sync::OnceLock;
-static NEO4J_RT: OnceLock<tokio::runtime::Handle> = OnceLock::new();
+/// Dedicated neo4j worker thread with its own tokio runtime.
+/// All neo4j async operations are serialized through this thread via a command channel.
+use std::sync::mpsc as std_mpsc;
 
-fn neo4j_runtime_handle() -> &'static tokio::runtime::Handle {
-    NEO4J_RT.get_or_init(|| {
-        let (tx, rx) = std::sync::mpsc::channel();
+type Neo4jCmd = Box<dyn FnOnce(&tokio::runtime::Runtime) + Send>;
+static NEO4J_SENDER: OnceLock<std_mpsc::Sender<Neo4jCmd>> = OnceLock::new();
+
+fn neo4j_sender() -> &'static std_mpsc::Sender<Neo4jCmd> {
+    NEO4J_SENDER.get_or_init(|| {
+        let (tx, rx) = std_mpsc::channel::<Neo4jCmd>();
         std::thread::Builder::new()
-            .name("neo4j-runtime".into())
+            .name("neo4j-worker".into())
             .spawn(move || {
-                let rt = Runtime::new().expect("failed to create neo4j tokio runtime");
-                tx.send(rt.handle().clone()).unwrap();
-                // Park this thread forever — the runtime stays alive
-                std::thread::park();
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to create neo4j tokio runtime");
+
+                // Process commands forever
+                while let Ok(cmd) = rx.recv() {
+                    cmd(&rt);
+                }
             })
-            .expect("failed to spawn neo4j runtime thread");
-        rx.recv().expect("neo4j runtime thread failed to start")
+            .expect("failed to spawn neo4j worker thread");
+        tx
     })
 }
 
-/// Run an async operation synchronously on the dedicated neo4j runtime.
+/// Run an async neo4j operation synchronously.
+///
+/// Sends the future to a dedicated worker thread that owns the tokio runtime.
+/// The worker thread runs `rt.block_on(future)` directly — no spawning, no
+/// cross-runtime issues. The calling thread blocks on a sync channel.
 fn block_on_async<F, T>(f: F) -> T
 where
     F: std::future::Future<Output = T> + Send + 'static,
     T: Send + 'static,
 {
-    let handle = neo4j_runtime_handle();
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
-    handle.spawn(async move {
-        let result = f.await;
-        let _ = tx.send(result);
-    });
-    rx.recv().expect("neo4j async task panicked")
+    neo4j_sender()
+        .send(Box::new(move |rt| {
+            let result = rt.block_on(f);
+            let _ = tx.send(result);
+        }))
+        .expect("neo4j worker thread died");
+    rx.recv().expect("neo4j async task failed")
 }
 
 /// Main dispatch function — called from the JS bridge router via op_neo4j_call.
@@ -102,15 +117,8 @@ fn neo4j_connect(args: &Value) -> Value {
 
     match result {
         Ok(graph) => {
-            let handle = NEXT_HANDLE.with(|h: &RefCell<u64>| {
-                let mut h = h.borrow_mut();
-                let id = *h;
-                *h += 1;
-                id
-            });
-            CONNECTIONS.with(|c: &RefCell<HashMap<u64, Arc<Graph>>>| {
-                c.borrow_mut().insert(handle, Arc::new(graph));
-            });
+            let handle = NEXT_HANDLE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            connections().lock().unwrap().insert(handle, Arc::new(graph));
             json!({ "ok": true, "handle": handle })
         }
         Err(e) => json!({ "ok": false, "error": e }),
@@ -130,7 +138,7 @@ fn neo4j_query(args: &Value) -> Value {
         Vec::new()
     };
 
-    let graph = CONNECTIONS.with(|c: &RefCell<HashMap<u64, Arc<Graph>>>| c.borrow().get(&handle).cloned());
+    let graph = connections().lock().unwrap().get(&handle).cloned();
     let graph = match graph {
         Some(g) => g,
         None => return json!({ "ok": false, "error": format!("invalid connection handle {}", handle) }),
@@ -181,20 +189,23 @@ fn neo4j_execute(args: &Value) -> Value {
     };
     let params = args.get("params").cloned().unwrap_or(json!({}));
 
-    let graph = CONNECTIONS.with(|c: &RefCell<HashMap<u64, Arc<Graph>>>| c.borrow().get(&handle).cloned());
+    let graph = connections().lock().unwrap().get(&handle).cloned();
     let graph = match graph {
         Some(g) => g,
         None => return json!({ "ok": false, "error": format!("invalid connection handle {}", handle) }),
     };
 
     let result = block_on_async(async move {
+
         let mut q = query(&cypher);
         if let Some(obj) = params.as_object() {
             for (key, val) in obj {
                 q = bind_param(q, key, val);
             }
         }
-        graph.run(q).await.map_err(|e| format!("{}", e))
+
+        graph.run(q).await.map_err(|e| format!("{}", e))?;
+        Ok::<(), String>(())
     });
 
     match result {
@@ -205,7 +216,7 @@ fn neo4j_execute(args: &Value) -> Value {
 
 fn neo4j_close(args: &Value) -> Value {
     let handle = args.get("handle").and_then(|v| v.as_u64()).unwrap_or(0);
-    let removed = CONNECTIONS.with(|c: &RefCell<HashMap<u64, Arc<Graph>>>| c.borrow_mut().remove(&handle).is_some());
+    let removed = connections().lock().unwrap().remove(&handle).is_some();
     if removed {
         json!({ "ok": true })
     } else {
