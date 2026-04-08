@@ -19,51 +19,41 @@ fn connections() -> &'static Mutex<HashMap<u64, Arc<Graph>>> {
     CONNECTIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Dedicated neo4j worker thread with its own tokio runtime.
-/// All neo4j async operations are serialized through this thread via a command channel.
-use std::sync::mpsc as std_mpsc;
+/// Dedicated multi-thread tokio runtime for neo4j async I/O.
+/// Has its own worker threads so async I/O is driven independently of the calling thread.
+static NEO4J_RT: OnceLock<tokio::runtime::Handle> = OnceLock::new();
 
-type Neo4jCmd = Box<dyn FnOnce(&tokio::runtime::Runtime) + Send>;
-static NEO4J_SENDER: OnceLock<std_mpsc::Sender<Neo4jCmd>> = OnceLock::new();
-
-fn neo4j_sender() -> &'static std_mpsc::Sender<Neo4jCmd> {
-    NEO4J_SENDER.get_or_init(|| {
-        let (tx, rx) = std_mpsc::channel::<Neo4jCmd>();
-        std::thread::Builder::new()
-            .name("neo4j-worker".into())
-            .spawn(move || {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to create neo4j tokio runtime");
-
-                // Process commands forever
-                while let Ok(cmd) = rx.recv() {
-                    cmd(&rt);
-                }
-            })
-            .expect("failed to spawn neo4j worker thread");
-        tx
+fn neo4j_handle() -> &'static tokio::runtime::Handle {
+    NEO4J_RT.get_or_init(|| {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("failed to create neo4j tokio runtime");
+        let handle = rt.handle().clone();
+        // Leak the runtime — it lives for the process lifetime
+        std::mem::forget(rt);
+        handle
     })
 }
 
 /// Run an async neo4j operation synchronously.
 ///
-/// Sends the future to a dedicated worker thread that owns the tokio runtime.
-/// The worker thread runs `rt.block_on(future)` directly — no spawning, no
-/// cross-runtime issues. The calling thread blocks on a sync channel.
+/// Spawns the future on the dedicated multi-thread runtime (which has its own worker
+/// threads for I/O). The calling thread blocks on a sync channel. The key insight:
+/// the neo4j runtime's worker threads drive the I/O independently, so blocking the
+/// caller doesn't prevent progress.
 fn block_on_async<F, T>(f: F) -> T
 where
     F: std::future::Future<Output = T> + Send + 'static,
     T: Send + 'static,
 {
+    let handle = neo4j_handle();
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
-    neo4j_sender()
-        .send(Box::new(move |rt| {
-            let result = rt.block_on(f);
-            let _ = tx.send(result);
-        }))
-        .expect("neo4j worker thread died");
+    handle.spawn(async move {
+        let result = f.await;
+        let _ = tx.send(result);
+    });
     rx.recv().expect("neo4j async task failed")
 }
 

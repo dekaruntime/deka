@@ -65,16 +65,21 @@ impl PlatformState {
 }
 
 async fn platform_async(context: &Context) {
+    crate::env::init_env();
+
     let input = &context.handler.input;
     let root = PathBuf::from(if input.is_empty() { "." } else { input });
     let root = std::fs::canonicalize(&root).unwrap_or(root);
 
-    // Load database config
+    // Load database config from platform-level deka.json
     runtime_config::load_database_config(&root);
 
-    // Set PHPX module root
+    // Set security env vars (permissive defaults for platform mode)
     unsafe {
-        std::env::set_var("PHPX_MODULE_ROOT", root.to_string_lossy().as_ref());
+        std::env::set_var("DEKA_SECURITY_ENFORCE", "1");
+        std::env::set_var("DEKA_SECURITY_NO_PROMPT", "1");
+        // Set module root to default dir so the ESM loader has a fallback
+        std::env::set_var("PHPX_MODULE_ROOT", root.join("default").to_string_lossy().as_ref());
     }
 
     // Validate directory structure
@@ -212,6 +217,7 @@ async fn handle_platform_request(
         mode: ExecutionMode::Request,
     };
 
+    eprintln!("[platform] executing tenant={} entry={:?}", shop_id, request_data.handler_entry);
     match state.engine.execute(handler_key, request_data).await {
         Ok(pool_response) => {
             if !pool_response.success {
