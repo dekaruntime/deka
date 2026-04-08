@@ -32,6 +32,8 @@ pub mod run;
 #[cfg(feature = "native")]
 pub mod self_cmd;
 #[cfg(feature = "native")]
+pub mod platform;
+#[cfg(feature = "native")]
 pub mod serve;
 #[cfg(feature = "native")]
 pub mod task;

@@ -3,6 +3,7 @@ use core::Context;
 mod env;
 mod extensions;
 mod js_pipeline;
+mod platform;
 mod run;
 mod security;
 mod serve;
@@ -13,6 +14,10 @@ pub fn run(context: &Context) {
 
 pub fn serve(context: &Context) {
     serve::serve(context);
+}
+
+pub fn platform(context: &Context) {
+    platform::platform(context);
 }
 
 pub fn serve_desktop(context: &Context) {

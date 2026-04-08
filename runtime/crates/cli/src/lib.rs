@@ -26,6 +26,7 @@ pub fn build_registry() -> Registry {
         cli::publish::register(&mut registry);
         cli::release::register(&mut registry);
         cli::run::register(&mut registry);
+        cli::platform::register(&mut registry);
         cli::serve::register(&mut registry);
         cli::self_cmd::register(&mut registry);
         cli::task::register(&mut registry);
