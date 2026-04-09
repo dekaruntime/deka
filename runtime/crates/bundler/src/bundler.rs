@@ -90,20 +90,11 @@ pub fn bundle_virtual_entry(
         GLOBALS.set(&globals, || {
             let top_level_mark = Mark::new();
             let unresolved_mark = Mark::new();
-            let mut compress = CompressOptions::default();
-            // Disable all transforms that rewrite code structure
-            // Only keep dead_code elimination and unused removal
-            compress.conditionals = false;
-            compress.collapse_vars = false;
-            compress.comparisons = false;
-            compress.if_return = false;
-            compress.join_vars = false;
-            compress.loops = false;
-            compress.negate_iife = false;
-            compress.sequences = 0; // Don't join statements with comma
-            compress.switches = false;
+            // SWC compress has bugs with globalThis conditional assignments.
+            // The swc_bundler already performs DCE via `disable_dce: false`.
+            // Just use the minifier for whitespace removal only.
             let minify_options = MinifyOptions {
-                compress: Some(compress),
+                compress: None,
                 mangle: None,
                 ..Default::default()
             };
