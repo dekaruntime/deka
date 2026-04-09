@@ -87,29 +87,31 @@ pub fn bundle_virtual_entry(
         .ok_or_else(|| "Failed to find bundled output".to_string())?;
 
     let module = if options.minify {
-        let top_level_mark = Mark::new();
-        let unresolved_mark = Mark::new();
-        let minify_options = MinifyOptions {
-            compress: Some(CompressOptions::default()),
-            mangle: Some(MangleOptions::default()),
-            ..Default::default()
-        };
+        GLOBALS.set(&globals, || {
+            let top_level_mark = Mark::new();
+            let unresolved_mark = Mark::new();
+            let minify_options = MinifyOptions {
+                compress: Some(CompressOptions::default()),
+                mangle: Some(MangleOptions::default()),
+                ..Default::default()
+            };
 
-        match optimize(
-            Program::Module(bundle.module),
-            cm.clone(),
-            None,
-            None,
-            &minify_options,
-            &swc_ecma_minifier::option::ExtraOptions {
-                unresolved_mark,
-                top_level_mark,
-                mangle_name_cache: Default::default(),
-            },
-        ) {
-            Program::Module(module) => module,
-            _ => return Err("Minifier returned non-module output".to_string()),
-        }
+            match optimize(
+                Program::Module(bundle.module),
+                cm.clone(),
+                None,
+                None,
+                &minify_options,
+                &swc_ecma_minifier::option::ExtraOptions {
+                    unresolved_mark,
+                    top_level_mark,
+                    mangle_name_cache: Default::default(),
+                },
+            ) {
+                Program::Module(module) => module,
+                _ => panic!("Minifier returned non-module output"),
+            }
+        })
     } else {
         bundle.module
     };
