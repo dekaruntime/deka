@@ -90,9 +90,14 @@ pub fn bundle_virtual_entry(
         GLOBALS.set(&globals, || {
             let top_level_mark = Mark::new();
             let unresolved_mark = Mark::new();
+            let mut compress = CompressOptions::default();
+            // Disable conditionals — SWC has a bug that transforms
+            // `if (x) { y = z }` into `x && y = z` without parens,
+            // producing invalid JS for assignment targets.
+            compress.conditionals = false;
             let minify_options = MinifyOptions {
-                compress: Some(CompressOptions::default()),
-                mangle: None, // Keep variable names readable for debugging
+                compress: Some(compress),
+                mangle: None,
                 ..Default::default()
             };
 
