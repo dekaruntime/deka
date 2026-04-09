@@ -1,5 +1,0 @@
-let $x: int = "oops";
-
-export default function handler() {
-  return "ok";
-}

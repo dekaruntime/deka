@@ -708,8 +708,17 @@ fn parse_file_exports(file: &str, source: &str, out: &mut BTreeMap<String, Expor
             continue;
         }
 
-        let (decl, next) = collect_statement(&lines, i);
         let docs = parse_doc_comment_above(&lines, i);
+        if trimmed.starts_with("export {") {
+            let (decl, next) = collect_brace_block(&lines, i);
+            for name in parse_reexport_names(&decl) {
+                insert_export(file, "reexport", &name, &decl, i + 1, docs.as_ref(), out);
+            }
+            i = next;
+            continue;
+        }
+
+        let (decl, next) = collect_statement(&lines, i);
         if trimmed.starts_with("export function ") {
             if let Some(name) = extract_name_after(trimmed, "export function") {
                 insert_export(file, "function", &name, &decl, i + 1, docs.as_ref(), out);
@@ -721,10 +730,6 @@ fn parse_file_exports(file: &str, source: &str, out: &mut BTreeMap<String, Expor
         } else if trimmed.starts_with("export type ") {
             if let Some(name) = extract_name_after(trimmed, "export type") {
                 insert_export(file, "type", &name, &decl, i + 1, docs.as_ref(), out);
-            }
-        } else if trimmed.starts_with("export {") {
-            for name in parse_reexport_names(&decl) {
-                insert_export(file, "reexport", &name, &decl, i + 1, docs.as_ref(), out);
             }
         }
 
@@ -753,7 +758,9 @@ fn insert_export(
         key,
         ExportSignature {
             kind: kind.to_string(),
-            signature: normalize_ws(decl),
+            signature: docs
+                .and_then(|d| d.typed_signature.clone())
+                .unwrap_or_else(|| normalize_ws(decl)),
             source: format!("{}:{}", file, line),
             summary: docs.and_then(|d| d.summary.clone()),
             description: docs.and_then(|d| d.description.clone()),
@@ -767,6 +774,7 @@ struct DocComment {
     summary: Option<String>,
     description: Option<String>,
     examples: Vec<String>,
+    typed_signature: Option<String>,
 }
 
 fn parse_doc_comment_above(lines: &[&str], export_line: usize) -> Option<DocComment> {
@@ -781,6 +789,23 @@ fn parse_doc_comment_above(lines: &[&str], export_line: usize) -> Option<DocComm
         if line.is_empty() {
             continue;
         }
+
+        if line.starts_with("///") {
+            let mut block = vec![lines[i].to_string()];
+            let mut j = i;
+            while j > 0 {
+                let prev = lines[j - 1].trim_start();
+                if prev.starts_with("///") {
+                    j -= 1;
+                    block.push(lines[j].to_string());
+                    continue;
+                }
+                break;
+            }
+            block.reverse();
+            return parse_slash_doc_block(&block);
+        }
+
         if !line.ends_with("*/") {
             return None;
         }
@@ -859,7 +884,182 @@ fn parse_doc_block(block: &[String]) -> Option<DocComment> {
         summary,
         description,
         examples,
+        typed_signature: None,
     })
+}
+
+fn parse_slash_doc_block(block: &[String]) -> Option<DocComment> {
+    if block.is_empty() {
+        return None;
+    }
+    let mut lines = Vec::new();
+    for raw in block {
+        let mut line = raw.trim_start().to_string();
+        line = line.trim_start_matches("///").trim().to_string();
+        if !line.is_empty() {
+            lines.push(line);
+        }
+    }
+    if lines.is_empty() {
+        return None;
+    }
+
+    let mut summary = None;
+    let mut description = None;
+    let mut examples = Vec::new();
+    let mut typed_signature = None;
+
+    if let Some(function_name) = extract_xml_attr(&lines, "Function", "name") {
+        let params = extract_parameter_signature_parts(&lines);
+        let return_type = extract_xml_attr(&lines, "ReturnType", "type");
+        let mut sig = format!("{}(", function_name);
+        sig.push_str(&params.join(", "));
+        sig.push(')');
+        if let Some(rt) = return_type {
+            if !rt.trim().is_empty() {
+                sig.push_str(": ");
+                sig.push_str(rt.trim());
+            }
+        }
+        typed_signature = Some(sig);
+    }
+
+    if let Some(desc) = extract_xml_tag(&lines, "Description") {
+        let clean = desc.trim().to_string();
+        if !clean.is_empty() {
+            summary = Some(clean.clone());
+            description = Some(clean);
+        }
+    }
+
+    for line in &lines {
+        if line.starts_with("@example") {
+            let ex = line.trim_start_matches("@example").trim().to_string();
+            if !ex.is_empty() {
+                examples.push(ex);
+            }
+        }
+    }
+
+    if summary.is_none() {
+        for line in &lines {
+            if line.starts_with("docid:") || line.starts_with('<') {
+                continue;
+            }
+            let clean = line.trim().to_string();
+            if !clean.is_empty() {
+                summary = Some(clean.clone());
+                description = Some(clean);
+                break;
+            }
+        }
+    }
+
+    if summary.is_none() && description.is_none() && examples.is_empty() {
+        return None;
+    }
+
+    Some(DocComment {
+        summary,
+        description,
+        examples,
+        typed_signature,
+    })
+}
+
+fn extract_xml_attr(lines: &[String], tag: &str, attr: &str) -> Option<String> {
+    let tag_open = format!("<{}", tag);
+    let needle = format!("{}=\"", attr);
+    for line in lines {
+        if !line.contains(&tag_open) {
+            continue;
+        }
+        let start = line.find(&needle)?;
+        let rest = &line[start + needle.len()..];
+        let end = rest.find('"')?;
+        let value = rest[..end].trim().to_string();
+        if !value.is_empty() {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn extract_parameter_signature_parts(lines: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in lines {
+        if !line.contains("<Parameter ") {
+            continue;
+        }
+        let name = extract_attr_from_line(line, "name").unwrap_or_default();
+        if name.is_empty() {
+            continue;
+        }
+        let param_type = extract_attr_from_line(line, "type").unwrap_or_default();
+        if param_type.is_empty() {
+            out.push(name);
+        } else {
+            out.push(format!("{} {}", name, param_type));
+        }
+    }
+    out
+}
+
+fn extract_attr_from_line(line: &str, attr: &str) -> Option<String> {
+    let needle = format!("{}=\"", attr);
+    let start = line.find(&needle)?;
+    let rest = &line[start + needle.len()..];
+    let end = rest.find('"')?;
+    let value = rest[..end].trim().to_string();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn extract_xml_tag(lines: &[String], tag: &str) -> Option<String> {
+    let open = format!("<{}>", tag);
+    let close = format!("</{}>", tag);
+    let mut collecting = false;
+    let mut out = Vec::new();
+    for line in lines {
+        if !collecting {
+            if let Some(start) = line.find(&open) {
+                let rest = &line[start + open.len()..];
+                if let Some(end) = rest.find(&close) {
+                    let inner = rest[..end].trim().to_string();
+                    if !inner.is_empty() {
+                        return Some(inner);
+                    }
+                    continue;
+                }
+                collecting = true;
+                let first = rest.trim();
+                if !first.is_empty() {
+                    out.push(first.to_string());
+                }
+            }
+            continue;
+        }
+
+        if let Some(end) = line.find(&close) {
+            let part = line[..end].trim();
+            if !part.is_empty() {
+                out.push(part.to_string());
+            }
+            break;
+        }
+        let t = line.trim();
+        if !t.is_empty() {
+            out.push(t.to_string());
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out.join("\n"))
+    }
 }
 
 fn collect_statement(lines: &[&str], start: usize) -> (String, usize) {
@@ -1328,6 +1528,20 @@ mod tests {
     }
 
     #[test]
+    fn parses_multiline_reexport_exports() {
+        let source = r#"
+export {
+  json_encode,
+  json_decode,
+} from 'encoding/json';
+"#;
+        let mut out = BTreeMap::new();
+        parse_file_exports("json/index.phpx", source, &mut out);
+        assert!(out.contains_key("json/index::json_encode"));
+        assert!(out.contains_key("json/index::json_decode"));
+    }
+
+    #[test]
     fn semver_minimum_for_bumps() {
         let v = Version::parse("1.2.3").unwrap();
         assert_eq!(
@@ -1379,6 +1593,35 @@ export function sum($a: int, $b: int): int {
             Some("Adds two integers.\nMore detail line.")
         );
         assert_eq!(entry.examples, vec!["sum(1, 2)".to_string()]);
+    }
+
+    #[test]
+    fn parses_triple_slash_xml_description() {
+        let source = r#"
+/// docid: phpx/array/array()
+/// <Function name="array">
+///   <Description>
+///     Creates an array from the given arguments.
+///   </Description>
+///   <Parameter name="$values" type="mixed" required="false" />
+///   <ReturnType type="array" />
+/// </Function>
+export function array() {
+  return [];
+}
+"#;
+        let mut out = BTreeMap::new();
+        parse_file_exports("array.phpx", source, &mut out);
+        let entry = out.get("array::array").expect("export");
+        assert_eq!(
+            entry.summary.as_deref(),
+            Some("Creates an array from the given arguments.")
+        );
+        assert_eq!(
+            entry.description.as_deref(),
+            Some("Creates an array from the given arguments.")
+        );
+        assert_eq!(entry.signature, "array($values mixed): array");
     }
 
     #[test]

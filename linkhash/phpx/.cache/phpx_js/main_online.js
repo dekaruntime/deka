@@ -98,6 +98,49 @@ return "/";
 return ("" + base);
 }
 
+function queryFromUrl(url) {
+let q = globalThis.strpos(url, "?");
+if ((q === false)) {
+return "";
+}
+return globalThis.substr(url, (q + 1));
+}
+
+function queryParam(query, key) {
+if ((query === "")) {
+return "";
+}
+let pairs = globalThis.explode("&", query);
+for (const pair of (Array.isArray(pairs) ? pairs : Object.values((pairs ?? {})))) {
+let eq = globalThis.strpos(pair, "=");
+if ((eq === false)) {
+continue;
+}
+let k = globalThis.substr(pair, 0, eq);
+if ((k !== key)) {
+continue;
+}
+return globalThis.substr(pair, (eq + 1));
+}
+return "";
+}
+
+function replaceAll(text, from, to) {
+return globalThis.implode(to, globalThis.explode(from, text));
+}
+
+function decodeToken(value) {
+let out = value;
+out = replaceAll(out, "%3A", ":");
+out = replaceAll(out, "%3a", ":");
+out = replaceAll(out, "%2F", "/");
+out = replaceAll(out, "%2f", "/");
+out = replaceAll(out, "%40", "@");
+out = replaceAll(out, "%20", " ");
+out = replaceAll(out, "%25", "%");
+return out;
+}
+
 function to_assoc(value) {
 if (globalThis.is_array(value)) {
 let out = [];
@@ -239,41 +282,104 @@ return "";
 return globalThis.substr(raw, (sep + 4));
 }
 
-function fetchPackagesFromApi() {
-let host = globalThis.getenv("LINKHASH_GIT_HOST");
-if (((host === false) || (("" + host) === ""))) {
-host = "127.0.0.1";
+function parseHttpStatusCode(raw) {
+let lineEnd = globalThis.strpos(raw, "\r\n");
+if ((lineEnd === false)) {
+return 0;
 }
-let port = globalThis.getenv("LINKHASH_GIT_PORT");
-if (((port === false) || (("" + port) === ""))) {
-port = "8608";
+let statusLine = globalThis.substr(raw, 0, lineEnd);
+let parts = globalThis.explode(" ", statusLine);
+if ((globalThis.count(parts) < 2)) {
+return 0;
+}
+return Number.parseInt(parts[1], 10);
+}
+
+function apiConfig() {
+let host = "127.0.0.1";
+let port = "8508";
+let apiUrl = globalThis.getenv("LINKHASH_GIT_API_URL");
+if (((apiUrl !== false) && (("" + apiUrl) !== ""))) {
+let raw = ("" + apiUrl);
+if ((globalThis.strpos(raw, "http://") === 0)) {
+raw = globalThis.substr(raw, 7);
+} else {
+if ((globalThis.strpos(raw, "https://") === 0)) {
+raw = globalThis.substr(raw, 8);
+}
+}
+let slash = globalThis.strpos(raw, "/");
+let authority = ((slash === false) ? raw : globalThis.substr(raw, 0, slash));
+if ((authority !== "")) {
+let colon = globalThis.strrpos(authority, ":");
+if ((colon !== false)) {
+host = globalThis.substr(authority, 0, colon);
+let portPart = globalThis.substr(authority, (colon + 1));
+if ((portPart !== "")) {
+port = portPart;
+}
+} else {
+host = authority;
+}
+}
+}
+let hostOverride = globalThis.getenv("LINKHASH_GIT_HOST");
+if (((hostOverride !== false) && (("" + hostOverride) !== ""))) {
+host = ("" + hostOverride);
+}
+let portOverride = globalThis.getenv("LINKHASH_GIT_PORT");
+if (((portOverride !== false) && (("" + portOverride) !== ""))) {
+port = ("" + portOverride);
 }
 let token = globalThis.getenv("LINKHASH_GIT_TOKEN");
 if (((token === false) || (("" + token) === ""))) {
-token = "test-token";
+token = globalThis.getenv("LINKHASH_GIT_API_TOKEN");
 }
-let conn = tcp_connect(("" + host), Number.parseInt(port, 10), {"timeout_ms": 1500});
+if (((token === false) || (("" + token) === ""))) {
+token = "deka-local-token";
+}
+return {"host": ("" + host), "port": ("" + port), "token": ("" + token)};
+}
+
+function apiGetJson(path, withAuth) {
+let cfg = apiConfig();
+let conn = tcp_connect(("" + cfg.host), Number.parseInt(cfg.port, 10), {"timeout_ms": 2000});
 if ((!result_is_ok(conn))) {
-return {"ok": false, "error": ("connect failed: " + ("" + conn.error)), "packages": []};
+return {"ok": false, "error": ("connect failed: " + ("" + conn.error)), "status": 0};
 }
 let handle = Number.parseInt(conn.value, 10);
-let request = ("GET /api/repos HTTP/1.1" + "\r\n");
-request = (((((request + "Host: ") + ("" + host)) + ":") + ("" + port)) + "\r\n");
+let request = ((("GET " + path) + " HTTP/1.1") + "\r\n");
+request = (((((request + "Host: ") + ("" + cfg.host)) + ":") + ("" + cfg.port)) + "\r\n");
 request = ((request + "Accept: application/json") + "\r\n");
-request = (((request + "Authorization: Bearer ") + ("" + token)) + "\r\n");
+if (withAuth) {
+request = (((request + "Authorization: Bearer ") + ("" + cfg.token)) + "\r\n");
+}
 request = ((request + "Connection: close") + "\r\n\r\n");
 let written = tcp_write(handle, request);
 if ((!result_is_ok(written))) {
 tcp_close(handle);
-return {"ok": false, "error": ("write failed: " + ("" + written.error)), "packages": []};
+return {"ok": false, "error": ("write failed: " + ("" + written.error)), "status": 0};
 }
 let raw = readAll(handle);
 tcp_close(handle);
+let status = parseHttpStatusCode(raw);
 let body = parseHttpBody(raw);
 if ((body === "")) {
-return {"ok": false, "error": "empty response body from deka-git", "packages": []};
+return {"ok": false, "error": "empty response body", "status": status};
 }
 let decoded = json_decode(body, true);
+if (((status >= 200) && (status < 300))) {
+return {"ok": true, "status": status, "value": decoded};
+}
+return {"ok": false, "status": status, "error": "request failed", "value": decoded};
+}
+
+function fetchPackagesFromApi() {
+let api = apiGetJson("/api/repos", true);
+if ((!api.ok)) {
+return {"ok": false, "error": "api /repos failed", "packages": []};
+}
+let decoded = api.value;
 let owner = mapLookup(decoded, "owner");
 let repos = mapLookup(decoded, "repos");
 if ((((!globalThis.is_string(owner)) && (!globalThis.is_numeric(owner))) || ((!globalThis.is_array(repos)) && (!globalThis.is_object(repos))))) {
@@ -377,20 +483,430 @@ return (("{\"ok\":true,\"packages\":" + ("" + globalThis.count(result["packages"
 
 function renderHome(result) {
 let body = "<!doctype html><html><head><meta charset=\"utf-8\" /><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" /><title>linkha.sh</title>";
-body = (body + "<style>body{font-family:ui-monospace,Menlo,monospace;margin:32px;background:#f7f7f7}main{max-width:920px;margin:0 auto;background:#fff;border:1px solid #ddd;border-radius:10px;padding:20px}a{color:#0b57d0}code{background:#f0f0f0;padding:2px 6px;border-radius:6px}</style>");
+body = (body + "<style>body{font-family:ui-monospace,Menlo,monospace;margin:32px;background:#f7f7f7}main{max-width:960px;margin:0 auto;background:#fff;border:1px solid #ddd;border-radius:10px;padding:20px}a{color:#0b57d0;text-decoration:none}a:hover{text-decoration:underline}code{background:#f0f0f0;padding:2px 6px;border-radius:6px}.list{display:grid;gap:10px}.item{border:1px solid #ececec;border-radius:8px;padding:10px 12px}</style>");
 body = (body + "</head><body><main>");
 body = (body + "<h1>linkha.sh</h1><p>Registry listing is online.</p>");
 body = (body + "<p><a href=\"/api/packages\">/api/packages</a> · <a href=\"/api/stats/packages\">/api/stats/packages</a></p>");
 if ((!result["ok"])) {
 body = (((body + "<p>error: ") + ("" + result["error"])) + "</p>");
 } else {
-body = (((body + "<h2>Published packages (") + ("" + globalThis.count(result["packages"]))) + ")</h2><ul>");
+body = (((body + "<h2>Published packages (") + ("" + globalThis.count(result["packages"]))) + ")</h2><div class=\"list\">");
 for (const pkg of (Array.isArray(result["packages"]) ? result["packages"] : Object.values((result["packages"] ?? {})))) {
-body = (((body + "<li><code>") + ("" + pkg.name)) + "</code></li>");
+let owner = jsonEscape(("" + pkg.owner));
+let repo = jsonEscape(("" + pkg.repo));
+let name = jsonEscape(("" + pkg.name));
+body = (((((((body + "<div class=\"item\"><a href=\"/package/") + owner) + "/") + repo) + "\"><code>") + name) + "</code></a></div>");
 }
-body = (body + "</ul>");
+body = (body + "</div>");
 }
 body = (body + "</main></body></html>");
+return body;
+}
+
+function firstReadmePath(treeEntries) {
+if ((!globalThis.is_array(treeEntries))) {
+return "";
+}
+for (const entry of (Array.isArray(treeEntries) ? treeEntries : Object.values((treeEntries ?? {})))) {
+let path = ("" + mapLookup(entry, "path"));
+let lower = globalThis.strtolower(path);
+if (((lower === "readme.md") || globalThis.str_ends_with(lower, "/readme.md"))) {
+return path;
+}
+}
+return "";
+}
+
+function symbolShortName(symbol) {
+let idx = globalThis.strrpos(symbol, "::");
+if ((idx === false)) {
+return symbol;
+}
+return globalThis.substr(symbol, (idx + 2));
+}
+
+function normalizeSignature(raw, symbol) {
+let sig = globalThis.trim(raw);
+if ((sig === "")) {
+return symbolShortName(symbol);
+}
+if (((globalThis.str_contains(sig, "{") && globalThis.str_contains(sig, "}")) && globalThis.str_contains(sig, " from "))) {
+return (symbolShortName(symbol) + "(...)");
+}
+if (globalThis.str_starts_with(sig, "export ")) {
+sig = globalThis.substr(sig, 7);
+}
+if (globalThis.str_ends_with(sig, "{")) {
+sig = globalThis.trim(globalThis.substr(sig, 0, (globalThis.strlen(sig) - 1)));
+}
+if (globalThis.str_ends_with(sig, ";")) {
+sig = globalThis.trim(globalThis.substr(sig, 0, (globalThis.strlen(sig) - 1)));
+}
+if (globalThis.str_starts_with(sig, "function ")) {
+return globalThis.trim(globalThis.substr(sig, 9));
+}
+return sig;
+}
+
+function signatureName(signature) {
+let idx = globalThis.strpos(signature, "(");
+if ((idx === false)) {
+return globalThis.trim(signature);
+}
+return globalThis.trim(globalThis.substr(signature, 0, idx));
+}
+
+function signatureReturnType(signature) {
+let close = globalThis.strrpos(signature, ")");
+if ((close === false)) {
+return "";
+}
+let tail = globalThis.trim(globalThis.substr(signature, (close + 1)));
+if ((!globalThis.str_starts_with(tail, ":"))) {
+return "";
+}
+return globalThis.trim(globalThis.substr(tail, 1));
+}
+
+function signatureParamsRaw(signature) {
+let open = globalThis.strpos(signature, "(");
+let close = globalThis.strrpos(signature, ")");
+if ((((open === false) || (close === false)) || (close <= open))) {
+return "";
+}
+return globalThis.trim(globalThis.substr(signature, (open + 1), ((close - open) - 1)));
+}
+
+function signatureParamsList(signature) {
+let raw = signatureParamsRaw(signature);
+if ((raw === "")) {
+return [];
+}
+let parts = globalThis.explode(",", raw);
+let out = [];
+for (const part of (Array.isArray(parts) ? parts : Object.values((parts ?? {})))) {
+let token = globalThis.trim(part);
+if ((token !== "")) {
+(() => { const __arr = out; const __val = token; __arr.push(__val); return __val; })();
+}
+}
+return out;
+}
+
+function parseParamToken(token) {
+let work = globalThis.trim(token);
+let required = (!globalThis.str_contains(work, "="));
+let defaultValue = "";
+if ((!required)) {
+let eq = globalThis.strpos(work, "=");
+if ((eq !== false)) {
+defaultValue = globalThis.trim(globalThis.substr(work, (eq + 1)));
+work = globalThis.trim(globalThis.substr(work, 0, eq));
+}
+}
+let name = work;
+let type = "";
+let colon = globalThis.strpos(work, ":");
+if ((colon !== false)) {
+name = globalThis.trim(globalThis.substr(work, 0, colon));
+type = globalThis.trim(globalThis.substr(work, (colon + 1)));
+}
+return {"name": name, "type": type, "required": required, "defaultValue": defaultValue};
+}
+
+function textValue(value) {
+if ((globalThis.is_string(value) || globalThis.is_numeric(value))) {
+return ("" + value);
+}
+return "";
+}
+
+function findSymbolEntry(symbols, target) {
+if ((!globalThis.is_array(symbols))) {
+return false;
+}
+for (const sym of (Array.isArray(symbols) ? symbols : Object.values((symbols ?? {})))) {
+let nameSym = ("" + mapLookup(sym, "symbol"));
+if ((nameSym === target)) {
+return sym;
+}
+}
+return false;
+}
+
+function parseReexportSpec(signatureRaw) {
+let needle = " from '";
+let idx = globalThis.strpos(signatureRaw, needle);
+if ((idx === false)) {
+return "";
+}
+let rest = globalThis.substr(signatureRaw, (idx + globalThis.strlen(needle)));
+let end = globalThis.strpos(rest, "'");
+if ((end === false)) {
+return "";
+}
+return globalThis.trim(globalThis.substr(rest, 0, end));
+}
+
+function resolveReexportEntry(spec, symbolName) {
+if (((spec === "") || (symbolName === ""))) {
+return false;
+}
+let owner = "deka";
+let repo = "";
+let modulePrefix = "";
+if (globalThis.str_starts_with(spec, "@")) {
+let parts = globalThis.explode("/", spec);
+if ((globalThis.count(parts) >= 2)) {
+owner = globalThis.trim(globalThis.substr(parts[0], 1));
+repo = parts[1];
+modulePrefix = ((globalThis.count(parts) >= 3) ? parts[2] : "index");
+}
+} else {
+let parts = globalThis.explode("/", spec);
+if ((globalThis.count(parts) >= 2)) {
+repo = parts[0];
+modulePrefix = parts[1];
+} else {
+if ((globalThis.count(parts) === 1)) {
+repo = parts[0];
+modulePrefix = "index";
+}
+}
+}
+if ((repo === "")) {
+return false;
+}
+let summaryRes = apiGetJson(((("/api/scoped-packages/" + owner) + "/") + repo), false);
+if ((!summaryRes.ok)) {
+return false;
+}
+let latest = ("" + mapLookup(summaryRes.value, "latest"));
+if ((latest === "")) {
+return false;
+}
+let docsRes = apiGetJson((((((("/api/scoped-packages/" + owner) + "/") + repo) + "/") + latest) + "/docs"), false);
+if ((!docsRes.ok)) {
+return false;
+}
+let symbols = mapLookup(docsRes.value, "symbols");
+if ((!globalThis.is_array(symbols))) {
+return false;
+}
+let targetA = ((modulePrefix + "/index::") + symbolName);
+let targetB = ((modulePrefix + "::") + symbolName);
+for (const sym of (Array.isArray(symbols) ? symbols : Object.values((symbols ?? {})))) {
+let nameSym = ("" + mapLookup(sym, "symbol"));
+if (((nameSym === targetA) || (nameSym === targetB))) {
+return sym;
+}
+}
+return false;
+}
+
+function renderPackagePage(owner, repo) {
+let scope = owner;
+let name = repo;
+let summaryRes = apiGetJson(((("/api/scoped-packages/" + scope) + "/") + name), false);
+let latest = "";
+let versions = [];
+if (summaryRes.ok) {
+latest = ("" + mapLookup(summaryRes.value, "latest"));
+let v = mapLookup(summaryRes.value, "versions");
+if (globalThis.is_array(v)) {
+versions = v;
+}
+}
+let releaseRes = ((latest === "") ? {"ok": false} : apiGetJson(((((("/api/scoped-packages/" + scope) + "/") + name) + "/") + latest), false));
+let docsRes = ((latest === "") ? {"ok": false} : apiGetJson((((((("/api/scoped-packages/" + scope) + "/") + name) + "/") + latest) + "/docs"), false));
+let treeRes = ((latest === "") ? {"ok": false} : apiGetJson((((((("/api/scoped-packages/" + scope) + "/") + name) + "/") + latest) + "/tree"), false));
+let readme = "";
+if (treeRes.ok) {
+let entries = mapLookup(treeRes.value, "entries");
+let readmePath = firstReadmePath(entries);
+if ((readmePath !== "")) {
+let blobRes = apiGetJson(((((((("/api/scoped-packages/" + scope) + "/") + name) + "/") + latest) + "/blob?path=") + readmePath), false);
+if (blobRes.ok) {
+readme = ("" + mapLookup(blobRes.value, "content"));
+}
+}
+}
+let title = ((("@" + owner) + "/") + repo);
+let desc = "";
+if (releaseRes.ok) {
+desc = ("" + mapLookup(releaseRes.value, "description"));
+}
+let docsLink = (((((("/api/scoped-packages/" + scope) + "/") + name) + "/") + latest) + "/docs");
+let treeLink = (((((("/api/scoped-packages/" + scope) + "/") + name) + "/") + latest) + "/tree");
+let body = (("<!doctype html><html><head><meta charset=\"utf-8\" /><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" /><title>" + jsonEscape(title)) + " · linkha.sh</title>");
+body = (body + "<style>body{font-family:ui-monospace,Menlo,monospace;margin:0;background:#f3f4f6;color:#0f172a}a{color:#1d4ed8;text-decoration:none}a:hover{text-decoration:underline}.wrap{max-width:1100px;margin:0 auto;padding:22px}.hero{background:linear-gradient(145deg,#0f172a,#1e293b);color:#e2e8f0;border-radius:14px;padding:20px 22px;margin-bottom:14px}.hero .pkg{font-size:30px;line-height:1.1;margin:8px 0 6px}.hero .meta{color:#94a3b8}.badge{display:inline-block;border-radius:999px;padding:3px 10px;background:#1e293b;border:1px solid #334155;color:#e2e8f0;margin-right:8px}.panel{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px}.stack{display:grid;gap:14px}.cols{display:grid;grid-template-columns:340px 1fr;gap:14px}.section-title{font-size:14px;letter-spacing:.04em;color:#64748b;text-transform:uppercase;margin:0 0 10px}.install{background:#0b1220;color:#dbeafe;border-radius:10px;padding:12px;overflow:auto}pre{margin:0;white-space:pre-wrap}.versions code{margin:0 6px 6px 0;display:inline-block;background:#eef2ff;border:1px solid #dbeafe;padding:3px 8px;border-radius:999px}.api-item{border:1px solid #e5e7eb;border-radius:10px;padding:12px;margin-bottom:10px;background:#fcfcfd}.api-name{font-weight:700;font-size:15px}.api-signature{margin-top:6px;background:#eef2f7;border:1px solid #dbe3ee;border-radius:10px;padding:10px 12px;overflow:auto;font-size:16px}.muted{color:#64748b}.readme{max-height:420px;overflow:auto;background:#0f172a;color:#e2e8f0;border-radius:10px;padding:12px}</style></head><body><div class=\"wrap\">");
+body = (((body + "<div class=\"hero\"><a href=\"/\" style=\"color:#93c5fd\">← Back to packages</a><div class=\"pkg\"><code>") + jsonEscape(title)) + "</code></div><div>");
+if ((latest !== "")) {
+body = (((body + "<span class=\"badge\">latest ") + jsonEscape(latest)) + "</span>");
+}
+body = (((body + "<span class=\"badge\">") + ("" + globalThis.count(versions))) + " versions</span></div>");
+if ((desc !== "")) {
+body = (((body + "<p class=\"meta\" style=\"margin:10px 0 0\">") + jsonEscape(desc)) + "</p>");
+}
+body = (body + "</div>");
+body = (body + "<div class=\"cols\"><div class=\"stack\">");
+body = (((((body + "<section class=\"panel\"><h2 class=\"section-title\">Install</h2><pre class=\"install\">deka add @") + jsonEscape(owner)) + "/") + jsonEscape(repo)) + "</pre></section>");
+body = (body + "<section class=\"panel versions\"><h2 class=\"section-title\">Versions</h2>");
+for (const v of (Array.isArray(versions) ? versions : Object.values((versions ?? {})))) {
+body = (((body + "<code>") + jsonEscape(("" + v))) + "</code>");
+}
+body = (body + "</section>");
+body = (((((body + "<section class=\"panel\"><h2 class=\"section-title\">Registry Data</h2><p><a href=\"") + docsLink) + "\">docs json</a></p><p><a href=\"") + treeLink) + "\">tree json</a></p></section>");
+body = (body + "</div><div class=\"stack\">");
+body = (body + "<section class=\"panel\"><h2 class=\"section-title\">API</h2>");
+if (docsRes.ok) {
+let symbols = mapLookup(docsRes.value, "symbols");
+if ((globalThis.is_array(symbols) && (globalThis.count(symbols) > 0))) {
+let max = 30;
+let i = 0;
+for (const sym of (Array.isArray(symbols) ? symbols : Object.values((symbols ?? {})))) {
+if ((i >= max)) {
+break;
+}
+let nameSym = ("" + mapLookup(sym, "symbol"));
+let sigRaw = ("" + mapLookup(sym, "signature"));
+let sig = normalizeSignature(sigRaw, nameSym);
+let summary = textValue(mapLookup(sym, "summary"));
+let description = textValue(mapLookup(sym, "description"));
+if (((summary === "") || (description === ""))) {
+let spec = parseReexportSpec(sigRaw);
+let fallback = resolveReexportEntry(spec, symbolShortName(nameSym));
+if ((fallback !== false)) {
+if ((summary === "")) {
+summary = textValue(mapLookup(fallback, "summary"));
+}
+if ((description === "")) {
+description = textValue(mapLookup(fallback, "description"));
+}
+}
+}
+if ((sig === "")) {
+sig = normalizeSignature(nameSym, nameSym);
+}
+let example = mapLookup(sym, "examples");
+let detailHref = ((((("/package/" + jsonEscape(owner)) + "/") + jsonEscape(repo)) + "/symbol/") + jsonEscape(nameSym));
+body = (((((((body + "<article class=\"api-item\"><div class=\"api-name\"><a href=\"") + detailHref) + "\"><code>") + jsonEscape(nameSym)) + "</code></a></div><div class=\"api-signature\"><code>") + jsonEscape(sig)) + "</code></div>");
+if ((summary !== "")) {
+body = (((body + "<div class=\"muted\">") + jsonEscape(summary)) + "</div>");
+}
+if (((description !== "") && (description !== summary))) {
+body = (((body + "<p class=\"muted\" style=\"margin:6px 0 0\">") + jsonEscape(description)) + "</p>");
+}
+if ((globalThis.is_array(example) && (globalThis.count(example) > 0))) {
+body = (((body + "<div class=\"muted\" style=\"margin-top:6px\">Example</div><div class=\"api-signature\"><code>") + jsonEscape(("" + example[0]))) + "</code></div>");
+}
+body = (body + "</article>");
+i = (i + 1);
+}
+if ((globalThis.count(symbols) > max)) {
+body = (((body + "<p class=\"muted\">Showing first ") + ("" + max)) + " symbols. Full list in docs json.</p>");
+}
+} else {
+body = (body + "<p class=\"muted\">No API symbols found.</p>");
+}
+} else {
+body = (body + "<p class=\"muted\">Unable to load API docs snapshot.</p>");
+}
+body = (body + "</section>");
+if ((readme !== "")) {
+body = (((body + "<section class=\"panel\"><h2 class=\"section-title\">README</h2><pre class=\"readme\">") + jsonEscape(readme)) + "</pre></section>");
+}
+body = (body + "</div></div></div></body></html>");
+return body;
+}
+
+function renderSymbolPage(owner, repo, symbol) {
+let scope = owner;
+let name = repo;
+let summaryRes = apiGetJson(((("/api/scoped-packages/" + scope) + "/") + name), false);
+let latest = "";
+if (summaryRes.ok) {
+latest = ("" + mapLookup(summaryRes.value, "latest"));
+}
+let docsRes = ((latest === "") ? {"ok": false} : apiGetJson((((((("/api/scoped-packages/" + scope) + "/") + name) + "/") + latest) + "/docs"), false));
+let entry = null;
+if (docsRes.ok) {
+let symbols = mapLookup(docsRes.value, "symbols");
+entry = findSymbolEntry(symbols, symbol);
+}
+let title = ((((("@" + owner) + "/") + repo) + " · ") + symbol);
+let body = (("<!doctype html><html><head><meta charset=\"utf-8\" /><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" /><title>" + jsonEscape(title)) + "</title>");
+body = (body + "<style>body{font-family:ui-monospace,Menlo,monospace;margin:0;background:#f3f4f6;color:#111827}.wrap{max-width:1100px;margin:0 auto;padding:24px}.crumb{margin-bottom:14px}.panel{background:#eceff3;border:1px solid #c4ccd8;border-radius:14px;padding:18px;margin-bottom:14px}.label{font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:#374151;margin-bottom:8px}.sig{font-size:30px;font-weight:700;margin:0 0 16px}.sigbox{display:inline-block;background:#d8dee6;border:1px solid #b7c3d1;border-radius:16px;padding:12px 14px;font-size:24px}.param{background:#eceff3;border:1px solid #c4ccd8;border-radius:14px;padding:14px;margin-bottom:10px}.muted{color:#4b5563}.chip{display:inline-block;border-radius:999px;padding:2px 8px;background:#d8dee6;border:1px solid #b7c3d1;margin-left:8px}</style></head><body><div class=\"wrap\">");
+body = (((((body + "<div class=\"crumb\"><a href=\"/package/") + jsonEscape(owner)) + "/") + jsonEscape(repo)) + "\">← Back to package</a></div>");
+if ((entry === false)) {
+body = (body + "<h1>Symbol not found</h1></div></body></html>");
+return body;
+}
+let sigRaw = ("" + mapLookup(entry, "signature"));
+let sig = normalizeSignature(sigRaw, symbol);
+let nameOnly = signatureName(sig);
+let returnType = signatureReturnType(sig);
+let summary = textValue(mapLookup(entry, "summary"));
+let description = textValue(mapLookup(entry, "description"));
+let examples = mapLookup(entry, "examples");
+if ((((description === "") || (summary === "")) || (globalThis.is_array(examples) && (globalThis.count(examples) === 0)))) {
+let spec = parseReexportSpec(sigRaw);
+let fallback = resolveReexportEntry(spec, symbolShortName(symbol));
+if ((fallback !== false)) {
+if ((summary === "")) {
+summary = textValue(mapLookup(fallback, "summary"));
+}
+if ((description === "")) {
+description = textValue(mapLookup(fallback, "description"));
+}
+if (((!globalThis.is_array(examples)) || (globalThis.count(examples) === 0))) {
+examples = mapLookup(fallback, "examples");
+}
+let fallbackSig = normalizeSignature(("" + mapLookup(fallback, "signature")), symbol);
+if (((sig === (symbolShortName(symbol) + "(...)")) || (sig === symbolShortName(symbol)))) {
+sig = fallbackSig;
+nameOnly = signatureName(sig);
+returnType = signatureReturnType(sig);
+}
+}
+}
+body = (((body + "<h1 class=\"sig\">") + jsonEscape(nameOnly)) + "</h1>");
+body = (((body + "<section class=\"panel\"><div class=\"label\">Signature</div><div class=\"sigbox\"><code>") + jsonEscape(sig)) + "</code></div></section>");
+body = (((body + "<section class=\"panel\"><div class=\"label\">Description</div><p>") + jsonEscape(((description !== "") ? description : summary))) + "</p></section>");
+body = (body + "<section class=\"panel\"><div class=\"label\">Parameters</div>");
+let params = signatureParamsList(sig);
+if ((globalThis.count(params) === 0)) {
+body = (body + "<p class=\"muted\">None</p>");
+} else {
+for (const paramToken of (Array.isArray(params) ? params : Object.values((params ?? {})))) {
+let p = parseParamToken(paramToken);
+let pName = ("" + mapLookup(p, "name"));
+let pType = ("" + mapLookup(p, "type"));
+let pRequired = mapLookup(p, "required");
+body = (((body + "<div class=\"param\"><strong>") + jsonEscape(pName)) + "</strong>");
+if ((pType !== "")) {
+body = (((body + "<span class=\"chip\">") + jsonEscape(pType)) + "</span>");
+}
+if (pRequired) {
+body = (body + "<span class=\"chip\">required</span>");
+} else {
+body = (body + "<span class=\"chip\">optional</span>");
+}
+body = (body + "</div>");
+}
+}
+body = (body + "</section>");
+body = (((body + "<section class=\"panel\"><div class=\"label\">Return Type</div><p>") + jsonEscape(((returnType !== "") ? returnType : "mixed"))) + "</p></section>");
+body = (body + "<section class=\"panel\"><div class=\"label\">Examples</div>");
+if ((globalThis.is_array(examples) && (globalThis.count(examples) > 0))) {
+for (const ex of (Array.isArray(examples) ? examples : Object.values((examples ?? {})))) {
+body = (((body + "<pre>") + jsonEscape(("" + ex))) + "</pre>");
+}
+} else {
+body = (body + "<p class=\"muted\">No examples in doccomments yet.</p>");
+}
+body = (body + "</section>");
+body = (body + "</div></body></html>");
 return body;
 }
 
@@ -398,11 +914,14 @@ return body;
 const __phpx_main = async () => {
 let app = function(req) {
 let path = "/";
+let query = "";
 if ((globalThis.is_object(req) && ((req.url !== undefined && req.url !== null)))) {
 path = pathFromUrl(("" + req.url));
+query = queryFromUrl(("" + req.url));
 } else {
 if (((((globalThis._SERVER !== undefined && globalThis._SERVER !== null)) && globalThis.is_array(globalThis._SERVER)) && globalThis.array_key_exists("REQUEST_URI", globalThis._SERVER))) {
 path = pathFromUrl(("" + globalThis._SERVER["REQUEST_URI"]));
+query = queryFromUrl(("" + globalThis._SERVER["REQUEST_URI"]));
 }
 }
 let result = fetchPackages();
@@ -414,6 +933,20 @@ return statsJson(result);
 }
 if ((path === "/api/debug")) {
 return debugJson();
+}
+if (globalThis.str_starts_with(path, "/package/")) {
+let parts = globalThis.explode("/", globalThis.trim(path, "/"));
+if (((globalThis.count(parts) >= 5) && (parts[3] === "symbol"))) {
+let symbol = decodeToken(("" + parts[4]));
+return renderSymbolPage(("" + parts[1]), ("" + parts[2]), symbol);
+}
+if ((globalThis.count(parts) >= 3)) {
+let symbolQ = decodeToken(queryParam(query, "symbol"));
+if ((symbolQ !== "")) {
+return renderSymbolPage(("" + parts[1]), ("" + parts[2]), symbolQ);
+}
+return renderPackagePage(("" + parts[1]), ("" + parts[2]));
+}
 }
 return renderHome(result);
  };

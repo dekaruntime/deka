@@ -89,3 +89,9 @@ If you see full-page reloads instead of HMR:
 2. confirm `<Hydration />` exists where client nav/runtime is needed
 3. check websocket endpoint health (`/_deka/hmr`)
 4. hard refresh once after bundler/runtime changes
+
+If startup fails with:
+
+- `port <n> is already in use... deka serve refuses to share ports between processes`
+
+that means another local server is already bound to that port. Stop it or run with `--port <n>`.

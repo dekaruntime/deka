@@ -3368,6 +3368,7 @@ dependencies = [
  "nanoid",
  "num_cpus",
  "phpx_js",
+ "redis",
  "runtime_core",
  "serde",
  "serde_json",
@@ -3971,6 +3972,8 @@ dependencies = [
 name = "runtime"
 version = "0.1.0"
 dependencies = [
+ "axum",
+ "base64 0.21.7",
  "bundler",
  "core",
  "deno_core",

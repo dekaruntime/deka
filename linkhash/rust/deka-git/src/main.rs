@@ -752,7 +752,7 @@ async fn handle_get_package(Path(name): Path<String>) -> impl IntoResponse {
 async fn handle_get_package_scoped(
     Path((scope, name)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    let full_name = format!("{}/{}", scope, name);
+    let full_name = format!("@{}/{}", scope.trim_start_matches('@'), name);
     handle_get_package(Path(full_name)).await
 }
 
@@ -820,7 +820,7 @@ async fn handle_get_release_docs(
 async fn handle_get_release_scoped(
     Path((scope, name, version)): Path<(String, String, String)>,
 ) -> impl IntoResponse {
-    let full_name = format!("{}/{}", scope, name);
+    let full_name = format!("@{}/{}", scope.trim_start_matches('@'), name);
     handle_get_release(Path((full_name, version))).await
 }
 
@@ -828,7 +828,7 @@ async fn handle_get_release_docs_scoped(
     Path((scope, name, version)): Path<(String, String, String)>,
     Query(query): Query<ReleaseDocsQuery>,
 ) -> impl IntoResponse {
-    let full_name = format!("{}/{}", scope, name);
+    let full_name = format!("@{}/{}", scope.trim_start_matches('@'), name);
     handle_get_release_docs(Path((full_name, version)), Query(query)).await
 }
 
@@ -853,7 +853,7 @@ async fn handle_get_release_tree(
 async fn handle_get_release_tree_scoped(
     Path((scope, name, version)): Path<(String, String, String)>,
 ) -> impl IntoResponse {
-    let full_name = format!("{}/{}", scope, name);
+    let full_name = format!("@{}/{}", scope.trim_start_matches('@'), name);
     handle_get_release_tree(Path((full_name, version))).await
 }
 
@@ -880,7 +880,7 @@ async fn handle_get_release_blob_scoped(
     Path((scope, name, version)): Path<(String, String, String)>,
     Query(query): Query<ReleaseBlobQuery>,
 ) -> impl IntoResponse {
-    let full_name = format!("{}/{}", scope, name);
+    let full_name = format!("@{}/{}", scope.trim_start_matches('@'), name);
     handle_get_release_blob(Path((full_name, version)), Query(query)).await
 }
 
@@ -917,7 +917,7 @@ async fn handle_download_release(Path((name, version)): Path<(String, String)>) 
 async fn handle_download_release_scoped(
     Path((scope, name, version)): Path<(String, String, String)>,
 ) -> Response {
-    let full_name = format!("{}/{}", scope, name);
+    let full_name = format!("@{}/{}", scope.trim_start_matches('@'), name);
     handle_download_release(Path((full_name, version))).await
 }
 

@@ -1,7 +1,7 @@
 // Minimal PHP runtime module - no Node.js compatibility
 // This provides only the essentials for PHP execution
 
-const { op_php_read_file_sync, op_php_read_env, op_php_cwd, op_php_file_exists, op_php_path_resolve, op_php_set_privileged } = Deno.core.ops;
+const { op_php_read_file_sync, op_php_cwd, op_php_file_exists, op_php_path_resolve, op_php_set_privileged } = Deno.core.ops;
 
 // Basic console implementation
 const console = {
@@ -111,12 +111,12 @@ if (!globalThis.fs.existsSync) {
   };
 }
 
-// Minimal process implementation for env access
+// Minimal process implementation
 if (!globalThis.process) {
   globalThis.process = {};
 }
 if (!globalThis.process.env) {
-  globalThis.process.env = op_php_read_env();
+  globalThis.process.env = {};
 }
 if (!globalThis.process.cwd) {
   globalThis.process.cwd = () => op_php_cwd();

@@ -2,6 +2,7 @@
 //!
 //! Each tenant gets their own PHPX handler from `tenants/{shop_id}/main.phpx`.
 //! Falls back to `default/main.phpx` if the tenant dir doesn't exist.
+//! Uses the bundler (same as `deka serve`) to compile PHPX→JS with stdlib prelude.
 
 use std::collections::HashMap;
 use std::net::TcpListener;
@@ -17,7 +18,6 @@ use engine::config as runtime_config;
 use engine::{RuntimeEngine, set_engine};
 use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData, RequestParts};
 
-use crate::extensions::extensions_for_mode;
 use crate::js_pipeline::build_phpx_handler_bundle;
 
 pub fn platform(context: &Context) {
@@ -32,34 +32,60 @@ pub fn platform(context: &Context) {
 struct PlatformState {
     engine: Arc<RuntimeEngine>,
     root: PathBuf,
+    /// Cache of bundled handler code per tenant (shop_id → compiled JS).
+    bundle_cache: Mutex<HashMap<String, String>>,
 }
 
 impl PlatformState {
     /// Returns (HandlerKey, handler_code, handler_entry) for a tenant.
-    /// In ESM mode, handler_code is empty and handler_entry is the file path.
+    /// Uses the bundler to compile PHPX→JS with stdlib prelude baked in.
+    /// Caches the result so subsequent requests are fast.
     fn resolve_handler(&self, shop_id: &str) -> (HandlerKey, String, Option<String>) {
-        if shop_id.is_empty() {
-            let entry = self.root.join("default").join("main.phpx");
-            return (
-                HandlerKey::new("default"),
-                String::new(),
-                Some(entry.to_string_lossy().to_string()),
-            );
+        let cache_key = if shop_id.is_empty() { "default" } else { shop_id };
+
+        // Check cache first
+        {
+            let cache = self.bundle_cache.lock().unwrap();
+            if let Some(code) = cache.get(cache_key) {
+                return (
+                    HandlerKey::new(if shop_id.is_empty() { "default".to_string() } else { format!("tenant:{}", shop_id) }),
+                    code.clone(),
+                    None, // No entry needed — code is already bundled
+                );
+            }
         }
 
-        // Check for tenant-specific handler
-        let tenant_handler = self.root.join("tenants").join(shop_id).join("main.phpx");
-        let entry = if tenant_handler.exists() {
-            tenant_handler
-        } else {
-            // Fall back to default template
+        // Resolve handler path
+        let handler_path = if shop_id.is_empty() {
             self.root.join("default").join("main.phpx")
+        } else {
+            let tenant = self.root.join("tenants").join(shop_id).join("main.phpx");
+            if tenant.exists() { tenant } else { self.root.join("default").join("main.phpx") }
         };
 
+        // Bundle using the same pipeline as `deka serve`
+        let handler_str = handler_path.to_string_lossy().to_string();
+        let code = match build_phpx_handler_bundle(&handler_str) {
+            Ok(bundled) => {
+                stdio::log("platform", &format!("bundled {} ({} bytes)", cache_key, bundled.len()));
+                bundled
+            }
+            Err(err) => {
+                stdio::error("platform", &format!("bundle failed for {}: {}", cache_key, err));
+                String::new()
+            }
+        };
+
+        // Cache the bundled code
+        {
+            let mut cache = self.bundle_cache.lock().unwrap();
+            cache.insert(cache_key.to_string(), code.clone());
+        }
+
         (
-            HandlerKey::new(format!("tenant:{}", shop_id)),
-            String::new(),
-            Some(entry.to_string_lossy().to_string()),
+            HandlerKey::new(if shop_id.is_empty() { "default".to_string() } else { format!("tenant:{}", shop_id) }),
+            code,
+            None, // Bundled code — no ESM entry needed
         )
     }
 }
@@ -78,7 +104,6 @@ async fn platform_async(context: &Context) {
     unsafe {
         std::env::set_var("DEKA_SECURITY_ENFORCE", "1");
         std::env::set_var("DEKA_SECURITY_NO_PROMPT", "1");
-        // Set module root to default dir so the ESM loader has a fallback
         std::env::set_var("PHPX_MODULE_ROOT", root.join("default").to_string_lossy().as_ref());
     }
 
@@ -91,9 +116,6 @@ async fn platform_async(context: &Context) {
         stdio::error("platform", &format!(
             "missing default/main.phpx at {}", default_dir.display()
         ));
-        stdio::log("platform", "expected directory structure:");
-        stdio::log("platform", "  default/main.phpx    (template for new tenants)");
-        stdio::log("platform", "  tenants/             (per-tenant overrides)");
         std::process::exit(1);
     }
 
@@ -101,11 +123,18 @@ async fn platform_async(context: &Context) {
         let _ = std::fs::create_dir_all(&tenants_dir);
     }
 
-    // In ESM mode (default), handler_code is empty — the ESM loader resolves modules dynamically.
-    // We just store the handler file path as the entry point.
-    let default_code = String::new();
+    // Pre-bundle the default handler to catch errors early
+    let default_handler_str = default_handler.to_string_lossy().to_string();
+    match build_phpx_handler_bundle(&default_handler_str) {
+        Ok(bundled) => {
+            stdio::log("platform", &format!("default handler bundled ({} bytes)", bundled.len()));
+        }
+        Err(err) => {
+            stdio::error("platform", &format!("failed to bundle default handler: {}", err));
+            std::process::exit(1);
+        }
+    }
 
-    // List existing tenants
     let tenant_count = std::fs::read_dir(&tenants_dir)
         .map(|entries| entries.filter_map(|e| e.ok()).filter(|e| e.path().is_dir()).count())
         .unwrap_or(0);
@@ -122,7 +151,7 @@ async fn platform_async(context: &Context) {
     };
 
     let serve_mode = runtime_config::ServeMode::Php;
-    let extensions_provider = Arc::new(move || extensions_for_mode(&serve_mode));
+    let extensions_provider = Arc::new(move || crate::extensions::extensions_for_mode(&serve_mode));
 
     let runtime_cfg = runtime_config::RuntimeConfig::load();
     let engine = Arc::new(RuntimeEngine::new(
@@ -136,6 +165,7 @@ async fn platform_async(context: &Context) {
     let state = Arc::new(PlatformState {
         engine,
         root: root.clone(),
+        bundle_cache: Mutex::new(HashMap::new()),
     });
 
     // Determine port
@@ -217,7 +247,6 @@ async fn handle_platform_request(
         mode: ExecutionMode::Request,
     };
 
-    eprintln!("[platform] executing tenant={} entry={:?}", shop_id, request_data.handler_entry);
     match state.engine.execute(handler_key, request_data).await {
         Ok(pool_response) => {
             if !pool_response.success {
@@ -262,11 +291,6 @@ async fn handle_platform_request(
             .body(axum::body::Body::from(format!("Handler execution failed: {}", err)))
             .unwrap(),
     }
-}
-
-fn load_and_compile_handler(path: &Path) -> Result<String, String> {
-    let path_str = path.to_string_lossy().to_string();
-    build_phpx_handler_bundle(&path_str)
 }
 
 mod stdio {

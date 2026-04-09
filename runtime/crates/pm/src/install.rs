@@ -636,7 +636,12 @@ fn parse_scoped_package(name: &str) -> Result<(&str, &str)> {
 fn php_modules_path_for(package_name: &str) -> Result<PathBuf> {
     let cwd = std::env::current_dir().context("failed to resolve current directory")?;
     let mut path = cwd.join("php_modules");
-    for segment in package_name.split('/') {
+    let segments: Vec<&str> = if let Some(rest) = package_name.strip_prefix("@deka/") {
+        vec![rest]
+    } else {
+        package_name.split('/').collect()
+    };
+    for segment in segments {
         if segment.is_empty() || segment == "." || segment == ".." {
             bail!("invalid php package name segment");
         }
@@ -647,7 +652,9 @@ fn php_modules_path_for(package_name: &str) -> Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{PhpPackageRelease, enforce_release_policy, extract_release_capabilities};
+    use super::{
+        PhpPackageRelease, enforce_release_policy, extract_release_capabilities, php_modules_path_for,
+    };
     use runtime_core::security_policy::{RuleList, SecurityPolicy, SecurityScope};
     use serde_json::json;
 
@@ -727,6 +734,13 @@ mod tests {
         };
         let result = enforce_release_policy(&release, &policy);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn deka_scoped_package_installs_to_unscoped_php_modules_path() {
+        let cwd = std::env::current_dir().expect("cwd");
+        let path = php_modules_path_for("@deka/component").expect("path");
+        assert_eq!(path, cwd.join("php_modules").join("component"));
     }
 }
 

@@ -27,6 +27,8 @@ pub struct PhpxEsmLoader {
     project_root: PathBuf,
     cache_dir: PathBuf,
     entry_specifier: ModuleSpecifier,
+    entry_is_app_directory: bool,
+    app_directory_path: Option<PathBuf>,
     wrapper_specifier: ModuleSpecifier,
     prelude_specifier: ModuleSpecifier,
     prelude_source: String,
@@ -38,7 +40,18 @@ impl PhpxEsmLoader {
         let cache_dir = project_root.join(".cache").join("phpx_js");
         std::fs::create_dir_all(&cache_dir)
             .map_err(|err| JsErrorBox::generic(format!("failed to create {}: {}", cache_dir.display(), err)))?;
-        let entry_specifier = ModuleSpecifier::from_file_path(&entry_path)
+        let entry_is_app_directory = entry_path.is_dir();
+        let app_directory_path = if entry_is_app_directory {
+            Some(entry_path.clone())
+        } else {
+            None
+        };
+        let entry_module_path = if entry_is_app_directory {
+            app_directory_entry_path(&project_root)
+        } else {
+            entry_path
+        };
+        let entry_specifier = ModuleSpecifier::from_file_path(&entry_module_path)
             .map_err(|_| JsErrorBox::generic("invalid entry module path"))?;
         let wrapper_specifier = ModuleSpecifier::from_file_path(entry_wrapper_path(&project_root))
             .map_err(|_| JsErrorBox::generic("invalid entry wrapper path"))?;
@@ -55,6 +68,8 @@ impl PhpxEsmLoader {
             project_root,
             cache_dir,
             entry_specifier,
+            entry_is_app_directory,
+            app_directory_path,
             wrapper_specifier,
             prelude_specifier,
             prelude_source,
@@ -113,7 +128,7 @@ impl PhpxEsmLoader {
         }
 
         let resolved = resolve_import(specifier, referrer).map_err(JsErrorBox::from_err)?;
-        if resolved.scheme() == "file" {
+        if resolved.scheme() == "file" || resolved.scheme() == "ext" {
             return Ok(resolved);
         }
         Err(JsErrorBox::generic(format!("unsupported module scheme: {}", resolved)))
@@ -133,6 +148,20 @@ impl PhpxEsmLoader {
             return Ok(ModuleSource::new(
                 ModuleType::JavaScript,
                 ModuleSourceCode::String(wrapper.into()),
+                specifier,
+                None,
+            ));
+        }
+        if self.entry_is_app_directory && specifier == &self.entry_specifier {
+            let app_root = self
+                .app_directory_path
+                .as_ref()
+                .ok_or_else(|| JsErrorBox::generic("missing app directory path"))?;
+            let app_root_json = serde_json::to_string(&app_root.to_string_lossy().to_string())
+                .map_err(|err| JsErrorBox::generic(format!("failed to encode app root: {}", err)))?;
+            return Ok(ModuleSource::new(
+                ModuleType::JavaScript,
+                ModuleSourceCode::String(app_directory_entry_source(&app_root_json).into()),
                 specifier,
                 None,
             ));
@@ -256,11 +285,28 @@ pub fn entry_wrapper_path(project_root: &Path) -> PathBuf {
         .join("__deka_entry.js")
 }
 
+pub fn app_directory_entry_path(project_root: &Path) -> PathBuf {
+    project_root
+        .join(".cache")
+        .join("phpx_js")
+        .join("__deka_app_entry.js")
+}
+
 pub fn entry_prelude_path(project_root: &Path) -> PathBuf {
     project_root
         .join(".cache")
         .join("phpx_js")
         .join("__deka_prelude.js")
+}
+
+fn app_directory_entry_source(app_root_json: &str) -> String {
+    format!(
+        "import {{ servePhp }} from \"ext:deka_php/php.js\";\n\
+const app = servePhp({});\n\
+export default app;\n",
+        app_root_json
+    )
+        .to_string()
 }
 
 pub fn hash_module_graph(entry_path: &Path) -> Result<u64, String> {
@@ -269,7 +315,11 @@ pub fn hash_module_graph(entry_path: &Path) -> Result<u64, String> {
 
     let project_root = resolve_project_root(entry_path)?;
     let mut visited: HashSet<PathBuf> = HashSet::new();
-    let mut stack: Vec<PathBuf> = vec![entry_path.to_path_buf()];
+    let mut stack: Vec<PathBuf> = if entry_path.is_dir() {
+        collect_app_route_files(entry_path)?
+    } else {
+        vec![entry_path.to_path_buf()]
+    };
     let mut hasher = DefaultHasher::new();
 
     while let Some(path) = stack.pop() {
@@ -294,6 +344,42 @@ pub fn hash_module_graph(entry_path: &Path) -> Result<u64, String> {
     }
 
     Ok(hasher.finish())
+}
+
+fn collect_app_route_files(project_root: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut out = Vec::new();
+    let app_dir = project_root.join("app");
+    if !app_dir.is_dir() {
+        return Err(format!(
+            "app directory missing for app-mode entry: {}",
+            app_dir.display()
+        ));
+    }
+    collect_phpx_files_recursive(&app_dir, &mut out)?;
+    out.sort();
+    Ok(out)
+}
+
+fn collect_phpx_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = std::fs::read_dir(dir)
+        .map_err(|err| format!("failed to read {}: {}", dir.display(), err))?;
+    for entry in entries {
+        let entry = entry.map_err(|err| format!("failed to read dir entry: {}", err))?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_phpx_files_recursive(&path, out)?;
+            continue;
+        }
+        let is_phpx = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.eq_ignore_ascii_case("phpx"))
+            .unwrap_or(false);
+        if is_phpx {
+            out.push(path);
+        }
+    }
+    Ok(())
 }
 
 pub fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Result<(), String> {
