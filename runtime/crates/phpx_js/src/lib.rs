@@ -2571,3 +2571,195 @@ fn is_js_reserved_word(name: &str) -> bool {
             | "yield"
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use php_rs::parser::lexer::Lexer;
+    use php_rs::parser::parser::{Parser, ParserMode};
+
+    /// Helper: parse PHPX source and emit JS via the subset emitter.
+    fn phpx_to_js(source: &str) -> Result<String, String> {
+        let arena = Bump::new();
+        let mut parser =
+            Parser::new_with_mode(Lexer::new(source.as_bytes()), &arena, ParserMode::Phpx);
+        let program = parser.parse_program();
+        if !program.errors.is_empty() {
+            let msgs: Vec<&str> = program.errors.iter().map(|e| e.message).collect();
+            return Err(format!("parse errors: {}", msgs.join("; ")));
+        }
+        emit_js_from_ast(&program, source.as_bytes(), SourceModuleMeta::empty())
+    }
+
+    // ---- 1. Simple function compilation ----
+
+    #[test]
+    fn simple_function_compiles_to_js() {
+        let js = phpx_to_js("function hello(): string { return 'world'; }")
+            .expect("should compile");
+        assert!(js.contains("function hello()"), "expected function declaration, got:\n{}", js);
+        assert!(js.contains("return \"world\"") || js.contains("return 'world'"),
+            "expected return statement, got:\n{}", js);
+    }
+
+    // ---- 2. Variable declaration ----
+
+    #[test]
+    fn variable_declaration_compiles() {
+        let js = phpx_to_js("$x = 42;").expect("should compile");
+        assert!(js.contains("let x = 42") || js.contains("x = 42"),
+            "expected variable assignment, got:\n{}", js);
+    }
+
+    // ---- 3. Object literal ----
+
+    #[test]
+    fn object_literal_compiles() {
+        let js = phpx_to_js("$value = 1;\n$obj = { key: $value };").expect("should compile");
+        assert!(js.contains("key") && js.contains("value"),
+            "expected object literal with key/value, got:\n{}", js);
+    }
+
+    // ---- 4. String concatenation ----
+
+    #[test]
+    fn string_concatenation_uses_plus() {
+        let js = phpx_to_js("$s = 'hello' . ' ' . 'world';").expect("should compile");
+        assert!(js.contains("+"), "expected + for string concat, got:\n{}", js);
+        // The concat line itself should use + not .
+        let concat_line = js.lines().find(|l| l.contains("hello")).expect("concat line");
+        assert!(!concat_line.contains(" . "), "should not use PHP dot operator in concat: {}", concat_line);
+    }
+
+    // ---- 5. Array access ----
+
+    #[test]
+    fn array_access_compiles() {
+        let js = phpx_to_js("$arr = ['key' => 'val'];\n$v = $arr['key'];").expect("should compile");
+        assert!(js.contains("arr[\"key\"]") || js.contains("arr['key']"),
+            "expected array key access, got:\n{}", js);
+    }
+
+    // ---- 6. CQL expression ----
+
+    #[test]
+    fn cql_expression_emits_object() {
+        let js = phpx_to_js("cql q = MATCH (n) RETURN n;").expect("should compile");
+        assert!(js.contains("__type: \"cql\""), "expected CQL type marker, got:\n{}", js);
+        assert!(js.contains("MATCH (n) RETURN n"), "expected cypher query, got:\n{}", js);
+        assert!(js.contains("params:"), "expected params field, got:\n{}", js);
+    }
+
+    // ---- 7. Module function calls compile ----
+
+    #[test]
+    fn function_call_compiles() {
+        let source = "$result = query('MATCH (n) RETURN n');";
+        let js = phpx_to_js(source).expect("should compile");
+        assert!(js.contains("query"), "expected query call, got:\n{}", js);
+    }
+
+    #[test]
+    fn multiple_function_calls_compile() {
+        let source = "$val = get('key');\n$ok = set('key', 'val');";
+        let js = phpx_to_js(source).expect("should compile");
+        assert!(js.contains("get"), "expected get call, got:\n{}", js);
+        assert!(js.contains("set"), "expected set call, got:\n{}", js);
+    }
+
+    // ---- 8. Null comparisons are rejected (typechecker, not emitter) ----
+    // Note: null comparison rejection is handled by the typechecker in php-rs,
+    // not by the JS emitter. The emitter itself will emit null comparisons.
+    // See php-rs typeck tests for null_comparison_is_rejected.
+
+    // ---- 9. Prelude uses ??= pattern ----
+
+    #[test]
+    fn prelude_uses_nullish_assignment() {
+        let js = phpx_to_js("$x = 1;").expect("should compile");
+        // The prelude should use ??= for global setup
+        assert!(js.contains("??="), "expected ??= in prelude, got:\n{}", js);
+        // Should NOT use the anti-pattern `if (!globalThis.X) { globalThis.X = ... }`
+        // for polyfill definitions (those should use ??=)
+        let lines: Vec<&str> = js.lines()
+            .filter(|l| l.contains("if (!globalThis.") && l.contains("globalThis.") && !l.contains("__deka"))
+            .collect();
+        // Allow __dekaGlobalsInstalled guard but polyfills should use ??=
+        for line in &lines {
+            assert!(!line.contains("function"),
+                "function polyfills should use ??= not if-guard: {}", line);
+        }
+    }
+
+    // ---- Additional coverage ----
+
+    #[test]
+    fn if_else_compiles() {
+        let js = phpx_to_js("$x = 1;\nif ($x == 1) { $x = 2; } else { $x = 3; }")
+            .expect("should compile");
+        assert!(js.contains("if ("), "expected if statement, got:\n{}", js);
+        assert!(js.contains("else"), "expected else branch, got:\n{}", js);
+    }
+
+    #[test]
+    fn arrow_function_compiles() {
+        let js = phpx_to_js("$fn = fn($x: int): int => $x + 1;").expect("should compile");
+        assert!(js.contains("=>"), "expected arrow function, got:\n{}", js);
+    }
+
+    #[test]
+    fn nullsafe_access_compiles() {
+        let js = phpx_to_js("$user = { name: 'test' };\n$v = $user?->name;")
+            .expect("should compile");
+        assert!(js.contains("?."), "expected optional chaining, got:\n{}", js);
+    }
+
+    #[test]
+    fn match_expression_compiles() {
+        let source = r#"
+$x = 1;
+$result = match ($x) {
+    1 => "one",
+    2 => "two",
+    default => "other",
+};
+"#;
+        let js = phpx_to_js(source).expect("should compile");
+        // match expressions are typically emitted as ternary chains or switch
+        assert!(js.contains("one") && js.contains("two") && js.contains("other"),
+            "expected match arms, got:\n{}", js);
+    }
+
+    #[test]
+    fn export_function_via_meta() {
+        // Export declarations are handled at the source meta level, not the parser.
+        // Verify the emitter can mark a function as exported via SourceModuleMeta.
+        let source = "function greet(): string {\n  return 'hi';\n}\n";
+        let arena = Bump::new();
+        let mut parser =
+            Parser::new_with_mode(Lexer::new(source.as_bytes()), &arena, ParserMode::Phpx);
+        let program = parser.parse_program();
+        assert!(program.errors.is_empty(), "parse errors: {:?}", program.errors);
+        let mut meta = SourceModuleMeta::empty();
+        meta.exported_functions.insert("greet".to_string());
+        let js = emit_js_from_ast(&program, source.as_bytes(), meta).expect("should emit");
+        assert!(js.contains("export") || js.contains("greet"),
+            "expected function in output, got:\n{}", js);
+    }
+
+    #[test]
+    fn struct_declaration_compiles_without_error() {
+        // Struct declarations compile without error; the struct schema is stored
+        // internally and used when deka/i imports are present.
+        let source = "struct Point {\n  $x: int;\n  $y: int;\n}\n";
+        phpx_to_js(source).expect("struct should compile to JS");
+    }
+
+    #[test]
+    fn jsx_element_compiles() {
+        let source = "function View(): Object { return <div class=\"test\">hello</div>; }";
+        let js = phpx_to_js(source).expect("should compile");
+        assert!(js.contains("div") || js.contains("jsx") || js.contains("h("),
+            "expected JSX output, got:\n{}", js);
+    }
+}

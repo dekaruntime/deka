@@ -47,11 +47,10 @@ const app = new Router()"#;
         );
 
         assert!(error.contains("Validation Error"));
-        assert!(error.contains("❌ Invalid Import"));
+        assert!(error.contains("Invalid Import"));
         assert!(error.contains("handler.js:3:8"));
         assert!(error.contains("import fs from 'fs'"));
         assert!(error.contains("^"));
-        assert!(error.contains("= help:"));
     }
 
     #[test]

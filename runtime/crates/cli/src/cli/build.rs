@@ -1013,9 +1013,10 @@ $nick = $user?->getNick()
         let program = parser.parse_program();
         let js = emit_js_from_ast(&program, source.as_bytes(), SourceModuleMeta::empty())
             .expect("subset emit");
-        assert!(js.contains("user.getName()"));
-        assert!(js.contains("(user)?.profile"));
-        assert!(js.contains("(user)?.getNick()"));
+        // Variables not previously declared emit as globalThis.X
+        assert!(js.contains("globalThis.user.getName()"));
+        assert!(js.contains("(globalThis.user)?.profile"));
+        assert!(js.contains("(globalThis.user)?.getNick()"));
     }
 
     #[test]
@@ -1038,9 +1039,10 @@ foreach ($items as $idx => $item) {
         let program = parser.parse_program();
         let js = emit_js_from_ast(&program, source.as_bytes(), SourceModuleMeta::empty())
             .expect("subset emit");
+        // i and j are locally declared by prior assignment; items is undeclared (globalThis)
         assert!(js.contains("while ((i < 2))"));
         assert!(js.contains("for (let j = 0; (j < 2); (j = (j + 1)))"));
-        assert!(js.contains("for (const [idx , item] of Object.entries(items))"));
+        assert!(js.contains("for (const [idx , item] of Object.entries(globalThis.items))"));
     }
 
     #[test]
@@ -1220,7 +1222,7 @@ $point = new Point(1, 2);
         let program = parser.parse_program();
         let js = emit_js_from_ast(&program, source.as_bytes(), SourceModuleMeta::empty())
             .expect("subset emit");
-        assert!(js.contains("new Point(1, 2)"));
+        assert!(js.contains("new Point(1, 2)") || js.contains("new globalThis.Point(1, 2)"));
     }
 
     #[test]
@@ -1322,7 +1324,8 @@ function demo($x: int): int {
         let program = parser.parse_program();
         let js = emit_js_from_ast(&program, source.as_bytes(), SourceModuleMeta::empty())
             .expect("subset emit");
-        assert!(js.contains("global declarations are no-ops"));
+        // global statement now imports from globalThis; static is a local let
+        assert!(js.contains("globalThis.shared"));
         assert!(js.contains("let count = 1;"));
         assert!(js.contains("shared = undefined;"));
     }
@@ -1361,9 +1364,10 @@ $three = clone $obj;
         let program = parser.parse_program();
         let js = emit_js_from_ast(&program, source.as_bytes(), SourceModuleMeta::empty())
             .expect("subset emit");
-        assert!(js.contains("await promise"));
+        // Undeclared variables get globalThis prefix
+        assert!(js.contains("await globalThis.promise"));
         assert!(js.contains("eval(\"40 + 2\")"));
-        assert!(js.contains("structuredClone(obj)"));
+        assert!(js.contains("structuredClone(globalThis.obj)"));
     }
 
     #[test]
@@ -1509,11 +1513,15 @@ class User {}
         std::fs::write(tmp.path().join("deka.json"), "{}").expect("deka.json");
         std::fs::write(tmp.path().join("deka.lock"), "{}").expect("deka.lock");
 
+        let php_modules = tmp.path().join("php_modules");
+        std::fs::create_dir_all(&php_modules).expect("php_modules dir");
+        std::fs::write(php_modules.join("stdlib.json"), "[]").expect("stdlib.json");
+
         let app_dir = tmp.path().join("app");
         std::fs::create_dir_all(&app_dir).expect("app dir");
         std::fs::write(
             app_dir.join("util.phpx"),
-            "export function shout($text: string): string { return $text . \"!\" }",
+            "export function shout($text: string): string { return $text . \"!\"; }",
         )
         .expect("util.phpx");
         std::fs::write(

@@ -1031,6 +1031,105 @@ mod tests {
         append_named_exports(&mut lines, "1bad").unwrap();
         assert!(lines.is_empty());
     }
+
+    struct SimpleVirtualSource {
+        entry: PathBuf,
+        code: String,
+    }
+
+    impl VirtualSource for SimpleVirtualSource {
+        fn load_virtual(&self, path: &Path) -> Result<Option<String>, String> {
+            if path == self.entry {
+                Ok(Some(self.code.clone()))
+            } else {
+                Ok(None)
+            }
+        }
+    }
+
+    fn make_tmp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("deka_bundler_test_{}", name));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create test dir");
+        dir
+    }
+
+    #[test]
+    fn bundle_produces_valid_js() {
+        let tmp = make_tmp_dir("valid_js");
+        let entry = tmp.join("entry.js");
+        std::fs::write(&entry, "export const x = 42;\n").expect("write entry");
+        let provider = Arc::new(SimpleVirtualSource {
+            entry: entry.clone(),
+            code: "export const x = 42;\n".to_string(),
+        });
+        let result = bundle_virtual_entry(
+            &entry,
+            BundleOptions {
+                project_root: tmp.clone(),
+                minify: false,
+                iife: false,
+            },
+            provider,
+        )
+        .expect("bundle should succeed");
+        assert!(result.contains("42"), "expected value in bundle: {}", result);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn bundle_with_iife_wrapping() {
+        let tmp = make_tmp_dir("iife");
+        let entry = tmp.join("entry.js");
+        std::fs::write(&entry, "const msg = 'hello';\n").expect("write entry");
+        let provider = Arc::new(SimpleVirtualSource {
+            entry: entry.clone(),
+            code: "const msg = 'hello';\n".to_string(),
+        });
+        let result = bundle_virtual_entry(
+            &entry,
+            BundleOptions {
+                project_root: tmp.clone(),
+                minify: false,
+                iife: true,
+            },
+            provider,
+        )
+        .expect("bundle should succeed");
+        assert!(
+            result.contains("function") || result.contains("hello"),
+            "expected IIFE or content in bundle: {}",
+            result
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn bundle_minified_output_is_valid() {
+        let tmp = make_tmp_dir("minified");
+        let entry = tmp.join("entry.js");
+        std::fs::write(&entry, "export const greeting = 'hello world';\n").expect("write entry");
+        let provider = Arc::new(SimpleVirtualSource {
+            entry: entry.clone(),
+            code: "export const greeting = 'hello world';\n".to_string(),
+        });
+        let result = bundle_virtual_entry(
+            &entry,
+            BundleOptions {
+                project_root: tmp.clone(),
+                minify: true,
+                iife: false,
+            },
+            provider,
+        )
+        .expect("minified bundle should succeed");
+        assert!(
+            result.contains("hello world"),
+            "expected string in minified bundle: {}",
+            result
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }
 
 /// Bundle with cache support

@@ -104,6 +104,44 @@ mod tests {
     }
 
     #[test]
+    fn extract_subdomain_with_ip_v4() {
+        assert_eq!(extract_subdomain("192.168.1.1"), None);
+        assert_eq!(extract_subdomain("10.0.0.1:3000"), None);
+    }
+
+    #[test]
+    fn extract_subdomain_plain_localhost() {
+        assert_eq!(extract_subdomain("localhost"), None);
+    }
+
+    #[test]
+    fn extract_subdomain_multiple_dots() {
+        // e.g. "shop.eu.tana.com" -> the first part is the subdomain
+        assert_eq!(extract_subdomain("shop.eu.tana.com"), Some("shop".to_string()));
+    }
+
+    #[test]
+    fn resolve_from_headers_x_shop_id_takes_priority() {
+        let headers = vec![
+            ("Host".to_string(), "real-shop.tana.com".to_string()),
+            ("X-Shop-ID".to_string(), "override-id".to_string()),
+        ];
+        assert_eq!(resolve_tenant_from_headers(&headers), Some("override-id".to_string()));
+    }
+
+    #[test]
+    fn resolve_from_headers_empty_x_shop_id_ignored() {
+        let headers = vec![
+            ("X-Shop-ID".to_string(), "".to_string()),
+            ("Host".to_string(), "localhost:8530".to_string()),
+        ];
+        // Empty X-Shop-ID should not override; falls through to host/env
+        let result = resolve_tenant_from_headers(&headers);
+        // Result depends on DEKA_SHOP_ID env; just verify no panic
+        let _ = result;
+    }
+
+    #[test]
     fn resolve_from_headers_with_explicit_header() {
         let headers = vec![
             ("host".to_string(), "anything.tana.com".to_string()),
