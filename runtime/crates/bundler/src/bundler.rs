@@ -90,15 +90,20 @@ pub fn bundle_virtual_entry(
         GLOBALS.set(&globals, || {
             let top_level_mark = Mark::new();
             let unresolved_mark = Mark::new();
+            let mut compress = CompressOptions::default();
+            // Disable all transforms that rewrite code structure
+            // Only keep dead_code elimination and unused removal
+            compress.conditionals = false;
+            compress.collapse_vars = false;
+            compress.comparisons = false;
+            compress.if_return = false;
+            compress.join_vars = false;
+            compress.loops = false;
+            compress.negate_iife = false;
+            compress.sequences = 0; // Don't join statements with comma
+            compress.switches = false;
             let minify_options = MinifyOptions {
-                compress: Some(CompressOptions {
-                    dead_code: true,
-                    conditionals: false, // Don't transform if/else to ternary/||
-                    collapse_vars: false, // Don't collapse variable assignments
-                    side_effects: true,
-                    unused: true,
-                    ..Default::default()
-                }),
+                compress: Some(compress),
                 mangle: None,
                 ..Default::default()
             };
