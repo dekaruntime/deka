@@ -91,8 +91,15 @@ pub fn bundle_virtual_entry(
             let top_level_mark = Mark::new();
             let unresolved_mark = Mark::new();
             let minify_options = MinifyOptions {
-                compress: Some(CompressOptions::default()),
-                mangle: None, // Don't rename variables — causes issues with globalThis assignments
+                compress: Some(CompressOptions {
+                    dead_code: true,
+                    conditionals: false, // Don't transform if/else to ternary/||
+                    collapse_vars: false, // Don't collapse variable assignments
+                    side_effects: true,
+                    unused: true,
+                    ..Default::default()
+                }),
+                mangle: None,
                 ..Default::default()
             };
 
