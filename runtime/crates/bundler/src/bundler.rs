@@ -90,12 +90,9 @@ pub fn bundle_virtual_entry(
         GLOBALS.set(&globals, || {
             let top_level_mark = Mark::new();
             let unresolved_mark = Mark::new();
-            // SWC compress has bugs with globalThis conditional assignments.
-            // The swc_bundler already performs DCE via `disable_dce: false`.
-            // Just use the minifier for whitespace removal only.
             let minify_options = MinifyOptions {
-                compress: None,
-                mangle: None,
+                compress: Some(CompressOptions::default()),
+                mangle: None, // Keep variable names readable for debugging
                 ..Default::default()
             };
 

@@ -189,18 +189,12 @@ pub fn build_stdlib_prelude(project_root: &Path) -> Result<String, String> {
     prelude.push_str("    globalThis[key] = value;\n");
     prelude.push_str("  }\n");
     prelude.push_str("};\n");
-    prelude.push_str("if (!globalThis.panic) {\n");
-    prelude.push_str("  globalThis.panic = (msg) => { throw new Error(String(msg)); };\n");
-    prelude.push_str("}\n");
-    prelude.push_str("if (!globalThis.function_exists) {\n");
-    prelude.push_str("  globalThis.function_exists = (name) => typeof globalThis[name] === 'function';\n");
-    prelude.push_str("}\n");
-    prelude.push_str("if (!globalThis.class_exists) {\n");
-    prelude.push_str("  globalThis.class_exists = (name) => typeof globalThis[name] === 'function' || typeof globalThis[name] === 'object';\n");
-    prelude.push_str("}\n");
-    prelude.push_str("if (!globalThis.class_alias) {\n");
-    prelude.push_str("  globalThis.class_alias = () => false;\n");
-    prelude.push_str("}\n");
+    // Use ??= (nullish coalescing assignment) instead of if(!x){x=y}
+    // to avoid SWC compress bug that incorrectly transforms the if pattern.
+    prelude.push_str("globalThis.panic ??= (msg) => { throw new Error(String(msg)); };\n");
+    prelude.push_str("globalThis.function_exists ??= (name) => typeof globalThis[name] === 'function';\n");
+    prelude.push_str("globalThis.class_exists ??= (name) => typeof globalThis[name] === 'function' || typeof globalThis[name] === 'object';\n");
+    prelude.push_str("globalThis.class_alias ??= () => false;\n");
     prelude.push_str("if (!globalThis.__dekaGlobalsInstalled) {\n");
     prelude.push_str("  globalThis.__dekaGlobalsInstalled = true;\n");
     for var in &binds {
