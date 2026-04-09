@@ -92,7 +92,7 @@ pub fn bundle_virtual_entry(
             let unresolved_mark = Mark::new();
             let minify_options = MinifyOptions {
                 compress: Some(CompressOptions::default()),
-                mangle: Some(MangleOptions::default()),
+                mangle: None, // Don't rename variables — causes issues with globalThis assignments
                 ..Default::default()
             };
 
