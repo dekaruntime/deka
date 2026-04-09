@@ -33,7 +33,7 @@ pub fn build_phpx_handler_bundle(handler_path: &str) -> Result<String, String> {
         &entry_path,
         BundleOptions {
             project_root,
-            minify: false,
+            minify: true,
             iife: true,
         },
         provider,
