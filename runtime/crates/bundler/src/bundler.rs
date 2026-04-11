@@ -90,12 +90,48 @@ pub fn bundle_virtual_entry(
         GLOBALS.set(&globals, || {
             let top_level_mark = Mark::new();
             let unresolved_mark = Mark::new();
-            // SWC compress has a bug that transforms conditional assignments
-            // into invalid `x && y = z` expressions (missing parens).
-            // Disabled until SWC fixes this. The bundler's own DCE still
-            // strips unreachable code. Whitespace removal still active.
+            // Re-enable SWC compress, but work around four independent
+            // bugs in swc_ecma_minifier 42.x. Every workaround is pinned
+            // to the upstream source file so future SWC upgrades can
+            // re-check whether the bug is still there. Validated by the
+            // `bundle_minified_preserves_*` tests below.
+            //
+            //  1. compress/pure/bools.rs :: `compress_if_stmt_as_expr`
+            //     Rewrites `if (c) x = y;` into `c && x = y` and emits
+            //     it without parens around the assignment LHS — invalid
+            //     JS. Gated on `conditionals || bools`; both must be off.
+            //
+            //  2. compress/pure/sequences.rs
+            //     Folds adjacent expression statements into comma-
+            //     sequence expressions and then pushes those into
+            //     `for-of` heads, producing `for (let _ of a = 0, arr)`
+            //     which is a parse error. `sequences = 0` disables it.
+            //
+            //  3. compress/optimize/inline.rs
+            //     `inline = 3` inlines callee bodies into callers, which
+            //     hoists block-local `let`s into a shared scope and then
+            //     collides when two modules declare the same name in
+            //     different block bodies. `inline = 0` disables it.
+            //
+            //  4. compress/optimize/if_return.rs
+            //     Merges `{ stmt; return expr; }` into `return (stmt, expr)`
+            //     and then — when the caller lives inside a ternary —
+            //     drops the parens, yielding `cond ? stmt, expr : alt`,
+            //     which is a parse error (sequence expression not allowed
+            //     in ternary `cons` position).
+            //
+            // Every other compress pass (DCE, unused removal, dead-branch
+            // elimination, evaluation/constant folding, property hoisting,
+            // IIFE collapsing, collapse_vars, reduce_vars, etc.) is safe
+            // and provides the bulk of the byte savings.
+            let mut compress = CompressOptions::default();
+            compress.conditionals = false;
+            compress.bools = false;
+            compress.sequences = 0;
+            compress.inline = 0;
+            compress.if_return = false;
             let minify_options = MinifyOptions {
-                compress: None,
+                compress: Some(compress),
                 mangle: None,
                 ..Default::default()
             };
@@ -1126,6 +1162,87 @@ mod tests {
         assert!(
             result.contains("hello world"),
             "expected string in minified bundle: {}",
+            result
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Regression: `if (cond) x = y;` must not be rewritten into
+    /// `cond && x = y` (invalid: assignment LHS not parenthesized).
+    /// Root cause: `compress_if_stmt_as_expr` in
+    /// swc_ecma_minifier/src/compress/pure/bools.rs runs whenever
+    /// `conditionals || bools` is enabled; the bundler disables both.
+    #[test]
+    fn bundle_minified_preserves_if_assignment() {
+        let tmp = make_tmp_dir("if_assign");
+        let entry = tmp.join("entry.js");
+        // The minifier used to emit `s < 0 && s = Math.max(...)` here,
+        // which Bun/V8 rejects as an invalid LHS in assignment.
+        let source = "\
+            export function substr(src, start) {\n\
+              let s = Number(start) || 0;\n\
+              if (s < 0) s = Math.max(src.length + s, 0);\n\
+              return src.slice(s);\n\
+            }\n\
+            export const out = substr('hello', -2);\n";
+        std::fs::write(&entry, source).expect("write entry");
+        let provider = Arc::new(SimpleVirtualSource {
+            entry: entry.clone(),
+            code: source.to_string(),
+        });
+        let result = bundle_virtual_entry(
+            &entry,
+            BundleOptions {
+                project_root: tmp.clone(),
+                minify: true,
+                iife: false,
+            },
+            provider,
+        )
+        .expect("minified bundle should succeed");
+        assert!(
+            !result.contains("&& s ="),
+            "minifier broke `if (cond) x = y` into `cond && x = y`: {}",
+            result
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Regression: compress must not fold adjacent statements into a
+    /// `for-of` head. `count = 0; for (let _ of arr) ...` must stay two
+    /// statements — otherwise we get `for (let _ of count = 0, arr)`,
+    /// which is a parse error. Disabling `sequences` prevents this.
+    #[test]
+    fn bundle_minified_preserves_for_of_head() {
+        let tmp = make_tmp_dir("for_of");
+        let entry = tmp.join("entry.js");
+        let source = "\
+            export function __c(value) {\n\
+              let count = 0;\n\
+              for (const _ of (Array.isArray(value) ? value : [])) {\n\
+                count += 1;\n\
+              }\n\
+              return count;\n\
+            }\n\
+            export const out = __c([1, 2, 3]);\n";
+        std::fs::write(&entry, source).expect("write entry");
+        let provider = Arc::new(SimpleVirtualSource {
+            entry: entry.clone(),
+            code: source.to_string(),
+        });
+        let result = bundle_virtual_entry(
+            &entry,
+            BundleOptions {
+                project_root: tmp.clone(),
+                minify: true,
+                iife: false,
+            },
+            provider,
+        )
+        .expect("minified bundle should succeed");
+        assert!(
+            !result.contains("of count = 0,"),
+            "minifier folded a statement into the for-of head: {}",
             result
         );
         let _ = std::fs::remove_dir_all(&tmp);
