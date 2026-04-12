@@ -55,7 +55,7 @@ impl PlatformState {
             }
         }
 
-        // Resolve handler path
+        // Resolve handler path — try tenant-specific, fall back to default
         let handler_path = if shop_id.is_empty() {
             self.root.join("default").join("main.phpx")
         } else {
@@ -63,7 +63,9 @@ impl PlatformState {
             if tenant.exists() { tenant } else { self.root.join("default").join("main.phpx") }
         };
 
-        // Bundle using the same pipeline as `deka serve`
+        // Bundle using the same pipeline as `deka serve`.
+        // If the tenant-specific bundle fails (e.g. missing stdlib.json),
+        // fall back to the default handler so we never serve empty code.
         let handler_str = handler_path.to_string_lossy().to_string();
         let code = match build_phpx_handler_bundle(&handler_str) {
             Ok(bundled) => {
@@ -72,7 +74,27 @@ impl PlatformState {
             }
             Err(err) => {
                 stdio::error("platform", &format!("bundle failed for {}: {}", cache_key, err));
-                String::new()
+                // Fall back to the default handler — never serve empty code
+                let default_path = self.root.join("default").join("main.phpx");
+                let default_str = default_path.to_string_lossy().to_string();
+                if handler_path != default_path {
+                    match build_phpx_handler_bundle(&default_str) {
+                        Ok(bundled) => {
+                            stdio::log("platform", &format!(
+                                "fallback to default for {} ({} bytes)", cache_key, bundled.len()
+                            ));
+                            bundled
+                        }
+                        Err(err2) => {
+                            stdio::error("platform", &format!(
+                                "default fallback also failed for {}: {}", cache_key, err2
+                            ));
+                            String::new()
+                        }
+                    }
+                } else {
+                    String::new()
+                }
             }
         };
 

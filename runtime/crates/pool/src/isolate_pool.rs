@@ -2461,91 +2461,177 @@ impl WorkerThread {
                 .map(|value| value != "0" && value != "false")
                 .unwrap_or(true);
 
+        // Check if the handler code is already a self-contained async IIFE
+        // produced by the bundler (e.g. `(async function() { ... })()`).
+        // These bundles set globalThis.app internally — double-wrapping them
+        // in another sync IIFE breaks top-level await and prevents the async
+        // code from resolving before __dekaExecuteRequest checks globalThis.app.
+        let is_pre_bundled_iife = {
+            let trimmed = request.request_data.handler_code.trim_start();
+            trimmed.starts_with("(async function()")
+                || trimmed.starts_with("(function()")
+        };
+
         let wrapped_handler_code = if !use_esm {
-            // Execute the handler - transform import/export statements
-            // Replace ES6 import with global access
-            let handler_code = request
-                .request_data
-                .handler_code
-                .replace(
-                    "import { Router, cors, logger, prettyJSON } from 'deka/router'",
-                    "const { Router, cors, logger, prettyJSON } = globalThis.__dekaRouter;",
-                )
-                .replace(
-                    "import { Router, cors, logger, prettyJSON } from \"deka/router\"",
-                    "const { Router, cors, logger, prettyJSON } = globalThis.__dekaRouter;",
-                )
-                .replace(
-                    "import { Router } from 'deka/router'",
-                    "const { Router } = globalThis.__dekaRouter;",
-                )
-                .replace(
-                    "import { Router } from \"deka/router\"",
-                    "const { Router } = globalThis.__dekaRouter;",
-                )
-                .replace(
-                    "import { Database, Statement } from 'deka/sqlite'",
-                    "const { Database, Statement } = globalThis.__dekaSqlite;",
-                )
-                .replace(
-                    "import { Database, Statement } from \"deka/sqlite\"",
-                    "const { Database, Statement } = globalThis.__dekaSqlite;",
-                )
-                .replace(
-                    "import { Database } from 'deka/sqlite'",
-                    "const { Database } = globalThis.__dekaSqlite;",
-                )
-                .replace(
-                    "import { Database } from \"deka/sqlite\"",
-                    "const { Database } = globalThis.__dekaSqlite;",
-                )
-                .replace(
-                    "import { t4, T4Client, T4File, write } from 'deka/t4'",
-                    "const { t4, T4Client, T4File, write } = globalThis.__dekaT4;",
-                )
-                .replace(
-                    "import { t4, T4Client, T4File, write } from \"deka/t4\"",
-                    "const { t4, T4Client, T4File, write } = globalThis.__dekaT4;",
-                )
-                .replace(
-                    "import { t4 } from 'deka/t4'",
-                    "const { t4 } = globalThis.__dekaT4;",
-                )
-                .replace(
-                    "import { t4 } from \"deka/t4\"",
-                    "const { t4 } = globalThis.__dekaT4;",
-                )
-                .replace(
-                    "import { Mesh, IsolatePool, Isolate, serve } from 'deka'",
-                    "const { Mesh, IsolatePool, Isolate, serve } = globalThis.__deka;",
-                )
-                .replace(
-                    "import { Mesh, IsolatePool, Isolate, serve } from \"deka\"",
-                    "const { Mesh, IsolatePool, Isolate, serve } = globalThis.__deka;",
-                )
-                // Remove export default statement - we'll capture 'app' variable directly
-                .replace("export default app", "// export default app")
-                .replace("export default ", "const __dekaDefault = ");
+            if is_pre_bundled_iife {
+                // Pre-bundled IIFE: run directly without re-wrapping.
+                // The bundler already stripped exports and wrapped in an
+                // async IIFE that sets globalThis.app.
+                let setup_code = "globalThis.app = undefined; globalThis.Deka = globalThis.Deka || {};";
+                if let Err(err) = isolate
+                    .runtime
+                    .execute_script("setup.js", ModuleCodeString::from(setup_code.to_string()))
+                {
+                    isolate.active_requests = 0;
+                    isolate.state = IsolateState::Idle;
+                    return (
+                        ExecutionOutcome::Err(format!("Setup failed: {}", err)),
+                        ExecutionProfile::empty(),
+                    );
+                }
 
-            let wrapped = format!(
-                "(function() {{\n{}\nif (typeof globalThis.app === 'undefined') {{ if (typeof __dekaDefault !== 'undefined') {{ if (typeof __dekaDefault === 'function' && typeof globalThis.__dekaNodeExpressAdapter === 'function' && (typeof __dekaDefault.handle === 'function' || typeof __dekaDefault.listen === 'function')) {{ globalThis.app = globalThis.__dekaNodeExpressAdapter(__dekaDefault); }} else if (__dekaDefault && typeof __dekaDefault === 'object' && !__dekaDefault.__dekaServer && (typeof __dekaDefault.fetch === 'function' || typeof __dekaDefault.routes === 'object')) {{ globalThis.app = globalThis.__deka.serve(__dekaDefault); }} else {{ globalThis.app = __dekaDefault; }} }} else if (typeof app !== 'undefined') {{ if (typeof app === 'function' && typeof globalThis.__dekaNodeExpressAdapter === 'function' && (typeof app.handle === 'function' || typeof app.listen === 'function')) {{ globalThis.app = globalThis.__dekaNodeExpressAdapter(app); }} else {{ globalThis.app = app; }} }} }}\n}})();",
-                handler_code
-            );
-
-            let setup_code = "globalThis.app = undefined; globalThis.Deka = globalThis.Deka || {};";
-            if let Err(err) = isolate
-                .runtime
-                .execute_script("setup.js", ModuleCodeString::from(setup_code.to_string()))
-            {
-                isolate.active_requests = 0;
-                isolate.state = IsolateState::Idle;
-                return (
-                    ExecutionOutcome::Err(format!("Setup failed: {}", err)),
-                    ExecutionProfile::empty(),
+                // Execute the pre-bundled handler directly
+                let handler_result = isolate.runtime.execute_script(
+                    "handler.js",
+                    ModuleCodeString::from(request.request_data.handler_code.clone()),
                 );
-            }
+                match handler_result {
+                    Ok(value) => {
+                        // If the script returned a Promise (async IIFE), run
+                        // the event loop so globalThis.app gets set before
+                        // __dekaExecuteRequest checks it.
+                        let is_promise = {
+                            deno_core::scope!(scope, &mut isolate.runtime);
+                            let local = deno_core::v8::Local::new(scope, &value);
+                            deno_core::v8::Local::<deno_core::v8::Promise>::try_from(local).is_ok()
+                        };
+                        if is_promise {
+                            if let Err(err) = isolate
+                                .runtime
+                                .run_event_loop(deno_core::PollEventLoopOptions::default())
+                                .await
+                            {
+                                isolate.active_requests = 0;
+                                isolate.state = IsolateState::Idle;
+                                return (
+                                    ExecutionOutcome::Err(format!(
+                                        "Handler async init failed: {}",
+                                        err
+                                    )),
+                                    ExecutionProfile::empty(),
+                                );
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        let raw = err.to_string();
+                        if parse_exit_code(&raw).is_none() {
+                            isolate.active_requests = 0;
+                            isolate.state = IsolateState::Idle;
+                            let formatted = validation::format_runtime_syntax_error(
+                                &raw,
+                                &request.request_data.handler_code,
+                                &key.name,
+                            );
+                            return (
+                                ExecutionOutcome::Err(
+                                    formatted.unwrap_or_else(|| {
+                                        format!("Handler execution failed: {}", err)
+                                    }),
+                                ),
+                                ExecutionProfile::empty(),
+                            );
+                        }
+                    }
+                }
 
-            Some(wrapped)
+                None // Already loaded — skip the wrapped-handler path below
+            } else {
+                // Execute the handler - transform import/export statements
+                // Replace ES6 import with global access
+                let handler_code = request
+                    .request_data
+                    .handler_code
+                    .replace(
+                        "import { Router, cors, logger, prettyJSON } from 'deka/router'",
+                        "const { Router, cors, logger, prettyJSON } = globalThis.__dekaRouter;",
+                    )
+                    .replace(
+                        "import { Router, cors, logger, prettyJSON } from \"deka/router\"",
+                        "const { Router, cors, logger, prettyJSON } = globalThis.__dekaRouter;",
+                    )
+                    .replace(
+                        "import { Router } from 'deka/router'",
+                        "const { Router } = globalThis.__dekaRouter;",
+                    )
+                    .replace(
+                        "import { Router } from \"deka/router\"",
+                        "const { Router } = globalThis.__dekaRouter;",
+                    )
+                    .replace(
+                        "import { Database, Statement } from 'deka/sqlite'",
+                        "const { Database, Statement } = globalThis.__dekaSqlite;",
+                    )
+                    .replace(
+                        "import { Database, Statement } from \"deka/sqlite\"",
+                        "const { Database, Statement } = globalThis.__dekaSqlite;",
+                    )
+                    .replace(
+                        "import { Database } from 'deka/sqlite'",
+                        "const { Database } = globalThis.__dekaSqlite;",
+                    )
+                    .replace(
+                        "import { Database } from \"deka/sqlite\"",
+                        "const { Database } = globalThis.__dekaSqlite;",
+                    )
+                    .replace(
+                        "import { t4, T4Client, T4File, write } from 'deka/t4'",
+                        "const { t4, T4Client, T4File, write } = globalThis.__dekaT4;",
+                    )
+                    .replace(
+                        "import { t4, T4Client, T4File, write } from \"deka/t4\"",
+                        "const { t4, T4Client, T4File, write } = globalThis.__dekaT4;",
+                    )
+                    .replace(
+                        "import { t4 } from 'deka/t4'",
+                        "const { t4 } = globalThis.__dekaT4;",
+                    )
+                    .replace(
+                        "import { t4 } from \"deka/t4\"",
+                        "const { t4 } = globalThis.__dekaT4;",
+                    )
+                    .replace(
+                        "import { Mesh, IsolatePool, Isolate, serve } from 'deka'",
+                        "const { Mesh, IsolatePool, Isolate, serve } = globalThis.__deka;",
+                    )
+                    .replace(
+                        "import { Mesh, IsolatePool, Isolate, serve } from \"deka\"",
+                        "const { Mesh, IsolatePool, Isolate, serve } = globalThis.__deka;",
+                    )
+                    // Remove export default statement - we'll capture 'app' variable directly
+                    .replace("export default app", "// export default app")
+                    .replace("export default ", "const __dekaDefault = ");
+
+                let wrapped = format!(
+                    "(function() {{\n{}\nif (typeof globalThis.app === 'undefined') {{ if (typeof __dekaDefault !== 'undefined') {{ if (typeof __dekaDefault === 'function' && typeof globalThis.__dekaNodeExpressAdapter === 'function' && (typeof __dekaDefault.handle === 'function' || typeof __dekaDefault.listen === 'function')) {{ globalThis.app = globalThis.__dekaNodeExpressAdapter(__dekaDefault); }} else if (__dekaDefault && typeof __dekaDefault === 'object' && !__dekaDefault.__dekaServer && (typeof __dekaDefault.fetch === 'function' || typeof __dekaDefault.routes === 'object')) {{ globalThis.app = globalThis.__deka.serve(__dekaDefault); }} else {{ globalThis.app = __dekaDefault; }} }} else if (typeof app !== 'undefined') {{ if (typeof app === 'function' && typeof globalThis.__dekaNodeExpressAdapter === 'function' && (typeof app.handle === 'function' || typeof app.listen === 'function')) {{ globalThis.app = globalThis.__dekaNodeExpressAdapter(app); }} else {{ globalThis.app = app; }} }} }}\n}})();",
+                    handler_code
+                );
+
+                let setup_code = "globalThis.app = undefined; globalThis.Deka = globalThis.Deka || {};";
+                if let Err(err) = isolate
+                    .runtime
+                    .execute_script("setup.js", ModuleCodeString::from(setup_code.to_string()))
+                {
+                    isolate.active_requests = 0;
+                    isolate.state = IsolateState::Idle;
+                    return (
+                        ExecutionOutcome::Err(format!("Setup failed: {}", err)),
+                        ExecutionProfile::empty(),
+                    );
+                }
+
+                Some(wrapped)
+            }
         } else {
             None
         };

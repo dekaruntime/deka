@@ -1195,6 +1195,52 @@ mod tests {
     }
 
     #[test]
+    fn bundle_iife_strips_exports_and_await() {
+        let tmp = make_tmp_dir("iife_exports");
+        let entry = tmp.join("entry.js");
+        let source = r#"
+export const phpxBuildMode = "subset-ast";
+export const phpxTargetSemantics = "js";
+function App(req) { return { status: 200, body: "ok" }; }
+const __phpx_main = async () => {
+    let app = App;
+    globalThis.app = app;
+};
+await __phpx_main();
+"#;
+        std::fs::write(&entry, source).expect("write entry");
+        let provider = Arc::new(SimpleVirtualSource {
+            entry: entry.clone(),
+            code: source.to_string(),
+        });
+        let result = bundle_virtual_entry(
+            &entry,
+            BundleOptions {
+                project_root: tmp.clone(),
+                minify: true,
+                iife: true,
+                stdlib_path: None,
+            },
+            provider,
+        )
+        .expect("bundle should succeed");
+        // IIFE mode should NOT contain export statements
+        assert!(
+            !result.contains("export "),
+            "IIFE bundle should not contain export statements: {}",
+            result
+        );
+        // Must start with `(async function` for pre-bundled IIFE detection
+        let trimmed = result.trim_start();
+        assert!(
+            trimmed.starts_with("(async function"),
+            "IIFE bundle should start with (async function: starts with {:?}",
+            &trimmed[..60.min(trimmed.len())]
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
     fn bundle_minified_output_is_valid() {
         let tmp = make_tmp_dir("minified");
         let entry = tmp.join("entry.js");
