@@ -49,9 +49,24 @@ pub fn emit_js_from_ast(
     source: &[u8],
     meta: SourceModuleMeta,
 ) -> Result<String, String> {
+    let (js, warnings) = emit_js_from_ast_with_warnings(program, source, meta)?;
+    for w in &warnings {
+        eprintln!("[phpx warning] {}", w);
+    }
+    Ok(js)
+}
+
+/// Like `emit_js_from_ast` but returns collected warnings instead of printing
+/// them.  Used by tests to assert on warning content.
+pub fn emit_js_from_ast_with_warnings(
+    program: &Program<'_>,
+    source: &[u8],
+    meta: SourceModuleMeta,
+) -> Result<(String, Vec<String>), String> {
     let mut emitter = JsSubsetEmitter::new(source, meta);
     emitter.emit_program(program)?;
-    Ok(emitter.finish())
+    let warnings = emitter.warnings.clone();
+    Ok((emitter.finish(), warnings))
 }
 
 pub fn emit_js_scaffold_with_reason(source: &str, file_path: &str, reason: &str) -> String {
@@ -350,6 +365,12 @@ struct JsSubsetEmitter<'a> {
     uses_jsx_runtime: bool,
     uses_include_stub: bool,
     scopes: Vec<HashSet<String>>,
+    /// Variables that were `let`-declared inside a block scope that has since
+    /// been popped.  When a variable reference hits this set (but is NOT in any
+    /// live scope), the transpiler emits a warning: the variable was block-
+    /// scoped and is no longer visible under JS scoping rules.
+    popped_declarations: HashSet<String>,
+    warnings: Vec<String>,
     meta: SourceModuleMeta,
     struct_schemas: Vec<(String, String)>,
     struct_names: HashSet<String>,
@@ -366,6 +387,8 @@ impl<'a> JsSubsetEmitter<'a> {
             uses_jsx_runtime: false,
             uses_include_stub: false,
             scopes: vec![HashSet::new()],
+            popped_declarations: HashSet::new(),
+            warnings: Vec::new(),
             meta,
             struct_schemas: Vec::new(),
             struct_names: HashSet::new(),
@@ -1200,6 +1223,18 @@ impl<'a> JsSubsetEmitter<'a> {
                 if self.is_declared(&ident) {
                     Ok(ident)
                 } else {
+                    // Phase 3: detect cross-block variable access.  If the
+                    // variable was `let`-declared inside a block scope that has
+                    // since been popped, the user is reading a variable that
+                    // won't be visible under JS block scoping rules.
+                    if self.popped_declarations.contains(&ident) {
+                        self.warnings.push(format!(
+                            "Variable `${}` is first assigned inside a block. \
+                             Under PHPX scoping rules, it won't be visible outside. \
+                             Declare it at function level if needed.",
+                            ident
+                        ));
+                    }
                     Ok(format!("globalThis.{}", ident))
                 }
             }
@@ -2475,7 +2510,17 @@ impl<'a> JsSubsetEmitter<'a> {
     }
 
     fn pop_scope(&mut self) {
-        let _ = self.scopes.pop();
+        if let Some(popped) = self.scopes.pop() {
+            // Record variables that were declared only in this block scope
+            // (not also in an enclosing scope).  If they are later referenced,
+            // we know the user wrote a cross-block variable access that won't
+            // work under JS block scoping.
+            for name in popped {
+                if !self.is_declared(&name) {
+                    self.popped_declarations.insert(name);
+                }
+            }
+        }
     }
 
     fn declare_in_scope(&mut self, name: &str) {
@@ -3219,5 +3264,54 @@ $result = match ($x) {
         // But kept entries should still be present
         assert!(js.contains("globalThis.panic ??="), "globalThis.panic should still be in prelude");
         assert!(js.contains("globalThis.defined ??="), "globalThis.defined should still be in prelude");
+    }
+
+    // ---- Phase 3: scope validation warnings ----
+
+    /// Helper: parse PHPX source and emit JS, returning both the JS and any
+    /// scope-validation warnings.
+    fn phpx_to_js_with_warnings(source: &str) -> Result<(String, Vec<String>), String> {
+        let arena = Bump::new();
+        let mut parser =
+            Parser::new_with_mode(Lexer::new(source.as_bytes()), &arena, ParserMode::Phpx);
+        let program = parser.parse_program();
+        if !program.errors.is_empty() {
+            let msgs: Vec<&str> = program.errors.iter().map(|e| e.message).collect();
+            return Err(format!("parse errors: {}", msgs.join("; ")));
+        }
+        emit_js_from_ast_with_warnings(&program, source.as_bytes(), SourceModuleMeta::empty())
+    }
+
+    #[test]
+    fn scope_outer_declare_inner_assign_no_warning() {
+        // Variable declared at outer scope, assigned inside foreach — no warning.
+        // Wrapped in a function to avoid top-level globalThis mirroring.
+        let source = "function test(): int {\n  $total = 0;\n  foreach ([1,2,3] as $v) {\n    $total = $total + $v;\n  }\n  return $total;\n}";
+        let (js, warnings) = phpx_to_js_with_warnings(source).expect("should compile");
+        let scope_warnings: Vec<_> = warnings.iter().filter(|w| w.contains("first assigned inside a block")).collect();
+        assert!(scope_warnings.is_empty(), "expected no scope warnings, got: {:?}", scope_warnings);
+        assert!(js.contains("let total = 0"), "expected let total at function scope, got:\n{}", js);
+        // Inside the function, total should never become globalThis.total
+        assert!(!js.contains("globalThis.total"), "total should not be globalThis inside function, got:\n{}", js);
+    }
+
+    #[test]
+    fn scope_first_assign_inside_block_warns() {
+        // Variable first assigned inside a foreach, then read outside — should warn.
+        let source = "function test(): int {\n  foreach ([1,2,3] as $v) {\n    $total = $total + $v;\n  }\n  return $total;\n}";
+        let (_js, warnings) = phpx_to_js_with_warnings(source).expect("should compile");
+        assert!(
+            warnings.iter().any(|w| w.contains("$total") && w.contains("first assigned inside a block")),
+            "expected scope warning for $total, got: {:?}", warnings
+        );
+    }
+
+    #[test]
+    fn scope_normal_block_scoped_no_warning() {
+        // Variables used only within their declaring scope — no warning.
+        let source = "function test(): int {\n  $x = 10;\n  if ($x > 5) {\n    $y = $x + 1;\n  }\n  return $x;\n}";
+        let (_js, warnings) = phpx_to_js_with_warnings(source).expect("should compile");
+        let scope_warnings: Vec<_> = warnings.iter().filter(|w| w.contains("first assigned inside a block")).collect();
+        assert!(scope_warnings.is_empty(), "expected no scope warnings, got: {:?}", scope_warnings);
     }
 }
