@@ -95,40 +95,43 @@ pub fn bundle_virtual_entry(
         GLOBALS.set(&globals, || {
             let top_level_mark = Mark::new();
             let unresolved_mark = Mark::new();
-            // Re-enable SWC compress, but work around four independent
-            // bugs in swc_ecma_minifier 42.x. Every workaround is pinned
-            // to the upstream source file so future SWC upgrades can
-            // re-check whether the bug is still there. Validated by the
-            // `bundle_minified_preserves_*` tests below.
+            // SWC compress with workarounds for genuine bugs in
+            // swc_ecma_minifier 42.x.  Every workaround is pinned to
+            // the upstream source file so future upgrades can re-check.
+            // Validated by `bundle_minified_preserves_*` tests below.
             //
             //  1. compress/pure/bools.rs :: `compress_if_stmt_as_expr`
-            //     Rewrites `if (c) x = y;` into `c && x = y` and emits
-            //     it without parens around the assignment LHS — invalid
-            //     JS. Gated on `conditionals || bools`; both must be off.
+            //     Rewrites `if (c) x = y;` into `c && x = y` without
+            //     parens on the assignment LHS — invalid JS.  Gated on
+            //     `conditionals || bools`; both must stay off.
             //
-            //  2. compress/pure/sequences.rs
-            //     Folds adjacent expression statements into comma-
-            //     sequence expressions and then pushes those into
-            //     `for-of` heads, producing `for (let _ of a = 0, arr)`
-            //     which is a parse error. `sequences = 0` disables it.
+            //  2. compress/pure/sequences.rs (for-of head bug)
+            //     Folds adjacent statements into comma-sequence exprs
+            //     then pushes them into `for-of` heads, producing
+            //     `for (let _ of count = 0, arr)` — a parse error.
+            //     `sequences = 0` disables it.  Still triggers on the
+            //     transpiler's `count()` rewrite pattern even after the
+            //     globalThis polyfill removal (Phase 2).
             //
             //  3. compress/optimize/inline.rs
-            //     `inline = 3` inlines callee bodies into callers, which
-            //     hoists block-local `let`s into a shared scope and then
-            //     collides when two modules declare the same name in
-            //     different block bodies. `inline = 0` disables it.
+            //     `inline = 3` inlines callee bodies into callers,
+            //     which hoists block-local `let`s into a shared scope
+            //     and collides when two modules declare the same name
+            //     in different block bodies.  Still triggers on the
+            //     bundled output (e.g. `let code` in hexdec inlined
+            //     into a scope that already has `let code`).
+            //     `inline = 0` disables it.
             //
             //  4. compress/optimize/if_return.rs
-            //     Merges `{ stmt; return expr; }` into `return (stmt, expr)`
-            //     and then — when the caller lives inside a ternary —
-            //     drops the parens, yielding `cond ? stmt, expr : alt`,
-            //     which is a parse error (sequence expression not allowed
-            //     in ternary `cons` position).
+            //     Merges `{ stmt; return expr; }` into
+            //     `return (stmt, expr)` and — when inside a ternary —
+            //     drops parens, yielding `cond ? stmt, expr : alt`
+            //     which is a parse error.  Still triggers on the
+            //     transpiler's prelude helpers (e.g. `sort`).
             //
-            // Every other compress pass (DCE, unused removal, dead-branch
-            // elimination, evaluation/constant folding, property hoisting,
-            // IIFE collapsing, collapse_vars, reduce_vars, etc.) is safe
-            // and provides the bulk of the byte savings.
+            // All five workarounds are genuine SWC bugs that persist
+            // even after the JS-first polyfill removal (Phase 2).
+            // No passes were safe to re-enable.
             let mut compress = CompressOptions::default();
             compress.conditionals = false;
             compress.bools = false;
