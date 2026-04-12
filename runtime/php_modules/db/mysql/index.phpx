@@ -2,6 +2,7 @@ import { result_ok, result_err, result_is_ok } from 'core/result'
 import { openHandle, query as db_query, queryOne as db_query_one, exec as db_exec, begin as db_begin, commit as db_commit, rollback as db_rollback, close as db_close, openHandleSync, querySync as db_query_sync, queryOneSync as db_query_one_sync, execSync as db_exec_sync, beginSync as db_begin_sync, commitSync as db_commit_sync, rollbackSync as db_rollback_sync, closeSync as db_close_sync } from 'db'
 import { tcp_connect, tcp_read_exact, tcp_write, tcp_close, tcp_set_deadline } from 'tcp'
 import { bytes_get } from 'core/bytes'
+import { rtrim } from 'string/rtrim'
 
 const CLIENT_LONG_PASSWORD = 0x00000001
 const CLIENT_LONG_FLAG = 0x00000004

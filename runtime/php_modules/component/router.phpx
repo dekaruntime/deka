@@ -3,6 +3,9 @@ import { readDirSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { renderToString, renderPartialResponse, isPartialRequest } from 'component/dom';
 import { result_is_ok } from 'core/result';
 import { now_ms } from 'time';
+import { trim } from 'string/trim';
+import { ltrim } from 'string/ltrim';
+import { rtrim } from 'string/rtrim';
 
 /// docid: phpx/component/generate_manifest()
 /// <Function name="generate_manifest">

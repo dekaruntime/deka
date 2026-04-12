@@ -1,5 +1,6 @@
 import { isValidElement, __component_push_context, __component_pop_context } from 'component/core';
 import { json_encode, json_decode } from 'encoding/json';
+import { ltrim } from 'string/ltrim';
 
 struct Root {
     $container: string = '#app';
