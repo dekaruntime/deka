@@ -34,6 +34,11 @@ pub struct BundleOptions {
     pub project_root: PathBuf,
     pub minify: bool,
     pub iife: bool,
+    /// Optional path to the system stdlib php_modules directory.
+    /// When set, the resolver falls back to this path for modules not found
+    /// in the project-local php_modules/. If None, the resolver checks
+    /// DEKA_STDLIB_PATH env var, then falls back to a compile-time default.
+    pub stdlib_path: Option<PathBuf>,
 }
 
 pub trait VirtualSource: Send + Sync {
@@ -52,7 +57,7 @@ pub fn bundle_virtual_entry(
         css_collector: Arc::new(Mutex::new(CssCollector::default())),
         provider,
     };
-    let resolver = DekaResolver::new(options.project_root)?;
+    let resolver = DekaResolver::new(options.project_root, options.stdlib_path)?;
 
     let mut bundler = Bundler::new(
         &globals,
@@ -816,14 +821,40 @@ fn is_jsx(path: &Path) -> bool {
 struct DekaResolver {
     root: PathBuf,
     php_modules: PathBuf,
+    /// Fallback path for stdlib modules not found in the project-local php_modules/.
+    /// Resolved from: BundleOptions.stdlib_path > DEKA_STDLIB_PATH env > compile-time default.
+    /// TODO: make configurable via CLI flag when deka supports it.
+    stdlib_php_modules: Option<PathBuf>,
 }
 
 impl DekaResolver {
-    fn new(project_root: PathBuf) -> Result<Self, String> {
+    fn new(project_root: PathBuf, stdlib_path: Option<PathBuf>) -> Result<Self, String> {
         let php_modules = project_root.join("php_modules");
+
+        // Resolve the system stdlib path:
+        // 1. Explicit parameter (from BundleOptions.stdlib_path)
+        // 2. DEKA_STDLIB_PATH environment variable
+        // 3. Compile-time default for development
+        let stdlib_php_modules = stdlib_path
+            .or_else(|| std::env::var("DEKA_STDLIB_PATH").ok().map(PathBuf::from))
+            .or_else(|| {
+                // Development fallback: deka/runtime/php_modules/ relative to the
+                // binary location. The release binary lives at
+                // deka/runtime/target/release/cli, so ../../php_modules/ gets us there.
+                let exe = std::env::current_exe().ok()?;
+                let runtime_dir = exe.parent()?.parent()?.parent()?;
+                let candidate = runtime_dir.join("php_modules");
+                if candidate.is_dir() {
+                    Some(candidate)
+                } else {
+                    None
+                }
+            });
+
         Ok(Self {
             root: project_root,
             php_modules,
+            stdlib_php_modules,
         })
     }
 
@@ -840,13 +871,23 @@ impl DekaResolver {
 
     fn resolve_php_module(&self, specifier: &str) -> Option<PathBuf> {
         for alias in module_spec_aliases(specifier) {
+            // First try project-local php_modules/
             let base = if alias.starts_with("@user/") {
                 self.php_modules.join("@user").join(alias.trim_start_matches("@user/"))
             } else {
-                self.php_modules.join(alias)
+                self.php_modules.join(&alias)
             };
             if let Some(path) = resolve_with_candidates(&base) {
                 return Some(path);
+            }
+            // Fallback: try system stdlib php_modules/
+            if let Some(ref stdlib) = self.stdlib_php_modules
+                && !alias.starts_with("@user/")
+            {
+                let stdlib_base = stdlib.join(&alias);
+                if let Some(path) = resolve_with_candidates(&stdlib_base) {
+                    return Some(path);
+                }
             }
         }
         None
@@ -896,15 +937,23 @@ impl Resolve for DekaResolver {
             }
         }
 
-        if let Some(mapped) = match specifier {
-            spec if spec.starts_with("component/") => Some(self.php_modules.join(spec)),
-            spec if spec.starts_with("encoding/") => Some(self.php_modules.join(spec)),
-            spec if spec.starts_with("deka/") => Some(self.php_modules.join(spec)),
-            spec if spec.starts_with("db/") => Some(self.php_modules.join(spec)),
-            spec if spec.starts_with("core/") => Some(self.php_modules.join(spec)),
-            _ => None,
-        } {
-            if let Some(candidate) = resolve_with_candidates(&mapped) {
+        let is_prefixed_module = specifier.starts_with("component/")
+            || specifier.starts_with("encoding/")
+            || specifier.starts_with("deka/")
+            || specifier.starts_with("db/")
+            || specifier.starts_with("core/");
+        if is_prefixed_module {
+            // Try project-local first
+            if let Some(candidate) = resolve_with_candidates(&self.php_modules.join(specifier)) {
+                return Ok(Resolution {
+                    filename: FileName::Real(candidate),
+                    slug: None,
+                });
+            }
+            // Fallback to system stdlib
+            if let Some(ref stdlib) = self.stdlib_php_modules
+                && let Some(candidate) = resolve_with_candidates(&stdlib.join(specifier))
+            {
                 return Ok(Resolution {
                     filename: FileName::Real(candidate),
                     slug: None,
@@ -1105,6 +1154,7 @@ mod tests {
                 project_root: tmp.clone(),
                 minify: false,
                 iife: false,
+                stdlib_path: None,
             },
             provider,
         )
@@ -1128,6 +1178,7 @@ mod tests {
                 project_root: tmp.clone(),
                 minify: false,
                 iife: true,
+                stdlib_path: None,
             },
             provider,
         )
@@ -1155,6 +1206,7 @@ mod tests {
                 project_root: tmp.clone(),
                 minify: true,
                 iife: false,
+                stdlib_path: None,
             },
             provider,
         )
@@ -1196,6 +1248,7 @@ mod tests {
                 project_root: tmp.clone(),
                 minify: true,
                 iife: false,
+                stdlib_path: None,
             },
             provider,
         )
@@ -1236,6 +1289,7 @@ mod tests {
                 project_root: tmp.clone(),
                 minify: true,
                 iife: false,
+                stdlib_path: None,
             },
             provider,
         )
@@ -1246,6 +1300,46 @@ mod tests {
             result
         );
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn resolver_falls_back_to_stdlib_path() {
+        // Project-local php_modules/ does NOT contain "crypto",
+        // but the stdlib path does. The resolver should find it there.
+        let project = make_tmp_dir("stdlib_fallback_project");
+        let stdlib = make_tmp_dir("stdlib_fallback_stdlib");
+
+        // Create project-local php_modules/ (empty)
+        std::fs::create_dir_all(project.join("php_modules")).unwrap();
+
+        // Create stdlib crypto/index.js
+        let crypto_dir = stdlib.join("crypto");
+        std::fs::create_dir_all(&crypto_dir).unwrap();
+        std::fs::write(crypto_dir.join("index.js"), "export function random_hex() { return '0a'; }\n").unwrap();
+
+        let resolver = DekaResolver::new(project.clone(), Some(stdlib.clone())).unwrap();
+        let result = resolver.resolve_php_module("crypto");
+        assert!(result.is_some(), "expected stdlib fallback to resolve crypto");
+        assert!(
+            result.unwrap().starts_with(&stdlib),
+            "resolved path should be under the stdlib directory"
+        );
+
+        // If project-local has the module, it should win
+        let local_crypto = project.join("php_modules").join("crypto");
+        std::fs::create_dir_all(&local_crypto).unwrap();
+        std::fs::write(local_crypto.join("index.js"), "export function random_hex() { return 'local'; }\n").unwrap();
+
+        let resolver2 = DekaResolver::new(project.clone(), Some(stdlib.clone())).unwrap();
+        let result2 = resolver2.resolve_php_module("crypto");
+        assert!(result2.is_some(), "expected local resolution");
+        assert!(
+            result2.unwrap().starts_with(&project),
+            "local php_modules should take priority over stdlib"
+        );
+
+        let _ = std::fs::remove_dir_all(&project);
+        let _ = std::fs::remove_dir_all(&stdlib);
     }
 }
 

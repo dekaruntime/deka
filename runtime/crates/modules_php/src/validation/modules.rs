@@ -36,13 +36,18 @@ struct ImportEdge {
 pub fn validate_module_resolution(source: &str, file_path: &str) -> Vec<ValidationError> {
     let mut errors = Vec::new();
     let modules_root = resolve_modules_root(file_path);
+    let stdlib_root = resolve_stdlib_modules_root();
     let imports = collect_import_specs(source, file_path);
-    let available_modules = modules_root
+    let mut available_modules = modules_root
         .as_deref()
         .map(scan_phpx_modules)
         .unwrap_or_default();
+    // Merge stdlib modules so validation sees them as available
+    if let Some(ref stdlib) = stdlib_root {
+        available_modules.extend(scan_phpx_modules(stdlib));
+    }
 
-    let mut graph = ModuleGraph::new(modules_root.clone(), available_modules.clone());
+    let mut graph = ModuleGraph::new(modules_root.clone(), available_modules.clone(), stdlib_root.clone());
     if !imports.is_empty() {
         graph.ensure_loaded("<entry>", Path::new(file_path), &mut errors);
     }
@@ -138,14 +143,17 @@ pub fn validate_target_capabilities(source: &str, file_path: &str) -> Vec<Valida
 
 struct ModuleGraph {
     modules_root: Option<PathBuf>,
+    /// Fallback stdlib root for system modules not found locally.
+    stdlib_root: Option<PathBuf>,
     available_modules: HashSet<String>,
     nodes: HashMap<String, ModuleNode>,
 }
 
 impl ModuleGraph {
-    fn new(modules_root: Option<PathBuf>, available_modules: HashSet<String>) -> Self {
+    fn new(modules_root: Option<PathBuf>, available_modules: HashSet<String>, stdlib_root: Option<PathBuf>) -> Self {
         Self {
             modules_root,
+            stdlib_root,
             available_modules,
             nodes: HashMap::new(),
         }
@@ -212,6 +220,7 @@ impl ModuleGraph {
                 file_path.to_string_lossy().as_ref(),
                 self.modules_root.as_deref(),
                 Some(&self.available_modules),
+                self.stdlib_root.as_deref(),
             ) {
                 Ok(resolved) => {
                     imports.push(ImportEdge {
@@ -524,6 +533,23 @@ pub(crate) fn resolve_modules_root(file_path: &str) -> Option<PathBuf> {
     None
 }
 
+/// Resolve the system stdlib php_modules/ path for validation.
+/// Checks DEKA_STDLIB_PATH env var first, then tries exe-relative path.
+/// TODO: make configurable via CLI flag when deka supports it.
+fn resolve_stdlib_modules_root() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("DEKA_STDLIB_PATH") {
+        let p = PathBuf::from(path);
+        if p.is_dir() {
+            return Some(p);
+        }
+    }
+    // Development fallback: binary at target/release/cli -> ../../php_modules/
+    let exe = std::env::current_exe().ok()?;
+    let runtime_dir = exe.parent()?.parent()?.parent()?;
+    let candidate = runtime_dir.join("php_modules");
+    if candidate.is_dir() { Some(candidate) } else { None }
+}
+
 fn scan_phpx_modules(modules_root: &Path) -> HashSet<String> {
     let mut modules = HashSet::new();
     let mut stack = vec![modules_root.to_path_buf()];
@@ -607,6 +633,7 @@ fn resolve_import_target(
     current_file_path: &str,
     modules_root: Option<&Path>,
     available_modules: Option<&HashSet<String>>,
+    stdlib_root: Option<&Path>,
 ) -> Result<ResolvedImportTarget, ValidationError> {
     let raw = raw.trim();
     let is_relative = raw.starts_with('.');
@@ -630,8 +657,14 @@ fn resolve_import_target(
         if let Ok(cwd) = std::env::current_dir() {
             base_dirs.push(cwd);
         }
-    } else if let Some(root) = modules_root {
-        base_dirs.push(root.to_path_buf());
+    } else {
+        if let Some(root) = modules_root {
+            base_dirs.push(root.to_path_buf());
+        }
+        // Fallback: system stdlib for bare module specifiers
+        if let Some(stdlib) = stdlib_root {
+            base_dirs.push(stdlib.to_path_buf());
+        }
     }
 
     if base_dirs.is_empty() {
@@ -678,6 +711,10 @@ fn resolve_import_target(
         if let Some(root) = modules_root {
             candidates.push(root.join(format!("{raw}.phpx")));
             candidates.push(root.join(raw).join("index.phpx"));
+        }
+        if let Some(stdlib) = stdlib_root {
+            candidates.push(stdlib.join(format!("{raw}.phpx")));
+            candidates.push(stdlib.join(raw).join("index.phpx"));
         }
     }
 

@@ -397,7 +397,10 @@ pub fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Re
     }
 
     let modules_dir = project_root.join("php_modules");
-    if !modules_dir.is_dir() {
+    let stdlib_dir = resolve_stdlib_path();
+
+    // At least one of local php_modules/ or system stdlib must exist
+    if !modules_dir.is_dir() && stdlib_dir.is_none() {
         return Err(format!(
             "deka runtime requires php_modules/ at project root when using stdlib imports ({})",
             stdlib_imports.join(", ")
@@ -406,7 +409,9 @@ pub fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Re
 
     let mut missing = Vec::new();
     for spec in stdlib_imports {
-        if resolve_module_file(&modules_dir, &spec).is_none() {
+        let found_local = modules_dir.is_dir() && resolve_module_file(&modules_dir, &spec).is_some();
+        let found_stdlib = stdlib_dir.as_ref().map_or(false, |d| resolve_module_file(d, &spec).is_some());
+        if !found_local && !found_stdlib {
             missing.push(spec);
         }
     }
@@ -420,6 +425,23 @@ pub fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Re
             missing.join(", ")
         ))
     }
+}
+
+/// Resolve the system stdlib php_modules/ path.
+/// Checks DEKA_STDLIB_PATH env var first, then tries exe-relative path.
+/// TODO: make configurable via CLI flag when deka supports it.
+fn resolve_stdlib_path() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("DEKA_STDLIB_PATH") {
+        let p = PathBuf::from(path);
+        if p.is_dir() {
+            return Some(p);
+        }
+    }
+    // Development fallback: binary at target/release/cli -> ../../php_modules/
+    let exe = std::env::current_exe().ok()?;
+    let runtime_dir = exe.parent()?.parent()?.parent()?;
+    let candidate = runtime_dir.join("php_modules");
+    if candidate.is_dir() { Some(candidate) } else { None }
 }
 
 fn collect_stdlib_imports(meta: &SourceModuleMeta) -> Vec<String> {
