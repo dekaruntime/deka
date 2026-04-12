@@ -821,6 +821,18 @@ fn is_jsx(path: &Path) -> bool {
     }
 }
 
+/// Verify that `resolved` stays within `root` after canonicalization.
+/// Returns `None` if the path escapes the root (path traversal).
+fn guard_path_traversal(resolved: &Path, root: &Path) -> Option<PathBuf> {
+    let canonical = std::fs::canonicalize(resolved).ok()?;
+    let canonical_root = std::fs::canonicalize(root).ok()?;
+    if canonical.starts_with(&canonical_root) {
+        Some(canonical)
+    } else {
+        None
+    }
+}
+
 struct DekaResolver {
     root: PathBuf,
     php_modules: PathBuf,
@@ -881,7 +893,11 @@ impl DekaResolver {
                 self.php_modules.join(&alias)
             };
             if let Some(path) = resolve_with_candidates(&base) {
-                return Some(path);
+                // Guard against path traversal — resolved path must stay
+                // within the php_modules directory.
+                if guard_path_traversal(&path, &self.php_modules).is_some() {
+                    return Some(path);
+                }
             }
             // Fallback: try system stdlib php_modules/
             if let Some(ref stdlib) = self.stdlib_php_modules
@@ -889,7 +905,9 @@ impl DekaResolver {
             {
                 let stdlib_base = stdlib.join(&alias);
                 if let Some(path) = resolve_with_candidates(&stdlib_base) {
-                    return Some(path);
+                    if guard_path_traversal(&path, stdlib).is_some() {
+                        return Some(path);
+                    }
                 }
             }
         }
@@ -933,10 +951,13 @@ impl Resolve for DekaResolver {
         if specifier.starts_with("@/") {
             let target = self.root.join(specifier.trim_start_matches("@/"));
             if let Some(candidate) = resolve_with_candidates(&target) {
-                return Ok(Resolution {
-                    filename: FileName::Real(candidate),
-                    slug: None,
-                });
+                // Guard: resolved @/ path must stay within the project root
+                if guard_path_traversal(&candidate, &self.root).is_some() {
+                    return Ok(Resolution {
+                        filename: FileName::Real(candidate),
+                        slug: None,
+                    });
+                }
             }
         }
 
@@ -948,19 +969,24 @@ impl Resolve for DekaResolver {
         if is_prefixed_module {
             // Try project-local first
             if let Some(candidate) = resolve_with_candidates(&self.php_modules.join(specifier)) {
-                return Ok(Resolution {
-                    filename: FileName::Real(candidate),
-                    slug: None,
-                });
+                // Guard: resolved path must stay within php_modules/
+                if guard_path_traversal(&candidate, &self.php_modules).is_some() {
+                    return Ok(Resolution {
+                        filename: FileName::Real(candidate),
+                        slug: None,
+                    });
+                }
             }
             // Fallback to system stdlib
             if let Some(ref stdlib) = self.stdlib_php_modules
                 && let Some(candidate) = resolve_with_candidates(&stdlib.join(specifier))
             {
-                return Ok(Resolution {
-                    filename: FileName::Real(candidate),
-                    slug: None,
-                });
+                if guard_path_traversal(&candidate, stdlib).is_some() {
+                    return Ok(Resolution {
+                        filename: FileName::Real(candidate),
+                        slug: None,
+                    });
+                }
             }
         }
 
@@ -1389,6 +1415,37 @@ await __phpx_main();
 
         let _ = std::fs::remove_dir_all(&project);
         let _ = std::fs::remove_dir_all(&stdlib);
+    }
+
+    #[test]
+    fn resolver_rejects_path_traversal() {
+        let project = make_tmp_dir("path_traversal");
+        let modules = project.join("php_modules");
+        std::fs::create_dir_all(modules.join("component")).unwrap();
+        std::fs::write(
+            modules.join("component").join("button.js"),
+            "export const Button = 'ok';\n",
+        )
+        .unwrap();
+
+        // Also create a file outside php_modules to be the traversal target
+        std::fs::write(project.join("secret.js"), "export const secret = 'oops';\n").unwrap();
+
+        let resolver = DekaResolver::new(project.clone(), None).unwrap();
+
+        // Normal resolution should work
+        let normal = resolver.resolve_php_module("component/button");
+        assert!(normal.is_some(), "normal module resolution should work");
+
+        // Path traversal should fail — the specifier escapes php_modules/
+        let traversal = resolver.resolve_php_module("component/../../secret");
+        assert!(
+            traversal.is_none(),
+            "path traversal should be rejected, but resolved to: {:?}",
+            traversal
+        );
+
+        let _ = std::fs::remove_dir_all(&project);
     }
 }
 
