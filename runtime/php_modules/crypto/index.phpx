@@ -38,7 +38,7 @@ function hex_from_bytes($bytes) {
   $arr = bytes_to_array($bytes)
   $hex = ''
   foreach ($arr as $v) {
-    $part = dechex($v)
+    $part = $v->toString(16)
     if (strlen($part) < 2) {
       $part = '0' . $part
     }
@@ -137,7 +137,7 @@ export function uuid_v4() {
   $arr[8] = ($arr[8] & 0x3f) | 0x80
   $hex = ''
   foreach ($arr as $v) {
-    $part = dechex($v)
+    $part = $v->toString(16)
     if (strlen($part) < 2) {
       $part = '0' . $part
     }
