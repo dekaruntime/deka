@@ -250,12 +250,18 @@ async fn handle_platform_request(
         }
     };
 
+    // Strip X-Shop-ID from untrusted external requests — in platform
+    // (multi-tenant) mode only the Host header determines the tenant.
+    // This prevents spoofed X-Shop-ID from influencing handler routing,
+    // $_SERVER['SHOP_ID'] injection, and analytics attribution.
+    headers.retain(|(k, _)| !k.eq_ignore_ascii_case("x-shop-id"));
+
     // Keep a lightweight clone of the request headers for the pageview
     // tracker — it needs them to resolve the shop_id on the worker thread.
     let request_headers_for_analytics = headers.clone();
 
-    // Resolve tenant
-    let shop_id = pool::tenant::resolve_tenant_from_headers(&headers).unwrap_or_default();
+    // Resolve tenant from Host header only.
+    let shop_id = pool::tenant::resolve_tenant_from_host(&headers).unwrap_or_default();
     let (handler_key, handler_code, handler_entry) = state.resolve_handler(&shop_id);
 
     let request_parts = RequestParts {

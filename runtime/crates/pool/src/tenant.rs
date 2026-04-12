@@ -61,6 +61,10 @@ pub fn resolve_tenant(subdomain: &str) -> Option<String> {
 /// Resolve tenant from request headers.
 /// Extracts Host header → subdomain → Redis lookup → shop_id.
 /// Falls back to `DEKA_SHOP_ID` env var for dev/testing.
+///
+/// NOTE: In platform (multi-tenant) mode, prefer `resolve_tenant_from_host`
+/// which ignores the `X-Shop-ID` header to prevent spoofing. This function
+/// trusts `X-Shop-ID` and is only suitable for trusted/internal callers.
 pub fn resolve_tenant_from_headers(headers: &[(String, String)]) -> Option<String> {
     // Check for explicit X-Shop-ID header (testing/dev override)
     if let Some(shop_id) = headers
@@ -73,6 +77,14 @@ pub fn resolve_tenant_from_headers(headers: &[(String, String)]) -> Option<Strin
         }
     }
 
+    resolve_tenant_from_host(headers)
+}
+
+/// Resolve tenant from the Host header only — ignores `X-Shop-ID`.
+/// Use this in platform (multi-tenant) mode where the `X-Shop-ID`
+/// header comes from untrusted external clients and must not influence
+/// tenant routing or analytics attribution.
+pub fn resolve_tenant_from_host(headers: &[(String, String)]) -> Option<String> {
     // Extract from Host header
     let host = headers
         .iter()
@@ -148,6 +160,19 @@ mod tests {
             ("x-shop-id".to_string(), "shop_override".to_string()),
         ];
         assert_eq!(resolve_tenant_from_headers(&headers), Some("shop_override".to_string()));
+    }
+
+    #[test]
+    fn resolve_from_host_ignores_x_shop_id() {
+        let headers = vec![
+            ("Host".to_string(), "localhost:8530".to_string()),
+            ("X-Shop-ID".to_string(), "spoofed-shop".to_string()),
+        ];
+        // resolve_tenant_from_host should ignore X-Shop-ID entirely;
+        // localhost has no subdomain so it falls through to env var.
+        let result = resolve_tenant_from_host(&headers);
+        // Must NOT be "spoofed-shop" — that would mean X-Shop-ID was trusted
+        assert_ne!(result, Some("spoofed-shop".to_string()));
     }
 
     #[test]

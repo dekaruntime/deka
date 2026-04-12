@@ -169,7 +169,7 @@ fn run_worker(rx: mpsc::Receiver<PageviewEvent>) {
         // Resolve subdomain → shop_id. The pool's tenant resolver keeps a
         // thread-local Redis connection cache — on this dedicated worker
         // thread the first call establishes it and subsequent calls reuse.
-        let shop_id = match pool::tenant::resolve_tenant_from_headers(&event.headers) {
+        let shop_id = match pool::tenant::resolve_tenant_from_host(&event.headers) {
             Some(id) if !id.is_empty() => id,
             _ => {
                 // No tenant — not a storefront request. Drop silently.
@@ -364,9 +364,9 @@ mod tests {
     // End-to-end integration test: requires a reachable Redis at
     // DEKA_REDIS_TEST_URL. Skips silently if not configured so CI stays clean.
     //
-    // Passes shop_id via the `X-Shop-ID` header which `resolve_tenant_from_headers`
-    // honors as a priority override — avoids needing to seed a real
-    // `subdomain:*` row in Redis.
+    // Seeds a `subdomain:{name}` → `{shop_id}` key in Redis so the
+    // Host-based resolver can find it (analytics now uses
+    // `resolve_tenant_from_host` which ignores X-Shop-ID).
     #[test]
     fn end_to_end_redis_integration() {
         let url = match std::env::var("DEKA_REDIS_TEST_URL") {
@@ -387,9 +387,19 @@ mod tests {
         unsafe {
             std::env::set_var("DEKA_REDIS_URL", &url);
         }
-        let shop = format!("shop_pv_test_{}", std::process::id());
+        let pid = std::process::id();
+        let subdomain = format!("pvtest{}", pid);
+        let shop = format!("shop_pvtest_{}", pid);
+        let subdomain_key = format!("subdomain:{}", subdomain);
         let total = format!("analytics:{}:pageviews:total", shop);
         let daily = format!("analytics:{}:pageviews:{}", shop, today_utc());
+
+        // Seed the subdomain → shop_id mapping
+        let _: () = redis::cmd("SET")
+            .arg(&subdomain_key)
+            .arg(&shop)
+            .query(&mut probe)
+            .unwrap();
         let _: () = redis::cmd("DEL")
             .arg(&total)
             .arg(&daily)
@@ -398,8 +408,7 @@ mod tests {
 
         let response_headers = header_map(&[("Content-Type", "text/html; charset=utf-8")]);
         let request_headers: Vec<(String, String)> = vec![
-            ("Host".to_string(), "something.tana.gg".to_string()),
-            ("X-Shop-ID".to_string(), shop.clone()),
+            ("Host".to_string(), format!("{}.tana.gg", subdomain)),
         ];
         assert!(track_pageview(&request_headers, 200, &response_headers));
         assert!(track_pageview(&request_headers, 200, &response_headers));
@@ -419,6 +428,7 @@ mod tests {
         let _: () = redis::cmd("DEL")
             .arg(&total)
             .arg(&daily)
+            .arg(&subdomain_key)
             .query(&mut probe)
             .unwrap();
     }
