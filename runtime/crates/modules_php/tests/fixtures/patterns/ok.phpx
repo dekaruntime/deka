@@ -3,7 +3,7 @@ enum Color {
     case Blue;
 }
 
-function to_int(Color $color): int {
+function to_int($color: Color): int {
     return match ($color) {
         Color::Red => 1,
         Color::Blue => 2,

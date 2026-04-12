@@ -4,5 +4,5 @@
 // World: hello
 // Records: struct
 
-export function interface_0__greet(string $name): string;
+export function interface_0__greet($name: string): string;
 

@@ -14,8 +14,8 @@ struct User {
     $age: int;
 }
 
-export function greet(string $name): string;
+export function greet($name: string): string;
 
 export function get_position(): Position;
 
-export function make_user(string $name, int $age): User;
+export function make_user($name: string, $age: int): User;

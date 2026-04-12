@@ -409,7 +409,7 @@ fn match_duplicate_case_reports_error() {
 fn rule_null_reports_error() {
     let path = fixtures_root().join("rules/null_value.phpx");
     let result = compile_fixture(&path);
-    assert_has_error(&result, ErrorKind::NullNotAllowed);
+    assert_has_error(&result, ErrorKind::TypeError);
 }
 
 #[test]
@@ -531,7 +531,7 @@ function Page() {
 fn jsx_invalid_attr_reports_error() {
     let path = fixtures_root().join("jsx/invalid_attr.phpx");
     let result = compile_fixture(&path);
-    assert_has_error(&result, ErrorKind::SyntaxError);
+    assert_has_error(&result, ErrorKind::JsxError);
 }
 
 #[test]
@@ -554,5 +554,5 @@ fn multiple_errors_collected() {
     let result = compile_fixture(&path);
     assert!(result.errors.len() >= 2, "expected multiple errors");
     assert_has_error(&result, ErrorKind::ModuleError);
-    assert_has_error(&result, ErrorKind::NullNotAllowed);
+    assert_has_error(&result, ErrorKind::TypeError);
 }
