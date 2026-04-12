@@ -11,6 +11,7 @@ platform_server = { path = "../platform_server" }
 engine = { path = "../engine" }
 pool = { path = "../pool" }
 transport = { path = "../transport" }
+deka_http = { path = "../http", package = "http" }
 stdio = { path = "../stdio" }
 modules_php = { path = "../modules_php" }
 phpx_js = { path = "../phpx_js" }

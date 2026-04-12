@@ -18,3 +18,5 @@ libc = "0.2"
 engine = { path = "../engine" }
 pool = { path = "../pool" }
 serde_json = { workspace = true }
+redis = { workspace = true }
+chrono = { workspace = true }

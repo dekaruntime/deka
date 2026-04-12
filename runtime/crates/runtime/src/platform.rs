@@ -228,6 +228,10 @@ async fn handle_platform_request(
         }
     };
 
+    // Keep a lightweight clone of the request headers for the pageview
+    // tracker — it needs them to resolve the shop_id on the worker thread.
+    let request_headers_for_analytics = headers.clone();
+
     // Resolve tenant
     let shop_id = pool::tenant::resolve_tenant_from_headers(&headers).unwrap_or_default();
     let (handler_key, handler_code, handler_entry) = state.resolve_handler(&shop_id);
@@ -259,6 +263,16 @@ async fn handle_platform_request(
             match pool_response.result {
                 Some(result) => match engine::ResponseEnvelope::from_value(result) {
                     Ok(envelope) => {
+                        // Fire-and-forget pageview tracking. Filters to
+                        // 2xx + text/html inside `track_pageview`, resolves
+                        // shop_id on a dedicated worker thread, writes to
+                        // Redis out-of-band. Never blocks or fails the
+                        // request path.
+                        deka_http::analytics::track_pageview(
+                            &request_headers_for_analytics,
+                            envelope.status,
+                            &envelope.headers,
+                        );
                         let mut response = Response::builder().status(envelope.status);
                         for (key, value) in &envelope.headers {
                             response = response.header(key.as_str(), value.as_str());

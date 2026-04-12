@@ -9,6 +9,7 @@ use axum::{
 };
 use base64::Engine;
 
+use crate::analytics::track_pageview;
 use crate::utility_css::inject_utility_css;
 use crate::websocket::{handle_hmr_websocket, handle_websocket, set_hmr_runtime_state};
 use engine::{RuntimeState, execute_request_parts};
@@ -78,6 +79,11 @@ async fn handle_request(
         (headers, body)
     };
 
+    // Keep a lightweight clone of the request headers for the pageview
+    // tracker — it needs them to resolve the shop_id on the worker thread.
+    // In perf mode `headers` is empty so the clone is effectively free.
+    let request_headers_for_analytics = headers.clone();
+
     match execute_request_parts(
         Arc::clone(&state),
         format!("http://localhost{}", uri),
@@ -91,6 +97,15 @@ async fn handle_request(
             if http_debug_enabled() {
                 tracing::info!("[http] response {} {}", response_envelope.status, uri);
             }
+            // Fire-and-forget pageview tracking. Filters to 2xx + text/html
+            // inside `track_pageview`, resolves shop_id on a dedicated
+            // worker thread, writes to Redis out-of-band. Never blocks the
+            // request path and never fails it.
+            track_pageview(
+                &request_headers_for_analytics,
+                response_envelope.status,
+                &response_envelope.headers,
+            );
             if let Some(upgrade) = response_envelope.upgrade {
                 if let Some(ws) = ws {
                     return ws
