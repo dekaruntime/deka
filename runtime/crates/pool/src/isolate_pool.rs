@@ -2496,31 +2496,24 @@ impl WorkerThread {
                     ModuleCodeString::from(request.request_data.handler_code.clone()),
                 );
                 match handler_result {
-                    Ok(value) => {
-                        // If the script returned a Promise (async IIFE), run
-                        // the event loop so globalThis.app gets set before
-                        // __dekaExecuteRequest checks it.
-                        let is_promise = {
-                            deno_core::scope!(scope, &mut isolate.runtime);
-                            let local = deno_core::v8::Local::new(scope, &value);
-                            deno_core::v8::Local::<deno_core::v8::Promise>::try_from(local).is_ok()
-                        };
-                        if is_promise {
-                            if let Err(err) = isolate
-                                .runtime
-                                .run_event_loop(deno_core::PollEventLoopOptions::default())
-                                .await
-                            {
-                                isolate.active_requests = 0;
-                                isolate.state = IsolateState::Idle;
-                                return (
-                                    ExecutionOutcome::Err(format!(
-                                        "Handler async init failed: {}",
-                                        err
-                                    )),
-                                    ExecutionProfile::empty(),
-                                );
-                            }
+                    Ok(_value) => {
+                        // The async IIFE returns a Promise. Run the event
+                        // loop unconditionally so globalThis.app gets set
+                        // before __dekaExecuteRequest checks it.
+                        if let Err(err) = isolate
+                            .runtime
+                            .run_event_loop(deno_core::PollEventLoopOptions::default())
+                            .await
+                        {
+                            isolate.active_requests = 0;
+                            isolate.state = IsolateState::Idle;
+                            return (
+                                ExecutionOutcome::Err(format!(
+                                    "Handler async init failed: {}",
+                                    err
+                                )),
+                                ExecutionProfile::empty(),
+                            );
                         }
                     }
                     Err(err) => {
