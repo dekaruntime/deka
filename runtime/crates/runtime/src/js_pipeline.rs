@@ -23,7 +23,20 @@ pub fn build_phpx_handler_bundle(handler_path: &str) -> Result<String, String> {
     ensure_project_layout(&project_root, &meta)?;
 
     let mut entry_js = compile_phpx_source_to_js(&source, input, meta)?;
-    let prelude = build_stdlib_prelude(&project_root)?;
+
+    // build_stdlib_prelude needs php_modules/stdlib.json under the project root.
+    // Tenants may not have their own stdlib.json, so fall back to the system
+    // stdlib path (same resolver used by ensure_project_layout).
+    let prelude_root = if project_root.join("php_modules").join("stdlib.json").is_file() {
+        project_root.clone()
+    } else if let Some(stdlib_dir) = resolve_stdlib_path() {
+        // The system stdlib lives at <runtime>/php_modules/; its parent is the
+        // effective "project root" for prelude generation purposes.
+        stdlib_dir.parent().unwrap_or(&stdlib_dir).to_path_buf()
+    } else {
+        project_root.clone() // let build_stdlib_prelude produce its normal error
+    };
+    let prelude = build_stdlib_prelude(&prelude_root)?;
     entry_js = format!("{prelude}\n{entry_js}");
     let entry_path = fs::canonicalize(input_path)
         .map_err(|err| format!("failed to resolve {}: {}", input_path.display(), err))?;

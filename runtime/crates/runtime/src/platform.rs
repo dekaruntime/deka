@@ -264,6 +264,18 @@ async fn handle_platform_request(
     let shop_id = pool::tenant::resolve_tenant_from_host(&headers).unwrap_or_default();
     let (handler_key, handler_code, handler_entry) = state.resolve_handler(&shop_id);
 
+    // Guard: if the bundle failed completely (empty code), return HTTP 500
+    // instead of sending empty JS to V8 which causes a HandleScope panic.
+    if handler_code.is_empty() {
+        stdio::error("platform", &format!(
+            "no handler code for tenant '{}' — bundle failed, returning 500", shop_id
+        ));
+        return Response::builder()
+            .status(500)
+            .body(axum::body::Body::from("Internal Server Error: store bundle unavailable"))
+            .unwrap();
+    }
+
     let request_parts = RequestParts {
         url: format!("http://localhost{}", uri),
         method,
