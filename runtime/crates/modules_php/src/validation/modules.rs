@@ -471,6 +471,11 @@ fn is_template_module(source: &str) -> bool {
 }
 
 pub(crate) fn resolve_modules_root(file_path: &str) -> Option<PathBuf> {
+    let env_val = std::env::var("PHPX_MODULE_ROOT").ok();
+    resolve_modules_root_with_env(file_path, env_val.as_deref())
+}
+
+fn resolve_modules_root_with_env(file_path: &str, env_module_root: Option<&str>) -> Option<PathBuf> {
     let path = Path::new(file_path);
     let dir = if path.is_dir() {
         path.to_path_buf()
@@ -484,8 +489,8 @@ pub(crate) fn resolve_modules_root(file_path: &str) -> Option<PathBuf> {
         }
     }
 
-    if let Ok(root) = std::env::var("PHPX_MODULE_ROOT") {
-        let root = PathBuf::from(root);
+    if let Some(env_root) = env_module_root {
+        let root = PathBuf::from(env_root);
         if root.join("deka.lock").exists() {
             let candidate = root.join("php_modules");
             if candidate.exists() {
@@ -1323,7 +1328,7 @@ fn wasm_error(
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_modules_root, validate_module_resolution, validate_target_capabilities};
+    use super::{resolve_modules_root_with_env, validate_module_resolution, validate_target_capabilities};
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1360,16 +1365,11 @@ mod tests {
         fs::create_dir_all(entry.parent().expect("entry parent")).expect("mkdir app");
         fs::write(&entry, "import { foo } from 'a'\n").expect("write entry");
 
-        // SAFETY: test process controls env mutations in this isolated test.
-        unsafe {
-            std::env::set_var("PHPX_MODULE_ROOT", &global);
-        }
-        let resolved =
-            resolve_modules_root(entry.to_string_lossy().as_ref()).expect("resolve modules root");
-        // SAFETY: test process controls env mutations in this isolated test.
-        unsafe {
-            std::env::remove_var("PHPX_MODULE_ROOT");
-        }
+        let resolved = resolve_modules_root_with_env(
+            entry.to_string_lossy().as_ref(),
+            Some(global.to_string_lossy().as_ref()),
+        )
+        .expect("resolve modules root");
 
         assert_eq!(resolved, local.join("php_modules"));
         let _ = fs::remove_dir_all(local);
@@ -1385,16 +1385,11 @@ mod tests {
         fs::create_dir_all(outside.parent().expect("outside parent")).expect("mkdir outside");
         fs::write(&outside, "import { foo } from 'a'\n").expect("write outside entry");
 
-        // SAFETY: test process controls env mutations in this isolated test.
-        unsafe {
-            std::env::set_var("PHPX_MODULE_ROOT", &global);
-        }
-        let resolved =
-            resolve_modules_root(outside.to_string_lossy().as_ref()).expect("resolve modules root");
-        // SAFETY: test process controls env mutations in this isolated test.
-        unsafe {
-            std::env::remove_var("PHPX_MODULE_ROOT");
-        }
+        let resolved = resolve_modules_root_with_env(
+            outside.to_string_lossy().as_ref(),
+            Some(global.to_string_lossy().as_ref()),
+        )
+        .expect("resolve modules root");
 
         assert_eq!(resolved, global.join("php_modules"));
         let _ = fs::remove_dir_all(global);
@@ -1410,15 +1405,10 @@ mod tests {
         fs::create_dir_all(outside.parent().expect("outside parent")).expect("mkdir outside");
         fs::write(&outside, "import { foo } from 'a'\n").expect("write outside entry");
 
-        // SAFETY: test process controls env mutations in this isolated test.
-        unsafe {
-            std::env::set_var("PHPX_MODULE_ROOT", &global);
-        }
-        let resolved = resolve_modules_root(outside.to_string_lossy().as_ref());
-        // SAFETY: test process controls env mutations in this isolated test.
-        unsafe {
-            std::env::remove_var("PHPX_MODULE_ROOT");
-        }
+        let resolved = resolve_modules_root_with_env(
+            outside.to_string_lossy().as_ref(),
+            Some(global.to_string_lossy().as_ref()),
+        );
 
         assert!(
             resolved.is_none(),
