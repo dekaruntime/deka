@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
@@ -5,35 +6,32 @@ use crate::db;
 
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct Issue {
-    pub id: i64,
+    pub id: i32,
     pub repo_owner: String,
     pub repo_name: String,
-    pub number: i64,
+    pub number: i32,
     pub title: String,
     pub body: Option<String>,
     pub state: String,
     pub author: String,
-    pub assignee: Option<String>,
-    pub priority: Option<String>,
-    pub repo: Option<String>,
-    pub created_at: Option<String>,
-    pub updated_at: Option<String>,
-    pub closed_at: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub closed_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct IssueComment {
-    pub id: i64,
-    pub issue_id: i64,
+    pub id: i32,
+    pub issue_id: i32,
     pub body: String,
     pub author: String,
-    pub created_at: Option<String>,
-    pub updated_at: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct Label {
-    pub id: i64,
+    pub id: i32,
     pub repo_owner: String,
     pub repo_name: String,
     pub name: String,
@@ -45,9 +43,6 @@ pub struct Label {
 pub struct CreateIssueRequest {
     pub title: String,
     pub body: Option<String>,
-    pub assignee: Option<String>,
-    pub priority: Option<String>,
-    pub repo: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -55,8 +50,6 @@ pub struct UpdateIssueRequest {
     pub title: Option<String>,
     pub body: Option<String>,
     pub state: Option<String>,
-    pub assignee: Option<String>,
-    pub priority: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -66,48 +59,26 @@ pub struct CreateCommentRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct ListIssuesQuery {
-    pub state: Option<String>,
+    pub state: Option<String>, // open, closed, all
+    #[allow(dead_code)]
     pub author: Option<String>,
-    pub assignee: Option<String>,
-    pub priority: Option<String>,
-    pub repo: Option<String>,
+    #[allow(dead_code)]
     pub label: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, FromRow)]
-pub struct CommitRef {
-    pub id: i64,
-    pub issue_id: i64,
-    pub commit_hash: String,
-    pub repo: String,
-    pub created_at: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateCommitRefRequest {
-    pub commit_hash: String,
-    pub repo: String,
-}
-
-async fn get_next_issue_number(repo_owner: &str, repo_name: &str) -> Result<i64, sqlx::Error> {
+/// Get next issue number for a repo (auto-increment)
+async fn get_next_issue_number(repo_owner: &str, repo_name: &str) -> Result<i32, sqlx::Error> {
     let pool = db::pool();
 
-    // SQLite doesn't have ON CONFLICT ... RETURNING, so we do it in two steps
-    sqlx::query(
+    // Insert or update sequence, returning the number
+    let result: (i32,) = sqlx::query_as(
         r#"
         INSERT INTO issue_sequences (repo_owner, repo_name, next_number)
-        VALUES (?, ?, 2)
+        VALUES ($1, $2, 2)
         ON CONFLICT (repo_owner, repo_name)
         DO UPDATE SET next_number = issue_sequences.next_number + 1
-        "#,
-    )
-    .bind(repo_owner)
-    .bind(repo_name)
-    .execute(pool)
-    .await?;
-
-    let result: (i64,) = sqlx::query_as(
-        "SELECT next_number - 1 FROM issue_sequences WHERE repo_owner = ? AND repo_name = ?",
+        RETURNING next_number - 1
+    "#,
     )
     .bind(repo_owner)
     .bind(repo_name)
@@ -117,6 +88,7 @@ async fn get_next_issue_number(repo_owner: &str, repo_name: &str) -> Result<i64,
     Ok(result.0)
 }
 
+/// Create a new issue
 pub async fn create_issue(
     repo_owner: &str,
     repo_name: &str,
@@ -128,10 +100,10 @@ pub async fn create_issue(
 
     let issue = sqlx::query_as::<_, Issue>(
         r#"
-        INSERT INTO issues (repo_owner, repo_name, number, title, body, author, assignee, priority, repo)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO issues (repo_owner, repo_name, number, title, body, author)
+        VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING *
-        "#,
+    "#,
     )
     .bind(repo_owner)
     .bind(repo_name)
@@ -139,15 +111,13 @@ pub async fn create_issue(
     .bind(&req.title)
     .bind(&req.body)
     .bind(author)
-    .bind(&req.assignee)
-    .bind(req.priority.as_deref().unwrap_or("p2"))
-    .bind(&req.repo)
     .fetch_one(pool)
     .await?;
 
     Ok(issue)
 }
 
+/// List issues for a repository
 pub async fn list_issues(
     repo_owner: &str,
     repo_name: &str,
@@ -155,85 +125,76 @@ pub async fn list_issues(
 ) -> Result<Vec<Issue>, sqlx::Error> {
     let pool = db::pool();
 
-    let state = match query.state.as_deref() {
-        Some("closed") | Some("done") => "closed",
-        Some("in-progress") => "in-progress",
+    let state_filter = match query.state.as_deref() {
+        Some("closed") => "closed",
         Some("all") => "%",
         _ => "open",
     };
 
-    // Build query dynamically based on filters
-    let mut sql = String::from(
-        "SELECT * FROM issues WHERE repo_owner = ?1 AND repo_name = ?2 AND state LIKE ?3",
-    );
-    if query.assignee.is_some() {
-        sql.push_str(" AND assignee = ?4");
-    }
-    if query.priority.is_some() {
-        sql.push_str(" AND priority = ?5");
-    }
-    if query.repo.is_some() {
-        sql.push_str(" AND repo = ?6");
-    }
-    sql.push_str(" ORDER BY number DESC");
+    let issues = sqlx::query_as::<_, Issue>(
+        r#"
+        SELECT * FROM issues
+        WHERE repo_owner = $1 AND repo_name = $2
+        AND state LIKE $3
+        ORDER BY number DESC
+    "#,
+    )
+    .bind(repo_owner)
+    .bind(repo_name)
+    .bind(state_filter)
+    .fetch_all(pool)
+    .await?;
 
-    let mut q = sqlx::query_as::<_, Issue>(&sql)
-        .bind(repo_owner)
-        .bind(repo_name)
-        .bind(state);
-
-    if let Some(ref assignee) = query.assignee {
-        q = q.bind(assignee);
-    }
-    if let Some(ref priority) = query.priority {
-        q = q.bind(priority);
-    }
-    if let Some(ref repo) = query.repo {
-        q = q.bind(repo);
-    }
-
-    q.fetch_all(pool).await
+    Ok(issues)
 }
 
+/// Get a single issue by number
 pub async fn get_issue(
     repo_owner: &str,
     repo_name: &str,
-    number: i64,
+    number: i32,
 ) -> Result<Option<Issue>, sqlx::Error> {
     let pool = db::pool();
-    sqlx::query_as::<_, Issue>(
-        "SELECT * FROM issues WHERE repo_owner = ? AND repo_name = ? AND number = ?",
+
+    let issue = sqlx::query_as::<_, Issue>(
+        r#"
+        SELECT * FROM issues
+        WHERE repo_owner = $1 AND repo_name = $2 AND number = $3
+    "#,
     )
     .bind(repo_owner)
     .bind(repo_name)
     .bind(number)
     .fetch_optional(pool)
-    .await
+    .await?;
+
+    Ok(issue)
 }
 
+/// Update an issue
 pub async fn update_issue(
     repo_owner: &str,
     repo_name: &str,
-    number: i64,
+    number: i32,
     req: UpdateIssueRequest,
 ) -> Result<Option<Issue>, sqlx::Error> {
     let pool = db::pool();
 
+    // Get existing issue
     let existing = get_issue(repo_owner, repo_name, number).await?;
     let existing = match existing {
         Some(i) => i,
         None => return Ok(None),
     };
 
+    let existing_state = existing.state.clone();
     let new_title = req.title.unwrap_or(existing.title);
     let new_body = req.body.or(existing.body);
-    let new_state = req.state.unwrap_or(existing.state.clone());
-    let new_assignee = req.assignee.or(existing.assignee);
-    let new_priority = req.priority.or(existing.priority);
+    let new_state = req.state.unwrap_or(existing_state.clone());
 
-    let closed_at = if (new_state == "closed" || new_state == "done") && existing.state != "closed" && existing.state != "done" {
-        Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string())
-    } else if new_state == "open" || new_state == "in-progress" {
+    let closed_at = if new_state == "closed" && existing_state != "closed" {
+        Some(Utc::now())
+    } else if new_state == "open" {
         None
     } else {
         existing.closed_at
@@ -242,36 +203,75 @@ pub async fn update_issue(
     let issue = sqlx::query_as::<_, Issue>(
         r#"
         UPDATE issues
-        SET title = ?, body = ?, state = ?, assignee = ?, priority = ?,
-            closed_at = ?, updated_at = datetime('now')
-        WHERE repo_owner = ? AND repo_name = ? AND number = ?
+        SET title = $4, body = $5, state = $6, closed_at = $7, updated_at = NOW()
+        WHERE repo_owner = $1 AND repo_name = $2 AND number = $3
         RETURNING *
-        "#,
+    "#,
     )
-    .bind(&new_title)
-    .bind(&new_body)
-    .bind(&new_state)
-    .bind(&new_assignee)
-    .bind(&new_priority)
-    .bind(&closed_at)
     .bind(repo_owner)
     .bind(repo_name)
     .bind(number)
+    .bind(&new_title)
+    .bind(&new_body)
+    .bind(&new_state)
+    .bind(closed_at)
     .fetch_optional(pool)
     .await?;
 
     Ok(issue)
 }
 
+/// Close an issue
+#[allow(dead_code)]
+pub async fn close_issue(
+    repo_owner: &str,
+    repo_name: &str,
+    number: i32,
+) -> Result<Option<Issue>, sqlx::Error> {
+    update_issue(
+        repo_owner,
+        repo_name,
+        number,
+        UpdateIssueRequest {
+            title: None,
+            body: None,
+            state: Some("closed".to_string()),
+        },
+    )
+    .await
+}
+
+/// Reopen an issue
+#[allow(dead_code)]
+pub async fn reopen_issue(
+    repo_owner: &str,
+    repo_name: &str,
+    number: i32,
+) -> Result<Option<Issue>, sqlx::Error> {
+    update_issue(
+        repo_owner,
+        repo_name,
+        number,
+        UpdateIssueRequest {
+            title: None,
+            body: None,
+            state: Some("open".to_string()),
+        },
+    )
+    .await
+}
+
+/// Add a comment to an issue
 pub async fn add_comment(
     repo_owner: &str,
     repo_name: &str,
-    number: i64,
+    number: i32,
     author: &str,
     req: CreateCommentRequest,
 ) -> Result<Option<IssueComment>, sqlx::Error> {
     let pool = db::pool();
 
+    // Get issue ID
     let issue = get_issue(repo_owner, repo_name, number).await?;
     let issue = match issue {
         Some(i) => i,
@@ -281,9 +281,9 @@ pub async fn add_comment(
     let comment = sqlx::query_as::<_, IssueComment>(
         r#"
         INSERT INTO issue_comments (issue_id, body, author)
-        VALUES (?, ?, ?)
+        VALUES ($1, $2, $3)
         RETURNING *
-        "#,
+    "#,
     )
     .bind(issue.id)
     .bind(&req.body)
@@ -291,7 +291,8 @@ pub async fn add_comment(
     .fetch_one(pool)
     .await?;
 
-    sqlx::query("UPDATE issues SET updated_at = datetime('now') WHERE id = ?")
+    // Update issue timestamp
+    sqlx::query("UPDATE issues SET updated_at = NOW() WHERE id = $1")
         .bind(issue.id)
         .execute(pool)
         .await?;
@@ -299,29 +300,34 @@ pub async fn add_comment(
     Ok(Some(comment))
 }
 
+/// List comments on an issue
 pub async fn list_comments(
     repo_owner: &str,
     repo_name: &str,
-    number: i64,
+    number: i32,
 ) -> Result<Vec<IssueComment>, sqlx::Error> {
     let pool = db::pool();
-    sqlx::query_as::<_, IssueComment>(
+
+    let comments = sqlx::query_as::<_, IssueComment>(
         r#"
         SELECT c.* FROM issue_comments c
         JOIN issues i ON c.issue_id = i.id
-        WHERE i.repo_owner = ? AND i.repo_name = ? AND i.number = ?
+        WHERE i.repo_owner = $1 AND i.repo_name = $2 AND i.number = $3
         ORDER BY c.created_at ASC
-        "#,
+    "#,
     )
     .bind(repo_owner)
     .bind(repo_name)
     .bind(number)
     .fetch_all(pool)
-    .await
+    .await?;
+
+    Ok(comments)
 }
 
 // Label operations
 
+/// Create a label
 pub async fn create_label(
     repo_owner: &str,
     repo_name: &str,
@@ -330,12 +336,13 @@ pub async fn create_label(
     description: Option<&str>,
 ) -> Result<Label, sqlx::Error> {
     let pool = db::pool();
-    sqlx::query_as::<_, Label>(
+
+    let label = sqlx::query_as::<_, Label>(
         r#"
         INSERT INTO labels (repo_owner, repo_name, name, color, description)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES ($1, $2, $3, $4, $5)
         RETURNING *
-        "#,
+    "#,
     )
     .bind(repo_owner)
     .bind(repo_name)
@@ -343,28 +350,40 @@ pub async fn create_label(
     .bind(color)
     .bind(description)
     .fetch_one(pool)
-    .await
+    .await?;
+
+    Ok(label)
 }
 
+/// List labels for a repo
 pub async fn list_labels(repo_owner: &str, repo_name: &str) -> Result<Vec<Label>, sqlx::Error> {
     let pool = db::pool();
-    sqlx::query_as::<_, Label>(
-        "SELECT * FROM labels WHERE repo_owner = ? AND repo_name = ? ORDER BY name",
+
+    let labels = sqlx::query_as::<_, Label>(
+        r#"
+        SELECT * FROM labels
+        WHERE repo_owner = $1 AND repo_name = $2
+        ORDER BY name
+    "#,
     )
     .bind(repo_owner)
     .bind(repo_name)
     .fetch_all(pool)
-    .await
+    .await?;
+
+    Ok(labels)
 }
 
+/// Add label to issue
 pub async fn add_label_to_issue(
     repo_owner: &str,
     repo_name: &str,
-    issue_number: i64,
+    issue_number: i32,
     label_name: &str,
 ) -> Result<bool, sqlx::Error> {
     let pool = db::pool();
 
+    // Get issue and label IDs
     let issue = get_issue(repo_owner, repo_name, issue_number).await?;
     let issue = match issue {
         Some(i) => i,
@@ -372,7 +391,10 @@ pub async fn add_label_to_issue(
     };
 
     let label: Option<Label> = sqlx::query_as(
-        "SELECT * FROM labels WHERE repo_owner = ? AND repo_name = ? AND name = ?",
+        r#"
+        SELECT * FROM labels
+        WHERE repo_owner = $1 AND repo_name = $2 AND name = $3
+    "#,
     )
     .bind(repo_owner)
     .bind(repo_name)
@@ -385,8 +407,13 @@ pub async fn add_label_to_issue(
         None => return Ok(false),
     };
 
+    // Insert assignment (ignore if exists)
     sqlx::query(
-        "INSERT OR IGNORE INTO issue_labels (issue_id, label_id) VALUES (?, ?)",
+        r#"
+        INSERT INTO issue_labels (issue_id, label_id)
+        VALUES ($1, $2)
+        ON CONFLICT DO NOTHING
+    "#,
     )
     .bind(issue.id)
     .bind(label.id)
@@ -396,10 +423,11 @@ pub async fn add_label_to_issue(
     Ok(true)
 }
 
+/// Remove label from issue
 pub async fn remove_label_from_issue(
     repo_owner: &str,
     repo_name: &str,
-    issue_number: i64,
+    issue_number: i32,
     label_name: &str,
 ) -> Result<bool, sqlx::Error> {
     let pool = db::pool();
@@ -408,12 +436,12 @@ pub async fn remove_label_from_issue(
         r#"
         DELETE FROM issue_labels
         WHERE issue_id = (
-            SELECT id FROM issues WHERE repo_owner = ?1 AND repo_name = ?2 AND number = ?3
+            SELECT id FROM issues WHERE repo_owner = $1 AND repo_name = $2 AND number = $3
         )
         AND label_id = (
-            SELECT id FROM labels WHERE repo_owner = ?1 AND repo_name = ?2 AND name = ?4
+            SELECT id FROM labels WHERE repo_owner = $1 AND repo_name = $2 AND name = $4
         )
-        "#,
+    "#,
     )
     .bind(repo_owner)
     .bind(repo_name)
@@ -425,50 +453,28 @@ pub async fn remove_label_from_issue(
     Ok(result.rows_affected() > 0)
 }
 
+/// Get labels for an issue
 pub async fn get_issue_labels(
     repo_owner: &str,
     repo_name: &str,
-    issue_number: i64,
+    issue_number: i32,
 ) -> Result<Vec<Label>, sqlx::Error> {
     let pool = db::pool();
-    sqlx::query_as::<_, Label>(
+
+    let labels = sqlx::query_as::<_, Label>(
         r#"
         SELECT l.* FROM labels l
         JOIN issue_labels il ON l.id = il.label_id
         JOIN issues i ON il.issue_id = i.id
-        WHERE i.repo_owner = ? AND i.repo_name = ? AND i.number = ?
+        WHERE i.repo_owner = $1 AND i.repo_name = $2 AND i.number = $3
         ORDER BY l.name
-        "#,
+    "#,
     )
     .bind(repo_owner)
     .bind(repo_name)
     .bind(issue_number)
     .fetch_all(pool)
-    .await
-}
+    .await?;
 
-pub async fn add_commit_ref(
-    issue_id: i64,
-    commit_hash: &str,
-    repo: &str,
-) -> Result<CommitRef, sqlx::Error> {
-    let pool = db::pool();
-    sqlx::query_as::<_, CommitRef>(
-        "INSERT INTO commit_refs (issue_id, commit_hash, repo) VALUES (?, ?, ?) RETURNING *",
-    )
-    .bind(issue_id)
-    .bind(commit_hash)
-    .bind(repo)
-    .fetch_one(pool)
-    .await
-}
-
-pub async fn get_commit_refs(issue_id: i64) -> Result<Vec<CommitRef>, sqlx::Error> {
-    let pool = db::pool();
-    sqlx::query_as::<_, CommitRef>(
-        "SELECT * FROM commit_refs WHERE issue_id = ? ORDER BY created_at ASC",
-    )
-    .bind(issue_id)
-    .fetch_all(pool)
-    .await
+    Ok(labels)
 }

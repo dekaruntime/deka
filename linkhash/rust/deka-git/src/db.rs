@@ -1,226 +1,290 @@
-use sha2::{Digest, Sha256};
-use sqlx::postgres::PgPoolOptions;
-use sqlx::PgPool;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::SqlitePool;
+use std::str::FromStr;
 use std::sync::OnceLock;
 
-static DB_POOL: OnceLock<PgPool> = OnceLock::new();
+static DB_POOL: OnceLock<SqlitePool> = OnceLock::new();
 
-pub async fn init_with_url(database_url: &str) -> anyhow::Result<()> {
-    tracing::info!("Connecting to database...");
+pub async fn init(db_path: &str) -> anyhow::Result<()> {
+    tracing::info!("Opening SQLite database at {}", db_path);
 
-    let pool = PgPoolOptions::new()
-        .max_connections(10)
-        .connect(database_url)
+    let opts = SqliteConnectOptions::from_str(&format!("sqlite:{}", db_path))?
+        .create_if_missing(true)
+        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+        .foreign_keys(true);
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect_with(opts)
         .await?;
 
-    verify_schema_ready(&pool).await?;
+    run_migrations(&pool).await?;
 
-    DB_POOL
-        .set(pool)
-        .expect("Database pool already initialized");
+    DB_POOL.set(pool).expect("Database pool already initialized");
 
-    tracing::info!("Database connected and schema verified");
+    tracing::info!("Database initialized");
     Ok(())
 }
 
-pub fn pool() -> &'static PgPool {
+pub fn pool() -> &'static SqlitePool {
     DB_POOL.get().expect("Database not initialized")
 }
 
-pub async fn ensure_bootstrap_identity(
-    username: &str,
-    raw_token: &str,
-) -> anyhow::Result<()> {
-    let pool = pool();
-
-    let user_id: i64 = sqlx::query_scalar(
+async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
+    sqlx::query(
         r#"
-        INSERT INTO users (username)
-        VALUES ($1)
-        ON CONFLICT (username) DO UPDATE SET username = EXCLUDED.username
-        RETURNING id
+        CREATE TABLE IF NOT EXISTS access_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            key_hash TEXT NOT NULL UNIQUE,
+            key_type TEXT NOT NULL CHECK (key_type IN ('system', 'agent', 'user')),
+            owner TEXT NOT NULL,
+            scopes TEXT NOT NULL DEFAULT '["repo:read"]',
+            repos TEXT NOT NULL DEFAULT '["*"]',
+            created_at TEXT DEFAULT (datetime('now')),
+            expires_at TEXT,
+            last_used_at TEXT,
+            revoked INTEGER DEFAULT 0
+        )
         "#,
     )
-    .bind(username)
-    .fetch_one(pool)
-    .await?;
-
-    let token_hash = sha256_hex(raw_token);
-    let created = sqlx::query(
-        r#"
-        INSERT INTO user_tokens (user_id, token_name, token_hash)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (token_hash) DO NOTHING
-        "#,
-    )
-    .bind(user_id)
-    .bind("bootstrap")
-    .bind(token_hash)
     .execute(pool)
     .await?;
 
-    if created.rows_affected() > 0 {
-        tracing::warn!(
-            "Created bootstrap token for {}. Rotate token after first login.",
-            username
-        );
-    }
-
-    Ok(())
-}
-
-fn sha256_hex(value: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(value.as_bytes());
-    hex::encode(hasher.finalize())
-}
-
-async fn verify_schema_ready(pool: &PgPool) -> anyhow::Result<()> {
-    let required_tables = [
-        "users",
-        "user_tokens",
-        "user_ssh_keys",
-        "package_releases",
-        "issues",
-        "issue_comments",
-        "labels",
-        "issue_labels",
-        "issue_sequences",
-        "pull_requests",
-        "pull_comments",
-        "pull_sequences",
-    ];
-
-    for table in required_tables {
-        require_table(pool, table).await?;
-    }
-
-    require_columns(
-        pool,
-        "users",
-        &[
-            "id",
-            "username",
-            "email",
-            "password_hash",
-            "status",
-            "email_verified_at",
-            "display_name",
-            "created_at",
-        ],
-    )
-    .await?;
-    require_columns(
-        pool,
-        "user_tokens",
-        &[
-            "id",
-            "user_id",
-            "token_name",
-            "token_hash",
-            "created_at",
-            "last_used_at",
-            "expires_at",
-            "revoked_at",
-        ],
-    )
-    .await?;
-    require_columns(
-        pool,
-        "package_releases",
-        &[
-            "id",
-            "package_name",
-            "version",
-            "owner",
-            "repo",
-            "git_ref",
-            "description",
-            "manifest",
-            "api_snapshot",
-            "api_change_kind",
-            "required_bump",
-            "capability_metadata",
-            "created_at",
-        ],
-    )
-    .await?;
-    require_columns(
-        pool,
-        "issues",
-        &[
-            "id",
-            "repo_owner",
-            "repo_name",
-            "number",
-            "title",
-            "body",
-            "state",
-            "author",
-            "created_at",
-            "updated_at",
-            "closed_at",
-        ],
-    )
-    .await?;
-    require_columns(
-        pool,
-        "pull_requests",
-        &[
-            "id",
-            "repo_owner",
-            "repo_name",
-            "number",
-            "title",
-            "body",
-            "state",
-            "author",
-            "source_ref",
-            "target_ref",
-            "created_at",
-            "updated_at",
-            "closed_at",
-        ],
-    )
-    .await?;
-
-    Ok(())
-}
-
-async fn require_table(pool: &PgPool, table: &str) -> anyhow::Result<()> {
-    let present: Option<String> = sqlx::query_scalar("SELECT to_regclass($1)::text")
-        .bind(format!("public.{table}"))
-        .fetch_one(pool)
-        .await?;
-    if present.is_none() {
-        anyhow::bail!(
-            "missing required table `{}`. run migrations from `linkhash/phpx` (for example: `deka db migrate`)",
-            table
-        );
-    }
-    Ok(())
-}
-
-async fn require_columns(pool: &PgPool, table: &str, columns: &[&str]) -> anyhow::Result<()> {
-    let existing: Vec<String> = sqlx::query_scalar(
+    sqlx::query(
         r#"
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = $1
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token_id INTEGER,
+            key_type TEXT NOT NULL,
+            owner TEXT NOT NULL,
+            action TEXT NOT NULL,
+            repo TEXT,
+            ref_name TEXT,
+            detail TEXT,
+            ip TEXT,
+            timestamp TEXT DEFAULT (datetime('now'))
+        )
         "#,
     )
-    .bind(table)
-    .fetch_all(pool)
+    .execute(pool)
     .await?;
 
-    for column in columns {
-        if !existing.iter().any(|current| current == column) {
-            anyhow::bail!(
-                "table `{}` is missing required column `{}`. run migrations from `linkhash/phpx` (for example: `deka db migrate`)",
-                table,
-                column
-            );
-        }
-    }
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS issues (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            repo_owner TEXT NOT NULL,
+            repo_name TEXT NOT NULL,
+            number INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            body TEXT,
+            state TEXT NOT NULL DEFAULT 'open',
+            author TEXT NOT NULL,
+            assignee TEXT,
+            priority TEXT DEFAULT 'p2' CHECK (priority IN ('p0', 'p1', 'p2', 'p3')),
+            repo TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now')),
+            closed_at TEXT,
+            UNIQUE(repo_owner, repo_name, number)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS issue_comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            issue_id INTEGER NOT NULL,
+            body TEXT NOT NULL,
+            author TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT,
+            FOREIGN KEY (issue_id) REFERENCES issues(id)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS labels (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            repo_owner TEXT NOT NULL,
+            repo_name TEXT NOT NULL,
+            name TEXT NOT NULL,
+            color TEXT NOT NULL DEFAULT '6e7681',
+            description TEXT,
+            UNIQUE(repo_owner, repo_name, name)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS issue_labels (
+            issue_id INTEGER NOT NULL,
+            label_id INTEGER NOT NULL,
+            PRIMARY KEY (issue_id, label_id),
+            FOREIGN KEY (issue_id) REFERENCES issues(id),
+            FOREIGN KEY (label_id) REFERENCES labels(id)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS issue_sequences (
+            repo_owner TEXT NOT NULL,
+            repo_name TEXT NOT NULL,
+            next_number INTEGER NOT NULL DEFAULT 1,
+            PRIMARY KEY (repo_owner, repo_name)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS pull_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            repo_owner TEXT NOT NULL,
+            repo_name TEXT NOT NULL,
+            number INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            body TEXT,
+            state TEXT NOT NULL DEFAULT 'open',
+            author TEXT NOT NULL,
+            source_ref TEXT NOT NULL,
+            target_ref TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now')),
+            closed_at TEXT,
+            UNIQUE(repo_owner, repo_name, number)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS pull_comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pull_id INTEGER NOT NULL,
+            body TEXT NOT NULL,
+            author TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT,
+            FOREIGN KEY (pull_id) REFERENCES pull_requests(id)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS pull_sequences (
+            repo_owner TEXT NOT NULL,
+            repo_name TEXT NOT NULL,
+            next_number INTEGER NOT NULL DEFAULT 1,
+            PRIMARY KEY (repo_owner, repo_name)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS commit_refs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            issue_id INTEGER NOT NULL,
+            commit_hash TEXT NOT NULL,
+            repo TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (issue_id) REFERENCES issues(id)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    // Package registry tables
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS package_releases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            package_name TEXT NOT NULL,
+            version TEXT NOT NULL,
+            owner TEXT NOT NULL,
+            repo TEXT NOT NULL,
+            git_ref TEXT NOT NULL,
+            description TEXT,
+            manifest TEXT,
+            api_snapshot TEXT,
+            api_change_kind TEXT,
+            required_bump TEXT,
+            capability_metadata TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(package_name, version)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS package_sequences (
+            package_name TEXT PRIMARY KEY,
+            next_number INTEGER NOT NULL DEFAULT 1
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    // Repo visibility
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS repo_visibility (
+            repo_owner TEXT NOT NULL,
+            repo_name TEXT NOT NULL,
+            visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('public', 'private')),
+            PRIMARY KEY (repo_owner, repo_name)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    // Create index on audit_log for common queries
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action)",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_audit_log_owner ON audit_log(owner)",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp)",
+    )
+    .execute(pool)
+    .await?;
+
+    tracing::info!("Database migrations complete");
     Ok(())
 }

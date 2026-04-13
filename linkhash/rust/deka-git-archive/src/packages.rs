@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -22,12 +23,12 @@ pub struct PackageRelease {
     pub repo: String,
     pub git_ref: String,
     pub description: Option<String>,
-    pub manifest: Option<String>,
-    pub api_snapshot: Option<String>,
+    pub manifest: Option<serde_json::Value>,
+    pub api_snapshot: Option<serde_json::Value>,
     pub api_change_kind: Option<String>,
     pub required_bump: Option<String>,
-    pub capability_metadata: Option<String>,
-    pub created_at: Option<String>,
+    pub capability_metadata: Option<serde_json::Value>,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize)]
@@ -141,8 +142,6 @@ pub struct BlobResponse {
     pub content: String,
 }
 
-// --- Public API ---
-
 pub async fn preflight_publish(
     owner: &str,
     req: &PublishPackageRequest,
@@ -253,9 +252,8 @@ pub async fn publish(
     let repo_path = crate::repo::storage::get_repo_path(owner, &req.repo);
     let manifest = resolved_manifest(&repo_path, &git_ref, req.manifest.as_ref())?;
     let snapshot = build_api_snapshot(&repo_path, &git_ref)?;
-    let snapshot_json = serde_json::to_string(&snapshot)?;
-    let manifest_json = serde_json::to_string(&manifest.raw)?;
-    let capability_meta_json = serde_json::to_string(&preflight.capabilities)?;
+    let snapshot_json = serde_json::to_value(snapshot)?;
+    let capability_meta_json = serde_json::to_value(preflight.capabilities.clone())?;
 
     let pool = crate::db::pool();
     let row = sqlx::query_as::<_, PackageRelease>(
@@ -263,7 +261,7 @@ pub async fn publish(
         INSERT INTO package_releases
             (package_name, version, owner, repo, git_ref, description, manifest, api_snapshot, api_change_kind, required_bump, capability_metadata)
         VALUES
-            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING package_name, version, owner, repo, git_ref, description, manifest, api_snapshot, api_change_kind, required_bump, capability_metadata, created_at
         "#,
     )
@@ -273,7 +271,7 @@ pub async fn publish(
     .bind(&req.repo)
     .bind(&git_ref)
     .bind(&req.description)
-    .bind(&manifest_json)
+    .bind(&manifest.raw)
     .bind(&snapshot_json)
     .bind(preflight.detected_change.as_str())
     .bind(preflight.required_bump.as_str())
@@ -290,7 +288,7 @@ pub async fn get_package(name: &str) -> Result<PackageSummary, sqlx::Error> {
         r#"
         SELECT version
         FROM package_releases
-        WHERE package_name = ?
+        WHERE package_name = $1
         ORDER BY created_at DESC
         "#,
     )
@@ -314,7 +312,7 @@ pub async fn get_release(name: &str, version: &str) -> Result<Option<PackageRele
         r#"
         SELECT package_name, version, owner, repo, git_ref, description, manifest, api_snapshot, api_change_kind, required_bump, capability_metadata, created_at
         FROM package_releases
-        WHERE package_name = ? AND version = ?
+        WHERE package_name = $1 AND version = $2
         "#,
     )
     .bind(name)
@@ -349,6 +347,20 @@ pub async fn get_release_docs(
         version: release.version,
         symbols,
     }))
+}
+
+pub async fn get_release_doc_symbol(
+    name: &str,
+    version: &str,
+    symbol: &str,
+) -> Result<Option<DocSymbol>, anyhow::Error> {
+    let Some(response) = get_release_docs(name, version).await? else {
+        return Ok(None);
+    };
+    Ok(response
+        .symbols
+        .into_iter()
+        .find(|entry| entry.symbol == symbol))
 }
 
 pub async fn get_release_tree(
@@ -415,66 +427,34 @@ pub async fn get_release_blob(
     }))
 }
 
-pub async fn get_latest_release(name: &str) -> Result<Option<PackageRelease>, anyhow::Error> {
-    let pool = crate::db::pool();
-    let rows: Vec<PackageRelease> = sqlx::query_as(
-        r#"
-        SELECT package_name, version, owner, repo, git_ref, description, manifest, api_snapshot, api_change_kind, required_bump, capability_metadata, created_at
-        FROM package_releases
-        WHERE package_name = ?
-        ORDER BY created_at DESC
-        "#,
-    )
-    .bind(name)
-    .fetch_all(pool)
-    .await?;
-
-    // Find the highest semver version (not just most recent by date)
-    let mut best: Option<(Version, PackageRelease)> = None;
-    for row in rows {
-        if let Ok(v) = Version::parse(&row.version) {
-            match &best {
-                Some((bv, _)) if v > *bv => best = Some((v, row)),
-                None => best = Some((v, row)),
-                _ => {}
-            }
-        }
+pub fn build_release_tarball(release: &PackageRelease) -> Result<Vec<u8>, anyhow::Error> {
+    let repo_path = crate::repo::storage::get_repo_path(&release.owner, &release.repo);
+    if !repo_path.exists() {
+        anyhow::bail!(
+            "Repository not found for package {}@{}",
+            release.package_name,
+            release.version
+        );
     }
 
-    Ok(best.map(|(_, release)| release))
-}
+    let prefix = "package/".to_string();
+    let output = Command::new("git")
+        .arg(format!("--git-dir={}", repo_path.display()))
+        .arg("archive")
+        .arg("--format=tar.gz")
+        .arg(format!("--prefix={}", prefix))
+        .arg(&release.git_ref)
+        .output()?;
 
-pub async fn list_all_packages() -> Result<Vec<PackageSummary>, sqlx::Error> {
-    let pool = crate::db::pool();
-    let rows: Vec<(String, String)> = sqlx::query_as(
-        r#"
-        SELECT package_name, version
-        FROM package_releases
-        ORDER BY package_name, created_at DESC
-        "#,
-    )
-    .fetch_all(pool)
-    .await?;
-
-    let mut packages: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for (name, version) in rows {
-        packages.entry(name).or_default().push(version);
+    if !output.status.success() {
+        anyhow::bail!(
+            "git archive failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
-    Ok(packages
-        .into_iter()
-        .map(|(name, versions)| {
-            let latest = versions.first().cloned();
-            PackageSummary {
-                name,
-                versions,
-                latest,
-            }
-        })
-        .collect())
+    Ok(output.stdout)
 }
-
-// --- Internal helpers ---
 
 impl ApiChangeKind {
     fn as_str(self) -> &'static str {
@@ -521,7 +501,7 @@ fn parse_semver(value: &str) -> Result<Version, anyhow::Error> {
 
 fn release_snapshot(release: &PackageRelease) -> Result<ApiSnapshot, anyhow::Error> {
     match &release.api_snapshot {
-        Some(value) => Ok(serde_json::from_str(value)?),
+        Some(value) => Ok(serde_json::from_value(value.clone())?),
         None => {
             let repo_path = crate::repo::storage::get_repo_path(&release.owner, &release.repo);
             if !repo_path.exists() {
@@ -619,7 +599,7 @@ async fn latest_release_for_package(name: &str) -> Result<Option<PackageRelease>
         r#"
         SELECT package_name, version, owner, repo, git_ref, description, manifest, api_snapshot, api_change_kind, required_bump, capability_metadata, created_at
         FROM package_releases
-        WHERE package_name = ?
+        WHERE package_name = $1
         ORDER BY created_at DESC
         LIMIT 1
         "#,

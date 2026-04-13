@@ -1,12 +1,11 @@
 use axum::{
-    extract::{Path, Query, Request},
+    extract::{ConnectInfo, Path, Query, Request},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
 use serde::Deserialize;
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -14,6 +13,7 @@ mod auth;
 mod config;
 mod db;
 mod git;
+mod hooks;
 mod issues;
 mod packages;
 mod pulls;
@@ -31,59 +31,46 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let config = match Config::load() {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!("Failed to load configuration: {}", e);
-            std::process::exit(1);
-        }
-    };
+    let config = Config::load();
 
-    tracing::info!("Deka Git starting on port {}", config.port);
+    tracing::info!("Linkhash (deka-git) starting on port {}", config.port);
 
-    if let Err(e) = db::init_with_url(&config.database_url).await {
+    // Ensure data directory exists
+    std::fs::create_dir_all(config.db_dir()).expect("Failed to create database directory");
+    std::fs::create_dir_all(&config.repos_dir).expect("Failed to create repos directory");
+
+    if let Err(e) = db::init(&config.db_path).await {
         tracing::error!("Failed to initialize database: {}", e);
         std::process::exit(1);
     }
 
-    if let Err(e) =
-        db::ensure_bootstrap_identity(&config.bootstrap_username, &config.bootstrap_token).await
-    {
-        tracing::error!("Failed to ensure bootstrap identity: {}", e);
-        std::process::exit(1);
+    repo::storage::init_repos_root(&config.repos_dir);
+
+    // Seed labels for the 5 project repos
+    let project_repos = ["tana", "deka", "tana-website", "tana-admin", "tana-store-admin"];
+    for repo_name in &project_repos {
+        auth::seed_labels("tana", repo_name).await;
     }
 
-    repo::storage::init_repos_root(&config.repos_path);
-    std::fs::create_dir_all(&config.repos_path).expect("Failed to create repos directory");
+    tracing::info!("Repositories stored in: {}", config.repos_dir);
 
-    tracing::info!("Repositories stored in: {}", config.repos_path);
-    tracing::info!(
-        "Auth enabled with bootstrap user '{}' (token from config)",
-        config.bootstrap_username
-    );
+    // Token management (no auth required for initial token creation)
+    let public_routes = Router::new()
+        .route("/health", get(handle_health))
+        .route("/api/tokens", post(handle_create_token));
 
+    // Authenticated routes
     let authenticated_routes = Router::new()
-        .route("/:owner/:repo/info/refs", get(handle_info_refs))
+        // Git protocol (write only — reads are handled via optional_auth routes)
         .route("/:owner/:repo/git-receive-pack", post(handle_receive_pack))
-        .route("/:owner/:repo/git-upload-pack", post(handle_upload_pack))
+        // Repo management
         .route("/api/repos/:repo", post(handle_create_repo))
         .route("/api/repos", get(handle_list_repos))
-        .route("/api/repos/:owner/:repo/fork", post(handle_fork_repo))
-        .route("/api/auth/me", get(handle_auth_me))
-        .route("/api/packages/preflight", post(handle_preflight_package))
-        .route("/api/packages/publish", post(handle_publish_package))
-        .route("/api/user/ssh-keys", get(handle_list_ssh_keys))
-        .route("/api/user/ssh-keys", post(handle_add_ssh_key))
-        .route(
-            "/api/user/ssh-keys/:fingerprint",
-            axum::routing::delete(handle_delete_ssh_key),
-        )
+        .route("/api/repos/:owner/:name/init", post(handle_init_store_repo))
+        // Issues
         .route("/api/repos/:owner/:repo/issues", get(handle_list_issues))
         .route("/api/repos/:owner/:repo/issues", post(handle_create_issue))
-        .route(
-            "/api/repos/:owner/:repo/issues/:number",
-            get(handle_get_issue),
-        )
+        .route("/api/repos/:owner/:repo/issues/:number", get(handle_get_issue))
         .route(
             "/api/repos/:owner/:repo/issues/:number",
             axum::routing::patch(handle_update_issue),
@@ -96,6 +83,15 @@ async fn main() {
             "/api/repos/:owner/:repo/issues/:number/comments",
             post(handle_create_comment),
         )
+        .route(
+            "/api/repos/:owner/:repo/issues/:number/commit-refs",
+            post(handle_add_commit_ref),
+        )
+        .route(
+            "/api/repos/:owner/:repo/issues/:number/commit-refs",
+            get(handle_get_commit_refs),
+        )
+        // Labels
         .route("/api/repos/:owner/:repo/labels", get(handle_list_labels))
         .route("/api/repos/:owner/:repo/labels", post(handle_create_label))
         .route(
@@ -106,12 +102,10 @@ async fn main() {
             "/api/repos/:owner/:repo/issues/:number/labels/:label",
             axum::routing::delete(handle_remove_label),
         )
+        // Pull requests
         .route("/api/repos/:owner/:repo/pulls", get(handle_list_pulls))
         .route("/api/repos/:owner/:repo/pulls", post(handle_create_pull))
-        .route(
-            "/api/repos/:owner/:repo/pulls/:number",
-            get(handle_get_pull),
-        )
+        .route("/api/repos/:owner/:repo/pulls/:number", get(handle_get_pull))
         .route(
             "/api/repos/:owner/:repo/pulls/:number",
             axum::routing::patch(handle_update_pull),
@@ -124,101 +118,286 @@ async fn main() {
             "/api/repos/:owner/:repo/pulls/:number/comments",
             post(handle_create_pull_comment),
         )
+        // Token management
+        .route("/api/tokens", get(handle_list_tokens))
+        .route("/api/tokens/:id", axum::routing::delete(handle_revoke_token))
+        // Audit log
+        .route("/api/audit", get(handle_audit_log))
+        // Convenience: flat issue list across all repos
+        .route("/api/issues", get(handle_list_all_issues))
+        // Package registry
+        .route("/api/packages", get(handle_list_packages))
+        .route("/api/packages/preflight", post(handle_preflight_publish))
+        .route("/api/packages/publish", post(handle_publish_package))
+        .route("/api/packages/:name/versions", get(handle_list_versions))
+        .route("/api/packages/:name/:version", get(handle_get_release))
+        .route("/api/packages/:name/latest", get(handle_get_latest))
+        .route("/api/packages/:name/:version/docs", get(handle_get_docs))
+        .route("/api/packages/:name/:version/tree", get(handle_get_tree))
+        .route("/api/packages/:name/:version/blob", get(handle_get_blob))
+        // Scoped packages (@scope/name)
+        .route("/api/scoped-packages/:scope/:name/versions", get(handle_list_scoped_versions))
+        .route("/api/scoped-packages/:scope/:name/:version", get(handle_get_scoped_release))
+        .route("/api/scoped-packages/:scope/:name/latest", get(handle_get_scoped_latest))
+        .route("/api/scoped-packages/:scope/:name/:version/docs", get(handle_get_scoped_docs))
+        .route("/api/scoped-packages/:scope/:name/:version/tree", get(handle_get_scoped_tree))
+        .route("/api/scoped-packages/:scope/:name/:version/blob", get(handle_get_scoped_blob))
+        .layer(axum::middleware::from_fn(auth::require_auth));
+
+    // Routes that use optional auth (public repos can be read without a token)
+    let optional_auth_routes = Router::new()
+        .route("/:owner/:repo/info/refs", get(handle_info_refs_public))
+        .route("/:owner/:repo/git-upload-pack", post(handle_upload_pack_public))
+        .route("/api/repos/:owner/:name/visibility", get(handle_get_visibility))
+        .layer(axum::middleware::from_fn(auth::optional_auth));
+
+    // Visibility management (requires auth)
+    let visibility_routes = Router::new()
+        .route(
+            "/api/repos/:owner/:name/visibility",
+            axum::routing::put(handle_set_visibility),
+        )
         .layer(axum::middleware::from_fn(auth::require_auth));
 
     let app = Router::new()
-        .merge(authenticated_routes)
-        .route(
-            "/api/public/repos/:owner/:repo/resolve",
-            get(handle_resolve_repo_ref),
-        )
-        .route("/api/auth/signup", post(handle_auth_signup))
-        .route("/api/auth/login", post(handle_auth_login))
-        .route("/api/packages/:name", get(handle_get_package))
-        .route("/api/packages/:name/:version", get(handle_get_release))
-        .route(
-            "/api/packages/:name/:version/docs",
-            get(handle_get_release_docs),
-        )
-        .route(
-            "/api/packages/:name/:version/tree",
-            get(handle_get_release_tree),
-        )
-        .route(
-            "/api/packages/:name/:version/blob",
-            get(handle_get_release_blob),
-        )
-        .route(
-            "/api/scoped-packages/:scope/:name",
-            get(handle_get_package_scoped),
-        )
-        .route(
-            "/api/scoped-packages/:scope/:name/:version",
-            get(handle_get_release_scoped),
-        )
-        .route(
-            "/api/scoped-packages/:scope/:name/:version/docs",
-            get(handle_get_release_docs_scoped),
-        )
-        .route(
-            "/api/scoped-packages/:scope/:name/:version/tree",
-            get(handle_get_release_tree_scoped),
-        )
-        .route(
-            "/api/scoped-packages/:scope/:name/:version/blob",
-            get(handle_get_release_blob_scoped),
-        )
-        .route(
-            "/api/packages/:name/:version/download",
-            get(handle_download_release),
-        )
-        .route(
-            "/api/scoped-packages/:scope/:name/:version/download",
-            get(handle_download_release_scoped),
-        )
-        .route("/health", get(handle_health));
+        .merge(public_routes)
+        .merge(optional_auth_routes)
+        .merge(visibility_routes)
+        .merge(authenticated_routes);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
-    tracing::info!("deka-git listening on {}", addr);
+    tracing::info!("Linkhash listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
+        .await
+        .unwrap();
 }
 
-async fn handle_info_refs(
-    Path((owner, repo)): Path<(String, String)>,
-    Query(params): Query<HashMap<String, String>>,
+// --- Health ---
+
+async fn handle_health() -> &'static str {
+    "OK"
+}
+
+// --- Repo visibility ---
+
+async fn handle_get_visibility(
+    Path((owner, name)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let visibility = auth::get_repo_visibility(&owner, &name).await;
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "owner": owner,
+            "repo": name,
+            "visibility": visibility
+        })),
+    )
+}
+
+#[derive(Debug, Deserialize)]
+struct SetVisibilityRequest {
+    visibility: String,
+}
+
+async fn handle_set_visibility(
+    Path((owner, name)): Path<(String, String)>,
     req: Request,
-) -> Response {
+) -> impl IntoResponse {
     let auth_user = match auth::get_auth_user(&req) {
-        Some(user) => user,
-        None => return (StatusCode::UNAUTHORIZED, "Authentication required").into_response(),
+        Some(user) => user.clone(),
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Authentication required" })),
+            )
+        }
     };
 
-    if owner != auth_user.username {
+    // Requires: system token, repo owner, wildcard scope, or repo:write on the repo
+    let is_system = auth_user.key_type == "system";
+    let is_owner = auth_user.owner == owner;
+    let has_wildcard = auth_user.has_scope("*");
+    let has_write = auth_user.has_scope("repo:write")
+        && auth_user.can_access_repo(&format!("{}/{}", owner, name));
+    if !is_system && !is_owner && !has_wildcard && !has_write {
         return (
             StatusCode::FORBIDDEN,
-            "Cannot access another user repository",
-        )
-            .into_response();
+            Json(serde_json::json!({ "error": "Insufficient permissions to change visibility" })),
+        );
     }
 
+    let body = match axum::body::to_bytes(req.into_body(), 1024).await {
+        Ok(b) => b,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Invalid body" })),
+            )
+        }
+    };
+
+    let vis_req: SetVisibilityRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+        }
+    };
+
+    if vis_req.visibility != "public" && vis_req.visibility != "private" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "visibility must be 'public' or 'private'" })),
+        );
+    }
+
+    match auth::set_repo_visibility(&owner, &name, &vis_req.visibility).await {
+        Ok(()) => {
+            auth::log_audit(
+                Some(auth_user.token_id),
+                &auth_user.key_type,
+                &auth_user.owner,
+                "repo.visibility",
+                Some(&format!("{}/{}", owner, name)),
+                None,
+                Some(&format!("set to {}", vis_req.visibility)),
+                None,
+            )
+            .await;
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "owner": owner,
+                    "repo": name,
+                    "visibility": vis_req.visibility
+                })),
+            )
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+// --- Git protocol handlers (public-aware) ---
+
+/// info/refs handler that allows public repo reads without auth.
+async fn handle_info_refs_public(
+    Path((owner, repo)): Path<(String, String)>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    req: Request,
+) -> Response {
+    let repo_name = repo.strip_suffix(".git").unwrap_or(&repo);
     let service = match params.get("service") {
         Some(s) => s.as_str(),
         None => return (StatusCode::BAD_REQUEST, "Missing service parameter").into_response(),
     };
 
-    match service {
-        "git-receive-pack" | "git-upload-pack" => {
-            match git::protocol::advertise_refs(&owner, &repo, service).await {
-                Ok(response) => response,
-                Err(e) => {
-                    tracing::error!("Failed to advertise refs: {}", e);
-                    (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
-                }
+    let is_read = service == "git-upload-pack";
+    let is_public = auth::is_repo_public(&owner, repo_name).await;
+
+    // Write operations always require auth
+    if !is_read {
+        let auth_user = match auth::get_auth_user(&req) {
+            Some(user) => user,
+            None => return (StatusCode::UNAUTHORIZED, "Authentication required for push").into_response(),
+        };
+        if !auth_user.has_scope("repo:write") {
+            return (StatusCode::FORBIDDEN, "repo:write scope required").into_response();
+        }
+        if !auth_user.can_access_repo(repo_name) && !auth_user.can_access_repo(&repo) {
+            return (StatusCode::FORBIDDEN, "Access denied to this repository").into_response();
+        }
+        auth::log_audit(
+            Some(auth_user.token_id), &auth_user.key_type, &auth_user.owner,
+            "push.info_refs", Some(&format!("{}/{}", owner, repo)), None, None, None,
+        ).await;
+    } else if !is_public {
+        // Private repo read requires auth
+        let auth_user = match auth::get_auth_user(&req) {
+            Some(user) => user,
+            None => return (StatusCode::UNAUTHORIZED, "Authentication required").into_response(),
+        };
+        if !auth_user.has_scope("repo:read") {
+            return (StatusCode::FORBIDDEN, "repo:read scope required").into_response();
+        }
+        if !auth_user.can_access_repo(repo_name) && !auth_user.can_access_repo(&repo) {
+            return (StatusCode::FORBIDDEN, "Access denied to this repository").into_response();
+        }
+        auth::log_audit(
+            Some(auth_user.token_id), &auth_user.key_type, &auth_user.owner,
+            "fetch.info_refs", Some(&format!("{}/{}", owner, repo)), None, None, None,
+        ).await;
+    }
+    // Public repo read: no auth needed, proceed
+
+    match git::protocol::advertise_refs(&owner, &repo, service).await {
+        Ok(response) => response,
+        Err(e) => {
+            tracing::error!("Failed to advertise refs: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+        }
+    }
+}
+
+/// upload-pack handler that allows public repo reads without auth.
+async fn handle_upload_pack_public(
+    Path((owner, repo)): Path<(String, String)>,
+    req: Request,
+) -> Response {
+    let repo_name = repo.strip_suffix(".git").unwrap_or(&repo);
+    let is_public = auth::is_repo_public(&owner, repo_name).await;
+
+    if !is_public {
+        let auth_user = match auth::get_auth_user(&req) {
+            Some(user) => user.clone(),
+            None => return (StatusCode::UNAUTHORIZED, "Authentication required").into_response(),
+        };
+        if !auth_user.has_scope("repo:read") {
+            return (StatusCode::FORBIDDEN, "repo:read scope required").into_response();
+        }
+        if !auth_user.can_access_repo(repo_name) && !auth_user.can_access_repo(&repo) {
+            return (StatusCode::FORBIDDEN, "Access denied to this repository").into_response();
+        }
+        let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                tracing::error!("Failed to read request body: {}", e);
+                return (StatusCode::BAD_REQUEST, "Failed to read body").into_response();
+            }
+        };
+        auth::log_audit(
+            Some(auth_user.token_id), &auth_user.key_type, &auth_user.owner,
+            "clone", Some(&format!("{}/{}", owner, repo)), None, None, None,
+        ).await;
+        match git::upload_pack::handle(&owner, &repo, body).await {
+            Ok(response) => response,
+            Err(e) => {
+                tracing::error!("upload-pack failed: {}", e);
+                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
             }
         }
-        _ => (StatusCode::BAD_REQUEST, "Invalid service").into_response(),
+    } else {
+        // Public repo: no auth required for reads
+        let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                tracing::error!("Failed to read request body: {}", e);
+                return (StatusCode::BAD_REQUEST, "Failed to read body").into_response();
+            }
+        };
+        match git::upload_pack::handle(&owner, &repo, body).await {
+            Ok(response) => response,
+            Err(e) => {
+                tracing::error!("upload-pack failed: {}", e);
+                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+            }
+        }
     }
 }
 
@@ -231,12 +410,13 @@ async fn handle_receive_pack(
         None => return (StatusCode::UNAUTHORIZED, "Authentication required").into_response(),
     };
 
-    if owner != auth_user.username {
-        return (
-            StatusCode::FORBIDDEN,
-            "Cannot push to another user repository",
-        )
-            .into_response();
+    if !auth_user.has_scope("repo:write") {
+        return (StatusCode::FORBIDDEN, "repo:write scope required").into_response();
+    }
+
+    let repo_name = repo.strip_suffix(".git").unwrap_or(&repo);
+    if !auth_user.can_access_repo(repo_name) && !auth_user.can_access_repo(&repo) {
+        return (StatusCode::FORBIDDEN, "Access denied to this repository").into_response();
     }
 
     let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
@@ -247,8 +427,42 @@ async fn handle_receive_pack(
         }
     };
 
+    auth::log_audit(
+        Some(auth_user.token_id),
+        &auth_user.key_type,
+        &auth_user.owner,
+        "push",
+        Some(&format!("{}/{}", owner, repo)),
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    // Keep a copy of the body for post-receive hook parsing
+    let body_bytes = body.to_vec();
+
     match git::receive_pack::handle(&owner, &repo, body).await {
-        Ok(response) => response,
+        Ok(response) => {
+            // Post-receive hook: trigger rebuild if main was pushed
+            let hook_owner = owner.clone();
+            let hook_repo = repo.clone();
+            let hook_token_id = auth_user.token_id;
+            let hook_key_type = auth_user.key_type.clone();
+            let hook_auth_owner = auth_user.owner.clone();
+            tokio::spawn(async move {
+                hooks::run_post_receive(
+                    &hook_owner,
+                    &hook_repo,
+                    &body_bytes,
+                    Some(hook_token_id),
+                    &hook_key_type,
+                    &hook_auth_owner,
+                )
+                .await;
+            });
+            response
+        }
         Err(e) => {
             tracing::error!("receive-pack failed: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
@@ -256,40 +470,11 @@ async fn handle_receive_pack(
     }
 }
 
-async fn handle_upload_pack(Path((owner, repo)): Path<(String, String)>, req: Request) -> Response {
-    let auth_user = match auth::get_auth_user(&req) {
-        Some(user) => user,
-        None => return (StatusCode::UNAUTHORIZED, "Authentication required").into_response(),
-    };
-
-    if owner != auth_user.username {
-        return (
-            StatusCode::FORBIDDEN,
-            "Cannot fetch another user repository",
-        )
-            .into_response();
-    }
-
-    let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            tracing::error!("Failed to read request body: {}", e);
-            return (StatusCode::BAD_REQUEST, "Failed to read body").into_response();
-        }
-    };
-
-    match git::upload_pack::handle(&owner, &repo, body).await {
-        Ok(response) => response,
-        Err(e) => {
-            tracing::error!("upload-pack failed: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
-        }
-    }
-}
+// --- Repo management ---
 
 async fn handle_create_repo(Path(repo): Path<String>, req: Request) -> impl IntoResponse {
     let auth_user = match auth::get_auth_user(&req) {
-        Some(user) => user,
+        Some(user) => user.clone(),
         None => {
             return (
                 StatusCode::UNAUTHORIZED,
@@ -298,23 +483,44 @@ async fn handle_create_repo(Path(repo): Path<String>, req: Request) -> impl Into
         }
     };
 
-    match repo::storage::create_bare_repo(&auth_user.username, &repo) {
-        Ok(path) => (
-            StatusCode::CREATED,
-            Json(serde_json::json!({
-                "status": "created",
-                "owner": auth_user.username,
-                "repo": repo,
-                "path": path.display().to_string()
-            })),
-        ),
-        Err(e) => {
-            tracing::error!("create repo failed: {}", e);
+    if !auth_user.has_scope("repo:write") {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "repo:write scope required" })),
+        );
+    }
+
+    match repo::storage::create_bare_repo(&auth_user.owner, &repo) {
+        Ok(path) => {
+            // Seed labels for the new repo
+            auth::seed_labels(&auth_user.owner, &repo).await;
+
+            auth::log_audit(
+                Some(auth_user.token_id),
+                &auth_user.key_type,
+                &auth_user.owner,
+                "repo.create",
+                Some(&format!("{}/{}", auth_user.owner, repo)),
+                None,
+                None,
+                None,
+            )
+            .await;
+
             (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "status": "error", "message": e.to_string() })),
+                StatusCode::CREATED,
+                Json(serde_json::json!({
+                    "status": "created",
+                    "owner": auth_user.owner,
+                    "repo": repo,
+                    "path": path.display().to_string()
+                })),
             )
         }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "status": "error", "message": e.to_string() })),
+        ),
     }
 }
 
@@ -329,63 +535,23 @@ async fn handle_list_repos(req: Request) -> impl IntoResponse {
         }
     };
 
-    match repo::storage::list_repos(&auth_user.username) {
+    // List repos for the "tana" owner (all store repos live under tana/)
+    match repo::storage::list_repos("tana") {
         Ok(repos) => (
             StatusCode::OK,
-            Json(serde_json::json!({ "owner": auth_user.username, "repos": repos })),
+            Json(serde_json::json!({ "owner": "tana", "repos": repos })),
         ),
-        Err(e) => {
-            tracing::error!("list repos failed: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct ResolveRefQuery {
-    #[serde(rename = "ref")]
-    reference: Option<String>,
-}
-
-async fn handle_resolve_repo_ref(
-    Path((owner, repo)): Path<(String, String)>,
-    Query(query): Query<ResolveRefQuery>,
-) -> impl IntoResponse {
-    let requested = query.reference.unwrap_or_else(|| "HEAD".to_string());
-    match repo::storage::resolve_ref(&owner, &repo, &requested) {
-        Ok(resolved) => {
-            let short = resolved.commit.chars().take(12).collect::<String>();
-            (
-                StatusCode::OK,
-                Json(serde_json::json!({
-                    "ok": true,
-                    "owner": owner,
-                    "repo": repo,
-                    "requestedRef": resolved.requested_ref,
-                    "normalizedRef": resolved.normalized_ref,
-                    "commit": resolved.commit,
-                    "shortCommit": short
-                })),
-            )
-        }
         Err(e) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
         ),
     }
 }
 
-#[derive(Debug, Deserialize, Default)]
-struct ForkRepoRequest {
-    target_owner: Option<String>,
-    target_repo: Option<String>,
-}
+// --- Store repo initialization ---
 
-async fn handle_fork_repo(
-    Path((source_owner, source_repo)): Path<(String, String)>,
+async fn handle_init_store_repo(
+    Path((owner, name)): Path<(String, String)>,
     req: Request,
 ) -> impl IntoResponse {
     let auth_user = match auth::get_auth_user(&req) {
@@ -398,118 +564,96 @@ async fn handle_fork_repo(
         }
     };
 
-    let body = match axum::body::to_bytes(req.into_body(), 1024 * 1024).await {
-        Ok(b) => b,
-        Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": "Invalid body" })),
-            )
-        }
-    };
-    let fork_req: ForkRepoRequest = if body.is_empty() {
-        ForkRepoRequest::default()
-    } else {
-        match serde_json::from_slice(&body) {
-            Ok(v) => v,
-            Err(e) => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({ "error": e.to_string() })),
-                )
-            }
-        }
-    };
-
-    let target_owner = fork_req
-        .target_owner
-        .unwrap_or_else(|| auth_user.username.clone());
-    if target_owner != auth_user.username {
+    if !auth_user.has_scope("repo:write") {
         return (
             StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": "fork target owner must match authenticated user" })),
+            Json(serde_json::json!({ "error": "repo:write scope required" })),
         );
     }
-    let target_repo = fork_req
-        .target_repo
-        .unwrap_or_else(|| format!("{}-fork", source_repo));
 
-    let forked_path = match repo::storage::fork_bare_repo(
-        &source_owner,
-        &source_repo,
-        &target_owner,
-        &target_repo,
-    ) {
-        Ok(path) => path,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+    // Resolve the default store template directory.
+    // Convention: TANA_STORE_ROOT env var points to tana/store/, or we derive
+    // it from the repos directory (repos is at store/repos/, template is at store/default/).
+    let template_dir = {
+        let config = Config::load();
+        let repos_path = std::path::PathBuf::from(&config.repos_dir);
+        // repos_dir is typically .../store/repos — go up one level for store root
+        repos_path
+            .parent()
+            .map(|p| p.join("default"))
+            .unwrap_or_else(|| std::path::PathBuf::from("store/default"))
+    };
+
+    match repo::storage::create_and_seed_repo(&owner, &name, &template_dir) {
+        Ok(path) => {
+            // Seed labels for the new repo
+            auth::seed_labels(&owner, &name).await;
+
+            auth::log_audit(
+                Some(auth_user.token_id),
+                &auth_user.key_type,
+                &auth_user.owner,
+                "repo.init",
+                Some(&format!("{}/{}", owner, name)),
+                None,
+                Some("seeded from default template"),
+                None,
+            )
+            .await;
+
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({
+                    "status": "created",
+                    "owner": owner,
+                    "repo": name,
+                    "path": path.display().to_string(),
+                    "seeded": template_dir.exists()
+                })),
             )
         }
-    };
-
-    let resolved = repo::storage::resolve_ref(&target_owner, &target_repo, "HEAD");
-    let (commit, short_commit) = match resolved {
-        Ok(value) => {
-            let short = value.commit.chars().take(12).collect::<String>();
-            (value.commit, short)
-        }
-        Err(_) => (String::new(), String::new()),
-    };
-
-    tracing::info!(
-        event = "repo.fork",
-        actor = %auth_user.username,
-        source_owner = %source_owner,
-        source_repo = %source_repo,
-        target_owner = %target_owner,
-        target_repo = %target_repo,
-        "repository forked"
-    );
-
-    (
-        StatusCode::CREATED,
-        Json(serde_json::json!({
-            "ok": true,
-            "sourceOwner": source_owner,
-            "sourceRepo": source_repo,
-            "targetOwner": target_owner,
-            "targetRepo": target_repo,
-            "path": forked_path.display().to_string(),
-            "commit": commit,
-            "shortCommit": short_commit
-        })),
-    )
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "status": "error", "message": e.to_string() })),
+        ),
+    }
 }
+
+// --- Token management ---
 
 #[derive(Debug, Deserialize)]
-struct SignupRequest {
-    username: String,
-    email: String,
-    password: String,
+struct CreateTokenPayload {
+    key_type: String,
+    owner: String,
+    scopes: Option<Vec<String>>,
+    repos: Option<Vec<String>>,
+    expires_in_days: Option<i64>,
 }
 
-async fn handle_auth_signup(Json(payload): Json<SignupRequest>) -> impl IntoResponse {
-    let cfg = match Config::load() {
-        Ok(v) => v,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": format!("config load failed: {}", e) })),
-            )
-        }
+async fn handle_create_token(Json(payload): Json<CreateTokenPayload>) -> impl IntoResponse {
+    let req = auth::CreateTokenRequest {
+        key_type: payload.key_type,
+        owner: payload.owner,
+        scopes: payload.scopes,
+        repos: payload.repos,
+        expires_in_days: payload.expires_in_days,
     };
 
-    match auth::signup(
-        &payload.username,
-        &payload.email,
-        &payload.password,
-        cfg.auto_verify_signups,
-    )
-    .await
-    {
-        Ok(result) => (StatusCode::CREATED, Json(serde_json::json!(result))),
+    match auth::create_token(req).await {
+        Ok(result) => {
+            auth::log_audit(
+                Some(result.id),
+                &result.key_type,
+                &result.owner,
+                "token.create",
+                None,
+                None,
+                Some(&format!("scopes: {:?}", result.scopes)),
+                None,
+            )
+            .await;
+            (StatusCode::CREATED, Json(serde_json::json!(result)))
+        }
         Err(e) => (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": e.to_string() })),
@@ -517,53 +661,7 @@ async fn handle_auth_signup(Json(payload): Json<SignupRequest>) -> impl IntoResp
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct LoginRequest {
-    username_or_email: String,
-    password: String,
-}
-
-async fn handle_auth_login(Json(payload): Json<LoginRequest>) -> impl IntoResponse {
-    match auth::login(&payload.username_or_email, &payload.password).await {
-        Ok(result) => (StatusCode::OK, Json(serde_json::json!(result))),
-        Err(e) => (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        ),
-    }
-}
-
-async fn handle_auth_me(req: Request) -> impl IntoResponse {
-    let auth_user = match auth::get_auth_user(&req) {
-        Some(v) => v,
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({ "error": "Authentication required" })),
-            )
-        }
-    };
-
-    match auth::auth_me(auth_user.user_id).await {
-        Ok(Some(profile)) => (StatusCode::OK, Json(serde_json::json!({ "user": profile }))),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "User not found" })),
-        ),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        ),
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct AddSshKeyRequest {
-    name: String,
-    public_key: String,
-}
-
-async fn handle_list_ssh_keys(req: Request) -> impl IntoResponse {
+async fn handle_list_tokens(req: Request) -> impl IntoResponse {
     let auth_user = match auth::get_auth_user(&req) {
         Some(user) => user,
         None => {
@@ -574,19 +672,16 @@ async fn handle_list_ssh_keys(req: Request) -> impl IntoResponse {
         }
     };
 
-    match auth::list_ssh_keys(auth_user.user_id).await {
-        Ok(keys) => (StatusCode::OK, Json(serde_json::json!({ "keys": keys }))),
-        Err(e) => {
-            tracing::error!("list ssh keys failed: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-        }
+    match auth::list_tokens().await {
+        Ok(tokens) => (StatusCode::OK, Json(serde_json::json!({ "tokens": tokens }))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
     }
 }
 
-async fn handle_add_ssh_key(req: Request) -> impl IntoResponse {
+async fn handle_revoke_token(Path(id): Path<i64>, req: Request) -> impl IntoResponse {
     let auth_user = match auth::get_auth_user(&req) {
         Some(user) => user.clone(),
         None => {
@@ -597,54 +692,27 @@ async fn handle_add_ssh_key(req: Request) -> impl IntoResponse {
         }
     };
 
-    let body = match axum::body::to_bytes(req.into_body(), 1024 * 1024).await {
-        Ok(b) => b,
-        Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": "Invalid body" })),
+    match auth::revoke_token(id).await {
+        Ok(true) => {
+            auth::log_audit(
+                Some(auth_user.token_id),
+                &auth_user.key_type,
+                &auth_user.owner,
+                "token.revoke",
+                None,
+                None,
+                Some(&format!("revoked token_id={}", id)),
+                None,
+            )
+            .await;
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "status": "revoked" })),
             )
         }
-    };
-
-    let payload: AddSshKeyRequest = match serde_json::from_slice(&body) {
-        Ok(v) => v,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-        }
-    };
-
-    match auth::add_ssh_key(auth_user.user_id, &payload.name, &payload.public_key).await {
-        Ok(key) => (StatusCode::CREATED, Json(serde_json::json!({ "key": key }))),
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        ),
-    }
-}
-
-async fn handle_delete_ssh_key(Path(fingerprint): Path<String>, req: Request) -> impl IntoResponse {
-    let auth_user = match auth::get_auth_user(&req) {
-        Some(user) => user,
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({ "error": "Authentication required" })),
-            )
-        }
-    };
-
-    match auth::delete_ssh_key(auth_user.user_id, &fingerprint).await {
-        Ok(true) => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "status": "deleted" })),
-        ),
         Ok(false) => (
             StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "SSH key not found" })),
+            Json(serde_json::json!({ "error": "Token not found" })),
         ),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -653,9 +721,14 @@ async fn handle_delete_ssh_key(Path(fingerprint): Path<String>, req: Request) ->
     }
 }
 
-async fn handle_publish_package(req: Request) -> impl IntoResponse {
-    let auth_user = match auth::get_auth_user(&req) {
-        Some(user) => user.clone(),
+// --- Audit log ---
+
+async fn handle_audit_log(
+    Query(query): Query<auth::AuditQuery>,
+    req: Request,
+) -> impl IntoResponse {
+    let _auth_user = match auth::get_auth_user(&req) {
+        Some(user) => user,
         None => {
             return (
                 StatusCode::UNAUTHORIZED,
@@ -664,84 +737,11 @@ async fn handle_publish_package(req: Request) -> impl IntoResponse {
         }
     };
 
-    let body = match axum::body::to_bytes(req.into_body(), 1024 * 1024).await {
-        Ok(b) => b,
-        Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": "Invalid body" })),
-            )
-        }
-    };
-
-    let payload: packages::PublishPackageRequest = match serde_json::from_slice(&body) {
-        Ok(v) => v,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-        }
-    };
-
-    match packages::publish(&auth_user.username, payload).await {
-        Ok(release) => (
-            StatusCode::CREATED,
-            Json(serde_json::json!({ "release": release })),
-        ),
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        ),
-    }
-}
-
-async fn handle_preflight_package(req: Request) -> impl IntoResponse {
-    let auth_user = match auth::get_auth_user(&req) {
-        Some(user) => user.clone(),
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({ "error": "Authentication required" })),
-            )
-        }
-    };
-
-    let body = match axum::body::to_bytes(req.into_body(), 1024 * 1024).await {
-        Ok(b) => b,
-        Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": "Invalid body" })),
-            )
-        }
-    };
-
-    let payload: packages::PublishPackageRequest = match serde_json::from_slice(&body) {
-        Ok(v) => v,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-        }
-    };
-
-    match packages::preflight_publish(&auth_user.username, &payload).await {
-        Ok(report) => (
+    match auth::query_audit_log(&query).await {
+        Ok(entries) => (
             StatusCode::OK,
-            Json(serde_json::json!({ "preflight": report })),
+            Json(serde_json::json!({ "entries": entries })),
         ),
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        ),
-    }
-}
-
-async fn handle_get_package(Path(name): Path<String>) -> impl IntoResponse {
-    match packages::get_package(&name).await {
-        Ok(summary) => (StatusCode::OK, Json(serde_json::json!(summary))),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e.to_string() })),
@@ -749,181 +749,7 @@ async fn handle_get_package(Path(name): Path<String>) -> impl IntoResponse {
     }
 }
 
-async fn handle_get_package_scoped(
-    Path((scope, name)): Path<(String, String)>,
-) -> impl IntoResponse {
-    let full_name = format!("@{}/{}", scope.trim_start_matches('@'), name);
-    handle_get_package(Path(full_name)).await
-}
-
-async fn handle_get_release(Path((name, version)): Path<(String, String)>) -> impl IntoResponse {
-    match packages::get_release(&name, &version).await {
-        Ok(Some(release)) => (StatusCode::OK, Json(serde_json::json!(release))).into_response(),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "Release not found" })),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct ReleaseDocsQuery {
-    symbol: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ReleaseBlobQuery {
-    path: String,
-}
-
-async fn handle_get_release_docs(
-    Path((name, version)): Path<(String, String)>,
-    Query(query): Query<ReleaseDocsQuery>,
-) -> impl IntoResponse {
-    if let Some(symbol) = query.symbol.as_deref() {
-        return match packages::get_release_doc_symbol(&name, &version, symbol).await {
-            Ok(Some(doc)) => (StatusCode::OK, Json(serde_json::json!(doc))).into_response(),
-            Ok(None) => (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": "Doc symbol not found" })),
-            )
-                .into_response(),
-            Err(e) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-                .into_response(),
-        };
-    }
-
-    match packages::get_release_docs(&name, &version).await {
-        Ok(Some(docs)) => (StatusCode::OK, Json(serde_json::json!(docs))).into_response(),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "Release docs not found" })),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
-}
-
-async fn handle_get_release_scoped(
-    Path((scope, name, version)): Path<(String, String, String)>,
-) -> impl IntoResponse {
-    let full_name = format!("@{}/{}", scope.trim_start_matches('@'), name);
-    handle_get_release(Path((full_name, version))).await
-}
-
-async fn handle_get_release_docs_scoped(
-    Path((scope, name, version)): Path<(String, String, String)>,
-    Query(query): Query<ReleaseDocsQuery>,
-) -> impl IntoResponse {
-    let full_name = format!("@{}/{}", scope.trim_start_matches('@'), name);
-    handle_get_release_docs(Path((full_name, version)), Query(query)).await
-}
-
-async fn handle_get_release_tree(
-    Path((name, version)): Path<(String, String)>,
-) -> impl IntoResponse {
-    match packages::get_release_tree(&name, &version).await {
-        Ok(Some(tree)) => (StatusCode::OK, Json(serde_json::json!(tree))).into_response(),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "Release tree not found" })),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
-}
-
-async fn handle_get_release_tree_scoped(
-    Path((scope, name, version)): Path<(String, String, String)>,
-) -> impl IntoResponse {
-    let full_name = format!("@{}/{}", scope.trim_start_matches('@'), name);
-    handle_get_release_tree(Path((full_name, version))).await
-}
-
-async fn handle_get_release_blob(
-    Path((name, version)): Path<(String, String)>,
-    Query(query): Query<ReleaseBlobQuery>,
-) -> impl IntoResponse {
-    match packages::get_release_blob(&name, &version, &query.path).await {
-        Ok(Some(blob)) => (StatusCode::OK, Json(serde_json::json!(blob))).into_response(),
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "Blob not found" })),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
-}
-
-async fn handle_get_release_blob_scoped(
-    Path((scope, name, version)): Path<(String, String, String)>,
-    Query(query): Query<ReleaseBlobQuery>,
-) -> impl IntoResponse {
-    let full_name = format!("@{}/{}", scope.trim_start_matches('@'), name);
-    handle_get_release_blob(Path((full_name, version)), Query(query)).await
-}
-
-async fn handle_download_release(Path((name, version)): Path<(String, String)>) -> Response {
-    let release = match packages::get_release(&name, &version).await {
-        Ok(Some(r)) => r,
-        Ok(None) => return (StatusCode::NOT_FOUND, "Release not found").into_response(),
-        Err(e) => {
-            tracing::error!("Failed to load release {}@{}: {}", name, version, e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to load release").into_response();
-        }
-    };
-
-    match packages::build_release_tarball(&release) {
-        Ok(bytes) => {
-            let filename = format!("{}-{}.tar.gz", name, version);
-            Response::builder()
-                .status(StatusCode::OK)
-                .header("content-type", "application/gzip")
-                .header(
-                    "content-disposition",
-                    format!("attachment; filename=\"{}\"", filename),
-                )
-                .body(axum::body::Body::from(bytes))
-                .unwrap()
-        }
-        Err(e) => {
-            tracing::error!("Failed to build tarball for {}@{}: {}", name, version, e);
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to build tarball").into_response()
-        }
-    }
-}
-
-async fn handle_download_release_scoped(
-    Path((scope, name, version)): Path<(String, String, String)>,
-) -> Response {
-    let full_name = format!("@{}/{}", scope.trim_start_matches('@'), name);
-    handle_download_release(Path((full_name, version))).await
-}
-
-async fn handle_health() -> &'static str {
-    "OK"
-}
+// --- Issues ---
 
 async fn handle_list_issues(
     Path((owner, repo)): Path<(String, String)>,
@@ -931,14 +757,54 @@ async fn handle_list_issues(
 ) -> impl IntoResponse {
     match issues::list_issues(&owner, &repo, &query).await {
         Ok(list) => (StatusCode::OK, Json(serde_json::json!({ "issues": list }))),
-        Err(e) => {
-            tracing::error!("list issues failed: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn handle_list_all_issues(
+    Query(query): Query<issues::ListIssuesQuery>,
+    req: Request,
+) -> impl IntoResponse {
+    let auth_user = match auth::get_auth_user(&req) {
+        Some(user) => user,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Authentication required" })),
             )
         }
+    };
+
+    // Query issues across all repos under "tana" owner
+    // For now, search across all known project repos
+    let mut all_issues = Vec::new();
+    let project_repos = ["tana", "deka", "tana-website", "tana-admin", "tana-store-admin"];
+    for repo_name in &project_repos {
+        if let Ok(mut list) = issues::list_issues("tana", repo_name, &query).await {
+            all_issues.append(&mut list);
+        }
     }
+    // Also check store repos
+    if let Ok(repos) = repo::storage::list_repos("tana") {
+        for repo_name in &repos {
+            if !project_repos.contains(&repo_name.as_str()) {
+                if let Ok(mut list) = issues::list_issues("tana", repo_name, &query).await {
+                    all_issues.append(&mut list);
+                }
+            }
+        }
+    }
+
+    // Sort by number descending
+    all_issues.sort_by(|a, b| b.number.cmp(&a.number));
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "issues": all_issues })),
+    )
 }
 
 async fn handle_create_issue(
@@ -954,6 +820,13 @@ async fn handle_create_issue(
             )
         }
     };
+
+    if !auth_user.has_scope("issues:write") {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "issues:write scope required" })),
+        );
+    }
 
     let body = match axum::body::to_bytes(req.into_body(), 1024 * 1024).await {
         Ok(b) => b,
@@ -975,20 +848,30 @@ async fn handle_create_issue(
         }
     };
 
-    match issues::create_issue(&owner, &repo, &auth_user.username, create_req).await {
-        Ok(issue) => (StatusCode::CREATED, Json(serde_json::json!(issue))),
-        Err(e) => {
-            tracing::error!("create issue failed: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
+    match issues::create_issue(&owner, &repo, &auth_user.owner, create_req).await {
+        Ok(issue) => {
+            auth::log_audit(
+                Some(auth_user.token_id),
+                &auth_user.key_type,
+                &auth_user.owner,
+                "issue.create",
+                Some(&format!("{}/{}", owner, repo)),
+                None,
+                Some(&format!("#{}: {}", issue.number, issue.title)),
+                None,
             )
+            .await;
+            (StatusCode::CREATED, Json(serde_json::json!(issue)))
         }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
     }
 }
 
 async fn handle_get_issue(
-    Path((owner, repo, number)): Path<(String, String, i32)>,
+    Path((owner, repo, number)): Path<(String, String, i64)>,
 ) -> impl IntoResponse {
     match issues::get_issue(&owner, &repo, number).await {
         Ok(Some(issue)) => {
@@ -998,12 +881,16 @@ async fn handle_get_issue(
             let labels = issues::get_issue_labels(&owner, &repo, number)
                 .await
                 .unwrap_or_default();
+            let commit_refs = issues::get_commit_refs(issue.id)
+                .await
+                .unwrap_or_default();
             (
                 StatusCode::OK,
                 Json(serde_json::json!({
                     "issue": issue,
                     "comments": comments,
-                    "labels": labels
+                    "labels": labels,
+                    "commit_refs": commit_refs
                 })),
             )
         }
@@ -1011,20 +898,27 @@ async fn handle_get_issue(
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "Issue not found" })),
         ),
-        Err(e) => {
-            tracing::error!("get issue failed: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
     }
 }
 
 async fn handle_update_issue(
-    Path((owner, repo, number)): Path<(String, String, i32)>,
+    Path((owner, repo, number)): Path<(String, String, i64)>,
     req: Request,
 ) -> impl IntoResponse {
+    let auth_user = match auth::get_auth_user(&req) {
+        Some(user) => user.clone(),
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Authentication required" })),
+            )
+        }
+    };
+
     let body = match axum::body::to_bytes(req.into_body(), 1024 * 1024).await {
         Ok(b) => b,
         Err(_) => {
@@ -1046,41 +940,48 @@ async fn handle_update_issue(
     };
 
     match issues::update_issue(&owner, &repo, number, update_req).await {
-        Ok(Some(issue)) => (StatusCode::OK, Json(serde_json::json!(issue))),
+        Ok(Some(issue)) => {
+            auth::log_audit(
+                Some(auth_user.token_id),
+                &auth_user.key_type,
+                &auth_user.owner,
+                "issue.update",
+                Some(&format!("{}/{}", owner, repo)),
+                None,
+                Some(&format!("#{} -> {}", number, issue.state)),
+                None,
+            )
+            .await;
+            (StatusCode::OK, Json(serde_json::json!(issue)))
+        }
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "Issue not found" })),
         ),
-        Err(e) => {
-            tracing::error!("update issue failed: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
     }
 }
 
 async fn handle_list_comments(
-    Path((owner, repo, number)): Path<(String, String, i32)>,
+    Path((owner, repo, number)): Path<(String, String, i64)>,
 ) -> impl IntoResponse {
     match issues::list_comments(&owner, &repo, number).await {
         Ok(comments) => (
             StatusCode::OK,
             Json(serde_json::json!({ "comments": comments })),
         ),
-        Err(e) => {
-            tracing::error!("list comments failed: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
     }
 }
 
 async fn handle_create_comment(
-    Path((owner, repo, number)): Path<(String, String, i32)>,
+    Path((owner, repo, number)): Path<(String, String, i64)>,
     req: Request,
 ) -> impl IntoResponse {
     let auth_user = match auth::get_auth_user(&req) {
@@ -1113,21 +1014,124 @@ async fn handle_create_comment(
         }
     };
 
-    match issues::add_comment(&owner, &repo, number, &auth_user.username, comment_req).await {
-        Ok(Some(comment)) => (StatusCode::CREATED, Json(serde_json::json!(comment))),
+    match issues::add_comment(&owner, &repo, number, &auth_user.owner, comment_req).await {
+        Ok(Some(comment)) => {
+            auth::log_audit(
+                Some(auth_user.token_id),
+                &auth_user.key_type,
+                &auth_user.owner,
+                "issue.comment",
+                Some(&format!("{}/{}", owner, repo)),
+                None,
+                Some(&format!("#{}", number)),
+                None,
+            )
+            .await;
+            (StatusCode::CREATED, Json(serde_json::json!(comment)))
+        }
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "Issue not found" })),
         ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn handle_add_commit_ref(
+    Path((owner, repo, number)): Path<(String, String, i64)>,
+    req: Request,
+) -> impl IntoResponse {
+    let auth_user = match auth::get_auth_user(&req) {
+        Some(user) => user.clone(),
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Authentication required" })),
+            )
+        }
+    };
+
+    let body = match axum::body::to_bytes(req.into_body(), 1024 * 1024).await {
+        Ok(b) => b,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Invalid body" })),
+            )
+        }
+    };
+
+    let cr_req: issues::CreateCommitRefRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
         Err(e) => {
-            tracing::error!("create comment failed: {}", e);
-            (
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+        }
+    };
+
+    // Get the issue first
+    let issue = match issues::get_issue(&owner, &repo, number).await {
+        Ok(Some(i)) => i,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": "Issue not found" })),
+            )
+        }
+        Err(e) => {
+            return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({ "error": e.to_string() })),
             )
         }
+    };
+
+    match issues::add_commit_ref(issue.id, &cr_req.commit_hash, &cr_req.repo).await {
+        Ok(cr) => (StatusCode::CREATED, Json(serde_json::json!(cr))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
     }
 }
+
+async fn handle_get_commit_refs(
+    Path((owner, repo, number)): Path<(String, String, i64)>,
+) -> impl IntoResponse {
+    let issue = match issues::get_issue(&owner, &repo, number).await {
+        Ok(Some(i)) => i,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": "Issue not found" })),
+            )
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+        }
+    };
+
+    match issues::get_commit_refs(issue.id).await {
+        Ok(refs) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "commit_refs": refs })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+// --- Labels ---
 
 async fn handle_list_labels(Path((owner, repo)): Path<(String, String)>) -> impl IntoResponse {
     match issues::list_labels(&owner, &repo).await {
@@ -1135,13 +1139,10 @@ async fn handle_list_labels(Path((owner, repo)): Path<(String, String)>) -> impl
             StatusCode::OK,
             Json(serde_json::json!({ "labels": labels })),
         ),
-        Err(e) => {
-            tracing::error!("list labels failed: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
     }
 }
 
@@ -1177,29 +1178,17 @@ async fn handle_create_label(
     };
 
     let color = label_req.color.as_deref().unwrap_or("6e7681");
-
-    match issues::create_label(
-        &owner,
-        &repo,
-        &label_req.name,
-        color,
-        label_req.description.as_deref(),
-    )
-    .await
-    {
+    match issues::create_label(&owner, &repo, &label_req.name, color, label_req.description.as_deref()).await {
         Ok(label) => (StatusCode::CREATED, Json(serde_json::json!(label))),
-        Err(e) => {
-            tracing::error!("create label failed: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
     }
 }
 
 async fn handle_add_label(
-    Path((owner, repo, number, label)): Path<(String, String, i32, String)>,
+    Path((owner, repo, number, label)): Path<(String, String, i64, String)>,
 ) -> impl IntoResponse {
     match issues::add_label_to_issue(&owner, &repo, number, &label).await {
         Ok(true) => (
@@ -1210,18 +1199,15 @@ async fn handle_add_label(
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "Issue or label not found" })),
         ),
-        Err(e) => {
-            tracing::error!("add label failed: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
     }
 }
 
 async fn handle_remove_label(
-    Path((owner, repo, number, label)): Path<(String, String, i32, String)>,
+    Path((owner, repo, number, label)): Path<(String, String, i64, String)>,
 ) -> impl IntoResponse {
     match issues::remove_label_from_issue(&owner, &repo, number, &label).await {
         Ok(true) => (
@@ -1232,15 +1218,14 @@ async fn handle_remove_label(
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "Issue or label not found" })),
         ),
-        Err(e) => {
-            tracing::error!("remove label failed: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
     }
 }
+
+// --- Pull requests ---
 
 async fn handle_list_pulls(
     Path((owner, repo)): Path<(String, String)>,
@@ -1289,8 +1274,21 @@ async fn handle_create_pull(
         }
     };
 
-    match pulls::create_pull(&owner, &repo, &auth_user.username, create_req).await {
-        Ok(pr) => (StatusCode::CREATED, Json(serde_json::json!(pr))),
+    match pulls::create_pull(&owner, &repo, &auth_user.owner, create_req).await {
+        Ok(pr) => {
+            auth::log_audit(
+                Some(auth_user.token_id),
+                &auth_user.key_type,
+                &auth_user.owner,
+                "pr.create",
+                Some(&format!("{}/{}", owner, repo)),
+                None,
+                Some(&format!("#{}: {}", pr.number, pr.title)),
+                None,
+            )
+            .await;
+            (StatusCode::CREATED, Json(serde_json::json!(pr)))
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e.to_string() })),
@@ -1299,7 +1297,7 @@ async fn handle_create_pull(
 }
 
 async fn handle_get_pull(
-    Path((owner, repo, number)): Path<(String, String, i32)>,
+    Path((owner, repo, number)): Path<(String, String, i64)>,
 ) -> impl IntoResponse {
     match pulls::get_pull(&owner, &repo, number).await {
         Ok(Some(pr)) => {
@@ -1323,9 +1321,19 @@ async fn handle_get_pull(
 }
 
 async fn handle_update_pull(
-    Path((owner, repo, number)): Path<(String, String, i32)>,
+    Path((owner, repo, number)): Path<(String, String, i64)>,
     req: Request,
 ) -> impl IntoResponse {
+    let auth_user = match auth::get_auth_user(&req) {
+        Some(user) => user.clone(),
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Authentication required" })),
+            )
+        }
+    };
+
     let body = match axum::body::to_bytes(req.into_body(), 1024 * 1024).await {
         Ok(b) => b,
         Err(_) => {
@@ -1345,7 +1353,20 @@ async fn handle_update_pull(
         }
     };
     match pulls::update_pull(&owner, &repo, number, update_req).await {
-        Ok(Some(pr)) => (StatusCode::OK, Json(serde_json::json!(pr))),
+        Ok(Some(pr)) => {
+            auth::log_audit(
+                Some(auth_user.token_id),
+                &auth_user.key_type,
+                &auth_user.owner,
+                "pr.update",
+                Some(&format!("{}/{}", owner, repo)),
+                None,
+                Some(&format!("#{} -> {}", number, pr.state)),
+                None,
+            )
+            .await;
+            (StatusCode::OK, Json(serde_json::json!(pr)))
+        }
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "Pull request not found" })),
@@ -1358,7 +1379,7 @@ async fn handle_update_pull(
 }
 
 async fn handle_list_pull_comments(
-    Path((owner, repo, number)): Path<(String, String, i32)>,
+    Path((owner, repo, number)): Path<(String, String, i64)>,
 ) -> impl IntoResponse {
     match pulls::list_pull_comments(&owner, &repo, number).await {
         Ok(comments) => (
@@ -1373,7 +1394,7 @@ async fn handle_list_pull_comments(
 }
 
 async fn handle_create_pull_comment(
-    Path((owner, repo, number)): Path<(String, String, i32)>,
+    Path((owner, repo, number)): Path<(String, String, i64)>,
     req: Request,
 ) -> impl IntoResponse {
     let auth_user = match auth::get_auth_user(&req) {
@@ -1403,11 +1424,566 @@ async fn handle_create_pull_comment(
             )
         }
     };
-    match pulls::add_pull_comment(&owner, &repo, number, &auth_user.username, create_req).await {
+    match pulls::add_pull_comment(&owner, &repo, number, &auth_user.owner, create_req).await {
         Ok(Some(comment)) => (StatusCode::CREATED, Json(serde_json::json!(comment))),
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "Pull request not found" })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+// --- Package registry ---
+
+#[derive(Debug, Deserialize)]
+struct BlobQuery {
+    path: Option<String>,
+}
+
+async fn handle_list_packages(req: Request) -> impl IntoResponse {
+    let auth_user = match auth::get_auth_user(&req) {
+        Some(user) => user,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Authentication required" })),
+            )
+        }
+    };
+
+    if !auth_user.has_scope("packages:read") {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "packages:read scope required" })),
+        );
+    }
+
+    match packages::list_all_packages().await {
+        Ok(list) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "packages": list })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn handle_preflight_publish(req: Request) -> impl IntoResponse {
+    let auth_user = match auth::get_auth_user(&req) {
+        Some(user) => user.clone(),
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Authentication required" })),
+            )
+        }
+    };
+
+    if !auth_user.has_scope("packages:write") {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "packages:write scope required" })),
+        );
+    }
+
+    let body = match axum::body::to_bytes(req.into_body(), 2 * 1024 * 1024).await {
+        Ok(b) => b,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Invalid body" })),
+            )
+        }
+    };
+
+    let publish_req: packages::PublishPackageRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+        }
+    };
+
+    auth::log_audit(
+        Some(auth_user.token_id),
+        &auth_user.key_type,
+        &auth_user.owner,
+        "package.preflight",
+        Some(&format!("{}/{}", auth_user.owner, publish_req.repo)),
+        Some(&publish_req.version),
+        Some(&publish_req.name),
+        None,
+    )
+    .await;
+
+    match packages::preflight_publish(&auth_user.owner, &publish_req).await {
+        Ok(result) => (StatusCode::OK, Json(serde_json::json!(result))),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn handle_publish_package(req: Request) -> impl IntoResponse {
+    let auth_user = match auth::get_auth_user(&req) {
+        Some(user) => user.clone(),
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Authentication required" })),
+            )
+        }
+    };
+
+    if !auth_user.has_scope("packages:write") {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "packages:write scope required" })),
+        );
+    }
+
+    let body = match axum::body::to_bytes(req.into_body(), 2 * 1024 * 1024).await {
+        Ok(b) => b,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Invalid body" })),
+            )
+        }
+    };
+
+    let publish_req: packages::PublishPackageRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+        }
+    };
+
+    auth::log_audit(
+        Some(auth_user.token_id),
+        &auth_user.key_type,
+        &auth_user.owner,
+        "package.publish",
+        Some(&format!("{}/{}", auth_user.owner, publish_req.repo)),
+        Some(&publish_req.version),
+        Some(&publish_req.name),
+        None,
+    )
+    .await;
+
+    match packages::publish(&auth_user.owner, publish_req).await {
+        Ok(release) => (StatusCode::CREATED, Json(serde_json::json!(release))),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn handle_list_versions(
+    Path(name): Path<String>,
+    req: Request,
+) -> impl IntoResponse {
+    let auth_user = match auth::get_auth_user(&req) {
+        Some(user) => user,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Authentication required" })),
+            )
+        }
+    };
+
+    if !auth_user.has_scope("packages:read") {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "packages:read scope required" })),
+        );
+    }
+
+    match packages::get_package(&name).await {
+        Ok(summary) => (StatusCode::OK, Json(serde_json::json!(summary))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn handle_get_release(
+    Path((name, version)): Path<(String, String)>,
+    req: Request,
+) -> impl IntoResponse {
+    let auth_user = match auth::get_auth_user(&req) {
+        Some(user) => user,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Authentication required" })),
+            )
+        }
+    };
+
+    if !auth_user.has_scope("packages:read") {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "packages:read scope required" })),
+        );
+    }
+
+    match packages::get_release(&name, &version).await {
+        Ok(Some(release)) => (StatusCode::OK, Json(serde_json::json!(release))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "Release not found" })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn handle_get_latest(
+    Path(name): Path<String>,
+    req: Request,
+) -> impl IntoResponse {
+    let auth_user = match auth::get_auth_user(&req) {
+        Some(user) => user,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Authentication required" })),
+            )
+        }
+    };
+
+    if !auth_user.has_scope("packages:read") {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "packages:read scope required" })),
+        );
+    }
+
+    match packages::get_latest_release(&name).await {
+        Ok(Some(release)) => (StatusCode::OK, Json(serde_json::json!(release))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "No releases found" })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn handle_get_docs(
+    Path((name, version)): Path<(String, String)>,
+    req: Request,
+) -> impl IntoResponse {
+    let auth_user = match auth::get_auth_user(&req) {
+        Some(user) => user,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Authentication required" })),
+            )
+        }
+    };
+
+    if !auth_user.has_scope("packages:read") {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "packages:read scope required" })),
+        );
+    }
+
+    match packages::get_release_docs(&name, &version).await {
+        Ok(Some(docs)) => (StatusCode::OK, Json(serde_json::json!(docs))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "Release not found" })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn handle_get_tree(
+    Path((name, version)): Path<(String, String)>,
+    req: Request,
+) -> impl IntoResponse {
+    let auth_user = match auth::get_auth_user(&req) {
+        Some(user) => user,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Authentication required" })),
+            )
+        }
+    };
+
+    if !auth_user.has_scope("packages:read") {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "packages:read scope required" })),
+        );
+    }
+
+    match packages::get_release_tree(&name, &version).await {
+        Ok(Some(tree)) => (StatusCode::OK, Json(serde_json::json!(tree))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "Release not found" })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn handle_get_blob(
+    Path((name, version)): Path<(String, String)>,
+    Query(query): Query<BlobQuery>,
+    req: Request,
+) -> impl IntoResponse {
+    let auth_user = match auth::get_auth_user(&req) {
+        Some(user) => user,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Authentication required" })),
+            )
+        }
+    };
+
+    if !auth_user.has_scope("packages:read") {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "packages:read scope required" })),
+        );
+    }
+
+    let path = query.path.as_deref().unwrap_or("");
+    match packages::get_release_blob(&name, &version, path).await {
+        Ok(Some(blob)) => (StatusCode::OK, Json(serde_json::json!(blob))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "File not found" })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+// --- Scoped package handlers (delegates to unscoped with @scope/name) ---
+
+async fn handle_list_scoped_versions(
+    Path((scope, name)): Path<(String, String)>,
+    req: Request,
+) -> impl IntoResponse {
+    let pkg_name = format!("@{}/{}", scope, name);
+    let auth_user = match auth::get_auth_user(&req) {
+        Some(user) => user,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Authentication required" })),
+            )
+        }
+    };
+    if !auth_user.has_scope("packages:read") {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "packages:read scope required" })),
+        );
+    }
+    match packages::get_package(&pkg_name).await {
+        Ok(summary) => (StatusCode::OK, Json(serde_json::json!(summary))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn handle_get_scoped_release(
+    Path((scope, name, version)): Path<(String, String, String)>,
+    req: Request,
+) -> impl IntoResponse {
+    let pkg_name = format!("@{}/{}", scope, name);
+    let auth_user = match auth::get_auth_user(&req) {
+        Some(user) => user,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Authentication required" })),
+            )
+        }
+    };
+    if !auth_user.has_scope("packages:read") {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "packages:read scope required" })),
+        );
+    }
+    match packages::get_release(&pkg_name, &version).await {
+        Ok(Some(release)) => (StatusCode::OK, Json(serde_json::json!(release))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "Release not found" })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn handle_get_scoped_latest(
+    Path((scope, name)): Path<(String, String)>,
+    req: Request,
+) -> impl IntoResponse {
+    let pkg_name = format!("@{}/{}", scope, name);
+    let auth_user = match auth::get_auth_user(&req) {
+        Some(user) => user,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Authentication required" })),
+            )
+        }
+    };
+    if !auth_user.has_scope("packages:read") {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "packages:read scope required" })),
+        );
+    }
+    match packages::get_latest_release(&pkg_name).await {
+        Ok(Some(release)) => (StatusCode::OK, Json(serde_json::json!(release))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "No releases found" })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn handle_get_scoped_docs(
+    Path((scope, name, version)): Path<(String, String, String)>,
+    req: Request,
+) -> impl IntoResponse {
+    let pkg_name = format!("@{}/{}", scope, name);
+    let auth_user = match auth::get_auth_user(&req) {
+        Some(user) => user,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Authentication required" })),
+            )
+        }
+    };
+    if !auth_user.has_scope("packages:read") {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "packages:read scope required" })),
+        );
+    }
+    match packages::get_release_docs(&pkg_name, &version).await {
+        Ok(Some(docs)) => (StatusCode::OK, Json(serde_json::json!(docs))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "Release not found" })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn handle_get_scoped_tree(
+    Path((scope, name, version)): Path<(String, String, String)>,
+    req: Request,
+) -> impl IntoResponse {
+    let pkg_name = format!("@{}/{}", scope, name);
+    let auth_user = match auth::get_auth_user(&req) {
+        Some(user) => user,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Authentication required" })),
+            )
+        }
+    };
+    if !auth_user.has_scope("packages:read") {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "packages:read scope required" })),
+        );
+    }
+    match packages::get_release_tree(&pkg_name, &version).await {
+        Ok(Some(tree)) => (StatusCode::OK, Json(serde_json::json!(tree))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "Release not found" })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn handle_get_scoped_blob(
+    Path((scope, name, version)): Path<(String, String, String)>,
+    Query(query): Query<BlobQuery>,
+    req: Request,
+) -> impl IntoResponse {
+    let pkg_name = format!("@{}/{}", scope, name);
+    let auth_user = match auth::get_auth_user(&req) {
+        Some(user) => user,
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Authentication required" })),
+            )
+        }
+    };
+    if !auth_user.has_scope("packages:read") {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "packages:read scope required" })),
+        );
+    }
+    let path = query.path.as_deref().unwrap_or("");
+    match packages::get_release_blob(&pkg_name, &version, path).await {
+        Ok(Some(blob)) => (StatusCode::OK, Json(serde_json::json!(blob))),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "File not found" })),
         ),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,

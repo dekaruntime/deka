@@ -1,31 +1,32 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 #[derive(Debug, Serialize, FromRow)]
 pub struct PullRequest {
-    pub id: i64,
+    pub id: i32,
     pub repo_owner: String,
     pub repo_name: String,
-    pub number: i64,
+    pub number: i32,
     pub title: String,
     pub body: Option<String>,
     pub state: String,
     pub author: String,
     pub source_ref: String,
     pub target_ref: String,
-    pub created_at: Option<String>,
-    pub updated_at: Option<String>,
-    pub closed_at: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub closed_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Serialize, FromRow)]
 pub struct PullComment {
-    pub id: i64,
-    pub pull_id: i64,
+    pub id: i32,
+    pub pull_id: i32,
     pub body: String,
     pub author: String,
-    pub created_at: Option<String>,
-    pub updated_at: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -53,31 +54,22 @@ pub struct CreatePullComment {
     pub body: String,
 }
 
-async fn get_next_pull_number(repo_owner: &str, repo_name: &str) -> Result<i64, sqlx::Error> {
+async fn get_next_pull_number(repo_owner: &str, repo_name: &str) -> Result<i32, sqlx::Error> {
     let pool = crate::db::pool();
-
-    sqlx::query(
+    let row: (i32,) = sqlx::query_as(
         r#"
         INSERT INTO pull_sequences (repo_owner, repo_name, next_number)
-        VALUES (?, ?, 2)
+        VALUES ($1, $2, 2)
         ON CONFLICT (repo_owner, repo_name)
         DO UPDATE SET next_number = pull_sequences.next_number + 1
+        RETURNING next_number - 1
         "#,
-    )
-    .bind(repo_owner)
-    .bind(repo_name)
-    .execute(pool)
-    .await?;
-
-    let result: (i64,) = sqlx::query_as(
-        "SELECT next_number - 1 FROM pull_sequences WHERE repo_owner = ? AND repo_name = ?",
     )
     .bind(repo_owner)
     .bind(repo_name)
     .fetch_one(pool)
     .await?;
-
-    Ok(result.0)
+    Ok(row.0)
 }
 
 pub async fn create_pull(
@@ -91,7 +83,7 @@ pub async fn create_pull(
     sqlx::query_as::<_, PullRequest>(
         r#"
         INSERT INTO pull_requests (repo_owner, repo_name, number, title, body, state, author, source_ref, target_ref)
-        VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?)
+        VALUES ($1, $2, $3, $4, $5, 'open', $6, $7, $8)
         RETURNING *
         "#,
     )
@@ -117,13 +109,12 @@ pub async fn list_pulls(
     sqlx::query_as::<_, PullRequest>(
         r#"
         SELECT * FROM pull_requests
-        WHERE repo_owner = ? AND repo_name = ? AND (? = 'all' OR state = ?)
+        WHERE repo_owner = $1 AND repo_name = $2 AND ($3 = 'all' OR state = $3)
         ORDER BY number DESC
         "#,
     )
     .bind(repo_owner)
     .bind(repo_name)
-    .bind(state)
     .bind(state)
     .fetch_all(pool)
     .await
@@ -132,11 +123,14 @@ pub async fn list_pulls(
 pub async fn get_pull(
     repo_owner: &str,
     repo_name: &str,
-    number: i64,
+    number: i32,
 ) -> Result<Option<PullRequest>, sqlx::Error> {
     let pool = crate::db::pool();
     sqlx::query_as::<_, PullRequest>(
-        "SELECT * FROM pull_requests WHERE repo_owner = ? AND repo_name = ? AND number = ?",
+        r#"
+        SELECT * FROM pull_requests
+        WHERE repo_owner = $1 AND repo_name = $2 AND number = $3
+        "#,
     )
     .bind(repo_owner)
     .bind(repo_name)
@@ -148,7 +142,7 @@ pub async fn get_pull(
 pub async fn update_pull(
     repo_owner: &str,
     repo_name: &str,
-    number: i64,
+    number: i32,
     req: UpdatePullRequest,
 ) -> Result<Option<PullRequest>, sqlx::Error> {
     let Some(existing) = get_pull(repo_owner, repo_name, number).await? else {
@@ -157,8 +151,8 @@ pub async fn update_pull(
     let title = req.title.unwrap_or(existing.title);
     let body = req.body.or(existing.body);
     let state = req.state.unwrap_or(existing.state);
-    let closed_at = if state == "closed" || state == "merged" {
-        Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string())
+    let closed_at = if state == "closed" {
+        Some(Utc::now())
     } else {
         None
     };
@@ -166,18 +160,18 @@ pub async fn update_pull(
     sqlx::query_as::<_, PullRequest>(
         r#"
         UPDATE pull_requests
-        SET title = ?, body = ?, state = ?, updated_at = datetime('now'), closed_at = ?
-        WHERE repo_owner = ? AND repo_name = ? AND number = ?
+        SET title = $4, body = $5, state = $6, updated_at = NOW(), closed_at = $7
+        WHERE repo_owner = $1 AND repo_name = $2 AND number = $3
         RETURNING *
         "#,
     )
+    .bind(repo_owner)
+    .bind(repo_name)
+    .bind(number)
     .bind(title)
     .bind(body)
     .bind(state)
     .bind(closed_at)
-    .bind(repo_owner)
-    .bind(repo_name)
-    .bind(number)
     .fetch_optional(pool)
     .await
 }
@@ -185,7 +179,7 @@ pub async fn update_pull(
 pub async fn add_pull_comment(
     repo_owner: &str,
     repo_name: &str,
-    number: i64,
+    number: i32,
     author: &str,
     req: CreatePullComment,
 ) -> Result<Option<PullComment>, sqlx::Error> {
@@ -194,14 +188,18 @@ pub async fn add_pull_comment(
     };
     let pool = crate::db::pool();
     let comment = sqlx::query_as::<_, PullComment>(
-        "INSERT INTO pull_comments (pull_id, body, author) VALUES (?, ?, ?) RETURNING *",
+        r#"
+        INSERT INTO pull_comments (pull_id, body, author)
+        VALUES ($1, $2, $3)
+        RETURNING *
+        "#,
     )
     .bind(pr.id)
     .bind(req.body.trim())
     .bind(author)
     .fetch_one(pool)
     .await?;
-    sqlx::query("UPDATE pull_requests SET updated_at = datetime('now') WHERE id = ?")
+    sqlx::query("UPDATE pull_requests SET updated_at = NOW() WHERE id = $1")
         .bind(pr.id)
         .execute(pool)
         .await?;
@@ -211,14 +209,14 @@ pub async fn add_pull_comment(
 pub async fn list_pull_comments(
     repo_owner: &str,
     repo_name: &str,
-    number: i64,
+    number: i32,
 ) -> Result<Vec<PullComment>, sqlx::Error> {
     let pool = crate::db::pool();
     sqlx::query_as::<_, PullComment>(
         r#"
         SELECT c.* FROM pull_comments c
         JOIN pull_requests p ON c.pull_id = p.id
-        WHERE p.repo_owner = ? AND p.repo_name = ? AND p.number = ?
+        WHERE p.repo_owner = $1 AND p.repo_name = $2 AND p.number = $3
         ORDER BY c.created_at ASC
         "#,
     )
