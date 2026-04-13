@@ -6,8 +6,9 @@
 
 use std::collections::HashMap;
 use std::net::TcpListener;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use axum::extract::{Request, State};
 use axum::http::header::CONTENT_LENGTH;
@@ -28,29 +29,44 @@ pub fn platform(context: &Context) {
     rt.block_on(platform_async(context));
 }
 
+/// A cached bundle entry with last-access tracking for preview cleanup.
+struct BundleEntry {
+    code: String,
+    last_accessed: Instant,
+}
+
 /// Platform state shared across all requests.
 struct PlatformState {
     engine: Arc<RuntimeEngine>,
     root: PathBuf,
-    /// Cache of bundled handler code per tenant (shop_id → compiled JS).
-    bundle_cache: Mutex<HashMap<String, String>>,
+    /// Cache of bundled handler code per tenant.
+    /// Keys: `shop_id` for main, `shop_id:{hash}` for preview builds.
+    bundle_cache: Mutex<HashMap<String, BundleEntry>>,
 }
+
+/// How long preview builds stay in cache without being accessed (7 days).
+const PREVIEW_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+/// How often the cleanup task runs (every hour).
+const CLEANUP_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 impl PlatformState {
     /// Returns (HandlerKey, handler_code, handler_entry) for a tenant.
     /// Uses the bundler to compile PHPX→JS with stdlib prelude baked in.
     /// Caches the result so subsequent requests are fast.
-    fn resolve_handler(&self, shop_id: &str) -> (HandlerKey, String, Option<String>) {
-        let cache_key = if shop_id.is_empty() { "default" } else { shop_id };
+    ///
+    /// `cache_key` is `shop_id` for main builds, `shop_id:{hash}` for previews.
+    fn resolve_handler(&self, shop_id: &str, cache_key: &str) -> (HandlerKey, String, Option<String>) {
+        let display_key = if cache_key.is_empty() { "default" } else { cache_key };
 
         // Check cache first
         {
-            let cache = self.bundle_cache.lock().unwrap();
-            if let Some(code) = cache.get(cache_key) {
+            let mut cache = self.bundle_cache.lock().unwrap();
+            if let Some(entry) = cache.get_mut(display_key) {
+                entry.last_accessed = Instant::now();
                 return (
-                    HandlerKey::new(if shop_id.is_empty() { "default".to_string() } else { format!("tenant:{}", shop_id) }),
-                    code.clone(),
-                    None, // No entry needed — code is already bundled
+                    HandlerKey::new(if shop_id.is_empty() { "default".to_string() } else { format!("tenant:{}", display_key) }),
+                    entry.code.clone(),
+                    None,
                 );
             }
         }
@@ -69,25 +85,24 @@ impl PlatformState {
         let handler_str = handler_path.to_string_lossy().to_string();
         let code = match build_phpx_handler_bundle(&handler_str) {
             Ok(bundled) => {
-                stdio::log("platform", &format!("bundled {} ({} bytes)", cache_key, bundled.len()));
+                stdio::log("platform", &format!("bundled {} ({} bytes)", display_key, bundled.len()));
                 bundled
             }
             Err(err) => {
-                stdio::error("platform", &format!("bundle failed for {}: {}", cache_key, err));
-                // Fall back to the default handler — never serve empty code
+                stdio::error("platform", &format!("bundle failed for {}: {}", display_key, err));
                 let default_path = self.root.join("default").join("main.phpx");
                 let default_str = default_path.to_string_lossy().to_string();
                 if handler_path != default_path {
                     match build_phpx_handler_bundle(&default_str) {
                         Ok(bundled) => {
                             stdio::log("platform", &format!(
-                                "fallback to default for {} ({} bytes)", cache_key, bundled.len()
+                                "fallback to default for {} ({} bytes)", display_key, bundled.len()
                             ));
                             bundled
                         }
                         Err(err2) => {
                             stdio::error("platform", &format!(
-                                "default fallback also failed for {}: {}", cache_key, err2
+                                "default fallback also failed for {}: {}", display_key, err2
                             ));
                             String::new()
                         }
@@ -101,14 +116,39 @@ impl PlatformState {
         // Cache the bundled code
         {
             let mut cache = self.bundle_cache.lock().unwrap();
-            cache.insert(cache_key.to_string(), code.clone());
+            cache.insert(display_key.to_string(), BundleEntry {
+                code: code.clone(),
+                last_accessed: Instant::now(),
+            });
         }
 
         (
-            HandlerKey::new(if shop_id.is_empty() { "default".to_string() } else { format!("tenant:{}", shop_id) }),
+            HandlerKey::new(if shop_id.is_empty() { "default".to_string() } else { format!("tenant:{}", display_key) }),
             code,
-            None, // Bundled code — no ESM entry needed
+            None,
         )
+    }
+
+    /// Remove preview bundle entries that haven't been accessed within PREVIEW_TTL.
+    /// Only affects entries whose key contains `:` (i.e. `shop_id:hash`).
+    fn cleanup_stale_previews(&self) -> usize {
+        let mut cache = self.bundle_cache.lock().unwrap();
+        let now = Instant::now();
+        let before = cache.len();
+        cache.retain(|key, entry| {
+            // Only expire preview entries (keys containing ':')
+            if !key.contains(':') {
+                return true;
+            }
+            let age = now.duration_since(entry.last_accessed);
+            if age > PREVIEW_TTL {
+                stdio::log("cleanup", &format!("expired preview bundle: {} (idle {:?})", key, age));
+                false
+            } else {
+                true
+            }
+        });
+        before - cache.len()
     }
 }
 
@@ -209,6 +249,20 @@ async fn platform_async(context: &Context) {
 
     stdio::log("listen", &format!("http://localhost:{}", port));
 
+    // Spawn background task to clean up stale preview bundles every hour.
+    {
+        let cleanup_state = Arc::clone(&state);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(CLEANUP_INTERVAL).await;
+                let removed = cleanup_state.cleanup_stale_previews();
+                if removed > 0 {
+                    stdio::log("cleanup", &format!("removed {} stale preview bundle(s)", removed));
+                }
+            }
+        });
+    }
+
     let app = Router::new()
         .route("/__admin/rebuild", axum::routing::post(handle_admin_rebuild))
         .fallback(handle_platform_request)
@@ -218,34 +272,34 @@ async fn platform_async(context: &Context) {
     axum::serve(listener, app).await.unwrap();
 }
 
-/// POST /__admin/rebuild?shop_id=xxx
+/// POST /__admin/rebuild?shop_id=xxx[&ref=hash]
 ///
 /// Clears the bundle cache for the given tenant and re-bundles their code.
+/// If `ref` is provided, caches the bundle as `shop_id:ref` (preview build).
+/// If `ref` is omitted, caches as `shop_id` (main build, current behavior).
 /// Only accepts requests from localhost for security.
 async fn handle_admin_rebuild(
     State(state): State<Arc<PlatformState>>,
     request: Request,
 ) -> impl IntoResponse {
-    // Security: only accept from localhost
-    // (Axum ConnectInfo not available here, but we're bound to 127.0.0.1 so
-    // all connections are inherently local.)
-
     let uri = request.uri().clone();
-    let shop_id = uri
-        .query()
-        .and_then(|q| {
-            q.split('&')
-                .find_map(|pair| {
-                    let mut parts = pair.splitn(2, '=');
-                    let key = parts.next()?;
-                    let val = parts.next()?;
-                    if key == "shop_id" && !val.is_empty() {
-                        Some(val.to_string())
-                    } else {
-                        None
-                    }
-                })
-        });
+
+    // Parse query params
+    let mut shop_id: Option<String> = None;
+    let mut git_ref: Option<String> = None;
+
+    if let Some(query) = uri.query() {
+        for pair in query.split('&') {
+            let mut parts = pair.splitn(2, '=');
+            let key = parts.next().unwrap_or("");
+            let val = parts.next().unwrap_or("");
+            if key == "shop_id" && !val.is_empty() {
+                shop_id = Some(val.to_string());
+            } else if key == "ref" && !val.is_empty() {
+                git_ref = Some(val.to_string());
+            }
+        }
+    }
 
     let shop_id = match shop_id {
         Some(id) => id,
@@ -259,40 +313,52 @@ async fn handle_admin_rebuild(
         }
     };
 
-    stdio::log("rebuild", &format!("triggered for shop_id={}", shop_id));
+    // The cache key is `shop_id` for main or `shop_id:{ref}` for previews
+    let cache_key = match &git_ref {
+        Some(r) => format!("{}:{}", shop_id, r),
+        None => shop_id.clone(),
+    };
 
-    // Clear the cached bundle for this tenant
+    let label = if git_ref.is_some() { "preview rebuild" } else { "rebuild" };
+    stdio::log(label, &format!("triggered for {}", cache_key));
+
+    // Clear the cached bundle
     {
         let mut cache = state.bundle_cache.lock().unwrap();
-        cache.remove(&shop_id);
+        cache.remove(&cache_key);
     }
 
-    // Re-bundle by calling resolve_handler (which will re-compile since cache is cleared)
-    let (_key, code, _entry) = state.resolve_handler(&shop_id);
+    // Re-bundle (resolve_handler will re-compile since cache is cleared)
+    let (_key, code, _entry) = state.resolve_handler(&shop_id, &cache_key);
     let bundle_size = code.len();
 
     if code.is_empty() {
-        stdio::error("rebuild", &format!("failed for shop_id={}", shop_id));
+        stdio::error(label, &format!("failed for {}", cache_key));
         return Response::builder()
             .status(500)
             .body(axum::body::Body::from(format!(
                 r#"{{"error":"bundle failed for {}"}}"#,
-                shop_id
+                cache_key
             )))
             .unwrap();
     }
 
     stdio::log(
-        "rebuild",
-        &format!("complete for shop_id={} ({} bytes)", shop_id, bundle_size),
+        label,
+        &format!("complete for {} ({} bytes)", cache_key, bundle_size),
     );
 
     Response::builder()
         .status(200)
         .header("content-type", "application/json")
         .body(axum::body::Body::from(format!(
-            r#"{{"status":"ok","shop_id":"{}","bundle_size":{}}}"#,
-            shop_id, bundle_size
+            r#"{{"status":"ok","shop_id":"{}","ref":{},"bundle_size":{}}}"#,
+            shop_id,
+            match &git_ref {
+                Some(r) => format!("\"{}\"", r),
+                None => "null".to_string(),
+            },
+            bundle_size
         )))
         .unwrap()
 }
@@ -340,9 +406,30 @@ async fn handle_platform_request(
     // tracker — it needs them to resolve the shop_id on the worker thread.
     let request_headers_for_analytics = headers.clone();
 
-    // Resolve tenant from Host header only.
-    let shop_id = pool::tenant::resolve_tenant_from_host(&headers).unwrap_or_default();
-    let (handler_key, handler_code, handler_entry) = state.resolve_handler(&shop_id);
+    // Resolve tenant from Host header only (preview-aware).
+    let tenant_info = pool::tenant::resolve_tenant_info_from_host(&headers);
+    let shop_id = tenant_info.as_ref().map(|t| t.shop_id.clone()).unwrap_or_default();
+    let cache_key = tenant_info.as_ref().map(|t| t.cache_key()).unwrap_or_else(|| shop_id.clone());
+    let (handler_key, handler_code, handler_entry) = state.resolve_handler(&shop_id, &cache_key);
+
+    // If this is a preview request and the preview bundle failed, fall back to
+    // the main branch build rather than returning 500.
+    let (handler_key, handler_code, handler_entry) = if handler_code.is_empty() {
+        if let Some(ref info) = tenant_info {
+            if info.preview_ref.is_some() {
+                stdio::log("platform", &format!(
+                    "preview bundle unavailable for {}, falling back to main", cache_key
+                ));
+                state.resolve_handler(&shop_id, &shop_id)
+            } else {
+                (handler_key, handler_code, handler_entry)
+            }
+        } else {
+            (handler_key, handler_code, handler_entry)
+        }
+    } else {
+        (handler_key, handler_code, handler_entry)
+    };
 
     // Guard: if the bundle failed completely (empty code), return HTTP 500
     // instead of sending empty JS to V8 which causes a HandleScope panic.

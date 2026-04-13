@@ -2,9 +2,32 @@
 //!
 //! Uses Redis for subdomain → shop_id lookup.
 //! Keys: `subdomain:{name}` → `{shop_id}`
+//!
+//! Preview deploys: `preview-{hash}.{shop}.tana.gg` resolves to the same
+//! shop_id as `{shop}.tana.gg`, but the caller receives the hash so it
+//! can look up the branch-specific bundle keyed as `{shop_id}:{hash}`.
 
 use redis::{Client, Commands, Connection};
 use std::cell::RefCell;
+
+/// Result of tenant resolution, optionally carrying a preview commit hash.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TenantInfo {
+    pub shop_id: String,
+    /// If the request came via `preview-{hash}.{shop}.tana.gg`, this holds
+    /// the short commit hash. `None` means serve from the main branch.
+    pub preview_ref: Option<String>,
+}
+
+impl TenantInfo {
+    /// The bundle cache key: `shop_id` for main, `shop_id:{hash}` for previews.
+    pub fn cache_key(&self) -> String {
+        match &self.preview_ref {
+            Some(hash) => format!("{}:{}", self.shop_id, hash),
+            None => self.shop_id.clone(),
+        }
+    }
+}
 
 thread_local! {
     static TENANT_REDIS: RefCell<Option<Connection>> = RefCell::new(None);
@@ -30,6 +53,32 @@ pub fn extract_subdomain(host: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Parse a preview subdomain: `preview-{hash}.{shop}.domain.tld`
+/// Returns `Some((hash, shop_subdomain))` if this is a preview URL,
+/// `None` otherwise.
+///
+/// The hash must be 7+ hex characters (short git hash).
+pub fn parse_preview_host(host: &str) -> Option<(String, String)> {
+    let host = host.split(':').next().unwrap_or(host);
+    if host == "localhost" || host.parse::<std::net::Ipv4Addr>().is_ok() {
+        return None;
+    }
+
+    let parts: Vec<&str> = host.split('.').collect();
+    // preview-{hash}.{shop}.domain.tld = at least 4 parts
+    if parts.len() >= 4 {
+        let first = parts[0];
+        if let Some(hash) = first.strip_prefix("preview-") {
+            // Validate hash: 7+ hex chars
+            if hash.len() >= 7 && hash.chars().all(|c| c.is_ascii_hexdigit()) {
+                let shop_subdomain = parts[1].to_string();
+                return Some((hash.to_string(), shop_subdomain));
+            }
+        }
+    }
+    None
 }
 
 /// Resolve a subdomain to a shop ID via Redis lookup.
@@ -85,21 +134,43 @@ pub fn resolve_tenant_from_headers(headers: &[(String, String)]) -> Option<Strin
 /// header comes from untrusted external clients and must not influence
 /// tenant routing or analytics attribution.
 pub fn resolve_tenant_from_host(headers: &[(String, String)]) -> Option<String> {
-    // Extract from Host header
+    resolve_tenant_info_from_host(headers).map(|info| info.shop_id)
+}
+
+/// Like `resolve_tenant_from_host` but also returns preview ref info.
+/// Used by the platform to decide which bundle cache key to use.
+pub fn resolve_tenant_info_from_host(headers: &[(String, String)]) -> Option<TenantInfo> {
     let host = headers
         .iter()
         .find(|(k, _)| k.eq_ignore_ascii_case("host"))
         .map(|(_, v)| v.as_str())
         .unwrap_or("");
 
+    // Check for preview subdomain first: preview-{hash}.{shop}.domain.tld
+    if let Some((hash, shop_subdomain)) = parse_preview_host(host) {
+        if let Some(shop_id) = resolve_tenant(&shop_subdomain) {
+            return Some(TenantInfo {
+                shop_id,
+                preview_ref: Some(hash),
+            });
+        }
+    }
+
+    // Normal subdomain resolution
     if let Some(subdomain) = extract_subdomain(host) {
         if let Some(shop_id) = resolve_tenant(&subdomain) {
-            return Some(shop_id);
+            return Some(TenantInfo {
+                shop_id,
+                preview_ref: None,
+            });
         }
     }
 
     // Fallback: env var for dev
-    std::env::var("DEKA_SHOP_ID").ok()
+    std::env::var("DEKA_SHOP_ID").ok().map(|shop_id| TenantInfo {
+        shop_id,
+        preview_ref: None,
+    })
 }
 
 #[cfg(test)]
@@ -183,6 +254,55 @@ mod tests {
         let result = resolve_tenant_from_headers(&headers);
         // Can't assert None because env var might be set from earlier test
         let _ = result;
+    }
+
+    #[test]
+    fn parse_preview_host_valid() {
+        let result = parse_preview_host("preview-a1b2c3d.beta.tana.gg");
+        assert_eq!(result, Some(("a1b2c3d".to_string(), "beta".to_string())));
+    }
+
+    #[test]
+    fn parse_preview_host_with_port() {
+        let result = parse_preview_host("preview-a1b2c3d.beta.tana.gg:8530");
+        assert_eq!(result, Some(("a1b2c3d".to_string(), "beta".to_string())));
+    }
+
+    #[test]
+    fn parse_preview_host_short_hash_rejected() {
+        // Hash must be 7+ chars
+        let result = parse_preview_host("preview-abc.beta.tana.gg");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn parse_preview_host_non_hex_rejected() {
+        let result = parse_preview_host("preview-zzzzzzz.beta.tana.gg");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn parse_preview_host_not_preview() {
+        let result = parse_preview_host("beta.tana.gg");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn parse_preview_host_localhost() {
+        let result = parse_preview_host("localhost:8530");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn tenant_info_cache_key_main() {
+        let info = TenantInfo { shop_id: "shop_beta".to_string(), preview_ref: None };
+        assert_eq!(info.cache_key(), "shop_beta");
+    }
+
+    #[test]
+    fn tenant_info_cache_key_preview() {
+        let info = TenantInfo { shop_id: "shop_beta".to_string(), preview_ref: Some("a1b2c3d".to_string()) };
+        assert_eq!(info.cache_key(), "shop_beta:a1b2c3d");
     }
 
     #[test]
