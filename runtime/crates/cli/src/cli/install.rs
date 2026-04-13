@@ -1,5 +1,6 @@
 use anyhow::Result;
 use core::{CommandSpec, Context, FlagSpec, ParamSpec, Registry};
+use linkhash_client::{LinkhashClient, is_phpx_package};
 use pm::{InstallPayload, run_install};
 use runtime_core::module_spec::canonical_php_package_spec;
 use std::path::PathBuf;
@@ -96,6 +97,37 @@ pub fn cmd(context: &Context) {
     // Set registry env vars from flags/env before delegating to pm
     apply_registry_env(context);
 
+    // Check if any positional args are scoped PHPX packages
+    let specs: Vec<String> = context.args.positionals.clone();
+    let phpx_specs: Vec<&String> = specs.iter().filter(|s| is_phpx_package(s)).collect();
+
+    if !phpx_specs.is_empty() {
+        let (registry_url, token) = get_registry_config(context);
+        let client = LinkhashClient::new(&registry_url, token.as_deref());
+        let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+        for spec in &phpx_specs {
+            let (name, version_range) = parse_spec_with_version(spec);
+            match install_phpx_package(&client, &name, &version_range, &project_dir) {
+                Ok(version) => {
+                    stdio::log("install", &format!("installed {}@{}", name, version));
+                }
+                Err(err) => {
+                    stdio::error("install", &format!("failed to install {}: {}", name, err));
+                }
+            }
+        }
+
+        // If there are also non-phpx specs, fall through to pm
+        let non_phpx: Vec<String> = specs.iter()
+            .filter(|s| !is_phpx_package(s))
+            .cloned()
+            .collect();
+        if non_phpx.is_empty() {
+            return;
+        }
+    }
+
     match build_payload(context) {
         Ok(payload) => {
             let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -115,8 +147,39 @@ pub fn cmd_update(context: &Context) {
     // Set registry env vars from flags/env before delegating to pm
     apply_registry_env(context);
 
+    // For update, check if positionals or deka.json deps contain scoped packages
+    let mut specs = context.args.positionals.clone();
+    if specs.is_empty() {
+        specs = collect_deka_json_deps();
+    }
+
+    let phpx_specs: Vec<String> = specs.iter()
+        .filter(|s| is_phpx_package(s))
+        .cloned()
+        .collect();
+
+    if !phpx_specs.is_empty() {
+        let (registry_url, token) = get_registry_config(context);
+        let client = LinkhashClient::new(&registry_url, token.as_deref());
+        let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+        for spec in &phpx_specs {
+            let (name, version_range) = parse_spec_with_version(spec);
+            match install_phpx_package(&client, &name, &version_range, &project_dir) {
+                Ok(version) => {
+                    stdio::log("update", &format!("updated {}@{}", name, version));
+                }
+                Err(err) => {
+                    stdio::error("update", &format!("failed to update {}: {}", name, err));
+                }
+            }
+        }
+    }
+
+    // Still run pm for non-phpx packages
     match build_update_payload(context) {
         Ok(payload) => {
+            // Filter out phpx specs from the payload
             let runtime = tokio::runtime::Runtime::new().unwrap();
             if let Err(err) = runtime.block_on(run_install(payload)) {
                 let message = err.to_string();
@@ -322,6 +385,91 @@ fn resolve_php_spec(raw: &str) -> Result<String> {
         "unscoped php package `{}` is not allowed. use @scope/name (bare names map to @deka/*)",
         trimmed
     ))
+}
+
+/// Extract registry URL and token from CLI context / env.
+fn get_registry_config(context: &Context) -> (String, Option<String>) {
+    let registry = context.args.params.get("--registry")
+        .cloned()
+        .or_else(|| std::env::var("LINKHASH_REGISTRY_URL").ok())
+        .or_else(|| std::env::var("LINKHASH_REGISTRY").ok())
+        .or_else(|| std::env::var("TANA_GIT_SERVER").ok())
+        .unwrap_or_else(|| "http://localhost:9418".to_string());
+
+    let token = context.args.params.get("--token")
+        .cloned()
+        .or_else(|| std::env::var("LINKHASH_TOKEN").ok())
+        .or_else(|| std::env::var("TANA_GIT_TOKEN").ok());
+
+    (registry, token)
+}
+
+/// Parse a spec like `@tana/store@1.0.0` into `("@tana/store", "1.0.0")`.
+/// If no version suffix, returns `("@tana/store", "latest")`.
+fn parse_spec_with_version(spec: &str) -> (String, String) {
+    if !spec.starts_with('@') {
+        return (spec.to_string(), "latest".to_string());
+    }
+    // @scope/name@version — find the second @
+    if let Some(idx) = spec[1..].find('@') {
+        let name = spec[..idx + 1].to_string();
+        let version = spec[idx + 2..].to_string();
+        (name, version)
+    } else {
+        (spec.to_string(), "latest".to_string())
+    }
+}
+
+/// Install a scoped PHPX package using linkhash-client.
+/// Returns the installed version on success.
+fn install_phpx_package(
+    client: &LinkhashClient,
+    name: &str,
+    version_range: &str,
+    project_dir: &std::path::Path,
+) -> Result<String> {
+    // Resolve the version
+    let resolved = client.resolve(name, version_range)?;
+
+    // Determine target: php_modules/@scope/name
+    let target = project_dir.join("php_modules").join(name);
+
+    // Remove existing installation if present
+    if target.exists() {
+        std::fs::remove_dir_all(&target)?;
+    }
+
+    // Download
+    client.download(name, &resolved.version, &target)?;
+
+    // Update deka.lock with the resolved version
+    update_deka_lock(project_dir, name, &resolved.version)?;
+
+    Ok(resolved.version)
+}
+
+/// Update deka.lock with the installed package version.
+fn update_deka_lock(project_dir: &std::path::Path, name: &str, version: &str) -> Result<()> {
+    let lock_path = project_dir.join("deka.lock");
+    let mut lock: serde_json::Value = if lock_path.exists() {
+        let raw = std::fs::read_to_string(&lock_path)?;
+        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({"packages": {}}))
+    } else {
+        serde_json::json!({"packages": {}})
+    };
+
+    if let Some(packages) = lock.get_mut("packages").and_then(|v| v.as_object_mut()) {
+        packages.insert(
+            name.to_string(),
+            serde_json::json!({
+                "version": version,
+                "resolved": format!("linkhash:{}", name),
+            }),
+        );
+    }
+
+    std::fs::write(&lock_path, serde_json::to_string_pretty(&lock)?)?;
+    Ok(())
 }
 
 fn is_valid_scoped_name(spec: &str) -> bool {
