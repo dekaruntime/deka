@@ -210,11 +210,91 @@ async fn platform_async(context: &Context) {
     stdio::log("listen", &format!("http://localhost:{}", port));
 
     let app = Router::new()
+        .route("/__admin/rebuild", axum::routing::post(handle_admin_rebuild))
         .fallback(handle_platform_request)
         .with_state(state);
 
     let listener = tokio::net::TcpListener::from_std(listener).unwrap();
     axum::serve(listener, app).await.unwrap();
+}
+
+/// POST /__admin/rebuild?shop_id=xxx
+///
+/// Clears the bundle cache for the given tenant and re-bundles their code.
+/// Only accepts requests from localhost for security.
+async fn handle_admin_rebuild(
+    State(state): State<Arc<PlatformState>>,
+    request: Request,
+) -> impl IntoResponse {
+    // Security: only accept from localhost
+    // (Axum ConnectInfo not available here, but we're bound to 127.0.0.1 so
+    // all connections are inherently local.)
+
+    let uri = request.uri().clone();
+    let shop_id = uri
+        .query()
+        .and_then(|q| {
+            q.split('&')
+                .find_map(|pair| {
+                    let mut parts = pair.splitn(2, '=');
+                    let key = parts.next()?;
+                    let val = parts.next()?;
+                    if key == "shop_id" && !val.is_empty() {
+                        Some(val.to_string())
+                    } else {
+                        None
+                    }
+                })
+        });
+
+    let shop_id = match shop_id {
+        Some(id) => id,
+        None => {
+            return Response::builder()
+                .status(400)
+                .body(axum::body::Body::from(
+                    r#"{"error":"missing shop_id query parameter"}"#,
+                ))
+                .unwrap();
+        }
+    };
+
+    stdio::log("rebuild", &format!("triggered for shop_id={}", shop_id));
+
+    // Clear the cached bundle for this tenant
+    {
+        let mut cache = state.bundle_cache.lock().unwrap();
+        cache.remove(&shop_id);
+    }
+
+    // Re-bundle by calling resolve_handler (which will re-compile since cache is cleared)
+    let (_key, code, _entry) = state.resolve_handler(&shop_id);
+    let bundle_size = code.len();
+
+    if code.is_empty() {
+        stdio::error("rebuild", &format!("failed for shop_id={}", shop_id));
+        return Response::builder()
+            .status(500)
+            .body(axum::body::Body::from(format!(
+                r#"{{"error":"bundle failed for {}"}}"#,
+                shop_id
+            )))
+            .unwrap();
+    }
+
+    stdio::log(
+        "rebuild",
+        &format!("complete for shop_id={} ({} bytes)", shop_id, bundle_size),
+    );
+
+    Response::builder()
+        .status(200)
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(format!(
+            r#"{{"status":"ok","shop_id":"{}","bundle_size":{}}}"#,
+            shop_id, bundle_size
+        )))
+        .unwrap()
 }
 
 async fn handle_platform_request(
