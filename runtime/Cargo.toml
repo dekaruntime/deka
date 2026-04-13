@@ -26,6 +26,7 @@ members = [
     "examples/wasm_hello_rust",
     "crates/phpx_lsp",
     "crates/cypher",
+    "crates/linkhash-client",
 ]
 
 [workspace.dependencies]
