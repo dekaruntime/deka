@@ -20,7 +20,7 @@ pub fn register(registry: &mut Registry) {
     registry.add_command(COMMAND);
     registry.add_param(ParamSpec {
         name: "--name",
-        description: "package name (@scope/name)",
+        description: "package name (@scope/name). default: from deka.json",
     });
     registry.add_param(ParamSpec {
         name: "--version",
@@ -28,11 +28,11 @@ pub fn register(registry: &mut Registry) {
     });
     registry.add_param(ParamSpec {
         name: "--pkg-version",
-        description: "package version",
+        description: "package version. default: from deka.json",
     });
     registry.add_param(ParamSpec {
         name: "--repo",
-        description: "source git repo name in linkhash",
+        description: "source git repo name in linkhash. default: from deka.json repository or derived from package name",
     });
     registry.add_param(ParamSpec {
         name: "--git-ref",
@@ -40,20 +40,29 @@ pub fn register(registry: &mut Registry) {
     });
     registry.add_param(ParamSpec {
         name: "--token",
-        description: "PAT token (fallback: auth profile or LINKHASH_TOKEN)",
+        description: "PAT token (fallback: auth profile, LINKHASH_TOKEN, TANA_GIT_TOKEN)",
     });
     registry.add_param(ParamSpec {
         name: "--registry-url",
-        description: "registry base URL (default: auth profile, LINKHASH_REGISTRY_URL, or http://localhost:8508)",
+        description: "registry base URL (default: auth profile, LINKHASH_REGISTRY, TANA_GIT_SERVER, or http://localhost:9418)",
+    });
+    registry.add_param(ParamSpec {
+        name: "--registry",
+        description: "alias for --registry-url",
     });
     registry.add_param(ParamSpec {
         name: "--description",
-        description: "package description",
+        description: "package description. default: from deka.json",
     });
     registry.add_flag(FlagSpec {
         name: "--yes",
         aliases: &["-y"],
         description: "auto-apply publish guard-rail fixes",
+    });
+    registry.add_flag(FlagSpec {
+        name: "--dry-run",
+        aliases: &[],
+        description: "run preflight check only; do not actually publish",
     });
 }
 
@@ -73,62 +82,93 @@ struct PublishRequest {
     endpoint: String,
     token: String,
     payload: serde_json::Value,
+    dry_run: bool,
 }
 
 fn build_request(context: &Context) -> Result<PublishRequest> {
     let params = &context.args.params;
     let profile = auth_store::load().ok().flatten();
+    let local_manifest = load_local_deka_manifest();
+    let dry_run = context.args.flags.contains_key("--dry-run");
 
-    let mut name = params.get("--name").cloned().context("missing --name")?;
+    // Name: --name flag, or deka.json name
+    let mut name = if let Some(n) = params.get("--name").cloned() {
+        n
+    } else if let Some(ref manifest) = local_manifest {
+        manifest.name.clone()
+    } else {
+        bail!("missing --name (or provide a deka.json with a \"name\" field)");
+    };
     validate_scoped_package_name(&name)?;
 
-    let mut version = params
-        .get("--pkg-version")
-        .or_else(|| params.get("--version"))
-        .cloned()
-        .context("missing --pkg-version")?;
+    // Version: --pkg-version or --version flag, or deka.json version
+    let mut version = if let Some(v) = params.get("--pkg-version").or_else(|| params.get("--version")).cloned() {
+        v
+    } else if let Some(ref manifest) = local_manifest {
+        manifest.version.clone()
+    } else {
+        bail!("missing --pkg-version (or provide a deka.json with a \"version\" field)");
+    };
 
-    let mut repo = params.get("--repo").cloned().context("missing --repo")?;
+    // Repo: --repo flag, or deka.json repository, or derived from package name
+    let mut repo = if let Some(r) = params.get("--repo").cloned() {
+        r
+    } else if let Some(ref manifest) = local_manifest {
+        if let Some(r) = manifest.repository.clone() {
+            r
+        } else {
+            derive_repo_from_name(&name)?
+        }
+    } else {
+        derive_repo_from_name(&name)?
+    };
 
     let mut git_ref = params
         .get("--git-ref")
         .cloned()
         .unwrap_or_else(|| "HEAD".to_string());
 
+    // Token: --token flag, auth profile, LINKHASH_TOKEN, TANA_GIT_TOKEN
     let token = params
         .get("--token")
         .cloned()
         .or_else(|| profile.as_ref().map(|p| p.token.clone()))
         .or_else(|| std::env::var("LINKHASH_TOKEN").ok())
-        .context("missing --token (or run `deka login`, or set LINKHASH_TOKEN)")?;
+        .or_else(|| std::env::var("TANA_GIT_TOKEN").ok())
+        .context("missing --token (or run `deka login`, or set LINKHASH_TOKEN / TANA_GIT_TOKEN)")?;
 
+    // Registry: --registry-url or --registry flag, auth profile, LINKHASH_REGISTRY, TANA_GIT_SERVER
     let registry = params
         .get("--registry-url")
+        .or_else(|| params.get("--registry"))
         .cloned()
         .or_else(|| profile.as_ref().map(|p| p.registry_url.clone()))
-        .or_else(|| std::env::var("LINKHASH_REGISTRY_URL").ok())
-        .unwrap_or_else(|| "http://localhost:8508".to_string());
+        .or_else(|| std::env::var("LINKHASH_REGISTRY").ok())
+        .or_else(|| std::env::var("TANA_GIT_SERVER").ok())
+        .unwrap_or_else(|| "http://localhost:9418".to_string());
 
+    // Description: --description flag, or deka.json description
     let description = params
         .get("--description")
         .cloned()
+        .or_else(|| local_manifest.as_ref().and_then(|m| m.description.clone()))
         .unwrap_or_else(|| "Published with deka publish".to_string());
 
     let auto_apply =
         context.args.flags.contains_key("--yes") || context.args.flags.contains_key("-y");
-    let local_manifest = load_local_deka_manifest();
     let mut planned_fixes: Vec<String> = Vec::new();
     let mut tag_to_create: Option<String> = None;
 
+    // Align with deka.json if present and flags were explicitly provided
     if let Some(manifest) = local_manifest.as_ref() {
-        if manifest.name != name {
+        if params.contains_key("--name") && manifest.name != name {
             planned_fixes.push(format!(
                 "align --name from `{}` to deka.json name `{}`",
                 name, manifest.name
             ));
             name = manifest.name.clone();
         }
-        if manifest.version != version {
+        if (params.contains_key("--pkg-version") || params.contains_key("--version")) && manifest.version != version {
             planned_fixes.push(format!(
                 "align --pkg-version from `{}` to deka.json version `{}`",
                 version, manifest.version
@@ -137,8 +177,8 @@ fn build_request(context: &Context) -> Result<PublishRequest> {
         }
     }
 
-    let expected_repo = package_basename_from_scoped(&name)?;
-    if repo != expected_repo {
+    let expected_repo = derive_repo_from_name(&name)?;
+    if params.contains_key("--repo") && repo != expected_repo {
         planned_fixes.push(format!(
             "align --repo from `{}` to package repo name `{}`",
             repo, expected_repo
@@ -168,7 +208,7 @@ fn build_request(context: &Context) -> Result<PublishRequest> {
             stdio::warn_simple(&format!("  - {}", fix));
         }
 
-        let apply = if auto_apply {
+        let apply = if auto_apply || dry_run {
             true
         } else {
             prompt_yes_no("Apply these fixes now? [Y/n]: ", true).unwrap_or(false)
@@ -176,8 +216,12 @@ fn build_request(context: &Context) -> Result<PublishRequest> {
 
         if apply {
             if let Some(tag) = tag_to_create.as_ref() {
-                create_local_git_tag(tag)?;
-                stdio::log("publish", &format!("created local tag {}", tag));
+                if !dry_run {
+                    create_local_git_tag(tag)?;
+                    stdio::log("publish", &format!("created local tag {}", tag));
+                } else {
+                    stdio::log("publish", &format!("would create local tag {} (dry-run)", tag));
+                }
             }
         } else {
             stdio::warn_simple(
@@ -204,6 +248,7 @@ fn build_request(context: &Context) -> Result<PublishRequest> {
         endpoint,
         token,
         payload,
+        dry_run,
     })
 }
 
@@ -324,9 +369,18 @@ async fn run_publish(request: PublishRequest) -> Result<()> {
         }
     }
 
+    // If dry-run, stop after preflight
+    if request.dry_run {
+        stdio::log(
+            "publish",
+            &format!("dry-run complete for {}@{} (no changes made)", requested_name, requested_version),
+        );
+        return Ok(());
+    }
+
     let response = client
         .post(&request.endpoint)
-        .bearer_auth(request.token)
+        .bearer_auth(&request.token)
         .json(&request.payload)
         .send()
         .await
@@ -376,7 +430,15 @@ async fn run_publish(request: PublishRequest) -> Result<()> {
         );
     }
 
-    stdio::log("publish", &format!("published: {}@{}", package, version));
+    // Create git tag on successful publish
+    let tag = format!("v{}", version);
+    if !local_git_ref_exists(&format!("refs/tags/{}^{{commit}}", tag)) {
+        if let Ok(()) = create_local_git_tag(&tag) {
+            stdio::log("publish", &format!("created git tag {}", tag));
+        }
+    }
+
+    stdio::log("publish", &format!("Published {}@{}", package, version));
     Ok(())
 }
 
@@ -409,18 +471,18 @@ fn validate_scoped_package_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn package_basename_from_scoped(name: &str) -> Result<String> {
+fn derive_repo_from_name(name: &str) -> Result<String> {
     validate_scoped_package_name(name)?;
-    let mut parts = name.split('/');
-    let _scope = parts.next().unwrap_or_default();
-    let pkg = parts.next().unwrap_or_default();
-    Ok(pkg.to_string())
+    let without_at = &name[1..]; // strip leading @
+    Ok(without_at.to_string()) // @tana/store -> tana/store
 }
 
 #[derive(Clone)]
 struct LocalManifest {
     name: String,
     version: String,
+    description: Option<String>,
+    repository: Option<String>,
     raw: serde_json::Value,
 }
 
@@ -433,9 +495,13 @@ fn load_local_deka_manifest() -> Option<LocalManifest> {
     if name.is_empty() || version.is_empty() {
         return None;
     }
+    let description = json.get("description").and_then(|v| v.as_str()).map(|s| s.trim().to_string());
+    let repository = json.get("repository").and_then(|v| v.as_str()).map(|s| s.trim().to_string());
     Some(LocalManifest {
         name,
         version,
+        description,
+        repository,
         raw: json,
     })
 }

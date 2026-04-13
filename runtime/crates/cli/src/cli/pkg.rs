@@ -5,7 +5,7 @@ const COMMAND: CommandSpec = CommandSpec {
     category: "package",
     summary: "package operations",
     aliases: &[],
-    subcommands: &[INSTALL_SUBCOMMAND, PUBLISH_SUBCOMMAND, RELEASE_SUBCOMMAND],
+    subcommands: &[INSTALL_SUBCOMMAND, UPDATE_SUBCOMMAND, PUBLISH_SUBCOMMAND, RELEASE_SUBCOMMAND],
     handler: cmd,
 };
 
@@ -14,6 +14,13 @@ const INSTALL_SUBCOMMAND: SubcommandSpec = SubcommandSpec {
     summary: "install package(s)",
     aliases: &["add", "i"],
     handler: crate::cli::install::cmd,
+};
+
+const UPDATE_SUBCOMMAND: SubcommandSpec = SubcommandSpec {
+    name: "update",
+    summary: "update dependencies to latest within semver range",
+    aliases: &[],
+    handler: crate::cli::install::cmd_update,
 };
 
 const PUBLISH_SUBCOMMAND: SubcommandSpec = SubcommandSpec {
@@ -35,5 +42,5 @@ pub fn register(registry: &mut Registry) {
 }
 
 fn cmd(_context: &Context) {
-    stdio::log("pkg", "available subcommands: install, publish, release");
+    stdio::log("pkg", "available subcommands: install, update, publish, release");
 }

@@ -59,7 +59,7 @@ pub fn register_global_flags(registry: &mut Registry) {
     });
     registry.add_flag(FlagSpec {
         name: "--update",
-        aliases: &["-U", "update"],
+        aliases: &["-U"],
         description: "check for updates",
     });
     registry.add_flag(FlagSpec {
@@ -311,7 +311,6 @@ pub fn execute(registry: &Registry) {
         }
         if args.flags.contains_key("--update")
             || args.flags.contains_key("-U")
-            || args.flags.contains_key("update")
         {
             update();
             return;
@@ -402,7 +401,6 @@ pub fn execute(registry: &Registry) {
             }
             if cmd.flags.contains_key("--update")
                 || cmd.flags.contains_key("-U")
-                || cmd.flags.contains_key("update")
             {
                 update();
             }

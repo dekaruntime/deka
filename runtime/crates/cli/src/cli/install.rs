@@ -32,10 +32,20 @@ const I_COMMAND: CommandSpec = CommandSpec {
     handler: cmd,
 };
 
+const UPDATE_COMMAND: CommandSpec = CommandSpec {
+    name: "update",
+    category: "package",
+    summary: "update dependencies to latest within semver range",
+    aliases: &[],
+    subcommands: &[],
+    handler: cmd_update,
+};
+
 pub fn register(registry: &mut Registry) {
     registry.add_command(INSTALL_COMMAND);
     registry.add_command(ADD_COMMAND);
     registry.add_command(I_COMMAND);
+    registry.add_command(UPDATE_COMMAND);
     registry.add_flag(FlagSpec {
         name: "--quiet",
         aliases: &["-q"],
@@ -72,9 +82,20 @@ pub fn register(registry: &mut Registry) {
         name: "--concurrency",
         description: "number of concurrent downloads (ignored for now)",
     });
+    registry.add_param(ParamSpec {
+        name: "--registry",
+        description: "registry base URL (fallback: LINKHASH_REGISTRY, TANA_GIT_SERVER, or http://localhost:9418)",
+    });
+    registry.add_param(ParamSpec {
+        name: "--token",
+        description: "auth token (fallback: LINKHASH_TOKEN, TANA_GIT_TOKEN)",
+    });
 }
 
 pub fn cmd(context: &Context) {
+    // Set registry env vars from flags/env before delegating to pm
+    apply_registry_env(context);
+
     match build_payload(context) {
         Ok(payload) => {
             let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -86,6 +107,50 @@ pub fn cmd(context: &Context) {
         Err(err) => {
             let message = err.to_string();
             stdio::error("install", &message);
+        }
+    }
+}
+
+pub fn cmd_update(context: &Context) {
+    // Set registry env vars from flags/env before delegating to pm
+    apply_registry_env(context);
+
+    match build_update_payload(context) {
+        Ok(payload) => {
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            if let Err(err) = runtime.block_on(run_install(payload)) {
+                let message = err.to_string();
+                stdio::error("update", &message);
+            }
+        }
+        Err(err) => {
+            let message = err.to_string();
+            stdio::error("update", &message);
+        }
+    }
+}
+
+/// Set LINKHASH_REGISTRY_URL from --registry flag or TANA_GIT_SERVER env,
+/// and LINKHASH_TOKEN from --token flag or TANA_GIT_TOKEN env.
+/// This ensures the pm crate picks up the right values.
+fn apply_registry_env(context: &Context) {
+    if let Some(registry) = context.args.params.get("--registry") {
+        unsafe { std::env::set_var("LINKHASH_REGISTRY_URL", registry); }
+    } else if std::env::var("LINKHASH_REGISTRY_URL").is_err() {
+        if let Ok(val) = std::env::var("LINKHASH_REGISTRY") {
+            unsafe { std::env::set_var("LINKHASH_REGISTRY_URL", val); }
+        } else if let Ok(val) = std::env::var("TANA_GIT_SERVER") {
+            unsafe { std::env::set_var("LINKHASH_REGISTRY_URL", val); }
+        } else {
+            unsafe { std::env::set_var("LINKHASH_REGISTRY_URL", "http://localhost:9418"); }
+        }
+    }
+
+    if let Some(token) = context.args.params.get("--token") {
+        unsafe { std::env::set_var("LINKHASH_TOKEN", token); }
+    } else if std::env::var("LINKHASH_TOKEN").is_err() {
+        if let Ok(val) = std::env::var("TANA_GIT_TOKEN") {
+            unsafe { std::env::set_var("LINKHASH_TOKEN", val); }
         }
     }
 }
@@ -141,6 +206,74 @@ fn build_payload(context: &Context) -> Result<InstallPayload> {
 
     apply_flags(&mut payload, context);
     Ok(payload)
+}
+
+fn build_update_payload(context: &Context) -> Result<InstallPayload> {
+    // For update: read specs from positionals or deka.json dependencies.
+    // The pm crate handles resolution; we pass specs with the ecosystem hint.
+    let mut specs = context.args.positionals.clone();
+    if specs.is_empty() {
+        if let Some(s) = context.args.params.get("--spec") {
+            specs = parse_spec_list(s);
+        }
+    }
+
+    // If no specs given, collect from deka.json dependencies
+    if specs.is_empty() {
+        specs = collect_deka_json_deps();
+    }
+
+    let ecosystem = context.args.params.get("--ecosystem").cloned()
+        .unwrap_or_else(|| "php".to_string());
+
+    if ecosystem == "php" {
+        let mut resolved = Vec::new();
+        for spec in &specs {
+            resolved.push(resolve_php_spec(spec)?);
+        }
+        specs = resolved;
+    }
+
+    let mut payload = InstallPayload {
+        specs,
+        ecosystem: Some(ecosystem),
+        yes: false,
+        prompt: false,
+        quiet: false,
+        rehash: false,
+    };
+    apply_flags(&mut payload, context);
+    Ok(payload)
+}
+
+fn collect_deka_json_deps() -> Vec<String> {
+    let cwd = match std::env::current_dir() {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let raw = match std::fs::read_to_string(cwd.join("deka.json")) {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+    let json: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(j) => j,
+        Err(_) => return Vec::new(),
+    };
+    let deps = match json.get("dependencies").and_then(|v| v.as_object()) {
+        Some(d) => d,
+        None => return Vec::new(),
+    };
+    deps.iter()
+        .map(|(name, version)| {
+            if let Some(v) = version.as_str() {
+                // Strip semver range prefixes for resolution
+                let clean = v.trim_start_matches('^').trim_start_matches('~').trim_start_matches(">=");
+                format!("{}@{}", name, clean)
+            } else {
+                name.clone()
+            }
+        })
+        .collect()
 }
 
 fn apply_flags(payload: &mut InstallPayload, context: &Context) {

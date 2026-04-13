@@ -95,7 +95,6 @@ fn run_for_wasm(args: Vec<String>) -> WasmRunOutput {
         }
         if cmd.flags.contains_key("--update")
             || cmd.flags.contains_key("-U")
-            || cmd.flags.contains_key("update")
         {
             cli::update();
             let output = stdio::end_capture();
