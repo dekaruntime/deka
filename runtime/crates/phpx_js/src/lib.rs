@@ -437,8 +437,8 @@ impl<'a> JsSubsetEmitter<'a> {
     //   __phpx_func_num_args   — arguments.length proxy
     //   __phpx_func_get_args   — arguments slice proxy
     //   __phpx_func_get_arg    — arguments index proxy
-    //   __deka_chr             — backing impl for chr (kept as alias target, now unused)
-    //   __deka_ord             — backing impl for ord (kept as alias target, now unused)
+    //   __deka_chr             — backing impl for chr (used by string/chr.phpx stdlib module)
+    //   __deka_ord             — backing impl for ord (used by string/ord.phpx stdlib module)
     //   __deka_object_set      — mutable object field set helper
     //   __phpx_base64_table    — base64 lookup table
     //   base64_encode          — base64 encoding (too complex to inline)
@@ -511,6 +511,8 @@ impl<'a> JsSubsetEmitter<'a> {
         out.push_str("globalThis.JSON_ERROR_UTF16 ??= 10;\n");
 
         // --- Class (b): runtime helpers (continued) ---
+        out.push_str("globalThis.__deka_chr ??= (code) => String.fromCharCode((Number(code) || 0) & 0xff);\n");
+        out.push_str("globalThis.__deka_ord ??= (s) => { const str = String(s ?? ''); return str.length > 0 ? str.charCodeAt(0) : 0; };\n");
         out.push_str("globalThis.__deka_object_set ??= (obj, key, value) => { if (obj && typeof obj === 'object') { obj[key] = value; } return obj; };\n");
         out.push_str("globalThis.__phpx_base64_table ??= 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';\n");
         out.push_str("globalThis.base64_encode ??= (input) => { const str = String(input ?? ''); const tbl = globalThis.__phpx_base64_table; let out = ''; for (let i = 0; i < str.length; i += 3) { const b0 = str.charCodeAt(i) & 0xff; const b1 = i + 1 < str.length ? str.charCodeAt(i + 1) & 0xff : NaN; const b2 = i + 2 < str.length ? str.charCodeAt(i + 2) & 0xff : NaN; const n = (b0 << 16) | ((Number.isNaN(b1) ? 0 : b1) << 8) | (Number.isNaN(b2) ? 0 : b2); out += tbl[(n >> 18) & 63]; out += tbl[(n >> 12) & 63]; out += Number.isNaN(b1) ? '=' : tbl[(n >> 6) & 63]; out += Number.isNaN(b2) ? '=' : tbl[n & 63]; } return out; };\n");
