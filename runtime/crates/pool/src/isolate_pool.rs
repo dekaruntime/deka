@@ -2184,16 +2184,31 @@ impl WorkerThread {
                         return { ok: false, error: `unknown bridge kind '${kind}'` };
                     };
 
+                    // Normalize serde_v8 results: Rust ops may return objects
+                    // created via Object.create(null) which lack toString/valueOf.
+                    // Deep-copy into regular JS objects so PHPX string coercion
+                    // (e.g. '' . $value) works as expected.
+                    const __dekaFixProto = (val) => {
+                        if (val === null || val === undefined || typeof val !== 'object') return val;
+                        if (Array.isArray(val)) return val.map(__dekaFixProto);
+                        if (Object.getPrototypeOf(val) === null) {
+                            const fixed = {};
+                            for (const k of Object.keys(val)) fixed[k] = __dekaFixProto(val[k]);
+                            return fixed;
+                        }
+                        return val;
+                    };
+
                     globalThis.__bridge = (kind, action, payload) => {
                         try {
-                            return routeHostCall(String(kind || ''), String(action || ''), payload || {});
+                            return __dekaFixProto(routeHostCall(String(kind || ''), String(action || ''), payload || {}));
                         } catch (err) {
                             return { ok: false, error: err && err.message ? String(err.message) : String(err) };
                         }
                     };
                     globalThis.__bridge_async = async (kind, action, payload) => {
                         try {
-                            return routeHostCall(String(kind || ''), String(action || ''), payload || {});
+                            return __dekaFixProto(routeHostCall(String(kind || ''), String(action || ''), payload || {}));
                         } catch (err) {
                             return { ok: false, error: err && err.message ? String(err.message) : String(err) };
                         }
@@ -2202,7 +2217,7 @@ impl WorkerThread {
                         const name = String(moduleId || '');
                         if (name.startsWith('__deka_')) {
                             const kind = name.replace(/^__deka_/, '');
-                            return routeHostCall(kind, exportName, payload || {});
+                            return __dekaFixProto(routeHostCall(kind, exportName, payload || {}));
                         }
                         return { ok: false, error: `unknown host bridge module '${name}'` };
                     };
@@ -2210,7 +2225,7 @@ impl WorkerThread {
                         const name = String(moduleId || '');
                         if (name.startsWith('__deka_')) {
                             const kind = name.replace(/^__deka_/, '');
-                            return routeHostCall(kind, exportName, payload || {});
+                            return __dekaFixProto(routeHostCall(kind, exportName, payload || {}));
                         }
                         return { ok: false, error: `unknown host bridge module '${name}'` };
                     };
