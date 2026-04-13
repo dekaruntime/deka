@@ -3,9 +3,13 @@
 //! Uses Redis for subdomain → shop_id lookup.
 //! Keys: `subdomain:{name}` → `{shop_id}`
 //!
-//! Preview deploys: `preview-{hash}.{shop}.tana.gg` resolves to the same
+//! Preview deploys: `preview-{hash}-{shop}.tana.gg` resolves to the same
 //! shop_id as `{shop}.tana.gg`, but the caller receives the hash so it
 //! can look up the branch-specific bundle keyed as `{shop_id}:{hash}`.
+//!
+//! The flat subdomain format (`preview-{hash}-{shop}` instead of
+//! `preview-{hash}.{shop}`) keeps everything under `*.tana.gg` so
+//! Cloudflare's free SSL wildcard certificate covers it.
 
 use redis::{Client, Commands, Connection};
 use std::cell::RefCell;
@@ -14,7 +18,7 @@ use std::cell::RefCell;
 #[derive(Debug, Clone, PartialEq)]
 pub struct TenantInfo {
     pub shop_id: String,
-    /// If the request came via `preview-{hash}.{shop}.tana.gg`, this holds
+    /// If the request came via `preview-{hash}-{shop}.tana.gg`, this holds
     /// the short commit hash. `None` means serve from the main branch.
     pub preview_ref: Option<String>,
 }
@@ -55,11 +59,17 @@ pub fn extract_subdomain(host: &str) -> Option<String> {
     }
 }
 
-/// Parse a preview subdomain: `preview-{hash}.{shop}.domain.tld`
+/// Parse a flat preview subdomain: `preview-{hash}-{shop}.domain.tld`
 /// Returns `Some((hash, shop_subdomain))` if this is a preview URL,
 /// `None` otherwise.
 ///
-/// The hash must be 7+ hex characters (short git hash).
+/// The hash is always exactly 7 hex characters (short git hash).
+/// The shop name follows the hash and may itself contain hyphens
+/// (e.g. `my-cool-shop`), so we split on the fixed structure:
+/// `preview-` (literal) + 7 hex chars + `-` + rest-is-shop.
+///
+/// Using a single subdomain level keeps everything under `*.tana.gg`
+/// so Cloudflare's free wildcard certificate covers preview URLs.
 pub fn parse_preview_host(host: &str) -> Option<(String, String)> {
     let host = host.split(':').next().unwrap_or(host);
     if host == "localhost" || host.parse::<std::net::Ipv4Addr>().is_ok() {
@@ -67,14 +77,22 @@ pub fn parse_preview_host(host: &str) -> Option<(String, String)> {
     }
 
     let parts: Vec<&str> = host.split('.').collect();
-    // preview-{hash}.{shop}.domain.tld = at least 4 parts
-    if parts.len() >= 4 {
+    // preview-{hash}-{shop}.domain.tld = at least 3 parts
+    if parts.len() >= 3 {
         let first = parts[0];
-        if let Some(hash) = first.strip_prefix("preview-") {
-            // Validate hash: 7+ hex chars
-            if hash.len() >= 7 && hash.chars().all(|c| c.is_ascii_hexdigit()) {
-                let shop_subdomain = parts[1].to_string();
-                return Some((hash.to_string(), shop_subdomain));
+        if let Some(rest) = first.strip_prefix("preview-") {
+            // Hash is exactly 7 hex chars, followed by '-', then shop name
+            if rest.len() > 8 {
+                let hash = &rest[..7];
+                let sep = rest.as_bytes()[7];
+                if sep == b'-'
+                    && hash.chars().all(|c| c.is_ascii_hexdigit())
+                {
+                    let shop_subdomain = rest[8..].to_string();
+                    if !shop_subdomain.is_empty() {
+                        return Some((hash.to_string(), shop_subdomain));
+                    }
+                }
             }
         }
     }
@@ -146,7 +164,7 @@ pub fn resolve_tenant_info_from_host(headers: &[(String, String)]) -> Option<Ten
         .map(|(_, v)| v.as_str())
         .unwrap_or("");
 
-    // Check for preview subdomain first: preview-{hash}.{shop}.domain.tld
+    // Check for preview subdomain first: preview-{hash}-{shop}.domain.tld
     if let Some((hash, shop_subdomain)) = parse_preview_host(host) {
         if let Some(shop_id) = resolve_tenant(&shop_subdomain) {
             return Some(TenantInfo {
@@ -258,26 +276,34 @@ mod tests {
 
     #[test]
     fn parse_preview_host_valid() {
-        let result = parse_preview_host("preview-a1b2c3d.beta.tana.gg");
+        // Flat format: preview-{7hex}-{shop}.domain.tld
+        let result = parse_preview_host("preview-a1b2c3d-beta.tana.gg");
         assert_eq!(result, Some(("a1b2c3d".to_string(), "beta".to_string())));
     }
 
     #[test]
     fn parse_preview_host_with_port() {
-        let result = parse_preview_host("preview-a1b2c3d.beta.tana.gg:8530");
+        let result = parse_preview_host("preview-a1b2c3d-beta.tana.gg:8530");
         assert_eq!(result, Some(("a1b2c3d".to_string(), "beta".to_string())));
     }
 
     #[test]
+    fn parse_preview_host_hyphenated_shop() {
+        // Shop names can contain hyphens: preview-{7hex}-{shop-with-hyphens}.domain.tld
+        let result = parse_preview_host("preview-a1b2c3d-my-cool-shop.tana.gg");
+        assert_eq!(result, Some(("a1b2c3d".to_string(), "my-cool-shop".to_string())));
+    }
+
+    #[test]
     fn parse_preview_host_short_hash_rejected() {
-        // Hash must be 7+ chars
-        let result = parse_preview_host("preview-abc.beta.tana.gg");
+        // Hash must be exactly 7 hex chars
+        let result = parse_preview_host("preview-abc-beta.tana.gg");
         assert_eq!(result, None);
     }
 
     #[test]
     fn parse_preview_host_non_hex_rejected() {
-        let result = parse_preview_host("preview-zzzzzzz.beta.tana.gg");
+        let result = parse_preview_host("preview-zzzzzzz-beta.tana.gg");
         assert_eq!(result, None);
     }
 
@@ -290,6 +316,13 @@ mod tests {
     #[test]
     fn parse_preview_host_localhost() {
         let result = parse_preview_host("localhost:8530");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn parse_preview_host_old_nested_format_rejected() {
+        // The old nested format should no longer match
+        let result = parse_preview_host("preview-a1b2c3d.beta.tana.gg");
         assert_eq!(result, None);
     }
 
