@@ -1,2 +1,8 @@
 /target
 Cargo.lock
+
+# Runtime data — not source
+data/
+*.db
+*.db-shm
+*.db-wal

@@ -1,0 +1,205 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+env:
+  SCCACHE_ENDPOINT: "https://08b93c93f8b7adc43678e9afba31e4ee.r2.cloudflarestorage.com"
+  SCCACHE_REGION: "auto"
+
+jobs:
+  # ============================================================================
+  # Phase 1: Build all platforms (no publishing yet)
+  # sccache stores compiled artifacts in R2 for fast rebuilds
+  # ============================================================================
+
+  build-linux-x64:
+    runs-on: ubuntu-latest
+    env:
+      SCCACHE_BUCKET: "sccache-tana-box-git-linux-x64"
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+
+      - name: Build tana-box-git
+        env:
+          RUSTC_WRAPPER: "sccache"
+        run: cargo build --release --bin tana-box-git
+
+      - name: Show sccache stats
+        run: sccache --show-stats
+
+      - name: Upload binary for Docker
+        uses: actions/upload-artifact@v4
+        with:
+          name: tana-box-git-linux-x64
+          path: target/release/tana-box-git
+          retention-days: 1
+
+  build-darwin-x64:
+    runs-on: macos-13
+    env:
+      SCCACHE_BUCKET: "sccache-tana-box-git-darwin-x64"
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+
+      - name: Build tana-box-git
+        env:
+          RUSTC_WRAPPER: "sccache"
+        run: cargo build --release --bin tana-box-git
+
+      - name: Show sccache stats
+        run: sccache --show-stats
+
+  build-darwin-arm64:
+    runs-on: macos-latest
+    env:
+      SCCACHE_BUCKET: "sccache-tana-box-git-darwin-arm64"
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+
+      - name: Build tana-box-git
+        env:
+          RUSTC_WRAPPER: "sccache"
+        run: cargo build --release --bin tana-box-git
+
+      - name: Show sccache stats
+        run: sccache --show-stats
+
+  build-linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    env:
+      SCCACHE_BUCKET: "sccache-tana-box-git-linux-arm64"
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+
+      - name: Build tana-box-git
+        env:
+          RUSTC_WRAPPER: "sccache"
+        run: cargo build --release --bin tana-box-git
+
+      - name: Show sccache stats
+        run: sccache --show-stats
+
+      - name: Upload binary for Docker
+        uses: actions/upload-artifact@v4
+        with:
+          name: tana-box-git-linux-arm64
+          path: target/release/tana-box-git
+          retention-days: 1
+
+  # ============================================================================
+  # Build and Push Docker Image (only after ALL builds succeed)
+  # ============================================================================
+
+  docker:
+    needs: [build-linux-x64, build-darwin-x64, build-darwin-arm64, build-linux-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download linux-x64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: tana-box-git-linux-x64
+          path: binaries/linux-amd64
+
+      - name: Download linux-arm64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: tana-box-git-linux-arm64
+          path: binaries/linux-arm64
+
+      - name: Prepare binaries
+        run: |
+          chmod +x binaries/linux-amd64/tana-box-git
+          chmod +x binaries/linux-arm64/tana-box-git
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: tananetwork
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.prebuilt
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/tananetwork/tana-box-git:${{ github.ref_name }}
+            ghcr.io/tananetwork/tana-box-git:latest
+            tananetwork/box-git:${{ steps.version.outputs.version }}
+            tananetwork/box-git:latest
