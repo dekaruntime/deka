@@ -1,7 +1,8 @@
 //! Tenant resolution — maps incoming request Host header to a shop ID.
 //!
 //! Uses Redis for subdomain → shop_id lookup.
-//! Keys: `subdomain:{name}` → `{shop_id}`
+//! Keys: `subdomain:{name}` → JSON `{"shop_id":..., "account_id":...}`
+//! (Legacy: a bare string value containing just `shop_id` is still accepted.)
 //!
 //! Preview deploys: `preview-{hash}-{shop}.tana.gg` resolves to the same
 //! shop_id as `{shop}.tana.gg`, but the caller receives the hash so it
@@ -14,10 +15,21 @@
 use redis::{Client, Commands, Connection};
 use std::cell::RefCell;
 
+/// Raw pair returned by a Redis subdomain lookup. `account_id` is
+/// `None` when the Redis value is still the legacy plain-string format.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SubdomainRecord {
+    pub shop_id: String,
+    pub account_id: Option<String>,
+}
+
 /// Result of tenant resolution, optionally carrying a preview commit hash.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TenantInfo {
     pub shop_id: String,
+    /// Stable opaque UUID for sharding. `None` when Redis still has the
+    /// legacy plain-string (pre-sharding) entry.
+    pub account_id: Option<String>,
     /// If the request came via `preview-{hash}-{shop}.tana.gg`, this holds
     /// the short commit hash. `None` means serve from the main branch.
     pub preview_ref: Option<String>,
@@ -100,12 +112,24 @@ pub fn parse_preview_host(host: &str) -> Option<(String, String)> {
 }
 
 /// Resolve a subdomain to a shop ID via Redis lookup.
-/// Returns None if not found or Redis unavailable.
+///
+/// Returns `None` if not found or Redis unavailable. For callers that
+/// also need the stable `account_id` (e.g. shard routing) use
+/// [`resolve_tenant_record`].
 pub fn resolve_tenant(subdomain: &str) -> Option<String> {
+    resolve_tenant_record(subdomain).map(|r| r.shop_id)
+}
+
+/// Resolve a subdomain to a `SubdomainRecord` via Redis lookup.
+///
+/// Accepts both the new JSON format (`{"shop_id":..., "account_id":...}`)
+/// and the legacy plain-string format (just the shop_id, with
+/// `account_id = None`). During the transition both may coexist.
+pub fn resolve_tenant_record(subdomain: &str) -> Option<SubdomainRecord> {
     let redis_url =
         std::env::var("DEKA_REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
 
-    TENANT_REDIS.with(|cell: &RefCell<Option<Connection>>| {
+    let raw: Option<String> = TENANT_REDIS.with(|cell: &RefCell<Option<Connection>>| {
         let mut conn = cell.borrow_mut();
         if conn.is_none() {
             if let Ok(client) = Client::open(redis_url.as_str()) {
@@ -122,7 +146,35 @@ pub fn resolve_tenant(subdomain: &str) -> Option<String> {
         } else {
             None
         }
-    })
+    });
+
+    raw.map(|s| parse_subdomain_value(&s))
+}
+
+/// Parse a Redis `subdomain:*` value into a `SubdomainRecord`.
+///
+/// Accepts either:
+///   - JSON: `{"shop_id": "...", "account_id": "..."}`
+///   - Plain string: `"shop_foo"` (legacy format)
+pub fn parse_subdomain_value(raw: &str) -> SubdomainRecord {
+    let trimmed = raw.trim();
+    if trimmed.starts_with('{') {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            let shop_id = v.get("shop_id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let account_id = v
+                .get("account_id")
+                .and_then(|x| x.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+            if !shop_id.is_empty() {
+                return SubdomainRecord { shop_id, account_id };
+            }
+        }
+    }
+    SubdomainRecord {
+        shop_id: trimmed.to_string(),
+        account_id: None,
+    }
 }
 
 /// Resolve tenant from request headers.
@@ -166,9 +218,10 @@ pub fn resolve_tenant_info_from_host(headers: &[(String, String)]) -> Option<Ten
 
     // Check for preview subdomain first: preview-{hash}-{shop}.domain.tld
     if let Some((hash, shop_subdomain)) = parse_preview_host(host) {
-        if let Some(shop_id) = resolve_tenant(&shop_subdomain) {
+        if let Some(rec) = resolve_tenant_record(&shop_subdomain) {
             return Some(TenantInfo {
-                shop_id,
+                shop_id: rec.shop_id,
+                account_id: rec.account_id,
                 preview_ref: Some(hash),
             });
         }
@@ -176,9 +229,10 @@ pub fn resolve_tenant_info_from_host(headers: &[(String, String)]) -> Option<Ten
 
     // Normal subdomain resolution
     if let Some(subdomain) = extract_subdomain(host) {
-        if let Some(shop_id) = resolve_tenant(&subdomain) {
+        if let Some(rec) = resolve_tenant_record(&subdomain) {
             return Some(TenantInfo {
-                shop_id,
+                shop_id: rec.shop_id,
+                account_id: rec.account_id,
                 preview_ref: None,
             });
         }
@@ -187,6 +241,7 @@ pub fn resolve_tenant_info_from_host(headers: &[(String, String)]) -> Option<Ten
     // Fallback: env var for dev
     std::env::var("DEKA_SHOP_ID").ok().map(|shop_id| TenantInfo {
         shop_id,
+        account_id: std::env::var("DEKA_ACCOUNT_ID").ok().filter(|s| !s.is_empty()),
         preview_ref: None,
     })
 }
@@ -328,13 +383,54 @@ mod tests {
 
     #[test]
     fn tenant_info_cache_key_main() {
-        let info = TenantInfo { shop_id: "shop_beta".to_string(), preview_ref: None };
+        let info = TenantInfo { shop_id: "shop_beta".to_string(), account_id: None, preview_ref: None };
         assert_eq!(info.cache_key(), "shop_beta");
     }
 
     #[test]
+    fn parse_subdomain_value_json_format() {
+        let rec = parse_subdomain_value(
+            r#"{"shop_id":"shop_beta","account_id":"2789d397-a96a-44ba-9073-24c711d007ff"}"#,
+        );
+        assert_eq!(rec.shop_id, "shop_beta");
+        assert_eq!(
+            rec.account_id.as_deref(),
+            Some("2789d397-a96a-44ba-9073-24c711d007ff")
+        );
+    }
+
+    #[test]
+    fn parse_subdomain_value_legacy_plain_string() {
+        let rec = parse_subdomain_value("shop_beta");
+        assert_eq!(rec.shop_id, "shop_beta");
+        assert_eq!(rec.account_id, None);
+    }
+
+    #[test]
+    fn parse_subdomain_value_json_without_account_id() {
+        let rec = parse_subdomain_value(r#"{"shop_id":"shop_beta"}"#);
+        assert_eq!(rec.shop_id, "shop_beta");
+        assert_eq!(rec.account_id, None);
+    }
+
+    #[test]
+    fn parse_subdomain_value_empty_account_id_becomes_none() {
+        let rec = parse_subdomain_value(r#"{"shop_id":"shop_beta","account_id":""}"#);
+        assert_eq!(rec.shop_id, "shop_beta");
+        assert_eq!(rec.account_id, None);
+    }
+
+    #[test]
+    fn parse_subdomain_value_bogus_json_falls_back() {
+        // Non-JSON-looking string is treated as the legacy plain-string shop_id.
+        let rec = parse_subdomain_value("weird_value");
+        assert_eq!(rec.shop_id, "weird_value");
+        assert_eq!(rec.account_id, None);
+    }
+
+    #[test]
     fn tenant_info_cache_key_preview() {
-        let info = TenantInfo { shop_id: "shop_beta".to_string(), preview_ref: Some("a1b2c3d".to_string()) };
+        let info = TenantInfo { shop_id: "shop_beta".to_string(), account_id: None, preview_ref: Some("a1b2c3d".to_string()) };
         assert_eq!(info.cache_key(), "shop_beta:a1b2c3d");
     }
 

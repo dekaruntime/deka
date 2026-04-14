@@ -26,6 +26,7 @@ swc_ecma_visit = { workspace = true }
 
 redis = { workspace = true }
 deka-validation = { path = "../../../deka-validation" }
+deka-shard = { path = "../shard" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 mach2 = "0.6.0"

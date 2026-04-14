@@ -27,6 +27,7 @@ getrandom = "0.2"
 neo4rs = { workspace = true }
 redis = { workspace = true }
 tokio = { workspace = true }
+deka-shard = { path = "../shard" }
 
 [build-dependencies]
 prost-build = "0.13"

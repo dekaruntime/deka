@@ -2060,7 +2060,17 @@ impl WorkerThread {
                         }
                         if (kind === 'neo4j') {
                             if (typeof ops.op_neo4j_call === 'function') {
-                                return ops.op_neo4j_call(String(action || ''), payload || {});
+                                const p = payload || {};
+                                // Shard routing: on connect without an explicit URI,
+                                // pass __accountId so the Rust op can pick the owning
+                                // shard's neo4j URL via deka-shard.
+                                if (action === 'connect' && !p.uri && !p.url) {
+                                    const accountId = globalThis.__accountId;
+                                    if (accountId) {
+                                        p.__account_id = accountId;
+                                    }
+                                }
+                                return ops.op_neo4j_call(String(action || ''), p);
                             }
                             return { ok: false, error: 'neo4j bridge op unavailable' };
                         }
@@ -2076,9 +2086,29 @@ impl WorkerThread {
                                 if (shopId && action === 'keys' && p.pattern) {
                                     p.pattern = shopId + ':' + p.pattern;
                                 }
+                                // Shard routing: on connect without an explicit URL,
+                                // pass __accountId so the Rust op can pick the owning
+                                // shard's redis URL via deka-shard.
+                                if (action === 'connect' && !p.url && !p.uri) {
+                                    const accountId = globalThis.__accountId;
+                                    if (accountId) {
+                                        p.__account_id = accountId;
+                                    }
+                                }
                                 return ops.op_redis_call(String(action || ''), p);
                             }
                             return { ok: false, error: 'redis bridge op unavailable' };
+                        }
+                        if (kind === 'shard') {
+                            if (typeof ops.op_shard_for === 'function') {
+                                const p = payload || {};
+                                const act = String(action || '');
+                                const accountId = (act === 'self' || !p.account_id)
+                                    ? globalThis.__accountId || ''
+                                    : p.account_id;
+                                return ops.op_shard_for(String(accountId || ''));
+                            }
+                            return { ok: false, error: 'shard bridge op unavailable' };
                         }
                         if (kind === 'net') {
                             if (typeof ops.op_php_net_call_proto === 'function' && typeof ops.op_php_net_proto_encode === 'function' && typeof ops.op_php_net_proto_decode === 'function') {
@@ -3293,10 +3323,25 @@ fn set_request_globals(
         serde_v8::to_v8(scope, deka_args).map_err(|err| format!("deka args to v8: {}", err))?;
     deka_obj.set(scope, args_key.into(), args_val);
 
-    // Tenant context: resolve shop_id from Host header and inject as globals
+    // Tenant context: resolve shop_id + account_id from Host header
+    // and inject as globals. X-Shop-ID is still honoured as an explicit
+    // override for trusted callers (dev tools, admin utilities). Platform
+    // mode strips it before we get here.
     if let Some(parts) = request_parts {
-        let shop_id = crate::tenant::resolve_tenant_from_headers(&parts.headers)
-            .unwrap_or_default();
+        // Prefer the richer resolver (returns both shop_id + account_id
+        // from the new JSON subdomain format); fall back to the legacy
+        // header/env-based path for X-Shop-ID overrides.
+        let (shop_id, account_id) = if let Some(info) =
+            crate::tenant::resolve_tenant_info_from_host(&parts.headers)
+        {
+            (info.shop_id, info.account_id.unwrap_or_default())
+        } else {
+            (
+                crate::tenant::resolve_tenant_from_headers(&parts.headers).unwrap_or_default(),
+                String::new(),
+            )
+        };
+
         if !shop_id.is_empty() {
             // globalThis.__shopId — used by bridge layer for Redis prefixing
             let shop_id_key = v8::String::new(scope, "__shopId")
@@ -3317,6 +3362,31 @@ fn set_request_globals(
                     }
                 }
             }
+        }
+
+        if !account_id.is_empty() {
+            // globalThis.__accountId — used by op_neo4j_call/op_redis_call
+            // to auto-route `connect` to the owning shard, and by
+            // `shard_for()` introspection.
+            let account_id_key = v8::String::new(scope, "__accountId")
+                .ok_or_else(|| "account id key".to_string())?;
+            let account_id_val = v8::String::new(scope, &account_id)
+                .ok_or_else(|| "account id val".to_string())?;
+            global.set(scope, account_id_key.into(), account_id_val.into());
+
+            // $_SERVER['ACCOUNT_ID'] mirrors SHOP_ID for PHPX callers.
+            if let Some(server_key) = v8::String::new(scope, "_SERVER") {
+                if let Some(server_val) = global.get(scope, server_key.into()) {
+                    if let Some(server_obj) = server_val.to_object(scope) {
+                        if let Some(k) = v8::String::new(scope, "ACCOUNT_ID") {
+                            if let Some(v) = v8::String::new(scope, &account_id) {
+                                server_obj.set(scope, k.into(), v.into());
+                            }
+                        }
+                    }
+                }
+            }
+
         }
     }
 

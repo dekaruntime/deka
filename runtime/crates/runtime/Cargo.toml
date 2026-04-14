@@ -11,6 +11,9 @@ platform_server = { path = "../platform_server" }
 engine = { path = "../engine" }
 pool = { path = "../pool" }
 transport = { path = "../transport" }
+deka-shard = { path = "../shard" }
+reqwest = { version = "0.11", features = ["stream"] }
+bytes = { workspace = true }
 deka_http = { path = "../http", package = "http" }
 stdio = { path = "../stdio" }
 modules_php = { path = "../modules_php" }

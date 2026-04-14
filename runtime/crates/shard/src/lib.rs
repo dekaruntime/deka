@@ -22,7 +22,7 @@ pub use config::{ShardConfig, ShardInfo};
 pub use hash::{fnv1a_64, shard_index};
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// Environment variable pointing at the shard config JSON file.
 pub const ENV_SHARD_CONFIG: &str = "DEKA_SHARD_CONFIG";
@@ -111,6 +111,29 @@ impl ShardResolver {
     pub fn shards(&self) -> &[ShardInfo] {
         &self.shards
     }
+}
+
+/// Process-global resolver. Lazily initialised from env the first
+/// time it's requested; see [`global`].
+static GLOBAL_RESOLVER: OnceLock<ShardResolver> = OnceLock::new();
+
+/// Return the process-global [`ShardResolver`], initialising it from
+/// env on first use. Never panics — on any error, falls back to the
+/// single-shard localhost config so dev/tests stay unblocked.
+pub fn global() -> &'static ShardResolver {
+    GLOBAL_RESOLVER.get_or_init(|| {
+        ShardResolver::from_env().unwrap_or_else(|_| {
+            ShardResolver::from_config(ShardConfig::single_shard_localhost(), None)
+        })
+    })
+}
+
+/// Install an explicit resolver as the process-global one. Returns
+/// `Err` if `global()` has already been initialised. Intended for
+/// platform startup where we've loaded config and want to pin the
+/// resolver before any op fires.
+pub fn set_global(resolver: ShardResolver) -> Result<(), ShardResolver> {
+    GLOBAL_RESOLVER.set(resolver)
 }
 
 fn load_config_from_env() -> Result<ShardConfig, String> {

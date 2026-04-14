@@ -21,6 +21,11 @@ use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData, RequestParts};
 
 use crate::js_pipeline::build_phpx_handler_bundle;
 
+/// Header that tags requests we've already proxied once. If we see it
+/// and we STILL don't own the shard, we refuse to re-proxy (prevents
+/// loops if the shard config is skewed across servers).
+const PROXY_LOOP_HEADER: &str = "X-Deka-Proxied";
+
 pub fn platform(context: &Context) {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -162,6 +167,30 @@ async fn platform_async(context: &Context) {
     // Load database config from platform-level deka.json
     runtime_config::load_database_config(&root);
 
+    // Install the process-global shard resolver from env. Any failure
+    // falls through to the single-shard localhost default so dev
+    // environments stay functional even without a shards.json.
+    match deka_shard::ShardResolver::from_env() {
+        Ok(resolver) => {
+            let shards = resolver.shard_count();
+            let self_name = resolver
+                .self_shard()
+                .map(|s| s.name.clone())
+                .unwrap_or_else(|| "<none>".to_string());
+            stdio::log(
+                "shard",
+                &format!(
+                    "resolver loaded: {} shard(s), self = {}",
+                    shards, self_name
+                ),
+            );
+            let _ = deka_shard::set_global(resolver);
+        }
+        Err(err) => {
+            stdio::error("shard", &format!("failed to load resolver: {}", err));
+        }
+    }
+
     // Set security env vars (permissive defaults for platform mode)
     unsafe {
         std::env::set_var("DEKA_SECURITY_ENFORCE", "1");
@@ -238,7 +267,19 @@ async fn platform_async(context: &Context) {
         .and_then(|v| v.parse().ok())
         .unwrap_or(8530);
 
-    let listener = match TcpListener::bind(format!("127.0.0.1:{}", port)) {
+    // Bind address. Defaults to 127.0.0.1 for single-machine dev; in
+    // sharded deployments the platform MUST be reachable from the
+    // router (phobos) so cross-shard proxy requests can land. The
+    // presence of DEKA_SHARD_SELF is a reliable signal we're in a
+    // cluster — override explicitly via DEKA_PLATFORM_BIND.
+    let bind_addr = std::env::var("DEKA_PLATFORM_BIND").unwrap_or_else(|_| {
+        if std::env::var("DEKA_SHARD_SELF").is_ok() {
+            "0.0.0.0".to_string()
+        } else {
+            "127.0.0.1".to_string()
+        }
+    });
+    let listener = match TcpListener::bind(format!("{}:{}", bind_addr, port)) {
         Ok(l) => l,
         Err(err) => {
             stdio::error("platform", &format!("failed to bind port {}: {}", port, err));
@@ -247,7 +288,7 @@ async fn platform_async(context: &Context) {
     };
     listener.set_nonblocking(true).ok();
 
-    stdio::log("listen", &format!("http://localhost:{}", port));
+    stdio::log("listen", &format!("http://{}:{}", bind_addr, port));
 
     // Spawn background task to clean up stale preview bundles every hour.
     {
@@ -387,11 +428,15 @@ async fn handle_platform_request(
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(usize::MAX);
 
-    let body = if content_len == 0 {
+    let already_proxied = headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case(PROXY_LOOP_HEADER));
+
+    let body_bytes: Option<bytes::Bytes> = if content_len == 0 {
         None
     } else {
         match axum::body::to_bytes(request.into_body(), usize::MAX).await {
-            Ok(bytes) if !bytes.is_empty() => Some(String::from_utf8_lossy(&bytes).to_string()),
+            Ok(b) if !b.is_empty() => Some(b),
             _ => None,
         }
     };
@@ -410,6 +455,52 @@ async fn handle_platform_request(
     let tenant_info = pool::tenant::resolve_tenant_info_from_host(&headers);
     let shop_id = tenant_info.as_ref().map(|t| t.shop_id.clone()).unwrap_or_default();
     let cache_key = tenant_info.as_ref().map(|t| t.cache_key()).unwrap_or_else(|| shop_id.clone());
+
+    // Cross-shard routing: if we know the shop's account_id and a
+    // different shard owns it, transparently proxy the request over
+    // the Tailscale mesh. Requests without an account_id (legacy
+    // Redis entries, admin paths, health checks) serve locally —
+    // shard 0 is the de-facto owner of "uncharted" traffic.
+    if let Some(info) = tenant_info.as_ref() {
+        if let Some(account_id) = info.account_id.as_ref() {
+            let resolver = deka_shard::global();
+            if !resolver.owns(account_id) {
+                if let Some(target) = resolver.resolve(account_id) {
+                    if already_proxied {
+                        // A previous server thought we owned this shard
+                        // but we don't. Refuse to bounce it again so we
+                        // don't loop forever.
+                        stdio::error(
+                            "proxy",
+                            &format!(
+                                "refusing to re-proxy for account={} shop={} (target {}): loop guard triggered",
+                                account_id, shop_id, target.name
+                            ),
+                        );
+                        return Response::builder()
+                            .status(500)
+                            .body(axum::body::Body::from(
+                                "Internal Server Error: shard routing loop",
+                            ))
+                            .unwrap();
+                    }
+                    return proxy_to_shard(
+                        &target.name,
+                        &method,
+                        &uri,
+                        &headers,
+                        body_bytes,
+                        resolver.self_shard().map(|s| s.index),
+                    )
+                    .await;
+                }
+            }
+        }
+    }
+
+    let body = body_bytes
+        .as_ref()
+        .map(|b| String::from_utf8_lossy(b).to_string());
     let (handler_key, handler_code, handler_entry) = state.resolve_handler(&shop_id, &cache_key);
 
     // If this is a preview request and the preview bundle failed, fall back to
@@ -512,6 +603,166 @@ async fn handle_platform_request(
             .body(axum::body::Body::from(format!("Handler execution failed: {}", err)))
             .unwrap(),
     }
+}
+
+/// Reverse-proxy a request to the shard that owns it.
+///
+/// Uses reqwest for simplicity — the body is already buffered (the
+/// platform reads it eagerly into memory upstream), so streaming is
+/// not an immediate win. Targets the shard server on its internal
+/// Tailscale DNS name at the platform port 8530.
+///
+/// Preserves: method, headers (minus Host), and body. Injects
+/// `X-Deka-Proxied: {self_index}` so the target can detect loops.
+async fn proxy_to_shard(
+    target_host: &str,
+    method: &str,
+    uri: &str,
+    headers: &[(String, String)],
+    body: Option<bytes::Bytes>,
+    self_index: Option<usize>,
+) -> Response {
+    // Extract just the path+query — uri from axum may be an absolute URL.
+    let path_and_query = match uri.find("://") {
+        Some(scheme_end) => {
+            let rest = &uri[scheme_end + 3..];
+            rest.find('/').map(|slash| &rest[slash..]).unwrap_or("/")
+        }
+        None => uri,
+    };
+    let target_url = format!("http://{}:8530{}", target_host, path_and_query);
+
+    let original_host = headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("host"))
+        .map(|(_, v)| v.clone())
+        .unwrap_or_default();
+
+    stdio::log(
+        "proxy",
+        &format!(
+            "{} {} → {} (host={})",
+            method, path_and_query, target_url, original_host
+        ),
+    );
+
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        // Don't follow redirects — tenant handlers may legitimately
+        // return 3xx, and we want to forward those verbatim.
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    {
+        Ok(c) => c,
+        Err(err) => {
+            stdio::error("proxy", &format!("client build failed: {}", err));
+            return Response::builder()
+                .status(502)
+                .body(axum::body::Body::from("Bad Gateway: proxy client build failed"))
+                .unwrap();
+        }
+    };
+
+    let method_parsed = match reqwest::Method::from_bytes(method.as_bytes()) {
+        Ok(m) => m,
+        Err(_) => {
+            return Response::builder()
+                .status(400)
+                .body(axum::body::Body::from("Bad Request: unknown HTTP method"))
+                .unwrap();
+        }
+    };
+
+    let mut req = client.request(method_parsed, &target_url);
+
+    // Forward headers except hop-by-hop + Host (reqwest sets Host from URL).
+    // We leave the original Host as X-Forwarded-Host so the target shard's
+    // platform can resolve the correct tenant from it.
+    for (k, v) in headers {
+        let kl = k.to_ascii_lowercase();
+        if matches!(
+            kl.as_str(),
+            "host"
+                | "content-length"
+                | "connection"
+                | "transfer-encoding"
+                | "keep-alive"
+                | "proxy-authenticate"
+                | "proxy-authorization"
+                | "te"
+                | "trailers"
+                | "upgrade"
+        ) {
+            continue;
+        }
+        req = req.header(k, v);
+    }
+    if !original_host.is_empty() {
+        req = req.header("Host", original_host.clone());
+        req = req.header("X-Forwarded-Host", original_host);
+    }
+    req = req.header(PROXY_LOOP_HEADER, self_index.unwrap_or(usize::MAX).to_string());
+
+    if let Some(b) = body {
+        req = req.body(b);
+    }
+
+    let upstream = match req.send().await {
+        Ok(r) => r,
+        Err(err) => {
+            stdio::error(
+                "proxy",
+                &format!("upstream {} failed: {}", target_url, err),
+            );
+            return Response::builder()
+                .status(502)
+                .body(axum::body::Body::from(format!(
+                    "Bad Gateway: upstream {} unreachable",
+                    target_host
+                )))
+                .unwrap();
+        }
+    };
+
+    let status = upstream.status();
+    let mut builder = Response::builder().status(status.as_u16());
+    for (k, v) in upstream.headers().iter() {
+        let kl = k.as_str().to_ascii_lowercase();
+        if matches!(
+            kl.as_str(),
+            "connection"
+                | "transfer-encoding"
+                | "keep-alive"
+                | "proxy-authenticate"
+                | "proxy-authorization"
+                | "te"
+                | "trailers"
+                | "upgrade"
+        ) {
+            continue;
+        }
+        builder = builder.header(k.as_str(), v.as_bytes());
+    }
+
+    let bytes = match upstream.bytes().await {
+        Ok(b) => b,
+        Err(err) => {
+            stdio::error("proxy", &format!("body read failed: {}", err));
+            return Response::builder()
+                .status(502)
+                .body(axum::body::Body::from("Bad Gateway: upstream body read failed"))
+                .unwrap();
+        }
+    };
+
+    builder
+        .body(axum::body::Body::from(bytes))
+        .unwrap_or_else(|_| {
+            Response::builder()
+                .status(502)
+                .body(axum::body::Body::from("Bad Gateway: response build failed"))
+                .unwrap()
+        })
 }
 
 mod stdio {

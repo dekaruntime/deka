@@ -57,6 +57,48 @@ where
     rx.recv().expect("neo4j async task failed")
 }
 
+/// Pick a Neo4j URL from the shard resolver for a connect() call that
+/// omits an explicit URL.
+///
+/// Precedence:
+///   1. If the payload carries an `__account_id`, route to that shop's
+///      shard directly — this is the PHPX storefront hot path.
+///   2. Otherwise, if the resolver is configured for a real cluster
+///      (more than one shard, or a named shard that isn't the
+///      `local` fallback), use shard 0 (the de-facto router shard).
+///   3. Otherwise, honour `DEKA_NEO4J_URI` — this preserves the
+///      single-machine dev default where docker-compose publishes
+///      Neo4j on a non-standard port (e.g. 7688).
+///   4. Finally fall back to `bolt://localhost:7687`.
+fn shard_route_neo4j(args: &Value) -> String {
+    let account_id = args
+        .get("__account_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let resolver = deka_shard::global();
+
+    if !account_id.is_empty() {
+        if let Some(info) = resolver.resolve(account_id) {
+            return info.neo4j.clone();
+        }
+    }
+
+    let is_configured_cluster = resolver.shard_count() > 1
+        || resolver
+            .shards()
+            .first()
+            .map(|s| s.name != "local")
+            .unwrap_or(false);
+
+    if is_configured_cluster {
+        if let Some(info) = resolver.shards().first() {
+            return info.neo4j.clone();
+        }
+    }
+
+    std::env::var("DEKA_NEO4J_URI").unwrap_or_else(|_| "bolt://localhost:7687".to_string())
+}
+
 /// Main dispatch function — called from the JS bridge router via op_neo4j_call.
 pub fn neo4j_call(action: &str, args: &Value) -> Value {
     match action {
@@ -69,13 +111,19 @@ pub fn neo4j_call(action: &str, args: &Value) -> Value {
 }
 
 fn neo4j_connect(args: &Value) -> Value {
-    // Config priority: explicit args > env vars > defaults
-    let uri = args
+    // Config priority: explicit args > shard resolver (from __account_id) > env vars > defaults.
+    //
+    // The JS bridge router stamps `__account_id` into the payload on
+    // connect() calls where no explicit URL was passed. The resolver
+    // maps that to the neo4j URL of the owning shard. Empty
+    // account_id (or an uninitialised resolver) falls through to
+    // DEKA_NEO4J_URI / the hardcoded localhost default.
+    let explicit = args
         .get("uri")
         .or_else(|| args.get("url"))
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| std::env::var("DEKA_NEO4J_URI").unwrap_or_else(|_| "bolt://localhost:7687".to_string()));
+        .map(|s| s.to_string());
+    let uri = explicit.unwrap_or_else(|| shard_route_neo4j(args));
     let user = args
         .get("user")
         .and_then(|v| v.as_str())

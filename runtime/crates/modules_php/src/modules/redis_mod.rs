@@ -12,6 +12,38 @@ thread_local! {
     static NEXT_HANDLE: RefCell<u64> = const { RefCell::new(1) };
 }
 
+/// Pick a Redis URL from the shard resolver for a connect() call that
+/// omits an explicit URL. See `shard_route_neo4j` for the rationale —
+/// this mirrors that logic exactly.
+fn shard_route_redis(args: &Value) -> String {
+    let account_id = args
+        .get("__account_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let resolver = deka_shard::global();
+
+    if !account_id.is_empty() {
+        if let Some(info) = resolver.resolve(account_id) {
+            return info.redis.clone();
+        }
+    }
+
+    let is_configured_cluster = resolver.shard_count() > 1
+        || resolver
+            .shards()
+            .first()
+            .map(|s| s.name != "local")
+            .unwrap_or(false);
+
+    if is_configured_cluster {
+        if let Some(info) = resolver.shards().first() {
+            return info.redis.clone();
+        }
+    }
+
+    std::env::var("DEKA_REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string())
+}
+
 /// Main dispatch function — called from the JS bridge router via op_redis_call.
 pub fn redis_call(action: &str, args: &Value) -> Value {
     match action {
@@ -63,12 +95,14 @@ where
 }
 
 fn redis_connect(args: &Value) -> Value {
-    let url = args
+    // Config priority: explicit args > shard resolver (from __account_id) > env vars > default.
+    // See neo4j_connect for the reasoning.
+    let explicit = args
         .get("url")
         .or_else(|| args.get("uri"))
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| std::env::var("DEKA_REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string()));
+        .map(|s| s.to_string());
+    let url = explicit.unwrap_or_else(|| shard_route_redis(args));
     let url = url.as_str();
 
     let client = match Client::open(url) {
