@@ -95,22 +95,46 @@ where
 }
 
 fn redis_connect(args: &Value) -> Value {
-    // Config priority: explicit args > shard resolver (from __account_id) > env vars > default.
-    // See neo4j_connect for the reasoning.
+    // Config priority: shard resolver (when the cluster is configured and
+    // the explicit URL looks like a dev default) > explicit args > env
+    // vars > default. See `neo4j_connect` for the full reasoning — this
+    // is the same safety net for tenant handlers that hardcode
+    // `redis://localhost:6380`.
     let explicit = args
         .get("url")
         .or_else(|| args.get("uri"))
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    let url = explicit.unwrap_or_else(|| shard_route_redis(args));
-    let url = url.as_str();
+    let shard_routed = shard_route_redis(args);
+    let url_owned = match explicit {
+        Some(u) if super::neo4j::should_override_dev_default(&u)
+            && super::neo4j::has_configured_cluster() =>
+        {
+            eprintln!(
+                "[shard] redis: overriding dev-default URL {} with shard-routed {} (account={})",
+                u,
+                shard_routed,
+                args.get("__account_id").and_then(|v| v.as_str()).unwrap_or("<none>"),
+            );
+            shard_routed
+        }
+        Some(u) => u,
+        None => shard_routed,
+    };
+    let url = url_owned.as_str();
 
     let client = match Client::open(url) {
         Ok(c) => c,
         Err(e) => return json!({ "ok": false, "error": format!("{}", e) }),
     };
 
-    let conn = match client.get_connection() {
+    // Bounded connect timeout: without this a handler pointing at an
+    // unreachable Redis (e.g. `redis://localhost:6380` on a shard that
+    // only exposes 6379) blocks the worker thread forever. Matches the
+    // 5s cap on the neo4j side.
+    let conn = match client
+        .get_connection_with_timeout(std::time::Duration::from_secs(5))
+    {
         Ok(c) => c,
         Err(e) => return json!({ "ok": false, "error": format!("{}", e) }),
     };

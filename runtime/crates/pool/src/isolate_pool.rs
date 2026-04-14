@@ -2123,10 +2123,18 @@ impl WorkerThread {
                         if (kind === 'neo4j') {
                             if (typeof ops.op_neo4j_call === 'function') {
                                 const p = payload || {};
-                                // Shard routing: on connect without an explicit URI,
-                                // pass __accountId so the Rust op can pick the owning
-                                // shard's neo4j URL via deka-shard.
-                                if (action === 'connect' && !p.uri && !p.url) {
+                                // Shard routing: always stamp __account_id on
+                                // connect(). The Rust op uses it for two things:
+                                //  (1) when no explicit URL was passed, pick
+                                //      the owning shard's Neo4j URL;
+                                //  (2) when an explicit URL looks like a
+                                //      single-machine dev default
+                                //      (`localhost`/`127.0.0.1`), override it
+                                //      with the account's shard URL so
+                                //      migrated tenants on non-router shards
+                                //      don't try to hit a port their stack
+                                //      doesn't expose.
+                                if (action === 'connect') {
                                     const accountId = globalThis.__accountId;
                                     if (accountId) {
                                         p.__account_id = accountId;
@@ -2148,10 +2156,13 @@ impl WorkerThread {
                                 if (shopId && action === 'keys' && p.pattern) {
                                     p.pattern = shopId + ':' + p.pattern;
                                 }
-                                // Shard routing: on connect without an explicit URL,
-                                // pass __accountId so the Rust op can pick the owning
-                                // shard's redis URL via deka-shard.
-                                if (action === 'connect' && !p.url && !p.uri) {
+                                // Shard routing: always stamp __account_id on
+                                // connect() so the Rust op can (a) pick the
+                                // owning shard when no URL was passed, or (b)
+                                // override a dev-default localhost URL with
+                                // the account's shard URL. See the neo4j
+                                // branch above for the full reasoning.
+                                if (action === 'connect') {
                                     const accountId = globalThis.__accountId;
                                     if (accountId) {
                                         p.__account_id = accountId;

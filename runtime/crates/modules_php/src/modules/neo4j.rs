@@ -19,6 +19,15 @@ fn connections() -> &'static Mutex<HashMap<u64, Arc<Graph>>> {
     CONNECTIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Hard ceiling on how long a Bolt connect can block before the op fails.
+/// Without this, a handler targeting an unreachable Bolt endpoint (e.g. a
+/// tenant hardcoded to `bolt://localhost:7688` that's been migrated to a
+/// shard whose docker stack only exposes 7687) will hang the request
+/// forever — the exact Phase 6 bugsy hang that blocked Noor's migration.
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// Hard ceiling on a single Cypher query / execute.
+const QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Dedicated multi-thread tokio runtime for neo4j async I/O.
 /// Has its own worker threads so async I/O is driven independently of the calling thread.
 static NEO4J_RT: OnceLock<tokio::runtime::Handle> = OnceLock::new();
@@ -99,6 +108,56 @@ fn shard_route_neo4j(args: &Value) -> String {
     std::env::var("DEKA_NEO4J_URI").unwrap_or_else(|_| "bolt://localhost:7687".to_string())
 }
 
+/// True iff this process is running inside a multi-shard deployment
+/// (shard count > 1, or a single named non-`local` shard). Callers
+/// use this as a signal that hardcoded localhost URLs in tenant
+/// code should be treated as developer placeholders and overridden
+/// with the shard-routed URL.
+pub(crate) fn has_configured_cluster() -> bool {
+    let r = deka_shard::global();
+    r.shard_count() > 1
+        || r.shards().first().map(|s| s.name != "local").unwrap_or(false)
+}
+
+/// Heuristic: does `url` look like a single-machine dev default?
+/// We treat bolt / neo4j / redis / http URLs pointing at `localhost`
+/// or `127.0.0.1` as dev defaults worth replacing with the
+/// shard-routed URL in a configured cluster. This covers tenant
+/// handlers that still hardcode `bolt://localhost:7688` /
+/// `redis://localhost:6380` instead of calling the no-arg
+/// auto-routing form.
+pub(crate) fn should_override_dev_default(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    // Cheap substring check — avoids pulling in the url crate for a
+    // simple host match.
+    let strip_scheme = lower
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(lower.as_str());
+    // Host portion ends at `/`, `?`, or end-of-string.
+    let host_port = strip_scheme
+        .split(['/', '?'])
+        .next()
+        .unwrap_or(strip_scheme);
+    // IPv6 literals are wrapped in [] — `[::1]:7687`. Strip the brackets
+    // before comparing.
+    let host = if let Some(inner) = host_port
+        .strip_prefix('[')
+        .and_then(|s| s.split_once(']').map(|(h, _)| h))
+    {
+        inner
+    } else {
+        host_port.split(':').next().unwrap_or(host_port)
+    };
+    host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
+/// Tiny log helper — matches the `[category] message` format used by
+/// `crates/runtime/src/platform.rs::stdio`.
+fn stdio_log(message: &str) {
+    eprintln!("[shard] {}", message);
+}
+
 /// Main dispatch function — called from the JS bridge router via op_neo4j_call.
 pub fn neo4j_call(action: &str, args: &Value) -> Value {
     match action {
@@ -111,19 +170,39 @@ pub fn neo4j_call(action: &str, args: &Value) -> Value {
 }
 
 fn neo4j_connect(args: &Value) -> Value {
-    // Config priority: explicit args > shard resolver (from __account_id) > env vars > defaults.
+    // Config priority: shard resolver (from __account_id in a configured cluster)
+    // > explicit args > env vars > defaults.
     //
     // The JS bridge router stamps `__account_id` into the payload on
-    // connect() calls where no explicit URL was passed. The resolver
-    // maps that to the neo4j URL of the owning shard. Empty
-    // account_id (or an uninitialised resolver) falls through to
-    // DEKA_NEO4J_URI / the hardcoded localhost default.
+    // connect() calls. The resolver maps that to the neo4j URL of
+    // the owning shard. We override an explicit URL with the
+    // shard-routed URL when (a) the cluster is configured with more
+    // than one shard, and (b) the explicit URL looks like the
+    // single-machine dev default (`localhost` / `127.0.0.1`). This
+    // is a safety net for PHPX handlers that still hardcode
+    // `bolt://localhost:7688` instead of calling the no-arg form.
+    // Without this override, migrated tenants on non-router shards
+    // (e.g. bugsy) hang forever connecting to a port their docker
+    // stack doesn't expose.
     let explicit = args
         .get("uri")
         .or_else(|| args.get("url"))
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    let uri = explicit.unwrap_or_else(|| shard_route_neo4j(args));
+    let shard_routed = shard_route_neo4j(args);
+    let uri = match explicit {
+        Some(u) if should_override_dev_default(&u) && has_configured_cluster() => {
+            stdio_log(&format!(
+                "neo4j: overriding dev-default URL {} with shard-routed {} (account={})",
+                u,
+                shard_routed,
+                args.get("__account_id").and_then(|v| v.as_str()).unwrap_or("<none>"),
+            ));
+            shard_routed
+        }
+        Some(u) => u,
+        None => shard_routed,
+    };
     let user = args
         .get("user")
         .and_then(|v| v.as_str())
@@ -140,6 +219,7 @@ fn neo4j_connect(args: &Value) -> Value {
         .map(|s| s.to_string())
         .unwrap_or_else(|| std::env::var("DEKA_NEO4J_DB").unwrap_or_else(|_| "neo4j".to_string()));
 
+    let uri_for_err = uri.clone();
     let result = block_on_async(async move {
         let config = neo4rs::ConfigBuilder::default()
             .uri(&uri)
@@ -148,8 +228,13 @@ fn neo4j_connect(args: &Value) -> Value {
             .db(&*db)
             .build()
             .map_err(|e| format!("{}", e))?;
-        Graph::connect(config)
+        // Hard connect timeout — without this, a handler targeting an
+        // unreachable Bolt endpoint will block the worker thread
+        // indefinitely (see Phase 6 hang diagnosis).
+        tokio::time::timeout(CONNECT_TIMEOUT, Graph::connect(config))
             .await
+            .map_err(|_| format!("neo4j connect timeout after {}s for {}",
+                CONNECT_TIMEOUT.as_secs(), uri_for_err))?
             .map_err(|e| format!("{}", e))
     });
 
@@ -191,7 +276,14 @@ fn neo4j_query(args: &Value) -> Value {
             }
         }
 
-        let mut result = graph.execute(q).await.map_err(|e| format!("{}", e))?;
+        // Hard query timeout — mirrors the connect timeout. If the
+        // server is unreachable mid-stream, this caps how long a
+        // single handler can block waiting on Neo4j.
+        let mut result = tokio::time::timeout(QUERY_TIMEOUT, graph.execute(q))
+            .await
+            .map_err(|_| format!("neo4j query timeout after {}s",
+                QUERY_TIMEOUT.as_secs()))?
+            .map_err(|e| format!("{}", e))?;
         let mut rows = Vec::new();
 
         while let Some(row) = result.next().await.map_err(|e| format!("{}", e))? {
@@ -234,7 +326,6 @@ fn neo4j_execute(args: &Value) -> Value {
     };
 
     let result = block_on_async(async move {
-
         let mut q = query(&cypher);
         if let Some(obj) = params.as_object() {
             for (key, val) in obj {
@@ -242,7 +333,12 @@ fn neo4j_execute(args: &Value) -> Value {
             }
         }
 
-        graph.run(q).await.map_err(|e| format!("{}", e))?;
+        // Same hard timeout as neo4j_query to cap worker blocking.
+        tokio::time::timeout(QUERY_TIMEOUT, graph.run(q))
+            .await
+            .map_err(|_| format!("neo4j execute timeout after {}s",
+                QUERY_TIMEOUT.as_secs()))?
+            .map_err(|e| format!("{}", e))?;
         Ok::<(), String>(())
     });
 
@@ -333,6 +429,22 @@ fn row_to_json(row: &neo4rs::Row, key: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dev_default_url_detection() {
+        assert!(should_override_dev_default("bolt://localhost:7688"));
+        assert!(should_override_dev_default("bolt://localhost:7687"));
+        assert!(should_override_dev_default("bolt://127.0.0.1:7687"));
+        assert!(should_override_dev_default("BOLT://LOCALHOST:7688"));
+        assert!(should_override_dev_default("redis://localhost:6380"));
+        assert!(should_override_dev_default("redis://localhost"));
+        assert!(should_override_dev_default("bolt://[::1]:7687"));
+        assert!(should_override_dev_default("bolt://127.0.0.1/db"));
+        assert!(!should_override_dev_default("bolt://100.70.138.96:7687"));
+        assert!(!should_override_dev_default("bolt://phobos:7687"));
+        assert!(!should_override_dev_default("bolt://neo4j.internal:7687"));
+        assert!(!should_override_dev_default("redis://10.0.0.5:6379"));
+    }
 
     #[test]
     fn connect_to_local_neo4j() {
