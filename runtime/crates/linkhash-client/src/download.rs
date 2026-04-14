@@ -65,6 +65,7 @@ fn download_via_api(
 
     let files = body.get("files")
         .or_else(|| body.get("tree"))
+        .or_else(|| body.get("entries"))
         .and_then(|v| v.as_array())
         .ok_or_else(|| anyhow::anyhow!("tree response missing files array"))?;
 
@@ -84,6 +85,7 @@ fn download_via_api(
             continue;
         }
         let is_dir = file_entry.get("type")
+            .or_else(|| file_entry.get("kind"))
             .and_then(|v| v.as_str())
             .map(|t| t == "tree" || t == "dir")
             .unwrap_or(false);
@@ -109,14 +111,23 @@ fn download_via_api(
             bail!("blob API returned {} for {}", blob_response.status(), path);
         }
 
-        let content = blob_response.bytes()
+        let content_bytes = blob_response.bytes()
             .map_err(|e| anyhow::anyhow!("failed to read blob for {}: {}", path, e))?;
+
+        // Registry blob endpoint returns JSON { content, ... }; extract the raw content.
+        // Fall back to raw bytes for non-JSON responses.
+        let file_bytes: Vec<u8> = match serde_json::from_slice::<serde_json::Value>(&content_bytes) {
+            Ok(v) if v.get("content").and_then(|c| c.as_str()).is_some() => {
+                v.get("content").and_then(|c| c.as_str()).unwrap().as_bytes().to_vec()
+            }
+            _ => content_bytes.to_vec(),
+        };
 
         let file_path = target_dir.join(path);
         if let Some(parent) = file_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&file_path, &content)?;
+        std::fs::write(&file_path, &file_bytes)?;
     }
 
     Ok(())

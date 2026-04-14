@@ -442,34 +442,94 @@ fn install_phpx_package(
     // Download
     client.download(name, &resolved.version, &target)?;
 
-    // Update deka.lock with the resolved version
-    update_deka_lock(project_dir, name, &resolved.version)?;
+    // Compute integrity hashes for the installed package so the lock matches
+    // what the module validator recomputes at load time.
+    let integrity = modules_php::integrity::compute_package_integrity(&target)
+        .map_err(|err| anyhow::anyhow!("integrity hash failed for {}: {}", name, err))?;
+
+    // Update deka.lock with the resolved version + integrity hashes
+    update_deka_lock(project_dir, name, &resolved.version, &integrity.module_graph, &integrity.fs_graph)?;
 
     Ok(resolved.version)
 }
 
 /// Update deka.lock with the installed package version.
-fn update_deka_lock(project_dir: &std::path::Path, name: &str, version: &str) -> Result<()> {
+///
+/// The lock format expected by the module validator is:
+/// `{ "lockfileVersion": 1, "node": { "packages": {} }, "php": { "packages": {...} } }`.
+/// Each entry value is a 4-tuple `[descriptor, resolved, metadata, integrity]`.
+fn update_deka_lock(
+    project_dir: &std::path::Path,
+    name: &str,
+    version: &str,
+    module_graph_hash: &str,
+    fs_graph_hash: &str,
+) -> Result<()> {
     let lock_path = project_dir.join("deka.lock");
     let mut lock: serde_json::Value = if lock_path.exists() {
         let raw = std::fs::read_to_string(&lock_path)?;
-        serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({"packages": {}}))
+        serde_json::from_str(&raw).unwrap_or_else(|_| default_lock())
     } else {
-        serde_json::json!({"packages": {}})
+        default_lock()
     };
 
-    if let Some(packages) = lock.get_mut("packages").and_then(|v| v.as_object_mut()) {
-        packages.insert(
+    // Ensure the top-level shape exists, migrating older { "packages": {} } layouts.
+    if !lock.get("lockfileVersion").is_some() {
+        lock["lockfileVersion"] = serde_json::json!(1);
+    }
+    if !lock.get("node").and_then(|v| v.get("packages")).is_some() {
+        lock["node"] = serde_json::json!({ "packages": {} });
+    }
+    // Migrate a bare top-level "packages" (old format) into php.packages.
+    let legacy_packages = lock
+        .get("packages")
+        .and_then(|v| v.as_object())
+        .cloned();
+    if !lock.get("php").and_then(|v| v.get("packages")).is_some() {
+        lock["php"] = serde_json::json!({ "packages": {} });
+    }
+    if let Some(legacy) = legacy_packages {
+        if let Some(php_packages) = lock
+            .get_mut("php")
+            .and_then(|v| v.get_mut("packages"))
+            .and_then(|v| v.as_object_mut())
+        {
+            for (k, v) in legacy {
+                php_packages.entry(k).or_insert(v);
+            }
+        }
+        lock.as_object_mut().map(|o| o.remove("packages"));
+    }
+
+    if let Some(php_packages) = lock
+        .get_mut("php")
+        .and_then(|v| v.get_mut("packages"))
+        .and_then(|v| v.as_object_mut())
+    {
+        php_packages.insert(
             name.to_string(),
-            serde_json::json!({
-                "version": version,
-                "resolved": format!("linkhash:{}", name),
-            }),
+            serde_json::json!([
+                version,
+                format!("linkhash:{}", name),
+                {
+                    "moduleGraph": { "hash": module_graph_hash },
+                    "fsGraph": { "hash": fs_graph_hash },
+                },
+                "",
+            ]),
         );
     }
 
     std::fs::write(&lock_path, serde_json::to_string_pretty(&lock)?)?;
     Ok(())
+}
+
+fn default_lock() -> serde_json::Value {
+    serde_json::json!({
+        "lockfileVersion": 1,
+        "node": { "packages": {} },
+        "php": { "packages": {} },
+    })
 }
 
 fn is_valid_scoped_name(spec: &str) -> bool {

@@ -34,10 +34,9 @@ pub struct BundleOptions {
     pub project_root: PathBuf,
     pub minify: bool,
     pub iife: bool,
-    /// Optional path to the system stdlib php_modules directory.
-    /// When set, the resolver falls back to this path for modules not found
-    /// in the project-local php_modules/. If None, the resolver checks
-    /// DEKA_STDLIB_PATH env var, then falls back to a compile-time default.
+    /// Deprecated. The resolver only reads the project-local `php_modules/`.
+    /// This field is retained for API compatibility and is ignored.
+    /// Install stdlib packages via `deka install` — no filesystem fallback.
     pub stdlib_path: Option<PathBuf>,
 }
 
@@ -836,40 +835,14 @@ fn guard_path_traversal(resolved: &Path, root: &Path) -> Option<PathBuf> {
 struct DekaResolver {
     root: PathBuf,
     php_modules: PathBuf,
-    /// Fallback path for stdlib modules not found in the project-local php_modules/.
-    /// Resolved from: BundleOptions.stdlib_path > DEKA_STDLIB_PATH env > compile-time default.
-    /// TODO: make configurable via CLI flag when deka supports it.
-    stdlib_php_modules: Option<PathBuf>,
 }
 
 impl DekaResolver {
-    fn new(project_root: PathBuf, stdlib_path: Option<PathBuf>) -> Result<Self, String> {
+    fn new(project_root: PathBuf, _stdlib_path: Option<PathBuf>) -> Result<Self, String> {
         let php_modules = project_root.join("php_modules");
-
-        // Resolve the system stdlib path:
-        // 1. Explicit parameter (from BundleOptions.stdlib_path)
-        // 2. DEKA_STDLIB_PATH environment variable
-        // 3. Compile-time default for development
-        let stdlib_php_modules = stdlib_path
-            .or_else(|| std::env::var("DEKA_STDLIB_PATH").ok().map(PathBuf::from))
-            .or_else(|| {
-                // Development fallback: deka/runtime/php_modules/ relative to the
-                // binary location. The release binary lives at
-                // deka/runtime/target/release/cli, so ../../php_modules/ gets us there.
-                let exe = std::env::current_exe().ok()?;
-                let runtime_dir = exe.parent()?.parent()?.parent()?;
-                let candidate = runtime_dir.join("php_modules");
-                if candidate.is_dir() {
-                    Some(candidate)
-                } else {
-                    None
-                }
-            });
-
         Ok(Self {
             root: project_root,
             php_modules,
-            stdlib_php_modules,
         })
     }
 
@@ -886,7 +859,8 @@ impl DekaResolver {
 
     fn resolve_php_module(&self, specifier: &str) -> Option<PathBuf> {
         for alias in module_spec_aliases(specifier) {
-            // First try project-local php_modules/
+            // Only look in the project-local php_modules/. There is no system
+            // stdlib fallback — packages must be installed via `deka install`.
             let base = if alias.starts_with("@user/") {
                 self.php_modules.join("@user").join(alias.trim_start_matches("@user/"))
             } else {
@@ -897,17 +871,6 @@ impl DekaResolver {
                 // within the php_modules directory.
                 if guard_path_traversal(&path, &self.php_modules).is_some() {
                     return Some(path);
-                }
-            }
-            // Fallback: try system stdlib php_modules/
-            if let Some(ref stdlib) = self.stdlib_php_modules
-                && !alias.starts_with("@user/")
-            {
-                let stdlib_base = stdlib.join(&alias);
-                if let Some(path) = resolve_with_candidates(&stdlib_base) {
-                    if guard_path_traversal(&path, stdlib).is_some() {
-                        return Some(path);
-                    }
                 }
             }
         }
@@ -967,7 +930,7 @@ impl Resolve for DekaResolver {
             || specifier.starts_with("db/")
             || specifier.starts_with("core/");
         if is_prefixed_module {
-            // Try project-local first
+            // Project-local php_modules/ only — no system stdlib fallback.
             if let Some(candidate) = resolve_with_candidates(&self.php_modules.join(specifier)) {
                 // Guard: resolved path must stay within php_modules/
                 if guard_path_traversal(&candidate, &self.php_modules).is_some() {
@@ -977,11 +940,12 @@ impl Resolve for DekaResolver {
                     });
                 }
             }
-            // Fallback to system stdlib
-            if let Some(ref stdlib) = self.stdlib_php_modules
-                && let Some(candidate) = resolve_with_candidates(&stdlib.join(specifier))
+            // Try the @deka/ scoped layout: encoding/json -> @deka/encoding/json
+            let scoped_specifier = format!("@deka/{}", specifier);
+            if let Some(candidate) =
+                resolve_with_candidates(&self.php_modules.join(&scoped_specifier))
             {
-                if guard_path_traversal(&candidate, stdlib).is_some() {
+                if guard_path_traversal(&candidate, &self.php_modules).is_some() {
                     return Ok(Resolution {
                         filename: FileName::Real(candidate),
                         slug: None,
@@ -1378,39 +1342,42 @@ await __phpx_main();
     }
 
     #[test]
-    fn resolver_falls_back_to_stdlib_path() {
-        // Project-local php_modules/ does NOT contain "crypto",
-        // but the stdlib path does. The resolver should find it there.
-        let project = make_tmp_dir("stdlib_fallback_project");
-        let stdlib = make_tmp_dir("stdlib_fallback_stdlib");
+    fn resolver_only_uses_project_local_php_modules() {
+        // There is no stdlib fallback. A stdlib path passed to the resolver
+        // is ignored — only project-local php_modules/ is consulted.
+        let project = make_tmp_dir("no_stdlib_fallback_project");
+        let stdlib = make_tmp_dir("no_stdlib_fallback_stdlib");
 
-        // Create project-local php_modules/ (empty)
         std::fs::create_dir_all(project.join("php_modules")).unwrap();
-
-        // Create stdlib crypto/index.js
         let crypto_dir = stdlib.join("crypto");
         std::fs::create_dir_all(&crypto_dir).unwrap();
-        std::fs::write(crypto_dir.join("index.js"), "export function random_hex() { return '0a'; }\n").unwrap();
+        std::fs::write(
+            crypto_dir.join("index.js"),
+            "export function random_hex() { return '0a'; }\n",
+        )
+        .unwrap();
 
         let resolver = DekaResolver::new(project.clone(), Some(stdlib.clone())).unwrap();
-        let result = resolver.resolve_php_module("crypto");
-        assert!(result.is_some(), "expected stdlib fallback to resolve crypto");
         assert!(
-            result.unwrap().starts_with(&stdlib),
-            "resolved path should be under the stdlib directory"
+            resolver.resolve_php_module("crypto").is_none(),
+            "stdlib fallback is disabled: resolver must return None for missing packages"
         );
 
-        // If project-local has the module, it should win
+        // If project-local has the module it resolves normally.
         let local_crypto = project.join("php_modules").join("crypto");
         std::fs::create_dir_all(&local_crypto).unwrap();
-        std::fs::write(local_crypto.join("index.js"), "export function random_hex() { return 'local'; }\n").unwrap();
+        std::fs::write(
+            local_crypto.join("index.js"),
+            "export function random_hex() { return 'local'; }\n",
+        )
+        .unwrap();
 
         let resolver2 = DekaResolver::new(project.clone(), Some(stdlib.clone())).unwrap();
         let result2 = resolver2.resolve_php_module("crypto");
         assert!(result2.is_some(), "expected local resolution");
         assert!(
             result2.unwrap().starts_with(&project),
-            "local php_modules should take priority over stdlib"
+            "local php_modules should resolve"
         );
 
         let _ = std::fs::remove_dir_all(&project);

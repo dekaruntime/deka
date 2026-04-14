@@ -36,16 +36,14 @@ struct ImportEdge {
 pub fn validate_module_resolution(source: &str, file_path: &str) -> Vec<ValidationError> {
     let mut errors = Vec::new();
     let modules_root = resolve_modules_root(file_path);
-    let stdlib_root = resolve_stdlib_modules_root();
+    // No system stdlib fallback — every module must be installed into the
+    // project-local php_modules/.
+    let stdlib_root: Option<PathBuf> = None;
     let imports = collect_import_specs(source, file_path);
-    let mut available_modules = modules_root
+    let available_modules = modules_root
         .as_deref()
         .map(scan_phpx_modules)
         .unwrap_or_default();
-    // Merge stdlib modules so validation sees them as available
-    if let Some(ref stdlib) = stdlib_root {
-        available_modules.extend(scan_phpx_modules(stdlib));
-    }
 
     let mut graph = ModuleGraph::new(modules_root.clone(), available_modules.clone(), stdlib_root.clone());
     if !imports.is_empty() {
@@ -538,23 +536,6 @@ fn resolve_modules_root_with_env(file_path: &str, env_module_root: Option<&str>)
     None
 }
 
-/// Resolve the system stdlib php_modules/ path for validation.
-/// Checks DEKA_STDLIB_PATH env var first, then tries exe-relative path.
-/// TODO: make configurable via CLI flag when deka supports it.
-fn resolve_stdlib_modules_root() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("DEKA_STDLIB_PATH") {
-        let p = PathBuf::from(path);
-        if p.is_dir() {
-            return Some(p);
-        }
-    }
-    // Development fallback: binary at target/release/cli -> ../../php_modules/
-    let exe = std::env::current_exe().ok()?;
-    let runtime_dir = exe.parent()?.parent()?.parent()?;
-    let candidate = runtime_dir.join("php_modules");
-    if candidate.is_dir() { Some(candidate) } else { None }
-}
-
 fn scan_phpx_modules(modules_root: &Path) -> HashSet<String> {
     let mut modules = HashSet::new();
     let mut stack = vec![modules_root.to_path_buf()];
@@ -686,40 +667,54 @@ fn resolve_import_target(
         ));
     }
 
+    // Build the set of spec variants to try. For bare stdlib-style specifiers
+    // we also try the @deka-scoped layout because stdlib packages installed
+    // via `deka install` live under php_modules/@deka/<pkg>/<subpath>.
+    let mut spec_variants: Vec<String> = vec![spec_path.to_string()];
+    if !is_relative && !is_project_alias && !raw.starts_with('@') && !raw.is_empty() {
+        spec_variants.push(format!("@deka/{}", spec_path));
+    }
+
     let mut candidates = Vec::new();
     for base_dir in &base_dirs {
-        let base_path = base_dir.join(spec_path);
-        if raw.ends_with(".phpx") {
-            candidates.push(base_path.clone());
-        } else {
-            let file_candidate = base_path.with_extension("phpx");
-            let index_candidate = base_path.join("index.phpx");
-            if file_candidate.exists() && index_candidate.exists() {
-                return Err(module_error(
-                    1,
-                    1,
-                    raw.len().max(1),
-                    format!(
-                        "Ambiguous phpx import '{}' (both '{}' and '{}' exist).",
-                        raw,
-                        file_candidate.display(),
-                        index_candidate.display()
-                    ),
-                    "Disambiguate the import by using an explicit path ending in .phpx.",
-                ));
+        for variant in &spec_variants {
+            let base_path = base_dir.join(variant);
+            if raw.ends_with(".phpx") {
+                candidates.push(base_path.clone());
+            } else {
+                let file_candidate = base_path.with_extension("phpx");
+                let index_candidate = base_path.join("index.phpx");
+                if file_candidate.exists() && index_candidate.exists() {
+                    return Err(module_error(
+                        1,
+                        1,
+                        raw.len().max(1),
+                        format!(
+                            "Ambiguous phpx import '{}' (both '{}' and '{}' exist).",
+                            raw,
+                            file_candidate.display(),
+                            index_candidate.display()
+                        ),
+                        "Disambiguate the import by using an explicit path ending in .phpx.",
+                    ));
+                }
+                candidates.push(file_candidate);
+                candidates.push(index_candidate);
             }
-            candidates.push(file_candidate);
-            candidates.push(index_candidate);
         }
     }
     if !is_relative && !is_project_alias {
         if let Some(root) = modules_root {
-            candidates.push(root.join(format!("{raw}.phpx")));
-            candidates.push(root.join(raw).join("index.phpx"));
+            for variant in &spec_variants {
+                candidates.push(root.join(format!("{variant}.phpx")));
+                candidates.push(root.join(variant).join("index.phpx"));
+            }
         }
         if let Some(stdlib) = stdlib_root {
-            candidates.push(stdlib.join(format!("{raw}.phpx")));
-            candidates.push(stdlib.join(raw).join("index.phpx"));
+            for variant in &spec_variants {
+                candidates.push(stdlib.join(format!("{variant}.phpx")));
+                candidates.push(stdlib.join(variant).join("index.phpx"));
+            }
         }
     }
 

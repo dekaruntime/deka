@@ -25,18 +25,13 @@ pub fn build_phpx_handler_bundle(handler_path: &str) -> Result<String, String> {
     let mut entry_js = compile_phpx_source_to_js(&source, input, meta)?;
 
     // build_stdlib_prelude needs php_modules/stdlib.json under the project root.
-    // Tenants may not have their own stdlib.json, so fall back to the system
-    // stdlib path (same resolver used by ensure_project_layout).
-    let prelude_root = if project_root.join("php_modules").join("stdlib.json").is_file() {
-        project_root.clone()
-    } else if let Some(stdlib_dir) = resolve_stdlib_path() {
-        // The system stdlib lives at <runtime>/php_modules/; its parent is the
-        // effective "project root" for prelude generation purposes.
-        stdlib_dir.parent().unwrap_or(&stdlib_dir).to_path_buf()
+    // If the tenant has not provided one, skip prelude generation entirely —
+    // there is no system stdlib fallback.
+    let prelude = if project_root.join("php_modules").join("stdlib.json").is_file() {
+        build_stdlib_prelude(&project_root)?
     } else {
-        project_root.clone() // let build_stdlib_prelude produce its normal error
+        String::new()
     };
-    let prelude = build_stdlib_prelude(&prelude_root)?;
     entry_js = format!("{prelude}\n{entry_js}");
     let entry_path = fs::canonicalize(input_path)
         .map_err(|err| format!("failed to resolve {}: {}", input_path.display(), err))?;
@@ -123,20 +118,16 @@ pub fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Re
     }
 
     let modules_dir = project_root.join("php_modules");
-    let stdlib_dir = resolve_stdlib_path();
-
-    if !modules_dir.is_dir() && stdlib_dir.is_none() {
+    if !modules_dir.is_dir() {
         return Err(format!(
-            "deka run requires php_modules/ at project root when using stdlib imports ({})",
+            "deka run requires php_modules/ at project root when using stdlib imports ({}). Run `deka install`.",
             stdlib_imports.join(", ")
         ));
     }
 
     let mut missing = Vec::new();
     for spec in stdlib_imports {
-        let found_local = modules_dir.is_dir() && resolve_module_file(&modules_dir, &spec).is_some();
-        let found_stdlib = stdlib_dir.as_ref().map_or(false, |d| resolve_module_file(d, &spec).is_some());
-        if !found_local && !found_stdlib {
+        if resolve_module_file(&modules_dir, &spec).is_none() {
             missing.push(spec);
         }
     }
@@ -145,27 +136,11 @@ pub fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Re
         Ok(())
     } else {
         Err(format!(
-            "missing stdlib modules under {}: {}",
+            "missing stdlib modules under {}: {}. Run `deka install`.",
             modules_dir.display(),
             missing.join(", ")
         ))
     }
-}
-
-/// Resolve the system stdlib php_modules/ path.
-/// Checks DEKA_STDLIB_PATH env var first, then tries exe-relative path.
-/// TODO: make configurable via CLI flag when deka supports it.
-fn resolve_stdlib_path() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("DEKA_STDLIB_PATH") {
-        let p = PathBuf::from(path);
-        if p.is_dir() {
-            return Some(p);
-        }
-    }
-    let exe = std::env::current_exe().ok()?;
-    let runtime_dir = exe.parent()?.parent()?.parent()?;
-    let candidate = runtime_dir.join("php_modules");
-    if candidate.is_dir() { Some(candidate) } else { None }
 }
 
 fn collect_stdlib_imports(meta: &SourceModuleMeta) -> Vec<String> {
@@ -209,8 +184,18 @@ fn is_stdlib_module_spec(spec: &str) -> bool {
 }
 
 fn resolve_module_file(modules_dir: &Path, spec: &str) -> Option<PathBuf> {
+    // For prefixed stdlib specifiers (e.g. encoding/json) also try the scoped
+    // @deka layout so `deka install`-ed modules are found.
+    let mut aliases = module_spec_aliases(spec);
+    if spec.contains('/')
+        && !spec.starts_with('@')
+        && !spec.starts_with("./")
+        && !spec.starts_with("../")
+    {
+        aliases.push(format!("@deka/{}", spec));
+    }
     let mut candidates = Vec::new();
-    for alias in module_spec_aliases(spec) {
+    for alias in aliases {
         candidates.push(modules_dir.join(format!("{}.phpx", alias)));
         candidates.push(modules_dir.join(format!("{}.php", alias)));
         candidates.push(modules_dir.join(alias.as_str()).join("index.phpx"));

@@ -323,20 +323,16 @@ fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Result
     }
 
     let modules_dir = project_root.join("php_modules");
-    let stdlib_dir = resolve_stdlib_path();
-
-    if !modules_dir.is_dir() && stdlib_dir.is_none() {
+    if !modules_dir.is_dir() {
         return Err(format!(
-            "deka build requires php_modules/ at project root when using stdlib imports ({})",
+            "deka build requires php_modules/ at project root when using stdlib imports ({}). Run `deka install`.",
             stdlib_imports.join(", ")
         ));
     }
 
     let mut missing = Vec::new();
     for spec in stdlib_imports {
-        let found_local = modules_dir.is_dir() && resolve_module_file(&modules_dir, &spec).is_some();
-        let found_stdlib = stdlib_dir.as_ref().map_or(false, |d| resolve_module_file(d, &spec).is_some());
-        if !found_local && !found_stdlib {
+        if resolve_module_file(&modules_dir, &spec).is_none() {
             missing.push(spec);
         }
     }
@@ -345,27 +341,11 @@ fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Result
         Ok(())
     } else {
         Err(format!(
-            "missing stdlib modules under {}: {}",
+            "missing stdlib modules under {}: {}. Run `deka install`.",
             modules_dir.display(),
             missing.join(", ")
         ))
     }
-}
-
-/// Resolve the system stdlib php_modules/ path.
-/// Checks DEKA_STDLIB_PATH env var first, then tries exe-relative path.
-/// TODO: make configurable via CLI flag when deka supports it.
-fn resolve_stdlib_path() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("DEKA_STDLIB_PATH") {
-        let p = PathBuf::from(path);
-        if p.is_dir() {
-            return Some(p);
-        }
-    }
-    let exe = std::env::current_exe().ok()?;
-    let runtime_dir = exe.parent()?.parent()?.parent()?;
-    let candidate = runtime_dir.join("php_modules");
-    if candidate.is_dir() { Some(candidate) } else { None }
 }
 
 fn collect_stdlib_imports(meta: &SourceModuleMeta) -> Vec<String> {
@@ -414,6 +394,20 @@ fn resolve_module_file(modules_dir: &Path, spec: &str) -> Option<PathBuf> {
         modules_dir.join(spec).join("index.phpx"),
         modules_dir.join(spec).join("index.php"),
     ];
+
+    // For prefixed stdlib specifiers (e.g. encoding/json) also check the scoped
+    // @deka layout — stdlib packages installed via `deka install` live there.
+    if spec.contains('/')
+        && !spec.starts_with('@')
+        && !spec.starts_with("./")
+        && !spec.starts_with("../")
+    {
+        let scoped = format!("@deka/{}", spec);
+        candidates.push(modules_dir.join(format!("{}.phpx", scoped)));
+        candidates.push(modules_dir.join(format!("{}.php", scoped)));
+        candidates.push(modules_dir.join(&scoped).join("index.phpx"));
+        candidates.push(modules_dir.join(&scoped).join("index.php"));
+    }
 
     if spec.ends_with(".phpx") || spec.ends_with(".php") {
         candidates.insert(0, modules_dir.join(spec));
@@ -1487,8 +1481,7 @@ class User {}
 
     #[test]
     fn ensure_project_layout_requires_php_modules_for_stdlib_imports() {
-        // Disable stdlib fallback so we test local-only behavior
-        unsafe { std::env::set_var("DEKA_STDLIB_PATH", "/nonexistent/stdlib"); }
+        // No stdlib fallback — only project-local php_modules/ is consulted.
         let tmp = tempfile::tempdir().expect("tmp");
         std::fs::write(tmp.path().join("deka.json"), "{}").expect("deka.json");
         std::fs::write(tmp.path().join("deka.lock"), "{}").expect("deka.lock");
@@ -1496,13 +1489,10 @@ class User {}
         let meta = parse_source_module_meta(source);
         let err = ensure_project_layout(tmp.path(), &meta).expect_err("missing php_modules");
         assert!(err.contains("php_modules"));
-        unsafe { std::env::remove_var("DEKA_STDLIB_PATH"); }
     }
 
     #[test]
     fn ensure_project_layout_requires_stdlib_module_files() {
-        // Disable stdlib fallback so we test local-only behavior
-        unsafe { std::env::set_var("DEKA_STDLIB_PATH", "/nonexistent/stdlib"); }
         let tmp = tempfile::tempdir().expect("tmp");
         std::fs::write(tmp.path().join("deka.json"), "{}").expect("deka.json");
         std::fs::write(tmp.path().join("deka.lock"), "{}").expect("deka.lock");
@@ -1511,7 +1501,6 @@ class User {}
         let meta = parse_source_module_meta(source);
         let err = ensure_project_layout(tmp.path(), &meta).expect_err("missing stdlib module file");
         assert!(err.contains("encoding/json"));
-        unsafe { std::env::remove_var("DEKA_STDLIB_PATH"); }
     }
 
     #[test]

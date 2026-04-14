@@ -397,21 +397,16 @@ pub fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Re
     }
 
     let modules_dir = project_root.join("php_modules");
-    let stdlib_dir = resolve_stdlib_path();
-
-    // At least one of local php_modules/ or system stdlib must exist
-    if !modules_dir.is_dir() && stdlib_dir.is_none() {
+    if !modules_dir.is_dir() {
         return Err(format!(
-            "deka runtime requires php_modules/ at project root when using stdlib imports ({})",
+            "deka runtime requires php_modules/ at project root when using stdlib imports ({}). Run `deka install`.",
             stdlib_imports.join(", ")
         ));
     }
 
     let mut missing = Vec::new();
     for spec in stdlib_imports {
-        let found_local = modules_dir.is_dir() && resolve_module_file(&modules_dir, &spec).is_some();
-        let found_stdlib = stdlib_dir.as_ref().map_or(false, |d| resolve_module_file(d, &spec).is_some());
-        if !found_local && !found_stdlib {
+        if resolve_module_file(&modules_dir, &spec).is_none() {
             missing.push(spec);
         }
     }
@@ -420,28 +415,11 @@ pub fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Re
         Ok(())
     } else {
         Err(format!(
-            "missing stdlib modules under {}: {}",
+            "missing stdlib modules under {}: {}. Run `deka install`.",
             modules_dir.display(),
             missing.join(", ")
         ))
     }
-}
-
-/// Resolve the system stdlib php_modules/ path.
-/// Checks DEKA_STDLIB_PATH env var first, then tries exe-relative path.
-/// TODO: make configurable via CLI flag when deka supports it.
-fn resolve_stdlib_path() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("DEKA_STDLIB_PATH") {
-        let p = PathBuf::from(path);
-        if p.is_dir() {
-            return Some(p);
-        }
-    }
-    // Development fallback: binary at target/release/cli -> ../../php_modules/
-    let exe = std::env::current_exe().ok()?;
-    let runtime_dir = exe.parent()?.parent()?.parent()?;
-    let candidate = runtime_dir.join("php_modules");
-    if candidate.is_dir() { Some(candidate) } else { None }
 }
 
 fn collect_stdlib_imports(meta: &SourceModuleMeta) -> Vec<String> {
@@ -485,8 +463,20 @@ fn is_stdlib_module_spec(spec: &str) -> bool {
 }
 
 fn resolve_module_file(modules_dir: &Path, spec: &str) -> Option<PathBuf> {
+    // Expand aliases, and for prefixed stdlib imports (e.g. encoding/json)
+    // also try the scoped layout (@deka/encoding/json) since modules installed
+    // from linkhash land under php_modules/@deka/<pkg>/<subpath>.
+    let mut aliases = module_spec_aliases(spec);
+    if spec.contains('/')
+        && !spec.starts_with('@')
+        && !spec.starts_with("./")
+        && !spec.starts_with("../")
+    {
+        aliases.push(format!("@deka/{}", spec));
+    }
+
     let mut candidates = Vec::new();
-    for alias in module_spec_aliases(spec) {
+    for alias in aliases {
         candidates.push(modules_dir.join(format!("{}.phpx", alias)));
         candidates.push(modules_dir.join(format!("{}.php", alias)));
         candidates.push(modules_dir.join(alias.as_str()).join("index.phpx"));
@@ -502,7 +492,16 @@ fn resolve_module_file(modules_dir: &Path, spec: &str) -> Option<PathBuf> {
 
 fn resolve_phpx_module_spec(project_root: &Path, specifier: &str) -> Option<PathBuf> {
     let modules_dir = project_root.join("php_modules");
-    for alias in module_spec_aliases(specifier) {
+    let mut aliases = module_spec_aliases(specifier);
+    // Map prefixed stdlib specifiers into the @deka scope: encoding/json -> @deka/encoding/json.
+    if specifier.contains('/')
+        && !specifier.starts_with('@')
+        && !specifier.starts_with("./")
+        && !specifier.starts_with("../")
+    {
+        aliases.push(format!("@deka/{}", specifier));
+    }
+    for alias in aliases {
         let base = if alias.starts_with("@user/") {
             modules_dir.join("@user").join(alias.trim_start_matches("@user/"))
         } else {
