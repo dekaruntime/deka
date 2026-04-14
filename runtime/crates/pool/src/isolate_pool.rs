@@ -1159,6 +1159,53 @@ const REQUEST_HISTORY_LIMIT: usize = 200;
 // ========== Warm Isolate ==========
 
 /// A warm isolate with metadata
+/// RAII guard that pushes a V8 isolate onto the thread's entered-isolate
+/// stack (via `Isolate::Enter`) and pops it on drop (via `Isolate::Exit`).
+///
+/// Each `OwnedIsolate` is `Enter`ed when it's constructed and `Exit`ed when
+/// it's dropped. With many isolates on a single worker thread only the
+/// most recently constructed one is `Isolate::GetCurrent()`; older
+/// isolates sit below on the enter stack. Any V8 API that calls
+/// `ContextScope::new` (directly or via `deno_core::scope!`) panics if
+/// the scope's isolate isn't the current one. Re-`Enter`ing the isolate
+/// we're about to drive makes it current for the duration of this guard,
+/// then `Exit` restores the previous top so the drop-order assertion on
+/// the underlying `OwnedIsolate`s still holds at shutdown.
+struct IsolateEntryGuard {
+    isolate_ptr: *mut v8::Isolate,
+}
+
+impl IsolateEntryGuard {
+    fn enter(isolate: &mut v8::OwnedIsolate) -> Self {
+        let isolate_ref: &mut v8::Isolate = isolate;
+        // SAFETY: `enter` is safe to call re-entrantly per the V8 docs
+        // ("Re-entering an isolate is allowed"). The matching `exit` in
+        // Drop simply pops this entry, leaving any previously-entered
+        // isolate as the current one.
+        unsafe {
+            isolate_ref.enter();
+        }
+        Self {
+            isolate_ptr: isolate_ref as *mut v8::Isolate,
+        }
+    }
+}
+
+impl Drop for IsolateEntryGuard {
+    fn drop(&mut self) {
+        // SAFETY: `enter` was called in the constructor on this same
+        // isolate pointer on this same thread, and the isolate outlives
+        // this guard (the guard is dropped before the `&mut WarmIsolate`
+        // borrow ends). `exit` requires that `self == Isolate::GetCurrent()`
+        // — we satisfy that because no inner code drops any OwnedIsolate
+        // (which would re-order the enter stack), and any re-entries
+        // (e.g. when V8 enters an isolate inside a callback) are paired.
+        unsafe {
+            (*self.isolate_ptr).exit();
+        }
+    }
+}
+
 struct WarmIsolate {
     isolate_id: String,
     runtime: JsRuntime,
@@ -1834,6 +1881,21 @@ impl WorkerThread {
             Ok(isolate) => isolate,
             Err(err) => return (ExecutionOutcome::Err(err), ExecutionProfile::empty()),
         };
+
+        // Ensure THIS isolate is the currently-entered one on this thread.
+        //
+        // Each `OwnedIsolate` in deno_core is `Enter()`ed at construction and
+        // `Exit()`ed on drop, so with N isolates on one worker only the most
+        // recently constructed one is `v8__Isolate__GetCurrent()`. When we
+        // dispatch a request to an older isolate the current-isolate mismatch
+        // makes `ContextScope::new` panic with
+        //   "PinnedRef<HandleScope<()>> and Context do not belong to the same Isolate".
+        //
+        // V8 allows re-entering an already-entered isolate; the matching
+        // `Exit()` simply restores the previous top-of-stack. `_enter_guard`
+        // does the exit on drop (covering every early return in this method
+        // without having to thread cleanup through each match arm).
+        let _enter_guard = IsolateEntryGuard::enter(isolate.runtime.v8_isolate());
 
         isolate.active_requests = 1;
         isolate.state = IsolateState::Executing {
