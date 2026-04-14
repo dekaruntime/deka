@@ -27,6 +27,7 @@ members = [
     "crates/phpx_lsp",
     "crates/cypher",
     "crates/linkhash-client",
+    "crates/shard",
 ]
 
 [workspace.dependencies]
