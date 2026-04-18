@@ -1800,6 +1800,7 @@ dependencies = [
  "hyper 1.8.1",
  "hyper-util",
  "libc",
+ "neo4rs",
  "pool",
  "redis",
  "serde_json",

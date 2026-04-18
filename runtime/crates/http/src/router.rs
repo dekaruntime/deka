@@ -28,7 +28,21 @@ async fn handle_request(
 ) -> impl IntoResponse {
     let method = request.method().as_str().to_string();
     let uri = request.uri().to_string();
-    let hmr_path = request.uri().path() == "/_deka/hmr";
+    let path = request.uri().path().to_string();
+
+    // ── Built-in REST API (/api/*) — skip V8 isolate entirely ──
+    if path.starts_with("/api/") || path == "/api" {
+        let mut headers = Vec::with_capacity(request.headers().len());
+        for (key, value) in request.headers().iter() {
+            headers.push((
+                key.as_str().to_string(),
+                value.to_str().unwrap_or("").to_string(),
+            ));
+        }
+        return crate::api::handle_api_request(&path, &headers).await.into_response();
+    }
+
+    let hmr_path = path == "/_deka/hmr";
     if hmr_path && dev_mode_enabled() {
         if let Some(ws) = ws {
             let state_for_hmr = Arc::clone(&state);
