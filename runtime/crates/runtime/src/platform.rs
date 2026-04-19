@@ -361,17 +361,38 @@ async fn handle_admin_rebuild(
     };
 
     let label = if git_ref.is_some() { "preview rebuild" } else { "rebuild" };
+    let started = Instant::now();
     stdio::log(label, &format!("triggered for {}", cache_key));
 
     // Clear the cached bundle
     {
         let mut cache = state.bundle_cache.lock().unwrap();
-        cache.remove(&cache_key);
+        if git_ref.is_some() {
+            // Preview-only: drop just the one preview entry.
+            cache.remove(&cache_key);
+        } else {
+            // Main rebuild: evict main and every preview keyed as `shop_id:*`
+            // so next preview request rebuilds on the new base as well.
+            let prefix = format!("{}:", shop_id);
+            cache.retain(|k, _| k != &shop_id && !k.starts_with(&prefix));
+        }
     }
+
+    // Evict cached isolates for this tenant across all workers.
+    // Handler keys are `tenant:{shop_id}` or `tenant:{shop_id}:{ref}` —
+    // use `tenant:{shop_id}` as the prefix to catch both. For preview
+    // rebuilds evict only the exact variant.
+    let isolate_prefix = if git_ref.is_some() {
+        format!("tenant:{}", cache_key)
+    } else {
+        format!("tenant:{}", shop_id)
+    };
+    let evicted = state.engine.pool().evict_by_prefix(&isolate_prefix).await;
 
     // Re-bundle (resolve_handler will re-compile since cache is cleared)
     let (_key, code, _entry) = state.resolve_handler(&shop_id, &cache_key);
     let bundle_size = code.len();
+    let elapsed_ms = started.elapsed().as_millis();
 
     if code.is_empty() {
         stdio::error(label, &format!("failed for {}", cache_key));
@@ -386,20 +407,25 @@ async fn handle_admin_rebuild(
 
     stdio::log(
         label,
-        &format!("complete for {} ({} bytes)", cache_key, bundle_size),
+        &format!(
+            "complete for {} ({} bytes, {} isolate(s) evicted, {}ms)",
+            cache_key, bundle_size, evicted, elapsed_ms
+        ),
     );
 
     Response::builder()
         .status(200)
         .header("content-type", "application/json")
         .body(axum::body::Body::from(format!(
-            r#"{{"status":"ok","shop_id":"{}","ref":{},"bundle_size":{}}}"#,
+            r#"{{"status":"ok","shop_id":"{}","ref":{},"bundle_size":{},"evicted":{},"elapsed_ms":{}}}"#,
             shop_id,
             match &git_ref {
                 Some(r) => format!("\"{}\"", r),
                 None => "null".to_string(),
             },
-            bundle_size
+            bundle_size,
+            evicted,
+            elapsed_ms
         )))
         .unwrap()
 }

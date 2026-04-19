@@ -323,6 +323,14 @@ enum WorkerControl {
         response_tx: oneshot::Sender<Result<(), String>>,
     },
 
+    /// Evict all isolates whose handler key name starts with a given prefix.
+    /// Used to invalidate all variants of a tenant (main + preview builds)
+    /// after a new commit lands.
+    EvictByPrefix {
+        prefix: String,
+        response_tx: oneshot::Sender<usize>,
+    },
+
     /// Get metrics for a specific isolate
     GetIsolateMetrics {
         key: HandlerKey,
@@ -945,6 +953,52 @@ impl IsolatePool {
         total_evicted
     }
 
+    /// Evict every cached isolate whose handler name starts with `prefix`.
+    /// Returns the total number of isolates evicted across all workers.
+    ///
+    /// Broadcasts to every worker (not just the consistent-hash target)
+    /// because under LeastLoaded scheduling, a tenant's isolate may live
+    /// on any worker. Safe no-op if no matches.
+    pub async fn evict_by_prefix(&self, prefix: impl Into<String>) -> usize {
+        let prefix = prefix.into();
+        let mut total_evicted = 0;
+        let mut receivers = Vec::new();
+
+        for worker in &self.workers {
+            let (tx, rx) = oneshot::channel();
+            if worker
+                .control_tx
+                .send(WorkerControl::EvictByPrefix {
+                    prefix: prefix.clone(),
+                    response_tx: tx,
+                })
+                .is_ok()
+            {
+                receivers.push(rx);
+            }
+        }
+
+        for rx in receivers {
+            if let Ok(count) = rx.await {
+                total_evicted += count;
+            }
+        }
+
+        if total_evicted > 0 {
+            self.metrics
+                .evictions
+                .fetch_add(total_evicted as u64, Ordering::Relaxed);
+            tracing::info!(
+                "Evicted {} isolate(s) matching prefix '{}' across {} worker(s)",
+                total_evicted,
+                prefix,
+                self.workers.len()
+            );
+        }
+
+        total_evicted
+    }
+
     /// Kill a specific isolate by handler name
     pub async fn kill_isolate(&self, handler_name: String) -> Result<(), String> {
         let key = HandlerKey::new(handler_name);
@@ -1350,6 +1404,29 @@ impl WorkerThread {
                 } else {
                     let _ = response_tx.send(Err("Isolate not found".to_string()));
                 }
+            }
+
+            WorkerControl::EvictByPrefix { prefix, response_tx } => {
+                let matching: Vec<HandlerKey> = self
+                    .isolates
+                    .keys()
+                    .filter(|k| k.name.starts_with(&prefix))
+                    .cloned()
+                    .collect();
+                let count = matching.len();
+                for key in &matching {
+                    self.isolates.remove(key);
+                }
+                if !matching.is_empty() {
+                    self.lru_order.retain(|k| !matching.iter().any(|m| m == k));
+                    tracing::debug!(
+                        "Worker {} evicted {} isolate(s) matching prefix '{}'",
+                        self.worker_id,
+                        count,
+                        prefix
+                    );
+                }
+                let _ = response_tx.send(count);
             }
 
             WorkerControl::GetIsolateMetrics { key, response_tx } => {
