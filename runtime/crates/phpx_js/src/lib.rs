@@ -2207,6 +2207,24 @@ impl<'a> JsSubsetEmitter<'a> {
             "time" if args.is_empty() => {
                 Ok(Some("Math.floor(Date.now() / 1000)".to_string()))
             }
+            // array_keys($a) -> Object.keys($a) for objects; for arrays JS gives
+            // stringified indices, so we emit an IIFE that returns numeric indices
+            // for arrays and string keys for objects. Structs are treated as objects.
+            "array_keys" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "(() => {{ const __v = {}; if (Array.isArray(__v)) return __v.map((_, __i) => __i); return (__v && typeof __v === \"object\") ? Object.keys(__v) : []; }})()",
+                    a[0]
+                )))
+            }
+            // array_values($a) -> Object.values for objects; arrays return a shallow copy.
+            "array_values" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "(() => {{ const __v = {}; if (Array.isArray(__v)) return __v.slice(); return (__v && typeof __v === \"object\") ? Object.values(__v) : []; }})()",
+                    a[0]
+                )))
+            }
             // is_array($x) -> inline with struct exclusion
             "is_array" if args.len() == 1 => {
                 let a = emit_args(self, args)?;
@@ -3220,6 +3238,37 @@ $result = match ($x) {
     }
 
     #[test]
+    fn rewrite_array_keys_inline() {
+        let js = phpx_to_js("$a = { x: 1, y: 2 };\n$k = array_keys($a);").expect("should compile");
+        assert!(js.contains("Object.keys("), "expected Object.keys for array_keys, got:\n{}", js);
+        assert!(!js.contains("globalThis.array_keys"), "should NOT contain globalThis.array_keys, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_array_keys_on_array_emits_numeric_indices() {
+        let js = phpx_to_js("$a = [10, 20, 30];\n$k = array_keys($a);").expect("should compile");
+        // For arrays we emit `__v.map((_, __i) => __i)` so the shape matches PHP
+        // (integer indices) rather than JS `Object.keys` stringified indices.
+        assert!(js.contains(".map("), "expected map for array-path array_keys, got:\n{}", js);
+        assert!(!js.contains("globalThis.array_keys"), "should NOT contain globalThis.array_keys, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_array_values_inline() {
+        let js = phpx_to_js("$a = { x: 1, y: 2 };\n$v = array_values($a);").expect("should compile");
+        assert!(js.contains("Object.values("), "expected Object.values for array_values, got:\n{}", js);
+        assert!(!js.contains("globalThis.array_values"), "should NOT contain globalThis.array_values, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_array_values_on_array_copies() {
+        let js = phpx_to_js("$a = [1, 2, 3];\n$v = array_values($a);").expect("should compile");
+        // For arrays we emit .slice() to return a shallow copy.
+        assert!(js.contains(".slice()"), "expected .slice() for array-path array_values, got:\n{}", js);
+        assert!(!js.contains("globalThis.array_values"), "should NOT contain globalThis.array_values, got:\n{}", js);
+    }
+
+    #[test]
     fn rewrite_is_array_inline() {
         let js = phpx_to_js("$arr = [1];\n$b = is_array($arr);").expect("should compile");
         assert!(js.contains("Array.isArray"), "expected Array.isArray for is_array, got:\n{}", js);
@@ -3263,6 +3312,8 @@ $result = match ($x) {
         assert!(!js.contains("globalThis.explode ??="), "globalThis.explode polyfill should be removed");
         assert!(!js.contains("globalThis.implode ??="), "globalThis.implode polyfill should be removed");
         assert!(!js.contains("globalThis.is_array ="), "globalThis.is_array polyfill should be removed");
+        assert!(!js.contains("globalThis.array_keys ??="), "globalThis.array_keys polyfill should not be added");
+        assert!(!js.contains("globalThis.array_values ??="), "globalThis.array_values polyfill should not be added");
         // But kept entries should still be present
         assert!(js.contains("globalThis.panic ??="), "globalThis.panic should still be in prelude");
         assert!(js.contains("globalThis.defined ??="), "globalThis.defined should still be in prelude");
