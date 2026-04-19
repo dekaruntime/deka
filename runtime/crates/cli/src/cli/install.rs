@@ -147,6 +147,16 @@ pub fn cmd_update(context: &Context) {
     // Set registry env vars from flags/env before delegating to pm
     apply_registry_env(context);
 
+    // Shop-mode: cwd is inside store/tenants/{shop_id}/. Run the per-shop
+    // flow (bump, build-verify, git commit with a version-diff message)
+    // so a downstream post-commit hook can redeploy via #84.
+    if let Some(shop_dir) = detect_shop_working_tree() {
+        if let Err(err) = run_shop_update(context, &shop_dir) {
+            stdio::error("update", &err);
+        }
+        return;
+    }
+
     // For update, check if positionals or deka.json deps contain scoped packages
     let mut specs = context.args.positionals.clone();
     if specs.is_empty() {
@@ -191,6 +201,285 @@ pub fn cmd_update(context: &Context) {
             stdio::error("update", &message);
         }
     }
+}
+
+/// Returns the shop working-tree root when cwd is inside `store/tenants/<id>/`
+/// with a deka.json + git repo, otherwise None.
+fn detect_shop_working_tree() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    let mut dir = cwd.as_path();
+    // Walk up looking for deka.json, then confirm the path contains
+    // `.../store/tenants/<id>`.
+    loop {
+        if dir.join("deka.json").is_file() {
+            // Path must contain /store/tenants/ somewhere above us.
+            let s = dir.to_string_lossy();
+            if s.contains("/store/tenants/") || s.contains("\\store\\tenants\\") {
+                // And must be a git working tree.
+                if dir.join(".git").exists() {
+                    return Some(dir.to_path_buf());
+                }
+            }
+            return None;
+        }
+        dir = dir.parent()?;
+    }
+}
+
+/// Per-shop update: bump deps via the same linkhash-client flow as the
+/// generic update, but record before/after versions, verify with a build,
+/// and commit the lock/json on success with an author identifying the
+/// platform-automated bump.
+fn run_shop_update(context: &Context, project_dir: &std::path::Path) -> Result<(), String> {
+    let shop_id = project_dir
+        .file_name()
+        .and_then(|v| v.to_str())
+        .unwrap_or("<shop>")
+        .to_string();
+
+    stdio::log("update", &format!("shop-mode: bumping deps for {}", shop_id));
+
+    // Read current versions from deka.lock (authoritative) before bump.
+    let before = read_php_lock_versions(project_dir);
+
+    // Collect scoped specs from deka.json dependencies. Shop-mode restricts
+    // updates to deps declared in deka.json (not arbitrary positionals) so
+    // the commit diff is predictable.
+    let (registry_url, token) = get_registry_config(context);
+    let client = LinkhashClient::new(&registry_url, token.as_deref());
+
+    let mut specs = context.args.positionals.clone();
+    if specs.is_empty() {
+        specs = collect_deka_json_deps_in(project_dir);
+    }
+
+    let phpx_specs: Vec<String> = specs
+        .iter()
+        .filter(|s| is_phpx_package(s))
+        .cloned()
+        .collect();
+
+    if phpx_specs.is_empty() {
+        stdio::log("update", "no scoped deps declared; nothing to bump");
+        return Ok(());
+    }
+
+    let mut any_failed = false;
+    for spec in &phpx_specs {
+        // parse_spec_with_version yields the declared semver range from
+        // deka.json (e.g. `^0.1.0`). The registry's resolve() picks the
+        // latest matching version, so we never silently cross a major
+        // boundary — merchants must edit deka.json explicitly for that.
+        let (name, version_range) = parse_spec_with_version(spec);
+        match install_phpx_package(&client, &name, &version_range, project_dir) {
+            Ok(v) => stdio::log("update", &format!("resolved {}@{}", name, v)),
+            Err(err) => {
+                stdio::error("update", &format!("failed {}: {}", name, err));
+                any_failed = true;
+            }
+        }
+    }
+
+    if any_failed {
+        revert_shop_update(project_dir);
+        return Err("one or more deps failed to resolve; working tree reverted".to_string());
+    }
+
+    // Read versions after bump and compute the diff.
+    let after = read_php_lock_versions(project_dir);
+    let diff = diff_versions(&before, &after);
+
+    if diff.is_empty() {
+        stdio::log("update", "already up to date");
+        return Ok(());
+    }
+
+    // Verify with a build. The shop working tree must still compile after
+    // the dep bump; if not, revert and report which bump broke it.
+    stdio::log("update", "verifying build...");
+    let build_ok = run_verify_build(project_dir);
+    if let Err(err) = build_ok {
+        revert_shop_update(project_dir);
+        return Err(format!(
+            "build failed after bump ({}). Reverted deka.json + deka.lock. Offending diff: {}",
+            err,
+            format_diff_line(&diff)
+        ));
+    }
+
+    // Commit the lock/json changes with an identifying author. The
+    // post-commit hook (or the git-server receive-pack path for bare
+    // repos) triggers the runtime reload.
+    let diff_line = format_diff_line(&diff);
+    let subject = format!("platform: {}", diff_line);
+    if let Err(err) = git_commit_shop_update(project_dir, &subject) {
+        return Err(format!("git commit failed: {}", err));
+    }
+
+    stdio::log("update", &format!("committed: {}", subject));
+    Ok(())
+}
+
+/// Read the current `php.packages` version map from deka.lock in `dir`.
+/// Returns `{ "@deka/redis": "0.1.0", ... }`.
+fn read_php_lock_versions(dir: &std::path::Path) -> std::collections::BTreeMap<String, String> {
+    let mut out = std::collections::BTreeMap::new();
+    let path = dir.join("deka.lock");
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return out;
+    };
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return out;
+    };
+    let Some(pkgs) = json
+        .get("php")
+        .and_then(|v| v.get("packages"))
+        .and_then(|v| v.as_object())
+    else {
+        return out;
+    };
+    for (name, entry) in pkgs {
+        // Lock entries are [version, resolved, metadata, integrity].
+        if let Some(v) = entry.as_array().and_then(|a| a.first()).and_then(|v| v.as_str()) {
+            out.insert(name.clone(), v.to_string());
+        }
+    }
+    out
+}
+
+/// Diff the before/after version maps into a sorted list of
+/// `(package, Option<before>, after)` tuples. Includes adds and changes;
+/// omits untouched packages.
+fn diff_versions(
+    before: &std::collections::BTreeMap<String, String>,
+    after: &std::collections::BTreeMap<String, String>,
+) -> Vec<(String, Option<String>, String)> {
+    let mut out = Vec::new();
+    for (name, new_v) in after {
+        match before.get(name) {
+            Some(old_v) if old_v == new_v => continue,
+            Some(old_v) => out.push((name.clone(), Some(old_v.clone()), new_v.clone())),
+            None => out.push((name.clone(), None, new_v.clone())),
+        }
+    }
+    out
+}
+
+/// Render a version diff as a single-line summary, e.g.
+/// `@deka/redis 0.1.0 -> 0.2.0, @tana/store 0.1.0 -> 0.2.0`.
+fn format_diff_line(diff: &[(String, Option<String>, String)]) -> String {
+    diff.iter()
+        .map(|(name, before, after)| match before {
+            Some(b) => format!("{} {} -> {}", name, b, after),
+            None => format!("{} added@{}", name, after),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Collect scoped deps declared in `<dir>/deka.json`. Mirrors
+/// `collect_deka_json_deps` but takes an explicit project directory
+/// instead of using cwd.
+fn collect_deka_json_deps_in(dir: &std::path::Path) -> Vec<String> {
+    let Ok(raw) = std::fs::read_to_string(dir.join("deka.json")) else {
+        return Vec::new();
+    };
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return Vec::new();
+    };
+    let Some(deps) = json.get("dependencies").and_then(|v| v.as_object()) else {
+        return Vec::new();
+    };
+    deps.iter()
+        .map(|(name, version)| {
+            if let Some(v) = version.as_str() {
+                let clean = v.trim_start_matches('^').trim_start_matches('~').trim_start_matches(">=");
+                format!("{}@{}", name, clean)
+            } else {
+                name.clone()
+            }
+        })
+        .collect()
+}
+
+/// Run `deka build` on the shop tree as a post-bump verification step.
+/// We invoke the single-file build via the in-process build helper
+/// instead of shelling out to the deka binary so tests and reverts are
+/// deterministic.
+fn run_verify_build(project_dir: &std::path::Path) -> Result<(), String> {
+    // Shell out to deka build — the in-process entry assumes a populated
+    // context, while this path is called from the CLI after the context
+    // is already committed to the update flow. Using the current
+    // executable keeps behavior aligned with what a human would see.
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("resolve self: {}", e))?;
+    let out = std::process::Command::new(&exe)
+        .arg("build")
+        .current_dir(project_dir)
+        .output()
+        .map_err(|e| format!("spawn deka build: {}", e))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        Err(stderr.lines().next().unwrap_or("unknown build failure").to_string())
+    }
+}
+
+/// Revert deka.json + deka.lock in the shop working tree to the git HEAD
+/// state. Best-effort — if git is missing the caller still surfaces the
+/// underlying failure.
+fn revert_shop_update(project_dir: &std::path::Path) {
+    let _ = std::process::Command::new("git")
+        .args(["checkout", "HEAD", "--", "deka.json", "deka.lock"])
+        .current_dir(project_dir)
+        .output();
+}
+
+/// Commit deka.json + deka.lock with an identifying author so downstream
+/// systems (branch protection, audit log, broadcast telemetry) can tell
+/// platform-automated bumps from human commits.
+fn git_commit_shop_update(project_dir: &std::path::Path, subject: &str) -> Result<(), String> {
+    // Stage the lock + manifest. Use explicit paths — never `git add -A`.
+    let add = std::process::Command::new("git")
+        .args(["add", "deka.json", "deka.lock"])
+        .current_dir(project_dir)
+        .output()
+        .map_err(|e| format!("git add: {}", e))?;
+    if !add.status.success() {
+        return Err(format!(
+            "git add failed: {}",
+            String::from_utf8_lossy(&add.stderr)
+        ));
+    }
+
+    // Commit with deka-update as author. The committer defaults to the
+    // repo's configured identity so audit logs still attribute the push.
+    let commit = std::process::Command::new("git")
+        .args([
+            "-c",
+            "user.name=deka-update",
+            "-c",
+            "user.email=platform@tana.gg",
+            "commit",
+            "--author",
+            "deka-update <platform@tana.gg>",
+            "-m",
+            subject,
+        ])
+        .current_dir(project_dir)
+        .output()
+        .map_err(|e| format!("git commit: {}", e))?;
+
+    if !commit.status.success() {
+        let stderr = String::from_utf8_lossy(&commit.stderr);
+        // If there is nothing to commit, treat as soft no-op.
+        if stderr.contains("nothing to commit") {
+            return Ok(());
+        }
+        return Err(format!("git commit failed: {}", stderr));
+    }
+    Ok(())
 }
 
 /// Set LINKHASH_REGISTRY_URL from --registry flag or TANA_GIT_SERVER env,
@@ -553,4 +842,121 @@ fn is_valid_scoped_name(spec: &str) -> bool {
         && name
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+}
+
+#[cfg(test)]
+mod shop_update_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn lock_with(pkgs: &[(&str, &str)]) -> String {
+        let mut php = serde_json::Map::new();
+        for (name, version) in pkgs {
+            php.insert(
+                (*name).to_string(),
+                serde_json::json!([version, format!("linkhash:{}", name), {}, ""]),
+            );
+        }
+        serde_json::json!({
+            "lockfileVersion": 1,
+            "node": { "packages": {} },
+            "php": { "packages": php },
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn read_php_lock_versions_parses_php_packages() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        std::fs::write(
+            tmp.path().join("deka.lock"),
+            lock_with(&[("@deka/redis", "0.1.0"), ("@tana/store", "0.2.3")]),
+        )
+        .expect("write");
+
+        let versions = read_php_lock_versions(tmp.path());
+        assert_eq!(versions.get("@deka/redis").map(String::as_str), Some("0.1.0"));
+        assert_eq!(versions.get("@tana/store").map(String::as_str), Some("0.2.3"));
+    }
+
+    #[test]
+    fn read_php_lock_versions_tolerates_missing_file() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let versions = read_php_lock_versions(tmp.path());
+        assert!(versions.is_empty());
+    }
+
+    #[test]
+    fn diff_versions_reports_bumps_and_adds_only() {
+        let mut before: BTreeMap<String, String> = BTreeMap::new();
+        before.insert("@deka/redis".into(), "0.1.0".into());
+        before.insert("@deka/core".into(), "0.1.0".into());
+
+        let mut after: BTreeMap<String, String> = BTreeMap::new();
+        after.insert("@deka/redis".into(), "0.2.0".into()); // bumped
+        after.insert("@deka/core".into(), "0.1.0".into()); // unchanged
+        after.insert("@tana/store".into(), "0.5.0".into()); // added
+
+        let diff = diff_versions(&before, &after);
+        assert_eq!(diff.len(), 2);
+        let (name, old, new) = &diff[0];
+        assert_eq!(name, "@deka/redis");
+        assert_eq!(old.as_deref(), Some("0.1.0"));
+        assert_eq!(new, "0.2.0");
+        let (name, old, new) = &diff[1];
+        assert_eq!(name, "@tana/store");
+        assert!(old.is_none());
+        assert_eq!(new, "0.5.0");
+    }
+
+    #[test]
+    fn format_diff_line_is_parseable_for_broadcast() {
+        let diff = vec![
+            ("@deka/redis".into(), Some("1.2.0".into()), "1.3.0".into()),
+            ("@tana/store".into(), Some("0.4.1".into()), "0.5.0".into()),
+        ];
+        let line = format_diff_line(&diff);
+        assert_eq!(line, "@deka/redis 1.2.0 -> 1.3.0, @tana/store 0.4.1 -> 0.5.0");
+    }
+
+    #[test]
+    fn format_diff_line_marks_added_deps() {
+        let diff = vec![("@deka/new".into(), None, "0.1.0".into())];
+        let line = format_diff_line(&diff);
+        assert_eq!(line, "@deka/new added@0.1.0");
+    }
+
+    #[test]
+    fn collect_deka_json_deps_in_strips_semver_prefixes() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        std::fs::write(
+            tmp.path().join("deka.json"),
+            r#"{"dependencies":{"@deka/redis":"^0.1.0","@tana/store":"~0.2.0","@deka/core":">=0.3.0"}}"#,
+        )
+        .expect("write");
+        let mut specs = collect_deka_json_deps_in(tmp.path());
+        specs.sort();
+        assert_eq!(
+            specs,
+            vec![
+                "@deka/core@0.3.0".to_string(),
+                "@deka/redis@0.1.0".to_string(),
+                "@tana/store@0.2.0".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn detect_shop_working_tree_rejects_non_tenant_paths() {
+        // cwd is the deka runtime workspace — not inside store/tenants/.
+        // Must return None even if a deka.json is present nearby.
+        let detected = detect_shop_working_tree();
+        assert!(
+            detected.is_none() || detected.as_ref().map(|p| {
+                let s = p.to_string_lossy();
+                s.contains("/store/tenants/") || s.contains("\\store\\tenants\\")
+            }).unwrap_or(true),
+            "detect_shop_working_tree must only fire inside store/tenants/"
+        );
+    }
 }
