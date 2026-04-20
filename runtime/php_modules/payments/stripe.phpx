@@ -1,0 +1,69 @@
+import { result_err } from 'core/result'
+
+// Stripe provider — stub.
+//
+// Every method returns Err('not_implemented') until the real Connect Express
+// wiring lands under issue #94 (Stripe Connect: onboarding, charges, webhooks).
+//
+// Kept loadable so the @deka/payments module graph stays stable regardless
+// of which providers are wired up yet. The interface surface is fixed by
+// index.phpx — all three stubs match it so the admin UI and checkout code
+// can `import { stripe_provider } from 'payments'` today.
+
+export function stripe_name() {
+  return 'stripe'
+}
+
+/// docid: phpx/payments/stripe_connect_url()
+/// <Function name="stripe_connect_url">
+///   <Description>Stub. Returns Err('not_implemented') until #94 lands.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function stripe_connect_url($return_url, $shop_id) {
+  return result_err('not_implemented')
+}
+
+/// docid: phpx/payments/stripe_handle_callback()
+/// <Function name="stripe_handle_callback">
+///   <Description>Stub. Returns Err('not_implemented') until #94 lands.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function stripe_handle_callback($query, $shop_id) {
+  return result_err('not_implemented')
+}
+
+/// docid: phpx/payments/stripe_create_charge()
+/// <Function name="stripe_create_charge">
+///   <Description>Stub. Returns Err('not_implemented') until #94 lands.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function stripe_create_charge($account, $amount_cents, $currency, $platform_fee_cents, $idempotency_key) {
+  return result_err('not_implemented')
+}
+
+/// docid: phpx/payments/stripe_refund()
+/// <Function name="stripe_refund">
+///   <Description>Stub. Returns Err('not_implemented') until #94 lands.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function stripe_refund($account, $charge_id, $amount_cents) {
+  return result_err('not_implemented')
+}
+
+/// docid: phpx/payments/stripe_webhook_verify()
+/// <Function name="stripe_webhook_verify">
+///   <Description>Stub. Returns Err('not_implemented') until #94 lands.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function stripe_webhook_verify($body, $signature, $secret) {
+  return result_err('not_implemented')
+}
+
+/// docid: phpx/payments/stripe_account_status()
+/// <Function name="stripe_account_status">
+///   <Description>Stub. Returns Err('not_implemented') until #94 lands.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function stripe_account_status($account) {
+  return result_err('not_implemented')
+}

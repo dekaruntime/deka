@@ -1,0 +1,67 @@
+import { result_err } from 'core/result'
+
+// Square provider — stub.
+//
+// Every method returns Err('not_implemented') until the real OAuth wiring
+// lands under issue #96 (Square OAuth: PAYMENTS_WRITE + ITEMS_READ scopes,
+// token refresh, payments.create with app_fee_money).
+//
+// Shipped in the MVP; parity with Stripe at launch.
+
+export function square_name() {
+  return 'square'
+}
+
+/// docid: phpx/payments/square_connect_url()
+/// <Function name="square_connect_url">
+///   <Description>Stub. Returns Err('not_implemented') until #96 lands.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function square_connect_url($return_url, $shop_id) {
+  return result_err('not_implemented')
+}
+
+/// docid: phpx/payments/square_handle_callback()
+/// <Function name="square_handle_callback">
+///   <Description>Stub. Returns Err('not_implemented') until #96 lands.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function square_handle_callback($query, $shop_id) {
+  return result_err('not_implemented')
+}
+
+/// docid: phpx/payments/square_create_charge()
+/// <Function name="square_create_charge">
+///   <Description>Stub. Returns Err('not_implemented') until #96 lands.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function square_create_charge($account, $amount_cents, $currency, $platform_fee_cents, $idempotency_key) {
+  return result_err('not_implemented')
+}
+
+/// docid: phpx/payments/square_refund()
+/// <Function name="square_refund">
+///   <Description>Stub. Returns Err('not_implemented') until #96 lands.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function square_refund($account, $charge_id, $amount_cents) {
+  return result_err('not_implemented')
+}
+
+/// docid: phpx/payments/square_webhook_verify()
+/// <Function name="square_webhook_verify">
+///   <Description>Stub. Returns Err('not_implemented') until #96 lands.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function square_webhook_verify($body, $signature, $secret) {
+  return result_err('not_implemented')
+}
+
+/// docid: phpx/payments/square_account_status()
+/// <Function name="square_account_status">
+///   <Description>Stub. Returns Err('not_implemented') until #96 lands.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function square_account_status($account) {
+  return result_err('not_implemented')
+}

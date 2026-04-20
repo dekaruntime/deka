@@ -1,0 +1,138 @@
+// Payments — shared struct types used by all providers.
+//
+// These are the shapes that flow across the PaymentProvider interface. Every
+// provider (Stripe / PayPal / Square) adapts its native API to these shapes
+// before returning to callers.
+//
+// Field notes
+// -----------
+// - Timestamps are int epoch milliseconds (`time/now_ms()` compatible).
+// - Amounts are int `cents` in the smallest currency unit — never floats.
+// - Metadata is a map<string, string> for provider-specific extras that
+//   don't fit the common shape (e.g. Stripe's `transfer_group`).
+
+// A merchant's payment account at a specific provider, once they've
+// completed the provider-native onboarding flow.
+struct ConnectedAccount {
+  $provider: string = '';
+  $account_id: string = '';
+  $charges_enabled: bool = false;
+  $onboarded_at: int = 0;
+  $metadata: mixed = [];
+}
+
+// A single charge created on behalf of a merchant's connected account.
+struct Charge {
+  $id: string = '';
+  $provider: string = '';
+  $amount_cents: int = 0;
+  $currency: string = 'usd';
+  $platform_fee_cents: int = 0;
+  $status: string = 'pending';
+}
+
+// A refund against an earlier charge.
+struct Refund {
+  $id: string = '';
+  $provider: string = '';
+  $charge_id: string = '';
+  $amount_cents: int = 0;
+  $status: string = 'pending';
+}
+
+// A webhook event after signature verification.
+struct Event {
+  $id: string = '';
+  $provider: string = '';
+  $type: string = '';
+  $created_at: int = 0;
+  $data: mixed = [];
+}
+
+// Latest known state of a connected account.
+struct AccountStatus {
+  $provider: string = '';
+  $account_id: string = '';
+  $charges_enabled: bool = false;
+  $disabled_reason: string = '';
+  $requirements_due: mixed = [];
+}
+
+// Constructors — provider modules import these to build the common shapes.
+// Each returns a fully-populated struct with explicit field assignment.
+
+/// docid: phpx/payments/new_connected_account()
+/// <Function name="new_connected_account">
+///   <Description>Construct a ConnectedAccount.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function new_connected_account($provider, $account_id, $charges_enabled, $onboarded_at, $metadata = []) {
+  return ConnectedAccount {
+    $provider: '' . $provider,
+    $account_id: '' . $account_id,
+    $charges_enabled: $charges_enabled === true,
+    $onboarded_at: (int) $onboarded_at,
+    $metadata: $metadata,
+  }
+}
+
+/// docid: phpx/payments/new_charge()
+/// <Function name="new_charge">
+///   <Description>Construct a Charge.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function new_charge($id, $provider, $amount_cents, $currency, $platform_fee_cents, $status) {
+  return Charge {
+    $id: '' . $id,
+    $provider: '' . $provider,
+    $amount_cents: (int) $amount_cents,
+    $currency: '' . $currency,
+    $platform_fee_cents: (int) $platform_fee_cents,
+    $status: '' . $status,
+  }
+}
+
+/// docid: phpx/payments/new_refund()
+/// <Function name="new_refund">
+///   <Description>Construct a Refund.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function new_refund($id, $provider, $charge_id, $amount_cents, $status) {
+  return Refund {
+    $id: '' . $id,
+    $provider: '' . $provider,
+    $charge_id: '' . $charge_id,
+    $amount_cents: (int) $amount_cents,
+    $status: '' . $status,
+  }
+}
+
+/// docid: phpx/payments/new_event()
+/// <Function name="new_event">
+///   <Description>Construct an Event.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function new_event($id, $provider, $type, $created_at, $data = []) {
+  return Event {
+    $id: '' . $id,
+    $provider: '' . $provider,
+    $type: '' . $type,
+    $created_at: (int) $created_at,
+    $data: $data,
+  }
+}
+
+/// docid: phpx/payments/new_account_status()
+/// <Function name="new_account_status">
+///   <Description>Construct an AccountStatus.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function new_account_status($provider, $account_id, $charges_enabled, $disabled_reason = '', $requirements_due = []) {
+  return AccountStatus {
+    $provider: '' . $provider,
+    $account_id: '' . $account_id,
+    $charges_enabled: $charges_enabled === true,
+    $disabled_reason: '' . $disabled_reason,
+    $requirements_due: $requirements_due,
+  }
+}

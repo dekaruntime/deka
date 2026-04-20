@@ -1,0 +1,7 @@
+{
+  "name": "@deka/payments",
+  "version": "0.1.0",
+  "description": "PHPX stdlib: payments abstraction (PaymentProvider interface + shared platform-fee helper)",
+  "main": "index.phpx",
+  "deka.security": { "allow": { "run": true } }
+}

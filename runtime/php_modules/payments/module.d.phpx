@@ -1,0 +1,82 @@
+import { Result } from 'core/result'
+
+type ConnectedAccount = {
+  provider: string,
+  account_id: string,
+  charges_enabled: bool,
+  onboarded_at: int,
+  metadata: mixed,
+}
+
+type Charge = {
+  id: string,
+  provider: string,
+  amount_cents: int,
+  currency: string,
+  platform_fee_cents: int,
+  status: string,
+}
+
+type Refund = {
+  id: string,
+  provider: string,
+  charge_id: string,
+  amount_cents: int,
+  status: string,
+}
+
+type Event = {
+  id: string,
+  provider: string,
+  type: string,
+  created_at: int,
+  data: mixed,
+}
+
+type AccountStatus = {
+  provider: string,
+  account_id: string,
+  charges_enabled: bool,
+  disabled_reason: string,
+  requirements_due: mixed,
+}
+
+// Fee math.
+export function platform_fee_cents($amount_cents: int, $tier: string): int
+
+// Struct constructors.
+export function new_connected_account($provider: string, $account_id: string, $charges_enabled: bool, $onboarded_at: int, $metadata: mixed = []): ConnectedAccount
+export function new_charge($id: string, $provider: string, $amount_cents: int, $currency: string, $platform_fee_cents: int, $status: string): Charge
+export function new_refund($id: string, $provider: string, $charge_id: string, $amount_cents: int, $status: string): Refund
+export function new_event($id: string, $provider: string, $type: string, $created_at: int, $data: mixed = []): Event
+export function new_account_status($provider: string, $account_id: string, $charges_enabled: bool, $disabled_reason: string = '', $requirements_due: mixed = []): AccountStatus
+
+// Webhook HMAC verify.
+export function verify_hmac_sha256($body: string, $signature_hex: string, $secret: string): Result<bool, string>
+
+// Stripe provider (stubbed; filled in under #94).
+export function stripe_name(): string
+export function stripe_connect_url($return_url: string, $shop_id: string): Result<string, string>
+export function stripe_handle_callback($query: mixed, $shop_id: string): Result<ConnectedAccount, string>
+export function stripe_create_charge($account: ConnectedAccount, $amount_cents: int, $currency: string, $platform_fee_cents: int, $idempotency_key: string): Result<Charge, string>
+export function stripe_refund($account: ConnectedAccount, $charge_id: string, $amount_cents: int): Result<Refund, string>
+export function stripe_webhook_verify($body: string, $signature: string, $secret: string): Result<Event, string>
+export function stripe_account_status($account: ConnectedAccount): Result<AccountStatus, string>
+
+// PayPal provider (stubbed; deferred post-launch).
+export function paypal_name(): string
+export function paypal_connect_url($return_url: string, $shop_id: string): Result<string, string>
+export function paypal_handle_callback($query: mixed, $shop_id: string): Result<ConnectedAccount, string>
+export function paypal_create_charge($account: ConnectedAccount, $amount_cents: int, $currency: string, $platform_fee_cents: int, $idempotency_key: string): Result<Charge, string>
+export function paypal_refund($account: ConnectedAccount, $charge_id: string, $amount_cents: int): Result<Refund, string>
+export function paypal_webhook_verify($body: string, $signature: string, $secret: string): Result<Event, string>
+export function paypal_account_status($account: ConnectedAccount): Result<AccountStatus, string>
+
+// Square provider (stubbed; filled in under #96).
+export function square_name(): string
+export function square_connect_url($return_url: string, $shop_id: string): Result<string, string>
+export function square_handle_callback($query: mixed, $shop_id: string): Result<ConnectedAccount, string>
+export function square_create_charge($account: ConnectedAccount, $amount_cents: int, $currency: string, $platform_fee_cents: int, $idempotency_key: string): Result<Charge, string>
+export function square_refund($account: ConnectedAccount, $charge_id: string, $amount_cents: int): Result<Refund, string>
+export function square_webhook_verify($body: string, $signature: string, $secret: string): Result<Event, string>
+export function square_account_status($account: ConnectedAccount): Result<AccountStatus, string>
