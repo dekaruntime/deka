@@ -3,39 +3,34 @@
 /// Reads `tana/store/default/main.phpx` through the PHPX transpiler and asserts
 /// that the output is non-empty valid JavaScript (no compilation errors).
 ///
-/// The storefront imports stdlib modules (crypto, time, etc.) that only exist in
-/// the runtime's full `php_modules/` directory. To make module resolution work,
-/// we create a temp project with the storefront source and symlink to the
-/// runtime's php_modules/ and deka.lock.
+/// The storefront imports `@tana/store` and `@deka/*` stdlib modules. Both live in
+/// `tana/store/default/php_modules/`. We symlink that directory (and its deka.lock)
+/// into a temp project so module resolution finds them.
 
 use phpx_js::{compile_phpx_source_to_js, SourceModuleMeta};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Path to the real storefront handler.
-const STOREFRONT_PHPX: &str = concat!(
+/// Path to the default storefront directory (contains main.phpx, php_modules/, deka.lock).
+const STOREFRONT_DIR: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../",
-    "../../tana/store/default/main.phpx"
+    "../../tana/store/default"
 );
-
-/// Runtime root that contains the full php_modules with all stdlib modules.
-const RUNTIME_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
 
 #[test]
 fn storefront_handler_compiles() {
-    let abs = std::fs::canonicalize(STOREFRONT_PHPX)
-        .unwrap_or_else(|e| panic!("cannot find storefront handler at {}: {}", STOREFRONT_PHPX, e));
-    let runtime_root = std::fs::canonicalize(RUNTIME_ROOT)
-        .unwrap_or_else(|e| panic!("cannot find runtime root at {}: {}", RUNTIME_ROOT, e));
+    let storefront_dir = std::fs::canonicalize(STOREFRONT_DIR)
+        .unwrap_or_else(|e| panic!("cannot find storefront dir at {}: {}", STOREFRONT_DIR, e));
 
-    let source = std::fs::read_to_string(&abs)
-        .unwrap_or_else(|e| panic!("cannot read {}: {}", abs.display(), e));
+    let storefront_phpx = storefront_dir.join("main.phpx");
+    let source = std::fs::read_to_string(&storefront_phpx)
+        .unwrap_or_else(|e| panic!("cannot read {}: {}", storefront_phpx.display(), e));
 
     assert!(!source.is_empty(), "storefront handler is empty");
 
     // Create a temp project directory with the storefront source and symlinks
-    // to the runtime's full php_modules/ and deka.lock so module resolution
-    // can find all imported stdlib modules (crypto, time, neo4j, etc.).
+    // to the storefront's own php_modules/ (which contains @tana/store and @deka/*)
+    // and deka.lock so module resolution can find all imported modules.
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -43,24 +38,25 @@ fn storefront_handler_compiles() {
     let tmp = std::env::temp_dir().join(format!("deka_storefront_compile_test_{}", nanos));
     std::fs::create_dir_all(&tmp).expect("create temp dir");
 
-    // Symlink php_modules and deka.lock from the runtime root
+    // Symlink the storefront's php_modules and deka.lock (not the runtime root's)
+    // because the storefront ships its own @tana/store and @deka/* packages.
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(
-            runtime_root.join("php_modules"),
+            storefront_dir.join("php_modules"),
             tmp.join("php_modules"),
         )
         .expect("symlink php_modules");
         std::os::unix::fs::symlink(
-            runtime_root.join("deka.lock"),
+            storefront_dir.join("deka.lock"),
             tmp.join("deka.lock"),
         )
         .expect("symlink deka.lock");
     }
     #[cfg(not(unix))]
     {
-        // On non-unix, copy instead of symlink
-        let _ = std::fs::copy(runtime_root.join("deka.lock"), tmp.join("deka.lock"));
+        // On non-unix, just use the storefront dir directly (see entry path below)
+        let _ = std::fs::copy(storefront_dir.join("deka.lock"), tmp.join("deka.lock"));
     }
 
     // Write the storefront source into the temp project
