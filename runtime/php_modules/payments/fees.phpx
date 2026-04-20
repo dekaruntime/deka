@@ -1,0 +1,65 @@
+// Payments — shared platform-fee helper.
+//
+// Tana charges a per-transaction platform fee on every sale that flows
+// through a merchant's connected payment provider. The fee scales with the
+// merchant's subscription tier — cheaper plans pay a higher percentage with
+// a lower cap; enterprise pays nothing.
+//
+// Fee ladder (Sami-approved 2026-04-19, each tier halves from the previous):
+//
+//   Tier          Percent   Cap ($)   Cap (cents)
+//   ----          -------   -------   -----------
+//   free          1.0%      $2.00     200
+//   standard      0.5%      $1.00     100
+//   premium       0.25%     $0.50      50
+//   enterprise    0.0%      —           0  (no cut)
+//
+// Unknown tiers fall through to `free` (conservative default).
+//
+// The helper returns ONLY the Tana piece. Provider processing fees (Stripe,
+// Square) are charged separately by the provider and are not this helper's
+// concern — the pricing page combines them for display, but the math at
+// charge time adds them as two independent line items.
+
+/// docid: phpx/payments/platform_fee_cents()
+/// <Function name="platform_fee_cents">
+///   <Description>Tana platform fee in cents, given a charge amount and merchant tier. Returns min(floor(amount * pct), cap).</Description>
+///   <ReturnType type="int" />
+/// </Function>
+export function platform_fee_cents($amount_cents, $tier) {
+  $amount = (int) $amount_cents
+
+  // Defensive: never charge a fee on a non-positive amount. A zero charge
+  // (e.g. a free trial signup with a $0 token) should not accrue fees, and
+  // a negative value is a caller bug we refuse to amplify.
+  if ($amount <= 0) {
+    return 0
+  }
+
+  // Tier lookup. Keep this in lockstep with the table above.
+  $pct = 0.01
+  $cap = 200
+  if ($tier === 'free') {
+    $pct = 0.01
+    $cap = 200
+  } else if ($tier === 'standard') {
+    $pct = 0.005
+    $cap = 100
+  } else if ($tier === 'premium') {
+    $pct = 0.0025
+    $cap = 50
+  } else if ($tier === 'enterprise') {
+    // Enterprise pays zero platform fee. Early-return so we don't hit the
+    // `cap = 0` edge case in the min() below (which would still be correct,
+    // but this is clearer).
+    return 0
+  }
+
+  // floor() via `(int)` cast — truncates toward zero, which matches floor
+  // for the non-negative range we guarded above.
+  $raw = (int) ($amount * $pct)
+  if ($raw > $cap) {
+    return $cap
+  }
+  return $raw
+}

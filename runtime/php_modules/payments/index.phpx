@@ -1,0 +1,53 @@
+// @deka/payments — payment provider abstraction.
+//
+// Tana supports multiple payment providers (Stripe, PayPal, Square) under a
+// single interface so storefront checkout code and store-admin onboarding
+// code can treat them uniformly. Per-merchant provider choice is pinned on
+// the Shop node (see migrations/20260420-shop-payment-fields.cypher).
+//
+// Module layout
+// -------------
+//   fees.phpx       — `platform_fee_cents(amount, tier)` (pure, canonical math)
+//   types.phpx      — ConnectedAccount, Charge, Refund, Event, AccountStatus
+//   webhook.phpx    — verify_hmac_sha256 helper (shared across providers)
+//   stripe.phpx     — Stripe provider (stubbed; filled in under #94)
+//   paypal.phpx     — PayPal provider (stubbed; deferred post-launch)
+//   square.phpx     — Square provider (stubbed; filled in under #96)
+//
+// All public surface re-exported here so callers write:
+//
+//   import { platform_fee_cents, new_charge, verify_hmac_sha256 } from 'payments'
+
+export { platform_fee_cents } from './fees.phpx';
+
+export { new_connected_account } from './types.phpx';
+export { new_charge } from './types.phpx';
+export { new_refund } from './types.phpx';
+export { new_event } from './types.phpx';
+export { new_account_status } from './types.phpx';
+
+export { verify_hmac_sha256 } from './webhook.phpx';
+
+export { stripe_name } from './stripe.phpx';
+export { stripe_connect_url } from './stripe.phpx';
+export { stripe_handle_callback } from './stripe.phpx';
+export { stripe_create_charge } from './stripe.phpx';
+export { stripe_refund } from './stripe.phpx';
+export { stripe_webhook_verify } from './stripe.phpx';
+export { stripe_account_status } from './stripe.phpx';
+
+export { paypal_name } from './paypal.phpx';
+export { paypal_connect_url } from './paypal.phpx';
+export { paypal_handle_callback } from './paypal.phpx';
+export { paypal_create_charge } from './paypal.phpx';
+export { paypal_refund } from './paypal.phpx';
+export { paypal_webhook_verify } from './paypal.phpx';
+export { paypal_account_status } from './paypal.phpx';
+
+export { square_name } from './square.phpx';
+export { square_connect_url } from './square.phpx';
+export { square_handle_callback } from './square.phpx';
+export { square_create_charge } from './square.phpx';
+export { square_refund } from './square.phpx';
+export { square_webhook_verify } from './square.phpx';
+export { square_account_status } from './square.phpx';

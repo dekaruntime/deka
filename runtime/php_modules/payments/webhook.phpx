@@ -1,0 +1,50 @@
+import { hmac_sha256_hex, secure_compare } from 'crypto'
+import { result_ok, result_err } from 'core/result'
+
+// Payments — shared webhook signature verification.
+//
+// Most providers sign webhook payloads with an HMAC-SHA256 over the raw
+// body and the agreed webhook secret. The header format differs by provider
+// (Stripe: `t=.../v1=...`, Square: base64, PayPal: asymmetric — handled
+// separately) but the underlying primitive is the same: recompute HMAC,
+// compare with the header, constant-time.
+//
+// Providers MUST pass the raw untouched body — not JSON-reparsed. A single
+// byte of whitespace difference invalidates the signature.
+//
+// Return
+// ------
+// Ok(true) on match. Err(reason) otherwise. We never leak WHICH input was
+// wrong (length, content, etc.) — callers just get a rejection. Timing is
+// equalized by hashing before comparing via secure_compare().
+
+/// docid: phpx/payments/verify_hmac_sha256()
+/// <Function name="verify_hmac_sha256">
+///   <Description>Verify an HMAC-SHA256 signature over a raw webhook body. Returns Ok(true) on match, Err(reason) otherwise.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function verify_hmac_sha256($body, $signature_hex, $secret) {
+  if (!is_string($body) || !is_string($signature_hex) || !is_string($secret)) {
+    return result_err('signature inputs must be strings')
+  }
+  if (strlen($signature_hex) === 0 || strlen($secret) === 0) {
+    return result_err('signature and secret must be non-empty')
+  }
+
+  $expected = hmac_sha256_hex($body, $secret)
+  if (!is_string($expected) || strlen($expected) === 0) {
+    return result_err('hmac compute failed')
+  }
+
+  // Always hash both to fixed-length hex (64 chars for sha256) before
+  // comparing; secure_compare() itself is constant-time over equal lengths
+  // but bails early on length mismatch. Lowercase both sides so callers
+  // can pass uppercase or mixed-case provider signatures.
+  $lhs = strtolower($expected)
+  $rhs = strtolower($signature_hex)
+
+  if (secure_compare($lhs, $rhs)) {
+    return result_ok(true)
+  }
+  return result_err('signature mismatch')
+}

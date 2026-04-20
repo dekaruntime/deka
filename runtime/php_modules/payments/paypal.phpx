@@ -1,0 +1,69 @@
+import { result_err } from 'core/result'
+
+// PayPal provider — stub.
+//
+// PayPal is **deferred post-launch** per the meta comment on #92 — MVP
+// ships Stripe + Square only. We still ship this stub so the @deka/payments
+// module graph is stable: when PayPal gets wired up later (Commerce Partner
+// Referrals API), it's a single module swap with no import churn for
+// callers.
+//
+// Every method returns Err('not_implemented').
+
+export function paypal_name() {
+  return 'paypal'
+}
+
+/// docid: phpx/payments/paypal_connect_url()
+/// <Function name="paypal_connect_url">
+///   <Description>Stub. PayPal deferred post-launch.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function paypal_connect_url($return_url, $shop_id) {
+  return result_err('not_implemented')
+}
+
+/// docid: phpx/payments/paypal_handle_callback()
+/// <Function name="paypal_handle_callback">
+///   <Description>Stub. PayPal deferred post-launch.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function paypal_handle_callback($query, $shop_id) {
+  return result_err('not_implemented')
+}
+
+/// docid: phpx/payments/paypal_create_charge()
+/// <Function name="paypal_create_charge">
+///   <Description>Stub. PayPal deferred post-launch.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function paypal_create_charge($account, $amount_cents, $currency, $platform_fee_cents, $idempotency_key) {
+  return result_err('not_implemented')
+}
+
+/// docid: phpx/payments/paypal_refund()
+/// <Function name="paypal_refund">
+///   <Description>Stub. PayPal deferred post-launch.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function paypal_refund($account, $charge_id, $amount_cents) {
+  return result_err('not_implemented')
+}
+
+/// docid: phpx/payments/paypal_webhook_verify()
+/// <Function name="paypal_webhook_verify">
+///   <Description>Stub. PayPal deferred post-launch (asymmetric verify).</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function paypal_webhook_verify($body, $signature, $secret) {
+  return result_err('not_implemented')
+}
+
+/// docid: phpx/payments/paypal_account_status()
+/// <Function name="paypal_account_status">
+///   <Description>Stub. PayPal deferred post-launch.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function paypal_account_status($account) {
+  return result_err('not_implemented')
+}
