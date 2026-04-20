@@ -1645,7 +1645,13 @@ impl<'a> JsSubsetEmitter<'a> {
                 let mut entries = Vec::new();
                 for item in *items {
                     let key = match item.key {
-                        ObjectKey::Ident(tok) | ObjectKey::String(tok) => self.token_text(tok),
+                        ObjectKey::Ident(tok) => self.token_text(tok),
+                        // String-literal keys carry their quote delimiters in
+                        // the source span (e.g. `'content-type'`). Strip the
+                        // outer quotes and decode escapes so the JS emitter
+                        // receives the logical key name; `json_string` below
+                        // will re-quote it correctly.
+                        ObjectKey::String(tok) => decode_string_key(&self.token_text(tok)),
                     };
                     let value = self.emit_expr(item.value)?;
                     entries.push(format!("{}: {}", json_string(&key), value));
@@ -2845,6 +2851,54 @@ fn json_string(input: &str) -> String {
     serde_json::to_string(input).unwrap_or_else(|_| "\"\"".to_string())
 }
 
+/// Decode a PHPX string-literal key as it appears in object literal syntax.
+///
+/// The lexer hands us the full source span for string-literal keys, which
+/// includes the surrounding `'` or `"` delimiters. To produce the correct
+/// JS object key we need to strip those delimiters and interpret the common
+/// escape sequences. Mirrors `parse_string_key` / `unescape_string_key`
+/// in `crates/php-rs/src/phpx/typeck/check.rs`.
+fn decode_string_key(raw: &str) -> String {
+    if raw.len() >= 2 {
+        let bytes = raw.as_bytes();
+        let first = bytes[0];
+        let last = bytes[bytes.len() - 1];
+        if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
+            let inner = &raw[1..raw.len() - 1];
+            return unescape_string_key(inner, first == b'"');
+        }
+    }
+    raw.to_string()
+}
+
+fn unescape_string_key(value: &str, double_quoted: bool) -> String {
+    let mut out = String::new();
+    let mut chars = value.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        let Some(next) = chars.next() else {
+            out.push('\\');
+            break;
+        };
+        match next {
+            '\'' if !double_quoted => out.push('\''),
+            '"' if double_quoted => out.push('"'),
+            '\\' => out.push('\\'),
+            'n' if double_quoted => out.push('\n'),
+            'r' if double_quoted => out.push('\r'),
+            't' if double_quoted => out.push('\t'),
+            other => {
+                out.push('\\');
+                out.push(other);
+            }
+        }
+    }
+    out
+}
+
 fn is_js_reserved_word(name: &str) -> bool {
     matches!(
         name,
@@ -3468,6 +3522,108 @@ function f(): void {
     fn nested_array_in_object() {
         let js = phpx_to_js("function f(): void { $o = { items: [1, 2] }; }").expect("should compile");
         assert!(js.contains("items"), "expected 'items' key, got:\n{}", js);
+    }
+
+    // ---- Regression: quoted string-literal keys (deka#25) ----
+    //
+    // PHPX source like `{ 'content-type': 'text/html' }` historically leaked
+    // the surrounding quote characters into the emitted JS key, producing
+    // `{"'content-type'": "text/html"}`. The key bytes must be the decoded
+    // inner string, not the raw source span.
+
+    #[test]
+    fn single_quoted_key_strips_delimiters() {
+        let js = phpx_to_js("function f(): void { $o = { 'content-type': 'text/html' }; }")
+            .expect("should compile");
+        assert!(
+            js.contains("\"content-type\""),
+            "expected bare 'content-type' key, got:\n{}",
+            js
+        );
+        assert!(
+            !js.contains("\"'content-type'\"") && !js.contains("\\'content-type\\'"),
+            "key must not retain outer quote characters, got:\n{}",
+            js
+        );
+    }
+
+    #[test]
+    fn double_quoted_key_strips_delimiters() {
+        let js = phpx_to_js("function f(): void { $o = { \"x-shop-id\": 'abc' }; }")
+            .expect("should compile");
+        assert!(
+            js.contains("\"x-shop-id\""),
+            "expected bare 'x-shop-id' key, got:\n{}",
+            js
+        );
+        assert!(
+            !js.contains("\\\"x-shop-id\\\""),
+            "key must not retain escaped double quotes, got:\n{}",
+            js
+        );
+    }
+
+    #[test]
+    fn quoted_keys_with_special_chars_preserved() {
+        let js = phpx_to_js(
+            "function f(): void { $o = { 'with-dash': 1, 'with space': 2 }; }",
+        )
+        .expect("should compile");
+        assert!(
+            js.contains("\"with-dash\""),
+            "expected 'with-dash' key, got:\n{}",
+            js
+        );
+        assert!(
+            js.contains("\"with space\""),
+            "expected 'with space' key, got:\n{}",
+            js
+        );
+    }
+
+    #[test]
+    fn mixed_quoted_and_bare_keys() {
+        let js = phpx_to_js("function f(): void { $o = { 'a': 1, b: 2 }; }")
+            .expect("should compile");
+        assert!(
+            js.contains("\"a\"") && js.contains("1"),
+            "expected quoted 'a' key mapped to 1, got:\n{}",
+            js
+        );
+        // The bare identifier key should still appear as `b`, either bare or
+        // JSON-quoted. It must NOT carry quote characters in the key name.
+        assert!(
+            js.contains("b: 2") || js.contains("\"b\": 2"),
+            "expected bare 'b' key mapped to 2, got:\n{}",
+            js
+        );
+    }
+
+    #[test]
+    fn bare_identifier_key_unchanged() {
+        // Regression guard: the fix must not affect unquoted identifier keys.
+        let js = phpx_to_js("function f(): void { $o = { items: 1 }; }")
+            .expect("should compile");
+        assert!(
+            js.contains("items: 1") || js.contains("\"items\": 1"),
+            "expected bare 'items' key, got:\n{}",
+            js
+        );
+    }
+
+    #[test]
+    fn escaped_quote_inside_string_key_preserved() {
+        // A single-quoted key containing an escaped single quote should decode
+        // to a key name with a literal `'` in it.
+        let js = phpx_to_js("function f(): void { $o = { 'it\\'s': 1 }; }")
+            .expect("should compile");
+        // JSON encoding of `it's` -> `"it's"` (single quote is not escaped in
+        // JSON strings). Just verify the key is properly encoded.
+        assert!(
+            js.contains("\"it's\""),
+            "expected decoded key \"it's\", got:\n{}",
+            js
+        );
     }
 
     #[test]
