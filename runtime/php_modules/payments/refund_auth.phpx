@@ -1,0 +1,170 @@
+import { connect as neo4j_connect, execute as neo4j_exec, query as neo4j_query } from 'neo4j'
+import { result_ok, result_err } from 'core/result'
+import { now_ms } from 'time'
+import { uuid_v4 } from 'crypto'
+
+// Refund authorization — shared across providers (issue #123).
+//
+// The #93 interface was extended so refund() takes an actor and a reason.
+// This module wraps the authorization + audit trail that every provider
+// refund() call MUST pass through before touching the provider API:
+//
+//   1. `authorize_refund(actor, shop_id, amount_cents, charge_amount_cents)`:
+//        - `actor.role` must be one of ['owner', 'admin', 'shop_owner',
+//          'platform_admin']. Any other role rejects.
+//        - `amount_cents` must be positive and <= `charge_amount_cents`.
+//          Providers also enforce this, but we double-check — a UX bug
+//          should NOT let staff drain more than the original charge.
+//
+//   2. `log_refund_attempt(shop_id, actor, charge_id, amount_cents, reason, outcome, error)`:
+//        Writes a RefundAudit node keyed by a uuid_v4 id. Append-only.
+//        Called on BOTH success and failure — even rejected attempts land
+//        in the audit trail (they're the most important ones for forensics).
+//
+// Callers (stripe_refund, square_refund, etc.) are expected to authorize
+// first, then call the provider, then log the outcome. The audit log is
+// best-effort: a Neo4j failure does NOT abort a successful refund, but it
+// does bubble up in logs so ops can investigate.
+
+const ALLOWED_ROLES = ['owner', 'admin', 'shop_owner', 'platform_admin']
+
+/// docid: phpx/payments/authorize_refund()
+/// <Function name="authorize_refund">
+///   <Description>Check whether an actor may issue a refund for a given shop + amount. Returns Ok(true) or Err(reason).</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function authorize_refund($actor, $shop_id, $amount_cents, $charge_amount_cents) {
+  if (!is_array($actor) && !is_object($actor)) {
+    return result_err('refund_unauthorized: no actor')
+  }
+  $role = ''
+  $user_id = ''
+  if (is_array($actor)) {
+    $role = array_key_exists('role', $actor) ? ('' . $actor['role']) : ''
+    $user_id = array_key_exists('user_id', $actor) ? ('' . $actor['user_id']) : ''
+  } else {
+    $role = isset($actor->role) ? ('' . $actor->role) : ''
+    $user_id = isset($actor->user_id) ? ('' . $actor->user_id) : ''
+  }
+
+  if (strlen($user_id) === 0) {
+    return result_err('refund_unauthorized: missing actor user_id')
+  }
+
+  $role_ok = false
+  foreach (ALLOWED_ROLES as $r) {
+    if ($role === $r) {
+      $role_ok = true
+    }
+  }
+  if (!$role_ok) {
+    return result_err('refund_unauthorized: role ' . $role . ' cannot refund')
+  }
+
+  if (!is_string($shop_id) || strlen($shop_id) === 0) {
+    return result_err('refund_unauthorized: missing shop_id')
+  }
+
+  $amt = (int) $amount_cents
+  if ($amt <= 0) {
+    return result_err('refund_amount_invalid: must be positive')
+  }
+  $charge = (int) $charge_amount_cents
+  if ($charge > 0 && $amt > $charge) {
+    return result_err('refund_amount_exceeds_charge')
+  }
+
+  return result_ok(true)
+}
+
+/// docid: phpx/payments/log_refund_attempt()
+/// <Function name="log_refund_attempt">
+///   <Description>Persist a refund attempt to the RefundAudit Neo4j node. Called on success AND failure. Best-effort: a logging failure does not abort the caller.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function log_refund_attempt($shop_id, $actor, $charge_id, $amount_cents, $reason, $outcome, $error_msg = '') {
+  $id_res = uuid_v4()
+  $audit_id = 'refund_audit_' . now_ms()
+  if (is_array($id_res) && array_key_exists('ok', $id_res) && $id_res['ok'] === true && array_key_exists('value', $id_res)) {
+    $audit_id = 'refund_audit_' . $id_res['value']
+  } else if (is_object($id_res) && isset($id_res->ok) && $id_res->ok === true && isset($id_res->value)) {
+    $audit_id = 'refund_audit_' . $id_res->value
+  }
+
+  $actor_user_id = ''
+  $actor_role = ''
+  $actor_jti = ''
+  if (is_array($actor)) {
+    $actor_user_id = array_key_exists('user_id', $actor) ? ('' . $actor['user_id']) : ''
+    $actor_role = array_key_exists('role', $actor) ? ('' . $actor['role']) : ''
+    $actor_jti = array_key_exists('session_jti', $actor) ? ('' . $actor['session_jti']) : ''
+  } else if (is_object($actor)) {
+    $actor_user_id = isset($actor->user_id) ? ('' . $actor->user_id) : ''
+    $actor_role = isset($actor->role) ? ('' . $actor->role) : ''
+    $actor_jti = isset($actor->session_jti) ? ('' . $actor->session_jti) : ''
+  }
+
+  $rh = neo4j_connect()
+  if (!is_array($rh) && !is_object($rh)) {
+    return result_err('neo4j_unavailable')
+  }
+  $handle = is_array($rh) ? $rh['handle'] : $rh->handle
+  if (!isset($handle)) {
+    return result_err('neo4j_handle_missing')
+  }
+
+  $cypher = 'CREATE (a:RefundAudit { '
+    . 'id: $id, '
+    . 'shop_id: $shop_id, '
+    . 'actor_user_id: $actor_user_id, '
+    . 'actor_role: $actor_role, '
+    . 'actor_session_jti: $actor_jti, '
+    . 'charge_id: $charge_id, '
+    . 'amount_cents: $amount_cents, '
+    . 'reason: $reason, '
+    . 'outcome: $outcome, '
+    . 'error_msg: $error_msg, '
+    . 'created_at: $created_at'
+    . '})'
+
+  $params = {
+    id: $audit_id,
+    shop_id: '' . $shop_id,
+    actor_user_id: $actor_user_id,
+    actor_role: $actor_role,
+    actor_jti: $actor_jti,
+    charge_id: '' . $charge_id,
+    amount_cents: (int) $amount_cents,
+    reason: '' . $reason,
+    outcome: '' . $outcome,
+    error_msg: '' . $error_msg,
+    created_at: now_ms(),
+  }
+
+  $res = neo4j_exec($handle, $cypher, $params)
+  if (is_array($res) && array_key_exists('ok', $res) && $res['ok'] !== true) {
+    // Don't bubble this up as a caller-visible error (the refund itself
+    // may have succeeded) — return Err so the caller can log it out-of-band.
+    return result_err('audit_log_failed')
+  }
+  return result_ok($audit_id)
+}
+
+/// docid: phpx/payments/require_refund_reason()
+/// <Function name="require_refund_reason">
+///   <Description>Validate that a refund carries a non-empty reason string. Returns Ok(trimmed) or Err('refund_reason_required').</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function require_refund_reason($reason) {
+  if (!is_string($reason)) {
+    return result_err('refund_reason_required')
+  }
+  $t = trim($reason)
+  if (strlen($t) < 3) {
+    return result_err('refund_reason_required')
+  }
+  if (strlen($t) > 500) {
+    return result_err('refund_reason_too_long')
+  }
+  return result_ok($t)
+}
