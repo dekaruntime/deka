@@ -552,3 +552,274 @@ fn websocket_capability_gate_blocks() {
         conn
     );
 }
+
+// ---------------------------------------------------------------------------
+// Redirect capability-gate regression tests (issue #128 follow-up).
+//
+// Before the host-checked redirect policy, a tenant with `allowed.host`
+// in its `net.allow` could be 302'd to `disallowed.host` and reqwest
+// would follow silently — carrying Authorization / Cookie headers
+// with it. These tests pin that behaviour so the gate can't regress:
+// the HTTP call must error with `host_not_allowed`, and the
+// disallowed host must never receive a byte.
+// ---------------------------------------------------------------------------
+
+use std::io::{Read, Write};
+use std::sync::atomic::{AtomicU32, Ordering};
+
+/// Spawn a tiny HTTP/1.1 server on a random loopback port. The
+/// `responder` closure decides what to send back given the raw
+/// request-line (e.g. `"GET / HTTP/1.1"`).
+///
+/// Deliberately hand-rolled so we don't drag hyper into dev-deps
+/// just to pin a redirect semantics test.
+fn spawn_http_server<F>(hits: Arc<AtomicU32>, responder: F) -> u16
+where
+    F: Fn(&str) -> String + Send + Sync + 'static,
+{
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind http");
+    let port = listener.local_addr().unwrap().port();
+    let responder = Arc::new(responder);
+    thread::spawn(move || {
+        for conn in listener.incoming() {
+            let Ok(mut stream) = conn else { continue };
+            let responder = responder.clone();
+            let hits = hits.clone();
+            thread::spawn(move || {
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+                let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
+                hits.fetch_add(1, Ordering::SeqCst);
+
+                // Read just enough to get the request line + headers.
+                // Don't bother parsing the body — we only need to
+                // observe that a request landed here.
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let raw = String::from_utf8_lossy(&buf[..n]).to_string();
+                let request_line = raw.lines().next().unwrap_or("").to_string();
+                let resp = responder(&request_line);
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+                // Give reqwest a moment to read the response before
+                // we drop the socket.
+                thread::sleep(Duration::from_millis(20));
+            });
+        }
+    });
+    // Small delay to ensure accept() is ready before the test calls
+    // `http_call`.
+    thread::sleep(Duration::from_millis(50));
+    port
+}
+
+use std::sync::Arc;
+
+#[test]
+fn redirect_to_disallowed_host_is_blocked() {
+    // The trap server redirects to the attacker; the attacker server
+    // must NEVER see a request.
+    let _g = PolicyGuard::allow_net(&["127.0.0.1"]);
+
+    let attacker_hits = Arc::new(AtomicU32::new(0));
+    let attacker_port = spawn_http_server(attacker_hits.clone(), |_line| {
+        "HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nPWNED!".to_string()
+    });
+
+    // The redirector lives on 127.0.0.1 (allowed) and points at
+    // `localhost` (NOT allowed — `localhost` != `127.0.0.1` at the
+    // capability-gate level; both resolve to loopback but the gate
+    // matches on the hostname text).
+    let redirector_hits = Arc::new(AtomicU32::new(0));
+    let redirector_port = spawn_http_server(redirector_hits.clone(), move |_line| {
+        format!(
+            "HTTP/1.1 302 Found\r\nLocation: http://localhost:{}/secret\r\nContent-Length: 0\r\n\r\n",
+            attacker_port
+        )
+    });
+
+    let url = format!("http://127.0.0.1:{}/trap", redirector_port);
+    let resp = http_call(
+        "request",
+        &json!({
+            "method": "GET",
+            "url": url,
+            "headers": { "Authorization": "Bearer sekret" },
+            "timeout_ms": 3000,
+        }),
+    );
+
+    assert_eq!(
+        resp.get("ok").and_then(|v| v.as_bool()),
+        Some(false),
+        "should error on disallowed redirect: {}",
+        resp
+    );
+    assert_eq!(
+        resp.get("error").and_then(|v| v.as_str()),
+        Some("host_not_allowed"),
+        "disallowed redirect should map to host_not_allowed: {}",
+        resp
+    );
+
+    // Absolute guarantee: the attacker never got called.
+    assert_eq!(
+        attacker_hits.load(Ordering::SeqCst),
+        0,
+        "attacker received {} request(s) — redirect bypassed the gate!",
+        attacker_hits.load(Ordering::SeqCst)
+    );
+    assert_eq!(
+        redirector_hits.load(Ordering::SeqCst),
+        1,
+        "redirector should have been hit exactly once, got {}",
+        redirector_hits.load(Ordering::SeqCst)
+    );
+}
+
+#[test]
+fn redirect_to_allowed_host_is_followed() {
+    // Positive control: when the hop lands somewhere still in the
+    // allowlist, the follow succeeds and the body comes back.
+    let _g = PolicyGuard::allow_net(&["127.0.0.1"]);
+
+    let final_hits = Arc::new(AtomicU32::new(0));
+    let final_port = spawn_http_server(final_hits.clone(), |_line| {
+        "HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\nlanded!".to_string()
+    });
+
+    let hop_hits = Arc::new(AtomicU32::new(0));
+    let hop_port = spawn_http_server(hop_hits.clone(), move |_line| {
+        format!(
+            "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{}/done\r\nContent-Length: 0\r\n\r\n",
+            final_port
+        )
+    });
+
+    let url = format!("http://127.0.0.1:{}/start", hop_port);
+    let resp = http_call(
+        "request",
+        &json!({
+            "method": "GET",
+            "url": url,
+            "timeout_ms": 3000,
+        }),
+    );
+
+    assert_eq!(
+        resp.get("ok").and_then(|v| v.as_bool()),
+        Some(true),
+        "same-host redirect should succeed: {}",
+        resp
+    );
+    assert_eq!(resp.get("status").and_then(|v| v.as_u64()), Some(200));
+    assert_eq!(
+        resp.get("body").and_then(|v| v.as_str()),
+        Some("landed!"),
+        "{}",
+        resp
+    );
+    assert_eq!(final_hits.load(Ordering::SeqCst), 1);
+    assert_eq!(hop_hits.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn redirect_via_client_handle_also_enforces_gate() {
+    // Cover the second client builder path — explicit `client_new`
+    // with `max_redirects` used to use `Policy::limited(N)` directly.
+    let _g = PolicyGuard::allow_net(&["127.0.0.1"]);
+
+    let attacker_hits = Arc::new(AtomicU32::new(0));
+    let attacker_port = spawn_http_server(attacker_hits.clone(), |_line| {
+        "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nPWN".to_string()
+    });
+
+    let redirector_port = spawn_http_server(Arc::new(AtomicU32::new(0)), move |_line| {
+        format!(
+            "HTTP/1.1 302 Found\r\nLocation: http://localhost:{}/\r\nContent-Length: 0\r\n\r\n",
+            attacker_port
+        )
+    });
+
+    let client = http_call(
+        "client_new",
+        &json!({ "max_redirects": 5, "timeout_ms": 3000 }),
+    );
+    let handle = client
+        .get("client_handle")
+        .and_then(|v| v.as_u64())
+        .expect("client handle");
+
+    let url = format!("http://127.0.0.1:{}/x", redirector_port);
+    let resp = http_call(
+        "request",
+        &json!({
+            "method": "GET",
+            "url": url,
+            "client_handle": handle,
+            "headers": { "Cookie": "session=secret" },
+        }),
+    );
+
+    assert_eq!(
+        resp.get("error").and_then(|v| v.as_str()),
+        Some("host_not_allowed"),
+        "client-handle path must also gate redirects: {}",
+        resp
+    );
+    assert_eq!(
+        attacker_hits.load(Ordering::SeqCst),
+        0,
+        "attacker saw {} hit(s) via explicit client — gate bypassed!",
+        attacker_hits.load(Ordering::SeqCst)
+    );
+
+    let _ = http_call("client_close", &json!({ "client_handle": handle }));
+}
+
+// ---------------------------------------------------------------------------
+// ALPN sanity — Amina flagged `http2_prior_knowledge_or_fallback` and we
+// want to pin that plain HTTP still works (i.e. the helper does NOT
+// force prior-knowledge h2, which would break `http://` URLs by sending
+// an h2 preface at a server that speaks HTTP/1.1).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn plain_http_still_works_not_forced_h2() {
+    let _g = PolicyGuard::allow_net(&["127.0.0.1"]);
+    let hits = Arc::new(AtomicU32::new(0));
+    let port = spawn_http_server(hits.clone(), |line| {
+        // Sanity — if reqwest was forcing h2 prior knowledge the
+        // server would see an "PRI * HTTP/2.0" preface here, not a
+        // normal GET request line.
+        assert!(
+            line.starts_with("GET "),
+            "server saw non-HTTP/1 request line: {:?}",
+            line
+        );
+        "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".to_string()
+    });
+
+    let url = format!("http://127.0.0.1:{}/ping", port);
+    let resp = http_call(
+        "request",
+        &json!({
+            "method": "GET",
+            "url": url,
+            "timeout_ms": 3000,
+        }),
+    );
+
+    assert_eq!(
+        resp.get("ok").and_then(|v| v.as_bool()),
+        Some(true),
+        "plain http request failed — http2_prior_knowledge_or_fallback may be forcing h2: {}",
+        resp
+    );
+    let version = resp.get("version").and_then(|v| v.as_str()).unwrap_or("");
+    assert!(
+        version.contains("HTTP/1"),
+        "expected HTTP/1.x for plain http, got: {} — helper is forcing h2",
+        version
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+}
