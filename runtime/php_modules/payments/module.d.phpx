@@ -54,14 +54,23 @@ export function new_account_status($provider: string, $account_id: string, $char
 // Webhook HMAC verify.
 export function verify_hmac_sha256($body: string, $signature_hex: string, $secret: string): Result<bool, string>
 
-// Stripe provider (stubbed; filled in under #94).
+// Shared security helpers (issues #118, #120, #123).
+export function oauth_state_issue($shop_id: string, $provider: string, $session_jti: string): Result<string, string>
+export function oauth_state_consume($state: string, $expected_shop_id: string, $expected_provider: string, $expected_jti: string): Result<mixed, string>
+export function validate_return_url($return_url: string): Result<string, string>
+export function authorize_refund($actor: mixed, $shop_id: string, $amount_cents: int, $charge_amount_cents: int): Result<bool, string>
+export function require_refund_reason($reason: string): Result<string, string>
+export function log_refund_attempt($shop_id: string, $actor: mixed, $charge_id: string, $amount_cents: int, $reason: string, $outcome: string, $error_msg: string): Result<string, string>
+
+// Stripe provider (issue #94).
 export function stripe_name(): string
-export function stripe_connect_url($return_url: string, $shop_id: string): Result<string, string>
-export function stripe_handle_callback($query: mixed, $shop_id: string): Result<ConnectedAccount, string>
-export function stripe_create_charge($account: ConnectedAccount, $amount_cents: int, $currency: string, $platform_fee_cents: int, $idempotency_key: string): Result<Charge, string>
-export function stripe_refund($account: ConnectedAccount, $charge_id: string, $amount_cents: int): Result<Refund, string>
-export function stripe_webhook_verify($body: string, $signature: string, $secret: string): Result<Event, string>
-export function stripe_account_status($account: ConnectedAccount): Result<AccountStatus, string>
+export function stripe_connect_url($return_url: string, $shop_id: string, $session_jti: string, $http: mixed): Result<mixed, string>
+export function stripe_handle_callback($query: mixed, $expected_shop_id: string, $expected_jti: string, $http: mixed): Result<ConnectedAccount, string>
+export function stripe_create_charge($account: ConnectedAccount, $amount_cents: int, $currency: string, $platform_fee_cents: int, $idempotency_key: string, $http: mixed): Result<Charge, string>
+export function stripe_refund($account: ConnectedAccount, $charge_id: string, $amount_cents: int, $actor: mixed, $shop_id: string, $reason: string, $charge_amount_cents: int, $http: mixed): Result<Refund, string>
+export function stripe_webhook_verify($body: string, $signature: string, $secret: string, $tolerance_seconds: int): Result<Event, string>
+export function stripe_account_status($account: ConnectedAccount, $http: mixed): Result<AccountStatus, string>
+export function stripe_disconnect($account: ConnectedAccount, $http: mixed): Result<mixed, string>
 
 // PayPal provider (stubbed; deferred post-launch).
 export function paypal_name(): string

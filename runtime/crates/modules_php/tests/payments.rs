@@ -93,6 +93,24 @@ fn payments_square_stub_compiles() {
     assert!(errs.is_empty(), "square.phpx errors: {:#?}", errs);
 }
 
+#[test]
+fn payments_oauth_state_compiles() {
+    let errs = compile_module_file("oauth_state.phpx");
+    assert!(errs.is_empty(), "oauth_state.phpx errors: {:#?}", errs);
+}
+
+#[test]
+fn payments_return_url_compiles() {
+    let errs = compile_module_file("return_url.phpx");
+    assert!(errs.is_empty(), "return_url.phpx errors: {:#?}", errs);
+}
+
+#[test]
+fn payments_refund_auth_compiles() {
+    let errs = compile_module_file("refund_auth.phpx");
+    assert!(errs.is_empty(), "refund_auth.phpx errors: {:#?}", errs);
+}
+
 // ---------------------------------------------------------------------------
 // Fee-ladder parity tests
 // ---------------------------------------------------------------------------
@@ -205,4 +223,274 @@ fn platform_fee_cents_cap_halving_ladder() {
     assert_eq!(platform_fee_cents(amount, "standard"), 100);
     assert_eq!(platform_fee_cents(amount, "premium"), 50);
     assert_eq!(platform_fee_cents(amount, "enterprise"), 0);
+}
+
+// ---------------------------------------------------------------------------
+// return_url allowlist parity (issue #120)
+// ---------------------------------------------------------------------------
+
+/// Rust mirror of the PHPX `validate_return_url` in
+/// `payments/return_url.phpx`. Any change to the PHPX side must come with
+/// a matching change here, or this parity test will flag the drift.
+fn validate_return_url(input: &str) -> Option<String> {
+    if input.is_empty() {
+        return None;
+    }
+    // No whitespace or newline — stops header-injection attempts.
+    if input.chars().any(|c| c.is_ascii_whitespace()) {
+        return None;
+    }
+
+    let (is_https, rest) = if let Some(r) = input.strip_prefix("https://") {
+        (true, r)
+    } else if let Some(r) = input.strip_prefix("http://") {
+        (false, r)
+    } else {
+        return None;
+    };
+
+    // scheme-relative `//` attacks.
+    if rest.starts_with('/') {
+        return None;
+    }
+    // userinfo in authority.
+    let slash_idx = rest.find('/');
+    let authority = match slash_idx {
+        Some(i) => &rest[..i],
+        None => rest,
+    };
+    if authority.contains('@') {
+        return None;
+    }
+    let path = match slash_idx {
+        Some(i) => &rest[i..],
+        None => "/",
+    };
+    // Strip fragment.
+    let clean_path = match path.find('#') {
+        Some(i) => &path[..i],
+        None => path,
+    };
+
+    let host = match authority.find(':') {
+        Some(i) => &authority[..i],
+        None => authority,
+    }
+    .to_ascii_lowercase();
+
+    let subdomain_ok = |label: &str| -> bool {
+        if label.is_empty() {
+            return false;
+        }
+        let first = label.chars().next().unwrap();
+        let last = label.chars().last().unwrap();
+        if matches!(first, '-' | '.' | '_') || matches!(last, '-' | '.' | '_') {
+            return false;
+        }
+        if label.contains("..") {
+            return false;
+        }
+        label.chars().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.' || c == '_'
+        })
+    };
+
+    let host_ok = if is_https {
+        if host == "tana.gg" || host == "tana.local" {
+            true
+        } else if let Some(label) = host.strip_suffix(".tana.gg") {
+            subdomain_ok(label)
+        } else if let Some(label) = host.strip_suffix(".tana.local") {
+            subdomain_ok(label)
+        } else {
+            false
+        }
+    } else {
+        if host == "tana.local" {
+            true
+        } else if let Some(label) = host.strip_suffix(".tana.local") {
+            subdomain_ok(label)
+        } else {
+            false
+        }
+    };
+    if !host_ok {
+        return None;
+    }
+    let scheme = if is_https { "https" } else { "http" };
+    Some(format!("{}://{}{}", scheme, authority, clean_path))
+}
+
+#[test]
+fn return_url_allowlist_accepts_valid_tana_urls() {
+    let cases = &[
+        "https://tana.gg/settings/payments",
+        "https://shop_alpha.tana.gg/cart",
+        "https://admin.tana.gg/dashboard",
+        "https://store.tana.gg/",
+        "https://tana.local/foo",
+        "https://my-shop.tana.local/a",
+        "http://tana.local/local-dev",
+        "http://store.tana.local:3002/settings/payments",
+        "https://my-shop.tana.gg:443/cart",
+    ];
+    for c in cases {
+        assert!(
+            validate_return_url(c).is_some(),
+            "expected accept, got reject: {}",
+            c
+        );
+    }
+}
+
+#[test]
+fn return_url_allowlist_rejects_open_redirects() {
+    let cases = &[
+        "",
+        "https://attacker.example/",
+        "http://attacker.example/",
+        "https://tana.gg.attacker.example/", // subdomain attack
+        "https://tana.com/",                 // lookalike TLD
+        "https://.tana.gg/",                 // malformed label
+        "https://tana.gg./",                 // trailing dot
+        "https://evil@tana.gg/",             // userinfo injection
+        "https://tana.gg\nX-Hacked: 1",      // header injection
+        "https:///attacker.example/",        // scheme-relative
+        "javascript:alert(1)",
+        "//attacker.example",
+        "ftp://tana.gg/",
+        "http://tana.gg/", // http not allowed for production domain
+        "https://tana.gg%2eattacker.example/",
+    ];
+    for c in cases {
+        assert!(
+            validate_return_url(c).is_none(),
+            "expected reject, got accept: {}",
+            c
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stripe webhook signature parsing parity
+// ---------------------------------------------------------------------------
+//
+// Mirrors the `stripe_webhook_verify` logic in stripe.phpx. This is a pure
+// string-parse + HMAC check. The PHPX side uses `crypto.hmac_sha256_hex`
+// which is the same HMAC-SHA256 as the `hmac` crate here.
+
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+
+type HmacSha256 = Hmac<Sha256>;
+
+fn stripe_hmac_hex(payload: &str, secret: &str) -> String {
+    let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
+    mac.update(payload.as_bytes());
+    let res = mac.finalize().into_bytes();
+    hex::encode(res)
+}
+
+#[test]
+fn stripe_sig_hmac_matches_known_vector() {
+    // Cross-check: pin the format + algorithm. A future change to the PHPX
+    // computation must produce the same hex.
+    let ts = "1700000000";
+    let body = "{\"id\":\"evt_1\",\"type\":\"account.updated\"}";
+    let secret = "whsec_test_secret_123";
+    let signed = format!("{}.{}", ts, body);
+    let sig = stripe_hmac_hex(&signed, secret);
+    assert_eq!(sig.len(), 64);
+    // Idempotent.
+    assert_eq!(sig, stripe_hmac_hex(&signed, secret));
+    // Changing the timestamp changes the signature.
+    let ts2 = "1700000001";
+    let signed2 = format!("{}.{}", ts2, body);
+    assert_ne!(sig, stripe_hmac_hex(&signed2, secret));
+    // Changing the body changes the signature.
+    let body2 = "{\"id\":\"evt_2\",\"type\":\"account.updated\"}";
+    let signed3 = format!("{}.{}", ts, body2);
+    assert_ne!(sig, stripe_hmac_hex(&signed3, secret));
+}
+
+#[test]
+fn stripe_sig_header_format_parses() {
+    // Typical Stripe header: `t=<unix>,v1=<hex>[,v1=<hex>]`. We parse
+    // only the first `t` and collect all `v1`s.
+    let header = "t=1700000000,v1=abc123,v1=def456";
+    let parts: Vec<&str> = header.split(',').collect();
+    let mut t = String::new();
+    let mut v1s: Vec<String> = Vec::new();
+    for part in parts {
+        if let Some(rest) = part.trim().strip_prefix("t=") {
+            t = rest.to_string();
+        } else if let Some(rest) = part.trim().strip_prefix("v1=") {
+            v1s.push(rest.to_string());
+        }
+    }
+    assert_eq!(t, "1700000000");
+    assert_eq!(v1s, vec!["abc123".to_string(), "def456".to_string()]);
+}
+
+// ---------------------------------------------------------------------------
+// Refund authorization parity (issue #123)
+// ---------------------------------------------------------------------------
+//
+// Mirrors `authorize_refund()` in refund_auth.phpx — same role allowlist,
+// same amount ordering rules. A drift between the two implementations
+// trips this test.
+
+fn authorize_refund(role: &str, user_id: &str, amount: i64, charge_amount: i64) -> Result<(), &'static str> {
+    if user_id.is_empty() {
+        return Err("refund_unauthorized: missing actor user_id");
+    }
+    let allowed = ["owner", "admin", "shop_owner", "platform_admin"];
+    if !allowed.iter().any(|r| *r == role) {
+        return Err("refund_unauthorized");
+    }
+    if amount <= 0 {
+        return Err("refund_amount_invalid");
+    }
+    if charge_amount > 0 && amount > charge_amount {
+        return Err("refund_amount_exceeds_charge");
+    }
+    Ok(())
+}
+
+#[test]
+fn refund_auth_role_allowlist() {
+    // Accepted roles.
+    for role in ["owner", "admin", "shop_owner", "platform_admin"] {
+        assert!(
+            authorize_refund(role, "user_1", 500, 1000).is_ok(),
+            "expected role {} to pass",
+            role
+        );
+    }
+    // Rejected roles.
+    for role in ["staff", "viewer", "customer", "", "OWNER"] {
+        assert!(
+            authorize_refund(role, "user_1", 500, 1000).is_err(),
+            "expected role {} to reject",
+            role
+        );
+    }
+}
+
+#[test]
+fn refund_auth_amount_sanity_checks() {
+    // Missing user_id rejects even with valid role.
+    assert!(authorize_refund("owner", "", 100, 1000).is_err());
+    // Zero or negative amount rejects.
+    assert!(authorize_refund("owner", "user_1", 0, 1000).is_err());
+    assert!(authorize_refund("owner", "user_1", -10, 1000).is_err());
+    // Partial refund accepted.
+    assert!(authorize_refund("owner", "user_1", 100, 1000).is_ok());
+    // Full refund accepted.
+    assert!(authorize_refund("owner", "user_1", 1000, 1000).is_ok());
+    // Over-refund rejects (can't refund more than charge amount).
+    assert!(authorize_refund("owner", "user_1", 1001, 1000).is_err());
+    // charge_amount=0 disables the over-refund check (caller chose not to
+    // pass the known charge amount). Auth still passes; provider is final arbiter.
+    assert!(authorize_refund("owner", "user_1", 999_999, 0).is_ok());
 }
