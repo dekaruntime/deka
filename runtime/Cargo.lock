@@ -2698,6 +2698,8 @@ dependencies = [
  "deno_core",
  "futures-util",
  "getrandom 0.2.17",
+ "hex",
+ "hmac",
  "mysql",
  "native-tls",
  "neo4rs",

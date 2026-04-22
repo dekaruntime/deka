@@ -1,0 +1,144 @@
+import { random_hex } from 'crypto'
+import { connect as redis_connect, set as redis_set, get as redis_get, del as redis_del } from 'redis'
+import { result_ok, result_err, result_is_ok } from 'core/result'
+import { now_ms } from 'time'
+
+// OAuth state parameter — shared helper used by Stripe + Square (issue #118).
+//
+// The OAuth 'state' parameter exists for CSRF + session-binding protection.
+// The design here is:
+//
+//   - `state` = 64 hex chars (32 random bytes, >=256 bits entropy) from
+//     `@deka/crypto` (system CSPRNG).
+//   - Stored in Redis under key `oauth:state:{state}` with TTL 600s (10 min).
+//   - Value is a small JSON blob: `{ shop_id, provider, session_jti, created_at }`.
+//   - On callback, the caller MUST read the state, verify it matches the
+//     currently-authenticated merchant's shop_id + session_jti, then DELETE
+//     the Redis key atomically (one-time use) before proceeding.
+//
+// If the state is missing, expired, or bound to a different session/shop,
+// reject the callback with Err('invalid_state'). NEVER trust the callback
+// query's `shop_id` — derive it from the state record only.
+//
+// Key naming convention: `oauth:state:{state}`. Because Redis is auto-
+// prefixed per-shop by the runtime, this ends up as `{shop_id}:oauth:state:{state}`
+// in the physical key space — which is exactly what we want (each shop's
+// state values live in their own slice).
+
+/// docid: phpx/payments/oauth_state_issue()
+/// <Function name="oauth_state_issue">
+///   <Description>Generate, store, and return a fresh OAuth state token for the given shop+provider+session. TTL 10 min, one-time-use.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function oauth_state_issue($shop_id, $provider, $session_jti) {
+  if (!is_string($shop_id) || strlen($shop_id) === 0) {
+    return result_err('shop_id required')
+  }
+  if (!is_string($provider) || strlen($provider) === 0) {
+    return result_err('provider required')
+  }
+  if (!is_string($session_jti) || strlen($session_jti) === 0) {
+    return result_err('session_jti required')
+  }
+
+  $rand = random_hex(32)
+  if (!result_is_ok($rand)) {
+    return result_err('entropy failure')
+  }
+  $state = $rand->value
+
+  $rh = redis_connect()
+  if (!is_array($rh) && !is_object($rh)) {
+    return result_err('redis unavailable')
+  }
+  $handle = is_array($rh) ? $rh['handle'] : $rh->handle
+  if (!isset($handle)) {
+    return result_err('redis handle missing')
+  }
+
+  $record = json_encode({
+    shop_id: '' . $shop_id,
+    provider: '' . $provider,
+    session_jti: '' . $session_jti,
+    created_at: now_ms(),
+  })
+
+  $key = 'oauth:state:' . $state
+  $set = redis_set($handle, $key, $record, 600)
+  if (is_array($set) && isset($set['ok']) && $set['ok'] !== true) {
+    return result_err('state store failed')
+  }
+  return result_ok($state)
+}
+
+/// docid: phpx/payments/oauth_state_consume()
+/// <Function name="oauth_state_consume">
+///   <Description>Verify an OAuth state token: must exist, match expected shop_id + session_jti + provider, then DELETE for one-time-use.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function oauth_state_consume($state, $expected_shop_id, $expected_provider, $expected_jti) {
+  if (!is_string($state) || strlen($state) < 32) {
+    return result_err('invalid_state')
+  }
+  if (!is_string($expected_shop_id) || strlen($expected_shop_id) === 0) {
+    return result_err('invalid_state')
+  }
+  if (!is_string($expected_provider) || strlen($expected_provider) === 0) {
+    return result_err('invalid_state')
+  }
+  if (!is_string($expected_jti) || strlen($expected_jti) === 0) {
+    return result_err('invalid_state')
+  }
+
+  $rh = redis_connect()
+  if (!is_array($rh) && !is_object($rh)) {
+    return result_err('redis unavailable')
+  }
+  $handle = is_array($rh) ? $rh['handle'] : $rh->handle
+  if (!isset($handle)) {
+    return result_err('redis handle missing')
+  }
+
+  $key = 'oauth:state:' . $state
+  $got = redis_get($handle, $key)
+  $raw = ''
+  if (is_array($got) && isset($got['value'])) {
+    $raw = '' . $got['value']
+  } else if (is_object($got) && isset($got->value)) {
+    $raw = '' . $got->value
+  }
+  if (strlen($raw) === 0) {
+    // Missing or expired.
+    return result_err('invalid_state')
+  }
+
+  $decoded = json_decode($raw)
+  if (!is_array($decoded) && !is_object($decoded)) {
+    // Can't parse — delete and reject.
+    redis_del($handle, $key)
+    return result_err('invalid_state')
+  }
+  $got_shop = is_array($decoded) ? (isset($decoded['shop_id']) ? ('' . $decoded['shop_id']) : '') : (isset($decoded->shop_id) ? ('' . $decoded->shop_id) : '')
+  $got_provider = is_array($decoded) ? (isset($decoded['provider']) ? ('' . $decoded['provider']) : '') : (isset($decoded->provider) ? ('' . $decoded->provider) : '')
+  $got_jti = is_array($decoded) ? (isset($decoded['session_jti']) ? ('' . $decoded['session_jti']) : '') : (isset($decoded->session_jti) ? ('' . $decoded->session_jti) : '')
+
+  // One-time use: DELETE first, then verify. Even on mismatch we wipe so
+  // an attacker can't probe for state values.
+  redis_del($handle, $key)
+
+  if ($got_shop !== $expected_shop_id) {
+    return result_err('invalid_state')
+  }
+  if ($got_provider !== $expected_provider) {
+    return result_err('invalid_state')
+  }
+  if ($got_jti !== $expected_jti) {
+    return result_err('invalid_state')
+  }
+
+  return result_ok({
+    shop_id: $got_shop,
+    provider: $got_provider,
+    session_jti: $got_jti,
+  })
+}

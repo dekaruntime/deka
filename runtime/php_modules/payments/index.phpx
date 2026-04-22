@@ -28,6 +28,14 @@ export { new_account_status } from './types.phpx';
 
 export { verify_hmac_sha256 } from './webhook.phpx';
 
+// Shared security helpers used by every provider (see issues #118, #120, #123).
+export { oauth_state_issue } from './oauth_state.phpx';
+export { oauth_state_consume } from './oauth_state.phpx';
+export { validate_return_url } from './return_url.phpx';
+export { authorize_refund } from './refund_auth.phpx';
+export { require_refund_reason } from './refund_auth.phpx';
+export { log_refund_attempt } from './refund_auth.phpx';
+
 export { stripe_name } from './stripe.phpx';
 export { stripe_connect_url } from './stripe.phpx';
 export { stripe_handle_callback } from './stripe.phpx';
@@ -35,6 +43,7 @@ export { stripe_create_charge } from './stripe.phpx';
 export { stripe_refund } from './stripe.phpx';
 export { stripe_webhook_verify } from './stripe.phpx';
 export { stripe_account_status } from './stripe.phpx';
+export { stripe_disconnect } from './stripe.phpx';
 
 export { paypal_name } from './paypal.phpx';
 export { paypal_connect_url } from './paypal.phpx';

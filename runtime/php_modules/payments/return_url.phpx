@@ -1,0 +1,136 @@
+import { result_ok, result_err } from 'core/result'
+
+// Return-URL allowlist validator — shared across providers (issue #120).
+//
+// The OAuth `return_url` parameter is caller-supplied and flows into the
+// provider's redirect after onboarding completes. Without validation, a
+// crafted link like `/api/payments/connect/stripe/start?return_url=https://attacker.example/`
+// would produce a legitimate Stripe auth URL whose post-auth redirect lands
+// on attacker origin — with session info potentially exposed via referer
+// or leaked query params.
+//
+// Policy: the return URL MUST be served from tana.gg or tana.local under
+// HTTPS. Subdomains (`{shop}.tana.gg`, `admin.tana.gg`, `store.tana.gg`)
+// are allowed. Any other host is rejected. Fragments are stripped — the
+// provider returns on the base URL + query.
+
+/// docid: phpx/payments/validate_return_url()
+/// <Function name="validate_return_url">
+///   <Description>Validate a caller-supplied return URL against the Tana allowlist. Returns Ok(clean_url) on match, Err('invalid_return_url') otherwise.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function validate_return_url($return_url) {
+  if (!is_string($return_url) || strlen($return_url) === 0) {
+    return result_err('invalid_return_url')
+  }
+
+  // Disallow obvious injection attempts early.
+  if (strpos($return_url, "\n") !== false || strpos($return_url, "\r") !== false) {
+    return result_err('invalid_return_url')
+  }
+  if (strpos($return_url, "\t") !== false || strpos($return_url, ' ') !== false) {
+    return result_err('invalid_return_url')
+  }
+
+  // Must start with https://. HTTP not allowed outside local dev.
+  // We accept http://*.tana.local for developer ergonomics (no cert chain
+  // set up locally); prod uses https.
+  $is_https = strpos($return_url, 'https://') === 0
+  $is_local_http = strpos($return_url, 'http://') === 0
+
+  if (!$is_https && !$is_local_http) {
+    return result_err('invalid_return_url')
+  }
+
+  $rest = $is_https ? substr($return_url, 8) : substr($return_url, 7)
+
+  // Scheme-relative // attacks (https://// -> //evil.example).
+  if (strpos($rest, '/') === 0) {
+    return result_err('invalid_return_url')
+  }
+  // Credentials in authority (`user:pass@host`) aren't allowed. They can
+  // bamboozle host parsing in downstream code.
+  if (strpos($rest, '@') !== false) {
+    $host_end = strpos($rest, '/')
+    $authority = $host_end === false ? $rest : substr($rest, 0, $host_end)
+    if (strpos($authority, '@') !== false) {
+      return result_err('invalid_return_url')
+    }
+  }
+
+  // Split host[:port] from path.
+  $slash = strpos($rest, '/')
+  $authority = $slash === false ? $rest : substr($rest, 0, $slash)
+  $path = $slash === false ? '/' : substr($rest, $slash)
+
+  // Strip :port if present.
+  $colon = strpos($authority, ':')
+  $host = $colon === false ? $authority : substr($authority, 0, $colon)
+  $host_l = strtolower($host)
+
+  // Allowlist:
+  //   tana.gg, *.tana.gg     (https only)
+  //   tana.local, *.tana.local  (https or http)
+  $ok = false
+  if ($is_https) {
+    if ($host_l === 'tana.gg') {
+      $ok = true
+    } else if (strlen($host_l) > 8 && substr($host_l, -8) === '.tana.gg') {
+      $ok = is_safe_subdomain(substr($host_l, 0, strlen($host_l) - 8))
+    } else if ($host_l === 'tana.local') {
+      $ok = true
+    } else if (strlen($host_l) > 11 && substr($host_l, -11) === '.tana.local') {
+      $ok = is_safe_subdomain(substr($host_l, 0, strlen($host_l) - 11))
+    }
+  } else {
+    if ($host_l === 'tana.local') {
+      $ok = true
+    } else if (strlen($host_l) > 11 && substr($host_l, -11) === '.tana.local') {
+      $ok = is_safe_subdomain(substr($host_l, 0, strlen($host_l) - 11))
+    }
+  }
+
+  if (!$ok) {
+    return result_err('invalid_return_url')
+  }
+
+  // Strip any fragment. Provider redirect can still carry query; we pass
+  // the cleaned URL back to the caller.
+  $hash = strpos($path, '#')
+  $clean_path = $hash === false ? $path : substr($path, 0, $hash)
+
+  $scheme = $is_https ? 'https://' : 'http://'
+  return result_ok($scheme . $authority . $clean_path)
+}
+
+// Accept only [a-z0-9_-]+ (multi-label permitted via dots) for subdomains.
+// Underscores are included because Tana shop_id values use them (e.g.
+// `shop_alpha`). Dots allow multi-label subdomains (e.g. `preview.shop_alpha`).
+function is_safe_subdomain($label) {
+  $l = '' . $label
+  $len = strlen($l)
+  if ($len === 0) {
+    return false
+  }
+  $i = 0
+  while ($i < $len) {
+    $c = substr($l, $i, 1)
+    $is_alpha = ($c >= 'a' && $c <= 'z')
+    $is_digit = ($c >= '0' && $c <= '9')
+    $is_punct = ($c === '-' || $c === '.' || $c === '_')
+    if (!$is_alpha && !$is_digit && !$is_punct) {
+      return false
+    }
+    $i = $i + 1
+  }
+  // Labels cannot start or end with '-' / '.' / '_', or contain '..'.
+  $first = substr($l, 0, 1)
+  $last = substr($l, $len - 1, 1)
+  if ($first === '-' || $first === '.' || $first === '_' || $last === '-' || $last === '.' || $last === '_') {
+    return false
+  }
+  if (strpos($l, '..') !== false) {
+    return false
+  }
+  return true
+}
