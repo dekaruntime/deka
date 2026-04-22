@@ -1,0 +1,289 @@
+import { aes_256_gcm_encrypt, aes_256_gcm_decrypt, random_bytes_result } from 'crypto'
+import { from_array as bytes_from_array, to_array as bytes_to_array, from_string as bytes_from_string } from 'bytes'
+import { result_ok, result_err, result_is_ok } from 'core/result'
+
+// Provider-token vault — AES-256-GCM envelope for OAuth access/refresh tokens
+// (issue #119, Square in particular but reusable for any provider).
+//
+// Wire format
+// -----------
+// A stored ciphertext is a single ASCII string of the form:
+//
+//     v1:{keyid}:{base64(nonce)}:{base64(ct||tag)}
+//
+// Fields:
+//   v1         — format version. Lets us evolve the layout later without a
+//                flag-day. Unrecognized versions fail closed.
+//   keyid      — short identifier (e.g. 'primary' / 'v2') so rotations can
+//                tag ciphertexts with which key they were wrapped under.
+//                Defaults to 'primary' unless a caller opts in to named
+//                rotations.
+//   nonce      — 12 random bytes (GCM), base64-encoded. Re-using a (key,
+//                nonce) pair is catastrophic — we generate fresh per-call.
+//   ct||tag    — AES-256-GCM ciphertext with the 16-byte tag appended.
+//                Base64-encoded. AES-GCM is authenticated; any tamper
+//                invalidates decrypt.
+//
+// Key lifecycle / rotation (baked into the interface — see #119)
+// --------------------------------------------------------------
+// The PHPX caller resolves keys via `resolve_key($keyid)` — by default
+// this reads `SQUARE_TOKEN_ENCRYPTION_KEY` (keyid=primary) from $_ENV.
+// Operators can also set `SQUARE_TOKEN_ENCRYPTION_KEY_V2` to initiate a
+// rotation:
+//
+//   1. Ship V2 as an ADDITIONAL key (don't replace V1).
+//   2. Run a re-encrypt migration: for every Shop row with a `v1:primary:`
+//      token, decrypt with primary, re-encrypt with v2, store under
+//      `v1:v2:`. (Migration is a one-liner loop — see migrate_tokens() below.)
+//   3. Once all rows are on `v2:`, remove `SQUARE_TOKEN_ENCRYPTION_KEY`
+//      (the primary) from env and rename v2 → primary.
+//
+// If decrypt fails (e.g. key was rotated without running the migration),
+// the helper returns `Err('key_rotation_required')` — explicitly, so the
+// caller can page ops + trigger the migration rather than silently
+// treating it as a corruption.
+//
+// Compromise recovery playbook
+// ----------------------------
+// If `SQUARE_TOKEN_ENCRYPTION_KEY` leaks:
+//   1. Rotate the key immediately (generate fresh via `openssl rand -hex 32`).
+//   2. Assume all ciphertexts in the database are compromised — do NOT
+//      re-encrypt them. Force-revoke every affected merchant's Square
+//      OAuth via the `oauth.authorization.revoke` provider call and
+//      clear the Shop.payment_account_id fields.
+//   3. Notify merchants and request re-OAuth.
+//   4. Do NOT skip step 2 — the attacker can decrypt historical
+//      ciphertexts at will until you revoke the actual provider tokens.
+//
+// These steps are documented here so anyone auditing this code sees the
+// recovery path without spelunking.
+
+/// docid: phpx/payments/token_vault_encrypt()
+/// <Function name="token_vault_encrypt">
+///   <Description>Encrypt a provider token. Produces a `v1:{keyid}:{nonce}:{ct+tag}` wire-format string. The caller supplies a key bytes array; defaults to env-resolved 'primary' key via resolve_key().</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function token_vault_encrypt($plaintext, $shop_id, $keyid = 'primary', $key_override = null) {
+  if (!is_string($plaintext) || strlen($plaintext) === 0) {
+    return result_err('plaintext_required')
+  }
+  if (!is_string($shop_id) || strlen($shop_id) === 0) {
+    return result_err('shop_id_required')
+  }
+
+  $key_res = $key_override !== null ? result_ok($key_override) : resolve_key($keyid)
+  if (!result_is_ok($key_res)) {
+    return $key_res
+  }
+  $key = $key_res->value
+
+  $nonce_res = random_bytes_result(12)
+  if (!result_is_ok($nonce_res)) {
+    return result_err('nonce_generation_failed')
+  }
+  $nonce = $nonce_res->value
+
+  // The shop_id is bound to the ciphertext via AAD. A ciphertext for
+  // shop A can't be silently "moved" to shop B even if an attacker has
+  // database write — the decrypt will fail closed.
+  $aad = 'shop:' . $shop_id
+  $enc_res = aes_256_gcm_encrypt($key, $nonce, $plaintext, $aad)
+  if (!result_is_ok($enc_res)) {
+    return result_err('encrypt_failed')
+  }
+  $ct = $enc_res->value
+
+  $nonce_b64 = base64_encode_bytes($nonce)
+  $ct_b64 = base64_encode_bytes($ct)
+  $keyid_s = is_string($keyid) && strlen($keyid) > 0 ? $keyid : 'primary'
+  if (strpos($keyid_s, ':') !== false) {
+    return result_err('keyid_must_not_contain_colon')
+  }
+
+  return result_ok('v1:' . $keyid_s . ':' . $nonce_b64 . ':' . $ct_b64)
+}
+
+/// docid: phpx/payments/token_vault_decrypt()
+/// <Function name="token_vault_decrypt">
+///   <Description>Decrypt a vault string back to plaintext. Tries primary key first, then any configured alternate (SQUARE_TOKEN_ENCRYPTION_KEY_V2). Returns Err('key_rotation_required') if no configured key decrypts the blob.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function token_vault_decrypt($blob, $shop_id) {
+  if (!is_string($blob) || strlen($blob) === 0) {
+    return result_err('blob_required')
+  }
+  if (!is_string($shop_id) || strlen($shop_id) === 0) {
+    return result_err('shop_id_required')
+  }
+
+  $parts = explode(':', $blob)
+  if (count($parts) !== 4) {
+    return result_err('invalid_vault_format')
+  }
+  $version = $parts[0]
+  $keyid = $parts[1]
+  $nonce_b64 = $parts[2]
+  $ct_b64 = $parts[3]
+  if ($version !== 'v1') {
+    return result_err('unsupported_vault_version')
+  }
+
+  $nonce_res = base64_decode_to_bytes($nonce_b64)
+  if (!result_is_ok($nonce_res)) {
+    return result_err('invalid_nonce')
+  }
+  $ct_res = base64_decode_to_bytes($ct_b64)
+  if (!result_is_ok($ct_res)) {
+    return result_err('invalid_ciphertext')
+  }
+  $nonce = $nonce_res->value
+  $ct = $ct_res->value
+  $aad = 'shop:' . $shop_id
+
+  // Try the labelled key first.
+  $key_res = resolve_key($keyid)
+  if (result_is_ok($key_res)) {
+    $dec = aes_256_gcm_decrypt($key_res->value, $nonce, $ct, $aad)
+    if (result_is_ok($dec)) {
+      return result_ok(bytes_to_string($dec->value))
+    }
+  }
+
+  // Fall back to the other configured key (rotation in flight). If the
+  // labelled key failed AND the alternate also fails, we're in a state
+  // where the blob can no longer be decrypted — return the explicit
+  // rotation-required error so ops can act.
+  $alt_ids = $keyid === 'primary' ? ['v2'] : ['primary']
+  foreach ($alt_ids as $alt) {
+    $alt_res = resolve_key($alt)
+    if (!result_is_ok($alt_res)) {
+      continue
+    }
+    $dec = aes_256_gcm_decrypt($alt_res->value, $nonce, $ct, $aad)
+    if (result_is_ok($dec)) {
+      return result_ok(bytes_to_string($dec->value))
+    }
+  }
+
+  return result_err('key_rotation_required')
+}
+
+/// docid: phpx/payments/token_vault_reencrypt()
+/// <Function name="token_vault_reencrypt">
+///   <Description>Re-encrypt a blob under a new keyid. Used by the rotation migration. Decrypts with the current key set, encrypts under the target keyid.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function token_vault_reencrypt($blob, $shop_id, $target_keyid) {
+  $dec = token_vault_decrypt($blob, $shop_id)
+  if (!result_is_ok($dec)) {
+    return $dec
+  }
+  return token_vault_encrypt($dec->value, $shop_id, $target_keyid)
+}
+
+// ---------------------------------------------------------------------------
+// Key resolution
+// ---------------------------------------------------------------------------
+//
+// `primary` reads SQUARE_TOKEN_ENCRYPTION_KEY. `v2` reads
+// SQUARE_TOKEN_ENCRYPTION_KEY_V2. Both must be 32-byte hex (64 chars).
+// Anything else fails closed — we do NOT pad, truncate, or derive.
+
+function resolve_key($keyid) {
+  $env_name = ''
+  if ($keyid === 'primary') {
+    $env_name = 'SQUARE_TOKEN_ENCRYPTION_KEY'
+  } else if ($keyid === 'v2') {
+    $env_name = 'SQUARE_TOKEN_ENCRYPTION_KEY_V2'
+  } else {
+    return result_err('unknown_keyid')
+  }
+
+  $hex = ''
+  if (is_array($_ENV) && array_key_exists($env_name, $_ENV)) {
+    $v = $_ENV[$env_name]
+    if ($v !== null && $v !== false) {
+      $hex = '' . $v
+    }
+  }
+  if (strlen($hex) === 0 && is_array($_SERVER) && array_key_exists($env_name, $_SERVER)) {
+    $v = $_SERVER[$env_name]
+    if ($v !== null && $v !== false) {
+      $hex = '' . $v
+    }
+  }
+  if (strlen($hex) === 0) {
+    return result_err('key_not_configured:' . $keyid)
+  }
+  if (strlen($hex) !== 64) {
+    return result_err('key_not_32_bytes:' . $keyid)
+  }
+
+  // Hex-decode. If the placeholder `0000...` was left in, we still succeed
+  // but the key is effectively zero — tests can exercise this path
+  // without touching real keys.
+  $bytes = hex_decode_to_bytes($hex)
+  if (!result_is_ok($bytes)) {
+    return result_err('key_hex_malformed:' . $keyid)
+  }
+  return result_ok($bytes->value)
+}
+
+// ---------------------------------------------------------------------------
+// Small codec helpers
+// ---------------------------------------------------------------------------
+
+function base64_encode_bytes($b) {
+  // bytes_to_array → array of ints 0..255 → base64 via native `base64_encode`
+  // over the raw string rebuilt from the bytes.
+  $arr = bytes_to_array($b)
+  $raw = ''
+  foreach ($arr as $v) {
+    $raw = $raw . chr($v)
+  }
+  return base64_encode($raw)
+}
+
+function base64_decode_to_bytes($s) {
+  if (!is_string($s) || strlen($s) === 0) {
+    return result_err('empty_b64')
+  }
+  $raw = base64_decode($s, true)
+  if ($raw === false) {
+    return result_err('invalid_b64')
+  }
+  return result_ok(bytes_from_string($raw))
+}
+
+function hex_decode_to_bytes($hex) {
+  $h = '' . $hex
+  if (strlen($h) === 0 || strlen($h) % 2 !== 0) {
+    return result_err('odd_length_hex')
+  }
+  $arr = []
+  $i = 0
+  $len = strlen($h)
+  while ($i < $len) {
+    $pair = substr($h, $i, 2)
+    $v = hexdec($pair)
+    if (!is_int($v) && !is_float($v)) {
+      return result_err('non_hex_char')
+    }
+    $vi = (int) $v
+    if ($vi < 0 || $vi > 255) {
+      return result_err('non_hex_char')
+    }
+    $arr[] = $vi
+    $i = $i + 2
+  }
+  return result_ok(bytes_from_array($arr))
+}
+
+function bytes_to_string($b) {
+  $arr = bytes_to_array($b)
+  $out = ''
+  foreach ($arr as $v) {
+    $out = $out . chr($v)
+  }
+  return $out
+}

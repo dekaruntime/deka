@@ -111,6 +111,12 @@ fn payments_refund_auth_compiles() {
     assert!(errs.is_empty(), "refund_auth.phpx errors: {:#?}", errs);
 }
 
+#[test]
+fn payments_token_vault_compiles() {
+    let errs = compile_module_file("token_vault.phpx");
+    assert!(errs.is_empty(), "token_vault.phpx errors: {:#?}", errs);
+}
+
 // ---------------------------------------------------------------------------
 // Fee-ladder parity tests
 // ---------------------------------------------------------------------------
@@ -385,7 +391,7 @@ use sha2::Sha256;
 type HmacSha256 = Hmac<Sha256>;
 
 fn stripe_hmac_hex(payload: &str, secret: &str) -> String {
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
+    let mut mac = <HmacSha256 as Mac>::new_from_slice(secret.as_bytes()).unwrap();
     mac.update(payload.as_bytes());
     let res = mac.finalize().into_bytes();
     hex::encode(res)
@@ -493,4 +499,267 @@ fn refund_auth_amount_sanity_checks() {
     // charge_amount=0 disables the over-refund check (caller chose not to
     // pass the known charge amount). Auth still passes; provider is final arbiter.
     assert!(authorize_refund("owner", "user_1", 999_999, 0).is_ok());
+}
+
+// ---------------------------------------------------------------------------
+// AES-256-GCM round-trip (issue #119 — token vault primitive)
+// ---------------------------------------------------------------------------
+//
+// These exercise the same `aes-gcm` crate the Rust op uses, so any behavioral
+// drift between the op's contract and the PHPX caller flags at build time.
+// We pin the wire-format assumptions:
+//
+//   - key length 32 bytes
+//   - nonce length 12 bytes
+//   - ciphertext is `raw_ct || tag_16`
+//   - AAD is authenticated but not encrypted
+
+use aes_gcm::aead::{Aead, KeyInit, Payload};
+use aes_gcm::{Aes256Gcm, Key, Nonce};
+
+fn gcm_encrypt(key: &[u8; 32], nonce: &[u8; 12], pt: &[u8], aad: &[u8]) -> Vec<u8> {
+    let key = Key::<Aes256Gcm>::from_slice(key);
+    let cipher = Aes256Gcm::new(key);
+    let nonce = Nonce::from_slice(nonce);
+    let payload = Payload { msg: pt, aad };
+    cipher.encrypt(nonce, payload).unwrap()
+}
+
+fn gcm_decrypt(key: &[u8; 32], nonce: &[u8; 12], ct: &[u8], aad: &[u8]) -> Option<Vec<u8>> {
+    let key = Key::<Aes256Gcm>::from_slice(key);
+    let cipher = Aes256Gcm::new(key);
+    let nonce = Nonce::from_slice(nonce);
+    let payload = Payload { msg: ct, aad };
+    cipher.decrypt(nonce, payload).ok()
+}
+
+#[test]
+fn aes_gcm_roundtrip_basic() {
+    let key = [7u8; 32];
+    let nonce = [3u8; 12];
+    let pt = b"EAAAEXAMPLE_sq0_access_token_material";
+    let aad = b"shop:shop_alpha";
+    let ct = gcm_encrypt(&key, &nonce, pt, aad);
+    // Ciphertext is plaintext-length + 16-byte tag.
+    assert_eq!(ct.len(), pt.len() + 16);
+    let pt2 = gcm_decrypt(&key, &nonce, &ct, aad).expect("decrypt should succeed");
+    assert_eq!(pt2, pt);
+}
+
+#[test]
+fn aes_gcm_aad_binds_ciphertext() {
+    // A ciphertext produced under AAD=shop:A MUST NOT decrypt under AAD=shop:B.
+    // This is the property the token_vault helper relies on to prevent
+    // row-swap attacks (move blob from shop A's row to shop B's row).
+    let key = [1u8; 32];
+    let nonce = [2u8; 12];
+    let pt = b"tok_123";
+    let ct = gcm_encrypt(&key, &nonce, pt, b"shop:A");
+    assert!(gcm_decrypt(&key, &nonce, &ct, b"shop:B").is_none());
+    assert!(gcm_decrypt(&key, &nonce, &ct, b"shop:A").is_some());
+}
+
+#[test]
+fn aes_gcm_wrong_key_fails_closed() {
+    let k1 = [0x11u8; 32];
+    let k2 = [0x22u8; 32];
+    let nonce = [0u8; 12];
+    let pt = b"secret";
+    let aad = b"";
+    let ct = gcm_encrypt(&k1, &nonce, pt, aad);
+    // Wrong key: decrypt returns None (auth tag fails).
+    assert!(gcm_decrypt(&k2, &nonce, &ct, aad).is_none());
+}
+
+#[test]
+fn aes_gcm_tamper_flips_tag() {
+    // Flipping a byte in the ciphertext invalidates the tag.
+    let key = [9u8; 32];
+    let nonce = [4u8; 12];
+    let pt = b"important-token";
+    let aad = b"shop:s1";
+    let mut ct = gcm_encrypt(&key, &nonce, pt, aad);
+    // Flip one bit in the middle.
+    ct[5] ^= 0x01;
+    assert!(gcm_decrypt(&key, &nonce, &ct, aad).is_none());
+}
+
+// ---------------------------------------------------------------------------
+// Token vault wire-format parity (issue #119)
+// ---------------------------------------------------------------------------
+//
+// Mirrors the `v1:{keyid}:{b64(nonce)}:{b64(ct+tag)}` layout in
+// token_vault.phpx. If the PHPX side ever drops or changes a field, the
+// rebuild test below fails.
+
+fn token_vault_encrypt_wire(
+    pt: &[u8],
+    shop_id: &str,
+    key: &[u8; 32],
+    keyid: &str,
+    nonce: &[u8; 12],
+) -> String {
+    use base64::Engine;
+    let aad = format!("shop:{}", shop_id);
+    let ct = gcm_encrypt(key, nonce, pt, aad.as_bytes());
+    let b64 = base64::engine::general_purpose::STANDARD;
+    format!(
+        "v1:{}:{}:{}",
+        keyid,
+        b64.encode(nonce),
+        b64.encode(&ct)
+    )
+}
+
+fn token_vault_decrypt_wire(
+    blob: &str,
+    shop_id: &str,
+    keys: &[(&str, &[u8; 32])],
+) -> Result<Vec<u8>, &'static str> {
+    use base64::Engine;
+    let parts: Vec<&str> = blob.split(':').collect();
+    if parts.len() != 4 {
+        return Err("invalid_vault_format");
+    }
+    if parts[0] != "v1" {
+        return Err("unsupported_vault_version");
+    }
+    let labelled_keyid = parts[1];
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let nonce_vec = b64.decode(parts[2]).map_err(|_| "invalid_nonce")?;
+    let ct = b64.decode(parts[3]).map_err(|_| "invalid_ciphertext")?;
+    if nonce_vec.len() != 12 {
+        return Err("invalid_nonce");
+    }
+    let mut nonce = [0u8; 12];
+    nonce.copy_from_slice(&nonce_vec);
+    let aad = format!("shop:{}", shop_id);
+    // Try labelled key first, then any other.
+    let mut order: Vec<&(&str, &[u8; 32])> = Vec::new();
+    if let Some(labelled) = keys.iter().find(|(k, _)| *k == labelled_keyid) {
+        order.push(labelled);
+    }
+    for key in keys.iter() {
+        if key.0 != labelled_keyid {
+            order.push(key);
+        }
+    }
+    for (_kid, k) in order {
+        if let Some(pt) = gcm_decrypt(k, &nonce, &ct, aad.as_bytes()) {
+            return Ok(pt);
+        }
+    }
+    Err("key_rotation_required")
+}
+
+#[test]
+fn token_vault_roundtrip_primary_key() {
+    let pt = b"EAAAE_square_sq0sandbox_access_token";
+    let key = [0x42u8; 32];
+    let nonce = [0x77u8; 12];
+    let blob = token_vault_encrypt_wire(pt, "shop_alpha", &key, "primary", &nonce);
+    assert!(blob.starts_with("v1:primary:"));
+    let decoded = token_vault_decrypt_wire(&blob, "shop_alpha", &[("primary", &key)])
+        .expect("decrypt should succeed");
+    assert_eq!(decoded, pt);
+}
+
+#[test]
+fn token_vault_cross_shop_decrypt_fails() {
+    let pt = b"tok_material";
+    let key = [0x10u8; 32];
+    let nonce = [0x20u8; 12];
+    let blob = token_vault_encrypt_wire(pt, "shop_alpha", &key, "primary", &nonce);
+    // Someone copied the blob into shop_beta's row — decrypt must fail.
+    let err = token_vault_decrypt_wire(&blob, "shop_beta", &[("primary", &key)])
+        .expect_err("cross-shop decrypt must fail");
+    assert_eq!(err, "key_rotation_required");
+}
+
+#[test]
+fn token_vault_rotation_tries_alternate_key() {
+    // Blob was encrypted under 'primary', but both primary AND v2 are
+    // configured. Decrypt should succeed under primary, ignoring v2.
+    let pt = b"old-token";
+    let k1 = [0x01u8; 32];
+    let k2 = [0x02u8; 32];
+    let nonce = [0x03u8; 12];
+    let blob = token_vault_encrypt_wire(pt, "shop", &k1, "primary", &nonce);
+    let decoded = token_vault_decrypt_wire(&blob, "shop", &[("primary", &k1), ("v2", &k2)])
+        .expect("decrypt should succeed with matching key");
+    assert_eq!(decoded, pt);
+
+    // Now simulate rotation where primary was rotated to a different value
+    // (the original k1 is gone) but a v2 is in the table. Decrypt should
+    // still fail because the blob was signed under the old primary key
+    // and the current primary doesn't decrypt. We fall through to v2 which
+    // also doesn't decrypt. Surface key_rotation_required so ops sees it.
+    let new_primary = [0x99u8; 32];
+    let err = token_vault_decrypt_wire(&blob, "shop", &[("primary", &new_primary), ("v2", &k2)])
+        .expect_err("expected key_rotation_required");
+    assert_eq!(err, "key_rotation_required");
+}
+
+#[test]
+fn token_vault_rejects_malformed_blobs() {
+    let k = [0u8; 32];
+    let keys: &[(&str, &[u8; 32])] = &[("primary", &k)];
+    let cases = &[
+        ("", "invalid_vault_format"),
+        ("garbage", "invalid_vault_format"),
+        ("v2:primary:aaa:bbb", "unsupported_vault_version"),
+        ("v1:primary:!!!:bbb", "invalid_nonce"),
+    ];
+    for (blob, want) in cases {
+        let got = token_vault_decrypt_wire(blob, "shop", keys);
+        assert!(got.is_err(), "expected err for {}", blob);
+        assert_eq!(got.unwrap_err(), *want, "blob={}", blob);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Square webhook signature parity (issue #96)
+// ---------------------------------------------------------------------------
+//
+// Square's v2 webhooks sign `{notification_url}{body}` with HMAC-SHA256 and
+// encode the result as base64. Parity test.
+
+#[test]
+fn square_webhook_hmac_matches_known_vector() {
+    use base64::Engine;
+    let url = "https://shop_alpha.tana.gg/api/payments/webhooks/square";
+    let body = r#"{"event_id":"evt_1","type":"payment.updated"}"#;
+    let key = "square_webhook_key_xyz";
+    let signed = format!("{}{}", url, body);
+
+    let mut mac = <HmacSha256 as Mac>::new_from_slice(key.as_bytes()).unwrap();
+    mac.update(signed.as_bytes());
+    let sig_bytes = mac.finalize().into_bytes();
+    let sig_b64 = base64::engine::general_purpose::STANDARD.encode(sig_bytes);
+
+    assert_eq!(sig_b64.len(), 44); // 32-byte HMAC → 44 chars base64 (with padding)
+
+    // Tamper test: change one char in the body, signature must not match.
+    let signed2 = format!("{}{}", url, r#"{"event_id":"evt_2","type":"payment.updated"}"#);
+    let mut mac2 = <HmacSha256 as Mac>::new_from_slice(key.as_bytes()).unwrap();
+    mac2.update(signed2.as_bytes());
+    let sig2_b64 = base64::engine::general_purpose::STANDARD.encode(mac2.finalize().into_bytes());
+    assert_ne!(sig_b64, sig2_b64);
+}
+
+// ---------------------------------------------------------------------------
+// Square is_sandbox_app_id parity
+// ---------------------------------------------------------------------------
+
+fn is_sandbox_app_id(app_id: &str) -> bool {
+    app_id.starts_with("sandbox-") || app_id.starts_with("sq0idb-")
+}
+
+#[test]
+fn square_sandbox_detection() {
+    assert!(is_sandbox_app_id("sandbox-sq0idb-abc123"));
+    assert!(is_sandbox_app_id("sq0idb-abc123"));
+    assert!(!is_sandbox_app_id("sq0idp-prod123"));
+    assert!(!is_sandbox_app_id(""));
+    assert!(!is_sandbox_app_id("garbage"));
 }

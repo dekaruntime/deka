@@ -81,11 +81,18 @@ export function paypal_refund($account: ConnectedAccount, $charge_id: string, $a
 export function paypal_webhook_verify($body: string, $signature: string, $secret: string): Result<Event, string>
 export function paypal_account_status($account: ConnectedAccount): Result<AccountStatus, string>
 
-// Square provider (stubbed; filled in under #96).
+// Square provider (issue #96).
 export function square_name(): string
-export function square_connect_url($return_url: string, $shop_id: string): Result<string, string>
-export function square_handle_callback($query: mixed, $shop_id: string): Result<ConnectedAccount, string>
-export function square_create_charge($account: ConnectedAccount, $amount_cents: int, $currency: string, $platform_fee_cents: int, $idempotency_key: string): Result<Charge, string>
-export function square_refund($account: ConnectedAccount, $charge_id: string, $amount_cents: int): Result<Refund, string>
-export function square_webhook_verify($body: string, $signature: string, $secret: string): Result<Event, string>
-export function square_account_status($account: ConnectedAccount): Result<AccountStatus, string>
+export function square_connect_url($return_url: string, $shop_id: string, $session_jti: string): Result<mixed, string>
+export function square_handle_callback($query: mixed, $expected_shop_id: string, $expected_jti: string, $http: mixed): Result<ConnectedAccount, string>
+export function square_create_charge($account: ConnectedAccount, $access_token: string, $source_id: string, $amount_cents: int, $currency: string, $platform_fee_cents: int, $idempotency_key: string, $location_id: string, $http: mixed): Result<Charge, string>
+export function square_refund($account: ConnectedAccount, $access_token: string, $charge_id: string, $amount_cents: int, $currency: string, $actor: mixed, $shop_id: string, $reason: string, $charge_amount_cents: int, $http: mixed): Result<Refund, string>
+export function square_webhook_verify($body: string, $signature: string, $secret: string, $notification_url: string): Result<Event, string>
+export function square_account_status($account: ConnectedAccount, $access_token: string, $http: mixed): Result<AccountStatus, string>
+export function square_refresh_token($refresh_token: string, $http: mixed): Result<mixed, string>
+export function square_disconnect($account: ConnectedAccount, $access_token: string, $http: mixed): Result<mixed, string>
+
+// Token vault (issue #119).
+export function token_vault_encrypt($plaintext: string, $shop_id: string, $keyid: string, $key_override: mixed): Result<string, string>
+export function token_vault_decrypt($blob: string, $shop_id: string): Result<string, string>
+export function token_vault_reencrypt($blob: string, $shop_id: string, $target_keyid: string): Result<string, string>
