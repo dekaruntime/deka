@@ -1316,6 +1316,113 @@ fn op_php_random_bytes(#[number] len: i64) -> Vec<u8> {
     out
 }
 
+// AES-256-GCM encrypt / decrypt — used by @deka/payments to store provider
+// OAuth tokens at rest (Square in particular; issue #119).
+//
+// Layout notes for callers: the PHPX side composes a `v1:{base64(nonce)}:{base64(ct||tag)}`
+// wire format. These ops stay small: take raw bytes in, emit raw bytes out.
+// A ciphertext-and-tag layout (tag appended to ciphertext) is what
+// `aes-gcm` and every other AEAD crate expects, so PHPX just slices the
+// last 16 bytes as the tag at decrypt time.
+//
+// Returns `{ok: true, data: Vec<u8>}` on success, `{ok: false, error: string}`
+// on failure. We never leak WHICH input was wrong on decrypt — a key
+// mismatch, a bit-flipped ciphertext, and a tampered tag all return the
+// same generic "aes_decrypt_failed" error.
+
+#[op2]
+#[serde]
+fn op_php_aes_256_gcm_encrypt(
+    #[buffer] key: &[u8],
+    #[buffer] nonce: &[u8],
+    #[buffer] plaintext: &[u8],
+    #[buffer] aad: &[u8],
+) -> serde_json::Value {
+    use aes_gcm::aead::{Aead, KeyInit, Payload};
+    use aes_gcm::{Aes256Gcm, Key, Nonce};
+
+    if key.len() != 32 {
+        return serde_json::json!({
+            "ok": false,
+            "error": "key_length_invalid",
+        });
+    }
+    if nonce.len() != 12 {
+        return serde_json::json!({
+            "ok": false,
+            "error": "nonce_length_invalid",
+        });
+    }
+
+    let key = Key::<Aes256Gcm>::from_slice(key);
+    let cipher = Aes256Gcm::new(key);
+    let nonce = Nonce::from_slice(nonce);
+    let payload = Payload {
+        msg: plaintext,
+        aad,
+    };
+    match cipher.encrypt(nonce, payload) {
+        Ok(ct) => serde_json::json!({
+            "ok": true,
+            "data": ct,
+        }),
+        Err(_) => serde_json::json!({
+            "ok": false,
+            "error": "aes_encrypt_failed",
+        }),
+    }
+}
+
+#[op2]
+#[serde]
+fn op_php_aes_256_gcm_decrypt(
+    #[buffer] key: &[u8],
+    #[buffer] nonce: &[u8],
+    #[buffer] ciphertext: &[u8],
+    #[buffer] aad: &[u8],
+) -> serde_json::Value {
+    use aes_gcm::aead::{Aead, KeyInit, Payload};
+    use aes_gcm::{Aes256Gcm, Key, Nonce};
+
+    if key.len() != 32 {
+        return serde_json::json!({
+            "ok": false,
+            "error": "key_length_invalid",
+        });
+    }
+    if nonce.len() != 12 {
+        return serde_json::json!({
+            "ok": false,
+            "error": "nonce_length_invalid",
+        });
+    }
+    // ciphertext must include the trailing 16-byte GCM tag.
+    if ciphertext.len() < 16 {
+        return serde_json::json!({
+            "ok": false,
+            "error": "aes_decrypt_failed",
+        });
+    }
+
+    let key = Key::<Aes256Gcm>::from_slice(key);
+    let cipher = Aes256Gcm::new(key);
+    let nonce = Nonce::from_slice(nonce);
+    let payload = Payload {
+        msg: ciphertext,
+        aad,
+    };
+    match cipher.decrypt(nonce, payload) {
+        Ok(pt) => serde_json::json!({
+            "ok": true,
+            "data": pt,
+        }),
+        Err(_) => serde_json::json!({
+            "ok": false,
+            "error": "aes_decrypt_failed",
+        }),
+    }
+}
+
 #[op2]
 #[serde]
 fn op_php_read_env() -> HashMap<String, String> {
@@ -4668,6 +4775,8 @@ deno_core::extension!(
         op_php_set_privileged,
         op_php_sha256,
         op_php_random_bytes,
+        op_php_aes_256_gcm_encrypt,
+        op_php_aes_256_gcm_decrypt,
         op_php_read_env,
         op_php_db_call_proto,
         op_php_db_proto_encode,

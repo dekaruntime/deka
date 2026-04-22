@@ -60,3 +60,10 @@ export { square_create_charge } from './square.phpx';
 export { square_refund } from './square.phpx';
 export { square_webhook_verify } from './square.phpx';
 export { square_account_status } from './square.phpx';
+export { square_refresh_token } from './square.phpx';
+export { square_disconnect } from './square.phpx';
+
+// Token vault — AES-256-GCM envelope for provider OAuth tokens (issue #119).
+export { token_vault_encrypt } from './token_vault.phpx';
+export { token_vault_decrypt } from './token_vault.phpx';
+export { token_vault_reencrypt } from './token_vault.phpx';
