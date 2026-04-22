@@ -1941,7 +1941,32 @@ fn match_rule_item(capability: &str, rule_item: &str, target: &str) -> bool {
     if matches!(capability, "read" | "write" | "wasm") {
         return path_matches(rule_item, target);
     }
+    // Net rules support DNS-label wildcards: `*.squareup.com` matches
+    // `connect.squareup.com` and `api.v2.squareup.com`, but not the
+    // bare `squareup.com`. This mirrors the pattern shipped by every
+    // other outbound allowlist (deno `--allow-net`, curl ACLs, cert
+    // SANs). The exact-match fallback below still handles plain hosts
+    // and `host:port` pairs.
+    if capability == "net" && rule_item.starts_with("*.") {
+        let suffix = &rule_item[1..]; // ".squareup.com"
+        let t = target.to_ascii_lowercase();
+        if t.ends_with(suffix) && t.len() > suffix.len() {
+            return true;
+        }
+        return false;
+    }
     rule_item == target
+}
+
+/// Public helper for @deka/http (and future outbound modules) to run
+/// the standard `net` capability gate against a host. We keep the host
+/// string lowercase and without port — the allowlist match handles
+/// exact hosts, DNS wildcards, and `*`.
+pub fn enforce_net_public(host: &str) -> Result<(), String> {
+    match enforce_net(Some(host)) {
+        Ok(()) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 fn path_matches(rule_item: &str, target: &str) -> bool {
@@ -4584,6 +4609,18 @@ fn op_neo4j_call(
     Ok(super::neo4j::neo4j_call(&action, &args))
 }
 
+/// @deka/http — outbound HTTP/1.1 + HTTP/2, streaming, cookie jars,
+/// WebSocket client. See `crates/modules_php/src/modules/http.rs` for
+/// the full action list and the DoD in issue #128.
+#[op2]
+#[serde]
+fn op_deka_http_call(
+    #[string] action: String,
+    #[serde] args: serde_json::Value,
+) -> Result<serde_json::Value, deno_core::error::CoreError> {
+    Ok(super::http::http_call(&action, &args))
+}
+
 /// Introspect the shard layout for an `account_id`.
 ///
 /// Empty `account_id` returns the local "self" shard if one is
@@ -4650,6 +4687,7 @@ deno_core::extension!(
         op_neo4j_call,
         op_redis_call,
         op_shard_for,
+        op_deka_http_call,
     ],
     esm_entry_point = "ext:php_core/php.js",
     esm = [dir "src/modules/php", "php.js"],

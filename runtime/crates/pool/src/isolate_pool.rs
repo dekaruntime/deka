@@ -2332,6 +2332,22 @@ impl WorkerThread {
                             }
                             return { ok: false, error: `unknown crypto action '${act}'` };
                         }
+                        if (kind === 'http') {
+                            // @deka/http — outbound HTTP/1.1, HTTP/2
+                            // (ALPN h2), streaming req/resp bodies,
+                            // opt-in cookie jars, WebSocket client.
+                            // All dispatched through a single Rust op;
+                            // see crates/modules_php/src/modules/http.rs
+                            // for the action list and issue #128 for
+                            // the DoD.
+                            if (typeof ops.op_deka_http_call !== 'function') {
+                                return { ok: false, error: 'op_deka_http_call unavailable' };
+                            }
+                            const act = String(action || '');
+                            const req = payload || {};
+                            const raw = ops.op_deka_http_call(act, req);
+                            return Object.entries(raw || {});
+                        }
                         if (kind === 'json') {
                             const act = String(action || '');
                             const req = payload || {};
