@@ -29,6 +29,20 @@ redis = { workspace = true }
 tokio = { workspace = true }
 deka-shard = { path = "../shard" }
 
+# @deka/http — outbound HTTP/1.1, HTTP/2 (ALPN h2), streaming bodies,
+# opt-in cookie jars. rustls keeps the TLS stack pure-Rust (no OpenSSL
+# system dep surprise) and matches what `crates/runtime` already uses.
+reqwest = { version = "0.11", default-features = false, features = ["rustls-tls", "stream", "cookies", "gzip", "json"] }
+# @deka/http WebSocket client. tokio-tungstenite gives us the RFC 6455
+# implementation with TLS via rustls, fragmentation reassembly, and
+# ping/pong keepalive. Chosen over reqwest-websocket because it exposes
+# full frame control (text/binary, close codes, ping payloads) which
+# Stripe-style streaming APIs need.
+tokio-tungstenite = { version = "0.21", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+tokio-stream = "0.1"
+futures-util = "0.3"
+url = "2"
+
 [build-dependencies]
 prost-build = "0.13"
 protoc-bin-vendored = "3"
