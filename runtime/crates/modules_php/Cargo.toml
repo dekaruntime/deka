@@ -24,6 +24,7 @@ runtime_core = { path = "../runtime_core" }
 stdio = { path = "../stdio" }
 native-tls = "0.2"
 getrandom = "0.2"
+aes-gcm = "0.10"
 neo4rs = { workspace = true }
 redis = { workspace = true }
 tokio = { workspace = true }
@@ -37,3 +38,4 @@ protoc-bin-vendored = "3"
 tempfile = "3.23.0"
 hmac = "0.12"
 hex = "0.4"
+base64 = "0.22"

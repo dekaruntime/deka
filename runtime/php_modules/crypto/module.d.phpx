@@ -7,3 +7,5 @@ export function hmac_sha256_hex($value: mixed, $key: mixed): string
 export function hmac_sha256_bytes($value: mixed, $key: mixed): mixed
 export function secure_compare($a: mixed, $b: mixed): bool
 export function uuid_v4(): Result<string, string>
+export function aes_256_gcm_encrypt($key: mixed, $nonce: mixed, $plaintext: mixed, $aad: mixed = ''): Result<mixed, string>
+export function aes_256_gcm_decrypt($key: mixed, $nonce: mixed, $ciphertext: mixed, $aad: mixed = ''): Result<mixed, string>

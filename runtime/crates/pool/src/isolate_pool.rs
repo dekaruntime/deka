@@ -2330,6 +2330,36 @@ impl WorkerThread {
                                 }
                                 return Object.entries({ ok: true, data: Array.from(bytes) });
                             }
+                            // AES-256-GCM — used by @deka/payments for at-rest
+                            // encryption of provider OAuth tokens (issue #119).
+                            // Inputs come in as byte arrays (each entry 0..255).
+                            if (act === 'aes_256_gcm_encrypt' || act === 'aes_256_gcm_decrypt') {
+                                const req = payload || {};
+                                const toU8 = (v) => {
+                                    if (v instanceof Uint8Array) return v;
+                                    if (Array.isArray(v)) return new Uint8Array(v);
+                                    if (v && typeof v.length === 'number') return new Uint8Array(Array.from(v));
+                                    return new Uint8Array();
+                                };
+                                const key = toU8(req.key);
+                                const nonce = toU8(req.nonce);
+                                const input = toU8(act === 'aes_256_gcm_encrypt' ? req.plaintext : req.ciphertext);
+                                const aad = toU8(req.aad || []);
+                                const opName = act === 'aes_256_gcm_encrypt' ? 'op_php_aes_256_gcm_encrypt' : 'op_php_aes_256_gcm_decrypt';
+                                if (typeof ops[opName] !== 'function') {
+                                    return { ok: false, error: `${opName} unavailable` };
+                                }
+                                const raw = ops[opName](key, nonce, input, aad);
+                                // Rust op already returns {ok, data|error}. Normalize
+                                // data into a plain array for the PHPX caller.
+                                const okVal = raw && raw.ok === true;
+                                if (okVal) {
+                                    const data = raw.data;
+                                    const arr = data instanceof Uint8Array ? Array.from(data) : (Array.isArray(data) ? data : Array.from(data || []));
+                                    return Object.entries({ ok: true, data: arr });
+                                }
+                                return Object.entries({ ok: false, error: (raw && raw.error) || 'aes_op_failed' });
+                            }
                             return { ok: false, error: `unknown crypto action '${act}'` };
                         }
                         if (kind === 'json') {

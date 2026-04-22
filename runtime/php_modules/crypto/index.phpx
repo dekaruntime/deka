@@ -154,3 +154,75 @@ export function uuid_v4() {
     . substr($hex, 20, 12)
   return result_ok($uuid)
 }
+
+// AES-256-GCM — authenticated encryption with associated data.
+//
+// Callers pass:
+//   - $key — 32-byte `bytes` value (the symmetric key).
+//   - $nonce — 12-byte `bytes` value. MUST be unique per encryption.
+//     Re-using a nonce with the same key is catastrophic for GCM.
+//   - $plaintext / $ciphertext — `bytes` values. Ciphertext includes the
+//     16-byte auth tag appended to the raw encryption output.
+//   - $aad — optional associated data (string or bytes). Authenticated
+//     but not encrypted. Pass '' if none.
+//
+// Returns `Result<bytes, string>`. Decrypt failures (wrong key, tampered
+// ciphertext, tampered tag, AAD mismatch) all collapse to a generic
+// `aes_decrypt_failed` so the caller can't use the error channel as an
+// oracle.
+
+/// docid: phpx/crypto/aes_256_gcm_encrypt()
+/// <Function name="aes_256_gcm_encrypt">
+///   <Description>AES-256-GCM encrypt. Returns Ok(bytes) on success, Err(string) otherwise.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function aes_256_gcm_encrypt($key, $nonce, $plaintext, $aad = '') {
+  $key_arr = is_string($key) ? bytes_to_array(bytes_from_string($key)) : bytes_to_array($key)
+  $nonce_arr = is_string($nonce) ? bytes_to_array(bytes_from_string($nonce)) : bytes_to_array($nonce)
+  $pt_arr = is_string($plaintext) ? bytes_to_array(bytes_from_string($plaintext)) : bytes_to_array($plaintext)
+  $aad_arr = is_string($aad) ? bytes_to_array(bytes_from_string($aad)) : bytes_to_array($aad)
+
+  $raw = bridge('crypto', 'aes_256_gcm_encrypt', {
+    key: $key_arr,
+    nonce: $nonce_arr,
+    plaintext: $pt_arr,
+    aad: $aad_arr,
+  })
+  $assoc = to_assoc($raw)
+  if (!is_array($assoc) || !array_key_exists('ok', $assoc) || !$assoc['ok']) {
+    $msg = is_array($assoc) && array_key_exists('error', $assoc) ? $assoc['error'] : 'aes_encrypt_failed'
+    return result_err('' . $msg)
+  }
+  if (!array_key_exists('data', $assoc) || !is_array($assoc['data'])) {
+    return result_err('aes_encrypt_failed')
+  }
+  return result_ok(bytes_from_array($assoc['data']))
+}
+
+/// docid: phpx/crypto/aes_256_gcm_decrypt()
+/// <Function name="aes_256_gcm_decrypt">
+///   <Description>AES-256-GCM decrypt. Ciphertext MUST include the 16-byte GCM tag appended. Returns Ok(bytes) on success, Err(string) on any failure.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function aes_256_gcm_decrypt($key, $nonce, $ciphertext, $aad = '') {
+  $key_arr = is_string($key) ? bytes_to_array(bytes_from_string($key)) : bytes_to_array($key)
+  $nonce_arr = is_string($nonce) ? bytes_to_array(bytes_from_string($nonce)) : bytes_to_array($nonce)
+  $ct_arr = is_string($ciphertext) ? bytes_to_array(bytes_from_string($ciphertext)) : bytes_to_array($ciphertext)
+  $aad_arr = is_string($aad) ? bytes_to_array(bytes_from_string($aad)) : bytes_to_array($aad)
+
+  $raw = bridge('crypto', 'aes_256_gcm_decrypt', {
+    key: $key_arr,
+    nonce: $nonce_arr,
+    ciphertext: $ct_arr,
+    aad: $aad_arr,
+  })
+  $assoc = to_assoc($raw)
+  if (!is_array($assoc) || !array_key_exists('ok', $assoc) || !$assoc['ok']) {
+    $msg = is_array($assoc) && array_key_exists('error', $assoc) ? $assoc['error'] : 'aes_decrypt_failed'
+    return result_err('' . $msg)
+  }
+  if (!array_key_exists('data', $assoc) || !is_array($assoc['data'])) {
+    return result_err('aes_decrypt_failed')
+  }
+  return result_ok(bytes_from_array($assoc['data']))
+}
