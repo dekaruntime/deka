@@ -1,0 +1,228 @@
+import { bridge } from 'core/bridge'
+import { result_ok, result_err, result_is_ok } from 'core/result'
+
+// `@deka/http` — modelled after Go's net/http.
+//
+// Four use-patterns (see README.md):
+//   1. One-liners — `http_get($url, $headers)` / `http_post(...)`
+//   2. Client struct — `http_client([...])->do($req)` for config reuse
+//   3. Request struct — `http_request([...])` for full control
+//   4. Pluggable Transport — for tests + middleware
+//
+// Errors are values. Every function that can fail returns Result<T, HttpError>.
+// HttpError is a plain map { kind: string, message: string }.
+
+// ---------------------------------------------------------------------------
+// One-liners.
+// ---------------------------------------------------------------------------
+
+/// docid: phpx/http/http_get()
+/// <Function name="http_get">
+///   <Description>GET request. Returns Result<HttpResponse, HttpError>.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function http_get($url, $headers = {}) {
+    return http_request({
+        method: 'GET',
+        url: $url,
+        headers: $headers,
+    })
+}
+
+/// docid: phpx/http/http_post()
+/// <Function name="http_post">
+///   <Description>POST request with body + content type. Returns Result<HttpResponse, HttpError>.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function http_post($url, $content_type, $body, $headers = {}) {
+    $merged_headers = $headers
+    $merged_headers['Content-Type'] = $content_type
+    return http_request({
+        method: 'POST',
+        url: $url,
+        headers: $merged_headers,
+        body: $body,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Request struct dispatch. Accepts a map:
+//   method, url, headers, body | body_bytes | body_stream_handle,
+//   timeout_ms, stream_response, response_as_bytes, max_body_bytes,
+//   client_handle (when coming from an HttpClient).
+// ---------------------------------------------------------------------------
+
+/// docid: phpx/http/http_request()
+/// <Function name="http_request">
+///   <Description>Dispatch an HTTP request described by a map. Returns Result<HttpResponse, HttpError>.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function http_request($req) {
+    $transport = isset($req['transport']) ? $req['transport'] : null
+    if ($transport !== null) {
+        // Pluggable transport — user-provided callable. Contract:
+        //   $transport($req) → Result<HttpResponse, HttpError>
+        return $transport($req)
+    }
+    return __http_request_default($req)
+}
+
+// Default transport — routes through the Rust bridge.
+export function __http_request_default($req) {
+    $raw = bridge('http', 'request', $req)
+    return __http_decode_response($raw)
+}
+
+function __http_decode_response($raw) {
+    if (!is_array($raw) || !array_key_exists('ok', $raw)) {
+        return result_err({ kind: 'transport_error', message: 'invalid bridge response' })
+    }
+    if (!$raw['ok']) {
+        $kind = array_key_exists('error', $raw) ? '' . $raw['error'] : 'transport_error'
+        $msg = array_key_exists('message', $raw) ? '' . $raw['message'] : $kind
+        return result_err({ kind: $kind, message: $msg })
+    }
+    $resp = {
+        status: array_key_exists('status', $raw) ? $raw['status'] : 0,
+        headers: array_key_exists('headers', $raw) ? $raw['headers'] : {},
+        version: array_key_exists('version', $raw) ? '' . $raw['version'] : '',
+        final_url: array_key_exists('final_url', $raw) ? '' . $raw['final_url'] : '',
+        body: array_key_exists('body', $raw) ? $raw['body'] : '',
+        body_bytes: array_key_exists('body_bytes', $raw) ? $raw['body_bytes'] : null,
+        streamed: array_key_exists('streamed', $raw) ? $raw['streamed'] : false,
+        stream_handle: array_key_exists('stream_handle', $raw) ? $raw['stream_handle'] : null,
+    }
+    return result_ok($resp)
+}
+
+// ---------------------------------------------------------------------------
+// Response streaming helpers.
+// ---------------------------------------------------------------------------
+
+/// docid: phpx/http/http_stream_read()
+/// <Function name="http_stream_read">
+///   <Description>Read the next chunk from a streaming response. Returns {ok, done, chunk}.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function http_stream_read($stream_handle, $timeout_ms = 30000) {
+    return bridge('http', 'stream_read', {
+        stream_handle: $stream_handle,
+        timeout_ms: $timeout_ms,
+    })
+}
+
+/// docid: phpx/http/http_stream_close()
+/// <Function name="http_stream_close">
+///   <Description>Close a streaming response early, releasing the underlying connection.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function http_stream_close($stream_handle) {
+    return bridge('http', 'stream_close', { stream_handle: $stream_handle })
+}
+
+// ---------------------------------------------------------------------------
+// Request streaming producers.
+// ---------------------------------------------------------------------------
+
+/// docid: phpx/http/http_req_stream_new()
+/// <Function name="http_req_stream_new">
+///   <Description>Create a request-body stream handle. Pass it as body_stream_handle on http_request.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function http_req_stream_new() {
+    return bridge('http', 'req_stream_new', {})
+}
+
+export function http_req_stream_write($stream_handle, $chunk) {
+    return bridge('http', 'req_stream_write', {
+        stream_handle: $stream_handle,
+        chunk: $chunk,
+    })
+}
+
+export function http_req_stream_end($stream_handle) {
+    return bridge('http', 'req_stream_end', { stream_handle: $stream_handle })
+}
+
+// ---------------------------------------------------------------------------
+// HttpClient — persistent connection pool + optional cookie jar.
+// ---------------------------------------------------------------------------
+
+/// docid: phpx/http/http_client()
+/// <Function name="http_client">
+///   <Description>Build an HttpClient. Options: timeout_ms, max_redirects, cookie_jar, transport.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function http_client($opts = {}) {
+    $raw = bridge('http', 'client_new', $opts)
+    if (!is_array($raw) || !array_key_exists('ok', $raw) || !$raw['ok']) {
+        return result_err($raw)
+    }
+    $handle = $raw['client_handle']
+    $transport = isset($opts['transport']) ? $opts['transport'] : null
+    return result_ok({
+        __handle: $handle,
+        __transport: $transport,
+        do: function ($req) use ($handle, $transport) {
+            $with_handle = $req
+            $with_handle['client_handle'] = $handle
+            if ($transport !== null) {
+                return $transport($with_handle)
+            }
+            return __http_request_default($with_handle)
+        },
+        jar: function ($url) use ($handle) {
+            return bridge('http', 'client_cookies', {
+                client_handle: $handle,
+                url: $url,
+            })
+        },
+        close: function () use ($handle) {
+            return bridge('http', 'client_close', { client_handle: $handle })
+        },
+    })
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket client.
+// ---------------------------------------------------------------------------
+
+/// docid: phpx/http/ws_connect()
+/// <Function name="ws_connect">
+///   <Description>Open a WebSocket. Returns Result<WsHandle, HttpError>.</Description>
+///   <ReturnType type="mixed" />
+/// </Function>
+export function ws_connect($url, $opts = {}) {
+    $payload = { url: $url }
+    if (isset($opts['headers'])) {
+        $payload['headers'] = $opts['headers']
+    }
+    if (isset($opts['max_frame_bytes'])) {
+        $payload['max_frame_bytes'] = $opts['max_frame_bytes']
+    }
+    $raw = bridge('http', 'ws_connect', $payload)
+    if (!is_array($raw) || !array_key_exists('ok', $raw) || !$raw['ok']) {
+        $kind = array_key_exists('error', $raw) ? '' . $raw['error'] : 'ws_connect_failed'
+        $msg = array_key_exists('message', $raw) ? '' . $raw['message'] : $kind
+        return result_err({ kind: $kind, message: $msg })
+    }
+    $handle = $raw['ws_handle']
+    return result_ok({
+        __handle: $handle,
+        send_text: function ($text) use ($handle) {
+            return bridge('http', 'ws_send_text', { ws_handle: $handle, text: $text })
+        },
+        send_binary: function ($bytes) use ($handle) {
+            return bridge('http', 'ws_send_binary', { ws_handle: $handle, bytes: $bytes })
+        },
+        recv: function ($timeout_ms = 30000) use ($handle) {
+            return bridge('http', 'ws_recv', { ws_handle: $handle, timeout_ms: $timeout_ms })
+        },
+        ping: function ($bytes = []) use ($handle) {
+            return bridge('http', 'ws_ping', { ws_handle: $handle, bytes: $bytes })
+        },
+        close: function ($code = 1000, $reason = '') use ($handle) {
+            return bridge('http', 'ws_close', { ws_handle: $handle, code: $code, reason: $reason })
+        },
+    })
+}
