@@ -1990,13 +1990,6 @@ function cookieSecureFlag() {
   return $raw === '1' || $raw === 'true' || $raw === 'yes'
 }
 
-function requestMethod() {
-  if (is_array($_SERVER) && array_key_exists('REQUEST_METHOD', $_SERVER)) {
-    return strtoupper('' . $_SERVER['REQUEST_METHOD'])
-  }
-  return 'GET'
-}
-
 function requestPath() {
   if (is_array($_SERVER) && array_key_exists('REQUEST_URI', $_SERVER)) {
     $uri = '' . $_SERVER['REQUEST_URI']
