@@ -22,4 +22,4 @@ fi
 export NODE_ENV=production
 export PORT=4004
 
-exec /Users/sami/Projects/deka/runtime/target/release/cli serve --port 4004 main_online.phpx
+exec /Users/sami/Projects/deka/runtime/target/release/cli serve --port 4004 main.phpx
