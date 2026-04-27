@@ -3,6 +3,7 @@ pub mod framework;
 pub mod handler;
 pub mod module_spec;
 pub mod modules;
+pub mod platform_env;
 pub mod process;
 pub mod security;
 pub mod security_policy;

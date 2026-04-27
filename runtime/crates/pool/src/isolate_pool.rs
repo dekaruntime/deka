@@ -3519,6 +3519,39 @@ fn set_request_globals(
         serde_v8::to_v8(scope, deka_args).map_err(|err| format!("deka args to v8: {}", err))?;
     deka_obj.set(scope, args_key.into(), args_val);
 
+    // Platform → tenant env-var injection. The platform process holds
+    // a small set of allowlisted secrets (Stripe publishable key,
+    // TANA_INTERNAL_API_SECRET, etc.) that storefront PHPX needs to
+    // read via `$_SERVER['NAME']`. Vars NOT on the allowlist (database
+    // creds, JWT secrets, etc.) are never exposed to tenant code.
+    //
+    // Allowlist source: `runtime_core::platform_env::DEFAULT_ALLOWLIST`
+    // plus the optional `DEKA_PLATFORM_ENV_ALLOWLIST` env var (comma
+    // separated names) for runtime extensibility without a code change.
+    //
+    // Done BEFORE the SHOP_ID/ACCOUNT_ID injection below so per-request
+    // tenant context can never be overridden by a host env var with
+    // the same name (defence in depth — those names aren't on the
+    // allowlist anyway).
+    if request_parts.is_some() {
+        if let Some(server_key) = v8::String::new(scope, "_SERVER") {
+            if let Some(server_val) = global.get(scope, server_key.into()) {
+                if let Some(server_obj) = server_val.to_object(scope) {
+                    for (name, value) in
+                        runtime_core::platform_env::snapshot_env_from_process()
+                    {
+                        if let (Some(k), Some(v)) = (
+                            v8::String::new(scope, &name),
+                            v8::String::new(scope, &value),
+                        ) {
+                            server_obj.set(scope, k.into(), v.into());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Tenant context: resolve shop_id + account_id from Host header
     // and inject as globals. X-Shop-ID is still honoured as an explicit
     // override for trusted callers (dev tools, admin utilities). Platform
