@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "linkha.sh — PHPX package registry web UI",
   "serve": {
-    "entry": "main.phpx",
+    "entry": "main_online.phpx",
     "mode": "php"
   },
   "scripts": {
