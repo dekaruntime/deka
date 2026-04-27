@@ -1,6 +1,9 @@
 {
+  "name": "@tana-admin/linkhash",
+  "version": "0.1.0",
+  "description": "linkha.sh — PHPX package registry web UI",
   "serve": {
-    "entry": "main_online.phpx",
+    "entry": "main.phpx",
     "mode": "php"
   },
   "scripts": {
