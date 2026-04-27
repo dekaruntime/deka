@@ -11,21 +11,11 @@
   },
   "security": {
     "allow": {
-      "db": [
-        "postgres",
-        "sqlite"
-      ],
-      "net": [
-        "127.0.0.1:8508",
-        "localhost:8508",
-        "127.0.0.1:8608",
-        "localhost:8608",
-        "127.0.0.1",
-        "*"
-      ],
-      "read": [
-        "*"
-      ]
+      "db": ["postgres", "sqlite"],
+      "net": ["127.0.0.1:8508", "localhost:8508", "*"],
+      "read": ["*"],
+      "dynamic": true,
+      "run": ["git"]
     }
   }
 }
