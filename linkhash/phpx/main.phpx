@@ -75,7 +75,7 @@ function loadDotEnv($path = '.env') {
   if (!is_file($full)) {
     return
   }
-  $lines = @file($full)
+  $lines = file($full)
   if (!is_array($lines)) {
     return
   }
@@ -2039,7 +2039,7 @@ function ensureLogDir() {
     }
     $current = $current === '' ? $seg : ($current . '/' . $seg)
     if (!is_dir($current)) {
-      @mkdir($current)
+      mkdir($current)
     }
   }
   return is_dir($dir)
@@ -2050,9 +2050,9 @@ function appendLogLine($line) {
   $logFile = '' . envValue('LINKHASH_LOG_FILE', '')
   if (function_exists('error_log')) {
     if ($logFile !== '') {
-      @error_log($clean . "\n", 3, $logFile)
+      error_log($clean . "\n", 3, $logFile)
     }
-    @error_log('[linkhash] ' . $clean)
+    error_log('[linkhash] ' . $clean)
     return true
   }
   return false
