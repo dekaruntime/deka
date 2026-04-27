@@ -44,7 +44,7 @@ return $out
 
 function model_table($model: mixed) {
 $name = model_name($model)
-if ($name === null || $name === '') {
+if (!isset($name) || $name === '') {
 return null
 }
 $table = to_snake_case($name)
@@ -68,7 +68,7 @@ return $fallback
 }
 
 function compile_predicate($expr: mixed, &$params: mixed) {
-if ($expr === null) {
+if (!isset($expr)) {
 return ''
 }
 $kind = field_value($expr, 'kind', null)
@@ -160,7 +160,7 @@ return db_close($handle)
 }
 
 function normalize_includes($includes: mixed) {
-if ($includes === null) {
+if (!isset($includes)) {
 return []
 }
 if (is_string($includes) && $includes !== '') {
@@ -205,7 +205,7 @@ return result_ok($out)
 
 export function selectMany($handle: mixed, $meta: mixed, $model: mixed, $where: mixed = null, $order: mixed = null, $limit: mixed = null, $offset: mixed = null, $includes: mixed = null) {
 $table = model_table($model)
-if ($table === null) {
+if (!isset($table)) {
 return result_err('unknown model')
 }
 $sql = 'SELECT * FROM ' . quote_ident($table)
@@ -214,17 +214,17 @@ $where_sql = compile_predicate($where, $params)
 if ($where_sql !== '') {
 $sql = $sql . ' WHERE ' . $where_sql
 }
-if ($order !== null && (is_array($order) || is_object($order)) && field_value($order, 'column', null) !== null) {
+if (isset($order) && (is_array($order) || is_object($order)) && field_value($order, 'column', '') !== '') {
 $dir = 'ASC'
 if (strtoupper('' . field_value($order, 'dir', 'ASC')) === 'DESC') {
 $dir = 'DESC'
 }
 $sql = $sql . ' ORDER BY ' . quote_ident('' . field_value($order, 'column', '')) . ' ' . $dir
 }
-if ($limit !== null) {
+if (isset($limit)) {
 $sql = $sql . ' LIMIT ' . (int) $limit
 }
-if ($offset !== null) {
+if (isset($offset)) {
 $sql = $sql . ' OFFSET ' . (int) $offset
 }
 $rows = db_rows(db_query($handle, $sql, $params))
@@ -247,7 +247,7 @@ return result_ok($rows->value[0])
 
 export function insertOne($handle: mixed, $model: mixed, $row: mixed, $returning: mixed = false) {
 $table = model_table($model)
-if ($table === null) {
+if (!isset($table)) {
 return result_err('unknown model')
 }
 if (!is_array($row) && !is_object($row)) {
@@ -278,7 +278,7 @@ return db_exec($handle, $sql, $values)
 
 export function updateWhere($handle: mixed, $model: mixed, $patch: mixed, $where: mixed = null, $returning: mixed = false) {
 $table = model_table($model)
-if ($table === null) {
+if (!isset($table)) {
 return result_err('unknown model')
 }
 if (!is_array($patch) && !is_object($patch)) {
@@ -307,7 +307,7 @@ return db_exec($handle, $sql, $params)
 
 export function deleteWhere($handle: mixed, $model: mixed, $where: mixed = null) {
 $table = model_table($model)
-if ($table === null) {
+if (!isset($table)) {
 return result_err('unknown model')
 }
 $params = []
@@ -415,7 +415,7 @@ if (!is_array($meta) || !array_key_exists('models', $meta)) {
 return null
 }
 $name = model_name($model)
-if ($name === null || !array_key_exists($name, $meta['models'])) {
+if (!isset($name) || !array_key_exists($name, $meta['models'])) {
 return null
 }
 return $meta['models'][$name]
@@ -423,7 +423,7 @@ return $meta['models'][$name]
 
 function relation_meta($meta: mixed, $model: mixed, $field: mixed) {
 $m = model_meta($meta, $model)
-if ($m === null || !is_array($m) || !array_key_exists('relations', $m) || !is_array($m['relations'])) {
+if (!isset($m) || !is_array($m) || !array_key_exists('relations', $m) || !is_array($m['relations'])) {
 return null
 }
 foreach ($m['relations'] as $rel) {
@@ -439,7 +439,7 @@ if (!is_array($row)) {
 return result_err('loadRelation expects row array')
 }
 $rel = relation_meta($meta, $model, $field)
-if ($rel === null) {
+if (!isset($rel)) {
 return result_err('unknown relation')
 }
 if (!array_key_exists('kind', $rel) || !array_key_exists('model', $rel) || !array_key_exists('foreignKey', $rel)) {
@@ -481,6 +481,16 @@ return $committed
 return result_ok($result)
 }
 
+function andWhere_wrap($parts: mixed) {
+$arr = is_array($parts) ? $parts : [$parts]
+return [ 'kind' => 'and', 'parts' => $arr ]
+}
+
+function orWhere_wrap($parts: mixed) {
+$arr = is_array($parts) ? $parts : [$parts]
+return [ 'kind' => 'or', 'parts' => $arr ]
+}
+
 export function createClient($meta: mixed, $handle: mixed = null) {
 return {
 meta: $meta,
@@ -516,8 +526,8 @@ transaction: fn($fn: mixed) => transaction($handle, $fn),
 eq: fn($column: mixed, $value: mixed) => eq($column, $value),
 ilike: fn($column: mixed, $value: mixed) => ilike($column, $value),
 isNull: fn($column: mixed) => isNull($column),
-andWhere: fn(...$parts: mixed) => andWhere(...$parts),
-orWhere: fn(...$parts: mixed) => orWhere(...$parts),
+andWhere: fn($parts) => andWhere_wrap($parts),
+orWhere: fn($parts) => orWhere_wrap($parts),
 asc: fn($column: mixed) => asc($column),
 desc: fn($column: mixed) => desc($column),
 limit: fn($value: mixed) => limit($value),

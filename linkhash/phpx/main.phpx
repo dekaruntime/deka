@@ -1,13 +1,12 @@
----
-import { renderPartialJson, isPartialRequest, Link, Hydration } from 'component/dom'
+import { renderToString, renderPartialJson, isPartialRequest, Link, Hydration } from 'component/dom'
 import { json_encode as encodeJson, json_decode_result } from 'encoding/json'
-import { PreviewRouteSection, ForkResultSection } from '@/src/pages/repo_flows'
-import { PackageStatPills, PackageVersionRows } from '@/src/pages/package_detail'
-import { buildAdwaBaseUrl, buildAdwaPreviewUrl, buildAdwaPreviewUrlForRef, buildAdwaEditUrl } from '@/src/services/adwa'
-import { gitApiDefaultBase, scopedReleaseDocsPath, scopedReleaseTreePath, scopedReleaseBlobPath, repoIssuesPath, repoIssueDetailPath, repoIssueCommentPath, repoPullsPath, repoPullDetailPath, repoPullCommentPath, repoResolvePath, repoForkPath } from '@/src/services/linkhash_git'
-import { repoIssueCreateRoute, repoIssueCommentRoute, repoPullCreateRoute, repoPullCommentRoute, repoForkRoute, buildRepoActionRedirectPath } from '@/src/api/repo_actions'
-import { meta } from '@/db/meta'
-import { selectMany, selectOne, insertOne, updateWhere, deleteWhere, loadRelation, transaction, eq, ilike, isNull, andWhere, asc, desc, limit } from '@/db'
+import { PreviewRouteSection, ForkResultSection } from './src/pages/repo_flows'
+import { PackageStatPills, PackageVersionRows } from './src/pages/package_detail'
+import { buildAdwaBaseUrl, buildAdwaPreviewUrl, buildAdwaPreviewUrlForRef, buildAdwaEditUrl } from './src/services/adwa'
+import { gitApiDefaultBase, scopedReleaseDocsPath, scopedReleaseTreePath, scopedReleaseBlobPath, repoIssuesPath, repoIssueDetailPath, repoIssueCommentPath, repoPullsPath, repoPullDetailPath, repoPullCommentPath, repoResolvePath, repoForkPath } from './src/services/linkhash_git'
+import { repoIssueCreateRoute, repoIssueCommentRoute, repoPullCreateRoute, repoPullCommentRoute, repoForkRoute, buildRepoActionRedirectPath } from './src/api/repo_actions'
+import { meta } from './db/meta'
+import { selectMany, selectOne, insertOne, updateWhere, deleteWhere, loadRelation, transaction, eq, ilike, isNull, andWhere, asc, desc, limit } from './db'
 import { stats } from 'db'
 import { connect as sqliteConnect, query as sqliteQuery, query_one as sqliteQueryOne, exec as sqliteExec, close as sqliteClose } from 'db/sqlite'
 import { connect as mysqlConnect, query_one as mysqlQueryOne, exec as mysqlExec, close as mysqlClose } from 'db/mysql'
@@ -6274,9 +6273,12 @@ loadDotEnv('.env')
 installRuntimeHandlers()
 bootstrapSchema()
 
+$app = phpxWrapHandler(function($req) {
 $uri = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '/'
 $parts = explode('?', $uri)
 $path = $parts[0]
+
+
 if (strpos($path, '/api/') === 0) {
   header('X-Request-Id: ' . requestId())
   logEvent('info', 'api.request', { route: '' . $path })
@@ -6713,19 +6715,13 @@ if (strpos($path, '/package/') === 0) {
 }
 
 if (isPartialRequest()) {
+  header('Content-Type: application/json')
   echo renderPartialJson($node, $title)
   return
 }
 $hydrationScript = Hydration([ 'container' => '#app', 'layout' => 'registry' ])
-echo '<!doctype html>'
----
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <title>{$title}</title>
-    {$hydrationScript}
-  </head>
-  <body>
-    <div id="app" dataLayout="registry">{$node}</div>
-  </body>
-</html>
+$nodeHtml = renderToString($node)
+$hydrationHtml = renderToString($hydrationScript)
+header('Content-Type: text/html; charset=utf-8')
+echo '<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>' . htmlspecialchars($title) . '</title>' . $hydrationHtml . '</head><body><div id="app" dataLayout="registry">' . $nodeHtml . '</div></body></html>'
+})

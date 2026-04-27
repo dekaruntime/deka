@@ -210,6 +210,12 @@ pub fn build_stdlib_prelude(project_root: &Path) -> Result<String, String> {
     prelude.push_str("globalThis.function_exists ??= (name) => typeof globalThis[name] === 'function';\n");
     prelude.push_str("globalThis.class_exists ??= (name) => typeof globalThis[name] === 'function' || typeof globalThis[name] === 'object';\n");
     prelude.push_str("globalThis.class_alias ??= () => false;\n");
+    // PHP filesystem builtins — polyfilled using __dekaFs (Deno/Node FS adapter injected by the runtime).
+    prelude.push_str("globalThis.__phpx_stat ??= (p) => { try { const s = (typeof __dekaFs !== 'undefined' && __dekaFs && typeof __dekaFs.statSync === 'function') ? __dekaFs.statSync(String(p)) : (typeof Deno !== 'undefined' && Deno.statSync ? Deno.statSync(String(p)) : null); return s; } catch(_) { return null; } };\n");
+    prelude.push_str("globalThis.is_file ??= (p) => { const s = globalThis.__phpx_stat(p); if (!s) return false; return typeof s.isFile === 'function' ? s.isFile() : !!s.isFile; };\n");
+    prelude.push_str("globalThis.is_dir ??= (p) => { const s = globalThis.__phpx_stat(p); if (!s) return false; return typeof s.isDirectory === 'function' ? s.isDirectory() : !!s.isDirectory; };\n");
+    prelude.push_str("globalThis.mkdir ??= (p, mode, recursive) => { try { const fs = typeof __dekaFs !== 'undefined' ? __dekaFs : null; if (fs && typeof fs.mkdirSync === 'function') { fs.mkdirSync(String(p), { recursive: !!recursive }); return true; } if (typeof Deno !== 'undefined' && Deno.mkdirSync) { Deno.mkdirSync(String(p), { recursive: !!recursive }); return true; } } catch(_) {} return false; };\n");
+    prelude.push_str("globalThis.file ??= (p) => { try { const fs = typeof __dekaFs !== 'undefined' ? __dekaFs : null; let text = null; if (fs && typeof fs.readFileSync === 'function') { text = fs.readFileSync(String(p), 'utf8'); } else if (typeof Deno !== 'undefined' && Deno.readTextFileSync) { text = Deno.readTextFileSync(String(p)); } if (text === null) return false; return text.split('\\n').map((l, i, a) => i < a.length - 1 ? l + '\\n' : l).filter((_, i, a) => !(i === a.length - 1 && a[i] === '')); } catch(_) { return false; } };\n");
     prelude.push_str("if (!globalThis.__dekaGlobalsInstalled) {\n");
     prelude.push_str("  globalThis.__dekaGlobalsInstalled = true;\n");
     for var in &binds {
@@ -365,6 +371,13 @@ struct JsSubsetEmitter<'a> {
     uses_jsx_runtime: bool,
     uses_include_stub: bool,
     scopes: Vec<HashSet<String>>,
+    /// Scope depth at which we entered the current function body.
+    /// Variables first assigned inside a function should use `let`, not bare
+    /// assignment, even if the name exists in an outer (module-level) scope —
+    /// because in PHP, $var inside a function is always a NEW local, shadowing
+    /// any outer binding.  We track this so `is_declared_in_function` only looks
+    /// at scopes since the function entry.
+    function_scope_entry: Vec<usize>,
     /// Variables that were `let`-declared inside a block scope that has since
     /// been popped.  When a variable reference hits this set (but is NOT in any
     /// live scope), the transpiler emits a warning: the variable was block-
@@ -386,6 +399,7 @@ impl<'a> JsSubsetEmitter<'a> {
             main_body: String::new(),
             uses_jsx_runtime: false,
             uses_include_stub: false,
+            function_scope_entry: Vec::new(),
             scopes: vec![HashSet::new()],
             popped_declarations: HashSet::new(),
             warnings: Vec::new(),
@@ -529,7 +543,56 @@ impl<'a> JsSubsetEmitter<'a> {
         out.push_str("globalThis.__deka_symbol_get ??= (name) => { const key = String(name); return Object.prototype.hasOwnProperty.call(globalThis.__phpx_symbol_table, key) ? globalThis.__phpx_symbol_table[key] : null; };\n");
         out.push_str("globalThis.__deka_symbol_exists ??= (name) => { const key = String(name); return Object.prototype.hasOwnProperty.call(globalThis.__phpx_symbol_table, key); };\n");
         out.push_str("globalThis.__phpx_array_cursor ??= new WeakMap();\n");
-        out.push_str("globalThis.__deka_array_cursor ??= (arr, action) => { if (!arr || (typeof arr !== 'object' && !Array.isArray(arr))) return null; const map = globalThis.__phpx_array_cursor; let state = map.get(arr); if (!state) { state = { idx: 0 }; map.set(arr, state); } const keys = Object.keys(arr); if (keys.length === 0) return null; const clamp = () => { if (state.idx < 0) state.idx = 0; if (state.idx >= keys.length) state.idx = keys.length - 1; }; switch (String(action)) { case 'reset': state.idx = 0; break; case 'end': state.idx = keys.length - 1; break; case 'next': state.idx += 1; if (state.idx >= keys.length) return null; break; case 'prev': state.idx -= 1; if (state.idx < 0) return null; break; case 'pos': case 'current': break; case 'key': break; default: return null; } clamp(); const key = keys[state.idx]; if (String(action) === 'key') return key; return arr[key]; };\n\n");
+        out.push_str("globalThis.__deka_array_cursor ??= (arr, action) => { if (!arr || (typeof arr !== 'object' && !Array.isArray(arr))) return null; const map = globalThis.__phpx_array_cursor; let state = map.get(arr); if (!state) { state = { idx: 0 }; map.set(arr, state); } const keys = Object.keys(arr); if (keys.length === 0) return null; const clamp = () => { if (state.idx < 0) state.idx = 0; if (state.idx >= keys.length) state.idx = keys.length - 1; }; switch (String(action)) { case 'reset': state.idx = 0; break; case 'end': state.idx = keys.length - 1; break; case 'next': state.idx += 1; if (state.idx >= keys.length) return null; break; case 'prev': state.idx -= 1; if (state.idx < 0) return null; break; case 'pos': case 'current': break; case 'key': break; default: return null; } clamp(); const key = keys[state.idx]; if (String(action) === 'key') return key; return arr[key]; };\n");
+        // PHP filesystem builtins — polyfilled using __dekaFs (Deno/Node FS adapter injected by runtime).
+        out.push_str("globalThis.__phpx_stat ??= (p) => { try { const fs = (typeof __dekaFs !== 'undefined' && __dekaFs) ? __dekaFs : null; if (fs && typeof fs.statSync === 'function') return fs.statSync(String(p)); if (typeof Deno !== 'undefined' && typeof Deno.statSync === 'function') return Deno.statSync(String(p)); } catch(_) {} return null; };\n");
+        out.push_str("globalThis.is_file ??= (p) => { const s = globalThis.__phpx_stat(p); if (!s) return false; return typeof s.isFile === 'function' ? s.isFile() : !!s.isFile; };\n");
+        out.push_str("globalThis.is_dir ??= (p) => { const s = globalThis.__phpx_stat(p); if (!s) return false; return typeof s.isDirectory === 'function' ? s.isDirectory() : !!s.isDirectory; };\n");
+        out.push_str("globalThis.mkdir ??= (p, _mode, recursive) => { try { const fs = (typeof __dekaFs !== 'undefined' && __dekaFs) ? __dekaFs : null; if (fs && typeof fs.mkdirSync === 'function') { fs.mkdirSync(String(p), { recursive: !!recursive }); return true; } if (typeof Deno !== 'undefined' && Deno.mkdirSync) { Deno.mkdirSync(String(p), { recursive: !!recursive }); return true; } } catch(_) {} return false; };\n");
+        out.push_str("globalThis.file ??= (p) => { try { const fs = (typeof __dekaFs !== 'undefined' && __dekaFs) ? __dekaFs : null; let text = null; if (fs && typeof fs.readFileSync === 'function') { const raw = fs.readFileSync(String(p)); text = typeof raw === 'string' ? raw : (new TextDecoder()).decode(raw); } else if (typeof Deno !== 'undefined' && Deno.readTextFileSync) { text = Deno.readTextFileSync(String(p)); } if (text === null) return false; const lines = text.split('\\n'); return lines[lines.length - 1] === '' ? lines.slice(0, -1).map((l, i) => l + '\\n') : lines.map((l, i, a) => i < a.length - 1 ? l + '\\n' : l); } catch(_) { return false; } };\n");
+        // PHP math and type builtins.
+        out.push_str("globalThis.max ??= (...args) => { if (args.length === 1 && Array.isArray(args[0])) args = args[0]; return args.reduce((a, b) => (Number(b) > Number(a) ? b : a)); };\n");
+        out.push_str("globalThis.min ??= (...args) => { if (args.length === 1 && Array.isArray(args[0])) args = args[0]; return args.reduce((a, b) => (Number(b) < Number(a) ? b : a)); };\n");
+        out.push_str("globalThis.is_int ??= (v) => typeof v === 'number' && Number.isInteger(v);\n");
+        out.push_str("globalThis.is_float ??= (v) => typeof v === 'number' && !Number.isInteger(v);\n");
+        out.push_str("globalThis.is_numeric ??= (v) => v !== null && v !== '' && !isNaN(Number(v));\n");
+        out.push_str("globalThis.is_string ??= (v) => typeof v === 'string';\n");
+        out.push_str("globalThis.is_object ??= (v) => v !== null && typeof v === 'object' && !Array.isArray(v);\n");
+        out.push_str("globalThis.gettype ??= (v) => { if (v === null) return 'NULL'; if (typeof v === 'boolean') return 'boolean'; if (typeof v === 'number') return Number.isInteger(v) ? 'integer' : 'double'; if (typeof v === 'string') return 'string'; if (Array.isArray(v)) return 'array'; if (typeof v === 'object') return 'object'; return 'unknown type'; };\n");
+        out.push_str("globalThis.get_object_vars ??= (v) => { if (!v || typeof v !== 'object') return {}; const out = {}; for (const k of Object.keys(v)) { if (k !== '__struct') out[k] = v[k]; } return out; };\n");
+        out.push_str("globalThis.mt_rand ??= (min, max) => { const lo = Number(min ?? 0); const hi = Number(max ?? 2147483647); return Math.floor(Math.random() * (hi - lo + 1)) + lo; };\n");
+        // PHP string/time builtins.
+        out.push_str("globalThis.ltrim ??= (s, chars) => { const str = String(s ?? ''); if (!chars) return str.replace(/^\\s+/, ''); const esc = String(chars).replace(/[-[\\]{}()*+?.,\\\\^$|#\\s]/g, '\\\\$&'); return str.replace(new RegExp('^[' + esc + ']+'), ''); };\n");
+        out.push_str("globalThis.rtrim ??= (s, chars) => { const str = String(s ?? ''); if (!chars) return str.replace(/\\s+$/, ''); const esc = String(chars).replace(/[-[\\]{}()*+?.,\\\\^$|#\\s]/g, '\\\\$&'); return str.replace(new RegExp('[' + esc + ']+$'), ''); };\n");
+        out.push_str("globalThis.str_replace ??= (search, replace, subject) => { let s = String(subject ?? ''); if (Array.isArray(search)) { for (let i = 0; i < search.length; i++) { const r = Array.isArray(replace) ? (replace[i] ?? '') : String(replace ?? ''); s = s.split(String(search[i])).join(r); } return s; } return s.split(String(search ?? '')).join(String(replace ?? '')); };\n");
+        out.push_str("globalThis.preg_match ??= (pattern, subject, matches) => { const src = String(pattern ?? ''); const lastSlash = src.lastIndexOf('/'); const flags = lastSlash > 0 ? src.slice(lastSlash + 1) : ''; const pat = lastSlash > 0 ? src.slice(1, lastSlash) : src.slice(1); try { const re = new RegExp(pat, flags.replace('u', '') + (flags.includes('u') ? 'u' : '') ); const m = re.exec(String(subject ?? '')); if (!m) return 0; return 1; } catch(_) { return 0; } };\n");
+        out.push_str("globalThis.preg_replace ??= (pattern, replacement, subject) => { const src = String(pattern ?? ''); const lastSlash = src.lastIndexOf('/'); const flags = (lastSlash > 0 ? src.slice(lastSlash + 1) : '') + 'g'; const pat = lastSlash > 0 ? src.slice(1, lastSlash) : src.slice(1); try { const re = new RegExp(pat, flags); return String(subject ?? '').replace(re, String(replacement ?? '')); } catch(_) { return String(subject ?? ''); } };\n");
+        out.push_str("globalThis.rawurlencode ??= (s) => encodeURIComponent(String(s ?? '')).replace(/!/g, '%21').replace(/'/g, '%27').replace(/\\(/g, '%28').replace(/\\)/g, '%29').replace(/\\*/g, '%2A');\n");
+        out.push_str("globalThis.parse_url ??= (url, component) => { try { const u = new URL(String(url ?? ''), 'http://x'); const map = { scheme: u.protocol.replace(':',''), host: u.hostname, port: u.port ? parseInt(u.port) : undefined, path: u.pathname, query: u.search ? u.search.slice(1) : undefined, fragment: u.hash ? u.hash.slice(1) : undefined }; if (component !== undefined && component !== null) { const names = ['scheme','host','path','port','user','pass','query','fragment']; return map[names[component]] ?? null; } return map; } catch(_) { return false; } };\n");
+        out.push_str("globalThis.dechex ??= (n) => (Number(n) >>> 0).toString(16);\n");
+        out.push_str("globalThis.hexdec ??= (s) => parseInt(String(s ?? ''), 16) || 0;\n");
+        out.push_str("globalThis.pack ??= (format, ...values) => { const fmt = String(format ?? ''); let out = ''; let vi = 0; for (let i = 0; i < fmt.length; i++) { const c = fmt[i]; if (c === 'H') { const hex = String(values[vi++] ?? ''); for (let j = 0; j < hex.length; j += 2) out += String.fromCharCode(parseInt(hex.slice(j, j+2), 16)); } else if (c === 'N') { const n = Number(values[vi++] ?? 0) >>> 0; out += String.fromCharCode((n>>24)&0xff,(n>>16)&0xff,(n>>8)&0xff,n&0xff); } else if (c === 'n') { const n = Number(values[vi++] ?? 0) & 0xffff; out += String.fromCharCode((n>>8)&0xff,n&0xff); } else if (c === 'C') { out += String.fromCharCode(Number(values[vi++] ?? 0) & 0xff); } } return out; };\n");
+        out.push_str("globalThis.microtime ??= (as_float) => { const t = Date.now(); if (as_float) return t / 1000; const sec = Math.floor(t / 1000); const msec = (t % 1000) / 1000; return msec.toFixed(6) + ' ' + sec; };\n");
+        out.push_str("globalThis.strtotime ??= (s) => { if (!s) return false; const d = new Date(String(s)); return isNaN(d.getTime()) ? false : Math.floor(d.getTime() / 1000); };\n");
+        out.push_str("globalThis.__phpx_date_format ??= (fmt, ts) => { const d = ts !== undefined && ts !== null ? new Date(Number(ts) * 1000) : new Date(); const p = (n, w) => String(n).padStart(w || 2, '0'); const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']; const months = ['January','February','March','April','May','June','July','August','September','October','November','December']; let out = ''; for (let i = 0; i < fmt.length; i++) { const c = fmt[i]; switch(c) { case 'Y': out += d.getFullYear(); break; case 'y': out += String(d.getFullYear()).slice(-2); break; case 'm': out += p(d.getMonth()+1); break; case 'd': out += p(d.getDate()); break; case 'H': out += p(d.getHours()); break; case 'i': out += p(d.getMinutes()); break; case 's': out += p(d.getSeconds()); break; case 'n': out += d.getMonth()+1; break; case 'j': out += d.getDate(); break; case 'G': out += d.getHours(); break; case 'N': out += d.getDay()||7; break; case 'w': out += d.getDay(); break; case 'l': out += days[d.getDay()]; break; case 'D': out += days[d.getDay()].slice(0,3); break; case 'F': out += months[d.getMonth()]; break; case 'M': out += months[d.getMonth()].slice(0,3); break; case 't': out += new Date(d.getFullYear(),d.getMonth()+1,0).getDate(); break; case 'U': out += Math.floor(d.getTime()/1000); break; case 'e': case 'T': out += 'UTC'; break; case 'Z': out += -d.getTimezoneOffset()*60; break; case 'c': out += d.toISOString().replace(/\\.\\d{3}Z$/, '+00:00'); break; case 'r': out += d.toUTCString(); break; case 'L': { const y = d.getFullYear(); out += ((y%4===0&&y%100!==0)||(y%400===0)) ? '1' : '0'; break; } default: out += c; } } return out; };\n");
+        out.push_str("globalThis.date ??= (fmt, ts) => globalThis.__phpx_date_format(String(fmt ?? ''), ts);\n");
+        out.push_str("globalThis.gmdate ??= (fmt, ts) => { const d = ts !== undefined && ts !== null ? new Date(Number(ts) * 1000) : new Date(); return globalThis.__phpx_date_format(String(fmt ?? ''), Math.floor(d.getTime()/1000)); };\n");
+        out.push_str("globalThis.error_log ??= (msg, type, dest) => { if (type === 3 && dest) { try { const fs = (typeof __dekaFs !== 'undefined' && __dekaFs) ? __dekaFs : null; if (fs && typeof fs.appendFileSync === 'function') { fs.appendFileSync(String(dest), String(msg ?? '')); return true; } } catch(_) {} } console.error(String(msg ?? '')); return true; };\n");
+        out.push_str("globalThis.error_get_last ??= () => null;\n");
+        out.push_str("globalThis.set_error_handler ??= () => null;\n");
+        out.push_str("globalThis.register_shutdown_function ??= () => undefined;\n");
+        out.push_str("globalThis.array_slice ??= (arr, offset, length, preserve_keys) => { if (!Array.isArray(arr)) { const keys = Object.keys(arr); const sl = length !== undefined && length !== null ? keys.slice(Number(offset), Number(offset) + Number(length)) : keys.slice(Number(offset)); if (preserve_keys) { const out = {}; for (const k of sl) out[k] = arr[k]; return out; } return sl.map(k => arr[k]); } return length !== undefined && length !== null ? arr.slice(Number(offset), Number(offset) + Number(length)) : arr.slice(Number(offset)); };\n");
+        out.push_str("globalThis.htmlspecialchars ??= (s, _flags, _enc, _double) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&#039;');\n");
+        // PHP serve adapter helper — allows PHPX template files to export themselves as ESM handlers.
+        out.push_str("globalThis.servePhp ??= (path) => { if (globalThis.__dekaPhp && typeof globalThis.__dekaPhp.servePhp === 'function') { return globalThis.__dekaPhp.servePhp(String(path || '')); } return null; };\n");
+        // PHP output buffering — enables echo/header() pattern in $app request handlers.
+        out.push_str("globalThis.__phpxCurrentResponse ??= { status: 200, headers: {}, body: '' };\n");
+        out.push_str("globalThis.header ??= (str) => { const s = String(str ?? ''); if (/^HTTP\\/[0-9]/i.test(s)) { const m = s.match(/^HTTP\\/[0-9.]+\\s+(\\d+)/i); if (m) globalThis.__phpxCurrentResponse.status = parseInt(m[1]); } else { const colon = s.indexOf(':'); if (colon > 0) { const name = s.slice(0, colon).trim().toLowerCase(); const value = s.slice(colon + 1).trim(); if (name === 'location' && globalThis.__phpxCurrentResponse.status === 200) globalThis.__phpxCurrentResponse.status = 302; globalThis.__phpxCurrentResponse.headers[name] = value; } } };\n");
+        out.push_str("globalThis.__phpxPrintOrig ??= null;\n");
+        out.push_str("globalThis.phpxStartBuffer ??= () => { globalThis.__phpxCurrentResponse = { status: 200, headers: {}, body: '' }; if (!globalThis.__phpxPrintOrig) { globalThis.__phpxPrintOrig = globalThis.__dekaPrint; } globalThis.__dekaPrint = (v) => { globalThis.__phpxCurrentResponse.body += String(v ?? ''); }; };\n");
+        out.push_str("globalThis.phpxEndBuffer ??= () => { if (globalThis.__phpxPrintOrig) { globalThis.__dekaPrint = globalThis.__phpxPrintOrig; globalThis.__phpxPrintOrig = null; } return globalThis.__phpxCurrentResponse; };\n");
+        // Wrap a PHP-style echo/header handler so it always returns the buffered response.
+        out.push_str("globalThis.phpxWrapHandler ??= (fn) => async (req, ctx) => { phpxStartBuffer(); try { const r = await fn(req, ctx); if (r != null) return r; } catch(_e) { Deno.core.print('[phpxWrap] error: ' + String(_e) + (_e && _e.stack ? '\\n' + String(_e.stack) : '') + '\\n', true); } return phpxEndBuffer(); };\n\n");
 
         let mut imports = self.meta.imports.clone();
         if self.uses_jsx_runtime {
@@ -760,6 +823,7 @@ impl<'a> JsSubsetEmitter<'a> {
                 }
 
                 self.push_scope();
+                self.function_scope_entry.push(self.scopes.len() - 1);
                 for p in *params {
                     self.declare_in_scope(&self.token_name(p.name));
                 }
@@ -767,6 +831,7 @@ impl<'a> JsSubsetEmitter<'a> {
                 for inner in *body {
                     self.emit_stmt(*inner)?;
                 }
+                self.function_scope_entry.pop();
                 self.pop_scope();
 
                 self.body.push_str("}\n\n");
@@ -1093,7 +1158,16 @@ impl<'a> JsSubsetEmitter<'a> {
             Stmt::Expression { expr, .. } => {
                 if let Some((name, rhs)) = self.assignment_to_named_var(*expr)? {
                     let top_level = self.scopes.len() == 1;
-                    if !self.is_declared(&name) {
+                    // Use function-local scope check when inside a function body:
+                    // PHP variables are always function-scoped, so `$x = v` inside
+                    // a function always creates a NEW local `x`, even if there is a
+                    // module-level binding with the same name (e.g. an import).
+                    let already_declared = if !self.function_scope_entry.is_empty() {
+                        self.is_declared_in_current_function(&name)
+                    } else {
+                        self.is_declared(&name)
+                    };
+                    if !already_declared {
                         self.declare_in_scope(&name);
                         self.body.push_str(&format!("let {} = {};\n", name, rhs));
                         if top_level {
@@ -1958,6 +2032,7 @@ impl<'a> JsSubsetEmitter<'a> {
     ) -> Result<String, String> {
         let saved = std::mem::take(&mut self.body);
         self.push_scope();
+        self.function_scope_entry.push(self.scopes.len() - 1);
         for param in params {
             self.declare_in_scope(&self.token_name(param.name));
         }
@@ -1968,6 +2043,7 @@ impl<'a> JsSubsetEmitter<'a> {
         for stmt in stmts {
             self.emit_stmt(*stmt)?;
         }
+        self.function_scope_entry.pop();
         self.pop_scope();
         let block = std::mem::take(&mut self.body);
         self.body = saved;
@@ -2592,6 +2668,20 @@ impl<'a> JsSubsetEmitter<'a> {
 
     fn is_declared(&self, name: &str) -> bool {
         for scope in self.scopes.iter().rev() {
+            if scope.contains(name) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Like `is_declared` but only checks scopes within the current function
+    /// body (i.e., scopes at or above the function entry scope index).  This
+    /// ensures PHP-style function-local variables always get `let` declarations,
+    /// even when an outer (module-level) import or variable has the same name.
+    fn is_declared_in_current_function(&self, name: &str) -> bool {
+        let start = self.function_scope_entry.last().copied().unwrap_or(0);
+        for scope in self.scopes[start..].iter().rev() {
             if scope.contains(name) {
                 return true;
             }
