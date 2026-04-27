@@ -31,7 +31,9 @@ async fn handle_request(
     let path = request.uri().path().to_string();
 
     // ── Built-in REST API (/api/*) — skip V8 isolate entirely ──
-    if path.starts_with("/api/") || path == "/api" {
+    // Only active when DEKA_PLATFORM_API=1 (set by `deka platform`).
+    // Standalone `deka serve` apps own their own /api/* routes.
+    if platform_api_enabled() && (path.starts_with("/api/") || path == "/api") {
         let mut headers = Vec::with_capacity(request.headers().len());
         for (key, value) in request.headers().iter() {
             headers.push((
@@ -192,6 +194,15 @@ async fn handle_request(
 
 fn dev_mode_enabled() -> bool {
     std::env::var("DEKA_DEV")
+        .map(|value| is_truthy(&value))
+        .unwrap_or(false)
+}
+
+/// Returns true when the built-in /api/* platform handler should be active.
+/// Set DEKA_PLATFORM_API=1 in the deka platform launchd plist.
+/// `deka serve` leaves this unset so PHPX apps own their own /api/* routes.
+fn platform_api_enabled() -> bool {
+    std::env::var("DEKA_PLATFORM_API")
         .map(|value| is_truthy(&value))
         .unwrap_or(false)
 }

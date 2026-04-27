@@ -29,15 +29,21 @@ pub(crate) fn resolve(
     let url = if range.is_empty() || range == "latest" || range == "*" {
         format!("{}/api/scoped-packages/{}/{}/latest", registry_url, scope, pkg_name)
     } else {
-        // Strip semver range prefixes for the API query
+        // Strip semver range prefixes to get the clean version string
         let clean = range
             .trim_start_matches('^')
             .trim_start_matches('~')
             .trim_start_matches(">=");
-        format!(
-            "{}/api/scoped-packages/{}/{}/resolve?range={}",
-            registry_url, scope, pkg_name, clean
-        )
+        // If clean looks like an exact semver (digits.digits.digits), fetch directly.
+        // Otherwise use the /resolve?range= endpoint for range queries.
+        if is_exact_version(clean) {
+            format!("{}/api/scoped-packages/{}/{}/{}", registry_url, scope, pkg_name, clean)
+        } else {
+            format!(
+                "{}/api/scoped-packages/{}/{}/resolve?range={}",
+                registry_url, scope, pkg_name, clean
+            )
+        }
     };
 
     let mut req = http.get(&url);
@@ -110,4 +116,11 @@ pub(crate) fn list_versions(
         .unwrap_or_default();
 
     Ok(versions)
+}
+
+/// Returns true if `v` looks like an exact semver (e.g. "1.2.3", "0.1.0").
+/// Does not accept range prefixes (^, ~, >=).
+fn is_exact_version(v: &str) -> bool {
+    let parts: Vec<&str> = v.split('.').collect();
+    parts.len() == 3 && parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
 }

@@ -401,10 +401,11 @@ async fn run_publish(request: PublishRequest) -> Result<()> {
         bail!("publish failed ({}): {}", status, err_msg);
     }
 
+    // Registry may return the release object directly or nested under "release".
     let release = payload
         .get("release")
         .cloned()
-        .unwrap_or_else(|| serde_json::Value::Null);
+        .unwrap_or_else(|| payload.clone());
 
     let package = release
         .get("package_name")
@@ -473,8 +474,14 @@ fn validate_scoped_package_name(name: &str) -> Result<()> {
 
 fn derive_repo_from_name(name: &str) -> Result<String> {
     validate_scoped_package_name(name)?;
+    // @scope/package -> package (registry repos are keyed by package name only,
+    // owner/scope is derived from the authenticated token)
     let without_at = &name[1..]; // strip leading @
-    Ok(without_at.to_string()) // @tana/store -> tana/store
+    if let Some(slash) = without_at.find('/') {
+        Ok(without_at[slash + 1..].to_string()) // @tana/store -> store
+    } else {
+        Ok(without_at.to_string())
+    }
 }
 
 #[derive(Clone)]
