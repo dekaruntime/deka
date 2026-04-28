@@ -558,17 +558,16 @@ impl<'a> JsSubsetEmitter<'a> {
         // PHP math and type builtins.
         out.push_str("globalThis.max ??= (...args) => { if (args.length === 1 && Array.isArray(args[0])) args = args[0]; return args.reduce((a, b) => (Number(b) > Number(a) ? b : a)); };\n");
         out.push_str("globalThis.min ??= (...args) => { if (args.length === 1 && Array.isArray(args[0])) args = args[0]; return args.reduce((a, b) => (Number(b) < Number(a) ? b : a)); };\n");
-        out.push_str("globalThis.is_int ??= (v) => typeof v === 'number' && Number.isInteger(v);\n");
-        out.push_str("globalThis.is_float ??= (v) => typeof v === 'number' && !Number.isInteger(v);\n");
-        out.push_str("globalThis.is_numeric ??= (v) => v !== null && v !== '' && !isNaN(Number(v));\n");
-        out.push_str("globalThis.is_string ??= (v) => typeof v === 'string';\n");
-        out.push_str("globalThis.is_object ??= (v) => v !== null && typeof v === 'object' && !Array.isArray(v);\n");
+        // is_int / is_float / is_numeric / is_string / is_object are compile-time rewrites
+        // in try_rewrite_builtin (IIFE binding the arg once). No globalThis polyfill needed.
         out.push_str("globalThis.gettype ??= (v) => { if (v === null) return 'NULL'; if (typeof v === 'boolean') return 'boolean'; if (typeof v === 'number') return Number.isInteger(v) ? 'integer' : 'double'; if (typeof v === 'string') return 'string'; if (Array.isArray(v)) return 'array'; if (typeof v === 'object') return 'object'; return 'unknown type'; };\n");
         out.push_str("globalThis.get_object_vars ??= (v) => { if (!v || typeof v !== 'object') return {}; const out = {}; for (const k of Object.keys(v)) { if (k !== '__struct') out[k] = v[k]; } return out; };\n");
         out.push_str("globalThis.mt_rand ??= (min, max) => { const lo = Number(min ?? 0); const hi = Number(max ?? 2147483647); return Math.floor(Math.random() * (hi - lo + 1)) + lo; };\n");
         // PHP string/time builtins.
-        out.push_str("globalThis.ltrim ??= (s, chars) => { const str = String(s ?? ''); if (!chars) return str.replace(/^\\s+/, ''); const esc = String(chars).replace(/[-[\\]{}()*+?.,\\\\^$|#\\s]/g, '\\\\$&'); return str.replace(new RegExp('^[' + esc + ']+'), ''); };\n");
-        out.push_str("globalThis.rtrim ??= (s, chars) => { const str = String(s ?? ''); if (!chars) return str.replace(/\\s+$/, ''); const esc = String(chars).replace(/[-[\\]{}()*+?.,\\\\^$|#\\s]/g, '\\\\$&'); return str.replace(new RegExp('[' + esc + ']+$'), ''); };\n");
+        // ltrim / rtrim are compile-time rewrites in try_rewrite_builtin (no $chars form).
+        // The $chars form falls back to globalThis via the unknown-call path, but that is
+        // only reached when 2 args are passed; the 1-arg no-chars form is the common case
+        // and is rewritten inline. No globalThis polyfill emitted here.
         out.push_str("globalThis.str_replace ??= (search, replace, subject) => { let s = String(subject ?? ''); if (Array.isArray(search)) { for (let i = 0; i < search.length; i++) { const r = Array.isArray(replace) ? (replace[i] ?? '') : String(replace ?? ''); s = s.split(String(search[i])).join(r); } return s; } return s.split(String(search ?? '')).join(String(replace ?? '')); };\n");
         out.push_str("globalThis.preg_match ??= (pattern, subject, matches) => { const src = String(pattern ?? ''); const lastSlash = src.lastIndexOf('/'); const flags = lastSlash > 0 ? src.slice(lastSlash + 1) : ''; const pat = lastSlash > 0 ? src.slice(1, lastSlash) : src.slice(1); try { const re = new RegExp(pat, flags.replace('u', '') + (flags.includes('u') ? 'u' : '') ); const m = re.exec(String(subject ?? '')); if (!m) return 0; return 1; } catch(_) { return 0; } };\n");
         out.push_str("globalThis.preg_replace ??= (pattern, replacement, subject) => { const src = String(pattern ?? ''); const lastSlash = src.lastIndexOf('/'); const flags = (lastSlash > 0 ? src.slice(lastSlash + 1) : '') + 'g'; const pat = lastSlash > 0 ? src.slice(1, lastSlash) : src.slice(1); try { const re = new RegExp(pat, flags); return String(subject ?? '').replace(re, String(replacement ?? '')); } catch(_) { return String(subject ?? ''); } };\n");
@@ -2331,6 +2330,46 @@ impl<'a> JsSubsetEmitter<'a> {
                     a[0]
                 )))
             }
+            // is_int($x) -> IIFE to bind arg once: typeof __v === "number" && Number.isInteger(__v)
+            "is_int" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "(() => {{ const __v = {}; return typeof __v === \"number\" && Number.isInteger(__v); }})()",
+                    a[0]
+                )))
+            }
+            // is_float($x) -> IIFE: typeof __v === "number" && !Number.isInteger(__v)
+            "is_float" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "(() => {{ const __v = {}; return typeof __v === \"number\" && !Number.isInteger(__v); }})()",
+                    a[0]
+                )))
+            }
+            // is_numeric($x) -> IIFE: __v !== '' && !isNaN(Number(__v))
+            "is_numeric" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "(() => {{ const __v = {}; return __v !== \"\" && !isNaN(Number(__v)); }})()",
+                    a[0]
+                )))
+            }
+            // is_string($x) -> IIFE: typeof __v === "string"
+            "is_string" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "(() => {{ const __v = {}; return typeof __v === \"string\"; }})()",
+                    a[0]
+                )))
+            }
+            // is_object($x) -> IIFE: __v != null && typeof __v === "object" && !Array.isArray(__v)
+            "is_object" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "(() => {{ const __v = {}; return __v != null && typeof __v === \"object\" && !Array.isArray(__v); }})()",
+                    a[0]
+                )))
+            }
             _ => Ok(None),
         }
     }
@@ -3474,6 +3513,12 @@ $result = match ($x) {
         assert!(!js.contains("globalThis.is_array ="), "globalThis.is_array polyfill should be removed");
         assert!(!js.contains("globalThis.array_keys ??="), "globalThis.array_keys polyfill should not be added");
         assert!(!js.contains("globalThis.array_values ??="), "globalThis.array_values polyfill should not be added");
+        // Type predicates are compile-time IIFE rewrites — no globalThis polyfill.
+        assert!(!js.contains("globalThis.is_int ??="), "globalThis.is_int polyfill should be removed");
+        assert!(!js.contains("globalThis.is_float ??="), "globalThis.is_float polyfill should be removed");
+        assert!(!js.contains("globalThis.is_numeric ??="), "globalThis.is_numeric polyfill should be removed");
+        assert!(!js.contains("globalThis.is_string ??="), "globalThis.is_string polyfill should be removed");
+        assert!(!js.contains("globalThis.is_object ??="), "globalThis.is_object polyfill should be removed");
         // But kept entries should still be present
         assert!(js.contains("globalThis.panic ??="), "globalThis.panic should still be in prelude");
         assert!(js.contains("globalThis.defined ??="), "globalThis.defined should still be in prelude");
@@ -3918,8 +3963,13 @@ function f(): void {
     #[test]
     fn function_with_typed_params_types_erased() {
         let js = phpx_to_js("function add($a: int, $b: int): int { return $a + $b; }").expect("should compile");
+        // The function signature must not carry type annotations.
         assert!(js.contains("function add(a, b)"), "expected types erased in params, got:\n{}", js);
-        assert!(!js.contains("int"), "types should be erased, got:\n{}", js);
+        // The word "int" must not appear inside the function signature itself.
+        // (The prelude legitimately contains "parseInt" / "Number.isInteger" / "integer", so
+        // we cannot assert the whole output is free of "int".)
+        assert!(!js.contains("function add(a: int") && !js.contains(": int)") && !js.contains(", b: int"),
+            "type annotation must be erased from the function signature, got:\n{}", js);
     }
 
     #[test]
@@ -4694,5 +4744,38 @@ function f(): void {
     fn negative_number_literal() {
         let js = phpx_to_js("function f(): int { return -42; }").expect("should compile");
         assert!(js.contains("-") && js.contains("42"), "expected negative number, got:\n{}", js);
+    }
+
+    // ---- Type predicate IIFE: arg evaluated exactly once ----
+
+    #[test]
+    fn type_predicates_evaluate_arg_exactly_once() {
+        // Each type predicate must bind the argument into __v once via an IIFE so that a
+        // side-effecting call-expression arg is only evaluated a single time.
+        // The snippets are wrapped in a function so the arg variable doesn't get mirrored
+        // onto globalThis (which would add an extra globalThis.consume_token reference).
+        let cases = [
+            ("is_int",     "function chk(): bool { return is_int(consume_token()); }"),
+            ("is_float",   "function chk(): bool { return is_float(consume_token()); }"),
+            ("is_numeric", "function chk(): bool { return is_numeric(consume_token()); }"),
+            ("is_string",  "function chk(): bool { return is_string(consume_token()); }"),
+            ("is_object",  "function chk(): bool { return is_object(consume_token()); }"),
+        ];
+        for (builtin, src) in cases {
+            let js = phpx_to_js(src).expect(&format!("{} should compile", builtin));
+            // The arg expression must appear exactly once — the IIFE binds it to __v.
+            let call_count = js.matches("consume_token()").count();
+            assert_eq!(
+                call_count, 1,
+                "{}: expected exactly 1 occurrence of consume_token() in emitted JS (got {}), JS:\n{}",
+                builtin, call_count, js
+            );
+            // Confirm the IIFE shape: `const __v =` binding must be present.
+            assert!(
+                js.contains("const __v"),
+                "{}: expected IIFE binding `const __v` in emitted JS, got:\n{}",
+                builtin, js
+            );
+        }
     }
 }
