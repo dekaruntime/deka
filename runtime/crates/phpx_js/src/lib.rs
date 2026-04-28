@@ -510,6 +510,9 @@ impl<'a> JsSubsetEmitter<'a> {
         // strpos, strrpos, str_starts_with, str_ends_with, str_contains,
         // strtolower, strtoupper, array_key_exists, in_array, explode, implode,
         // count, time, is_array — now compile-time rewrites in emit_expr.
+        // Batch 2 removals: array_slice, gettype, get_object_vars, mt_rand,
+        // microtime, strtotime, preg_match, preg_replace, parse_url,
+        // intval, floatval, boolval, strval — now compile-time rewrites in try_rewrite_builtin.
 
         // --- Class (c): mission helpers (continued) ---
         out.push_str("globalThis.getenv ??= (name) => { const key = String(name ?? ''); const env = globalThis.process && globalThis.process.env ? globalThis.process.env : null; if (!env || !Object.prototype.hasOwnProperty.call(env, key)) return false; const value = env[key]; return value === undefined || value === null ? false : String(value); };\n");
@@ -559,23 +562,22 @@ impl<'a> JsSubsetEmitter<'a> {
         // max / min are compile-time rewrites in try_rewrite_builtin. No globalThis polyfill needed.
         // is_int / is_float / is_numeric / is_string / is_object are compile-time rewrites
         // in try_rewrite_builtin (IIFE binding the arg once). No globalThis polyfill needed.
-        out.push_str("globalThis.gettype ??= (v) => { if (v === null) return 'NULL'; if (typeof v === 'boolean') return 'boolean'; if (typeof v === 'number') return Number.isInteger(v) ? 'integer' : 'double'; if (typeof v === 'string') return 'string'; if (Array.isArray(v)) return 'array'; if (typeof v === 'object') return 'object'; return 'unknown type'; };\n");
-        out.push_str("globalThis.get_object_vars ??= (v) => { if (!v || typeof v !== 'object') return {}; const out = {}; for (const k of Object.keys(v)) { if (k !== '__struct') out[k] = v[k]; } return out; };\n");
-        out.push_str("globalThis.mt_rand ??= (min, max) => { const lo = Number(min ?? 0); const hi = Number(max ?? 2147483647); return Math.floor(Math.random() * (hi - lo + 1)) + lo; };\n");
+        // gettype / get_object_vars / mt_rand are compile-time rewrites in try_rewrite_builtin.
+        // No globalThis polyfill needed.
         // PHP string/time builtins.
         // ltrim / rtrim are compile-time rewrites in try_rewrite_builtin (no $chars form).
         // The $chars form falls back to globalThis via the unknown-call path, but that is
         // only reached when 2 args are passed; the 1-arg no-chars form is the common case
         // and is rewritten inline. No globalThis polyfill emitted here.
         // str_replace is a compile-time rewrite in try_rewrite_builtin. No globalThis polyfill needed.
-        out.push_str("globalThis.preg_match ??= (pattern, subject, matches) => { const src = String(pattern ?? ''); const lastSlash = src.lastIndexOf('/'); const flags = lastSlash > 0 ? src.slice(lastSlash + 1) : ''; const pat = lastSlash > 0 ? src.slice(1, lastSlash) : src.slice(1); try { const re = new RegExp(pat, flags.replace('u', '') + (flags.includes('u') ? 'u' : '') ); const m = re.exec(String(subject ?? '')); if (!m) return 0; return 1; } catch(_) { return 0; } };\n");
-        out.push_str("globalThis.preg_replace ??= (pattern, replacement, subject) => { const src = String(pattern ?? ''); const lastSlash = src.lastIndexOf('/'); const flags = (lastSlash > 0 ? src.slice(lastSlash + 1) : '') + 'g'; const pat = lastSlash > 0 ? src.slice(1, lastSlash) : src.slice(1); try { const re = new RegExp(pat, flags); return String(subject ?? '').replace(re, String(replacement ?? '')); } catch(_) { return String(subject ?? ''); } };\n");
+        // preg_match / preg_replace are compile-time rewrites in try_rewrite_builtin.
+        // No globalThis polyfill needed.
         // rawurlencode is a compile-time rewrite in JsSubsetEmitter::emit_builtin_call.
-        out.push_str("globalThis.parse_url ??= (url, component) => { try { const u = new URL(String(url ?? ''), 'http://x'); const map = { scheme: u.protocol.replace(':',''), host: u.hostname, port: u.port ? parseInt(u.port) : undefined, path: u.pathname, query: u.search ? u.search.slice(1) : undefined, fragment: u.hash ? u.hash.slice(1) : undefined }; if (component !== undefined && component !== null) { const names = ['scheme','host','path','port','user','pass','query','fragment']; return map[names[component]] ?? null; } return map; } catch(_) { return false; } };\n");
+        // parse_url is a compile-time rewrite in try_rewrite_builtin. No globalThis polyfill needed.
         // dechex/hexdec are compile-time rewrites in JsSubsetEmitter::emit_builtin_call.
         out.push_str("globalThis.pack ??= (format, ...values) => { const fmt = String(format ?? ''); let out = ''; let vi = 0; for (let i = 0; i < fmt.length; i++) { const c = fmt[i]; if (c === 'H') { const hex = String(values[vi++] ?? ''); for (let j = 0; j < hex.length; j += 2) out += String.fromCharCode(parseInt(hex.slice(j, j+2), 16)); } else if (c === 'N') { const n = Number(values[vi++] ?? 0) >>> 0; out += String.fromCharCode((n>>24)&0xff,(n>>16)&0xff,(n>>8)&0xff,n&0xff); } else if (c === 'n') { const n = Number(values[vi++] ?? 0) & 0xffff; out += String.fromCharCode((n>>8)&0xff,n&0xff); } else if (c === 'C') { out += String.fromCharCode(Number(values[vi++] ?? 0) & 0xff); } } return out; };\n");
-        out.push_str("globalThis.microtime ??= (as_float) => { const t = Date.now(); if (as_float) return t / 1000; const sec = Math.floor(t / 1000); const msec = (t % 1000) / 1000; return msec.toFixed(6) + ' ' + sec; };\n");
-        out.push_str("globalThis.strtotime ??= (s) => { if (!s) return false; const d = new Date(String(s)); return isNaN(d.getTime()) ? false : Math.floor(d.getTime() / 1000); };\n");
+        // microtime / strtotime are compile-time rewrites in try_rewrite_builtin.
+        // No globalThis polyfill needed.
         out.push_str("globalThis.__phpx_date_format ??= (fmt, ts) => { const d = ts !== undefined && ts !== null ? new Date(Number(ts) * 1000) : new Date(); const p = (n, w) => String(n).padStart(w || 2, '0'); const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']; const months = ['January','February','March','April','May','June','July','August','September','October','November','December']; let out = ''; for (let i = 0; i < fmt.length; i++) { const c = fmt[i]; switch(c) { case 'Y': out += d.getFullYear(); break; case 'y': out += String(d.getFullYear()).slice(-2); break; case 'm': out += p(d.getMonth()+1); break; case 'd': out += p(d.getDate()); break; case 'H': out += p(d.getHours()); break; case 'i': out += p(d.getMinutes()); break; case 's': out += p(d.getSeconds()); break; case 'n': out += d.getMonth()+1; break; case 'j': out += d.getDate(); break; case 'G': out += d.getHours(); break; case 'N': out += d.getDay()||7; break; case 'w': out += d.getDay(); break; case 'l': out += days[d.getDay()]; break; case 'D': out += days[d.getDay()].slice(0,3); break; case 'F': out += months[d.getMonth()]; break; case 'M': out += months[d.getMonth()].slice(0,3); break; case 't': out += new Date(d.getFullYear(),d.getMonth()+1,0).getDate(); break; case 'U': out += Math.floor(d.getTime()/1000); break; case 'e': case 'T': out += 'UTC'; break; case 'Z': out += -d.getTimezoneOffset()*60; break; case 'c': out += d.toISOString().replace(/\\.\\d{3}Z$/, '+00:00'); break; case 'r': out += d.toUTCString(); break; case 'L': { const y = d.getFullYear(); out += ((y%4===0&&y%100!==0)||(y%400===0)) ? '1' : '0'; break; } default: out += c; } } return out; };\n");
         out.push_str("globalThis.date ??= (fmt, ts) => globalThis.__phpx_date_format(String(fmt ?? ''), ts);\n");
         out.push_str("globalThis.gmdate ??= (fmt, ts) => { const d = ts !== undefined && ts !== null ? new Date(Number(ts) * 1000) : new Date(); return globalThis.__phpx_date_format(String(fmt ?? ''), Math.floor(d.getTime()/1000)); };\n");
@@ -583,7 +585,7 @@ impl<'a> JsSubsetEmitter<'a> {
         out.push_str("globalThis.error_get_last ??= () => null;\n");
         out.push_str("globalThis.set_error_handler ??= () => null;\n");
         out.push_str("globalThis.register_shutdown_function ??= () => undefined;\n");
-        out.push_str("globalThis.array_slice ??= (arr, offset, length, preserve_keys) => { if (!Array.isArray(arr)) { const keys = Object.keys(arr); const sl = length !== undefined && length !== null ? keys.slice(Number(offset), Number(offset) + Number(length)) : keys.slice(Number(offset)); if (preserve_keys) { const out = {}; for (const k of sl) out[k] = arr[k]; return out; } return sl.map(k => arr[k]); } return length !== undefined && length !== null ? arr.slice(Number(offset), Number(offset) + Number(length)) : arr.slice(Number(offset)); };\n");
+        // array_slice is a compile-time rewrite in try_rewrite_builtin. No globalThis polyfill needed.
         // htmlspecialchars is a compile-time rewrite in JsSubsetEmitter::emit_builtin_call.
         // PHP serve adapter helper — allows PHPX template files to export themselves as ESM handlers.
         // Mangled __phpx_X name (NOT a plain `servePhp` global) so it can't collide with a user-defined
@@ -2447,6 +2449,134 @@ impl<'a> JsSubsetEmitter<'a> {
                 let a = emit_args(self, args)?;
                 Ok(Some(format!("(parseInt(String({}), 16) || 0)", a[0])))
             }
+            // intval($v) -> Math.trunc(Number($v))
+            // intval($v, $base) -> IIFE with parseInt for non-decimal base
+            "intval" if args.len() >= 1 && args.len() <= 2 => {
+                let a = emit_args(self, args)?;
+                if args.len() == 1 {
+                    Ok(Some(format!("Math.trunc(Number({}))", a[0])))
+                } else {
+                    Ok(Some(format!(
+                        "(() => {{ const __b = Number({}); return __b === 10 ? Math.trunc(Number({})) : (parseInt(String({}), __b) || 0); }})()",
+                        a[1], a[0], a[0]
+                    )))
+                }
+            }
+            // floatval($v) -> parseFloat(String($v))
+            "floatval" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!("parseFloat(String({}))", a[0])))
+            }
+            // boolval($v) -> Boolean($v) with PHP semantics for "0" string
+            // PHP boolval("0") === false; JS Boolean("0") === true — need IIFE
+            "boolval" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "(() => {{ const __v = {}; return __v !== \"0\" && __v !== 0 && __v !== false && __v !== \"\" && __v != null && !(Array.isArray(__v) && __v.length === 0); }})()",
+                    a[0]
+                )))
+            }
+            // strval($v) -> String($v)
+            "strval" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!("String({})", a[0])))
+            }
+            // gettype($v) -> IIFE matching PHP gettype return strings
+            "gettype" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "(() => {{ const __v = {}; if (__v === null || __v === undefined) return \"NULL\"; if (typeof __v === \"boolean\") return \"boolean\"; if (typeof __v === \"number\") return Number.isInteger(__v) ? \"integer\" : \"double\"; if (typeof __v === \"string\") return \"string\"; if (Array.isArray(__v)) return \"array\"; if (typeof __v === \"object\") return \"object\"; return \"unknown type\"; }})()",
+                    a[0]
+                )))
+            }
+            // get_object_vars($v) -> IIFE returning own properties excluding __struct
+            "get_object_vars" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "(() => {{ const __v = {}; if (!__v || typeof __v !== \"object\") return {{}}; const __o = {{}}; for (const __k of Object.keys(__v)) {{ if (__k !== \"__struct\") __o[__k] = __v[__k]; }} return __o; }})()",
+                    a[0]
+                )))
+            }
+            // mt_rand() -> Math.floor(Math.random() * 2147483648)
+            // mt_rand($min, $max) -> Math.floor(Math.random() * (max - min + 1)) + min
+            "mt_rand" if args.len() <= 2 => {
+                let a = emit_args(self, args)?;
+                if args.is_empty() {
+                    Ok(Some("Math.floor(Math.random() * 2147483648)".to_string()))
+                } else if args.len() == 1 {
+                    Ok(Some(format!(
+                        "Math.floor(Math.random() * ({}  + 1))",
+                        a[0]
+                    )))
+                } else {
+                    Ok(Some(format!(
+                        "(() => {{ const __lo = Number({}); const __hi = Number({}); return Math.floor(Math.random() * (__hi - __lo + 1)) + __lo; }})()",
+                        a[0], a[1]
+                    )))
+                }
+            }
+            // microtime($as_float) -> IIFE returning float seconds or "msec sec" string
+            "microtime" if args.len() <= 1 => {
+                if args.is_empty() {
+                    Ok(Some("(() => { const __t = Date.now(); const __sec = Math.floor(__t / 1000); const __msec = (__t % 1000) / 1000; return __msec.toFixed(6) + \" \" + __sec; })()".to_string()))
+                } else {
+                    let a = emit_args(self, args)?;
+                    Ok(Some(format!(
+                        "(() => {{ const __t = Date.now(); if ({}) return __t / 1000; const __sec = Math.floor(__t / 1000); const __msec = (__t % 1000) / 1000; return __msec.toFixed(6) + \" \" + __sec; }})()",
+                        a[0]
+                    )))
+                }
+            }
+            // strtotime($s) -> IIFE wrapping new Date()
+            "strtotime" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "(() => {{ const __s = {}; if (!__s) return false; const __d = new Date(String(__s)); return isNaN(__d.getTime()) ? false : Math.floor(__d.getTime() / 1000); }})()",
+                    a[0]
+                )))
+            }
+            // preg_match($pattern, $subject) -> IIFE with RegExp.exec, returns 0 or 1
+            "preg_match" if args.len() >= 2 && args.len() <= 3 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "(() => {{ const __src = String({}); const __lastSlash = __src.lastIndexOf(\"/\"); const __flags = __lastSlash > 0 ? __src.slice(__lastSlash + 1) : \"\"; const __pat = __lastSlash > 0 ? __src.slice(1, __lastSlash) : __src.slice(1); try {{ const __re = new RegExp(__pat, __flags.replace(\"u\", \"\") + (__flags.includes(\"u\") ? \"u\" : \"\")); const __m = __re.exec(String({})); return __m ? 1 : 0; }} catch(_) {{ return 0; }} }})()",
+                    a[0], a[1]
+                )))
+            }
+            // preg_replace($pattern, $replacement, $subject) -> IIFE with RegExp replace
+            "preg_replace" if args.len() == 3 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "(() => {{ const __src = String({}); const __lastSlash = __src.lastIndexOf(\"/\"); const __flags = (__lastSlash > 0 ? __src.slice(__lastSlash + 1) : \"\") + \"g\"; const __pat = __lastSlash > 0 ? __src.slice(1, __lastSlash) : __src.slice(1); try {{ const __re = new RegExp(__pat, __flags); return String({}).replace(__re, String({})); }} catch(_) {{ return String({}); }} }})()",
+                    a[0], a[2], a[1], a[2]
+                )))
+            }
+            // array_slice($arr, $offset) or array_slice($arr, $offset, $length) -> IIFE
+            "array_slice" if args.len() >= 2 && args.len() <= 4 => {
+                let a = emit_args(self, args)?;
+                let preserve_keys = if args.len() >= 4 { a[3].clone() } else { "false".to_string() };
+                let length_expr = if args.len() >= 3 { format!("const __len = {}; const __hasLen = true;", a[2]) } else { "const __len = undefined; const __hasLen = false;".to_string() };
+                Ok(Some(format!(
+                    "(() => {{ const __arr = {}; const __off = Number({}); {} const __pk = Boolean({}); if (!Array.isArray(__arr)) {{ const __keys = Object.keys(__arr); const __sl = __hasLen ? __keys.slice(__off, __off + __len) : __keys.slice(__off); if (__pk) {{ const __o = {{}}; for (const __k of __sl) __o[__k] = __arr[__k]; return __o; }} return __sl.map(__k => __arr[__k]); }} return __hasLen ? __arr.slice(__off, __off + __len) : __arr.slice(__off); }})()",
+                    a[0], a[1], length_expr, preserve_keys
+                )))
+            }
+            // parse_url($url) -> IIFE wrapping new URL()
+            // parse_url($url, $component) -> IIFE returning specific component
+            "parse_url" if args.len() >= 1 && args.len() <= 2 => {
+                let a = emit_args(self, args)?;
+                if args.len() == 1 {
+                    Ok(Some(format!(
+                        "(() => {{ try {{ const __u = new URL(String({}), \"http://x\"); return {{ scheme: __u.protocol.replace(\":\",\"\"), host: __u.hostname, port: __u.port ? parseInt(__u.port) : undefined, path: __u.pathname, query: __u.search ? __u.search.slice(1) : undefined, fragment: __u.hash ? __u.hash.slice(1) : undefined }}; }} catch(_) {{ return false; }} }})()",
+                        a[0]
+                    )))
+                } else {
+                    Ok(Some(format!(
+                        "(() => {{ try {{ const __u = new URL(String({}), \"http://x\"); const __map = {{ scheme: __u.protocol.replace(\":\",\"\"), host: __u.hostname, port: __u.port ? parseInt(__u.port) : undefined, path: __u.pathname, query: __u.search ? __u.search.slice(1) : undefined, fragment: __u.hash ? __u.hash.slice(1) : undefined }}; const __names = [\"scheme\",\"host\",\"path\",\"port\",\"user\",\"pass\",\"query\",\"fragment\"]; return __map[__names[{}]] ?? null; }} catch(_) {{ return false; }} }})()",
+                        a[0], a[1]
+                    )))
+                }
+            }
             _ => Ok(None),
         }
     }
@@ -3596,6 +3726,16 @@ $result = match ($x) {
         assert!(!js.contains("globalThis.is_numeric ??="), "globalThis.is_numeric polyfill should be removed");
         assert!(!js.contains("globalThis.is_string ??="), "globalThis.is_string polyfill should be removed");
         assert!(!js.contains("globalThis.is_object ??="), "globalThis.is_object polyfill should be removed");
+        // Batch 2 polyfills — now compile-time rewrites.
+        assert!(!js.contains("globalThis.array_slice ??="), "globalThis.array_slice polyfill should be removed");
+        assert!(!js.contains("globalThis.gettype ??="), "globalThis.gettype polyfill should be removed");
+        assert!(!js.contains("globalThis.get_object_vars ??="), "globalThis.get_object_vars polyfill should be removed");
+        assert!(!js.contains("globalThis.mt_rand ??="), "globalThis.mt_rand polyfill should be removed");
+        assert!(!js.contains("globalThis.microtime ??="), "globalThis.microtime polyfill should be removed");
+        assert!(!js.contains("globalThis.strtotime ??="), "globalThis.strtotime polyfill should be removed");
+        assert!(!js.contains("globalThis.preg_match ??="), "globalThis.preg_match polyfill should be removed");
+        assert!(!js.contains("globalThis.preg_replace ??="), "globalThis.preg_replace polyfill should be removed");
+        assert!(!js.contains("globalThis.parse_url ??="), "globalThis.parse_url polyfill should be removed");
         // But kept entries should still be present
         assert!(js.contains("globalThis.panic ??="), "globalThis.panic should still be in prelude");
         assert!(js.contains("globalThis.defined ??="), "globalThis.defined should still be in prelude");
@@ -3718,6 +3858,113 @@ $result = match ($x) {
         let js = phpx_to_js("$s = 'hello...';\n$r = rtrim($s, '.');").expect("should compile");
         assert!(js.contains("new RegExp("), "expected new RegExp for rtrim with chars, got:\n{}", js);
         assert!(!js.contains("globalThis.rtrim"), "should NOT contain globalThis.rtrim, got:\n{}", js);
+    }
+
+    // ---- Batch 2 rewrite tests ----
+
+    #[test]
+    fn rewrite_intval_inline() {
+        let js = phpx_to_js("$v = '42';\n$n = intval($v);").expect("should compile");
+        assert!(js.contains("Math.trunc(Number("), "expected Math.trunc(Number()) for intval, got:\n{}", js);
+        assert!(!js.contains("globalThis.intval"), "should NOT contain globalThis.intval, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_floatval_inline() {
+        let js = phpx_to_js("$v = '3.14';\n$n = floatval($v);").expect("should compile");
+        assert!(js.contains("parseFloat(String("), "expected parseFloat for floatval, got:\n{}", js);
+        assert!(!js.contains("globalThis.floatval"), "should NOT contain globalThis.floatval, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_boolval_inline() {
+        let js = phpx_to_js("$v = '0';\n$b = boolval($v);").expect("should compile");
+        // boolval emits IIFE with PHP "0" === false semantics
+        assert!(js.contains("\"0\""), "expected \"0\" check for boolval PHP semantics, got:\n{}", js);
+        assert!(!js.contains("globalThis.boolval"), "should NOT contain globalThis.boolval, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_strval_inline() {
+        let js = phpx_to_js("$v = 42;\n$s = strval($v);").expect("should compile");
+        assert!(js.contains("String("), "expected String() for strval, got:\n{}", js);
+        assert!(!js.contains("globalThis.strval"), "should NOT contain globalThis.strval, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_gettype_inline() {
+        let js = phpx_to_js("$v = 42;\n$t = gettype($v);").expect("should compile");
+        assert!(js.contains("Number.isInteger"), "expected Number.isInteger check for gettype, got:\n{}", js);
+        assert!(js.contains("\"integer\""), "expected \"integer\" string for gettype, got:\n{}", js);
+        assert!(!js.contains("globalThis.gettype"), "should NOT contain globalThis.gettype, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_get_object_vars_inline() {
+        let js = phpx_to_js("$o = ['x' => 1, 'y' => 2];\n$v = get_object_vars($o);").expect("should compile");
+        assert!(js.contains("Object.keys("), "expected Object.keys for get_object_vars, got:\n{}", js);
+        assert!(js.contains("__struct"), "expected __struct exclusion for get_object_vars, got:\n{}", js);
+        assert!(!js.contains("globalThis.get_object_vars"), "should NOT contain globalThis.get_object_vars, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_mt_rand_two_arg() {
+        let js = phpx_to_js("$n = mt_rand(1, 100);").expect("should compile");
+        assert!(js.contains("Math.random()"), "expected Math.random() for mt_rand, got:\n{}", js);
+        assert!(js.contains("Math.floor("), "expected Math.floor for mt_rand, got:\n{}", js);
+        assert!(!js.contains("globalThis.mt_rand"), "should NOT contain globalThis.mt_rand, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_mt_rand_no_arg() {
+        let js = phpx_to_js("$n = mt_rand();").expect("should compile");
+        assert!(js.contains("Math.random()"), "expected Math.random() for mt_rand(), got:\n{}", js);
+        assert!(!js.contains("globalThis.mt_rand"), "should NOT contain globalThis.mt_rand, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_microtime_float() {
+        let js = phpx_to_js("$t = microtime(true);").expect("should compile");
+        assert!(js.contains("Date.now()"), "expected Date.now() for microtime, got:\n{}", js);
+        assert!(!js.contains("globalThis.microtime"), "should NOT contain globalThis.microtime, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_strtotime_inline() {
+        let js = phpx_to_js("$t = strtotime('2024-01-01');").expect("should compile");
+        assert!(js.contains("new Date("), "expected new Date() for strtotime, got:\n{}", js);
+        assert!(js.contains("isNaN("), "expected isNaN check for strtotime, got:\n{}", js);
+        assert!(!js.contains("globalThis.strtotime"), "should NOT contain globalThis.strtotime, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_preg_match_inline() {
+        let js = phpx_to_js("$n = preg_match('/foo/', 'foobar');").expect("should compile");
+        assert!(js.contains("new RegExp("), "expected new RegExp for preg_match, got:\n{}", js);
+        assert!(js.contains(".exec("), "expected .exec() for preg_match, got:\n{}", js);
+        assert!(!js.contains("globalThis.preg_match"), "should NOT contain globalThis.preg_match, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_preg_replace_inline() {
+        let js = phpx_to_js("$s = preg_replace('/foo/', 'bar', 'foobar');").expect("should compile");
+        assert!(js.contains("new RegExp("), "expected new RegExp for preg_replace, got:\n{}", js);
+        assert!(js.contains(".replace("), "expected .replace() for preg_replace, got:\n{}", js);
+        assert!(!js.contains("globalThis.preg_replace"), "should NOT contain globalThis.preg_replace, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_array_slice_inline() {
+        let js = phpx_to_js("$a = [1, 2, 3, 4, 5];\n$s = array_slice($a, 1, 3);").expect("should compile");
+        assert!(js.contains(".slice("), "expected .slice() for array_slice, got:\n{}", js);
+        assert!(!js.contains("globalThis.array_slice"), "should NOT contain globalThis.array_slice, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_parse_url_inline() {
+        let js = phpx_to_js("$u = parse_url('https://example.com/path?q=1');").expect("should compile");
+        assert!(js.contains("new URL("), "expected new URL() for parse_url, got:\n{}", js);
+        assert!(!js.contains("globalThis.parse_url"), "should NOT contain globalThis.parse_url, got:\n{}", js);
     }
 
     // ---- Phase 3: scope validation warnings ----
