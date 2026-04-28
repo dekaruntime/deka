@@ -1,7 +1,7 @@
 // Minimal PHP runtime module - no Node.js compatibility
 // This provides only the essentials for PHP execution
 
-const { op_php_read_file_sync, op_php_cwd, op_php_file_exists, op_php_path_resolve, op_php_set_privileged } = Deno.core.ops;
+const { op_php_read_file_sync, op_php_cwd, op_php_canonicalize, op_php_file_exists, op_php_path_resolve, op_php_set_privileged } = Deno.core.ops;
 
 // Basic console implementation
 const console = {
@@ -177,10 +177,19 @@ if (!globalThis.fs.existsSync) {
     // Normalise (layer 2).
     const norm = dekaFsNormPath(rawStr);
     if (!norm) return false;
-    // Prefix assertion (layer 3): path must start with tenant root.
-    // Add trailing slash to norm for unambiguous prefix check.
-    const normSlash = norm.endsWith('/') ? norm : norm + '/';
-    return normSlash.startsWith(root) || norm === root.slice(0, -1);
+    // Canonicalize (layer 3) -- resolves symlinks at OS level so a tenant
+    // can't `ln -s /etc/passwd evil` inside their root and bypass the
+    // textual prefix check. Mirrors what _allow in serve.rs does.
+    // For paths that don't yet exist (e.g. about to be created), canonicalize
+    // returns null/throws; fall back to textual norm. The pre-canonicalize
+    // layers (segment reject + normalize) catch traversal in those cases.
+    let canon = null;
+    try { canon = op_php_canonicalize(norm); } catch (_) {}
+    const check = (typeof canon === 'string' && canon) ? canon : norm;
+    // Prefix assertion (layer 4): path must start with tenant root.
+    // Add trailing slash to check for unambiguous prefix check.
+    const checkSlash = check.endsWith('/') ? check : check + '/';
+    return checkSlash.startsWith(root) || check === root.slice(0, -1);
   }
 
   // Install __dekaFs only if not already installed (idempotent).

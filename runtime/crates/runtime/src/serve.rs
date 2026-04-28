@@ -413,7 +413,7 @@ const __dekaFs = (() => {
     }
     // Resolve to absolute.
     let abs = s.startsWith('/') ? s : _rootSlash + s;
-    // Collapse redundant segments (no symlink IO needed here).
+    // Collapse redundant segments (textual pre-canonicalize step).
     const parts = abs.split('/');
     const out = [];
     for (const seg of parts) {
@@ -422,8 +422,17 @@ const __dekaFs = (() => {
       out.push(seg);
     }
     abs = '/' + out.join('/');
-    const absSlash = abs.endsWith('/') ? abs : abs + '/';
-    return absSlash.startsWith(_rootSlash) || abs === _rootSlash.slice(0, -1);
+    // Symlink resolution: use op_php_canonicalize so the OS resolves all
+    // symlinks before the prefix check. Returns null for non-existent paths;
+    // fall through to the textual path so new-file writes inside the root
+    // still work.
+    let canon = null;
+    try {
+      if (typeof op_php_canonicalize === 'function') canon = op_php_canonicalize(abs);
+    } catch (_) {}
+    const check = (typeof canon === 'string' && canon) ? canon : abs;
+    const checkSlash = check.endsWith('/') ? check : check + '/';
+    return checkSlash.startsWith(_rootSlash) || check === _rootSlash.slice(0, -1);
   }
   return {
     statSync: (p) => {
@@ -483,21 +492,18 @@ const __dekaHtml = (status, body) => new Response(body, {
 const __dekaStat = (target) => {
   try {
     if (__dekaFs && typeof __dekaFs.statSync === 'function') return __dekaFs.statSync(target);
-    if (typeof Deno !== 'undefined' && typeof Deno.statSync === 'function') return Deno.statSync(target);
   } catch (_err) {}
   return null;
 };
 const __dekaReadFile = (target) => {
   try {
     if (__dekaFs && typeof __dekaFs.readFileSync === 'function') return __dekaFs.readFileSync(target);
-    if (typeof Deno !== 'undefined' && typeof Deno.readFileSync === 'function') return Deno.readFileSync(target);
   } catch (_err) {}
   return null;
 };
 const __dekaReadDir = (target) => {
   try {
     if (__dekaFs && typeof __dekaFs.readdirSync === 'function') return __dekaFs.readdirSync(target, { withFileTypes: true });
-    if (typeof Deno !== 'undefined' && typeof Deno.readDirSync === 'function') return Array.from(Deno.readDirSync(target));
   } catch (_err) {}
   return null;
 };
@@ -962,5 +968,102 @@ mod tests {
         let port = listener.local_addr().expect("local addr").port();
         let err = ensure_http_port_available(port).expect_err("port should be rejected");
         assert!(err.contains("already in use"), "unexpected error: {}", err);
+    }
+
+    /// Blocker 1 regression: __dekaStat/__dekaReadFile/__dekaReadDir must NOT
+    /// contain Deno.* fallback branches.  If a tenant can shadow globalThis.fs
+    /// to null the helpers must fail-closed (return null) rather than falling
+    /// through to raw Deno ops that bypass the __dekaFs confinement wrapper.
+    #[test]
+    fn static_handler_no_deno_fallbacks_in_helpers() {
+        let code = build_static_handler_code("/srv/static", "index.html", false);
+        assert!(
+            !code.contains("Deno.statSync"),
+            "__dekaStat must not contain Deno.statSync fallback"
+        );
+        assert!(
+            !code.contains("Deno.readFileSync"),
+            "__dekaReadFile must not contain Deno.readFileSync fallback"
+        );
+        assert!(
+            !code.contains("Deno.readDirSync"),
+            "__dekaReadDir must not contain Deno.readDirSync fallback"
+        );
+    }
+
+    /// Blocker 2 companion: verify the static handler _allow guard now calls
+    /// op_php_canonicalize before the prefix check.
+    #[test]
+    fn static_handler_allow_uses_canonicalize() {
+        let code = build_static_handler_code("/srv/static", "index.html", false);
+        assert!(
+            code.contains("op_php_canonicalize"),
+            "_allow guard in __dekaFs must call op_php_canonicalize for symlink resolution"
+        );
+    }
+
+    /// Blocker 2: symlink containment.
+    ///
+    /// Tenant A's root contains a symlink pointing at tenant B's secret file.
+    /// std::fs::canonicalize resolves the symlink; the prefix check then sees
+    /// the real path (outside tenant A's root) and rejects it.
+    ///
+    /// This test validates the Rust-layer logic that backs op_php_canonicalize
+    /// and confirms it is exactly what the JS guard calls.
+    #[test]
+    fn canonicalize_catches_symlink_escape() {
+        use std::fs;
+        use std::os::unix::fs as unix_fs;
+
+        // Create tenant roots. Canonicalize immediately so the macOS
+        // /var -> /private/var symlink does not confuse starts_with.
+        let tmp = std::env::temp_dir();
+        let root_a_pre = tmp.join(format!("deka_test_tenant_a_{}", std::process::id()));
+        let root_b_pre = tmp.join(format!("deka_test_tenant_b_{}", std::process::id()));
+        fs::create_dir_all(&root_a_pre).unwrap();
+        fs::create_dir_all(&root_b_pre).unwrap();
+        let root_a = fs::canonicalize(&root_a_pre).expect("canonicalize root_a");
+        let root_b = fs::canonicalize(&root_b_pre).expect("canonicalize root_b");
+
+        // B has a secret file.
+        let secret_b = root_b.join("secret.txt");
+        fs::write(&secret_b, "B's secret").unwrap();
+
+        // Symlink inside tenant A pointing at B's secret.
+        let symlink_in_a = root_a.join("peek_b");
+        unix_fs::symlink(&secret_b, &symlink_in_a).unwrap();
+
+        // The symlink path PASSES a naive starts_with check (textual).
+        assert!(
+            symlink_in_a.starts_with(&root_a),
+            "sanity: symlink IS inside tenant A's root textually"
+        );
+
+        // std::fs::canonicalize follows the symlink and resolves to B's path.
+        let canonical = fs::canonicalize(&symlink_in_a)
+            .expect("canonicalize must succeed: symlink target exists");
+        assert!(
+            !canonical.starts_with(&root_a),
+            "canonicalized path must NOT be inside tenant A's root: got {}",
+            canonical.display()
+        );
+        assert!(
+            canonical.starts_with(&root_b),
+            "canonicalized path must point inside tenant B's root: got {}",
+            canonical.display()
+        );
+
+        // Verify a legitimate file inside A stays inside A after canonicalize.
+        let real_file_a = root_a.join("real.txt");
+        fs::write(&real_file_a, "A's data").unwrap();
+        let canon_real = fs::canonicalize(&real_file_a).expect("canonicalize real file");
+        assert!(
+            canon_real.starts_with(&root_a),
+            "real file inside A must canonicalize to within A"
+        );
+
+        // Cleanup.
+        let _ = fs::remove_dir_all(&root_a);
+        let _ = fs::remove_dir_all(&root_b);
     }
 }
