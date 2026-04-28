@@ -95,7 +95,7 @@ impl PhpxEsmLoader {
             .to_str()
             .ok_or_else(|| JsErrorBox::generic(format!("invalid path: {}", path.display())))?;
         let source = std::fs::read_to_string(path)
-            .map_err(|err| JsErrorBox::from_err(err))?;
+            .map_err(|err| JsErrorBox::generic(format!("Failed to read {}: {}", path.display(), err)))?;
         let meta = parse_source_module_meta(&source);
         ensure_project_layout(&self.project_root, &meta)
             .map_err(|err| JsErrorBox::generic(err))?;
@@ -166,9 +166,29 @@ impl PhpxEsmLoader {
                 None,
             ));
         }
-        let path = specifier
+        let raw_path = specifier
             .to_file_path()
             .map_err(|_| JsErrorBox::generic("Only file:// URLs are supported"))?;
+        // If the specifier has no extension, try .phpx, .js, index.phpx, index.js candidates.
+        let path = if raw_path.extension().is_none() {
+            let phpx = raw_path.with_extension("phpx");
+            let js = raw_path.with_extension("js");
+            let idx_phpx = raw_path.join("index.phpx");
+            let idx_js = raw_path.join("index.js");
+            if phpx.is_file() {
+                phpx
+            } else if js.is_file() {
+                js
+            } else if idx_phpx.is_file() {
+                idx_phpx
+            } else if idx_js.is_file() {
+                idx_js
+            } else {
+                raw_path
+            }
+        } else {
+            raw_path
+        };
         let ext = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
         let mut code = match ext {
             "phpx" => self.load_phpx_source(&path)?,
@@ -491,6 +511,35 @@ fn resolve_module_file(modules_dir: &Path, spec: &str) -> Option<PathBuf> {
 }
 
 fn resolve_phpx_module_spec(project_root: &Path, specifier: &str) -> Option<PathBuf> {
+    // @/ is a project-root alias: @/src/pages/foo -> {project_root}/src/pages/foo.phpx
+    //
+    // Path-traversal guard: a malicious specifier like `@/../../etc/passwd`
+    // would escape the tenant's project_root via `Path::join` (which does NOT
+    // normalize `..` components). Reject any rel containing `..` segments
+    // BEFORE join, then canonicalize the resolved path and assert it stays
+    // inside the canonicalized project_root. Belt-and-suspenders: each layer
+    // catches a different escape vector (literal `..`, symlinks, casing).
+    if let Some(rel) = specifier.strip_prefix("@/") {
+        // Reject literal traversal segments before doing any IO.
+        let has_traversal = rel.split('/').any(|seg| seg == ".." || seg == ".");
+        if !has_traversal {
+            let base = project_root.join(rel);
+            if let Some(resolved) = resolve_with_candidates(&base) {
+                // Canonicalize both sides and confirm the resolved file is
+                // inside project_root. If canonicalize fails (path doesn't
+                // exist, etc.) we fall through to the next resolver — never
+                // return a path that might escape.
+                if let (Ok(resolved_canon), Ok(root_canon)) =
+                    (std::fs::canonicalize(&resolved), std::fs::canonicalize(project_root))
+                {
+                    if resolved_canon.starts_with(&root_canon) {
+                        return Some(resolved);
+                    }
+                }
+            }
+        }
+    }
+
     let modules_dir = project_root.join("php_modules");
     let mut aliases = module_spec_aliases(specifier);
     // Map prefixed stdlib specifiers into the @deka scope: encoding/json -> @deka/encoding/json.

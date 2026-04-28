@@ -1,14 +1,12 @@
----
-import { jsx, jsxs } from 'component/core'
-import { renderPartialJson, isPartialRequest, Link, Hydration } from 'component/dom'
+import { renderToString, renderPartialJson, isPartialRequest, Link, Hydration } from 'component/dom'
 import { json_encode as encodeJson, json_decode_result } from 'encoding/json'
-import { PreviewRouteSection, ForkResultSection } from '@/src/pages/repo_flows'
-import { PackageStatPills, PackageVersionRows } from '@/src/pages/package_detail'
-import { buildAdwaBaseUrl, buildAdwaPreviewUrl, buildAdwaPreviewUrlForRef, buildAdwaEditUrl } from '@/src/services/adwa'
-import { gitApiDefaultBase, scopedReleaseDocsPath, scopedReleaseTreePath, scopedReleaseBlobPath, repoIssuesPath, repoIssueDetailPath, repoIssueCommentPath, repoPullsPath, repoPullDetailPath, repoPullCommentPath, repoResolvePath, repoForkPath } from '@/src/services/linkhash_git'
-import { repoIssueCreateRoute, repoIssueCommentRoute, repoPullCreateRoute, repoPullCommentRoute, repoForkRoute, buildRepoActionRedirectPath } from '@/src/api/repo_actions'
-import { meta } from '@/db/meta'
-import { selectMany, selectOne, insertOne, updateWhere, deleteWhere, loadRelation, transaction, eq, ilike, isNull, andWhere, asc, desc, limit } from '@/db'
+import { PreviewRouteSection, ForkResultSection } from './src/pages/repo_flows'
+import { PackageStatPills, PackageVersionRows } from './src/pages/package_detail'
+import { buildAdwaBaseUrl, buildAdwaPreviewUrl, buildAdwaPreviewUrlForRef, buildAdwaEditUrl } from './src/services/adwa'
+import { gitApiDefaultBase, scopedReleaseDocsPath, scopedReleaseTreePath, scopedReleaseBlobPath, repoIssuesPath, repoIssueDetailPath, repoIssueCommentPath, repoPullsPath, repoPullDetailPath, repoPullCommentPath, repoResolvePath, repoForkPath } from './src/services/linkhash_git'
+import { repoIssueCreateRoute, repoIssueCommentRoute, repoPullCreateRoute, repoPullCommentRoute, repoForkRoute, buildRepoActionRedirectPath } from './src/api/repo_actions'
+import { meta } from './db/meta'
+import { selectMany, selectOne, insertOne, updateWhere, deleteWhere, loadRelation, transaction, eq, ilike, isNull, andWhere, asc, desc, limit } from './db'
 import { stats } from 'db'
 import { connect as sqliteConnect, query as sqliteQuery, query_one as sqliteQueryOne, exec as sqliteExec, close as sqliteClose } from 'db/sqlite'
 import { connect as mysqlConnect, query_one as mysqlQueryOne, exec as mysqlExec, close as mysqlClose } from 'db/mysql'
@@ -28,13 +26,13 @@ function envValue($name, $fallback = null) {
     : (is_array($_ENV) ? $_ENV : [])
   if (is_array($envBag) && array_key_exists($name, $envBag)) {
     $fromEnv = $envBag[$name]
-    if ($fromEnv !== null && $fromEnv !== '') {
+    if (isset($fromEnv) && $fromEnv !== '') {
       return $fromEnv
     }
   }
 
   $val = getenv($name)
-  if ($val !== false && $val !== null && $val !== '') {
+  if ($val !== false && isset($val) && $val !== '') {
     return $val
   }
 
@@ -43,7 +41,7 @@ function envValue($name, $fallback = null) {
     : (is_array($_SERVER) ? $_SERVER : [])
   if (is_array($serverBag) && array_key_exists($name, $serverBag)) {
     $fromServer = $serverBag[$name]
-    if ($fromServer !== null && $fromServer !== '') {
+    if (isset($fromServer) && $fromServer !== '') {
       return $fromServer
     }
   }
@@ -76,7 +74,7 @@ function loadDotEnv($path = '.env') {
   if (!is_file($full)) {
     return
   }
-  $lines = @file($full)
+  $lines = file($full)
   if (!is_array($lines)) {
     return
   }
@@ -203,7 +201,7 @@ function dbClose($handle) {
 }
 
 function parseTimestamp($value) {
-  if ($value === null) {
+  if (!isset($value)) {
     return null
   }
   $str = trim('' . $value)
@@ -233,6 +231,7 @@ function fetchFallbackVisiblePackageRows($limit = 25, $query = '') {
   $db = $conn->value
   $max = max(1, (int) $limit)
   $term = trim('' . $query)
+  $rowsRes = result_err('not run')
   if ($term === '') {
     $rowsRes = sqliteQuery(
       $db,
@@ -1212,12 +1211,12 @@ function queryValue($key, $fallback = null) {
 }
 
 function strStartsWith($value, $prefix) {
-  $value = '' . $value
-  $prefix = '' . $prefix
-  if (strlen($prefix) > strlen($value)) {
+  $sv = '' . $value
+  $sp = '' . $prefix
+  if (strlen($sp) > strlen($sv)) {
     return false
   }
-  return substr($value, 0, strlen($prefix)) === $prefix
+  return substr($sv, 0, strlen($sp)) === $sp
 }
 
 function oauthB64Url($raw) {
@@ -1303,8 +1302,12 @@ function parseHttpHeaders($rawHeaders) {
   $lines = explode("\n", $normalized)
   $statusLine = count($lines) > 0 ? ('' . $lines[0]) : ''
   $status = 0
-  if (preg_match('/^HTTP\/[0-9.]+\s+([0-9]{3})/i', $statusLine, $m)) {
-    $status = (int) $m[1]
+  $spacePos = strpos($statusLine, ' ')
+  if ($spacePos !== false && $spacePos < strlen($statusLine) - 3) {
+    $statusStr = substr($statusLine, $spacePos + 1, 3)
+    if (preg_match('/^[0-9]{3}$/', $statusStr) === 1) {
+      $status = (int) $statusStr
+    }
   }
   $headers = []
   for ($i = 1; $i < count($lines); $i = $i + 1) {
@@ -1362,7 +1365,7 @@ function decodeChunkedBody($chunked) {
 
 function httpRequestRaw($method, $url, $headers = [], $body = '') {
   $parts = parseUrlParts($url)
-  if ($parts === null) {
+  if (!isset($parts)) {
     return { ok: false, error: 'invalid url' }
   }
   $scheme = '' . $parts->scheme
@@ -1585,7 +1588,7 @@ function fetchRemoteGitJson($method, $path, $payload = null) {
   $url = linkhashGitApiBase() . $path
   $body = ''
   $headers = linkhashGitAuthHeaders([])
-  if ($payload !== null) {
+  if (isset($payload)) {
     $encoded = encodeJson(normalizeJsonValue($payload))
     if (!is_string($encoded)) {
       return [ 'ok' => false, 'error' => 'json encode failed' ]
@@ -1851,7 +1854,7 @@ function oauthUnpackContext($packed) {
 
 function requestCookie($name, $fallback = null) {
   $value = cookieGet($name, null)
-  if ($value !== null && $value !== '') {
+  if (isset($value) && $value !== '') {
     return urldecode('' . $value)
   }
   if (!is_array($_SERVER) || !array_key_exists('HTTP_COOKIE', $_SERVER)) {
@@ -1880,13 +1883,13 @@ function requestCookie($name, $fallback = null) {
 
 function authRequestToken() {
   $token = requestCookie('lh_session', null)
-  if ($token !== null && $token !== '') {
+  if (isset($token) && $token !== '') {
     return $token
   }
   $allowQuery = strtolower('' . envValue('LINKHASH_ALLOW_QUERY_SESSION', '0'))
   if ($allowQuery === '1' || $allowQuery === 'true' || $allowQuery === 'yes' || $allowQuery === 'on') {
     $q = queryValue('session', null)
-    if ($q !== null && $q !== '') {
+    if (isset($q) && $q !== '') {
       return '' . $q
     }
   }
@@ -1986,13 +1989,6 @@ function cookieSecureFlag() {
   return $raw === '1' || $raw === 'true' || $raw === 'yes'
 }
 
-function requestMethod() {
-  if (is_array($_SERVER) && array_key_exists('REQUEST_METHOD', $_SERVER)) {
-    return strtoupper('' . $_SERVER['REQUEST_METHOD'])
-  }
-  return 'GET'
-}
-
 function requestPath() {
   if (is_array($_SERVER) && array_key_exists('REQUEST_URI', $_SERVER)) {
     $uri = '' . $_SERVER['REQUEST_URI']
@@ -2035,7 +2031,7 @@ function ensureLogDir() {
     }
     $current = $current === '' ? $seg : ($current . '/' . $seg)
     if (!is_dir($current)) {
-      @mkdir($current)
+      mkdir($current)
     }
   }
   return is_dir($dir)
@@ -2046,9 +2042,9 @@ function appendLogLine($line) {
   $logFile = '' . envValue('LINKHASH_LOG_FILE', '')
   if (function_exists('error_log')) {
     if ($logFile !== '') {
-      @error_log($clean . "\n", 3, $logFile)
+      error_log($clean . "\n", 3, $logFile)
     }
-    @error_log('[linkhash] ' . $clean)
+    error_log('[linkhash] ' . $clean)
     return true
   }
   return false
@@ -2111,7 +2107,7 @@ function auditEvent($action, $auth, $result = 'ok', $subjectKind = '', $subjectR
     $authKind = '' . rowValue($auth, 'kind', 'session')
     $scopeMask = (int) rowValue($auth, 'scopeMask', 0)
     $user = rowValue($auth, 'user', null)
-    if ($user !== null) {
+    if (isset($user)) {
       $uid = (int) rowValue($user, 'id', 0)
       if ($uid > 0) {
         $actorUserId = $uid
@@ -2133,7 +2129,7 @@ function auditEvent($action, $auth, $result = 'ok', $subjectKind = '', $subjectR
   clientInsertOne($client, $client.models.LhAuditLog, {
     action: '' . $action,
     result: '' . $result,
-    actor_user_id: $actorUserId === null ? null : (int) $actorUserId,
+    actor_user_id: isset($actorUserId) ? (int) $actorUserId : null,
     actor_handle: $actorHandle,
     auth_kind: $authKind,
     scope_mask: (int) $scopeMask,
@@ -2545,7 +2541,7 @@ function rateLimitCheck($db, $bucket, $subjectKey, $limit, $windowSeconds) {
   $seen = 0
   foreach ($hits->value as $hit) {
     $ts = parseTimestamp(rowValue($hit, 'createdAt', rowValue($hit, 'created_at', '')))
-    if ($ts === null) {
+    if (!isset($ts)) {
       continue
     }
     if ($ts < $windowStart) {
@@ -2613,7 +2609,7 @@ function authUserId($auth) {
     return 0
   }
   $user = rowValue($auth, 'user', null)
-  if ($user === null) {
+  if (!isset($user)) {
     return 0
   }
   return (int) rowValue($user, 'id', 0)
@@ -2831,7 +2827,7 @@ function authIssueSession($handle, $userId) {
 
 function authCurrentUser() {
   $sessionToken = authRequestToken()
-  if ($sessionToken === null || $sessionToken === '') {
+  if (!isset($sessionToken) || $sessionToken === '') {
     return [ 'ok' => false, 'error' => 'not authenticated' ]
   }
   if (strStartsWith($sessionToken, 'lhs_dev:')) {
@@ -2880,13 +2876,13 @@ function authCurrentUser() {
     $now = time()
     $idleLimit = $now - (int) $idleSecs
     $maxLimit = $now - (int) $maxSecs
-    if ($revokedAt !== null) {
+    if (isset($revokedAt)) {
       $session = result_err('revoked')
-    } else if ($expiresAt !== null && $expiresAt <= $now) {
+    } else if (isset($expiresAt) && $expiresAt <= $now) {
       $session = result_err('expired')
-    } else if ($lastSeenAt !== null && $lastSeenAt <= $idleLimit) {
+    } else if (isset($lastSeenAt) && $lastSeenAt <= $idleLimit) {
       $session = result_err('idle timeout')
-    } else if ($createdAt !== null && $createdAt <= $maxLimit) {
+    } else if (isset($createdAt) && $createdAt <= $maxLimit) {
       $session = result_err('max timeout')
     }
   }
@@ -2991,9 +2987,9 @@ function authPatFromBearer($requiredMask = 1) {
     $expiresAt = parseTimestamp(rowValue($tokenValue, 'expires_at', rowValue($tokenValue, 'expiresAt', null)))
     $scopeMask = (int) rowValue($tokenValue, 'scope_mask', rowValue($tokenValue, 'scopeMask', 0))
     $now = time()
-    if ($revokedAt !== null) {
+    if (isset($revokedAt)) {
       $tokenRow = result_err('revoked')
-    } else if ($expiresAt !== null && $expiresAt <= $now) {
+    } else if (isset($expiresAt) && $expiresAt <= $now) {
       $tokenRow = result_err('expired')
     } else if (!authHasScopeMask($scopeMask, (int) $requiredMask)) {
       $tokenRow = result_err('scope')
@@ -3130,8 +3126,8 @@ function apiAuthCallback() {
   $state = '' . queryValue('state', '')
   $code = '' . queryValue('code', '')
   $ctx = oauthUnpackContext(requestCookie('lh_oauth_ctx', ''))
-  $expectedState = $ctx === null ? ('' . requestCookie('lh_oauth_state', '')) : ('' . $ctx->state)
-  $pkce = $ctx === null ? ('' . requestCookie('lh_oauth_pkce', '')) : ('' . $ctx->pkce)
+  $expectedState = !isset($ctx) ? ('' . requestCookie('lh_oauth_state', '')) : ('' . $ctx->state)
+  $pkce = !isset($ctx) ? ('' . requestCookie('lh_oauth_pkce', '')) : ('' . $ctx->pkce)
   if ($state === '' || $state !== $expectedState) {
     echo jsonReply([ 'ok' => false, 'error' => 'invalid oauth state' ])
     return
@@ -3300,7 +3296,7 @@ function apiAuthLogout() {
     return
   }
   $sessionToken = authRequestToken()
-  if ($sessionToken === null || $sessionToken === '') {
+  if (!isset($sessionToken) || $sessionToken === '') {
     cookieClearHeader('lh_session', ['path' => '/'])
     auditEvent('auth.logout', [ 'ok' => false ], 'ok', 'session', 'none', [])
     echo jsonReply([ 'ok' => true ])
@@ -3314,7 +3310,7 @@ function apiAuthLogout() {
       return
     }
   }
-  if ($sessionToken !== null && $sessionToken !== '') {
+  if (isset($sessionToken) && $sessionToken !== '') {
     $tokenHash = authTokenHash($sessionToken)
     $conn = openDbHandle()
     if (result_is_ok($conn)) {
@@ -3476,7 +3472,8 @@ function apiAuthPatList() {
   }
   $out = []
   foreach ($rows->value as $row) {
-    if (rowValue($row, 'revokedat', rowValue($row, 'revoked_at', null)) !== null) {
+    $revokedVal = rowValue($row, 'revokedat', rowValue($row, 'revoked_at', null))
+    if (isset($revokedVal)) {
       continue
     }
     $scopeMask = (int) rowValue($row, 'scopemask', rowValue($row, 'scope_mask', 0))
@@ -3487,7 +3484,7 @@ function apiAuthPatList() {
       'label' => rowValue($row, 'label', ''),
       'scopeMask' => $scopeMask,
       'scope' => authScopeText($scopeMask),
-      'used' => $lastUsedAt !== null && ('' . $lastUsedAt) !== '',
+      'used' => isset($lastUsedAt) && ('' . $lastUsedAt) !== '',
       'lastUsedAt' => $lastUsedAt,
       'expiresAt' => rowValue($row, 'expiresat', rowValue($row, 'expires_at', null)),
       'createdAt' => rowValue($row, 'createdat', rowValue($row, 'created_at', null))
@@ -3851,7 +3848,7 @@ function apiOrgsCreate() {
     echo jsonReply([ 'ok' => false, 'error' => 'reserved or invalid org handle' ])
     return
   }
-  if ($visibility === null) {
+  if (!isset($visibility)) {
     echo jsonReply({ ok: false, error: 'visibility must be public or private' })
     return
   }
@@ -4079,15 +4076,16 @@ function apiOrgMembersUpsert() {
       eq('user_id', (int) $targetId)
     )
   )
+  $up = result_err('not run')
   if (result_is_ok($existing)) {
-    $up = clientUpdateWhere($client, 
+    $up = clientUpdateWhere($client,
       $client.models.LhOrgMember,
       eq('id', (int) rowValue($existing->value, 'id', 0)),
       { role: $role, revoked_at: null },
       false
     )
   } else if (isNoRowsError($existing->error)) {
-    $up = clientInsertOne($client, 
+    $up = clientInsertOne($client,
       $client.models.LhOrgMember,
       { org_id: (int) $orgId, user_id: (int) $targetId, role: $role },
       false
@@ -4226,7 +4224,7 @@ function apiPackageSetVisibility() {
   $body = requestData()
   $name = normalizePackageName(queryValue('name', array_key_exists('name', $body) ? $body['name'] : ''))
   $visibility = parseVisibility(queryValue('visibility', array_key_exists('visibility', $body) ? $body['visibility'] : ''), null)
-  if ($name === '' || $visibility === null) {
+  if ($name === '' || !isset($visibility)) {
     echo jsonReply([ 'ok' => false, 'error' => 'name and valid visibility are required' ])
     return
   }
@@ -4547,9 +4545,9 @@ function apiPublishPackage() {
   $capabilityDecoded = decodeJsonLike($capabilityInput, null)
   $filesPayload = is_array($filesDecoded) ? $filesDecoded : []
   $depsPayload = is_array($depsDecoded) ? $depsDecoded : []
-  $capabilityPayload = $capabilityDecoded === null ? null : $capabilityDecoded
+  $capabilityPayload = isset($capabilityDecoded) ? $capabilityDecoded : null
 
-  if ($orgId <= 0 || !isValidPackageName($name) || isReservedPackageName($name) || $version === '' || $visibility === null) {
+  if ($orgId <= 0 || !isValidPackageName($name) || isReservedPackageName($name) || $version === '' || !isset($visibility)) {
     auditEvent('package.publish', $auth, 'error', 'package', '@' . $orgId . '/' . $name . '@' . $version, [ 'error' => 'invalid publish parameters' ])
     echo jsonReply([ 'ok' => false, 'error' => 'orgId, valid name, version, and visibility are required' ])
     return
@@ -4654,8 +4652,9 @@ function apiPublishPackage() {
       eq('version', $version)
     )
   )
+  $upVer = result_err('not run')
   if (result_is_ok($verRow)) {
-    $upVer = clientUpdateWhere($client, 
+    $upVer = clientUpdateWhere($client,
       $client.models.PackageVersion,
       eq('id', (int) rowValue($verRow->value, 'id', 0)),
       {
@@ -5536,15 +5535,17 @@ function apiArtifactDownload($canonicalId) {
   $backend = '' . rowValue($ver->value, 'artifactBackend', rowValue($ver->value, 'artifact_backend', 'local'))
   $mime = '' . rowValue($ver->value, 'artifactMime', rowValue($ver->value, 'artifact_mime', 'application/octet-stream'))
   $artifactKey = '' . rowValue($ver->value, 'artifactKey', rowValue($ver->value, 'artifact_key', ''))
-  $bytes = null
+  $bytes = ''
+  $bytesLoaded = false
   if ($backend === 'r2' && $artifactKey !== '') {
     $fromR2 = r2GetObject($artifactKey)
     if ($fromR2['ok']) {
       $bytes = '' . $fromR2['body']
       $mime = '' . $fromR2['mime']
+      $bytesLoaded = true
     }
   }
-  if ($bytes === null) {
+  if (!$bytesLoaded) {
     $b64 = '' . rowValue($ver->value, 'artifactInlineB64', rowValue($ver->value, 'artifact_inline_b64', ''))
     if ($b64 === '') {
       dbClose($db)
@@ -6125,7 +6126,7 @@ function apiCreateDemoPackage() {
     echo jsonReply({ ok: false, error: 'invalid or reserved package name' })
     return
   }
-  if ($visibility === null) {
+  if (!isset($visibility)) {
     dbClose($conn->value)
     echo jsonReply({ ok: false, error: 'visibility must be public or private' })
     return
@@ -6272,9 +6273,12 @@ loadDotEnv('.env')
 installRuntimeHandlers()
 bootstrapSchema()
 
+$app = phpxWrapHandler(function($req) {
 $uri = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '/'
 $parts = explode('?', $uri)
 $path = $parts[0]
+
+
 if (strpos($path, '/api/') === 0) {
   header('X-Request-Id: ' . requestId())
   logEvent('info', 'api.request', { route: '' . $path })
@@ -6494,7 +6498,7 @@ if (strpos($path, '/package/') === 0) {
   $node = <PackageDetailPage ok={$detail['ok']} org={rowValue($detail, 'org', '')} package={rowValue($detail, 'package', [])} versions={rowValue($detail, 'versions', [])} docsSymbols={rowValue($detail, 'docsSymbols', [])} docsError={rowValue($detail, 'docsError', '')} treeEntries={rowValue($detail, 'treeEntries', [])} treeError={rowValue($detail, 'treeError', '')} selectedFile={rowValue($detail, 'selectedFile', '')} selectedFileContent={rowValue($detail, 'selectedFileContent', '')} selectedFileError={rowValue($detail, 'selectedFileError', '')} error={rowValue($detail, 'error', '')} />
 } else if (strStartsWith($path, '/@')) {
   $preview = parsePreviewRepoPath($path)
-  if ($preview !== null) {
+  if (isset($preview)) {
     $resolved = fetchRepoRefResolution(rowValue($preview, 'owner', ''), rowValue($preview, 'repo', ''), rowValue($preview, 'ref', 'HEAD'))
     if (rowValue($resolved, 'ok', false)) {
       $value = rowValue($resolved, 'value', [])
@@ -6538,14 +6542,14 @@ if (strpos($path, '/package/') === 0) {
     }
   } else {
     $alias = parseAliasPackagePath($path)
-    if ($alias === null) {
+    if (!isset($alias)) {
       $node = <PackageDetailPage ok={false} org={''} package={[]} versions={[]} docsSymbols={[]} docsError={''} treeEntries={[]} treeError={''} selectedFile={''} selectedFileContent={''} selectedFileError={''} error={'invalid package route'} />
     } else {
       $auth = authWithScope(1)
       $detail = fetchPackageDetail($alias['org'], $alias['name'], $auth)
       if ($detail['ok'] && ('' . $alias['version']) !== '') {
         $picked = findVersionInRows(rowValue($detail, 'versions', []), $alias['version'])
-        if ($picked === null) {
+        if (!isset($picked)) {
           $detail = [ 'ok' => false, 'error' => 'version not found' ]
         } else {
           $pkgDetail = rowValue($detail, 'package', [])
@@ -6568,7 +6572,7 @@ if (strpos($path, '/package/') === 0) {
     $detail = fetchPackageDetail(rowValue($target, 'org', ''), rowValue($target, 'name', ''), $auth)
     if ($detail['ok']) {
       $picked = findVersionInRows(rowValue($detail, 'versions', []), rowValue($target, 'version', ''))
-      if ($picked !== null) {
+      if (isset($picked)) {
         $pkgDetail = rowValue($detail, 'package', [])
         $pkgDetail['latestVersion'] = '' . rowValue($target, 'version', '')
         $detail['package'] = $pkgDetail
@@ -6603,18 +6607,18 @@ if (strpos($path, '/package/') === 0) {
       $effectiveVersion = ($requestedVersion === '' || $requestedVersion === 'latest')
         ? ('' . rowValue($package, 'latestVersion', ''))
         : $requestedVersion
-      $picked = null
+      $picked = []
       foreach ($versions as $v) {
         if ('' . rowValue($v, 'version', '') === $effectiveVersion) {
           $picked = $v
           break
         }
       }
-      if ($picked === null && is_array($versions) && count($versions) > 0) {
+      if (count($picked) === 0 && is_array($versions) && count($versions) > 0) {
         $picked = $versions[0]
         $effectiveVersion = '' . rowValue($picked, 'version', $effectiveVersion)
       }
-      if ($picked === null) {
+      if (count($picked) === 0) {
         $error = 'no published versions found'
       } else {
         $cid = '' . rowValue($picked, 'canonicalId', rowValue($picked, 'canonical_id', ''))
@@ -6711,19 +6715,13 @@ if (strpos($path, '/package/') === 0) {
 }
 
 if (isPartialRequest()) {
+  header('Content-Type: application/json')
   echo renderPartialJson($node, $title)
   return
 }
----
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{$title}</title>
-  </head>
-  <body>
-    <div id="app" dataLayout="registry">{$node}</div>
-    <Hydration container="#app" layout="registry" />
-  </body>
-</html>
+$hydrationScript = Hydration([ 'container' => '#app', 'layout' => 'registry' ])
+$nodeHtml = renderToString($node)
+$hydrationHtml = renderToString($hydrationScript)
+header('Content-Type: text/html; charset=utf-8')
+echo '<!doctype html><html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>' . htmlspecialchars($title) . '</title>' . $hydrationHtml . '</head><body><div id="app" dataLayout="registry">' . $nodeHtml . '</div></body></html>'
+})
