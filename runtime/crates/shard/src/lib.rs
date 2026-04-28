@@ -368,6 +368,39 @@ mod tests {
         assert_eq!(r.self_shard().unwrap().name, r2.self_shard().unwrap().name);
     }
 
+    /// Mirrors the shard-selection logic in pool's `set_request_globals`:
+    /// when account_id is empty, resolve() returns None and the caller
+    /// falls back to shards().first() — always shard 0 (phobos).
+    #[test]
+    fn empty_account_id_falls_back_to_shard_zero() {
+        let cfg = ShardConfig {
+            shards: vec![
+                ShardInfo {
+                    index: 0,
+                    name: "phobos".into(),
+                    neo4j: "bolt://100.113.2.21:7687".into(),
+                    redis: "redis://100.113.2.21:6379".into(),
+                },
+                ShardInfo {
+                    index: 1,
+                    name: "bugsy".into(),
+                    neo4j: "bolt://100.70.138.96:7687".into(),
+                    redis: "redis://100.70.138.96:6379".into(),
+                },
+            ],
+        };
+        let r = ShardResolver::from_config(cfg, None);
+
+        // Empty account_id: resolve() returns None per its contract.
+        assert!(r.resolve("").is_none());
+
+        // The pool's fallback: .or_else(|| shards().first()) picks index 0.
+        let picked = r.resolve("").or_else(|| r.shards().first()).unwrap();
+        assert_eq!(picked.index, 0);
+        assert_eq!(picked.name, "phobos");
+        assert_eq!(picked.neo4j, "bolt://100.113.2.21:7687");
+    }
+
     #[test]
     fn real_account_ids_resolve_stably() {
         // These are real shop account_ids from the database (per Phase 2 spec).

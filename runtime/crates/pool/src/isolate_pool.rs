@@ -3593,6 +3593,9 @@ fn set_request_globals(
             }
         }
 
+        // globalThis.__accountId + $_SERVER['ACCOUNT_ID'] — only when we
+        // actually have an account_id; empty-account_id requests skip this
+        // block but still receive shard env below (falls back to shard 0).
         if !account_id.is_empty() {
             // globalThis.__accountId — used by op_neo4j_call/op_redis_call
             // to auto-route `connect` to the owning shard, and by
@@ -3615,60 +3618,67 @@ fn set_request_globals(
                     }
                 }
             }
+        }
 
-            // Shard-aware connection env — inject SHOP_NEO4J_URL,
-            // SHOP_REDIS_URL, SHOP_NEO4J_USER, SHOP_NEO4J_PASSWORD into
-            // $_SERVER so PHPX storefront code can connect to the correct
-            // shard without hardcoding localhost. The password is sourced
-            // from the host process env (DEKA_NEO4J_PASSWORD / NEO4J_PASSWORD)
-            // and is only injected into user-pool isolates (this block is
-            // already gated on `request_parts.is_some()` above). It is NOT
-            // added to the platform_env allowlist — it is computed from
-            // the shard resolver at request time.
-            {
-                let resolver = deka_shard::global();
-                let shard = if account_id.is_empty() {
-                    resolver.shards().first()
-                } else {
-                    resolver.resolve(&account_id).or_else(|| resolver.shards().first())
-                };
-                let (neo4j_url, redis_url) = match shard {
-                    Some(s) => (s.neo4j.clone(), s.redis.clone()),
-                    None => (
-                        std::env::var("DEKA_NEO4J_URI")
-                            .unwrap_or_else(|_| "bolt://127.0.0.1:7687".to_string()),
-                        std::env::var("DEKA_REDIS_URL")
-                            .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string()),
-                    ),
-                };
-                let neo4j_user = std::env::var("DEKA_NEO4J_USER")
-                    .unwrap_or_else(|_| "neo4j".to_string());
-                let neo4j_password = std::env::var("DEKA_NEO4J_PASSWORD")
-                    .or_else(|_| std::env::var("NEO4J_PASSWORD"))
-                    .unwrap_or_default();
+        // Shard-aware connection env — inject SHOP_NEO4J_URL,
+        // SHOP_REDIS_URL, SHOP_NEO4J_USER, SHOP_NEO4J_PASSWORD into
+        // $_SERVER so PHPX storefront code can connect to the correct
+        // shard without hardcoding localhost. The password is sourced
+        // from the host process env (DEKA_NEO4J_PASSWORD / NEO4J_PASSWORD)
+        // and is only injected into user-pool isolates (this block is
+        // already gated on `request_parts.is_some()` above). It is NOT
+        // added to the platform_env allowlist — it is computed from
+        // the shard resolver at request time.
+        //
+        // When account_id is empty (legacy subdomain format or dev
+        // requests without resolver data), fall through to shard 0
+        // (phobos) explicitly — matching the documented fallback behaviour.
+        {
+            let resolver = deka_shard::global();
+            let shard = if account_id.is_empty() {
+                // No account_id — fall back to shard 0 (phobos).
+                resolver.shards().first()
+            } else {
+                resolver.resolve(&account_id).or_else(|| resolver.shards().first())
+            };
+            let shard_name = shard.map(|s| s.name.as_str()).unwrap_or("local");
+            let (neo4j_url, redis_url) = match shard {
+                Some(s) => (s.neo4j.clone(), s.redis.clone()),
+                None => (
+                    std::env::var("DEKA_NEO4J_URI")
+                        .unwrap_or_else(|_| "bolt://127.0.0.1:7687".to_string()),
+                    std::env::var("DEKA_REDIS_URL")
+                        .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string()),
+                ),
+            };
+            let neo4j_user = std::env::var("DEKA_NEO4J_USER")
+                .unwrap_or_else(|_| "neo4j".to_string());
+            let neo4j_password = std::env::var("DEKA_NEO4J_PASSWORD")
+                .or_else(|_| std::env::var("NEO4J_PASSWORD"))
+                .unwrap_or_default();
 
-                tracing::info!(
-                    account_id = %account_id,
-                    neo4j_url = %neo4j_url,
-                    redis_url = %redis_url,
-                    "shard env injection"
-                );
+            // SECURITY: never log URLs that may contain embedded credentials.
+            // Use shard name only. Forbid user:pw@ form in shards.json.
+            tracing::info!(
+                account_id = %account_id,
+                shard = %shard_name,
+                "shard env injection"
+            );
 
-                if let Some(server_key) = v8::String::new(scope, "_SERVER") {
-                    if let Some(server_val) = global.get(scope, server_key.into()) {
-                        if let Some(server_obj) = server_val.to_object(scope) {
-                            for (key, val) in &[
-                                ("SHOP_NEO4J_URL", neo4j_url.as_str()),
-                                ("SHOP_REDIS_URL", redis_url.as_str()),
-                                ("SHOP_NEO4J_USER", neo4j_user.as_str()),
-                                ("SHOP_NEO4J_PASSWORD", neo4j_password.as_str()),
-                            ] {
-                                if let (Some(k), Some(v)) = (
-                                    v8::String::new(scope, key),
-                                    v8::String::new(scope, val),
-                                ) {
-                                    server_obj.set(scope, k.into(), v.into());
-                                }
+            if let Some(server_key) = v8::String::new(scope, "_SERVER") {
+                if let Some(server_val) = global.get(scope, server_key.into()) {
+                    if let Some(server_obj) = server_val.to_object(scope) {
+                        for (key, val) in &[
+                            ("SHOP_NEO4J_URL", neo4j_url.as_str()),
+                            ("SHOP_REDIS_URL", redis_url.as_str()),
+                            ("SHOP_NEO4J_USER", neo4j_user.as_str()),
+                            ("SHOP_NEO4J_PASSWORD", neo4j_password.as_str()),
+                        ] {
+                            if let (Some(k), Some(v)) = (
+                                v8::String::new(scope, key),
+                                v8::String::new(scope, val),
+                            ) {
+                                server_obj.set(scope, k.into(), v.into());
                             }
                         }
                     }
