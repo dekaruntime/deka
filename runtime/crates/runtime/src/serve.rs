@@ -390,7 +390,76 @@ const __dekaExt = (name) => {
   return i === -1 ? '' : name.slice(i).toLowerCase();
 };
 const __dekaPath = globalThis.path || null;
-const __dekaFs = globalThis.fs || null;
+// __dekaFs - confined to __dekaStaticRoot.
+//
+// Three-layer guard mirrors the @/ resolver path-traversal fix:
+//   1. Reject any ".." or lone "." path segment before IO.
+//   2. Resolve relative paths to absolute without symlink IO.
+//   3. Assert the resolved path starts with __dekaStaticRoot.
+//
+// All methods fail-silently (return null / false / void) on out-of-root
+// access, matching the existing catch-all behaviour used by callers.
+const __dekaFs = (() => {
+  const _raw = globalThis.fs || null;
+  if (!_raw) return null;
+  const _rootSlash = __dekaStaticRoot.endsWith('/')
+    ? __dekaStaticRoot
+    : __dekaStaticRoot + '/';
+  function _allow(p) {
+    const s = String(p || '');
+    const segs = s.replace(/\\/g, '/').split('/');
+    for (const seg of segs) {
+      if (seg === '..') return false;
+    }
+    // Resolve to absolute.
+    let abs = s.startsWith('/') ? s : _rootSlash + s;
+    // Collapse redundant segments (no symlink IO needed here).
+    const parts = abs.split('/');
+    const out = [];
+    for (const seg of parts) {
+      if (seg === '' || seg === '.') continue;
+      if (seg === '..') { out.pop(); continue; }
+      out.push(seg);
+    }
+    abs = '/' + out.join('/');
+    const absSlash = abs.endsWith('/') ? abs : abs + '/';
+    return absSlash.startsWith(_rootSlash) || abs === _rootSlash.slice(0, -1);
+  }
+  return {
+    statSync: (p) => {
+      if (!_allow(p)) return null;
+      try { if (typeof _raw.statSync === 'function') return _raw.statSync(p); } catch (_) {}
+      return null;
+    },
+    readFileSync: (p, enc) => {
+      if (!_allow(p)) return null;
+      try { if (typeof _raw.readFileSync === 'function') return _raw.readFileSync(p, enc); } catch (_) {}
+      return null;
+    },
+    readdirSync: (p, opts) => {
+      if (!_allow(p)) return null;
+      try { if (typeof _raw.readdirSync === 'function') return _raw.readdirSync(p, opts); } catch (_) {}
+      return null;
+    },
+    writeFileSync: (p, data, enc) => {
+      if (!_allow(p)) return;
+      try { if (typeof _raw.writeFileSync === 'function') _raw.writeFileSync(p, data, enc); } catch (_) {}
+    },
+    mkdirSync: (p, opts) => {
+      if (!_allow(p)) return;
+      try { if (typeof _raw.mkdirSync === 'function') _raw.mkdirSync(p, opts); } catch (_) {}
+    },
+    appendFileSync: (p, data) => {
+      if (!_allow(p)) return;
+      try { if (typeof _raw.appendFileSync === 'function') _raw.appendFileSync(p, data); } catch (_) {}
+    },
+    existsSync: (p) => {
+      if (!_allow(p)) return false;
+      try { if (typeof _raw.existsSync === 'function') return _raw.existsSync(p); } catch (_) {}
+      return false;
+    },
+  };
+})();
 const __dekaPathJoin = (...parts) => {
   if (__dekaPath && typeof __dekaPath.join === 'function') return __dekaPath.join(...parts);
   return parts.filter(Boolean).join('/');
@@ -815,9 +884,43 @@ fn should_ignore_watch_path(path: &FsPath) -> bool {
 mod tests {
     use super::flag_or_env_truthy_with;
     use super::ensure_http_port_available;
+    use super::build_static_handler_code;
     use runtime_core::env::is_truthy;
     use std::collections::HashMap;
     use std::net::TcpListener;
+
+    /// Verify the static handler template contains the __dekaFs confinement
+    /// wrapper.  We check for the key guard identifiers that must be present
+    /// for path-prefix enforcement.
+    #[test]
+    fn static_handler_dekafs_is_path_confined() {
+        let code = build_static_handler_code("/srv/static", "index.html", false);
+        // Wrapper must be an IIFE (not a bare reference to globalThis.fs).
+        assert!(
+            code.contains("const __dekaFs = (() => {"),
+            "expected __dekaFs to be an IIFE wrapper"
+        );
+        // Must reference __dekaStaticRoot as the confinement boundary.
+        assert!(
+            code.contains("__dekaStaticRoot"),
+            "expected __dekaFs wrapper to reference __dekaStaticRoot"
+        );
+        // The _allow guard must be present.
+        assert!(
+            code.contains("function _allow("),
+            "expected path-allow guard in __dekaFs wrapper"
+        );
+        // Must reject '..' segments explicitly.
+        assert!(
+            code.contains("if (seg === '..') return false"),
+            "expected '..' rejection in _allow guard"
+        );
+        // The raw globalThis.fs must NOT be directly assigned to __dekaFs.
+        assert!(
+            !code.contains("const __dekaFs = globalThis.fs"),
+            "expected __dekaFs NOT to be a bare globalThis.fs alias"
+        );
+    }
 
     #[test]
     fn truthy_parser_matches_expected_values() {
