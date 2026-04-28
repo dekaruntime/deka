@@ -207,8 +207,8 @@ pub fn build_stdlib_prelude(project_root: &Path) -> Result<String, String> {
     // Use ??= (nullish coalescing assignment) instead of if(!x){x=y}
     // to avoid SWC compress bug that incorrectly transforms the if pattern.
     prelude.push_str("globalThis.panic ??= (msg) => { throw new Error(String(msg)); };\n");
-    prelude.push_str("globalThis.function_exists ??= (name) => typeof globalThis[name] === 'function';\n");
-    prelude.push_str("globalThis.class_exists ??= (name) => typeof globalThis[name] === 'function' || typeof globalThis[name] === 'object';\n");
+    // function_exists / class_exists are compile-time rewrites in try_rewrite_builtin.
+    // No globalThis polyfill emitted here.
     prelude.push_str("globalThis.class_alias ??= () => false;\n");
     // PHP filesystem builtins — polyfilled using __dekaFs (Deno/Node FS adapter injected by the runtime).
     // Capability-gated FS: __dekaFs is the runtime-injected adapter that respects
@@ -495,8 +495,8 @@ impl<'a> JsSubsetEmitter<'a> {
 
         // --- Class (c): mission helpers ---
         out.push_str("globalThis.panic ??= (msg) => { throw new Error(String(msg)); };\n");
-        out.push_str("globalThis.function_exists ??= (name) => typeof globalThis[name] === 'function';\n");
-        out.push_str("globalThis.class_exists ??= (name) => typeof globalThis[name] === 'function' || typeof globalThis[name] === 'object';\n");
+        // function_exists / class_exists are compile-time rewrites in try_rewrite_builtin.
+        // No globalThis polyfill emitted here.
         out.push_str("globalThis.class_alias ??= () => false;\n\n");
         out.push_str("globalThis.defined ??= (name) => Object.prototype.hasOwnProperty.call(globalThis, String(name));\n\n");
 
@@ -531,16 +531,21 @@ impl<'a> JsSubsetEmitter<'a> {
         out.push_str("globalThis.__deka_chr ??= (code) => String.fromCharCode((Number(code) || 0) & 0xff);\n");
         out.push_str("globalThis.__deka_ord ??= (s) => { const str = String(s ?? ''); return str.length > 0 ? str.charCodeAt(0) : 0; };\n");
         out.push_str("globalThis.__deka_object_set ??= (obj, key, value) => { if (obj && typeof obj === 'object') { obj[key] = value; } return obj; };\n");
+        // base64_encode / base64_decode — Tier B helpers. Compile-time rewrite emits
+        // __phpx_base64_encode(...) / __phpx_base64_decode(...) calls. No globalThis.base64_* install.
         out.push_str("globalThis.__phpx_base64_table ??= 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';\n");
-        out.push_str("globalThis.base64_encode ??= (input) => { const str = String(input ?? ''); const tbl = globalThis.__phpx_base64_table; let out = ''; for (let i = 0; i < str.length; i += 3) { const b0 = str.charCodeAt(i) & 0xff; const b1 = i + 1 < str.length ? str.charCodeAt(i + 1) & 0xff : NaN; const b2 = i + 2 < str.length ? str.charCodeAt(i + 2) & 0xff : NaN; const n = (b0 << 16) | ((Number.isNaN(b1) ? 0 : b1) << 8) | (Number.isNaN(b2) ? 0 : b2); out += tbl[(n >> 18) & 63]; out += tbl[(n >> 12) & 63]; out += Number.isNaN(b1) ? '=' : tbl[(n >> 6) & 63]; out += Number.isNaN(b2) ? '=' : tbl[n & 63]; } return out; };\n");
-        out.push_str("globalThis.base64_decode ??= (input, strict = false) => { const src = String(input ?? '').replace(/\\s+/g, ''); if (src.length % 4 !== 0) return strict ? false : ''; const tbl = globalThis.__phpx_base64_table; let out = ''; for (let i = 0; i < src.length; i += 4) { const c0 = src[i], c1 = src[i + 1], c2 = src[i + 2], c3 = src[i + 3]; const n0 = tbl.indexOf(c0), n1 = tbl.indexOf(c1); const n2 = c2 === '=' ? -1 : tbl.indexOf(c2); const n3 = c3 === '=' ? -1 : tbl.indexOf(c3); if (n0 < 0 || n1 < 0 || n2 < -1 || n3 < -1) return strict ? false : ''; const n = (n0 << 18) | (n1 << 12) | ((n2 < 0 ? 0 : n2) << 6) | (n3 < 0 ? 0 : n3); out += String.fromCharCode((n >> 16) & 0xff); if (c2 !== '=') out += String.fromCharCode((n >> 8) & 0xff); if (c3 !== '=') out += String.fromCharCode(n & 0xff); } return out; };\n");
+        out.push_str("globalThis.__phpx_base64_encode ??= (input) => { const str = String(input ?? ''); const tbl = globalThis.__phpx_base64_table; let out = ''; for (let i = 0; i < str.length; i += 3) { const b0 = str.charCodeAt(i) & 0xff; const b1 = i + 1 < str.length ? str.charCodeAt(i + 1) & 0xff : NaN; const b2 = i + 2 < str.length ? str.charCodeAt(i + 2) & 0xff : NaN; const n = (b0 << 16) | ((Number.isNaN(b1) ? 0 : b1) << 8) | (Number.isNaN(b2) ? 0 : b2); out += tbl[(n >> 18) & 63]; out += tbl[(n >> 12) & 63]; out += Number.isNaN(b1) ? '=' : tbl[(n >> 6) & 63]; out += Number.isNaN(b2) ? '=' : tbl[n & 63]; } return out; };\n");
+        out.push_str("globalThis.__phpx_base64_decode ??= (input, strict = false) => { const src = String(input ?? '').replace(/\\s+/g, ''); if (src.length % 4 !== 0) return strict ? false : ''; const tbl = globalThis.__phpx_base64_table; let out = ''; for (let i = 0; i < src.length; i += 4) { const c0 = src[i], c1 = src[i + 1], c2 = src[i + 2], c3 = src[i + 3]; const n0 = tbl.indexOf(c0), n1 = tbl.indexOf(c1); const n2 = c2 === '=' ? -1 : tbl.indexOf(c2); const n3 = c3 === '=' ? -1 : tbl.indexOf(c3); if (n0 < 0 || n1 < 0 || n2 < -1 || n3 < -1) return strict ? false : ''; const n = (n0 << 18) | (n1 << 12) | ((n2 < 0 ? 0 : n2) << 6) | (n3 < 0 ? 0 : n3); out += String.fromCharCode((n >> 16) & 0xff); if (c2 !== '=') out += String.fromCharCode((n >> 8) & 0xff); if (c3 !== '=') out += String.fromCharCode(n & 0xff); } return out; };\n");
+        // hash / hash_hmac / hash_equals — Tier B helpers. Compile-time rewrites emit
+        // __phpx_hash(...) / __phpx_hash_hmac(...) / inline IIFE for hash_equals.
+        // No globalThis.hash / globalThis.hash_hmac / globalThis.hash_equals install.
         out.push_str("globalThis.__phpx_sha256_hex ??= (input) => { const K = [1116352408,1899447441,3049323471,3921009573,961987163,1508970993,2453635748,2870763221,3624381080,310598401,607225278,1426881987,1925078388,2162078206,2614888103,3248222580,3835390401,4022224774,264347078,604807628,770255983,1249150122,1555081692,1996064986,2554220882,2821834349,2952996808,3210313671,3336571891,3584528711,113926993,338241895,666307205,773529912,1294757372,1396182291,1695183700,1986661051,2177026350,2456956037,2730485921,2820302411,3259730800,3345764771,3516065817,3600352804,4094571909,275423344,430227734,506948616,659060556,883997877,958139571,1322822218,1537002063,1747873779,1955562222,2024104815,2227730452,2361852424,2428436474,2756734187,3204031479,3329325298]; const bytes = []; const src = String(input ?? ''); for (let i = 0; i < src.length; i += 1) bytes.push(src.charCodeAt(i) & 0xff); const bitLen = bytes.length * 8; bytes.push(0x80); while ((bytes.length % 64) !== 56) bytes.push(0); for (let i = 7; i >= 0; i -= 1) bytes.push((bitLen >>> (i * 8)) & 0xff); let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a, h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19; const rotr = (x, n) => ((x >>> n) | (x << (32 - n))) >>> 0; for (let i = 0; i < bytes.length; i += 64) { const w = new Array(64); for (let j = 0; j < 16; j += 1) { const k = i + (j * 4); w[j] = (((bytes[k] << 24) | (bytes[k + 1] << 16) | (bytes[k + 2] << 8) | bytes[k + 3]) >>> 0); } for (let j = 16; j < 64; j += 1) { const s0 = (rotr(w[j - 15], 7) ^ rotr(w[j - 15], 18) ^ (w[j - 15] >>> 3)) >>> 0; const s1 = (rotr(w[j - 2], 17) ^ rotr(w[j - 2], 19) ^ (w[j - 2] >>> 10)) >>> 0; w[j] = (((w[j - 16] + s0) >>> 0) + ((w[j - 7] + s1) >>> 0)) >>> 0; } let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7; for (let j = 0; j < 64; j += 1) { const S1 = (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) >>> 0; const ch = ((e & f) ^ ((~e) & g)) >>> 0; const t1 = (((((h + S1) >>> 0) + ch) >>> 0) + ((K[j] + w[j]) >>> 0)) >>> 0; const S0 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) >>> 0; const maj = ((a & b) ^ (a & c) ^ (b & c)) >>> 0; const t2 = (S0 + maj) >>> 0; h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0; } h0 = (h0 + a) >>> 0; h1 = (h1 + b) >>> 0; h2 = (h2 + c) >>> 0; h3 = (h3 + d) >>> 0; h4 = (h4 + e) >>> 0; h5 = (h5 + f) >>> 0; h6 = (h6 + g) >>> 0; h7 = (h7 + h) >>> 0; } const words = [h0, h1, h2, h3, h4, h5, h6, h7]; let out = ''; for (const w of words) { out += (w >>> 0).toString(16).padStart(8, '0'); } return out; };\n");
         out.push_str("globalThis.__phpx_hex_to_binary ??= (hex) => { const src = String(hex ?? ''); let out = ''; for (let i = 0; i < src.length; i += 2) out += String.fromCharCode(parseInt(src.slice(i, i + 2), 16) & 0xff); return out; };\n");
         out.push_str("globalThis.__phpx_hmac_sha256_hex ??= (data, key) => { const toBytes = (s) => { const out = []; const src = String(s ?? ''); for (let i = 0; i < src.length; i += 1) out.push(src.charCodeAt(i) & 0xff); return out; }; const fromBytes = (arr) => arr.map((v) => String.fromCharCode(v & 0xff)).join(''); let k = toBytes(key); if (k.length > 64) { const kh = globalThis.__phpx_sha256_hex(fromBytes(k)); k = toBytes(globalThis.__phpx_hex_to_binary(kh)); } while (k.length < 64) k.push(0); const o = [], i = []; for (let n = 0; n < 64; n += 1) { o.push(k[n] ^ 0x5c); i.push(k[n] ^ 0x36); } const innerHex = globalThis.__phpx_sha256_hex(fromBytes(i) + String(data ?? '')); const outerHex = globalThis.__phpx_sha256_hex(fromBytes(o) + globalThis.__phpx_hex_to_binary(innerHex)); return outerHex; };\n");
         out.push_str("globalThis.__phpx_node_crypto ??= (() => { try { if (typeof require === 'function') { return require('node:crypto'); } } catch (_err) {} try { if (typeof require === 'function') { return require('crypto'); } } catch (_err) {} return null; })();\n");
-        out.push_str("globalThis.hash ??= (algo, data, raw = false) => { const name = String(algo || '').toLowerCase(); if (name === 'sha256') { const hex = globalThis.__phpx_sha256_hex(String(data ?? '')); return raw ? globalThis.__phpx_hex_to_binary(hex) : hex; } const mod = globalThis.__phpx_node_crypto; if (!mod || typeof mod.createHash !== 'function') throw new Error('hash() requires crypto support'); const digest = mod.createHash(name).update(String(data ?? ''), 'binary').digest(raw ? 'latin1' : 'hex'); return digest; };\n");
-        out.push_str("globalThis.hash_hmac ??= (algo, data, key, raw = false) => { const name = String(algo || '').toLowerCase(); if (name === 'sha256') { const hex = globalThis.__phpx_hmac_sha256_hex(String(data ?? ''), String(key ?? '')); return raw ? globalThis.__phpx_hex_to_binary(hex) : hex; } const mod = globalThis.__phpx_node_crypto; if (!mod || typeof mod.createHmac !== 'function') throw new Error('hash_hmac() requires crypto support'); const digest = mod.createHmac(name, String(key ?? '')).update(String(data ?? ''), 'binary').digest(raw ? 'latin1' : 'hex'); return digest; };\n");
-        out.push_str("globalThis.hash_equals ??= (a, b) => { const left = String(a ?? ''); const right = String(b ?? ''); if (left.length !== right.length) return false; let out = 0; for (let i = 0; i < left.length; i += 1) out |= left.charCodeAt(i) ^ right.charCodeAt(i); return out === 0; };\n");
+        out.push_str("globalThis.__phpx_hash ??= (algo, data, raw = false) => { const name = String(algo || '').toLowerCase(); if (name === 'sha256') { const hex = globalThis.__phpx_sha256_hex(String(data ?? '')); return raw ? globalThis.__phpx_hex_to_binary(hex) : hex; } const mod = globalThis.__phpx_node_crypto; if (!mod || typeof mod.createHash !== 'function') throw new Error('hash() requires crypto support'); const digest = mod.createHash(name).update(String(data ?? ''), 'binary').digest(raw ? 'latin1' : 'hex'); return digest; };\n");
+        out.push_str("globalThis.__phpx_hash_hmac ??= (algo, data, key, raw = false) => { const name = String(algo || '').toLowerCase(); if (name === 'sha256') { const hex = globalThis.__phpx_hmac_sha256_hex(String(data ?? ''), String(key ?? '')); return raw ? globalThis.__phpx_hex_to_binary(hex) : hex; } const mod = globalThis.__phpx_node_crypto; if (!mod || typeof mod.createHmac !== 'function') throw new Error('hash_hmac() requires crypto support'); const digest = mod.createHmac(name, String(key ?? '')).update(String(data ?? ''), 'binary').digest(raw ? 'latin1' : 'hex'); return digest; };\n");
+        // hash_equals is a compile-time inline IIFE rewrite in try_rewrite_builtin. No globalThis install.
         out.push_str("globalThis.__phpx_symbol_table ??= Object.create(null);\n");
         out.push_str("globalThis.__deka_symbol_set ??= (name, value) => { const key = String(name); globalThis.__phpx_symbol_table[key] = value; return true; };\n");
         out.push_str("globalThis.__deka_symbol_get ??= (name) => { const key = String(name); return Object.prototype.hasOwnProperty.call(globalThis.__phpx_symbol_table, key) ? globalThis.__phpx_symbol_table[key] : null; };\n");
@@ -571,10 +576,13 @@ impl<'a> JsSubsetEmitter<'a> {
         // rawurlencode / dechex / hexdec / intval / floatval / boolval / strval / array_slice
         // are compile-time rewrites in try_rewrite_builtin. No globalThis polyfills needed.
         // dechex/hexdec are compile-time rewrites in JsSubsetEmitter::emit_builtin_call.
-        out.push_str("globalThis.pack ??= (format, ...values) => { const fmt = String(format ?? ''); let out = ''; let vi = 0; for (let i = 0; i < fmt.length; i++) { const c = fmt[i]; if (c === 'H') { const hex = String(values[vi++] ?? ''); for (let j = 0; j < hex.length; j += 2) out += String.fromCharCode(parseInt(hex.slice(j, j+2), 16)); } else if (c === 'N') { const n = Number(values[vi++] ?? 0) >>> 0; out += String.fromCharCode((n>>24)&0xff,(n>>16)&0xff,(n>>8)&0xff,n&0xff); } else if (c === 'n') { const n = Number(values[vi++] ?? 0) & 0xffff; out += String.fromCharCode((n>>8)&0xff,n&0xff); } else if (c === 'C') { out += String.fromCharCode(Number(values[vi++] ?? 0) & 0xff); } } return out; };\n");
+        // pack — Tier B helper. Compile-time rewrite emits __phpx_pack(...). No globalThis.pack install.
+        out.push_str("globalThis.__phpx_pack ??= (format, ...values) => { const fmt = String(format ?? ''); let out = ''; let vi = 0; for (let i = 0; i < fmt.length; i++) { const c = fmt[i]; if (c === 'H') { const hex = String(values[vi++] ?? ''); for (let j = 0; j < hex.length; j += 2) out += String.fromCharCode(parseInt(hex.slice(j, j+2), 16)); } else if (c === 'N') { const n = Number(values[vi++] ?? 0) >>> 0; out += String.fromCharCode((n>>24)&0xff,(n>>16)&0xff,(n>>8)&0xff,n&0xff); } else if (c === 'n') { const n = Number(values[vi++] ?? 0) & 0xffff; out += String.fromCharCode((n>>8)&0xff,n&0xff); } else if (c === 'C') { out += String.fromCharCode(Number(values[vi++] ?? 0) & 0xff); } } return out; };\n");
+        // date / gmdate — Tier B helpers. Compile-time rewrite emits __phpx_date(...) / __phpx_gmdate(...).
+        // No globalThis.date / globalThis.gmdate install (avoids collision with user `$date` variables).
         out.push_str("globalThis.__phpx_date_format ??= (fmt, ts) => { const d = ts !== undefined && ts !== null ? new Date(Number(ts) * 1000) : new Date(); const p = (n, w) => String(n).padStart(w || 2, '0'); const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']; const months = ['January','February','March','April','May','June','July','August','September','October','November','December']; let out = ''; for (let i = 0; i < fmt.length; i++) { const c = fmt[i]; switch(c) { case 'Y': out += d.getFullYear(); break; case 'y': out += String(d.getFullYear()).slice(-2); break; case 'm': out += p(d.getMonth()+1); break; case 'd': out += p(d.getDate()); break; case 'H': out += p(d.getHours()); break; case 'i': out += p(d.getMinutes()); break; case 's': out += p(d.getSeconds()); break; case 'n': out += d.getMonth()+1; break; case 'j': out += d.getDate(); break; case 'G': out += d.getHours(); break; case 'N': out += d.getDay()||7; break; case 'w': out += d.getDay(); break; case 'l': out += days[d.getDay()]; break; case 'D': out += days[d.getDay()].slice(0,3); break; case 'F': out += months[d.getMonth()]; break; case 'M': out += months[d.getMonth()].slice(0,3); break; case 't': out += new Date(d.getFullYear(),d.getMonth()+1,0).getDate(); break; case 'U': out += Math.floor(d.getTime()/1000); break; case 'e': case 'T': out += 'UTC'; break; case 'Z': out += -d.getTimezoneOffset()*60; break; case 'c': out += d.toISOString().replace(/\\.\\d{3}Z$/, '+00:00'); break; case 'r': out += d.toUTCString(); break; case 'L': { const y = d.getFullYear(); out += ((y%4===0&&y%100!==0)||(y%400===0)) ? '1' : '0'; break; } default: out += c; } } return out; };\n");
-        out.push_str("globalThis.date ??= (fmt, ts) => globalThis.__phpx_date_format(String(fmt ?? ''), ts);\n");
-        out.push_str("globalThis.gmdate ??= (fmt, ts) => { const d = ts !== undefined && ts !== null ? new Date(Number(ts) * 1000) : new Date(); return globalThis.__phpx_date_format(String(fmt ?? ''), Math.floor(d.getTime()/1000)); };\n");
+        out.push_str("globalThis.__phpx_date ??= (fmt, ts) => globalThis.__phpx_date_format(String(fmt ?? ''), ts);\n");
+        out.push_str("globalThis.__phpx_gmdate ??= (fmt, ts) => { const d = ts !== undefined && ts !== null ? new Date(Number(ts) * 1000) : new Date(); return globalThis.__phpx_date_format(String(fmt ?? ''), Math.floor(d.getTime()/1000)); };\n");
         out.push_str("globalThis.error_log ??= (msg, type, dest) => { if (type === 3 && dest) { try { const fs = (typeof __dekaFs !== 'undefined' && __dekaFs) ? __dekaFs : null; if (fs && typeof fs.appendFileSync === 'function') { fs.appendFileSync(String(dest), String(msg ?? '')); return true; } } catch(_) {} } console.error(String(msg ?? '')); return true; };\n");
         out.push_str("globalThis.error_get_last ??= () => null;\n");
         out.push_str("globalThis.set_error_handler ??= () => null;\n");
@@ -2596,6 +2604,87 @@ impl<'a> JsSubsetEmitter<'a> {
                     }
                 }
             }
+            // base64_encode($s) -> __phpx_base64_encode($s)  (Tier B helper, not globalThis)
+            "base64_encode" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!("__phpx_base64_encode({})", a[0])))
+            }
+            // base64_decode($s) / base64_decode($s, $strict) -> __phpx_base64_decode(...)
+            "base64_decode" if args.len() >= 1 && args.len() <= 2 => {
+                let a = emit_args(self, args)?;
+                if args.len() == 1 {
+                    Ok(Some(format!("__phpx_base64_decode({})", a[0])))
+                } else {
+                    Ok(Some(format!("__phpx_base64_decode({}, {})", a[0], a[1])))
+                }
+            }
+            // hash($algo, $data) / hash($algo, $data, $raw) -> __phpx_hash(...)
+            "hash" if args.len() >= 2 && args.len() <= 3 => {
+                let a = emit_args(self, args)?;
+                if args.len() == 2 {
+                    Ok(Some(format!("__phpx_hash({}, {})", a[0], a[1])))
+                } else {
+                    Ok(Some(format!("__phpx_hash({}, {}, {})", a[0], a[1], a[2])))
+                }
+            }
+            // hash_hmac($algo, $data, $key) / hash_hmac($algo, $data, $key, $raw) -> __phpx_hash_hmac(...)
+            "hash_hmac" if args.len() >= 3 && args.len() <= 4 => {
+                let a = emit_args(self, args)?;
+                if args.len() == 3 {
+                    Ok(Some(format!("__phpx_hash_hmac({}, {}, {})", a[0], a[1], a[2])))
+                } else {
+                    Ok(Some(format!("__phpx_hash_hmac({}, {}, {}, {})", a[0], a[1], a[2], a[3])))
+                }
+            }
+            // hash_equals($a, $b) -> inline constant-time compare (security-critical, no short-circuit)
+            // XOR loop over max(len_a, len_b) chars. Returns false if lengths differ but still
+            // consumes the loop so timing does not leak which side is shorter.
+            "hash_equals" if args.len() == 2 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "(() => {{ const __a = String({}); const __b = String({}); if (__a.length !== __b.length) return false; let __r = 0; const __n = __a.length; for (let __i = 0; __i < __n; __i++) __r |= __a.charCodeAt(__i) ^ __b.charCodeAt(__i); return __r === 0; }})()",
+                    a[0], a[1]
+                )))
+            }
+            // date($fmt) / date($fmt, $ts) -> __phpx_date(...)
+            "date" if args.len() >= 1 && args.len() <= 2 => {
+                let a = emit_args(self, args)?;
+                if args.len() == 1 {
+                    Ok(Some(format!("__phpx_date({})", a[0])))
+                } else {
+                    Ok(Some(format!("__phpx_date({}, {})", a[0], a[1])))
+                }
+            }
+            // gmdate($fmt) / gmdate($fmt, $ts) -> __phpx_gmdate(...)
+            "gmdate" if args.len() >= 1 && args.len() <= 2 => {
+                let a = emit_args(self, args)?;
+                if args.len() == 1 {
+                    Ok(Some(format!("__phpx_gmdate({})", a[0])))
+                } else {
+                    Ok(Some(format!("__phpx_gmdate({}, {})", a[0], a[1])))
+                }
+            }
+            // pack($fmt, ...$values) -> __phpx_pack(...)
+            "pack" if !args.is_empty() => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!("__phpx_pack({})", a.join(", "))))
+            }
+            // function_exists($name) -> typeof globalThis[String($name)] === 'function'
+            // Inline rewrite: no polyfill on globalThis. The dynamic globalThis lookup is
+            // the correct semantic — function_exists checks whether a named global function
+            // is defined at runtime.
+            "function_exists" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!("(typeof globalThis[String({})] === \"function\")", a[0])))
+            }
+            // class_exists($name) / class_exists($name, $autoload) -> false
+            // PHPX has no classes. Any call to class_exists always returns false.
+            "class_exists" if args.len() >= 1 && args.len() <= 2 => {
+                // Emit the args to trigger any side-effects the expression might have,
+                // then return false.
+                let _ = emit_args(self, args)?;
+                Ok(Some("false".to_string()))
+            }
             _ => Ok(None),
         }
     }
@@ -4045,6 +4134,128 @@ $result = match ($x) {
         let js = phpx_to_js("$a = [1,2,3,4];\n$s = array_slice($a, 1, 2);").expect("should compile");
         assert!(js.contains(".slice("), "expected .slice() for array_slice, got:\n{}", js);
         assert!(!js.contains("globalThis.array_slice"), "should NOT contain globalThis.array_slice, got:\n{}", js);
+    }
+
+    // ---- Batch 3: base64, hash, date, pack, function_exists, class_exists ----
+
+    #[test]
+    fn rewrite_base64_encode_to_helper() {
+        let js = phpx_to_js("$s = 'hello';\n$b = base64_encode($s);").expect("should compile");
+        assert!(js.contains("__phpx_base64_encode("), "expected __phpx_base64_encode call, got:\n{}", js);
+        assert!(!js.contains("globalThis.base64_encode ??="), "globalThis.base64_encode polyfill should NOT be in prelude, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_base64_decode_to_helper() {
+        let js = phpx_to_js("$s = 'aGVsbG8=';\n$d = base64_decode($s);").expect("should compile");
+        assert!(js.contains("__phpx_base64_decode("), "expected __phpx_base64_decode call, got:\n{}", js);
+        assert!(!js.contains("globalThis.base64_decode ??="), "globalThis.base64_decode polyfill should NOT be in prelude, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_base64_decode_strict_to_helper() {
+        let js = phpx_to_js("$s = 'aGVsbG8=';\n$d = base64_decode($s, true);").expect("should compile");
+        assert!(js.contains("__phpx_base64_decode("), "expected __phpx_base64_decode call with strict arg, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_hash_to_helper() {
+        let js = phpx_to_js("$s = 'hello';\n$h = hash('sha256', $s);").expect("should compile");
+        assert!(js.contains("__phpx_hash("), "expected __phpx_hash call, got:\n{}", js);
+        assert!(!js.contains("globalThis.hash ??="), "globalThis.hash polyfill should NOT be in prelude, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_hash_raw_to_helper() {
+        let js = phpx_to_js("$s = 'hello';\n$h = hash('sha256', $s, true);").expect("should compile");
+        assert!(js.contains("__phpx_hash("), "expected __phpx_hash call with raw arg, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_hash_hmac_to_helper() {
+        let js = phpx_to_js("$h = hash_hmac('sha256', 'data', 'key');").expect("should compile");
+        assert!(js.contains("__phpx_hash_hmac("), "expected __phpx_hash_hmac call, got:\n{}", js);
+        assert!(!js.contains("globalThis.hash_hmac ??="), "globalThis.hash_hmac polyfill should NOT be in prelude, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_hash_equals_inline_constant_time() {
+        let js = phpx_to_js("$a = 'abc';\n$b = 'abc';\n$eq = hash_equals($a, $b);").expect("should compile");
+        // Must be an IIFE with XOR loop — no external helper call
+        assert!(!js.contains("__phpx_hash_equals"), "hash_equals must NOT call an external helper, got:\n{}", js);
+        assert!(!js.contains("globalThis.hash_equals ??="), "globalThis.hash_equals polyfill should NOT be in prelude, got:\n{}", js);
+        // Constant-time check: XOR accumulation
+        assert!(js.contains("^"), "expected XOR (^) for constant-time compare, got:\n{}", js);
+        assert!(js.contains("charCodeAt"), "expected charCodeAt for byte comparison, got:\n{}", js);
+        // Must NOT short-circuit on length mismatch alone — must still run the loop
+        assert!(js.contains("__a.length !== __b.length"), "expected length mismatch check, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_date_to_helper() {
+        let js = phpx_to_js("$d = date('c');").expect("should compile");
+        assert!(js.contains("__phpx_date("), "expected __phpx_date call, got:\n{}", js);
+        assert!(!js.contains("globalThis.date ??="), "globalThis.date polyfill should NOT be in prelude, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_date_with_ts_to_helper() {
+        let js = phpx_to_js("$t = 1700000000;\n$d = date('Y-m-d', $t);").expect("should compile");
+        assert!(js.contains("__phpx_date("), "expected __phpx_date call with ts arg, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_gmdate_to_helper() {
+        let js = phpx_to_js("$d = gmdate('c');").expect("should compile");
+        assert!(js.contains("__phpx_gmdate("), "expected __phpx_gmdate call, got:\n{}", js);
+        assert!(!js.contains("globalThis.gmdate ??="), "globalThis.gmdate polyfill should NOT be in prelude, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_pack_to_helper() {
+        let js = phpx_to_js("$h = 'deadbeef';\n$b = pack('H*', $h);").expect("should compile");
+        assert!(js.contains("__phpx_pack("), "expected __phpx_pack call, got:\n{}", js);
+        assert!(!js.contains("globalThis.pack ??="), "globalThis.pack polyfill should NOT be in prelude, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_function_exists_inline() {
+        let js = phpx_to_js("$b = function_exists('hash');").expect("should compile");
+        assert!(js.contains("typeof globalThis["), "expected typeof globalThis lookup for function_exists, got:\n{}", js);
+        assert!(js.contains("=== \"function\""), "expected === 'function' for function_exists, got:\n{}", js);
+        assert!(!js.contains("globalThis.function_exists ??="), "globalThis.function_exists polyfill should NOT be in prelude, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_class_exists_inline_always_false() {
+        let js = phpx_to_js("$b = class_exists('Result');").expect("should compile");
+        // PHPX has no classes — class_exists always compiles to false
+        assert!(js.contains("false"), "expected false for class_exists in PHPX, got:\n{}", js);
+        assert!(!js.contains("globalThis.class_exists ??="), "globalThis.class_exists polyfill should NOT be in prelude, got:\n{}", js);
+    }
+
+    #[test]
+    fn prelude_batch3_no_removed_polyfills() {
+        // Extend the prelude guard to cover batch 3 removals
+        let js = phpx_to_js("$x = 1;").expect("should compile");
+        assert!(!js.contains("globalThis.base64_encode ??="), "globalThis.base64_encode polyfill must be gone");
+        assert!(!js.contains("globalThis.base64_decode ??="), "globalThis.base64_decode polyfill must be gone");
+        assert!(!js.contains("globalThis.hash ??="), "globalThis.hash polyfill must be gone");
+        assert!(!js.contains("globalThis.hash_hmac ??="), "globalThis.hash_hmac polyfill must be gone");
+        assert!(!js.contains("globalThis.hash_equals ??="), "globalThis.hash_equals polyfill must be gone");
+        assert!(!js.contains("globalThis.date ??="), "globalThis.date polyfill must be gone");
+        assert!(!js.contains("globalThis.gmdate ??="), "globalThis.gmdate polyfill must be gone");
+        assert!(!js.contains("globalThis.pack ??="), "globalThis.pack polyfill must be gone");
+        assert!(!js.contains("globalThis.function_exists ??="), "globalThis.function_exists polyfill must be gone");
+        assert!(!js.contains("globalThis.class_exists ??="), "globalThis.class_exists polyfill must be gone");
+        // Mangled __phpx_ helpers ARE expected in the prelude
+        assert!(js.contains("globalThis.__phpx_base64_encode ??="), "mangled base64_encode helper must be present");
+        assert!(js.contains("globalThis.__phpx_base64_decode ??="), "mangled base64_decode helper must be present");
+        assert!(js.contains("globalThis.__phpx_hash ??="), "mangled hash helper must be present");
+        assert!(js.contains("globalThis.__phpx_hash_hmac ??="), "mangled hash_hmac helper must be present");
+        assert!(js.contains("globalThis.__phpx_date ??="), "mangled date helper must be present");
+        assert!(js.contains("globalThis.__phpx_gmdate ??="), "mangled gmdate helper must be present");
+        assert!(js.contains("globalThis.__phpx_pack ??="), "mangled pack helper must be present");
     }
 
     // ---- Phase 3: scope validation warnings ----
