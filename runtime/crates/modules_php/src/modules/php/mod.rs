@@ -4545,6 +4545,18 @@ fn op_php_cwd() -> Result<String, deno_core::error::CoreError> {
         .map_err(|e| deno_core::error::CoreError::from(e))
 }
 
+/// Resolve all symlinks in `path` via the OS and return the canonical absolute
+/// path, or None (null in JS) if the path does not exist or cannot be resolved.
+/// Used by the __dekaFs / dekaFsAllow guards to prevent symlink-based
+/// path-traversal out of the tenant root.
+#[op2]
+#[string]
+fn op_php_canonicalize(#[string] path: String) -> Option<String> {
+    std::fs::canonicalize(&path)
+        .ok()
+        .map(|p| p.to_string_lossy().to_string())
+}
+
 #[op2(fast)]
 fn op_php_file_exists(#[string] path: String) -> bool {
     if enforce_read(Some(&path)).is_err() {
@@ -4789,6 +4801,7 @@ deno_core::extension!(
         op_php_fs_proto_decode,
         op_php_bridge_proto_stats,
         op_php_cwd,
+        op_php_canonicalize,
         op_php_file_exists,
         op_php_path_resolve,
         op_php_read_dir,

@@ -113,6 +113,11 @@ pub const OPERATION_CAPABILITY_MATRIX: &[OperationCapability] = &[
         notes: "Read current working directory",
     },
     OperationCapability {
+        op_id: "php.op_php_canonicalize",
+        capability: Capability::Read,
+        notes: "Resolve symlinks to canonical path (used for confinement checks)",
+    },
+    OperationCapability {
         op_id: "php.op_php_file_exists",
         capability: Capability::Read,
         notes: "Check file existence",
@@ -319,6 +324,7 @@ pub const KNOWN_RUNTIME_OPERATION_IDS: &[&str] = &[
     "php.op_php_fs_proto_decode",
     "php.op_php_bridge_proto_stats",
     "php.op_php_cwd",
+    "php.op_php_canonicalize",
     "php.op_php_file_exists",
     "php.op_php_path_resolve",
     "php.op_php_read_dir",
