@@ -392,6 +392,13 @@ struct JsSubsetEmitter<'a> {
     struct_names: HashSet<String>,
     struct_methods: HashMap<String, Vec<(String, String)>>,
     enum_cases: HashMap<String, Vec<EnumCaseDef>>,
+    /// Tier B helpers needed by this module. Populated during AST traversal
+    /// (try_rewrite_builtin inserts keys here). finish() emits each needed helper
+    /// as a module-scoped `function __phpx_X(...)` declaration — NOT globalThis.
+    /// This makes them tree-shakable: the bundler DCE can see that a helper is
+    /// unreferenced and prune it, rather than assuming globalThis.X might be
+    /// accessed from anywhere.
+    needed_helpers: BTreeSet<&'static str>,
 }
 
 impl<'a> JsSubsetEmitter<'a> {
@@ -411,6 +418,7 @@ impl<'a> JsSubsetEmitter<'a> {
             struct_names: HashSet::new(),
             struct_methods: HashMap::new(),
             enum_cases: HashMap::new(),
+            needed_helpers: BTreeSet::new(),
         }
     }
 
@@ -531,20 +539,14 @@ impl<'a> JsSubsetEmitter<'a> {
         out.push_str("globalThis.__deka_chr ??= (code) => String.fromCharCode((Number(code) || 0) & 0xff);\n");
         out.push_str("globalThis.__deka_ord ??= (s) => { const str = String(s ?? ''); return str.length > 0 ? str.charCodeAt(0) : 0; };\n");
         out.push_str("globalThis.__deka_object_set ??= (obj, key, value) => { if (obj && typeof obj === 'object') { obj[key] = value; } return obj; };\n");
-        // base64_encode / base64_decode — Tier B helpers. Compile-time rewrite emits
-        // __phpx_base64_encode(...) / __phpx_base64_decode(...) calls. No globalThis.base64_* install.
-        out.push_str("globalThis.__phpx_base64_table ??= 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';\n");
-        out.push_str("globalThis.__phpx_base64_encode ??= (input) => { const str = String(input ?? ''); const tbl = globalThis.__phpx_base64_table; let out = ''; for (let i = 0; i < str.length; i += 3) { const b0 = str.charCodeAt(i) & 0xff; const b1 = i + 1 < str.length ? str.charCodeAt(i + 1) & 0xff : NaN; const b2 = i + 2 < str.length ? str.charCodeAt(i + 2) & 0xff : NaN; const n = (b0 << 16) | ((Number.isNaN(b1) ? 0 : b1) << 8) | (Number.isNaN(b2) ? 0 : b2); out += tbl[(n >> 18) & 63]; out += tbl[(n >> 12) & 63]; out += Number.isNaN(b1) ? '=' : tbl[(n >> 6) & 63]; out += Number.isNaN(b2) ? '=' : tbl[n & 63]; } return out; };\n");
-        out.push_str("globalThis.__phpx_base64_decode ??= (input, strict = false) => { const src = String(input ?? '').replace(/\\s+/g, ''); if (src.length % 4 !== 0) return strict ? false : ''; const tbl = globalThis.__phpx_base64_table; let out = ''; for (let i = 0; i < src.length; i += 4) { const c0 = src[i], c1 = src[i + 1], c2 = src[i + 2], c3 = src[i + 3]; const n0 = tbl.indexOf(c0), n1 = tbl.indexOf(c1); const n2 = c2 === '=' ? -1 : tbl.indexOf(c2); const n3 = c3 === '=' ? -1 : tbl.indexOf(c3); if (n0 < 0 || n1 < 0 || n2 < -1 || n3 < -1) return strict ? false : ''; const n = (n0 << 18) | (n1 << 12) | ((n2 < 0 ? 0 : n2) << 6) | (n3 < 0 ? 0 : n3); out += String.fromCharCode((n >> 16) & 0xff); if (c2 !== '=') out += String.fromCharCode((n >> 8) & 0xff); if (c3 !== '=') out += String.fromCharCode(n & 0xff); } return out; };\n");
-        // hash / hash_hmac / hash_equals — Tier B helpers. Compile-time rewrites emit
-        // __phpx_hash(...) / __phpx_hash_hmac(...) / inline IIFE for hash_equals.
-        // No globalThis.hash / globalThis.hash_hmac / globalThis.hash_equals install.
-        out.push_str("globalThis.__phpx_sha256_hex ??= (input) => { const K = [1116352408,1899447441,3049323471,3921009573,961987163,1508970993,2453635748,2870763221,3624381080,310598401,607225278,1426881987,1925078388,2162078206,2614888103,3248222580,3835390401,4022224774,264347078,604807628,770255983,1249150122,1555081692,1996064986,2554220882,2821834349,2952996808,3210313671,3336571891,3584528711,113926993,338241895,666307205,773529912,1294757372,1396182291,1695183700,1986661051,2177026350,2456956037,2730485921,2820302411,3259730800,3345764771,3516065817,3600352804,4094571909,275423344,430227734,506948616,659060556,883997877,958139571,1322822218,1537002063,1747873779,1955562222,2024104815,2227730452,2361852424,2428436474,2756734187,3204031479,3329325298]; const bytes = []; const src = String(input ?? ''); for (let i = 0; i < src.length; i += 1) bytes.push(src.charCodeAt(i) & 0xff); const bitLen = bytes.length * 8; bytes.push(0x80); while ((bytes.length % 64) !== 56) bytes.push(0); for (let i = 7; i >= 0; i -= 1) bytes.push((bitLen >>> (i * 8)) & 0xff); let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a, h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19; const rotr = (x, n) => ((x >>> n) | (x << (32 - n))) >>> 0; for (let i = 0; i < bytes.length; i += 64) { const w = new Array(64); for (let j = 0; j < 16; j += 1) { const k = i + (j * 4); w[j] = (((bytes[k] << 24) | (bytes[k + 1] << 16) | (bytes[k + 2] << 8) | bytes[k + 3]) >>> 0); } for (let j = 16; j < 64; j += 1) { const s0 = (rotr(w[j - 15], 7) ^ rotr(w[j - 15], 18) ^ (w[j - 15] >>> 3)) >>> 0; const s1 = (rotr(w[j - 2], 17) ^ rotr(w[j - 2], 19) ^ (w[j - 2] >>> 10)) >>> 0; w[j] = (((w[j - 16] + s0) >>> 0) + ((w[j - 7] + s1) >>> 0)) >>> 0; } let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7; for (let j = 0; j < 64; j += 1) { const S1 = (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) >>> 0; const ch = ((e & f) ^ ((~e) & g)) >>> 0; const t1 = (((((h + S1) >>> 0) + ch) >>> 0) + ((K[j] + w[j]) >>> 0)) >>> 0; const S0 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) >>> 0; const maj = ((a & b) ^ (a & c) ^ (b & c)) >>> 0; const t2 = (S0 + maj) >>> 0; h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0; } h0 = (h0 + a) >>> 0; h1 = (h1 + b) >>> 0; h2 = (h2 + c) >>> 0; h3 = (h3 + d) >>> 0; h4 = (h4 + e) >>> 0; h5 = (h5 + f) >>> 0; h6 = (h6 + g) >>> 0; h7 = (h7 + h) >>> 0; } const words = [h0, h1, h2, h3, h4, h5, h6, h7]; let out = ''; for (const w of words) { out += (w >>> 0).toString(16).padStart(8, '0'); } return out; };\n");
-        out.push_str("globalThis.__phpx_hex_to_binary ??= (hex) => { const src = String(hex ?? ''); let out = ''; for (let i = 0; i < src.length; i += 2) out += String.fromCharCode(parseInt(src.slice(i, i + 2), 16) & 0xff); return out; };\n");
-        out.push_str("globalThis.__phpx_hmac_sha256_hex ??= (data, key) => { const toBytes = (s) => { const out = []; const src = String(s ?? ''); for (let i = 0; i < src.length; i += 1) out.push(src.charCodeAt(i) & 0xff); return out; }; const fromBytes = (arr) => arr.map((v) => String.fromCharCode(v & 0xff)).join(''); let k = toBytes(key); if (k.length > 64) { const kh = globalThis.__phpx_sha256_hex(fromBytes(k)); k = toBytes(globalThis.__phpx_hex_to_binary(kh)); } while (k.length < 64) k.push(0); const o = [], i = []; for (let n = 0; n < 64; n += 1) { o.push(k[n] ^ 0x5c); i.push(k[n] ^ 0x36); } const innerHex = globalThis.__phpx_sha256_hex(fromBytes(i) + String(data ?? '')); const outerHex = globalThis.__phpx_sha256_hex(fromBytes(o) + globalThis.__phpx_hex_to_binary(innerHex)); return outerHex; };\n");
-        out.push_str("globalThis.__phpx_node_crypto ??= (() => { try { if (typeof require === 'function') { return require('node:crypto'); } } catch (_err) {} try { if (typeof require === 'function') { return require('crypto'); } } catch (_err) {} return null; })();\n");
-        out.push_str("globalThis.__phpx_hash ??= (algo, data, raw = false) => { const name = String(algo || '').toLowerCase(); if (name === 'sha256') { const hex = globalThis.__phpx_sha256_hex(String(data ?? '')); return raw ? globalThis.__phpx_hex_to_binary(hex) : hex; } const mod = globalThis.__phpx_node_crypto; if (!mod || typeof mod.createHash !== 'function') throw new Error('hash() requires crypto support'); const digest = mod.createHash(name).update(String(data ?? ''), 'binary').digest(raw ? 'latin1' : 'hex'); return digest; };\n");
-        out.push_str("globalThis.__phpx_hash_hmac ??= (algo, data, key, raw = false) => { const name = String(algo || '').toLowerCase(); if (name === 'sha256') { const hex = globalThis.__phpx_hmac_sha256_hex(String(data ?? ''), String(key ?? '')); return raw ? globalThis.__phpx_hex_to_binary(hex) : hex; } const mod = globalThis.__phpx_node_crypto; if (!mod || typeof mod.createHmac !== 'function') throw new Error('hash_hmac() requires crypto support'); const digest = mod.createHmac(name, String(key ?? '')).update(String(data ?? ''), 'binary').digest(raw ? 'latin1' : 'hex'); return digest; };\n");
+        // --- Tier B helpers: module-scoped function declarations (DCE-visible) ---
+        // Emitted only when needed (self.needed_helpers tracks which ones were
+        // referenced during AST traversal). Plain `function` declarations are in
+        // lexical scope — the bundler sees references and can prune unused helpers.
+        // Inter-helper calls use plain names (not globalThis.X) so DCE chains work.
+        // hash_equals is always an inline IIFE — no helper declaration needed.
+        out.push_str(&emit_needed_helpers(&self.needed_helpers));
+
         // hash_equals is a compile-time inline IIFE rewrite in try_rewrite_builtin. No globalThis install.
         out.push_str("globalThis.__phpx_symbol_table ??= Object.create(null);\n");
         out.push_str("globalThis.__deka_symbol_set ??= (name, value) => { const key = String(name); globalThis.__phpx_symbol_table[key] = value; return true; };\n");
@@ -576,13 +578,8 @@ impl<'a> JsSubsetEmitter<'a> {
         // rawurlencode / dechex / hexdec / intval / floatval / boolval / strval / array_slice
         // are compile-time rewrites in try_rewrite_builtin. No globalThis polyfills needed.
         // dechex/hexdec are compile-time rewrites in JsSubsetEmitter::emit_builtin_call.
-        // pack — Tier B helper. Compile-time rewrite emits __phpx_pack(...). No globalThis.pack install.
-        out.push_str("globalThis.__phpx_pack ??= (format, ...values) => { const fmt = String(format ?? ''); let out = ''; let vi = 0; for (let i = 0; i < fmt.length; i++) { const c = fmt[i]; if (c === 'H') { const hex = String(values[vi++] ?? ''); for (let j = 0; j < hex.length; j += 2) out += String.fromCharCode(parseInt(hex.slice(j, j+2), 16)); } else if (c === 'N') { const n = Number(values[vi++] ?? 0) >>> 0; out += String.fromCharCode((n>>24)&0xff,(n>>16)&0xff,(n>>8)&0xff,n&0xff); } else if (c === 'n') { const n = Number(values[vi++] ?? 0) & 0xffff; out += String.fromCharCode((n>>8)&0xff,n&0xff); } else if (c === 'C') { out += String.fromCharCode(Number(values[vi++] ?? 0) & 0xff); } } return out; };\n");
-        // date / gmdate — Tier B helpers. Compile-time rewrite emits __phpx_date(...) / __phpx_gmdate(...).
-        // No globalThis.date / globalThis.gmdate install (avoids collision with user `$date` variables).
-        out.push_str("globalThis.__phpx_date_format ??= (fmt, ts) => { const d = ts !== undefined && ts !== null ? new Date(Number(ts) * 1000) : new Date(); const p = (n, w) => String(n).padStart(w || 2, '0'); const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']; const months = ['January','February','March','April','May','June','July','August','September','October','November','December']; let out = ''; for (let i = 0; i < fmt.length; i++) { const c = fmt[i]; switch(c) { case 'Y': out += d.getFullYear(); break; case 'y': out += String(d.getFullYear()).slice(-2); break; case 'm': out += p(d.getMonth()+1); break; case 'd': out += p(d.getDate()); break; case 'H': out += p(d.getHours()); break; case 'i': out += p(d.getMinutes()); break; case 's': out += p(d.getSeconds()); break; case 'n': out += d.getMonth()+1; break; case 'j': out += d.getDate(); break; case 'G': out += d.getHours(); break; case 'N': out += d.getDay()||7; break; case 'w': out += d.getDay(); break; case 'l': out += days[d.getDay()]; break; case 'D': out += days[d.getDay()].slice(0,3); break; case 'F': out += months[d.getMonth()]; break; case 'M': out += months[d.getMonth()].slice(0,3); break; case 't': out += new Date(d.getFullYear(),d.getMonth()+1,0).getDate(); break; case 'U': out += Math.floor(d.getTime()/1000); break; case 'e': case 'T': out += 'UTC'; break; case 'Z': out += -d.getTimezoneOffset()*60; break; case 'c': out += d.toISOString().replace(/\\.\\d{3}Z$/, '+00:00'); break; case 'r': out += d.toUTCString(); break; case 'L': { const y = d.getFullYear(); out += ((y%4===0&&y%100!==0)||(y%400===0)) ? '1' : '0'; break; } default: out += c; } } return out; };\n");
-        out.push_str("globalThis.__phpx_date ??= (fmt, ts) => globalThis.__phpx_date_format(String(fmt ?? ''), ts);\n");
-        out.push_str("globalThis.__phpx_gmdate ??= (fmt, ts) => { const d = ts !== undefined && ts !== null ? new Date(Number(ts) * 1000) : new Date(); return globalThis.__phpx_date_format(String(fmt ?? ''), Math.floor(d.getTime()/1000)); };\n");
+        // pack / date / gmdate — moved to emit_needed_helpers(); emitted only when needed.
+        // No globalThis.pack / globalThis.date / globalThis.gmdate install.
         out.push_str("globalThis.error_log ??= (msg, type, dest) => { if (type === 3 && dest) { try { const fs = (typeof __dekaFs !== 'undefined' && __dekaFs) ? __dekaFs : null; if (fs && typeof fs.appendFileSync === 'function') { fs.appendFileSync(String(dest), String(msg ?? '')); return true; } } catch(_) {} } console.error(String(msg ?? '')); return true; };\n");
         out.push_str("globalThis.error_get_last ??= () => null;\n");
         out.push_str("globalThis.set_error_handler ??= () => null;\n");
@@ -2604,14 +2601,16 @@ impl<'a> JsSubsetEmitter<'a> {
                     }
                 }
             }
-            // base64_encode($s) -> __phpx_base64_encode($s)  (Tier B helper, not globalThis)
+            // base64_encode($s) -> __phpx_base64_encode($s)  (Tier B helper, module-scoped)
             "base64_encode" if args.len() == 1 => {
                 let a = emit_args(self, args)?;
+                self.needed_helpers.insert("base64_encode");
                 Ok(Some(format!("__phpx_base64_encode({})", a[0])))
             }
             // base64_decode($s) / base64_decode($s, $strict) -> __phpx_base64_decode(...)
             "base64_decode" if args.len() >= 1 && args.len() <= 2 => {
                 let a = emit_args(self, args)?;
+                self.needed_helpers.insert("base64_decode");
                 if args.len() == 1 {
                     Ok(Some(format!("__phpx_base64_decode({})", a[0])))
                 } else {
@@ -2621,6 +2620,7 @@ impl<'a> JsSubsetEmitter<'a> {
             // hash($algo, $data) / hash($algo, $data, $raw) -> __phpx_hash(...)
             "hash" if args.len() >= 2 && args.len() <= 3 => {
                 let a = emit_args(self, args)?;
+                self.needed_helpers.insert("hash");
                 if args.len() == 2 {
                     Ok(Some(format!("__phpx_hash({}, {})", a[0], a[1])))
                 } else {
@@ -2630,6 +2630,7 @@ impl<'a> JsSubsetEmitter<'a> {
             // hash_hmac($algo, $data, $key) / hash_hmac($algo, $data, $key, $raw) -> __phpx_hash_hmac(...)
             "hash_hmac" if args.len() >= 3 && args.len() <= 4 => {
                 let a = emit_args(self, args)?;
+                self.needed_helpers.insert("hash_hmac");
                 if args.len() == 3 {
                     Ok(Some(format!("__phpx_hash_hmac({}, {}, {})", a[0], a[1], a[2])))
                 } else {
@@ -2649,6 +2650,7 @@ impl<'a> JsSubsetEmitter<'a> {
             // date($fmt) / date($fmt, $ts) -> __phpx_date(...)
             "date" if args.len() >= 1 && args.len() <= 2 => {
                 let a = emit_args(self, args)?;
+                self.needed_helpers.insert("date");
                 if args.len() == 1 {
                     Ok(Some(format!("__phpx_date({})", a[0])))
                 } else {
@@ -2658,6 +2660,7 @@ impl<'a> JsSubsetEmitter<'a> {
             // gmdate($fmt) / gmdate($fmt, $ts) -> __phpx_gmdate(...)
             "gmdate" if args.len() >= 1 && args.len() <= 2 => {
                 let a = emit_args(self, args)?;
+                self.needed_helpers.insert("gmdate");
                 if args.len() == 1 {
                     Ok(Some(format!("__phpx_gmdate({})", a[0])))
                 } else {
@@ -2667,6 +2670,7 @@ impl<'a> JsSubsetEmitter<'a> {
             // pack($fmt, ...$values) -> __phpx_pack(...)
             "pack" if !args.is_empty() => {
                 let a = emit_args(self, args)?;
+                self.needed_helpers.insert("pack");
                 Ok(Some(format!("__phpx_pack({})", a.join(", "))))
             }
             // function_exists($name) -> typeof globalThis[String($name)] === 'function'
@@ -3263,6 +3267,136 @@ fn unescape_php_double(raw: &str) -> String {
             }
         }
     }
+    out
+}
+
+/// Emit module-scoped `function __phpx_X(...)` declarations for every Tier B
+/// helper that was referenced during AST traversal (tracked in
+/// `JsSubsetEmitter::needed_helpers`).
+///
+/// Each helper is a plain `function` declaration — NOT a `globalThis.X ??= …`
+/// assignment.  Plain function declarations are in lexical scope: the bundler
+/// can see that `__phpx_base64_encode` is called from line N and is defined at
+/// line M, and can prune it via DCE if no caller survives tree-shaking.
+///
+/// Helpers are emitted in dependency order.  Inter-helper calls use plain
+/// names (e.g. `__phpx_sha256_hex(…)` not `globalThis.__phpx_sha256_hex(…)`)
+/// so the dependency graph is visible to the bundler.
+///
+/// Dependency map (each key depends on its values):
+///   base64_encode  -> [base64_table]
+///   base64_decode  -> [base64_table]
+///   hash           -> [sha256_hex, hex_to_binary, node_crypto]
+///   hash_hmac      -> [hmac_sha256_hex, hex_to_binary, node_crypto, sha256_hex]
+///   date           -> [date_format]
+///   gmdate         -> [date_format]
+///   pack           -> []
+fn emit_needed_helpers(needed: &BTreeSet<&'static str>) -> String {
+    // Compute transitive closure of required internal helpers.
+    // Internal helpers (not user-callable) are tracked by short name without __phpx_ prefix.
+    let mut emit_base64_table = false;
+    let mut emit_base64_encode = false;
+    let mut emit_base64_decode = false;
+    let mut emit_sha256_hex = false;
+    let mut emit_hex_to_binary = false;
+    let mut emit_hmac_sha256_hex = false;
+    let mut emit_node_crypto = false;
+    let mut emit_hash = false;
+    let mut emit_hash_hmac = false;
+    let mut emit_date_format = false;
+    let mut emit_date = false;
+    let mut emit_gmdate = false;
+    let mut emit_pack = false;
+
+    for &key in needed {
+        match key {
+            "base64_encode" => {
+                emit_base64_table = true;
+                emit_base64_encode = true;
+            }
+            "base64_decode" => {
+                emit_base64_table = true;
+                emit_base64_decode = true;
+            }
+            "hash" => {
+                emit_sha256_hex = true;
+                emit_hex_to_binary = true;
+                emit_node_crypto = true;
+                emit_hash = true;
+            }
+            "hash_hmac" => {
+                emit_sha256_hex = true;
+                emit_hex_to_binary = true;
+                emit_hmac_sha256_hex = true;
+                emit_node_crypto = true;
+                emit_hash_hmac = true;
+            }
+            "date" => {
+                emit_date_format = true;
+                emit_date = true;
+            }
+            "gmdate" => {
+                emit_date_format = true;
+                emit_gmdate = true;
+            }
+            "pack" => {
+                emit_pack = true;
+            }
+            _ => {}
+        }
+    }
+
+    if !emit_base64_table && !emit_base64_encode && !emit_base64_decode
+        && !emit_sha256_hex && !emit_hex_to_binary && !emit_hmac_sha256_hex
+        && !emit_node_crypto && !emit_hash && !emit_hash_hmac
+        && !emit_date_format && !emit_date && !emit_gmdate && !emit_pack
+    {
+        return String::new();
+    }
+
+    let mut out = String::new();
+    out.push_str("// Tier B helpers — module-scoped, emitted only when referenced (DCE-visible).\n");
+
+    if emit_base64_table {
+        out.push_str("const __phpx_base64_table = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';\n");
+    }
+    if emit_base64_encode {
+        out.push_str("function __phpx_base64_encode(input) { const str = String(input ?? ''); const tbl = __phpx_base64_table; let out = ''; for (let i = 0; i < str.length; i += 3) { const b0 = str.charCodeAt(i) & 0xff; const b1 = i + 1 < str.length ? str.charCodeAt(i + 1) & 0xff : NaN; const b2 = i + 2 < str.length ? str.charCodeAt(i + 2) & 0xff : NaN; const n = (b0 << 16) | ((Number.isNaN(b1) ? 0 : b1) << 8) | (Number.isNaN(b2) ? 0 : b2); out += tbl[(n >> 18) & 63]; out += tbl[(n >> 12) & 63]; out += Number.isNaN(b1) ? '=' : tbl[(n >> 6) & 63]; out += Number.isNaN(b2) ? '=' : tbl[n & 63]; } return out; }\n");
+    }
+    if emit_base64_decode {
+        out.push_str("function __phpx_base64_decode(input, strict = false) { const src = String(input ?? '').replace(/\\s+/g, ''); if (src.length % 4 !== 0) return strict ? false : ''; const tbl = __phpx_base64_table; let out = ''; for (let i = 0; i < src.length; i += 4) { const c0 = src[i], c1 = src[i + 1], c2 = src[i + 2], c3 = src[i + 3]; const n0 = tbl.indexOf(c0), n1 = tbl.indexOf(c1); const n2 = c2 === '=' ? -1 : tbl.indexOf(c2); const n3 = c3 === '=' ? -1 : tbl.indexOf(c3); if (n0 < 0 || n1 < 0 || n2 < -1 || n3 < -1) return strict ? false : ''; const n = (n0 << 18) | (n1 << 12) | ((n2 < 0 ? 0 : n2) << 6) | (n3 < 0 ? 0 : n3); out += String.fromCharCode((n >> 16) & 0xff); if (c2 !== '=') out += String.fromCharCode((n >> 8) & 0xff); if (c3 !== '=') out += String.fromCharCode(n & 0xff); } return out; }\n");
+    }
+    if emit_sha256_hex {
+        out.push_str("function __phpx_sha256_hex(input) { const K = [1116352408,1899447441,3049323471,3921009573,961987163,1508970993,2453635748,2870763221,3624381080,310598401,607225278,1426881987,1925078388,2162078206,2614888103,3248222580,3835390401,4022224774,264347078,604807628,770255983,1249150122,1555081692,1996064986,2554220882,2821834349,2952996808,3210313671,3336571891,3584528711,113926993,338241895,666307205,773529912,1294757372,1396182291,1695183700,1986661051,2177026350,2456956037,2730485921,2820302411,3259730800,3345764771,3516065817,3600352804,4094571909,275423344,430227734,506948616,659060556,883997877,958139571,1322822218,1537002063,1747873779,1955562222,2024104815,2227730452,2361852424,2428436474,2756734187,3204031479,3329325298]; const bytes = []; const src = String(input ?? ''); for (let i = 0; i < src.length; i += 1) bytes.push(src.charCodeAt(i) & 0xff); const bitLen = bytes.length * 8; bytes.push(0x80); while ((bytes.length % 64) !== 56) bytes.push(0); for (let i = 7; i >= 0; i -= 1) bytes.push((bitLen >>> (i * 8)) & 0xff); let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a, h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19; const rotr = (x, n) => ((x >>> n) | (x << (32 - n))) >>> 0; for (let i = 0; i < bytes.length; i += 64) { const w = new Array(64); for (let j = 0; j < 16; j += 1) { const k = i + (j * 4); w[j] = (((bytes[k] << 24) | (bytes[k + 1] << 16) | (bytes[k + 2] << 8) | bytes[k + 3]) >>> 0); } for (let j = 16; j < 64; j += 1) { const s0 = (rotr(w[j - 15], 7) ^ rotr(w[j - 15], 18) ^ (w[j - 15] >>> 3)) >>> 0; const s1 = (rotr(w[j - 2], 17) ^ rotr(w[j - 2], 19) ^ (w[j - 2] >>> 10)) >>> 0; w[j] = (((w[j - 16] + s0) >>> 0) + ((w[j - 7] + s1) >>> 0)) >>> 0; } let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7; for (let j = 0; j < 64; j += 1) { const S1 = (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) >>> 0; const ch = ((e & f) ^ ((~e) & g)) >>> 0; const t1 = (((((h + S1) >>> 0) + ch) >>> 0) + ((K[j] + w[j]) >>> 0)) >>> 0; const S0 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) >>> 0; const maj = ((a & b) ^ (a & c) ^ (b & c)) >>> 0; const t2 = (S0 + maj) >>> 0; h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0; } h0 = (h0 + a) >>> 0; h1 = (h1 + b) >>> 0; h2 = (h2 + c) >>> 0; h3 = (h3 + d) >>> 0; h4 = (h4 + e) >>> 0; h5 = (h5 + f) >>> 0; h6 = (h6 + g) >>> 0; h7 = (h7 + h) >>> 0; } const words = [h0, h1, h2, h3, h4, h5, h6, h7]; let out = ''; for (const w of words) { out += (w >>> 0).toString(16).padStart(8, '0'); } return out; }\n");
+    }
+    if emit_hex_to_binary {
+        out.push_str("function __phpx_hex_to_binary(hex) { const src = String(hex ?? ''); let out = ''; for (let i = 0; i < src.length; i += 2) out += String.fromCharCode(parseInt(src.slice(i, i + 2), 16) & 0xff); return out; }\n");
+    }
+    if emit_hmac_sha256_hex {
+        out.push_str("function __phpx_hmac_sha256_hex(data, key) { const toBytes = (s) => { const out = []; const src = String(s ?? ''); for (let i = 0; i < src.length; i += 1) out.push(src.charCodeAt(i) & 0xff); return out; }; const fromBytes = (arr) => arr.map((v) => String.fromCharCode(v & 0xff)).join(''); let k = toBytes(key); if (k.length > 64) { const kh = __phpx_sha256_hex(fromBytes(k)); k = toBytes(__phpx_hex_to_binary(kh)); } while (k.length < 64) k.push(0); const o = [], i = []; for (let n = 0; n < 64; n += 1) { o.push(k[n] ^ 0x5c); i.push(k[n] ^ 0x36); } const innerHex = __phpx_sha256_hex(fromBytes(i) + String(data ?? '')); const outerHex = __phpx_sha256_hex(fromBytes(o) + __phpx_hex_to_binary(innerHex)); return outerHex; }\n");
+    }
+    if emit_node_crypto {
+        out.push_str("const __phpx_node_crypto = (() => { try { if (typeof require === 'function') { return require('node:crypto'); } } catch (_err) {} try { if (typeof require === 'function') { return require('crypto'); } } catch (_err) {} return null; })();\n");
+    }
+    if emit_hash {
+        out.push_str("function __phpx_hash(algo, data, raw = false) { const name = String(algo || '').toLowerCase(); if (name === 'sha256') { const hex = __phpx_sha256_hex(String(data ?? '')); return raw ? __phpx_hex_to_binary(hex) : hex; } const mod = __phpx_node_crypto; if (!mod || typeof mod.createHash !== 'function') throw new Error('hash() requires crypto support'); const digest = mod.createHash(name).update(String(data ?? ''), 'binary').digest(raw ? 'latin1' : 'hex'); return digest; }\n");
+    }
+    if emit_hash_hmac {
+        out.push_str("function __phpx_hash_hmac(algo, data, key, raw = false) { const name = String(algo || '').toLowerCase(); if (name === 'sha256') { const hex = __phpx_hmac_sha256_hex(String(data ?? ''), String(key ?? '')); return raw ? __phpx_hex_to_binary(hex) : hex; } const mod = __phpx_node_crypto; if (!mod || typeof mod.createHmac !== 'function') throw new Error('hash_hmac() requires crypto support'); const digest = mod.createHmac(name, String(key ?? '')).update(String(data ?? ''), 'binary').digest(raw ? 'latin1' : 'hex'); return digest; }\n");
+    }
+    if emit_date_format {
+        out.push_str("function __phpx_date_format(fmt, ts) { const d = ts !== undefined && ts !== null ? new Date(Number(ts) * 1000) : new Date(); const p = (n, w) => String(n).padStart(w || 2, '0'); const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']; const months = ['January','February','March','April','May','June','July','August','September','October','November','December']; let out = ''; for (let i = 0; i < fmt.length; i++) { const c = fmt[i]; switch(c) { case 'Y': out += d.getFullYear(); break; case 'y': out += String(d.getFullYear()).slice(-2); break; case 'm': out += p(d.getMonth()+1); break; case 'd': out += p(d.getDate()); break; case 'H': out += p(d.getHours()); break; case 'i': out += p(d.getMinutes()); break; case 's': out += p(d.getSeconds()); break; case 'n': out += d.getMonth()+1; break; case 'j': out += d.getDate(); break; case 'G': out += d.getHours(); break; case 'N': out += d.getDay()||7; break; case 'w': out += d.getDay(); break; case 'l': out += days[d.getDay()]; break; case 'D': out += days[d.getDay()].slice(0,3); break; case 'F': out += months[d.getMonth()]; break; case 'M': out += months[d.getMonth()].slice(0,3); break; case 't': out += new Date(d.getFullYear(),d.getMonth()+1,0).getDate(); break; case 'U': out += Math.floor(d.getTime()/1000); break; case 'e': case 'T': out += 'UTC'; break; case 'Z': out += -d.getTimezoneOffset()*60; break; case 'c': out += d.toISOString().replace(/\\.\\d{3}Z$/, '+00:00'); break; case 'r': out += d.toUTCString(); break; case 'L': { const y = d.getFullYear(); out += ((y%4===0&&y%100!==0)||(y%400===0)) ? '1' : '0'; break; } default: out += c; } } return out; }\n");
+    }
+    if emit_date {
+        out.push_str("function __phpx_date(fmt, ts) { return __phpx_date_format(String(fmt ?? ''), ts); }\n");
+    }
+    if emit_gmdate {
+        out.push_str("function __phpx_gmdate(fmt, ts) { const d = ts !== undefined && ts !== null ? new Date(Number(ts) * 1000) : new Date(); return __phpx_date_format(String(fmt ?? ''), Math.floor(d.getTime()/1000)); }\n");
+    }
+    if emit_pack {
+        out.push_str("function __phpx_pack(format, ...values) { const fmt = String(format ?? ''); let out = ''; let vi = 0; for (let i = 0; i < fmt.length; i++) { const c = fmt[i]; if (c === 'H') { const hex = String(values[vi++] ?? ''); for (let j = 0; j < hex.length; j += 2) out += String.fromCharCode(parseInt(hex.slice(j, j+2), 16)); } else if (c === 'N') { const n = Number(values[vi++] ?? 0) >>> 0; out += String.fromCharCode((n>>24)&0xff,(n>>16)&0xff,(n>>8)&0xff,n&0xff); } else if (c === 'n') { const n = Number(values[vi++] ?? 0) & 0xffff; out += String.fromCharCode((n>>8)&0xff,n&0xff); } else if (c === 'C') { out += String.fromCharCode(Number(values[vi++] ?? 0) & 0xff); } } return out; }\n");
+    }
+    out.push('\n');
     out
 }
 
@@ -4236,8 +4370,10 @@ $result = match ($x) {
 
     #[test]
     fn prelude_batch3_no_removed_polyfills() {
-        // Extend the prelude guard to cover batch 3 removals
+        // Batch 3 polyfills must be gone — neither the old un-mangled form nor the
+        // old globalThis.__phpx_X ??= form should appear in output.
         let js = phpx_to_js("$x = 1;").expect("should compile");
+        // Old un-mangled polyfills (batch 3 targets) must be absent.
         assert!(!js.contains("globalThis.base64_encode ??="), "globalThis.base64_encode polyfill must be gone");
         assert!(!js.contains("globalThis.base64_decode ??="), "globalThis.base64_decode polyfill must be gone");
         assert!(!js.contains("globalThis.hash ??="), "globalThis.hash polyfill must be gone");
@@ -4248,14 +4384,52 @@ $result = match ($x) {
         assert!(!js.contains("globalThis.pack ??="), "globalThis.pack polyfill must be gone");
         assert!(!js.contains("globalThis.function_exists ??="), "globalThis.function_exists polyfill must be gone");
         assert!(!js.contains("globalThis.class_exists ??="), "globalThis.class_exists polyfill must be gone");
-        // Mangled __phpx_ helpers ARE expected in the prelude
-        assert!(js.contains("globalThis.__phpx_base64_encode ??="), "mangled base64_encode helper must be present");
-        assert!(js.contains("globalThis.__phpx_base64_decode ??="), "mangled base64_decode helper must be present");
-        assert!(js.contains("globalThis.__phpx_hash ??="), "mangled hash helper must be present");
-        assert!(js.contains("globalThis.__phpx_hash_hmac ??="), "mangled hash_hmac helper must be present");
-        assert!(js.contains("globalThis.__phpx_date ??="), "mangled date helper must be present");
-        assert!(js.contains("globalThis.__phpx_gmdate ??="), "mangled gmdate helper must be present");
-        assert!(js.contains("globalThis.__phpx_pack ??="), "mangled pack helper must be present");
+        // Tier B helpers must NOT appear in output for a file that does not use them.
+        // They are module-scoped and emitted only when referenced (DCE via omission).
+        assert!(!js.contains("globalThis.__phpx_base64_encode"), "globalThis.__phpx_base64_encode must be absent when unused");
+        assert!(!js.contains("globalThis.__phpx_base64_decode"), "globalThis.__phpx_base64_decode must be absent when unused");
+        assert!(!js.contains("globalThis.__phpx_hash ??="), "globalThis.__phpx_hash must be absent when unused");
+        assert!(!js.contains("globalThis.__phpx_hash_hmac"), "globalThis.__phpx_hash_hmac must be absent when unused");
+        assert!(!js.contains("globalThis.__phpx_date ??="), "globalThis.__phpx_date must be absent when unused");
+        assert!(!js.contains("globalThis.__phpx_gmdate"), "globalThis.__phpx_gmdate must be absent when unused");
+        assert!(!js.contains("globalThis.__phpx_pack"), "globalThis.__phpx_pack must be absent when unused");
+        assert!(!js.contains("function __phpx_base64_encode"), "base64_encode helper must be absent when unused");
+        assert!(!js.contains("function __phpx_hash("), "hash helper must be absent when unused");
+        assert!(!js.contains("function __phpx_pack"), "pack helper must be absent when unused");
+        assert!(!js.contains("function __phpx_date("), "date helper must be absent when unused");
+    }
+
+    #[test]
+    fn tier_b_helpers_emitted_as_module_scoped_functions() {
+        // When base64_encode is used, the output must contain a module-scoped function
+        // declaration — NOT a globalThis assignment. This is the DCE-correctness test.
+        let js = phpx_to_js("$s = 'hello';\n$b = base64_encode($s);").expect("should compile");
+        assert!(js.contains("function __phpx_base64_encode("), "expected module-scoped function declaration for base64_encode, got:\n{}", js);
+        assert!(!js.contains("globalThis.__phpx_base64_encode"), "globalThis assignment must NOT be emitted for base64_encode, got:\n{}", js);
+        // pack should be absent since it's not used
+        assert!(!js.contains("function __phpx_pack"), "pack helper must be absent when unused, got:\n{}", js);
+        // date should be absent since it's not used
+        assert!(!js.contains("function __phpx_date("), "date helper must be absent when unused, got:\n{}", js);
+
+        // Same check for date helper.
+        let js2 = phpx_to_js("$d = date('Y-m-d');").expect("should compile");
+        assert!(js2.contains("function __phpx_date("), "expected module-scoped function declaration for date, got:\n{}", js2);
+        assert!(!js2.contains("globalThis.__phpx_date"), "globalThis assignment must NOT be emitted for date, got:\n{}", js2);
+        // base64 should be absent since it's not used
+        assert!(!js2.contains("function __phpx_base64_encode"), "base64_encode helper must be absent when unused, got:\n{}", js2);
+    }
+
+    #[test]
+    fn tier_b_dce_evidence_no_helpers_when_unused() {
+        // A file that uses neither hash/hash_hmac nor base64_* must NOT contain any
+        // of those helper declarations. This is the DCE-evidence test.
+        let js = phpx_to_js("$x = strlen('hello');\n$y = count([1, 2, 3]);").expect("should compile");
+        assert!(!js.contains("function __phpx_hash("), "hash helper must be absent when unused");
+        assert!(!js.contains("function __phpx_hash_hmac("), "hash_hmac helper must be absent when unused");
+        assert!(!js.contains("function __phpx_sha256_hex("), "sha256_hex helper must be absent when unused");
+        assert!(!js.contains("function __phpx_base64_encode("), "base64_encode helper must be absent when unused");
+        assert!(!js.contains("function __phpx_base64_decode("), "base64_decode helper must be absent when unused");
+        assert!(!js.contains("__phpx_base64_table"), "base64_table must be absent when unused");
     }
 
     // ---- Phase 3: scope validation warnings ----
