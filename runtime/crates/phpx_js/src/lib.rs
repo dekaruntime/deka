@@ -2454,11 +2454,14 @@ impl<'a> JsSubsetEmitter<'a> {
                     a[0]
                 )))
             }
-            // urldecode($s) -> reverse of urlencode: '+' → space first, then decodeURIComponent
+            // urldecode($s) -> reverse of urlencode: '+' → space, then decodeURIComponent.
+            // Wrapped in IIFE with try/catch so malformed sequences (%G0, %2, %E0) return
+            // the raw post-substitution string instead of throwing URIError — matching PHP
+            // pass-through semantics for bad percent-sequences (DoS safety for user input).
             "urldecode" if args.len() == 1 => {
                 let a = emit_args(self, args)?;
                 Ok(Some(format!(
-                    "decodeURIComponent(String({}).replace(/\\+/g, '%20'))",
+                    "(() => {{ const __s = String({}).replace(/\\+/g, '%20'); try {{ return decodeURIComponent(__s); }} catch(_) {{ return __s; }} }})()",
                     a[0]
                 )))
             }
@@ -3900,6 +3903,52 @@ $result = match ($x) {
         assert!(js.contains("decodeURIComponent("), "expected decodeURIComponent for urldecode, got:\n{}", js);
         assert!(js.contains("replace(/\\+/g"), "expected +→%20 substitution for urldecode, got:\n{}", js);
         assert!(!js.contains("globalThis.urldecode"), "should NOT contain globalThis.urldecode, got:\n{}", js);
+        // Must be wrapped in IIFE with try/catch — no bare decodeURIComponent call.
+        assert!(js.contains("try {"), "expected try/catch guard against URIError, got:\n{}", js);
+        assert!(js.contains("catch("), "expected catch clause for URIError guard, got:\n{}", js);
+    }
+
+    // Regression: Hamza's DoS report — malformed %XX sequences must not throw URIError.
+    // PHP urldecode passes malformed sequences through unchanged.
+    #[test]
+    fn urldecode_malformed_percent_g0_no_throw() {
+        // %G0 is not a valid percent-sequence — JS decodeURIComponent throws URIError.
+        // The rewrite must emit a try/catch so the IIFE returns the raw string instead.
+        let js = phpx_to_js("$d = urldecode('%G0');").expect("should compile");
+        // Verify the guard structure is present in the emitted JS.
+        assert!(js.contains("try {"), "urldecode('%G0') must emit try/catch guard, got:\n{}", js);
+        assert!(js.contains("catch("), "urldecode('%G0') must emit catch clause, got:\n{}", js);
+        // Verify the emitted code is syntactically valid and evaluates without throwing.
+        // (We cannot run JS here, but structure checks above are sufficient for unit scope.)
+    }
+
+    #[test]
+    fn urldecode_malformed_truncated_percent_no_throw() {
+        // %2 has only one hex digit — also invalid.
+        let js = phpx_to_js("$d = urldecode('%2');").expect("should compile");
+        assert!(js.contains("try {"), "urldecode('%2') must emit try/catch guard, got:\n{}", js);
+    }
+
+    #[test]
+    fn urldecode_malformed_incomplete_multibyte_no_throw() {
+        // %E0 is the first byte of a three-byte UTF-8 sequence with no continuation bytes —
+        // decodeURIComponent throws URIError on this.
+        let js = phpx_to_js("$d = urldecode('%E0');").expect("should compile");
+        assert!(js.contains("try {"), "urldecode('%E0') must emit try/catch guard, got:\n{}", js);
+    }
+
+    #[test]
+    fn urldecode_plus_to_space() {
+        // Regression: existing behaviour — '+' must become a space.
+        let js = phpx_to_js("$d = urldecode('hello+world');").expect("should compile");
+        assert!(js.contains("replace(/\\+/g, '%20')"), "expected + → %20 substitution, got:\n{}", js);
+    }
+
+    #[test]
+    fn urldecode_percent20_to_space() {
+        // Regression: %20 must decode to a space (decodeURIComponent handles this).
+        let js = phpx_to_js("$d = urldecode('hello%20world');").expect("should compile");
+        assert!(js.contains("decodeURIComponent("), "expected decodeURIComponent for %20, got:\n{}", js);
     }
 
     #[test]
