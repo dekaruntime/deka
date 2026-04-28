@@ -556,26 +556,19 @@ impl<'a> JsSubsetEmitter<'a> {
         out.push_str("globalThis.mkdir ??= (p, _mode, recursive) => { try { const fs = (typeof __dekaFs !== 'undefined' && __dekaFs) ? __dekaFs : null; if (fs && typeof fs.mkdirSync === 'function') { fs.mkdirSync(String(p), { recursive: !!recursive }); return true; } } catch(_) {} return false; };\n");
         out.push_str("globalThis.file ??= (p) => { try { const fs = (typeof __dekaFs !== 'undefined' && __dekaFs) ? __dekaFs : null; if (!fs || typeof fs.readFileSync !== 'function') return false; const raw = fs.readFileSync(String(p)); const text = typeof raw === 'string' ? raw : (new TextDecoder()).decode(raw); if (text === null) return false; const lines = text.split('\\n'); return lines[lines.length - 1] === '' ? lines.slice(0, -1).map((l, i) => l + '\\n') : lines.map((l, i, a) => i < a.length - 1 ? l + '\\n' : l); } catch(_) { return false; } };\n");
         // PHP math and type builtins.
-        out.push_str("globalThis.max ??= (...args) => { if (args.length === 1 && Array.isArray(args[0])) args = args[0]; return args.reduce((a, b) => (Number(b) > Number(a) ? b : a)); };\n");
-        out.push_str("globalThis.min ??= (...args) => { if (args.length === 1 && Array.isArray(args[0])) args = args[0]; return args.reduce((a, b) => (Number(b) < Number(a) ? b : a)); };\n");
-        out.push_str("globalThis.is_int ??= (v) => typeof v === 'number' && Number.isInteger(v);\n");
-        out.push_str("globalThis.is_float ??= (v) => typeof v === 'number' && !Number.isInteger(v);\n");
-        out.push_str("globalThis.is_numeric ??= (v) => v !== null && v !== '' && !isNaN(Number(v));\n");
-        out.push_str("globalThis.is_string ??= (v) => typeof v === 'string';\n");
-        out.push_str("globalThis.is_object ??= (v) => v !== null && typeof v === 'object' && !Array.isArray(v);\n");
+        // max/min/is_int/is_float/is_numeric/is_string/is_object are compile-time rewrites
+        // in JsSubsetEmitter::emit_builtin_call — no globalThis polyfill needed.
         out.push_str("globalThis.gettype ??= (v) => { if (v === null) return 'NULL'; if (typeof v === 'boolean') return 'boolean'; if (typeof v === 'number') return Number.isInteger(v) ? 'integer' : 'double'; if (typeof v === 'string') return 'string'; if (Array.isArray(v)) return 'array'; if (typeof v === 'object') return 'object'; return 'unknown type'; };\n");
         out.push_str("globalThis.get_object_vars ??= (v) => { if (!v || typeof v !== 'object') return {}; const out = {}; for (const k of Object.keys(v)) { if (k !== '__struct') out[k] = v[k]; } return out; };\n");
         out.push_str("globalThis.mt_rand ??= (min, max) => { const lo = Number(min ?? 0); const hi = Number(max ?? 2147483647); return Math.floor(Math.random() * (hi - lo + 1)) + lo; };\n");
         // PHP string/time builtins.
-        out.push_str("globalThis.ltrim ??= (s, chars) => { const str = String(s ?? ''); if (!chars) return str.replace(/^\\s+/, ''); const esc = String(chars).replace(/[-[\\]{}()*+?.,\\\\^$|#\\s]/g, '\\\\$&'); return str.replace(new RegExp('^[' + esc + ']+'), ''); };\n");
-        out.push_str("globalThis.rtrim ??= (s, chars) => { const str = String(s ?? ''); if (!chars) return str.replace(/\\s+$/, ''); const esc = String(chars).replace(/[-[\\]{}()*+?.,\\\\^$|#\\s]/g, '\\\\$&'); return str.replace(new RegExp('[' + esc + ']+$'), ''); };\n");
-        out.push_str("globalThis.str_replace ??= (search, replace, subject) => { let s = String(subject ?? ''); if (Array.isArray(search)) { for (let i = 0; i < search.length; i++) { const r = Array.isArray(replace) ? (replace[i] ?? '') : String(replace ?? ''); s = s.split(String(search[i])).join(r); } return s; } return s.split(String(search ?? '')).join(String(replace ?? '')); };\n");
+        // ltrim/rtrim (1-arg and 2-arg) are compile-time rewrites in JsSubsetEmitter::emit_builtin_call.
+        // str_replace is a compile-time rewrite in JsSubsetEmitter::emit_builtin_call.
         out.push_str("globalThis.preg_match ??= (pattern, subject, matches) => { const src = String(pattern ?? ''); const lastSlash = src.lastIndexOf('/'); const flags = lastSlash > 0 ? src.slice(lastSlash + 1) : ''; const pat = lastSlash > 0 ? src.slice(1, lastSlash) : src.slice(1); try { const re = new RegExp(pat, flags.replace('u', '') + (flags.includes('u') ? 'u' : '') ); const m = re.exec(String(subject ?? '')); if (!m) return 0; return 1; } catch(_) { return 0; } };\n");
         out.push_str("globalThis.preg_replace ??= (pattern, replacement, subject) => { const src = String(pattern ?? ''); const lastSlash = src.lastIndexOf('/'); const flags = (lastSlash > 0 ? src.slice(lastSlash + 1) : '') + 'g'; const pat = lastSlash > 0 ? src.slice(1, lastSlash) : src.slice(1); try { const re = new RegExp(pat, flags); return String(subject ?? '').replace(re, String(replacement ?? '')); } catch(_) { return String(subject ?? ''); } };\n");
-        out.push_str("globalThis.rawurlencode ??= (s) => encodeURIComponent(String(s ?? '')).replace(/!/g, '%21').replace(/'/g, '%27').replace(/\\(/g, '%28').replace(/\\)/g, '%29').replace(/\\*/g, '%2A');\n");
+        // rawurlencode is a compile-time rewrite in JsSubsetEmitter::emit_builtin_call.
         out.push_str("globalThis.parse_url ??= (url, component) => { try { const u = new URL(String(url ?? ''), 'http://x'); const map = { scheme: u.protocol.replace(':',''), host: u.hostname, port: u.port ? parseInt(u.port) : undefined, path: u.pathname, query: u.search ? u.search.slice(1) : undefined, fragment: u.hash ? u.hash.slice(1) : undefined }; if (component !== undefined && component !== null) { const names = ['scheme','host','path','port','user','pass','query','fragment']; return map[names[component]] ?? null; } return map; } catch(_) { return false; } };\n");
-        out.push_str("globalThis.dechex ??= (n) => (Number(n) >>> 0).toString(16);\n");
-        out.push_str("globalThis.hexdec ??= (s) => parseInt(String(s ?? ''), 16) || 0;\n");
+        // dechex/hexdec are compile-time rewrites in JsSubsetEmitter::emit_builtin_call.
         out.push_str("globalThis.pack ??= (format, ...values) => { const fmt = String(format ?? ''); let out = ''; let vi = 0; for (let i = 0; i < fmt.length; i++) { const c = fmt[i]; if (c === 'H') { const hex = String(values[vi++] ?? ''); for (let j = 0; j < hex.length; j += 2) out += String.fromCharCode(parseInt(hex.slice(j, j+2), 16)); } else if (c === 'N') { const n = Number(values[vi++] ?? 0) >>> 0; out += String.fromCharCode((n>>24)&0xff,(n>>16)&0xff,(n>>8)&0xff,n&0xff); } else if (c === 'n') { const n = Number(values[vi++] ?? 0) & 0xffff; out += String.fromCharCode((n>>8)&0xff,n&0xff); } else if (c === 'C') { out += String.fromCharCode(Number(values[vi++] ?? 0) & 0xff); } } return out; };\n");
         out.push_str("globalThis.microtime ??= (as_float) => { const t = Date.now(); if (as_float) return t / 1000; const sec = Math.floor(t / 1000); const msec = (t % 1000) / 1000; return msec.toFixed(6) + ' ' + sec; };\n");
         out.push_str("globalThis.strtotime ??= (s) => { if (!s) return false; const d = new Date(String(s)); return isNaN(d.getTime()) ? false : Math.floor(d.getTime() / 1000); };\n");
@@ -587,7 +580,7 @@ impl<'a> JsSubsetEmitter<'a> {
         out.push_str("globalThis.set_error_handler ??= () => null;\n");
         out.push_str("globalThis.register_shutdown_function ??= () => undefined;\n");
         out.push_str("globalThis.array_slice ??= (arr, offset, length, preserve_keys) => { if (!Array.isArray(arr)) { const keys = Object.keys(arr); const sl = length !== undefined && length !== null ? keys.slice(Number(offset), Number(offset) + Number(length)) : keys.slice(Number(offset)); if (preserve_keys) { const out = {}; for (const k of sl) out[k] = arr[k]; return out; } return sl.map(k => arr[k]); } return length !== undefined && length !== null ? arr.slice(Number(offset), Number(offset) + Number(length)) : arr.slice(Number(offset)); };\n");
-        out.push_str("globalThis.htmlspecialchars ??= (s, _flags, _enc, _double) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&#039;');\n");
+        // htmlspecialchars is a compile-time rewrite in JsSubsetEmitter::emit_builtin_call.
         // PHP serve adapter helper — allows PHPX template files to export themselves as ESM handlers.
         // Mangled __phpx_X name (NOT a plain `servePhp` global) so it can't collide with a user-defined
         // `$servePhp` variable in PHPX source. Tree-shakable through bundler DCE since it's a
@@ -2176,15 +2169,31 @@ impl<'a> JsSubsetEmitter<'a> {
                 let a = emit_args(self, args)?;
                 Ok(Some(format!("String({}).trim()", a[0])))
             }
-            // ltrim($s) -> String($s).trimStart()  (no $chars arg only)
-            "ltrim" if args.len() == 1 => {
+            // ltrim($s) -> String($s).trimStart()
+            // ltrim($s, $chars) -> inline regex strip from left
+            "ltrim" if args.len() >= 1 && args.len() <= 2 => {
                 let a = emit_args(self, args)?;
-                Ok(Some(format!("String({}).trimStart()", a[0])))
+                if args.len() == 1 {
+                    Ok(Some(format!("String({}).trimStart()", a[0])))
+                } else {
+                    Ok(Some(format!(
+                        "(() => {{ const __str = String({0}); const __esc = String({1}).replace(/[-[\\]{{}}()*+?.,\\\\^$|#\\s]/g, \"\\\\$&\"); return __str.replace(new RegExp(\"^[\" + __esc + \"]+\"), \"\"); }})()",
+                        a[0], a[1]
+                    )))
+                }
             }
-            // rtrim($s) -> String($s).trimEnd()  (no $chars arg only)
-            "rtrim" if args.len() == 1 => {
+            // rtrim($s) -> String($s).trimEnd()
+            // rtrim($s, $chars) -> inline regex strip from right
+            "rtrim" if args.len() >= 1 && args.len() <= 2 => {
                 let a = emit_args(self, args)?;
-                Ok(Some(format!("String({}).trimEnd()", a[0])))
+                if args.len() == 1 {
+                    Ok(Some(format!("String({}).trimEnd()", a[0])))
+                } else {
+                    Ok(Some(format!(
+                        "(() => {{ const __str = String({0}); const __esc = String({1}).replace(/[-[\\]{{}}()*+?.,\\\\^$|#\\s]/g, \"\\\\$&\"); return __str.replace(new RegExp(\"[\" + __esc + \"]+$\"), \"\"); }})()",
+                        a[0], a[1]
+                    )))
+                }
             }
             // strpos($h, $n) -> IIFE returning index or false
             // strpos($h, $n, $offset) -> IIFE with offset
@@ -2330,6 +2339,111 @@ impl<'a> JsSubsetEmitter<'a> {
                     "(() => {{ const __v = {}; if (Array.isArray(__v)) return true; if (!(__v !== null && typeof __v === \"object\" && Object.getPrototypeOf(__v) === Object.prototype)) return false; if (Object.prototype.hasOwnProperty.call(__v, \"__struct\")) return false; return true; }})()",
                     a[0]
                 )))
+            }
+            // max($a, $b, ...) -> Math.max($a, $b, ...)
+            // max($arr)        -> Math.max(...$arr)   (single array arg)
+            "max" if !args.is_empty() => {
+                let a = emit_args(self, args)?;
+                if args.len() == 1 {
+                    // Single arg: may be an array — emit IIFE to handle both cases.
+                    Ok(Some(format!(
+                        "(() => {{ const __v = {}; return Array.isArray(__v) ? Math.max(...__v) : Math.max(__v); }})()",
+                        a[0]
+                    )))
+                } else {
+                    Ok(Some(format!("Math.max({})", a.join(", "))))
+                }
+            }
+            // min($a, $b, ...) -> Math.min($a, $b, ...)
+            // min($arr)        -> Math.min(...$arr)   (single array arg)
+            "min" if !args.is_empty() => {
+                let a = emit_args(self, args)?;
+                if args.len() == 1 {
+                    Ok(Some(format!(
+                        "(() => {{ const __v = {}; return Array.isArray(__v) ? Math.min(...__v) : Math.min(__v); }})()",
+                        a[0]
+                    )))
+                } else {
+                    Ok(Some(format!("Math.min({})", a.join(", "))))
+                }
+            }
+            // is_int($v) -> (typeof $v === "number" && Number.isInteger($v))
+            "is_int" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "(typeof {} === \"number\" && Number.isInteger({}))",
+                    a[0], a[0]
+                )))
+            }
+            // is_float($v) -> (typeof $v === "number" && !Number.isInteger($v))
+            "is_float" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "(typeof {} === \"number\" && !Number.isInteger({}))",
+                    a[0], a[0]
+                )))
+            }
+            // is_numeric($v) -> (String($v) !== "" && !isNaN(Number($v)))
+            // PHPX has no null so we skip the null check from the PHP polyfill.
+            "is_numeric" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "(String({0}) !== \"\" && !isNaN(Number({0})))",
+                    a[0]
+                )))
+            }
+            // is_string($v) -> (typeof $v === "string")
+            "is_string" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!("(typeof {} === \"string\")", a[0])))
+            }
+            // is_object($v) -> (typeof $v === "object" && $v !== null && !Array.isArray($v))
+            // Structs are objects in PHPX so they return true here, matching PHP semantics
+            // where instances of classes are objects. If struct exclusion is ever needed,
+            // add !Object.prototype.hasOwnProperty.call($v,'__struct') to the check.
+            "is_object" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "(typeof {0} === \"object\" && {0} !== null && !Array.isArray({0}))",
+                    a[0]
+                )))
+            }
+            // htmlspecialchars($s) -> inline .replace() chain
+            // Optional flags/encoding/double-encode args are accepted but ignored (same as polyfill).
+            "htmlspecialchars" if args.len() >= 1 && args.len() <= 4 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "String({}).replace(/&/g, \"&amp;\").replace(/</g, \"&lt;\").replace(/>/g, \"&gt;\").replace(/\"/g, \"&quot;\").replace(/'/g, \"&#039;\")",
+                    a[0]
+                )))
+            }
+            // str_replace($search, $replace, $subject)
+            // Scalar case: String($subject).split(String($search)).join(String($replace))
+            // Array search case: IIFE loop (keeps array form working without a runtime helper).
+            "str_replace" if args.len() == 3 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "(() => {{ const __srch = {0}; const __repl = {1}; let __s = String({2}); if (Array.isArray(__srch)) {{ for (let __i = 0; __i < __srch.length; __i++) {{ const __r = Array.isArray(__repl) ? String(__repl[__i] ?? \"\") : String(__repl); __s = __s.split(String(__srch[__i])).join(__r); }} return __s; }} return __s.split(String(__srch)).join(String(__repl)); }})()",
+                    a[0], a[1], a[2]
+                )))
+            }
+            // rawurlencode($s) -> encodeURIComponent(String($s)) + RFC 3986 replacements
+            "rawurlencode" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "encodeURIComponent(String({})).replace(/!/g, \"%21\").replace(/'/g, \"%27\").replace(/\\(/g, \"%28\").replace(/\\)/g, \"%29\").replace(/\\*/g, \"%2A\")",
+                    a[0]
+                )))
+            }
+            // dechex($n) -> (Number($n)>>>0).toString(16)
+            "dechex" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!("(Number({})>>>0).toString(16)", a[0])))
+            }
+            // hexdec($s) -> (parseInt(String($s), 16) || 0)
+            "hexdec" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!("(parseInt(String({}), 16) || 0)", a[0])))
             }
             _ => Ok(None),
         }
@@ -3474,9 +3588,141 @@ $result = match ($x) {
         assert!(!js.contains("globalThis.is_array ="), "globalThis.is_array polyfill should be removed");
         assert!(!js.contains("globalThis.array_keys ??="), "globalThis.array_keys polyfill should not be added");
         assert!(!js.contains("globalThis.array_values ??="), "globalThis.array_values polyfill should not be added");
+        // Phase 2 (easy polyfills) — also removed
+        assert!(!js.contains("globalThis.max ??="), "globalThis.max polyfill should be removed");
+        assert!(!js.contains("globalThis.min ??="), "globalThis.min polyfill should be removed");
+        assert!(!js.contains("globalThis.is_int ??="), "globalThis.is_int polyfill should be removed");
+        assert!(!js.contains("globalThis.is_float ??="), "globalThis.is_float polyfill should be removed");
+        assert!(!js.contains("globalThis.is_numeric ??="), "globalThis.is_numeric polyfill should be removed");
+        assert!(!js.contains("globalThis.is_string ??="), "globalThis.is_string polyfill should be removed");
+        assert!(!js.contains("globalThis.is_object ??="), "globalThis.is_object polyfill should be removed");
+        assert!(!js.contains("globalThis.htmlspecialchars ??="), "globalThis.htmlspecialchars polyfill should be removed");
+        assert!(!js.contains("globalThis.str_replace ??="), "globalThis.str_replace polyfill should be removed");
+        assert!(!js.contains("globalThis.rawurlencode ??="), "globalThis.rawurlencode polyfill should be removed");
+        assert!(!js.contains("globalThis.dechex ??="), "globalThis.dechex polyfill should be removed");
+        assert!(!js.contains("globalThis.hexdec ??="), "globalThis.hexdec polyfill should be removed");
         // But kept entries should still be present
         assert!(js.contains("globalThis.panic ??="), "globalThis.panic should still be in prelude");
         assert!(js.contains("globalThis.defined ??="), "globalThis.defined should still be in prelude");
+    }
+
+    // ---- Phase 2 (easy polyfills) rewrite tests ----
+
+    #[test]
+    fn rewrite_max_multi_arg() {
+        let js = phpx_to_js("$n = max(1, 2, 3);").expect("should compile");
+        assert!(js.contains("Math.max("), "expected Math.max for max, got:\n{}", js);
+        assert!(!js.contains("globalThis.max"), "should NOT contain globalThis.max, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_max_single_array_arg() {
+        let js = phpx_to_js("$arr = [1, 2, 3];\n$n = max($arr);").expect("should compile");
+        // Single arg emits IIFE checking Array.isArray
+        assert!(js.contains("Array.isArray"), "expected Array.isArray check for max(arr), got:\n{}", js);
+        assert!(js.contains("Math.max("), "expected Math.max for max(arr), got:\n{}", js);
+        assert!(!js.contains("globalThis.max"), "should NOT contain globalThis.max, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_min_multi_arg() {
+        let js = phpx_to_js("$n = min(4, 2, 9);").expect("should compile");
+        assert!(js.contains("Math.min("), "expected Math.min for min, got:\n{}", js);
+        assert!(!js.contains("globalThis.min"), "should NOT contain globalThis.min, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_is_int_inline() {
+        let js = phpx_to_js("$v = 42;\n$b = is_int($v);").expect("should compile");
+        assert!(js.contains("typeof"), "expected typeof check for is_int, got:\n{}", js);
+        assert!(js.contains("Number.isInteger"), "expected Number.isInteger for is_int, got:\n{}", js);
+        assert!(!js.contains("globalThis.is_int"), "should NOT contain globalThis.is_int, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_is_float_inline() {
+        let js = phpx_to_js("$v = 3.14;\n$b = is_float($v);").expect("should compile");
+        assert!(js.contains("typeof"), "expected typeof check for is_float, got:\n{}", js);
+        assert!(js.contains("Number.isInteger"), "expected Number.isInteger for is_float, got:\n{}", js);
+        assert!(!js.contains("globalThis.is_float"), "should NOT contain globalThis.is_float, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_is_numeric_inline() {
+        let js = phpx_to_js("$v = '42';\n$b = is_numeric($v);").expect("should compile");
+        assert!(js.contains("isNaN(Number("), "expected isNaN(Number()) for is_numeric, got:\n{}", js);
+        assert!(!js.contains("globalThis.is_numeric"), "should NOT contain globalThis.is_numeric, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_is_string_inline() {
+        let js = phpx_to_js("$v = 'hello';\n$b = is_string($v);").expect("should compile");
+        assert!(js.contains("typeof"), "expected typeof for is_string, got:\n{}", js);
+        assert!(js.contains("\"string\""), "expected string type check for is_string, got:\n{}", js);
+        assert!(!js.contains("globalThis.is_string"), "should NOT contain globalThis.is_string, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_is_object_inline() {
+        let js = phpx_to_js("$v = { x: 1 };\n$b = is_object($v);").expect("should compile");
+        assert!(js.contains("typeof"), "expected typeof for is_object, got:\n{}", js);
+        assert!(js.contains("Array.isArray"), "expected Array.isArray check for is_object, got:\n{}", js);
+        assert!(!js.contains("globalThis.is_object"), "should NOT contain globalThis.is_object, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_htmlspecialchars_inline() {
+        let js = phpx_to_js("$s = '<script>';\n$e = htmlspecialchars($s);").expect("should compile");
+        assert!(js.contains(".replace("), "expected .replace() chain for htmlspecialchars, got:\n{}", js);
+        assert!(js.contains("&amp;"), "expected &amp; entity for htmlspecialchars, got:\n{}", js);
+        assert!(js.contains("&lt;"), "expected &lt; entity for htmlspecialchars, got:\n{}", js);
+        assert!(!js.contains("globalThis.htmlspecialchars"), "should NOT contain globalThis.htmlspecialchars, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_str_replace_scalar_inline() {
+        let js = phpx_to_js("$s = 'hello world';\n$r = str_replace('world', 'earth', $s);").expect("should compile");
+        assert!(js.contains(".split("), "expected .split for str_replace, got:\n{}", js);
+        assert!(js.contains(".join("), "expected .join for str_replace, got:\n{}", js);
+        assert!(!js.contains("globalThis.str_replace"), "should NOT contain globalThis.str_replace, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_rawurlencode_inline() {
+        let js = phpx_to_js("$s = 'hello world';\n$e = rawurlencode($s);").expect("should compile");
+        assert!(js.contains("encodeURIComponent("), "expected encodeURIComponent for rawurlencode, got:\n{}", js);
+        assert!(js.contains("%21"), "expected %21 replacement for rawurlencode, got:\n{}", js);
+        assert!(!js.contains("globalThis.rawurlencode"), "should NOT contain globalThis.rawurlencode, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_dechex_inline() {
+        let js = phpx_to_js("$n = 255;\n$h = dechex($n);").expect("should compile");
+        assert!(js.contains(".toString(16)"), "expected .toString(16) for dechex, got:\n{}", js);
+        assert!(!js.contains("globalThis.dechex"), "should NOT contain globalThis.dechex, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_hexdec_inline() {
+        let js = phpx_to_js("$s = 'ff';\n$n = hexdec($s);").expect("should compile");
+        assert!(js.contains("parseInt("), "expected parseInt for hexdec, got:\n{}", js);
+        assert!(js.contains(", 16)"), "expected base 16 for hexdec, got:\n{}", js);
+        assert!(!js.contains("globalThis.hexdec"), "should NOT contain globalThis.hexdec, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_ltrim_with_chars_inline() {
+        let js = phpx_to_js("$s = '...hello';\n$r = ltrim($s, '.');").expect("should compile");
+        // 2-arg ltrim emits an IIFE with regex escaping
+        assert!(js.contains("new RegExp("), "expected new RegExp for ltrim with chars, got:\n{}", js);
+        assert!(!js.contains("globalThis.ltrim"), "should NOT contain globalThis.ltrim, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_rtrim_with_chars_inline() {
+        let js = phpx_to_js("$s = 'hello...';\n$r = rtrim($s, '.');").expect("should compile");
+        assert!(js.contains("new RegExp("), "expected new RegExp for rtrim with chars, got:\n{}", js);
+        assert!(!js.contains("globalThis.rtrim"), "should NOT contain globalThis.rtrim, got:\n{}", js);
     }
 
     // ---- Phase 3: scope validation warnings ----
@@ -3919,7 +4165,10 @@ function f(): void {
     fn function_with_typed_params_types_erased() {
         let js = phpx_to_js("function add($a: int, $b: int): int { return $a + $b; }").expect("should compile");
         assert!(js.contains("function add(a, b)"), "expected types erased in params, got:\n{}", js);
-        assert!(!js.contains("int"), "types should be erased, got:\n{}", js);
+        // Check that `: int` annotation syntax is not in the emitted function signature.
+        // Note: the prelude may contain "integer" (e.g. in gettype), so we check for
+        // the PHP type annotation form `: int` rather than the bare word.
+        assert!(!js.contains(": int"), "PHP type annotations should be erased from function signature, got:\n{}", js);
     }
 
     #[test]
