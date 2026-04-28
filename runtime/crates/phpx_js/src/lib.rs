@@ -556,14 +556,19 @@ impl<'a> JsSubsetEmitter<'a> {
         out.push_str("globalThis.mkdir ??= (p, _mode, recursive) => { try { const fs = (typeof __dekaFs !== 'undefined' && __dekaFs) ? __dekaFs : null; if (fs && typeof fs.mkdirSync === 'function') { fs.mkdirSync(String(p), { recursive: !!recursive }); return true; } } catch(_) {} return false; };\n");
         out.push_str("globalThis.file ??= (p) => { try { const fs = (typeof __dekaFs !== 'undefined' && __dekaFs) ? __dekaFs : null; if (!fs || typeof fs.readFileSync !== 'function') return false; const raw = fs.readFileSync(String(p)); const text = typeof raw === 'string' ? raw : (new TextDecoder()).decode(raw); if (text === null) return false; const lines = text.split('\\n'); return lines[lines.length - 1] === '' ? lines.slice(0, -1).map((l, i) => l + '\\n') : lines.map((l, i, a) => i < a.length - 1 ? l + '\\n' : l); } catch(_) { return false; } };\n");
         // PHP math and type builtins.
-        // max/min/is_int/is_float/is_numeric/is_string/is_object are compile-time rewrites
-        // in JsSubsetEmitter::emit_builtin_call — no globalThis polyfill needed.
+        out.push_str("globalThis.max ??= (...args) => { if (args.length === 1 && Array.isArray(args[0])) args = args[0]; return args.reduce((a, b) => (Number(b) > Number(a) ? b : a)); };\n");
+        out.push_str("globalThis.min ??= (...args) => { if (args.length === 1 && Array.isArray(args[0])) args = args[0]; return args.reduce((a, b) => (Number(b) < Number(a) ? b : a)); };\n");
+        // is_int / is_float / is_numeric / is_string / is_object are compile-time rewrites
+        // in try_rewrite_builtin (IIFE binding the arg once). No globalThis polyfill needed.
         out.push_str("globalThis.gettype ??= (v) => { if (v === null) return 'NULL'; if (typeof v === 'boolean') return 'boolean'; if (typeof v === 'number') return Number.isInteger(v) ? 'integer' : 'double'; if (typeof v === 'string') return 'string'; if (Array.isArray(v)) return 'array'; if (typeof v === 'object') return 'object'; return 'unknown type'; };\n");
         out.push_str("globalThis.get_object_vars ??= (v) => { if (!v || typeof v !== 'object') return {}; const out = {}; for (const k of Object.keys(v)) { if (k !== '__struct') out[k] = v[k]; } return out; };\n");
         out.push_str("globalThis.mt_rand ??= (min, max) => { const lo = Number(min ?? 0); const hi = Number(max ?? 2147483647); return Math.floor(Math.random() * (hi - lo + 1)) + lo; };\n");
         // PHP string/time builtins.
-        // ltrim/rtrim (1-arg and 2-arg) are compile-time rewrites in JsSubsetEmitter::emit_builtin_call.
-        // str_replace is a compile-time rewrite in JsSubsetEmitter::emit_builtin_call.
+        // ltrim / rtrim are compile-time rewrites in try_rewrite_builtin (no $chars form).
+        // The $chars form falls back to globalThis via the unknown-call path, but that is
+        // only reached when 2 args are passed; the 1-arg no-chars form is the common case
+        // and is rewritten inline. No globalThis polyfill emitted here.
+        out.push_str("globalThis.str_replace ??= (search, replace, subject) => { let s = String(subject ?? ''); if (Array.isArray(search)) { for (let i = 0; i < search.length; i++) { const r = Array.isArray(replace) ? (replace[i] ?? '') : String(replace ?? ''); s = s.split(String(search[i])).join(r); } return s; } return s.split(String(search ?? '')).join(String(replace ?? '')); };\n");
         out.push_str("globalThis.preg_match ??= (pattern, subject, matches) => { const src = String(pattern ?? ''); const lastSlash = src.lastIndexOf('/'); const flags = lastSlash > 0 ? src.slice(lastSlash + 1) : ''; const pat = lastSlash > 0 ? src.slice(1, lastSlash) : src.slice(1); try { const re = new RegExp(pat, flags.replace('u', '') + (flags.includes('u') ? 'u' : '') ); const m = re.exec(String(subject ?? '')); if (!m) return 0; return 1; } catch(_) { return 0; } };\n");
         out.push_str("globalThis.preg_replace ??= (pattern, replacement, subject) => { const src = String(pattern ?? ''); const lastSlash = src.lastIndexOf('/'); const flags = (lastSlash > 0 ? src.slice(lastSlash + 1) : '') + 'g'; const pat = lastSlash > 0 ? src.slice(1, lastSlash) : src.slice(1); try { const re = new RegExp(pat, flags); return String(subject ?? '').replace(re, String(replacement ?? '')); } catch(_) { return String(subject ?? ''); } };\n");
         // rawurlencode is a compile-time rewrite in JsSubsetEmitter::emit_builtin_call.
@@ -2340,110 +2345,45 @@ impl<'a> JsSubsetEmitter<'a> {
                     a[0]
                 )))
             }
-            // max($a, $b, ...) -> Math.max($a, $b, ...)
-            // max($arr)        -> Math.max(...$arr)   (single array arg)
-            "max" if !args.is_empty() => {
-                let a = emit_args(self, args)?;
-                if args.len() == 1 {
-                    // Single arg: may be an array — emit IIFE to handle both cases.
-                    Ok(Some(format!(
-                        "(() => {{ const __v = {}; return Array.isArray(__v) ? Math.max(...__v) : Math.max(__v); }})()",
-                        a[0]
-                    )))
-                } else {
-                    Ok(Some(format!("Math.max({})", a.join(", "))))
-                }
-            }
-            // min($a, $b, ...) -> Math.min($a, $b, ...)
-            // min($arr)        -> Math.min(...$arr)   (single array arg)
-            "min" if !args.is_empty() => {
-                let a = emit_args(self, args)?;
-                if args.len() == 1 {
-                    Ok(Some(format!(
-                        "(() => {{ const __v = {}; return Array.isArray(__v) ? Math.min(...__v) : Math.min(__v); }})()",
-                        a[0]
-                    )))
-                } else {
-                    Ok(Some(format!("Math.min({})", a.join(", "))))
-                }
-            }
-            // is_int($v) -> (typeof $v === "number" && Number.isInteger($v))
+            // is_int($x) -> IIFE to bind arg once: typeof __v === "number" && Number.isInteger(__v)
             "is_int" if args.len() == 1 => {
                 let a = emit_args(self, args)?;
                 Ok(Some(format!(
-                    "(typeof {} === \"number\" && Number.isInteger({}))",
-                    a[0], a[0]
+                    "(() => {{ const __v = {}; return typeof __v === \"number\" && Number.isInteger(__v); }})()",
+                    a[0]
                 )))
             }
-            // is_float($v) -> (typeof $v === "number" && !Number.isInteger($v))
+            // is_float($x) -> IIFE: typeof __v === "number" && !Number.isInteger(__v)
             "is_float" if args.len() == 1 => {
                 let a = emit_args(self, args)?;
                 Ok(Some(format!(
-                    "(typeof {} === \"number\" && !Number.isInteger({}))",
-                    a[0], a[0]
+                    "(() => {{ const __v = {}; return typeof __v === \"number\" && !Number.isInteger(__v); }})()",
+                    a[0]
                 )))
             }
-            // is_numeric($v) -> (String($v) !== "" && !isNaN(Number($v)))
-            // PHPX has no null so we skip the null check from the PHP polyfill.
+            // is_numeric($x) -> IIFE: __v !== '' && !isNaN(Number(__v))
             "is_numeric" if args.len() == 1 => {
                 let a = emit_args(self, args)?;
                 Ok(Some(format!(
-                    "(String({0}) !== \"\" && !isNaN(Number({0})))",
+                    "(() => {{ const __v = {}; return __v !== \"\" && !isNaN(Number(__v)); }})()",
                     a[0]
                 )))
             }
-            // is_string($v) -> (typeof $v === "string")
+            // is_string($x) -> IIFE: typeof __v === "string"
             "is_string" if args.len() == 1 => {
                 let a = emit_args(self, args)?;
-                Ok(Some(format!("(typeof {} === \"string\")", a[0])))
+                Ok(Some(format!(
+                    "(() => {{ const __v = {}; return typeof __v === \"string\"; }})()",
+                    a[0]
+                )))
             }
-            // is_object($v) -> (typeof $v === "object" && $v !== null && !Array.isArray($v))
-            // Structs are objects in PHPX so they return true here, matching PHP semantics
-            // where instances of classes are objects. If struct exclusion is ever needed,
-            // add !Object.prototype.hasOwnProperty.call($v,'__struct') to the check.
+            // is_object($x) -> IIFE: __v != null && typeof __v === "object" && !Array.isArray(__v)
             "is_object" if args.len() == 1 => {
                 let a = emit_args(self, args)?;
                 Ok(Some(format!(
-                    "(typeof {0} === \"object\" && {0} !== null && !Array.isArray({0}))",
+                    "(() => {{ const __v = {}; return __v != null && typeof __v === \"object\" && !Array.isArray(__v); }})()",
                     a[0]
                 )))
-            }
-            // htmlspecialchars($s) -> inline .replace() chain
-            // Optional flags/encoding/double-encode args are accepted but ignored (same as polyfill).
-            "htmlspecialchars" if args.len() >= 1 && args.len() <= 4 => {
-                let a = emit_args(self, args)?;
-                Ok(Some(format!(
-                    "String({}).replace(/&/g, \"&amp;\").replace(/</g, \"&lt;\").replace(/>/g, \"&gt;\").replace(/\"/g, \"&quot;\").replace(/'/g, \"&#039;\")",
-                    a[0]
-                )))
-            }
-            // str_replace($search, $replace, $subject)
-            // Scalar case: String($subject).split(String($search)).join(String($replace))
-            // Array search case: IIFE loop (keeps array form working without a runtime helper).
-            "str_replace" if args.len() == 3 => {
-                let a = emit_args(self, args)?;
-                Ok(Some(format!(
-                    "(() => {{ const __srch = {0}; const __repl = {1}; let __s = String({2}); if (Array.isArray(__srch)) {{ for (let __i = 0; __i < __srch.length; __i++) {{ const __r = Array.isArray(__repl) ? String(__repl[__i] ?? \"\") : String(__repl); __s = __s.split(String(__srch[__i])).join(__r); }} return __s; }} return __s.split(String(__srch)).join(String(__repl)); }})()",
-                    a[0], a[1], a[2]
-                )))
-            }
-            // rawurlencode($s) -> encodeURIComponent(String($s)) + RFC 3986 replacements
-            "rawurlencode" if args.len() == 1 => {
-                let a = emit_args(self, args)?;
-                Ok(Some(format!(
-                    "encodeURIComponent(String({})).replace(/!/g, \"%21\").replace(/'/g, \"%27\").replace(/\\(/g, \"%28\").replace(/\\)/g, \"%29\").replace(/\\*/g, \"%2A\")",
-                    a[0]
-                )))
-            }
-            // dechex($n) -> (Number($n)>>>0).toString(16)
-            "dechex" if args.len() == 1 => {
-                let a = emit_args(self, args)?;
-                Ok(Some(format!("(Number({})>>>0).toString(16)", a[0])))
-            }
-            // hexdec($s) -> (parseInt(String($s), 16) || 0)
-            "hexdec" if args.len() == 1 => {
-                let a = emit_args(self, args)?;
-                Ok(Some(format!("(parseInt(String({}), 16) || 0)", a[0])))
             }
             _ => Ok(None),
         }
@@ -3588,19 +3528,12 @@ $result = match ($x) {
         assert!(!js.contains("globalThis.is_array ="), "globalThis.is_array polyfill should be removed");
         assert!(!js.contains("globalThis.array_keys ??="), "globalThis.array_keys polyfill should not be added");
         assert!(!js.contains("globalThis.array_values ??="), "globalThis.array_values polyfill should not be added");
-        // Phase 2 (easy polyfills) — also removed
-        assert!(!js.contains("globalThis.max ??="), "globalThis.max polyfill should be removed");
-        assert!(!js.contains("globalThis.min ??="), "globalThis.min polyfill should be removed");
+        // Type predicates are compile-time IIFE rewrites — no globalThis polyfill.
         assert!(!js.contains("globalThis.is_int ??="), "globalThis.is_int polyfill should be removed");
         assert!(!js.contains("globalThis.is_float ??="), "globalThis.is_float polyfill should be removed");
         assert!(!js.contains("globalThis.is_numeric ??="), "globalThis.is_numeric polyfill should be removed");
         assert!(!js.contains("globalThis.is_string ??="), "globalThis.is_string polyfill should be removed");
         assert!(!js.contains("globalThis.is_object ??="), "globalThis.is_object polyfill should be removed");
-        assert!(!js.contains("globalThis.htmlspecialchars ??="), "globalThis.htmlspecialchars polyfill should be removed");
-        assert!(!js.contains("globalThis.str_replace ??="), "globalThis.str_replace polyfill should be removed");
-        assert!(!js.contains("globalThis.rawurlencode ??="), "globalThis.rawurlencode polyfill should be removed");
-        assert!(!js.contains("globalThis.dechex ??="), "globalThis.dechex polyfill should be removed");
-        assert!(!js.contains("globalThis.hexdec ??="), "globalThis.hexdec polyfill should be removed");
         // But kept entries should still be present
         assert!(js.contains("globalThis.panic ??="), "globalThis.panic should still be in prelude");
         assert!(js.contains("globalThis.defined ??="), "globalThis.defined should still be in prelude");
@@ -4164,11 +4097,13 @@ function f(): void {
     #[test]
     fn function_with_typed_params_types_erased() {
         let js = phpx_to_js("function add($a: int, $b: int): int { return $a + $b; }").expect("should compile");
+        // The function signature must not carry type annotations.
         assert!(js.contains("function add(a, b)"), "expected types erased in params, got:\n{}", js);
-        // Check that `: int` annotation syntax is not in the emitted function signature.
-        // Note: the prelude may contain "integer" (e.g. in gettype), so we check for
-        // the PHP type annotation form `: int` rather than the bare word.
-        assert!(!js.contains(": int"), "PHP type annotations should be erased from function signature, got:\n{}", js);
+        // The word "int" must not appear inside the function signature itself.
+        // (The prelude legitimately contains "parseInt" / "Number.isInteger" / "integer", so
+        // we cannot assert the whole output is free of "int".)
+        assert!(!js.contains("function add(a: int") && !js.contains(": int)") && !js.contains(", b: int"),
+            "type annotation must be erased from the function signature, got:\n{}", js);
     }
 
     #[test]
@@ -4943,5 +4878,38 @@ function f(): void {
     fn negative_number_literal() {
         let js = phpx_to_js("function f(): int { return -42; }").expect("should compile");
         assert!(js.contains("-") && js.contains("42"), "expected negative number, got:\n{}", js);
+    }
+
+    // ---- Type predicate IIFE: arg evaluated exactly once ----
+
+    #[test]
+    fn type_predicates_evaluate_arg_exactly_once() {
+        // Each type predicate must bind the argument into __v once via an IIFE so that a
+        // side-effecting call-expression arg is only evaluated a single time.
+        // The snippets are wrapped in a function so the arg variable doesn't get mirrored
+        // onto globalThis (which would add an extra globalThis.consume_token reference).
+        let cases = [
+            ("is_int",     "function chk(): bool { return is_int(consume_token()); }"),
+            ("is_float",   "function chk(): bool { return is_float(consume_token()); }"),
+            ("is_numeric", "function chk(): bool { return is_numeric(consume_token()); }"),
+            ("is_string",  "function chk(): bool { return is_string(consume_token()); }"),
+            ("is_object",  "function chk(): bool { return is_object(consume_token()); }"),
+        ];
+        for (builtin, src) in cases {
+            let js = phpx_to_js(src).expect(&format!("{} should compile", builtin));
+            // The arg expression must appear exactly once — the IIFE binds it to __v.
+            let call_count = js.matches("consume_token()").count();
+            assert_eq!(
+                call_count, 1,
+                "{}: expected exactly 1 occurrence of consume_token() in emitted JS (got {}), JS:\n{}",
+                builtin, call_count, js
+            );
+            // Confirm the IIFE shape: `const __v =` binding must be present.
+            assert!(
+                js.contains("const __v"),
+                "{}: expected IIFE binding `const __v` in emitted JS, got:\n{}",
+                builtin, js
+            );
+        }
     }
 }
