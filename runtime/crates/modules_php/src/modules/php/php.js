@@ -111,6 +111,138 @@ if (!globalThis.fs.existsSync) {
   };
 }
 
+// __dekaFs - tenant-root-confined wrapper around globalThis.fs.
+//
+// Motivation: globalThis.fs methods call op_php_* ops which are
+// security-policy-gated, but a tenant can call op_php_set_privileged(1)
+// via Deno.core.ops to bypass policy for the current thread. Wrapping
+// at the JS layer adds a path-prefix check that cannot be bypassed via
+// the privileged flag: if the resolved path does not start with the
+// tenant root, the call is rejected before reaching any op.
+//
+// The tenant root is baked into each tenant bundle as:
+//   globalThis.__dekaFsTenantRoot = "/absolute/project/root";
+// (injected by js_pipeline.rs / build_phpx_handler_bundle).
+// This module reads it lazily (at call time) so the wrapper is safe to
+// install during extension init, before the bundle has run.
+//
+// Three-layer guard (mirrors esm_loader.rs @/ path-traversal fix):
+//   1. Reject any path segment equal to ".." or "." before IO.
+//   2. Resolve the path against the cwd (normalise without IO).
+//   3. Assert the resolved path starts with the canonicalised tenant root.
+//
+// Fail-closed: if tenantRoot is not set, all calls return null/false/void.
+// This keeps the polyfills inert in contexts where no root is configured
+// (e.g. bare deno/test environments) rather than silently allowing full-fs
+// access.
+(function installDekaFsWrapper() {
+  function dekaFsGetRoot() {
+    const r = globalThis.__dekaFsTenantRoot;
+    if (typeof r !== 'string' || !r) return null;
+    // Ensure trailing separator so starts_with is unambiguous.
+    return r.endsWith('/') ? r : r + '/';
+  }
+
+  function dekaFsNormPath(p) {
+    // Resolve relative paths against cwd using the op.
+    let resolved;
+    try {
+      resolved = typeof p === 'string' && p.startsWith('/')
+        ? p
+        : (op_php_cwd() + '/' + p);
+    } catch (_) {
+      return null;
+    }
+    // Collapse ./ and // without resolving symlinks.
+    const parts = resolved.split('/');
+    const out = [];
+    for (const seg of parts) {
+      if (seg === '' || seg === '.') continue;
+      if (seg === '..') { out.pop(); continue; }
+      out.push(seg);
+    }
+    return '/' + out.join('/');
+  }
+
+  function dekaFsAllow(p) {
+    const root = dekaFsGetRoot();
+    // Fail-closed: no root configured => deny.
+    if (!root) return false;
+    const rawStr = String(p || '');
+    // Reject literal traversal segments before any resolution (layer 1).
+    const segs = rawStr.replace(/\\/g, '/').split('/');
+    for (const seg of segs) {
+      if (seg === '..' || (seg === '.' && segs.length > 1)) return false;
+    }
+    // Normalise (layer 2).
+    const norm = dekaFsNormPath(rawStr);
+    if (!norm) return false;
+    // Prefix assertion (layer 3): path must start with tenant root.
+    // Add trailing slash to norm for unambiguous prefix check.
+    const normSlash = norm.endsWith('/') ? norm : norm + '/';
+    return normSlash.startsWith(root) || norm === root.slice(0, -1);
+  }
+
+  // Install __dekaFs only if not already installed (idempotent).
+  if (typeof globalThis.__dekaFs === 'undefined') {
+    globalThis.__dekaFs = {
+      statSync: (p) => {
+        if (!dekaFsAllow(p)) return null;
+        try {
+          const raw = globalThis.fs;
+          if (raw && typeof raw.statSync === 'function') return raw.statSync(String(p));
+        } catch (_) {}
+        return null;
+      },
+      readFileSync: (p, encoding) => {
+        if (!dekaFsAllow(p)) return null;
+        try {
+          const raw = globalThis.fs;
+          if (raw && typeof raw.readFileSync === 'function') return raw.readFileSync(String(p), encoding);
+        } catch (_) {}
+        return null;
+      },
+      writeFileSync: (p, data, encoding) => {
+        if (!dekaFsAllow(p)) return;
+        try {
+          const raw = globalThis.fs;
+          if (raw && typeof raw.writeFileSync === 'function') return raw.writeFileSync(String(p), data, encoding);
+        } catch (_) {}
+      },
+      mkdirSync: (p, options) => {
+        if (!dekaFsAllow(p)) return;
+        try {
+          const raw = globalThis.fs;
+          if (raw && typeof raw.mkdirSync === 'function') return raw.mkdirSync(String(p), options);
+        } catch (_) {}
+      },
+      appendFileSync: (p, data) => {
+        if (!dekaFsAllow(p)) return;
+        try {
+          const raw = globalThis.fs;
+          if (raw && typeof raw.appendFileSync === 'function') return raw.appendFileSync(String(p), data);
+        } catch (_) {}
+      },
+      readdirSync: (p, options) => {
+        if (!dekaFsAllow(p)) return null;
+        try {
+          const raw = globalThis.fs;
+          if (raw && typeof raw.readdirSync === 'function') return raw.readdirSync(String(p), options);
+        } catch (_) {}
+        return null;
+      },
+      existsSync: (p) => {
+        if (!dekaFsAllow(p)) return false;
+        try {
+          const raw = globalThis.fs;
+          if (raw && typeof raw.existsSync === 'function') return raw.existsSync(String(p));
+        } catch (_) {}
+        return false;
+      },
+    };
+  }
+}());
+
 // Minimal process implementation
 if (!globalThis.process) {
   globalThis.process = {};

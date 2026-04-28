@@ -32,7 +32,23 @@ pub fn build_phpx_handler_bundle(handler_path: &str) -> Result<String, String> {
     } else {
         String::new()
     };
-    entry_js = format!("{prelude}\n{entry_js}");
+
+    // Inject the tenant root so that globalThis.__dekaFs (installed by
+    // php/php.js at extension-init time) can enforce per-tenant path
+    // confinement.  The root is the canonicalised project_root — i.e. the
+    // directory containing deka.json for this tenant.
+    let canonical_root = fs::canonicalize(&project_root)
+        .unwrap_or_else(|_| project_root.clone());
+    let root_json = serde_json::to_string(
+        &canonical_root.to_string_lossy().to_string()
+    )
+    .unwrap_or_else(|_| "\"\"".to_string());
+    let tenant_root_injection = format!(
+        "globalThis.__dekaFsTenantRoot = {};\n",
+        root_json
+    );
+
+    entry_js = format!("{prelude}\n{tenant_root_injection}{entry_js}");
     let entry_path = fs::canonicalize(input_path)
         .map_err(|err| format!("failed to resolve {}: {}", input_path.display(), err))?;
 

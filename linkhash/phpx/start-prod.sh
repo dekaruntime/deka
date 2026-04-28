@@ -22,4 +22,7 @@ fi
 export NODE_ENV=production
 export PORT=4004
 
+# Purge stale PHPX compile cache so audits don't pick up old artifacts.
+rm -rf .cache/phpx_js
+
 exec /Users/sami/Projects/deka/runtime/target/release/cli serve --port 4004 main.phpx
