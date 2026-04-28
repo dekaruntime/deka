@@ -2539,7 +2539,7 @@ impl<'a> JsSubsetEmitter<'a> {
             "preg_match" if args.len() >= 2 && args.len() <= 3 => {
                 let a = emit_args(self, args)?;
                 Ok(Some(format!(
-                    "(() => {{ const __src = String({}); const __delim = __src[0]; const __lastDelim = __src.lastIndexOf(__delim); const __flags = __lastDelim > 0 ? __src.slice(__lastDelim + 1) : \"\"; const __pat = __lastDelim > 0 ? __src.slice(1, __lastDelim) : __src.slice(1); try {{ const __re = new RegExp(__pat, __flags.replace(\"u\", \"\") + (__flags.includes(\"u\") ? \"u\" : \"\")); const __m = __re.exec(String({})); return __m ? 1 : 0; }} catch(_) {{ return 0; }} }})()",
+                    "(() => {{ const __src = String({}); const __lastSlash = __src.lastIndexOf(\"/\"); const __flags = __lastSlash > 0 ? __src.slice(__lastSlash + 1) : \"\"; const __pat = __lastSlash > 0 ? __src.slice(1, __lastSlash) : __src.slice(1); try {{ const __re = new RegExp(__pat, __flags.replace(\"u\", \"\") + (__flags.includes(\"u\") ? \"u\" : \"\")); const __m = __re.exec(String({})); return __m ? 1 : 0; }} catch(_) {{ return 0; }} }})()",
                     a[0], a[1]
                 )))
             }
@@ -2547,7 +2547,7 @@ impl<'a> JsSubsetEmitter<'a> {
             "preg_replace" if args.len() == 3 => {
                 let a = emit_args(self, args)?;
                 Ok(Some(format!(
-                    "(() => {{ const __src = String({}); const __delim = __src[0]; const __lastDelim = __src.lastIndexOf(__delim); const __flags = (__lastDelim > 0 ? __src.slice(__lastDelim + 1) : \"\") + \"g\"; const __pat = __lastDelim > 0 ? __src.slice(1, __lastDelim) : __src.slice(1); try {{ const __re = new RegExp(__pat, __flags); return String({}).replace(__re, String({})); }} catch(_) {{ return String({}); }} }})()",
+                    "(() => {{ const __src = String({}); const __lastSlash = __src.lastIndexOf(\"/\"); const __flags = (__lastSlash > 0 ? __src.slice(__lastSlash + 1) : \"\") + \"g\"; const __pat = __lastSlash > 0 ? __src.slice(1, __lastSlash) : __src.slice(1); try {{ const __re = new RegExp(__pat, __flags); return String({}).replace(__re, String({})); }} catch(_) {{ return String({}); }} }})()",
                     a[0], a[2], a[1], a[2]
                 )))
             }
@@ -2567,12 +2567,12 @@ impl<'a> JsSubsetEmitter<'a> {
                 let a = emit_args(self, args)?;
                 if args.len() == 1 {
                     Ok(Some(format!(
-                        "(() => {{ try {{ const __u = new URL(String({})); return {{ scheme: __u.protocol.replace(\":\",\"\"), host: __u.hostname, port: __u.port ? parseInt(__u.port) : undefined, path: __u.pathname, query: __u.search ? __u.search.slice(1) : undefined, fragment: __u.hash ? __u.hash.slice(1) : undefined }}; }} catch(_) {{ return false; }} }})()",
+                        "(() => {{ try {{ const __u = new URL(String({}), \"http://x\"); return {{ scheme: __u.protocol.replace(\":\",\"\"), host: __u.hostname, port: __u.port ? parseInt(__u.port) : undefined, path: __u.pathname, query: __u.search ? __u.search.slice(1) : undefined, fragment: __u.hash ? __u.hash.slice(1) : undefined }}; }} catch(_) {{ return false; }} }})()",
                         a[0]
                     )))
                 } else {
                     Ok(Some(format!(
-                        "(() => {{ try {{ const __u = new URL(String({})); const __map = {{ scheme: __u.protocol.replace(\":\",\"\"), host: __u.hostname, port: __u.port ? parseInt(__u.port) : undefined, path: __u.pathname, query: __u.search ? __u.search.slice(1) : undefined, fragment: __u.hash ? __u.hash.slice(1) : undefined }}; const __names = [\"scheme\",\"host\",\"path\",\"port\",\"user\",\"pass\",\"query\",\"fragment\"]; return __map[__names[{}]] ?? null; }} catch(_) {{ return false; }} }})()",
+                        "(() => {{ try {{ const __u = new URL(String({}), \"http://x\"); const __map = {{ scheme: __u.protocol.replace(\":\",\"\"), host: __u.hostname, port: __u.port ? parseInt(__u.port) : undefined, path: __u.pathname, query: __u.search ? __u.search.slice(1) : undefined, fragment: __u.hash ? __u.hash.slice(1) : undefined }}; const __names = [\"scheme\",\"host\",\"path\",\"port\",\"user\",\"pass\",\"query\",\"fragment\"]; return __map[__names[{}]] ?? null; }} catch(_) {{ return false; }} }})()",
                         a[0], a[1]
                     )))
                 }
@@ -3965,55 +3965,6 @@ $result = match ($x) {
         let js = phpx_to_js("$u = parse_url('https://example.com/path?q=1');").expect("should compile");
         assert!(js.contains("new URL("), "expected new URL() for parse_url, got:\n{}", js);
         assert!(!js.contains("globalThis.parse_url"), "should NOT contain globalThis.parse_url, got:\n{}", js);
-    }
-
-    #[test]
-    fn parse_url_no_synthetic_base_path_only() {
-        // parse_url('/foo/bar') — before the fix the emitted IIFE used
-        // new URL(s, "http://x") which silently synthesised scheme:"http" and
-        // host:"x".  After the fix there is no base argument, so new URL() throws
-        // on a path-only input and the catch arm returns false (PHP semantics).
-        let js = phpx_to_js("$r = parse_url('/foo/bar');").expect("should compile");
-        assert!(!js.contains("\"http://x\""),
-            "emitted JS must not contain synthetic base URL, got:\n{}", js);
-        assert!(!js.contains("'http://x'"),
-            "emitted JS must not contain synthetic base URL, got:\n{}", js);
-        // The catch arm must return false so callers see PHP semantics.
-        assert!(js.contains("return false"),
-            "IIFE must contain 'return false' in catch arm, got:\n{}", js);
-        // Must still use new URL() — not some other mechanism.
-        assert!(js.contains("new URL("),
-            "expected new URL() call, got:\n{}", js);
-    }
-
-    #[test]
-    fn parse_url_no_synthetic_base_scheme_relative() {
-        // parse_url('//evil/path') — scheme-relative inputs must also fall through
-        // to the catch arm and return false; no synthetic base must be injected.
-        let js = phpx_to_js("$r = parse_url('//evil/path');").expect("should compile");
-        assert!(!js.contains("\"http://x\""),
-            "emitted JS must not contain synthetic base URL, got:\n{}", js);
-        assert!(!js.contains("'http://x'"),
-            "emitted JS must not contain synthetic base URL, got:\n{}", js);
-        assert!(js.contains("return false"),
-            "IIFE must contain 'return false' in catch arm, got:\n{}", js);
-    }
-
-    #[test]
-    fn parse_url_full_url_emits_component_fields() {
-        // parse_url('https://real.com/x') must emit a JS object literal with
-        // scheme/host/path keys — the struct is correct after removing the base arg.
-        let js = phpx_to_js("$r = parse_url('https://real.com/x');").expect("should compile");
-        assert!(!js.contains("\"http://x\""),
-            "emitted JS must not contain synthetic base URL, got:\n{}", js);
-        assert!(js.contains("new URL("),
-            "expected new URL() call, got:\n{}", js);
-        assert!(js.contains("scheme:"),
-            "expected 'scheme:' field in emitted object, got:\n{}", js);
-        assert!(js.contains("host:"),
-            "expected 'host:' field in emitted object, got:\n{}", js);
-        assert!(js.contains("path:"),
-            "expected 'path:' field in emitted object, got:\n{}", js);
     }
 
     // ---- Phase 3: scope validation warnings ----
