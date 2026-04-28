@@ -584,7 +584,10 @@ impl<'a> JsSubsetEmitter<'a> {
         out.push_str("globalThis.array_slice ??= (arr, offset, length, preserve_keys) => { if (!Array.isArray(arr)) { const keys = Object.keys(arr); const sl = length !== undefined && length !== null ? keys.slice(Number(offset), Number(offset) + Number(length)) : keys.slice(Number(offset)); if (preserve_keys) { const out = {}; for (const k of sl) out[k] = arr[k]; return out; } return sl.map(k => arr[k]); } return length !== undefined && length !== null ? arr.slice(Number(offset), Number(offset) + Number(length)) : arr.slice(Number(offset)); };\n");
         out.push_str("globalThis.htmlspecialchars ??= (s, _flags, _enc, _double) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;').replace(/'/g, '&#039;');\n");
         // PHP serve adapter helper — allows PHPX template files to export themselves as ESM handlers.
-        out.push_str("globalThis.servePhp ??= (path) => { if (globalThis.__dekaPhp && typeof globalThis.__dekaPhp.servePhp === 'function') { return globalThis.__dekaPhp.servePhp(String(path || '')); } return null; };\n");
+        // Mangled __phpx_X name (NOT a plain `servePhp` global) so it can't collide with a user-defined
+        // `$servePhp` variable in PHPX source. Tree-shakable through bundler DCE since it's a
+        // string-keyed assignment instead of a free identifier.
+        out.push_str("globalThis.__phpx_serve_php ??= (path) => { if (globalThis.__dekaPhp && typeof globalThis.__dekaPhp.servePhp === 'function') { return globalThis.__dekaPhp.servePhp(String(path || '')); } return null; };\n");
         // PHP output buffering — enables echo/header() pattern in $app request handlers.
         out.push_str("globalThis.__phpxCurrentResponse ??= { status: 200, headers: {}, body: '' };\n");
         out.push_str("globalThis.header ??= (str) => { const s = String(str ?? ''); if (/^HTTP\\/[0-9]/i.test(s)) { const m = s.match(/^HTTP\\/[0-9.]+\\s+(\\d+)/i); if (m) globalThis.__phpxCurrentResponse.status = parseInt(m[1]); } else { const colon = s.indexOf(':'); if (colon > 0) { const name = s.slice(0, colon).trim().toLowerCase(); const value = s.slice(colon + 1).trim(); if (name === 'location' && globalThis.__phpxCurrentResponse.status === 200) globalThis.__phpxCurrentResponse.status = 302; globalThis.__phpxCurrentResponse.headers[name] = value; } } };\n");
@@ -592,7 +595,15 @@ impl<'a> JsSubsetEmitter<'a> {
         out.push_str("globalThis.phpxStartBuffer ??= () => { globalThis.__phpxCurrentResponse = { status: 200, headers: {}, body: '' }; if (!globalThis.__phpxPrintOrig) { globalThis.__phpxPrintOrig = globalThis.__dekaPrint; } globalThis.__dekaPrint = (v) => { globalThis.__phpxCurrentResponse.body += String(v ?? ''); }; };\n");
         out.push_str("globalThis.phpxEndBuffer ??= () => { if (globalThis.__phpxPrintOrig) { globalThis.__dekaPrint = globalThis.__phpxPrintOrig; globalThis.__phpxPrintOrig = null; } return globalThis.__phpxCurrentResponse; };\n");
         // Wrap a PHP-style echo/header handler so it always returns the buffered response.
-        out.push_str("globalThis.phpxWrapHandler ??= (fn) => async (req, ctx) => { phpxStartBuffer(); try { const r = await fn(req, ctx); if (r != null) return r; } catch(_e) { Deno.core.print('[phpxWrap] error: ' + String(_e) + (_e && _e.stack ? '\\n' + String(_e.stack) : '') + '\\n', true); } return phpxEndBuffer(); };\n\n");
+        //
+        // LEGACY-COMPAT ONLY: this wrapper is the linkhash-registry escape hatch for handlers
+        // built in PHP-template style (echo + header()). It contradicts PHPX's "errors as values /
+        // no exceptions" core principle by catching thrown errors. The catch is structured: it
+        // emits a 500 JSON envelope with kind='phpxWrapHandler.error' so an outage is visible in
+        // logs AND surfaces a typed error to the caller. New PHPX handlers should return
+        // Result<Response, Error> directly; only linkhash uses this wrapper today. Followup issue
+        // tracks migrating linkhash off this pattern.
+        out.push_str("globalThis.phpxWrapHandler ??= (fn) => async (req, ctx) => { phpxStartBuffer(); try { const r = await fn(req, ctx); if (r != null) return r; } catch(_e) { const stack = _e && _e.stack ? String(_e.stack) : ''; const err = { kind: 'phpxWrapHandler.error', message: String(_e), stack }; Deno.core.print('[phpxWrap] ' + JSON.stringify(err) + '\\n', true); return { status: 500, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ error: 'internal_error', kind: err.kind }) }; } return phpxEndBuffer(); };\n\n");
 
         let mut imports = self.meta.imports.clone();
         if self.uses_jsx_runtime {
