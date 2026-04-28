@@ -556,8 +556,7 @@ impl<'a> JsSubsetEmitter<'a> {
         out.push_str("globalThis.mkdir ??= (p, _mode, recursive) => { try { const fs = (typeof __dekaFs !== 'undefined' && __dekaFs) ? __dekaFs : null; if (fs && typeof fs.mkdirSync === 'function') { fs.mkdirSync(String(p), { recursive: !!recursive }); return true; } } catch(_) {} return false; };\n");
         out.push_str("globalThis.file ??= (p) => { try { const fs = (typeof __dekaFs !== 'undefined' && __dekaFs) ? __dekaFs : null; if (!fs || typeof fs.readFileSync !== 'function') return false; const raw = fs.readFileSync(String(p)); const text = typeof raw === 'string' ? raw : (new TextDecoder()).decode(raw); if (text === null) return false; const lines = text.split('\\n'); return lines[lines.length - 1] === '' ? lines.slice(0, -1).map((l, i) => l + '\\n') : lines.map((l, i, a) => i < a.length - 1 ? l + '\\n' : l); } catch(_) { return false; } };\n");
         // PHP math and type builtins.
-        out.push_str("globalThis.max ??= (...args) => { if (args.length === 1 && Array.isArray(args[0])) args = args[0]; return args.reduce((a, b) => (Number(b) > Number(a) ? b : a)); };\n");
-        out.push_str("globalThis.min ??= (...args) => { if (args.length === 1 && Array.isArray(args[0])) args = args[0]; return args.reduce((a, b) => (Number(b) < Number(a) ? b : a)); };\n");
+        // max / min are compile-time rewrites in try_rewrite_builtin. No globalThis polyfill needed.
         // is_int / is_float / is_numeric / is_string / is_object are compile-time rewrites
         // in try_rewrite_builtin (IIFE binding the arg once). No globalThis polyfill needed.
         out.push_str("globalThis.gettype ??= (v) => { if (v === null) return 'NULL'; if (typeof v === 'boolean') return 'boolean'; if (typeof v === 'number') return Number.isInteger(v) ? 'integer' : 'double'; if (typeof v === 'string') return 'string'; if (Array.isArray(v)) return 'array'; if (typeof v === 'object') return 'object'; return 'unknown type'; };\n");
@@ -568,7 +567,7 @@ impl<'a> JsSubsetEmitter<'a> {
         // The $chars form falls back to globalThis via the unknown-call path, but that is
         // only reached when 2 args are passed; the 1-arg no-chars form is the common case
         // and is rewritten inline. No globalThis polyfill emitted here.
-        out.push_str("globalThis.str_replace ??= (search, replace, subject) => { let s = String(subject ?? ''); if (Array.isArray(search)) { for (let i = 0; i < search.length; i++) { const r = Array.isArray(replace) ? (replace[i] ?? '') : String(replace ?? ''); s = s.split(String(search[i])).join(r); } return s; } return s.split(String(search ?? '')).join(String(replace ?? '')); };\n");
+        // str_replace is a compile-time rewrite in try_rewrite_builtin. No globalThis polyfill needed.
         out.push_str("globalThis.preg_match ??= (pattern, subject, matches) => { const src = String(pattern ?? ''); const lastSlash = src.lastIndexOf('/'); const flags = lastSlash > 0 ? src.slice(lastSlash + 1) : ''; const pat = lastSlash > 0 ? src.slice(1, lastSlash) : src.slice(1); try { const re = new RegExp(pat, flags.replace('u', '') + (flags.includes('u') ? 'u' : '') ); const m = re.exec(String(subject ?? '')); if (!m) return 0; return 1; } catch(_) { return 0; } };\n");
         out.push_str("globalThis.preg_replace ??= (pattern, replacement, subject) => { const src = String(pattern ?? ''); const lastSlash = src.lastIndexOf('/'); const flags = (lastSlash > 0 ? src.slice(lastSlash + 1) : '') + 'g'; const pat = lastSlash > 0 ? src.slice(1, lastSlash) : src.slice(1); try { const re = new RegExp(pat, flags); return String(subject ?? '').replace(re, String(replacement ?? '')); } catch(_) { return String(subject ?? ''); } };\n");
         // rawurlencode is a compile-time rewrite in JsSubsetEmitter::emit_builtin_call.
@@ -2384,6 +2383,69 @@ impl<'a> JsSubsetEmitter<'a> {
                     "(() => {{ const __v = {}; return __v != null && typeof __v === \"object\" && !Array.isArray(__v); }})()",
                     a[0]
                 )))
+            }
+            // htmlspecialchars($s) -> inline .replace() chain
+            // Optional flags/encoding/double-encode args are accepted but ignored (same as PHP default).
+            "htmlspecialchars" if args.len() >= 1 && args.len() <= 4 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "String({}).replace(/&/g, \"&amp;\").replace(/</g, \"&lt;\").replace(/>/g, \"&gt;\").replace(/\"/g, \"&quot;\").replace(/'/g, \"&#039;\")",
+                    a[0]
+                )))
+            }
+            // max($a, $b, ...) -> Math.max($a, $b, ...)
+            // max($arr)        -> IIFE: Math.max(...$arr) if array, else Math.max($arr)
+            "max" if !args.is_empty() => {
+                let a = emit_args(self, args)?;
+                if args.len() == 1 {
+                    Ok(Some(format!(
+                        "(() => {{ const __v = {}; return Array.isArray(__v) ? Math.max(...__v) : Math.max(__v); }})()",
+                        a[0]
+                    )))
+                } else {
+                    Ok(Some(format!("Math.max({})", a.join(", "))))
+                }
+            }
+            // min($a, $b, ...) -> Math.min($a, $b, ...)
+            // min($arr)        -> IIFE: Math.min(...$arr) if array, else Math.min($arr)
+            "min" if !args.is_empty() => {
+                let a = emit_args(self, args)?;
+                if args.len() == 1 {
+                    Ok(Some(format!(
+                        "(() => {{ const __v = {}; return Array.isArray(__v) ? Math.min(...__v) : Math.min(__v); }})()",
+                        a[0]
+                    )))
+                } else {
+                    Ok(Some(format!("Math.min({})", a.join(", "))))
+                }
+            }
+            // str_replace($search, $replace, $subject)
+            // Scalar search: String($subject).split(String($search)).join(String($replace))
+            // Array search: IIFE loop (handles array form without a runtime helper).
+            "str_replace" if args.len() == 3 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "(() => {{ const __srch = {0}; const __repl = {1}; let __s = String({2}); if (Array.isArray(__srch)) {{ for (let __i = 0; __i < __srch.length; __i++) {{ const __r = Array.isArray(__repl) ? String(__repl[__i] ?? \"\") : String(__repl); __s = __s.split(String(__srch[__i])).join(__r); }} return __s; }} return __s.split(String(__srch)).join(String(__repl)); }})()",
+                    a[0], a[1], a[2]
+                )))
+            }
+            // rawurlencode($s) -> encodeURIComponent(String($s)) + RFC 3986 replacements for !'/*()'
+            "rawurlencode" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "encodeURIComponent(String({})).replace(/!/g, \"%21\").replace(/'/g, \"%27\").replace(/\\(/g, \"%28\").replace(/\\)/g, \"%29\").replace(/\\*/g, \"%2A\")",
+                    a[0]
+                )))
+            }
+            // dechex($n) -> (Number($n)>>>0).toString(16)
+            "dechex" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!("(Number({})>>>0).toString(16)", a[0])))
+            }
+            // hexdec($s) -> (parseInt(String($s), 16) || 0)
+            "hexdec" if args.len() == 1 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!("(parseInt(String({}), 16) || 0)", a[0])))
             }
             _ => Ok(None),
         }
