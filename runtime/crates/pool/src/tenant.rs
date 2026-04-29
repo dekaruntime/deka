@@ -125,9 +125,35 @@ pub fn resolve_tenant(subdomain: &str) -> Option<String> {
 /// Accepts both the new JSON format (`{"shop_id":..., "account_id":...}`)
 /// and the legacy plain-string format (just the shop_id, with
 /// `account_id = None`). During the transition both may coexist.
+///
+/// Redis URL resolution order:
+/// 1. `DEKA_REDIS_URL` env var (explicit operator override).
+/// 2. The local shard's Redis URL from the shard resolver (shard 0 / phobos).
+///    The subdomain mapping is always written to phobos Redis by the signup
+///    flow, so the tenant resolver must read from the same instance.
+/// 3. Hard-coded `redis://localhost:6380` (last-resort dev fallback).
+///
+/// Using the shard resolver's URL ensures that dev environments whose Docker
+/// Redis binds on a non-standard port (e.g. 6380) are routed correctly
+/// without needing a manual `DEKA_REDIS_URL` override.
 pub fn resolve_tenant_record(subdomain: &str) -> Option<SubdomainRecord> {
-    let redis_url =
-        std::env::var("DEKA_REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
+    let redis_url = std::env::var("DEKA_REDIS_URL").unwrap_or_else(|_| {
+        // Fall back to the local shard's Redis URL so dev machines with
+        // non-standard ports (e.g. Docker Redis on :6380) work without
+        // explicit config. The global resolver is cheap — it's a static
+        // OnceLock that's already initialised by the time any request
+        // arrives.
+        deka_shard::global()
+            .self_shard()
+            .map(|s| s.redis.clone())
+            .or_else(|| {
+                deka_shard::global()
+                    .shards()
+                    .first()
+                    .map(|s| s.redis.clone())
+            })
+            .unwrap_or_else(|| "redis://localhost:6380".to_string())
+    });
 
     let raw: Option<String> = TENANT_REDIS.with(|cell: &RefCell<Option<Connection>>| {
         let mut conn = cell.borrow_mut();
@@ -436,7 +462,9 @@ mod tests {
 
     #[test]
     fn redis_lookup_integration() {
-        // This test requires Redis at localhost:6380
+        // This test requires Redis at localhost:6380 (the dev Docker Redis port).
+        // DEKA_REDIS_URL is set explicitly so the resolver uses the correct port
+        // regardless of whether a shards.json is present in the test environment.
         let redis_url = "redis://localhost:6380";
         let client = match Client::open(redis_url) {
             Ok(c) => c,
