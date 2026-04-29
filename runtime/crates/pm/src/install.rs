@@ -636,11 +636,10 @@ fn parse_scoped_package(name: &str) -> Result<(&str, &str)> {
 fn php_modules_path_for(package_name: &str) -> Result<PathBuf> {
     let cwd = std::env::current_dir().context("failed to resolve current directory")?;
     let mut path = cwd.join("php_modules");
-    let segments: Vec<&str> = if let Some(rest) = package_name.strip_prefix("@deka/") {
-        vec![rest]
-    } else {
-        package_name.split('/').collect()
-    };
+    // Scoped packages (@scope/name) map to php_modules/@scope/name on disk.
+    // This matches the layout produced by the bundler's module resolver and
+    // the stdlib install layout. Unscoped names are still supported as-is.
+    let segments: Vec<&str> = package_name.split('/').collect();
     for segment in segments {
         if segment.is_empty() || segment == "." || segment == ".." {
             bail!("invalid php package name segment");
@@ -737,10 +736,27 @@ mod tests {
     }
 
     #[test]
-    fn deka_scoped_package_installs_to_unscoped_php_modules_path() {
+    fn scoped_package_installs_to_scoped_php_modules_path() {
         let cwd = std::env::current_dir().expect("cwd");
         let path = php_modules_path_for("@deka/component").expect("path");
-        assert_eq!(path, cwd.join("php_modules").join("component"));
+        assert_eq!(
+            path,
+            cwd.join("php_modules").join("@deka").join("component")
+        );
+    }
+
+    #[test]
+    fn non_deka_scoped_package_preserves_scope_in_path() {
+        let cwd = std::env::current_dir().expect("cwd");
+        let path = php_modules_path_for("@tana/store").expect("path");
+        assert_eq!(path, cwd.join("php_modules").join("@tana").join("store"));
+    }
+
+    #[test]
+    fn unscoped_package_preserves_legacy_path() {
+        let cwd = std::env::current_dir().expect("cwd");
+        let path = php_modules_path_for("legacy").expect("path");
+        assert_eq!(path, cwd.join("php_modules").join("legacy"));
     }
 }
 
