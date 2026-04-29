@@ -183,9 +183,11 @@ pub fn bundle_browser(entry: &str) -> Result<String, String> {
     let entry_path = resolve_entry(entry)?;
     let cm: Lrc<SourceMap> = Default::default();
     let globals = Globals::new();
+    let root = std::env::current_dir().map_err(|err| err.to_string())?;
     let loader = FsLoader {
         cm: cm.clone(),
         css_collector: Arc::new(Mutex::new(CssCollector::default())),
+        root: root.clone(),
     };
     let resolver = FsResolver::new()?;
 
@@ -239,9 +241,11 @@ pub fn bundle_browser_assets(entry: &str) -> Result<JsBundle, String> {
     let cm: Lrc<SourceMap> = Default::default();
     let globals = Globals::new();
     let css_collector = Arc::new(Mutex::new(CssCollector::default()));
+    let root = std::env::current_dir().map_err(|err| err.to_string())?;
     let loader = FsLoader {
         cm: cm.clone(),
         css_collector: Arc::clone(&css_collector),
+        root: root.clone(),
     };
     let resolver = FsResolver::new()?;
 
@@ -332,12 +336,25 @@ struct CssEntry {
 struct FsLoader {
     cm: Lrc<SourceMap>,
     css_collector: Arc<Mutex<CssCollector>>,
+    /// Project root — second containment line after DekaResolver.
+    /// Even if a future caller bypasses DekaResolver, the loader will not
+    /// read files outside this directory.
+    root: PathBuf,
 }
 
 impl Load for FsLoader {
     fn load(&self, file: &FileName) -> Result<ModuleData, anyhow::Error> {
         let (source, path) = match file {
             FileName::Real(path) => {
+                // Defense-in-depth: verify the path stays within the project
+                // root before touching the filesystem, even though DekaResolver
+                // already enforces this for normal resolution paths.
+                if guard_path_traversal(path, &self.root).is_none() {
+                    anyhow::bail!(
+                        "Path traversal blocked by FsLoader: {} is outside project root",
+                        path.display()
+                    );
+                }
                 if path.extension().and_then(|ext| ext.to_str()) == Some("css") {
                     let (source, module_path) = self.load_css_module(path)?;
                     (source, module_path)
@@ -983,6 +1000,14 @@ impl Resolve for DekaResolver {
         }
 
         if target.is_file() {
+            // Guard: resolved relative path must stay within the project root.
+            // This closes the path-traversal gap for `../` imports that resolve
+            // to a file that actually exists outside the project root.
+            if guard_path_traversal(&target, &self.root).is_none() {
+                anyhow::bail!(
+                    "Path traversal detected: {specifier} from {base:?} resolves outside project root"
+                );
+            }
             return Ok(Resolution {
                 filename: FileName::Real(target),
                 slug: None,
@@ -1463,13 +1488,22 @@ await __phpx_main();
     }
 
     // Ensure that `../../..` traversal that exits the project root is blocked.
-    // The bundler resolver resolves to a real path; the guard_path_traversal
-    // call in the PhpX bundler pipeline rejects it.  The DekaResolver.resolve
-    // method itself returns Ok for valid relative paths — security is enforced
-    // later.  This test documents the current behaviour.
+    // DekaResolver now calls guard_path_traversal before returning Ok for any
+    // resolved relative path, so even files that exist outside the root are
+    // rejected with a path-traversal error (not file-not-found).
     #[test]
     fn resolver_parent_relative_import_stays_within_project() {
-        let project = make_tmp_dir("parent_relative_escaping");
+        // Layout:
+        //   workspace/
+        //     outside.js          <- the target file: exists but outside project
+        //     project/
+        //       api/
+        //         checkout.js     <- base file
+        //
+        // `../outside` from `workspace/project/api/checkout.js`
+        // resolves to `workspace/outside.js` — exists but outside the project root.
+        let workspace = make_tmp_dir("parent_relative_escaping_workspace");
+        let project = workspace.join("project");
         let api_dir = project.join("api");
         std::fs::create_dir_all(&api_dir).unwrap();
         std::fs::write(
@@ -1478,13 +1512,96 @@ await __phpx_main();
         )
         .unwrap();
 
+        // Create a file that DOES exist but is OUTSIDE the project root.
+        // This is the file that the previous implementation silently allowed
+        // through (the only reason it returned Err was file-not-found).
+        std::fs::write(workspace.join("outside.js"), "export const x = 'leaked';\n").unwrap();
+
         let resolver = DekaResolver::new(project.clone(), None).unwrap();
         let base = FileName::Real(api_dir.join("checkout.js"));
-        // The file `../../outside.js` doesn't exist, so resolve returns Err.
+
+        // `../../outside` from `project/api/checkout.js` resolves to
+        // `workspace/outside.js` — which exists but is outside the project root.
+        // guard_path_traversal must reject it.
         let result = resolver.resolve(&base, "../../outside");
         assert!(
             result.is_err(),
-            "expected Err for non-existent escaping import, got Ok"
+            "expected path-traversal Err for import resolving outside project root, got Ok"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Path traversal") || err_msg.contains("traversal"),
+            "expected path-traversal message, got: {err_msg}"
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    // Confirm that going all-the-way out (many ../ hops) is also rejected.
+    #[test]
+    fn resolver_deep_traversal_to_system_path_is_rejected() {
+        let project = make_tmp_dir("deep_traversal");
+        let src_dir = project.join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(src_dir.join("index.js"), "// entry\n").unwrap();
+
+        let resolver = DekaResolver::new(project.clone(), None).unwrap();
+        let base = FileName::Real(src_dir.join("index.js"));
+
+        // This specifier attempts to climb to /etc/passwd (or an analogous
+        // path on this OS). It either doesn't exist (Err from file-not-found)
+        // or it does exist but must be rejected by the path-traversal guard.
+        // Either way it must NOT return Ok with a path outside the project.
+        let result = resolver.resolve(&base, "../../../../../../etc/passwd");
+        if let Ok(ref res) = result {
+            if let FileName::Real(ref p) = res.filename {
+                panic!(
+                    "resolver returned Ok with path outside project root: {:?}",
+                    p
+                );
+            }
+        }
+        // Err is the expected outcome (traversal rejected or file not found).
+
+        let _ = std::fs::remove_dir_all(&project);
+    }
+
+    // Positive test: a within-project cross-package `../` import is allowed.
+    // (The existing resolver_allows_parent_relative_import_within_project test
+    //  covers api/ → root helpers. This test covers one level deeper nesting.)
+    #[test]
+    fn resolver_allows_parent_relative_import_two_levels_within_project() {
+        let project = make_tmp_dir("parent_relative_two_levels");
+        let deep_dir = project.join("components").join("ui");
+        std::fs::create_dir_all(&deep_dir).unwrap();
+        std::fs::write(
+            project.join("utils.js"),
+            "export function fmt(x) { return String(x); }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            deep_dir.join("button.js"),
+            "import { fmt } from '../../utils';\n",
+        )
+        .unwrap();
+
+        let resolver = DekaResolver::new(project.clone(), None).unwrap();
+        let base = FileName::Real(deep_dir.join("button.js"));
+        let result = resolver.resolve(&base, "../../utils");
+        assert!(
+            result.is_ok(),
+            "expected ../../utils to resolve from components/ui/button.js, got: {:?}",
+            result
+        );
+        let resolved_path = match result.unwrap().filename {
+            FileName::Real(p) => p,
+            other => panic!("expected FileName::Real, got {other:?}"),
+        };
+        assert!(
+            resolved_path.starts_with(&project),
+            "resolved path {:?} must stay within project root {:?}",
+            resolved_path,
+            project
         );
 
         let _ = std::fs::remove_dir_all(&project);
