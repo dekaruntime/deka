@@ -98,18 +98,12 @@ pub fn validate_imports(
             seen_locals.insert(spec.local.clone(), (spec.line, spec.column));
         }
 
-        if spec.from.contains("../") || spec.from.contains("..\\") {
-            errors.push(import_error(
-                spec.line,
-                find_column(&spec.line_text, &spec.from),
-                spec.from.len().max(1),
-                format!(
-                    "Relative module paths using '..' are not supported ('{}').",
-                    spec.from
-                ),
-                "Use a module name from php_modules/ instead of relative paths.",
-            ));
-        }
+        // `../` relative imports are allowed — e.g. `api/checkout.phpx` can
+        // import a helper from the package root via `import { f } from "../helpers"`.
+        // The module resolver (modules.rs resolve_import_target) handles
+        // is_relative paths and emits "Missing phpx module" if the target does
+        // not exist. The bundler's guard_path_traversal is the security gate
+        // that prevents path-escaping at bundle time.
     }
 
     let searchable = strip_comments_and_strings(&strip_import_lines(source, &import_lines));
@@ -663,4 +657,54 @@ fn is_ident_char(byte: u8) -> bool {
 
 pub(crate) fn find_column(line: &str, needle: &str) -> usize {
     line.find(needle).map(|idx| idx + 1).unwrap_or(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_imports;
+
+    #[test]
+    fn parent_relative_import_is_allowed() {
+        // Regression for issue #36: `../helpers` from a subdir file must not
+        // be rejected by the validator.  The bundler's guard_path_traversal is
+        // the security gate; the validator should only reject syntactically
+        // invalid import paths.
+        let src = r#"import { client_ip } from "../helpers";
+$x = client_ip();"#;
+        let (errors, _warnings) = validate_imports(src, "api/checkout.phpx");
+        let parent_errors: Vec<_> = errors
+            .iter()
+            .filter(|e| e.message.contains(".."))
+            .collect();
+        assert!(
+            parent_errors.is_empty(),
+            "expected no errors for ../helpers import, got: {:?}",
+            parent_errors
+        );
+    }
+
+    #[test]
+    fn same_dir_relative_import_is_allowed() {
+        let src = r#"import { helper } from "./utils";
+$x = helper();"#;
+        let (errors, _warnings) = validate_imports(src, "api/checkout.phpx");
+        assert!(
+            errors.is_empty(),
+            "expected no errors for ./utils import, got: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn duplicate_local_import_is_rejected() {
+        let src = r#"import { foo } from "array";
+import { foo } from "string";
+$x = foo();"#;
+        let (errors, _warnings) = validate_imports(src, "test.phpx");
+        assert!(
+            errors.iter().any(|e| e.message.contains("Duplicate")),
+            "expected duplicate import error, got: {:?}",
+            errors
+        );
+    }
 }

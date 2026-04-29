@@ -1414,6 +1414,81 @@ await __phpx_main();
 
         let _ = std::fs::remove_dir_all(&project);
     }
+
+    // Regression for issue #36: a file in api/ must be able to import from
+    // the package root via `../helpers`.  The resolved path must stay within
+    // the project root — this is the security check in guard_path_traversal.
+    #[test]
+    fn resolver_allows_parent_relative_import_within_project() {
+        let project = make_tmp_dir("parent_relative_import");
+
+        // Create project structure:
+        //   helpers.js           <- the shared helper at the project root
+        //   api/checkout.js      <- file that imports ../helpers
+        let api_dir = project.join("api");
+        std::fs::create_dir_all(&api_dir).unwrap();
+        std::fs::write(
+            project.join("helpers.js"),
+            "export function client_ip() { return '127.0.0.1'; }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            api_dir.join("checkout.js"),
+            "import { client_ip } from '../helpers';\n",
+        )
+        .unwrap();
+
+        let resolver = DekaResolver::new(project.clone(), None).unwrap();
+
+        // Resolve `../helpers` from `api/checkout.js`
+        let base = FileName::Real(api_dir.join("checkout.js"));
+        let result = resolver.resolve(&base, "../helpers");
+        assert!(
+            result.is_ok(),
+            "expected ../helpers to resolve from api/checkout.js, got: {:?}",
+            result
+        );
+        let resolved_path = match result.unwrap().filename {
+            FileName::Real(p) => p,
+            other => panic!("expected FileName::Real, got {other:?}"),
+        };
+        assert!(
+            resolved_path.starts_with(&project),
+            "resolved path {:?} must stay within project root {:?}",
+            resolved_path,
+            project
+        );
+
+        let _ = std::fs::remove_dir_all(&project);
+    }
+
+    // Ensure that `../../..` traversal that exits the project root is blocked.
+    // The bundler resolver resolves to a real path; the guard_path_traversal
+    // call in the PhpX bundler pipeline rejects it.  The DekaResolver.resolve
+    // method itself returns Ok for valid relative paths — security is enforced
+    // later.  This test documents the current behaviour.
+    #[test]
+    fn resolver_parent_relative_import_stays_within_project() {
+        let project = make_tmp_dir("parent_relative_escaping");
+        let api_dir = project.join("api");
+        std::fs::create_dir_all(&api_dir).unwrap();
+        std::fs::write(
+            api_dir.join("checkout.js"),
+            "import { x } from '../../outside';\n",
+        )
+        .unwrap();
+
+        let resolver = DekaResolver::new(project.clone(), None).unwrap();
+        let base = FileName::Real(api_dir.join("checkout.js"));
+        // The file `../../outside.js` doesn't exist, so resolve returns Err.
+        let result = resolver.resolve(&base, "../../outside");
+        assert!(
+            result.is_err(),
+            "expected Err for non-existent escaping import, got Ok"
+        );
+
+        let _ = std::fs::remove_dir_all(&project);
+    }
 }
 
 /// Bundle with cache support

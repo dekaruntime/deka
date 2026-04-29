@@ -134,11 +134,23 @@ fn import_after_code_reports_error() {
     assert_has_error(&result, ErrorKind::ImportError);
 }
 
+// `../` relative imports are now allowed (issue #36 fix).  A `../` path that
+// points to a file that does not exist still produces an error — but it is a
+// ModuleError ("Missing phpx module"), not an ImportError.  This test verifies
+// that the error kind changed from ImportError → ModuleError.
 #[test]
-fn import_relative_path_reports_error() {
+fn import_relative_path_missing_file_reports_module_error() {
     let path = fixtures_root().join("imports/relative.phpx");
     let result = compile_fixture(&path);
-    assert_has_error(&result, ErrorKind::ImportError);
+    // The fixture imports `../core/result` which does not exist on disk.
+    // After the fix the validator no longer rejects `../` syntax; it falls
+    // through to the module resolver which emits a ModuleError.
+    assert_has_error(&result, ErrorKind::ModuleError);
+    // Confirm the old ImportError is gone.
+    assert!(
+        !result.errors.iter().any(|e| e.kind == ErrorKind::ImportError),
+        "ImportError for ../relative path should be gone after issue #36 fix"
+    );
 }
 
 #[test]
