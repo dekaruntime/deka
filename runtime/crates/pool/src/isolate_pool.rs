@@ -3403,7 +3403,7 @@ static DEV_MODE: OnceLock<bool> = OnceLock::new();
 /// shop hits the local Docker Neo4j/Redis, regardless of `account_id`.
 /// This prevents the shard-hash from routing dev-created shops to a remote
 /// production shard that doesn't hold their data.
-pub fn is_dev_mode() -> bool {
+pub(crate) fn is_dev_mode() -> bool {
     *DEV_MODE.get_or_init(|| {
         std::env::var("DEKA_DEV_MODE").as_deref() == Ok("1")
             || std::env::var("NODE_ENV").as_deref() == Ok("development")
