@@ -3364,7 +3364,13 @@ fn emit_needed_helpers(needed: &BTreeSet<&'static str>) -> String {
         out.push_str("function __phpx_base64_encode(input) { const str = String(input ?? ''); const tbl = __phpx_base64_table; let out = ''; for (let i = 0; i < str.length; i += 3) { const b0 = str.charCodeAt(i) & 0xff; const b1 = i + 1 < str.length ? str.charCodeAt(i + 1) & 0xff : NaN; const b2 = i + 2 < str.length ? str.charCodeAt(i + 2) & 0xff : NaN; const n = (b0 << 16) | ((Number.isNaN(b1) ? 0 : b1) << 8) | (Number.isNaN(b2) ? 0 : b2); out += tbl[(n >> 18) & 63]; out += tbl[(n >> 12) & 63]; out += Number.isNaN(b1) ? '=' : tbl[(n >> 6) & 63]; out += Number.isNaN(b2) ? '=' : tbl[n & 63]; } return out; }\n");
     }
     if emit_base64_decode {
-        out.push_str("function __phpx_base64_decode(input, strict = false) { const src = String(input ?? '').replace(/\\s+/g, ''); if (src.length % 4 !== 0) return strict ? false : ''; const tbl = __phpx_base64_table; let out = ''; for (let i = 0; i < src.length; i += 4) { const c0 = src[i], c1 = src[i + 1], c2 = src[i + 2], c3 = src[i + 3]; const n0 = tbl.indexOf(c0), n1 = tbl.indexOf(c1); const n2 = c2 === '=' ? -1 : tbl.indexOf(c2); const n3 = c3 === '=' ? -1 : tbl.indexOf(c3); if (n0 < 0 || n1 < 0 || n2 < -1 || n3 < -1) return strict ? false : ''; const n = (n0 << 18) | (n1 << 12) | ((n2 < 0 ? 0 : n2) << 6) | (n3 < 0 ? 0 : n3); out += String.fromCharCode((n >> 16) & 0xff); if (c2 !== '=') out += String.fromCharCode((n >> 8) & 0xff); if (c3 !== '=') out += String.fromCharCode(n & 0xff); } return out; }\n");
+        // Fix (issue #34): the old guard used `n2 < -1 || n3 < -1`, but
+        // tbl.indexOf() returns AT MOST -1, so `< -1` is unreachable.  Invalid
+        // non-padding chars in positions 2-3 were therefore silently decoded as
+        // 0, producing garbage bytes instead of returning false in strict mode.
+        // Fix: look up positions 2-3 unconditionally and reject on -1 only when
+        // the char is NOT the padding `=` character.
+        out.push_str("function __phpx_base64_decode(input, strict = false) { const src = String(input ?? '').replace(/\\s+/g, ''); if (src.length % 4 !== 0) return strict ? false : ''; const tbl = __phpx_base64_table; let out = ''; for (let i = 0; i < src.length; i += 4) { const c0 = src[i], c1 = src[i + 1], c2 = src[i + 2], c3 = src[i + 3]; const n0 = tbl.indexOf(c0), n1 = tbl.indexOf(c1), n2raw = tbl.indexOf(c2), n3raw = tbl.indexOf(c3); if (n0 < 0 || n1 < 0) return strict ? false : ''; if (c2 !== '=' && n2raw < 0) return strict ? false : ''; if (c3 !== '=' && n3raw < 0) return strict ? false : ''; const n2 = c2 === '=' ? 0 : n2raw; const n3 = c3 === '=' ? 0 : n3raw; const n = (n0 << 18) | (n1 << 12) | (n2 << 6) | n3; out += String.fromCharCode((n >> 16) & 0xff); if (c2 !== '=') out += String.fromCharCode((n >> 8) & 0xff); if (c3 !== '=') out += String.fromCharCode(n & 0xff); } return out; }\n");
     }
     if emit_sha256_hex {
         out.push_str("function __phpx_sha256_hex(input) { const K = [1116352408,1899447441,3049323471,3921009573,961987163,1508970993,2453635748,2870763221,3624381080,310598401,607225278,1426881987,1925078388,2162078206,2614888103,3248222580,3835390401,4022224774,264347078,604807628,770255983,1249150122,1555081692,1996064986,2554220882,2821834349,2952996808,3210313671,3336571891,3584528711,113926993,338241895,666307205,773529912,1294757372,1396182291,1695183700,1986661051,2177026350,2456956037,2730485921,2820302411,3259730800,3345764771,3516065817,3600352804,4094571909,275423344,430227734,506948616,659060556,883997877,958139571,1322822218,1537002063,1747873779,1955562222,2024104815,2227730452,2361852424,2428436474,2756734187,3204031479,3329325298]; const bytes = []; const src = String(input ?? ''); for (let i = 0; i < src.length; i += 1) bytes.push(src.charCodeAt(i) & 0xff); const bitLen = bytes.length * 8; bytes.push(0x80); while ((bytes.length % 64) !== 56) bytes.push(0); const hi = Math.floor(bitLen / 0x100000000); const lo = (bitLen >>> 0) & 0xffffffff; for (let i = 3; i >= 0; i -= 1) bytes.push((hi >>> (i * 8)) & 0xff); for (let i = 3; i >= 0; i -= 1) bytes.push((lo >>> (i * 8)) & 0xff); let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a, h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19; const rotr = (x, n) => ((x >>> n) | (x << (32 - n))) >>> 0; for (let i = 0; i < bytes.length; i += 64) { const w = new Array(64); for (let j = 0; j < 16; j += 1) { const k = i + (j * 4); w[j] = (((bytes[k] << 24) | (bytes[k + 1] << 16) | (bytes[k + 2] << 8) | bytes[k + 3]) >>> 0); } for (let j = 16; j < 64; j += 1) { const s0 = (rotr(w[j - 15], 7) ^ rotr(w[j - 15], 18) ^ (w[j - 15] >>> 3)) >>> 0; const s1 = (rotr(w[j - 2], 17) ^ rotr(w[j - 2], 19) ^ (w[j - 2] >>> 10)) >>> 0; w[j] = (((w[j - 16] + s0) >>> 0) + ((w[j - 7] + s1) >>> 0)) >>> 0; } let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7; for (let j = 0; j < 64; j += 1) { const S1 = (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) >>> 0; const ch = ((e & f) ^ ((~e) & g)) >>> 0; const t1 = (((((h + S1) >>> 0) + ch) >>> 0) + ((K[j] + w[j]) >>> 0)) >>> 0; const S0 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) >>> 0; const maj = ((a & b) ^ (a & c) ^ (b & c)) >>> 0; const t2 = (S0 + maj) >>> 0; h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0; } h0 = (h0 + a) >>> 0; h1 = (h1 + b) >>> 0; h2 = (h2 + c) >>> 0; h3 = (h3 + d) >>> 0; h4 = (h4 + e) >>> 0; h5 = (h5 + f) >>> 0; h6 = (h6 + g) >>> 0; h7 = (h7 + h) >>> 0; } const words = [h0, h1, h2, h3, h4, h5, h6, h7]; let out = ''; for (const w of words) { out += (w >>> 0).toString(16).padStart(8, '0'); } return out; }\n");
@@ -4290,6 +4296,60 @@ $result = match ($x) {
     fn rewrite_base64_decode_strict_to_helper() {
         let js = phpx_to_js("$s = 'aGVsbG8=';\n$d = base64_decode($s, true);").expect("should compile");
         assert!(js.contains("__phpx_base64_decode("), "expected __phpx_base64_decode call with strict arg, got:\n{}", js);
+    }
+
+    // Regression: strict-mode base64_decode must return false for invalid chars
+    // in positions 2-3 of a quartet (issue #34).  The old guard `n2 < -1 || n3 < -1`
+    // was unreachable because tbl.indexOf returns at most -1; any invalid char
+    // would silently produce garbage bytes instead of returning false.
+    #[test]
+    fn base64_decode_strict_rejects_invalid_char_in_quartet() {
+        let js = phpx_to_js("$d = base64_decode('aGV!o=', true);").expect("should compile");
+        // Extract the helper JS so we can run it directly.
+        let helpers: String = js
+            .lines()
+            .filter(|l| {
+                l.starts_with("function __phpx_base64_")
+                    || l.starts_with("const __phpx_base64_table")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let script = format!(
+            "{helpers}\nconsole.log(String(__phpx_base64_decode('aGV!o=', true)));"
+        );
+        match run_node(&script) {
+            Err(e) if e.contains("node not available") => return, // skip if no node
+            Err(e) => panic!("node error: {e}"),
+            Ok(out) => assert_eq!(
+                out, "false",
+                "strict base64_decode with invalid char 'aGV!o=' should return false, got: {out}"
+            ),
+        }
+    }
+
+    // Also verify that valid base64 still decodes correctly with strict=true
+    #[test]
+    fn base64_decode_strict_accepts_valid_base64() {
+        let js = phpx_to_js("$d = base64_decode('aGVsbG8=', true);").expect("should compile");
+        let helpers: String = js
+            .lines()
+            .filter(|l| {
+                l.starts_with("function __phpx_base64_")
+                    || l.starts_with("const __phpx_base64_table")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let script = format!(
+            "{helpers}\nconsole.log(__phpx_base64_decode('aGVsbG8=', true));"
+        );
+        match run_node(&script) {
+            Err(e) if e.contains("node not available") => return,
+            Err(e) => panic!("node error: {e}"),
+            Ok(out) => assert_eq!(
+                out, "hello",
+                "strict base64_decode with valid 'aGVsbG8=' should return 'hello', got: {out}"
+            ),
+        }
     }
 
     #[test]
