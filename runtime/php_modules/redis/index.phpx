@@ -80,6 +80,10 @@ export function llen($handle, $key) {
     return bridge('redis', 'llen', { handle: $handle, key: $key })
 }
 
+export function ltrim($handle, $key, $start, $stop) {
+    return bridge('redis', 'ltrim', { handle: $handle, key: $key, start: $start, stop: $stop })
+}
+
 export function sadd($handle, $key, $member) {
     return bridge('redis', 'sadd', { handle: $handle, key: $key, member: $member })
 }
