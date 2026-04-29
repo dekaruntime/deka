@@ -3367,7 +3367,7 @@ fn emit_needed_helpers(needed: &BTreeSet<&'static str>) -> String {
         out.push_str("function __phpx_base64_decode(input, strict = false) { const src = String(input ?? '').replace(/\\s+/g, ''); if (src.length % 4 !== 0) return strict ? false : ''; const tbl = __phpx_base64_table; let out = ''; for (let i = 0; i < src.length; i += 4) { const c0 = src[i], c1 = src[i + 1], c2 = src[i + 2], c3 = src[i + 3]; const n0 = tbl.indexOf(c0), n1 = tbl.indexOf(c1); const n2 = c2 === '=' ? -1 : tbl.indexOf(c2); const n3 = c3 === '=' ? -1 : tbl.indexOf(c3); if (n0 < 0 || n1 < 0 || n2 < -1 || n3 < -1) return strict ? false : ''; const n = (n0 << 18) | (n1 << 12) | ((n2 < 0 ? 0 : n2) << 6) | (n3 < 0 ? 0 : n3); out += String.fromCharCode((n >> 16) & 0xff); if (c2 !== '=') out += String.fromCharCode((n >> 8) & 0xff); if (c3 !== '=') out += String.fromCharCode(n & 0xff); } return out; }\n");
     }
     if emit_sha256_hex {
-        out.push_str("function __phpx_sha256_hex(input) { const K = [1116352408,1899447441,3049323471,3921009573,961987163,1508970993,2453635748,2870763221,3624381080,310598401,607225278,1426881987,1925078388,2162078206,2614888103,3248222580,3835390401,4022224774,264347078,604807628,770255983,1249150122,1555081692,1996064986,2554220882,2821834349,2952996808,3210313671,3336571891,3584528711,113926993,338241895,666307205,773529912,1294757372,1396182291,1695183700,1986661051,2177026350,2456956037,2730485921,2820302411,3259730800,3345764771,3516065817,3600352804,4094571909,275423344,430227734,506948616,659060556,883997877,958139571,1322822218,1537002063,1747873779,1955562222,2024104815,2227730452,2361852424,2428436474,2756734187,3204031479,3329325298]; const bytes = []; const src = String(input ?? ''); for (let i = 0; i < src.length; i += 1) bytes.push(src.charCodeAt(i) & 0xff); const bitLen = bytes.length * 8; bytes.push(0x80); while ((bytes.length % 64) !== 56) bytes.push(0); for (let i = 7; i >= 0; i -= 1) bytes.push((bitLen >>> (i * 8)) & 0xff); let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a, h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19; const rotr = (x, n) => ((x >>> n) | (x << (32 - n))) >>> 0; for (let i = 0; i < bytes.length; i += 64) { const w = new Array(64); for (let j = 0; j < 16; j += 1) { const k = i + (j * 4); w[j] = (((bytes[k] << 24) | (bytes[k + 1] << 16) | (bytes[k + 2] << 8) | bytes[k + 3]) >>> 0); } for (let j = 16; j < 64; j += 1) { const s0 = (rotr(w[j - 15], 7) ^ rotr(w[j - 15], 18) ^ (w[j - 15] >>> 3)) >>> 0; const s1 = (rotr(w[j - 2], 17) ^ rotr(w[j - 2], 19) ^ (w[j - 2] >>> 10)) >>> 0; w[j] = (((w[j - 16] + s0) >>> 0) + ((w[j - 7] + s1) >>> 0)) >>> 0; } let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7; for (let j = 0; j < 64; j += 1) { const S1 = (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) >>> 0; const ch = ((e & f) ^ ((~e) & g)) >>> 0; const t1 = (((((h + S1) >>> 0) + ch) >>> 0) + ((K[j] + w[j]) >>> 0)) >>> 0; const S0 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) >>> 0; const maj = ((a & b) ^ (a & c) ^ (b & c)) >>> 0; const t2 = (S0 + maj) >>> 0; h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0; } h0 = (h0 + a) >>> 0; h1 = (h1 + b) >>> 0; h2 = (h2 + c) >>> 0; h3 = (h3 + d) >>> 0; h4 = (h4 + e) >>> 0; h5 = (h5 + f) >>> 0; h6 = (h6 + g) >>> 0; h7 = (h7 + h) >>> 0; } const words = [h0, h1, h2, h3, h4, h5, h6, h7]; let out = ''; for (const w of words) { out += (w >>> 0).toString(16).padStart(8, '0'); } return out; }\n");
+        out.push_str("function __phpx_sha256_hex(input) { const K = [1116352408,1899447441,3049323471,3921009573,961987163,1508970993,2453635748,2870763221,3624381080,310598401,607225278,1426881987,1925078388,2162078206,2614888103,3248222580,3835390401,4022224774,264347078,604807628,770255983,1249150122,1555081692,1996064986,2554220882,2821834349,2952996808,3210313671,3336571891,3584528711,113926993,338241895,666307205,773529912,1294757372,1396182291,1695183700,1986661051,2177026350,2456956037,2730485921,2820302411,3259730800,3345764771,3516065817,3600352804,4094571909,275423344,430227734,506948616,659060556,883997877,958139571,1322822218,1537002063,1747873779,1955562222,2024104815,2227730452,2361852424,2428436474,2756734187,3204031479,3329325298]; const bytes = []; const src = String(input ?? ''); for (let i = 0; i < src.length; i += 1) bytes.push(src.charCodeAt(i) & 0xff); const bitLen = bytes.length * 8; bytes.push(0x80); while ((bytes.length % 64) !== 56) bytes.push(0); const hi = Math.floor(bitLen / 0x100000000); const lo = (bitLen >>> 0) & 0xffffffff; for (let i = 3; i >= 0; i -= 1) bytes.push((hi >>> (i * 8)) & 0xff); for (let i = 3; i >= 0; i -= 1) bytes.push((lo >>> (i * 8)) & 0xff); let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a, h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19; const rotr = (x, n) => ((x >>> n) | (x << (32 - n))) >>> 0; for (let i = 0; i < bytes.length; i += 64) { const w = new Array(64); for (let j = 0; j < 16; j += 1) { const k = i + (j * 4); w[j] = (((bytes[k] << 24) | (bytes[k + 1] << 16) | (bytes[k + 2] << 8) | bytes[k + 3]) >>> 0); } for (let j = 16; j < 64; j += 1) { const s0 = (rotr(w[j - 15], 7) ^ rotr(w[j - 15], 18) ^ (w[j - 15] >>> 3)) >>> 0; const s1 = (rotr(w[j - 2], 17) ^ rotr(w[j - 2], 19) ^ (w[j - 2] >>> 10)) >>> 0; w[j] = (((w[j - 16] + s0) >>> 0) + ((w[j - 7] + s1) >>> 0)) >>> 0; } let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7; for (let j = 0; j < 64; j += 1) { const S1 = (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) >>> 0; const ch = ((e & f) ^ ((~e) & g)) >>> 0; const t1 = (((((h + S1) >>> 0) + ch) >>> 0) + ((K[j] + w[j]) >>> 0)) >>> 0; const S0 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) >>> 0; const maj = ((a & b) ^ (a & c) ^ (b & c)) >>> 0; const t2 = (S0 + maj) >>> 0; h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0; } h0 = (h0 + a) >>> 0; h1 = (h1 + b) >>> 0; h2 = (h2 + c) >>> 0; h3 = (h3 + d) >>> 0; h4 = (h4 + e) >>> 0; h5 = (h5 + f) >>> 0; h6 = (h6 + g) >>> 0; h7 = (h7 + h) >>> 0; } const words = [h0, h1, h2, h3, h4, h5, h6, h7]; let out = ''; for (const w of words) { out += (w >>> 0).toString(16).padStart(8, '0'); } return out; }\n");
     }
     if emit_hex_to_binary {
         out.push_str("function __phpx_hex_to_binary(hex) { const src = String(hex ?? ''); let out = ''; for (let i = 0; i < src.length; i += 2) out += String.fromCharCode(parseInt(src.slice(i, i + 2), 16) & 0xff); return out; }\n");
@@ -4311,6 +4311,164 @@ $result = match ($x) {
         assert!(js.contains("__phpx_hash_hmac("), "expected __phpx_hash_hmac call, got:\n{}", js);
         assert!(!js.contains("globalThis.hash_hmac ??="), "globalThis.hash_hmac polyfill should NOT be in prelude, got:\n{}", js);
     }
+
+    // ---- SHA-256 correctness: NIST / RFC test vectors run via node ----
+    //
+    // These tests extract the emitted __phpx_sha256_hex and __phpx_hmac_sha256_hex helpers
+    // from transpiler output and execute them in Node.js to verify bit-exact correctness.
+    // Structural/compile-time assertions are NOT enough for a cryptographic primitive —
+    // the bit-length encoding bug (issue #37, PR #25) passed structural checks but produced
+    // wrong hashes for all non-empty inputs.
+    //
+    // If node is not on PATH, the test is skipped gracefully so CI without node still passes.
+
+    /// Run a JS snippet in Node.js. Returns Ok(stdout) or Err(stderr).
+    #[cfg(test)]
+    fn run_node(script: &str) -> Result<String, String> {
+        use std::process::Command;
+        let out = Command::new("node")
+            .arg("-e")
+            .arg(script)
+            .output()
+            .map_err(|e| format!("node not available: {e}"))?;
+        if out.status.success() {
+            Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        } else {
+            Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        }
+    }
+
+    /// Extract the `__phpx_sha256_hex` and related helper function bodies from
+    /// compiled PHPX output so the tests can run them directly.
+    #[cfg(test)]
+    fn sha256_helpers_js() -> String {
+        // Compile a minimal PHPX file that forces all three helpers to be emitted.
+        let js = phpx_to_js("$h = hash('sha256', 'x');\n$m = hash_hmac('sha256', 'x', 'k');")
+            .expect("should compile");
+        // Strip the non-function lines (let assignments etc.) — keep only function/const lines.
+        js.lines()
+            .filter(|l| {
+                l.starts_with("function __phpx_") || l.starts_with("const __phpx_node_crypto")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn sha256_nist_empty_string() {
+        let helpers = sha256_helpers_js();
+        let script = format!(
+            "{helpers}\nconsole.log(__phpx_sha256_hex(''));"
+        );
+        match run_node(&script) {
+            Err(e) if e.contains("node not available") => return, // skip if no node
+            Err(e) => panic!("node error: {e}"),
+            Ok(got) => assert_eq!(
+                got,
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                "sha256('') mismatch — NIST vector"
+            ),
+        }
+    }
+
+    #[test]
+    fn sha256_nist_abc() {
+        // NIST FIPS 180-4 example: SHA-256('abc')
+        let helpers = sha256_helpers_js();
+        let script = format!("{helpers}\nconsole.log(__phpx_sha256_hex('abc'));");
+        match run_node(&script) {
+            Err(e) if e.contains("node not available") => return,
+            Err(e) => panic!("node error: {e}"),
+            Ok(got) => assert_eq!(
+                got,
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                "sha256('abc') mismatch — NIST vector"
+            ),
+        }
+    }
+
+    #[test]
+    fn sha256_nist_56byte_crosses_block_boundary() {
+        // 56-byte input: padding pushes it into a second 64-byte block.
+        // This exercises the message-schedule expansion path and the length encoding.
+        let helpers = sha256_helpers_js();
+        let script = format!(
+            "{helpers}\nconsole.log(__phpx_sha256_hex('abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq'));"
+        );
+        match run_node(&script) {
+            Err(e) if e.contains("node not available") => return,
+            Err(e) => panic!("node error: {e}"),
+            Ok(got) => assert_eq!(
+                got,
+                "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+                "sha256(56-byte vector) mismatch — NIST vector"
+            ),
+        }
+    }
+
+    #[test]
+    fn sha256_nist_one_million_a() {
+        // NIST: SHA-256(1_000_000 × 'a').
+        // bitLen = 8_000_000 — fits in 32 bits (< 2^32), so the high-half of the
+        // 64-bit length field must be 0.  The bug (#37) wrote the LOW half into
+        // both halves, which still corrupted the padding for non-zero bitLen.
+        let helpers = sha256_helpers_js();
+        let script = format!(
+            "{helpers}\nconsole.log(__phpx_sha256_hex('a'.repeat(1_000_000)));"
+        );
+        match run_node(&script) {
+            Err(e) if e.contains("node not available") => return,
+            Err(e) => panic!("node error: {e}"),
+            Ok(got) => assert_eq!(
+                got,
+                "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0",
+                "sha256(1M 'a') mismatch — NIST vector"
+            ),
+        }
+    }
+
+    #[test]
+    fn hmac_sha256_rfc4231_tc1_key_0b_20_hi_there() {
+        // RFC 4231 Test Case 1: key = 0x0b repeated 20 times, data = "Hi There"
+        // Expected: b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7
+        let helpers = sha256_helpers_js();
+        let script = format!(
+            "{helpers}\n\
+             const key1 = String.fromCharCode(...Array(20).fill(0x0b));\n\
+             console.log(__phpx_hmac_sha256_hex('Hi There', key1));"
+        );
+        match run_node(&script) {
+            Err(e) if e.contains("node not available") => return,
+            Err(e) => panic!("node error: {e}"),
+            Ok(got) => assert_eq!(
+                got,
+                "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7",
+                "hmac-sha256 RFC 4231 TC1 mismatch"
+            ),
+        }
+    }
+
+    #[test]
+    fn hmac_sha256_rfc4231_tc2_jefe() {
+        // RFC 4231 Test Case 2: key = "Jefe", data = "what do ya want for nothing?"
+        // Expected: 5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843
+        let helpers = sha256_helpers_js();
+        let script = format!(
+            "{helpers}\n\
+             console.log(__phpx_hmac_sha256_hex('what do ya want for nothing?', 'Jefe'));"
+        );
+        match run_node(&script) {
+            Err(e) if e.contains("node not available") => return,
+            Err(e) => panic!("node error: {e}"),
+            Ok(got) => assert_eq!(
+                got,
+                "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843",
+                "hmac-sha256 RFC 4231 TC2 mismatch"
+            ),
+        }
+    }
+
+    // ---- end SHA-256 correctness tests ----
 
     #[test]
     fn rewrite_hash_equals_inline_constant_time() {
