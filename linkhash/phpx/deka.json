@@ -11,7 +11,7 @@
   },
   "security": {
     "allow": {
-      "db": ["postgres", "sqlite"],
+      "db": ["postgres", "sqlite", "stats"],
       "net": ["127.0.0.1:8508", "localhost:8508", "*"],
       "read": ["*"],
       "dynamic": true,

@@ -1930,6 +1930,20 @@ function normalizeJsonValue($value, $depth = 0) {
     return $value
   }
   if (is_array($value)) {
+    $hasStringKey = false
+    foreach ($value as $k => $v) {
+      if (!is_int($k)) {
+        $hasStringKey = true
+        break
+      }
+    }
+    if ($hasStringKey) {
+      $out = {}
+      foreach ($value as $k => $v) {
+        $out->{'' . $k} = normalizeJsonValue($v, $depth + 1)
+      }
+      return $out
+    }
     $out = []
     foreach ($value as $k => $v) {
       $out[$k] = normalizeJsonValue($v, $depth + 1)
@@ -1937,23 +1951,9 @@ function normalizeJsonValue($value, $depth = 0) {
     return $out
   }
   if (is_object($value)) {
-    $out = []
+    $out = {}
     foreach ($value as $k => $v) {
-      $out['' . $k] = normalizeJsonValue($v, $depth + 1)
-    }
-    if (count($out) > 0) {
-      return $out
-    }
-
-    $arr = (array) $value
-    if (count($arr) === 1 && array_key_exists(0, $arr) && (is_object($arr[0]) || is_array($arr[0]))) {
-      return normalizeJsonValue($arr[0], $depth + 1)
-    }
-    if (count($arr) === 1 && array_key_exists('0', $arr) && (is_object($arr['0']) || is_array($arr['0']))) {
-      return normalizeJsonValue($arr['0'], $depth + 1)
-    }
-    foreach ($arr as $k => $v) {
-      $out['' . $k] = normalizeJsonValue($v, $depth + 1)
+      $out->{'' . $k} = normalizeJsonValue($v, $depth + 1)
     }
     return $out
   }
