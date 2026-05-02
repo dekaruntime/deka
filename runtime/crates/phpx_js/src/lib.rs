@@ -2689,6 +2689,27 @@ impl<'a> JsSubsetEmitter<'a> {
                 let _ = emit_args(self, args)?;
                 Ok(Some("false".to_string()))
             }
+            // usort($arr, $fn) -> ($arr.sort($fn), true)
+            // JS Array.prototype.sort is in-place and mutates the array.
+            // The PHPX caller's variable still references the same array object.
+            "usort" if args.len() == 2 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!("({}.sort({}), true)", a[0], a[1])))
+            }
+            // uasort($arr, $fn) -> ($arr.sort($fn), true)
+            // Same as usort; key association is preserved in JS arrays.
+            "uasort" if args.len() == 2 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!("({}.sort({}), true)", a[0], a[1])))
+            }
+            // uksort($arr, $fn) -> not directly mappable; emit sort by key as best-effort
+            "uksort" if args.len() == 2 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "(() => {{ const __arr = {0}; const __fn = {1}; const __keys = Object.keys(__arr); __keys.sort(__fn); const __tmp = __keys.reduce((o, k) => {{ o[k] = __arr[k]; return o; }}, {{}}); Object.keys(__arr).forEach(k => delete __arr[k]); Object.assign(__arr, __tmp); return true; }})()",
+                    a[0], a[1]
+                )))
+            }
             _ => Ok(None),
         }
     }
