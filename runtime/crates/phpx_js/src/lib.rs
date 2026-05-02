@@ -5896,6 +5896,31 @@ function f(): void {
     // ---- Type predicate IIFE: arg evaluated exactly once ----
 
     #[test]
+    #[test]
+    fn rewrite_usort_inline() {
+        let js = phpx_to_js("$arr = [3, 1, 2];\n$ok = usort($arr, function($a, $b) { return $a - $b; });").expect("should compile");
+        assert!(js.contains(".sort("), "expected .sort() for usort, got:\n{}", js);
+        assert!(js.contains(", true)"), "expected comma-true pattern for usort, got:\n{}", js);
+        assert!(!js.contains("globalThis.usort"), "should NOT contain globalThis.usort, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_uasort_inline() {
+        let js = phpx_to_js("$arr = [3, 1, 2];\n$ok = uasort($arr, function($a, $b) { return $a - $b; });").expect("should compile");
+        assert!(js.contains(".sort("), "expected .sort() for uasort, got:\n{}", js);
+        assert!(js.contains(", true)"), "expected comma-true pattern for uasort, got:\n{}", js);
+        assert!(!js.contains("globalThis.uasort"), "should NOT contain globalThis.uasort, got:\n{}", js);
+    }
+
+    #[test]
+    fn rewrite_uksort_inline() {
+        let js = phpx_to_js("$obj = ['b' => 2, 'a' => 1];\n$ok = uksort($obj, function($a, $b) { return strcmp($a, $b); });").expect("should compile");
+        assert!(js.contains("Object.keys("), "expected Object.keys for uksort, got:\n{}", js);
+        assert!(js.contains(".sort("), "expected .sort() for uksort, got:\n{}", js);
+        assert!(js.contains("Object.assign("), "expected Object.assign for uksort key-rebuild, got:\n{}", js);
+        assert!(!js.contains("globalThis.uksort"), "should NOT contain globalThis.uksort, got:\n{}", js);
+    }
+
     fn type_predicates_evaluate_arg_exactly_once() {
         // Each type predicate must bind the argument into __v once via an IIFE so that a
         // side-effecting call-expression arg is only evaluated a single time.
