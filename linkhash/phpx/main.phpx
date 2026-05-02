@@ -116,14 +116,22 @@ function getDbConfigCandidates(): array {
   if (!$hasExplicitPort) {
     $basePort = (int) rowValue($base, 'port', 55432)
     if ($basePort !== 5432) {
-      $fallbackA = $base
-      $fallbackA['port'] = 5432
-      $candidates[] = $fallbackA
+      $candidates[] = {
+        host: rowValue($base, 'host', '127.0.0.1'),
+        port: 5432,
+        database: rowValue($base, 'database', 'linkhash_registry'),
+        user: rowValue($base, 'user', 'postgres'),
+        password: rowValue($base, 'password', 'postgres')
+      }
     }
     if ($basePort !== 55432) {
-      $fallbackB = $base
-      $fallbackB['port'] = 55432
-      $candidates[] = $fallbackB
+      $candidates[] = {
+        host: rowValue($base, 'host', '127.0.0.1'),
+        port: 55432,
+        database: rowValue($base, 'database', 'linkhash_registry'),
+        user: rowValue($base, 'user', 'postgres'),
+        password: rowValue($base, 'password', 'postgres')
+      }
     }
   }
   return $candidates
