@@ -58,8 +58,8 @@ export function http_post($url, $content_type, $body, $headers = {}) {
 ///   <ReturnType type="mixed" />
 /// </Function>
 export function http_request($req) {
-    $transport = isset($req['transport']) ? $req['transport'] : null
-    if ($transport !== null) {
+    $transport = isset($req['transport']) ? $req['transport'] : false
+    if (is_callable($transport)) {
         // Pluggable transport — user-provided callable. Contract:
         //   $transport($req) → Result<HttpResponse, HttpError>
         return $transport($req)
@@ -88,9 +88,9 @@ function __http_decode_response($raw) {
         version: array_key_exists('version', $raw) ? '' . $raw['version'] : '',
         final_url: array_key_exists('final_url', $raw) ? '' . $raw['final_url'] : '',
         body: array_key_exists('body', $raw) ? $raw['body'] : '',
-        body_bytes: array_key_exists('body_bytes', $raw) ? $raw['body_bytes'] : null,
+        body_bytes: array_key_exists('body_bytes', $raw) ? $raw['body_bytes'] : false,
         streamed: array_key_exists('streamed', $raw) ? $raw['streamed'] : false,
-        stream_handle: array_key_exists('stream_handle', $raw) ? $raw['stream_handle'] : null,
+        stream_handle: array_key_exists('stream_handle', $raw) ? $raw['stream_handle'] : false,
     }
     return result_ok($resp)
 }
@@ -159,14 +159,14 @@ export function http_client($opts = {}) {
         return result_err($raw)
     }
     $handle = $raw['client_handle']
-    $transport = isset($opts['transport']) ? $opts['transport'] : null
+    $transport = isset($opts['transport']) ? $opts['transport'] : false
     return result_ok({
         __handle: $handle,
         __transport: $transport,
         do: function ($req) use ($handle, $transport) {
             $with_handle = $req
             $with_handle['client_handle'] = $handle
-            if ($transport !== null) {
+            if (is_callable($transport)) {
                 return $transport($with_handle)
             }
             return __http_request_default($with_handle)

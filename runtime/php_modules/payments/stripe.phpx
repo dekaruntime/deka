@@ -72,7 +72,7 @@ export function stripe_name() {
 ///   <Description>Start Stripe Connect Express onboarding. Validates the return_url, issues an OAuth state, creates a Stripe Account + AccountLink, and returns the hosted onboarding URL.</Description>
 ///   <ReturnType type="mixed" />
 /// </Function>
-export function stripe_connect_url($return_url, $shop_id, $session_jti = '', $http = null) {
+export function stripe_connect_url($return_url, $shop_id, $session_jti = '', $http = false) {
   $url_check = validate_return_url($return_url)
   if (!result_is_ok($url_check)) {
     return result_err('stripe:invalid_return_url')
@@ -159,7 +159,7 @@ export function stripe_connect_url($return_url, $shop_id, $session_jti = '', $ht
 ///   <Description>Handle the Stripe Connect return. Verifies the state (CSRF), fetches the Account, and returns a ConnectedAccount with charges_enabled reflecting the current Stripe state.</Description>
 ///   <ReturnType type="mixed" />
 /// </Function>
-export function stripe_handle_callback($query, $expected_shop_id, $expected_jti, $http = null) {
+export function stripe_handle_callback($query, $expected_shop_id, $expected_jti, $http = false) {
   $state = pick_query($query, 'state')
   if (strlen($state) === 0) {
     return result_err('stripe:missing_state')
@@ -213,7 +213,7 @@ export function stripe_handle_callback($query, $expected_shop_id, $expected_jti,
 ///   <Description>Create a Stripe PaymentIntent on behalf of a connected account with an application_fee_amount. Returns a Charge with status reflecting the intent's status.</Description>
 ///   <ReturnType type="mixed" />
 /// </Function>
-export function stripe_create_charge($account, $amount_cents, $currency, $platform_fee_cents, $idempotency_key, $http = null) {
+export function stripe_create_charge($account, $amount_cents, $currency, $platform_fee_cents, $idempotency_key, $http = false) {
   $account_id = pick_string($account, 'account_id')
   if (strlen($account_id) === 0) {
     return result_err('stripe:missing_account_id')
@@ -281,7 +281,7 @@ export function stripe_create_charge($account, $amount_cents, $currency, $platfo
 ///   <Description>Refund a Stripe charge. Requires an authorized actor (owner/admin) and a non-empty reason; writes a RefundAudit entry for every attempt.</Description>
 ///   <ReturnType type="mixed" />
 /// </Function>
-export function stripe_refund($account, $charge_id, $amount_cents, $actor, $shop_id, $reason, $charge_amount_cents = 0, $http = null) {
+export function stripe_refund($account, $charge_id, $amount_cents, $actor, $shop_id, $reason, $charge_amount_cents = 0, $http = false) {
   $reason_check = require_refund_reason($reason)
   if (!result_is_ok($reason_check)) {
     log_refund_attempt($shop_id, $actor, $charge_id, $amount_cents, '' . $reason, 'rejected', $reason_check->error)
@@ -437,7 +437,7 @@ export function stripe_webhook_verify($body, $signature_header, $secret, $tolera
 ///   <Description>Fetch the latest AccountStatus from Stripe. Returns Ok(AccountStatus) reflecting charges_enabled and any disabled_reason.</Description>
 ///   <ReturnType type="mixed" />
 /// </Function>
-export function stripe_account_status($account, $http = null) {
+export function stripe_account_status($account, $http = false) {
   $account_id = pick_string($account, 'account_id')
   if (strlen($account_id) === 0) {
     return result_err('stripe:missing_account_id')
@@ -462,7 +462,7 @@ export function stripe_account_status($account, $http = null) {
   if (is_array($acct) && array_key_exists('requirements', $acct) && is_array($acct['requirements'])) {
     if (array_key_exists('disabled_reason', $acct['requirements'])) {
       $dr = $acct['requirements']['disabled_reason']
-      if ($dr !== null && $dr !== false) {
+      if (isset($dr) && $dr !== false) {
         $disabled_reason = '' . $dr
       }
     }
@@ -481,7 +481,7 @@ export function stripe_account_status($account, $http = null) {
 ///   <Description>Revoke the connected account. Stripe Connect Express uses the OAuth deauthorize endpoint — for Standard this is required; for Express, we simply instruct the caller to clear the Shop fields.</Description>
 ///   <ReturnType type="mixed" />
 /// </Function>
-export function stripe_disconnect($account, $http = null) {
+export function stripe_disconnect($account, $http = false) {
   $account_id = pick_string($account, 'account_id')
   if (strlen($account_id) === 0) {
     return result_err('stripe:missing_account_id')
@@ -522,7 +522,7 @@ function stripe_default_headers($secret) {
 }
 
 function http_call($http, $request) {
-  if ($http === null) {
+  if (!is_callable($http)) {
     return result_err('stripe:no_http_transport')
   }
   $resp = $http($request)
@@ -576,14 +576,14 @@ function urlencode_form($map) {
 function pick_string($obj, $key) {
   if (is_array($obj) && array_key_exists($key, $obj)) {
     $v = $obj[$key]
-    if ($v === null || $v === false) {
+    if (!isset($v) || $v === false) {
       return ''
     }
     return '' . $v
   }
   if (is_object($obj) && isset($obj->$key)) {
     $v = $obj->$key
-    if ($v === null || $v === false) {
+    if (!isset($v) || $v === false) {
       return ''
     }
     return '' . $v
@@ -604,14 +604,14 @@ function pick_bool($obj, $key) {
 function pick_query($query, $key) {
   if (is_array($query) && array_key_exists($key, $query)) {
     $v = $query[$key]
-    if ($v === null || $v === false) {
+    if (!isset($v) || $v === false) {
       return ''
     }
     return '' . $v
   }
   if (is_object($query) && isset($query->$key)) {
     $v = $query->$key
-    if ($v === null || $v === false) {
+    if (!isset($v) || $v === false) {
       return ''
     }
     return '' . $v
@@ -622,14 +622,14 @@ function pick_query($query, $key) {
 function env_get($name) {
   if (is_array($_ENV) && array_key_exists($name, $_ENV)) {
     $v = $_ENV[$name]
-    if ($v === null || $v === false) {
+    if (!isset($v) || $v === false) {
       return ''
     }
     return '' . $v
   }
   if (is_array($_SERVER) && array_key_exists($name, $_SERVER)) {
     $v = $_SERVER[$name]
-    if ($v === null || $v === false) {
+    if (!isset($v) || $v === false) {
       return ''
     }
     return '' . $v
