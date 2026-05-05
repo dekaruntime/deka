@@ -106,7 +106,7 @@ export function square_connect_url($return_url, $shop_id, $session_jti = '') {
 ///   <Description>Complete the Square OAuth flow: verify state, exchange the auth code for access+refresh tokens, encrypt them, return a ConnectedAccount. Caller persists the ConnectedAccount + the ciphertext blobs.</Description>
 ///   <ReturnType type="mixed" />
 /// </Function>
-export function square_handle_callback($query, $expected_shop_id, $expected_jti, $http = null) {
+export function square_handle_callback($query, $expected_shop_id, $expected_jti, $http = false) {
   $state = pick_query($query, 'state')
   if (strlen($state) === 0) {
     return result_err('square:missing_state')
@@ -186,7 +186,7 @@ export function square_handle_callback($query, $expected_shop_id, $expected_jti,
 ///   <Description>Charge via POST /v2/payments with app_fee_money + source_id. Takes an already-decrypted access_token (caller responsibility — fetch from vault, call this, zero the plaintext).</Description>
 ///   <ReturnType type="mixed" />
 /// </Function>
-export function square_create_charge($account, $access_token, $source_id, $amount_cents, $currency, $platform_fee_cents, $idempotency_key, $location_id, $http = null) {
+export function square_create_charge($account, $access_token, $source_id, $amount_cents, $currency, $platform_fee_cents, $idempotency_key, $location_id, $http = false) {
   $merchant_id = pick_string($account, 'account_id')
   if (strlen($merchant_id) === 0) {
     return result_err('square:missing_account_id')
@@ -260,7 +260,7 @@ export function square_create_charge($account, $access_token, $source_id, $amoun
 ///   <Description>Refund via POST /v2/refunds. Requires an authorized actor, a non-empty reason; writes a RefundAudit entry on every attempt.</Description>
 ///   <ReturnType type="mixed" />
 /// </Function>
-export function square_refund($account, $access_token, $charge_id, $amount_cents, $currency, $actor, $shop_id, $reason, $charge_amount_cents = 0, $http = null) {
+export function square_refund($account, $access_token, $charge_id, $amount_cents, $currency, $actor, $shop_id, $reason, $charge_amount_cents = 0, $http = false) {
   $reason_check = require_refund_reason($reason)
   if (!result_is_ok($reason_check)) {
     log_refund_attempt($shop_id, $actor, $charge_id, $amount_cents, '' . $reason, 'rejected', $reason_check->error)
@@ -395,7 +395,7 @@ export function square_webhook_verify($body, $signature_header, $secret, $notifi
 ///   <Description>Fetch the merchant record + confirm authorization still works. Returns Ok(AccountStatus).</Description>
 ///   <ReturnType type="mixed" />
 /// </Function>
-export function square_account_status($account, $access_token, $http = null) {
+export function square_account_status($account, $access_token, $http = false) {
   $merchant_id = pick_string($account, 'account_id')
   if (strlen($merchant_id) === 0) {
     return result_err('square:missing_account_id')
@@ -428,7 +428,7 @@ export function square_account_status($account, $access_token, $http = null) {
 ///   <Description>Exchange a refresh_token for a fresh access_token. Returns Ok({access_token, refresh_token, expires_at}) — caller re-encrypts and persists.</Description>
 ///   <ReturnType type="mixed" />
 /// </Function>
-export function square_refresh_token($refresh_token, $http = null) {
+export function square_refresh_token($refresh_token, $http = false) {
   if (!is_string($refresh_token) || strlen($refresh_token) === 0) {
     return result_err('square:missing_refresh_token')
   }
@@ -473,7 +473,7 @@ export function square_refresh_token($refresh_token, $http = null) {
 ///   <Description>Revoke the OAuth authorization. POST /oauth2/revoke with client credentials. After this, caller clears Shop.payment_account_id + encrypted blobs.</Description>
 ///   <ReturnType type="mixed" />
 /// </Function>
-export function square_disconnect($account, $access_token, $http = null) {
+export function square_disconnect($account, $access_token, $http = false) {
   $merchant_id = pick_string($account, 'account_id')
   if (strlen($merchant_id) === 0) {
     return result_err('square:missing_account_id')
@@ -536,7 +536,7 @@ function is_sandbox_app_id($app_id) {
 }
 
 function http_call($http, $request) {
-  if ($http === null) {
+  if (!is_callable($http)) {
     return result_err('square:no_http_transport')
   }
   $resp = $http($request)
@@ -576,14 +576,14 @@ function http_call($http, $request) {
 function pick_string($obj, $key) {
   if (is_array($obj) && array_key_exists($key, $obj)) {
     $v = $obj[$key]
-    if ($v === null || $v === false) {
+    if (!isset($v) || $v === false) {
       return ''
     }
     return '' . $v
   }
   if (is_object($obj) && isset($obj->$key)) {
     $v = $obj->$key
-    if ($v === null || $v === false) {
+    if (!isset($v) || $v === false) {
       return ''
     }
     return '' . $v
@@ -594,14 +594,14 @@ function pick_string($obj, $key) {
 function pick_query($query, $key) {
   if (is_array($query) && array_key_exists($key, $query)) {
     $v = $query[$key]
-    if ($v === null || $v === false) {
+    if (!isset($v) || $v === false) {
       return ''
     }
     return '' . $v
   }
   if (is_object($query) && isset($query->$key)) {
     $v = $query->$key
-    if ($v === null || $v === false) {
+    if (!isset($v) || $v === false) {
       return ''
     }
     return '' . $v
@@ -612,14 +612,14 @@ function pick_query($query, $key) {
 function env_get($name) {
   if (is_array($_ENV) && array_key_exists($name, $_ENV)) {
     $v = $_ENV[$name]
-    if ($v === null || $v === false) {
+    if (!isset($v) || $v === false) {
       return ''
     }
     return '' . $v
   }
   if (is_array($_SERVER) && array_key_exists($name, $_SERVER)) {
     $v = $_SERVER[$name]
-    if ($v === null || $v === false) {
+    if (!isset($v) || $v === false) {
       return ''
     }
     return '' . $v
