@@ -12,6 +12,9 @@ export function LandingHero() {
             Apple-like clarity for your infrastructure. Serve, run, build, compile, and deploy with a
             runtime that stays fast and predictable.
           </p>
+          <p className={styles.heroSubtitle}>
+            PHP-compatible. PHPX-modern. One runtime.
+          </p>
           <div className={styles.heroActions}>
             <Link className={styles.primaryAction} href="/install">
               Get started
