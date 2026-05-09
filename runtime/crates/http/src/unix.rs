@@ -75,8 +75,7 @@ fn bind_abstract_unix(socket_path: &str) -> Result<tokio::net::UnixListener, Str
         use socket2::{Domain, Socket, Type};
         use std::os::unix::net::UnixListener as StdUnixListener;
 
-        let name = socket_path.trim_start_matches('\0');
-        let addr = socket2::SockAddr::unix_abstract(name.as_bytes())
+        let addr = socket2::SockAddr::unix(socket_path)
             .map_err(|err| format!("Failed to create abstract unix addr: {}", err))?;
 
         let socket = Socket::new(Domain::UNIX, Type::STREAM, None)

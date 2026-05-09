@@ -1935,7 +1935,7 @@ dependencies = [
  "pool",
  "redis",
  "serde_json",
- "socket2 0.5.10",
+ "socket2 0.6.2",
  "tokio",
  "tracing",
 ]
@@ -6019,7 +6019,7 @@ dependencies = [
  "pool",
  "serde",
  "serde_json",
- "socket2 0.5.10",
+ "socket2 0.6.2",
  "tokio",
  "tracing",
 ]
