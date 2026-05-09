@@ -22,6 +22,11 @@ const docSections = [
     title: 'Deploy Server',
     description: 'Operate and secure the Deka deploy server in production.',
     href: '/docs/deploy'
+  },
+  {
+    title: 'Platform',
+    description: 'How Tana is put together: agents, dispatchers, and the shape of the system.',
+    href: '/docs/platform'
   }
 ]
 
