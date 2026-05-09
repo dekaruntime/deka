@@ -19,14 +19,12 @@ import {
   User
 } from 'lucide-react'
 import { notFound } from 'next/navigation'
-import { useUser } from '@/context/user-context'
 
 export default function RFDDetailPage({ params }: { params: Promise<{ number: string }> }) {
   const { number } = use(params)
   const rfdNumber = parseInt(number)
   const rfd = getRFD(rfdNumber)
   const allRFDs = getRFDs()
-  const { user } = useUser()
 
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
@@ -268,7 +266,7 @@ export default function RFDDetailPage({ params }: { params: Promise<{ number: st
                         <User className="w-5 h-5 text-primary" />
                       </div>
                       <div className="flex-1">
-                        <p className="font-semibold text-foreground mb-1">{user.username}</p>
+                        <p className="font-semibold text-foreground mb-1">guest</p>
                         <p className="text-xs text-muted-foreground">Leave a comment</p>
                       </div>
                     </div>

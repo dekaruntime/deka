@@ -5,9 +5,6 @@ import { ChevronUp } from 'lucide-react'
 import { languages } from '@/i18n'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useLangOnClient } from '@/context/lang'
-import { update_lang } from '@/actions/update_lang'
-import { useIsAuthenticated } from '@/context/user-context'
-import type { Lang } from '@/types'
 
 interface LanguageSelectProps {
   className?: string
@@ -17,24 +14,14 @@ export function LanguageSelect({ className }: LanguageSelectProps) {
   const [isOpen, setIsOpen] = useState(false)
   const { data: lang, action: setLang } = useLangOnClient()
   const selectedLang = lang ?? (languages[0]?.code ?? 'en')
-  const { isAuthenticated } = useIsAuthenticated()
 
   const handleSelect = async (code: string) => {
     if (code === selectedLang) {
       setIsOpen(false)
       return
     }
-
     setLang?.(code)
     setIsOpen(false)
-
-    if (isAuthenticated) {
-      try {
-        await update_lang(code as Lang)
-      } catch (error) {
-        console.warn('Failed to persist language preference', error)
-      }
-    }
   }
 
   return (

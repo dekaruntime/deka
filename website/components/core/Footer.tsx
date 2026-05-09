@@ -5,9 +5,6 @@ import Link from 'next/link'
 import { ChevronUp, Sun, Moon } from 'lucide-react'
 import { useTheme } from '@/context/theme-context'
 import { useLangOnClient } from '@/context/lang'
-import { update_lang } from '@/actions/update_lang'
-import { useIsAuthenticated } from '@/context/user-context'
-import type { Lang } from '@/types'
 import { languages } from '@/i18n'
 
 const footerLinks = [
@@ -15,7 +12,6 @@ const footerLinks = [
   { name: 'docs', href: '/docs' },
   { name: 'blog', href: '/blog' },
   { name: 'status', href: '/status' },
-  { name: 'sign in', href: '/signin' },
 ]
 
 export default function Footer() {
@@ -25,24 +21,16 @@ export default function Footer() {
   const langRef = useRef<HTMLDivElement | null>(null)
   const { data: lang, action: setLang } = useLangOnClient()
   const selectedLang = lang ?? (languages[0]?.code ?? 'en')
-  const { isAuthenticated } = useIsAuthenticated()
 
   const handleSelect = async (code: string) => {
     if (code === selectedLang) {
       setIsLangOpen(false)
       return
     }
-
     setLang?.(code)
     setIsLangOpen(false)
-
-    if (isAuthenticated) {
-      try {
-        await update_lang(code as Lang)
-      } catch (error) {
-        console.warn('Failed to persist language preference', error)
-      }
-    }
+    // Language preference persists via the cookie set by `useLangOnClient` —
+    // no server-side user record to update, so nothing else to do.
   }
 
   useEffect(() => {

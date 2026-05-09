@@ -3,13 +3,13 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   pageExtensions: ['js', 'jsx', 'md', 'mdx', 'ts', 'tsx'],
 
-  // Skip TypeScript + ESLint validation during production builds. The deka.gg
-  // app carries dead routes and stale imports from a prior product iteration
-  // (dashboard / auth / blockchain client) that the docs site itself doesn't
-  // exercise. Auditing-and-deleting that surface is its own followup; for
-  // now, a fresh-clone build needs to succeed so the CD pipeline can deploy.
-  // Type-checking still runs in `next dev` and via `bun x tsc --noEmit` for
-  // anyone who wants the signal locally.
+  // Production builds skip TypeScript + ESLint validation. After the
+  // dead-code purge there are still small TS strictness issues in the
+  // docs route (e.g. extra props on breadcrumb objects) that would
+  // otherwise block deploys. Type-checking still runs in `next dev`
+  // and via `bun x tsc --noEmit` for anyone who wants the signal.
+  // TODO: file an issue for the remaining strict-mode violations and
+  // remove these flags once they're fixed.
   typescript: {
     ignoreBuildErrors: true,
   },
