@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
+import { getToken } from 'next-auth/jwt'
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   // Allow NextAuth API routes and static assets
@@ -14,8 +15,12 @@ export function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  // Check for NextAuth session token
-  const token = request.cookies.get('next-auth.session-token')?.value
+  // Verify NextAuth JWT session (handles both secure and non-secure cookie names)
+  const token = await getToken({
+    req: request,
+    secret: process.env.NEXTAUTH_SECRET,
+  })
+
   if (!token) {
     const signInUrl = new URL('/api/auth/signin', request.url)
     signInUrl.searchParams.set(
