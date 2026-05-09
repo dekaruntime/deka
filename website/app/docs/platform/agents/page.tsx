@@ -183,6 +183,43 @@ curl -sS http://yasmin.agents.local/task \\
         </section>
 
         <h2 className="text-2xl font-semibold text-foreground mt-12 mb-4">
+          Mixing runtimes
+        </h2>
+        <section className="space-y-4 text-foreground/90 leading-relaxed">
+          <p>
+            The persona is the constant; the runtime is per-task. The same
+            Yasmin can drive a <code>claude</code> child for one task, a{' '}
+            <code>codex</code> child for another, and an{' '}
+            <code>opencode</code> child running Kimi K2.6 for a third —
+            concurrently, in three separate processes, all wearing the same
+            name tag. Spawning one on each is as simple as a command; the
+            runtime is just a flag on the dispatch call.
+          </p>
+
+          <pre className="not-prose bg-background border border-border rounded-md p-4 font-mono text-xs overflow-x-auto leading-relaxed">
+{`tana dispatch yasmin "audit Navbar a11y"        --runtime claude
+tana dispatch yasmin "port the badge to PHPX"   --runtime codex
+tana dispatch yasmin "trim the homepage copy"   --runtime opencode --model opencode/kimi-k2.6`}
+          </pre>
+
+          <p>
+            The dispatcher reads the runtime flag, locates the right CLI on
+            the agent&apos;s <code>PATH</code>, and fork+execs it with the
+            persona injected as the system prompt. Nothing about the agent
+            itself changes — same uid, same workspace, same persona file.
+          </p>
+          <p>
+            That makes per-task routing a scheduler concern, not a persona
+            concern. The orchestrator can send cheap mechanical work —
+            codemods, copy edits, lint sweeps — to Kimi via{' '}
+            <code>opencode</code> and reserve <code>claude</code> for
+            high-stakes reasoning, all without changing the agent
+            definition. A future router can pick the runtime from task
+            metadata; today it is a flag the caller sets.
+          </p>
+        </section>
+
+        <h2 className="text-2xl font-semibold text-foreground mt-12 mb-4">
           Why this shape
         </h2>
         <section className="space-y-4 text-foreground/90 leading-relaxed">
