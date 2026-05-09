@@ -1668,9 +1668,9 @@ fn infer_expr_type(expr: ExprId, source: &[u8]) -> Option<String> {
             let mut fields = Vec::new();
             for item in *items {
                 let key = match item.key {
-                    ObjectKey::Ident(token) | ObjectKey::String(token) => token_text(source, token),
+                    ObjectKey::Ident(token) => token_text(source, token),
+                    ObjectKey::String(token) => decode_string_key(&token_text(source, token)),
                 };
-                let key = key.trim_matches('"').trim_matches('\'').to_string();
                 if !key.is_empty() {
                     fields.push(format!("{}: mixed", key));
                 }
@@ -1793,6 +1793,52 @@ fn token_text(source: &[u8], token: &Token) -> String {
 
 fn span_text(source: &[u8], span: &Span) -> String {
     String::from_utf8_lossy(span.as_str(source)).to_string()
+}
+
+// Keep in sync with `decode_string_key` in
+// runtime/crates/phpx_js/src/lib.rs and `parse_string_key` in
+// runtime/crates/php-rs/src/phpx/typeck/check.rs. ObjectKey::String tokens
+// retain their surrounding quotes and embedded escapes — we strip the matched
+// quote pair and decode the few escapes the lexer accepts inside string keys.
+fn decode_string_key(raw: &str) -> String {
+    if raw.len() >= 2 {
+        let bytes = raw.as_bytes();
+        let first = bytes[0];
+        let last = bytes[bytes.len() - 1];
+        if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
+            let inner = &raw[1..raw.len() - 1];
+            return unescape_string_key(inner, first == b'"');
+        }
+    }
+    raw.to_string()
+}
+
+fn unescape_string_key(value: &str, double_quoted: bool) -> String {
+    let mut out = String::new();
+    let mut chars = value.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        let Some(next) = chars.next() else {
+            out.push('\\');
+            break;
+        };
+        match next {
+            '\'' if !double_quoted => out.push('\''),
+            '"' if double_quoted => out.push('"'),
+            '\\' => out.push('\\'),
+            'n' if double_quoted => out.push('\n'),
+            'r' if double_quoted => out.push('\r'),
+            't' if double_quoted => out.push('\t'),
+            other => {
+                out.push('\\');
+                out.push(other);
+            }
+        }
+    }
+    out
 }
 
 fn span_contains(span: Span, offset: usize) -> bool {

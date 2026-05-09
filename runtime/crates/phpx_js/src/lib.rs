@@ -3479,6 +3479,10 @@ fn json_string(input: &str) -> String {
 /// JS object key we need to strip those delimiters and interpret the common
 /// escape sequences. Mirrors `parse_string_key` / `unescape_string_key`
 /// in `crates/php-rs/src/phpx/typeck/check.rs`.
+// Keep in sync with `decode_string_key` in
+// runtime/crates/phpx_lsp/src/lib.rs and `parse_string_key` in
+// runtime/crates/php-rs/src/phpx/typeck/check.rs. All three strip the matching
+// quote pair and decode the same escape set on ObjectKey::String tokens.
 fn decode_string_key(raw: &str) -> String {
     if raw.len() >= 2 {
         let bytes = raw.as_bytes();
