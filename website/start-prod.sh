@@ -2,8 +2,12 @@
 # Production startup for deka.gg website (host-level, not Docker)
 # Sources env from .env.local then starts the Next.js server on port 4003.
 # Port 4003 matches the cloudflared ingress for deka.gg.
+#
+# Path is resolved from the script's own location so deploys can run from
+# any checkout (sami's working tree, deka-deploy/, etc.) without hardcoded
+# paths drifting between machines.
 
-cd /Users/sami/Projects/deka/website
+cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # Load repo-local env (any docs-site-specific config)
 if [ -f .env.local ]; then
