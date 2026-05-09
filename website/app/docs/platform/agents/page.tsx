@@ -217,6 +217,106 @@ tana dispatch yasmin "trim the homepage copy"   --runtime opencode --model openc
             definition. A future router can pick the runtime from task
             metadata; today it is a flag the caller sets.
           </p>
+          <p>
+            One note on defaults: <code>tana dispatch {'<agent>'}</code> still
+            routes to <code>claude</code> when no runtime flag is given. But
+            Ava-the-orchestrator herself is different — her default is{' '}
+            <code>opencode/kimi-k2.6</code>. The distinction is intentional:
+            dispatch is the high-stakes reasoning path, while Ava handles a
+            high volume of conversational turns where cost and quota
+            preservation matter.
+          </p>
+        </section>
+
+        <h2 className="text-2xl font-semibold text-foreground mt-12 mb-4">
+          Topology — what runs where
+        </h2>
+        <section className="space-y-4 text-foreground/90 leading-relaxed">
+          <pre className="not-prose bg-background border border-border rounded-md p-4 font-mono text-xs overflow-x-auto leading-relaxed">
+{`phobos (production frontend)
+├── storefronts shard 0
+├── tana-website / admin / store-admin (Next.js)
+├── Neo4j canonical
+├── Redis
+├── git-server :9418
+├── ava-bot (Telegram → demon bridge)
+└── cloudflared
+
+bugsy
+└── storefront shard 1
+
+blanco
+└── storefront shard 2 (disabled in shards.json)
+
+demon (agent compute)
+├── ava-daemon :9421
+├── 11 specialist dispatchers :9430–9440
+├── claude / codex / opencode (all credentialed)
+└── per-agent unix users
+
+thinkpad (Sami's workstation)
+└── tana ava + tana dispatch CLIs → POST to demon`}
+          </pre>
+          <p>
+            The split is deliberate. <code>phobos</code> runs only production
+            services — anything customer-facing stays there.{' '}
+            <code>demon</code> is the agent compute host; nothing
+            customer-facing lives on it, and no agent workload bleeds into
+            the storefront tier. If one side is under pressure, the other
+            keeps breathing.
+          </p>
+        </section>
+
+        <h2 className="text-2xl font-semibold text-foreground mt-12 mb-4">
+          Resilience — Ava can’t be rate-limited
+        </h2>
+        <section className="space-y-4 text-foreground/90 leading-relaxed">
+          <p>
+            Ava rides a multi-runtime fallback chain. <code>ava-daemon</code>{' '}
+            walks <code>AVA_RUNTIME_CHAIN</code> with a default of{' '}
+            <code>opencode/kimi-k2.6 → codex → claude</code>. If the first
+            runtime returns a rate-limit, network error, or timeout, it
+            retries on the next — preserving the system prompt, the user
+            message, and the conversation thread. The response carries a
+            banner:{' '}
+            <code>[switched to X after Y failed]</code>, and the
+            conversation continues without interruption.
+          </p>
+          <p>
+            Cost matters here. Kimi-default is roughly 10× cheaper per turn
+            than Claude (~$0.017 vs ~$0.18 for short responses) and does not
+            burn subscription quota. Claude is held in reserve as the
+            high-stakes-reasoning fallback. Both Telegram Ava and the{' '}
+            <code>tana ava</code> CLI inherit the same chain — they are thin
+            surfaces over the same backend.
+          </p>
+        </section>
+
+        <h2 className="text-2xl font-semibold text-foreground mt-12 mb-4">
+          The <code>tana ava</code> CLI
+        </h2>
+        <section className="space-y-4 text-foreground/90 leading-relaxed">
+          <p>
+            New as of tonight: a thin TypeScript HTTP client to{' '}
+            <code>ava-daemon</code> on <code>demon:9421</code>. It talks to
+            the same backend as Telegram Ava, but from your terminal. Useful
+            when you are at the laptop and do not want to switch to your
+            phone, or when you need the response in shell-readable output.
+          </p>
+
+          <pre className="not-prose bg-background border border-border rounded-md p-4 font-mono text-xs overflow-x-auto leading-relaxed">
+{`tana ava "<message>"   # send a message
+tana ava status          # daemon health + this thread's stats
+tana ava reset           # clear rolling summary + recent turns`}
+          </pre>
+
+          <p>
+            Conversation key is <code>surface=cli</code>,{' '}
+            <code>external_id=cli@{'<hostname>'}</code>. Each machine gets its
+            own thread, so the thinkpad CLI does not collide with Telegram or
+            other machines. Auth is via{' '}
+            <code>~/.config/tana/ava-cli.env</code> (mode 600).
+          </p>
         </section>
 
         <h2 className="text-2xl font-semibold text-foreground mt-12 mb-4">
@@ -309,6 +409,13 @@ tana dispatch yasmin "trim the homepage copy"   --runtime opencode --model openc
             messaging, and richer workspace policy are all open. The shape
             described above is the load-bearing part — the rest accretes
             around it.
+          </p>
+          <p>
+            What shipped in #206: <code>ava-daemon</code> and the multi-runtime
+            fallback chain are now live. Ava defaults to{' '}
+            <code>opencode/kimi-k2.6</code>, falls back to{' '}
+            <code>codex</code>, then <code>claude</code>. The{' '}
+            <code>tana ava</code> CLI was added tonight as a new surface.
           </p>
         </section>
       </article>
