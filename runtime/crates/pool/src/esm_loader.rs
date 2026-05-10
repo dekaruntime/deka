@@ -403,6 +403,14 @@ fn collect_phpx_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()
 }
 
 pub fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Result<(), String> {
+    // PHPX_MODULE_ROOT bypass (#220): when set, the tenant relies on the runtime stdlib at
+    // that root and we trust the runtime-provided modules without requiring a local
+    // deka.lock or php_modules/. Tenant-local packages would still need a lockfile, but
+    // stdlib-only tenants (id.tana.gg) deploy without ceremony.
+    if std::env::var_os("PHPX_MODULE_ROOT").is_some() {
+        return Ok(());
+    }
+
     let lock_path = project_root.join("deka.lock");
     if !lock_path.is_file() {
         return Err(format!(
@@ -550,7 +558,7 @@ fn resolve_phpx_module_spec(project_root: &Path, specifier: &str) -> Option<Path
     {
         aliases.push(format!("@deka/{}", specifier));
     }
-    for alias in aliases {
+    for alias in aliases.iter() {
         let base = if alias.starts_with("@user/") {
             modules_dir.join("@user").join(alias.trim_start_matches("@user/"))
         } else {
@@ -560,6 +568,24 @@ fn resolve_phpx_module_spec(project_root: &Path, specifier: &str) -> Option<Path
             return Some(resolved);
         }
     }
+
+    // PHPX_MODULE_ROOT fallback (#220): if the tenant's php_modules/ doesn't
+    // contain the spec, try the runtime stdlib root. This lets stdlib-only
+    // tenants (e.g. id.tana.gg) deploy without vendoring stdlib.
+    if let Some(root_os) = std::env::var_os("PHPX_MODULE_ROOT") {
+        let root = std::path::Path::new(&root_os);
+        for alias in aliases.iter() {
+            let base = if alias.starts_with("@user/") {
+                root.join("@user").join(alias.trim_start_matches("@user/"))
+            } else {
+                root.join(alias)
+            };
+            if let Some(resolved) = resolve_with_candidates(&base) {
+                return Some(resolved);
+            }
+        }
+    }
+
     None
 }
 

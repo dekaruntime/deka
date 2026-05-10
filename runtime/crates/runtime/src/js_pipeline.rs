@@ -120,6 +120,14 @@ pub fn resolve_project_root(input_path: &Path) -> Result<PathBuf, String> {
 }
 
 pub fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Result<(), String> {
+    // PHPX_MODULE_ROOT bypass (#220): when set, the tenant relies on the runtime stdlib at
+    // that root and we trust the runtime-provided modules without requiring a local
+    // deka.lock or php_modules/. Tenant-local packages would still need a lockfile, but
+    // stdlib-only tenants (id.tana.gg) deploy without ceremony.
+    if std::env::var_os("PHPX_MODULE_ROOT").is_some() {
+        return Ok(());
+    }
+
     let lock_path = project_root.join("deka.lock");
     if !lock_path.is_file() {
         return Err(format!(
