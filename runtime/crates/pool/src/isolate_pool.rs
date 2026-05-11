@@ -3570,9 +3570,8 @@ fn set_request_globals(
     // Platform → tenant env-var injection. The platform process holds
     // a small set of allowlisted secrets (Stripe publishable key,
     // TANA_INTERNAL_API_SECRET, etc.) that storefront PHPX needs to
-    // read via `$_SERVER['NAME']` and `$_ENV['NAME']`. Vars NOT on the
-    // allowlist (database creds, JWT secrets, etc.) are never exposed
-    // to tenant code.
+    // read via `$_SERVER['NAME']`. Vars NOT on the allowlist (database
+    // creds, JWT secrets, etc.) are never exposed to tenant code.
     //
     // Allowlist source: `runtime_core::platform_env::DEFAULT_ALLOWLIST`
     // plus the optional `DEKA_PLATFORM_ENV_ALLOWLIST` env var (comma
@@ -3583,14 +3582,15 @@ fn set_request_globals(
     // the same name (defence in depth — those names aren't on the
     // allowlist anyway).
     if request_parts.is_some() {
-        let env_snapshot = runtime_core::platform_env::snapshot_env_from_process();
         if let Some(server_key) = v8::String::new(scope, "_SERVER") {
             if let Some(server_val) = global.get(scope, server_key.into()) {
                 if let Some(server_obj) = server_val.to_object(scope) {
-                    for (name, value) in &env_snapshot {
+                    for (name, value) in
+                        runtime_core::platform_env::snapshot_env_from_process()
+                    {
                         if let (Some(k), Some(v)) = (
-                            v8::String::new(scope, name),
-                            v8::String::new(scope, value),
+                            v8::String::new(scope, &name),
+                            v8::String::new(scope, &value),
                         ) {
                             server_obj.set(scope, k.into(), v.into());
                         }
@@ -3598,38 +3598,6 @@ fn set_request_globals(
                 }
             }
         }
-        // Also inject into globalThis.process.env so PHPX $_ENV works.
-        // The PHPX prelude generator reads globalThis.process?.env and
-        // populates $_ENV from it; without this the allowlisted vars are
-        // invisible to PHPX code that uses $_ENV['NAME'].
-        let process_key = v8::String::new(scope, "process")
-            .ok_or_else(|| "process key".to_string())?;
-        let process_val = global.get(scope, process_key.into());
-        let process_obj = if let Some(val) = process_val {
-            if val.is_object() {
-                val.to_object(scope).unwrap()
-            } else {
-                let obj = v8::Object::new(scope);
-                global.set(scope, process_key.into(), obj.into());
-                obj
-            }
-        } else {
-            let obj = v8::Object::new(scope);
-            global.set(scope, process_key.into(), obj.into());
-            obj
-        };
-        let env_key = v8::String::new(scope, "env")
-            .ok_or_else(|| "env key".to_string())?;
-        let env_obj = v8::Object::new(scope);
-        for (name, value) in &env_snapshot {
-            if let (Some(k), Some(v)) = (
-                v8::String::new(scope, name),
-                v8::String::new(scope, value),
-            ) {
-                env_obj.set(scope, k.into(), v.into());
-            }
-        }
-        process_obj.set(scope, env_key.into(), env_obj.into());
     }
 
     // Tenant context: resolve shop_id + account_id from Host header
