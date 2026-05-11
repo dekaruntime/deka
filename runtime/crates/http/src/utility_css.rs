@@ -62,7 +62,7 @@ fn collect_classes(html: &str) -> BTreeSet<String> {
     let bytes = html.as_bytes();
     let mut i = 0usize;
     while i + 6 < bytes.len() {
-        if !html[i..].starts_with("class=") {
+        if !bytes[i..].starts_with(b"class=") {
             i += 1;
             continue;
         }

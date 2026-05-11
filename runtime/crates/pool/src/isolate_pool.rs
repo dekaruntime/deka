@@ -3598,6 +3598,43 @@ fn set_request_globals(
                 }
             }
         }
+        // PHPX superglobal $_ENV must mirror the allowlisted env vars so
+        // tenant code can read secrets via $_ENV['NAME'] (not just
+        // $_SERVER). Also sync process.env so getenv() and buildPrelude
+        // see current values in warm isolates.
+        let env_snapshot = runtime_core::platform_env::snapshot_env_from_process();
+        let env_obj = v8::Object::new(scope);
+        for (name, value) in &env_snapshot {
+            if let (Some(k), Some(v)) = (
+                v8::String::new(scope, name),
+                v8::String::new(scope, value),
+            ) {
+                env_obj.set(scope, k.into(), v.into());
+            }
+        }
+        if let Some(env_key) = v8::String::new(scope, "_ENV") {
+            global.set(scope, env_key.into(), env_obj.into());
+        }
+        if let Some(process_key) = v8::String::new(scope, "process") {
+            if let Some(process_val) = global.get(scope, process_key.into()) {
+                if let Some(process_obj) = process_val.to_object(scope) {
+                    if let Some(env_key) = v8::String::new(scope, "env") {
+                        if let Some(env_val) = process_obj.get(scope, env_key.into()) {
+                            if let Some(env_obj) = env_val.to_object(scope) {
+                                for (name, value) in &env_snapshot {
+                                    if let (Some(k), Some(v)) = (
+                                        v8::String::new(scope, name),
+                                        v8::String::new(scope, value),
+                                    ) {
+                                        env_obj.set(scope, k.into(), v.into());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // Tenant context: resolve shop_id + account_id from Host header
