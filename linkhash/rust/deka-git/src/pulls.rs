@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
+use crate::redaction;
+
 #[derive(Debug, Serialize, FromRow)]
 pub struct PullRequest {
     pub id: i64,
@@ -88,6 +90,12 @@ pub async fn create_pull(
 ) -> Result<PullRequest, sqlx::Error> {
     let number = get_next_pull_number(repo_owner, repo_name).await?;
     let pool = crate::db::pool();
+    let redacted_title = redaction::redact_secret_strings(req.title.trim());
+    redaction::log_redactions("pull.title.create", &redacted_title.redactions);
+    let (redacted_body, body_redactions) = redaction::redact_optional_secret_strings(
+        req.body.map(|value| value.trim().to_string()),
+    );
+    redaction::log_redactions("pull.body.create", &body_redactions);
     sqlx::query_as::<_, PullRequest>(
         r#"
         INSERT INTO pull_requests (repo_owner, repo_name, number, title, body, state, author, source_ref, target_ref)
@@ -98,8 +106,8 @@ pub async fn create_pull(
     .bind(repo_owner)
     .bind(repo_name)
     .bind(number)
-    .bind(req.title.trim())
-    .bind(req.body.map(|v| v.trim().to_string()))
+    .bind(redacted_title.text)
+    .bind(redacted_body)
     .bind(author)
     .bind(req.source_ref.trim())
     .bind(req.target_ref.trim())
@@ -154,8 +162,12 @@ pub async fn update_pull(
     let Some(existing) = get_pull(repo_owner, repo_name, number).await? else {
         return Ok(None);
     };
-    let title = req.title.unwrap_or(existing.title);
-    let body = req.body.or(existing.body);
+    let title_raw = req.title.unwrap_or(existing.title);
+    let body_raw = req.body.or(existing.body);
+    let title = redaction::redact_secret_strings(&title_raw);
+    redaction::log_redactions("pull.title.update", &title.redactions);
+    let (body, body_redactions) = redaction::redact_optional_secret_strings(body_raw);
+    redaction::log_redactions("pull.body.update", &body_redactions);
     let state = req.state.unwrap_or(existing.state);
     let closed_at = if state == "closed" || state == "merged" {
         Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string())
@@ -171,7 +183,7 @@ pub async fn update_pull(
         RETURNING *
         "#,
     )
-    .bind(title)
+    .bind(title.text)
     .bind(body)
     .bind(state)
     .bind(closed_at)
@@ -193,11 +205,13 @@ pub async fn add_pull_comment(
         return Ok(None);
     };
     let pool = crate::db::pool();
+    let redacted_body = redaction::redact_secret_strings(req.body.trim());
+    redaction::log_redactions("pull.comment.create", &redacted_body.redactions);
     let comment = sqlx::query_as::<_, PullComment>(
         "INSERT INTO pull_comments (pull_id, body, author) VALUES (?, ?, ?) RETURNING *",
     )
     .bind(pr.id)
-    .bind(req.body.trim())
+    .bind(redacted_body.text)
     .bind(author)
     .fetch_one(pool)
     .await?;

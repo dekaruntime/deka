@@ -1,4 +1,4 @@
-use crate::db;
+use crate::{db, redaction};
 
 use super::records::{CreateCommentRequest, IssueComment};
 use super::store::get_issue;
@@ -18,6 +18,9 @@ pub async fn add_comment(
         None => return Ok(None),
     };
 
+    let redacted_body = redaction::redact_secret_strings(req.body.trim());
+    redaction::log_redactions("issue.comment.create", &redacted_body.redactions);
+
     let comment = sqlx::query_as::<_, IssueComment>(
         r#"
         INSERT INTO issue_comments (issue_id, body, author)
@@ -26,7 +29,7 @@ pub async fn add_comment(
         "#,
     )
     .bind(issue.id)
-    .bind(&req.body)
+    .bind(redacted_body.text)
     .bind(author)
     .fetch_one(pool)
     .await?;

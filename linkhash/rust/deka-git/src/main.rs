@@ -21,6 +21,7 @@ mod package_routes;
 mod packages;
 mod pull_routes;
 mod pulls;
+mod redaction;
 mod repo;
 mod repo_routes;
 mod scoped_package_routes;
