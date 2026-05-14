@@ -30,7 +30,7 @@ const docSections = [
   },
   {
     title: 'Gild — Agent Sandbox',
-    description: 'Firecracker microVM isolation, userland, audit trails, and boundaries for Tana agent work.',
+    description: 'Firecracker microVM isolation, userland, rollout status, and sandbox boundaries for Tana agent work.',
     href: '/docs/gild'
   }
 ]

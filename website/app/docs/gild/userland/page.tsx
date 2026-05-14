@@ -29,8 +29,9 @@ export default function GildUserlandPage() {
         Gild uses a custom <code>init.sh</code> and <code>init.js</code> inside
         the guest. The shell init performs early mount and environment setup.
         The JavaScript init receives the dispatch payload, prepares the
-        workspace, injects runtime auth, starts the audit hooks, and launches
-        the selected agent CLI.
+        workspace, injects runtime auth, and launches the selected agent CLI.
+        Guest audit callback wiring is still landing in the real Firecracker
+        path.
       </p>
 
       <Diagram>{`Firecracker
@@ -41,7 +42,7 @@ export default function GildUserlandPage() {
             |
             +-- init.js
                  |
-                 +-- audit hooks
+                 +-- audit callback path (in progress)
                  +-- auth injection
                  +-- agent CLI
                  +-- /workspace`}</Diagram>
@@ -62,8 +63,9 @@ export default function GildUserlandPage() {
         Authentication material is injected at task start, scoped to the
         runtime that needs it, and scrubbed from the broader environment. The
         agent gets enough bearer auth to perform the accepted dispatch. It does
-        not inherit the host user&apos;s shell, login session, or ambient
-        secrets.
+        not inherit the host user&apos;s shell, login session, or ambient secrets.
+        Audit-token injection for sandboxed cross-owner review is still tracked
+        as follow-up work.
       </p>
 
       <h2 className="text-2xl font-semibold text-foreground mt-10">
@@ -81,10 +83,11 @@ export default function GildUserlandPage() {
         Filesystem boundary
       </h2>
       <p>
-        The writable work area is <code>/workspace</code>. Outside that path,
-        the guest filesystem is mounted read-only. Package managers and agent
-        CLIs can write inside the assigned checkout and task scratch space, but
-        cannot rewrite the guest base image or leave durable files elsewhere.
+        The intended writable work area is <code>/workspace</code>. Outside
+        tmpfs work areas, the guest rootfs is attached read-only. Package
+        managers and agent CLIs can write inside guest task scratch space, but
+        cannot rewrite the guest base image. Host workspace and artifact
+        attachment in the real Firecracker client is still a rollout blocker.
       </p>
 
       <pre className="not-prose bg-background border border-border rounded-md p-4 font-mono text-xs overflow-x-auto leading-relaxed">{`/                  read-only guest root
