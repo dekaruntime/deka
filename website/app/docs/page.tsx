@@ -27,6 +27,11 @@ const docSections = [
     title: 'Platform',
     description: 'How Tana is put together: agents, dispatchers, and the shape of the system.',
     href: '/docs/platform'
+  },
+  {
+    title: 'Gild — Agent Sandbox',
+    description: 'Firecracker microVM isolation, userland, rollout status, and sandbox boundaries for Tana agent work.',
+    href: '/docs/gild'
   }
 ]
 
