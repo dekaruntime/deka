@@ -120,6 +120,19 @@ pub fn resolve_tenant(subdomain: &str) -> Option<String> {
     resolve_tenant_record(subdomain).map(|r| r.shop_id)
 }
 
+/// Return true when a subdomain is already a canonical shop_id.
+///
+/// Shop IDs are accepted directly so shard-local storefront requests like
+/// `shop_alpha.tana.gg` do not need a Redis `subdomain:*` routing lookup.
+pub fn is_shop_id_subdomain(subdomain: &str) -> bool {
+    subdomain.strip_prefix("shop_").is_some_and(|rest| {
+        !rest.is_empty()
+            && rest
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
+    })
+}
+
 /// Resolve a subdomain to a `SubdomainRecord` via Redis lookup.
 ///
 /// Accepts both the new JSON format (`{"shop_id":..., "account_id":...}`)
@@ -244,6 +257,14 @@ pub fn resolve_tenant_info_from_host(headers: &[(String, String)]) -> Option<Ten
 
     // Check for preview subdomain first: preview-{hash}-{shop}.domain.tld
     if let Some((hash, shop_subdomain)) = parse_preview_host(host) {
+        if is_shop_id_subdomain(&shop_subdomain) {
+            return Some(TenantInfo {
+                shop_id: shop_subdomain,
+                account_id: None,
+                preview_ref: Some(hash),
+            });
+        }
+
         if let Some(rec) = resolve_tenant_record(&shop_subdomain) {
             return Some(TenantInfo {
                 shop_id: rec.shop_id,
@@ -255,6 +276,14 @@ pub fn resolve_tenant_info_from_host(headers: &[(String, String)]) -> Option<Ten
 
     // Normal subdomain resolution
     if let Some(subdomain) = extract_subdomain(host) {
+        if is_shop_id_subdomain(&subdomain) {
+            return Some(TenantInfo {
+                shop_id: subdomain,
+                account_id: None,
+                preview_ref: None,
+            });
+        }
+
         if let Some(rec) = resolve_tenant_record(&subdomain) {
             return Some(TenantInfo {
                 shop_id: rec.shop_id,
@@ -405,6 +434,43 @@ mod tests {
         // The old nested format should no longer match
         let result = parse_preview_host("preview-a1b2c3d.beta.tana.gg");
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn shop_id_subdomain_format_matches_expected_shape() {
+        assert!(is_shop_id_subdomain("shop_alpha"));
+        assert!(is_shop_id_subdomain("shop_alpha-1_beta"));
+
+        assert!(!is_shop_id_subdomain("shop_"));
+        assert!(!is_shop_id_subdomain("Shop_alpha"));
+        assert!(!is_shop_id_subdomain("shop_Alpha"));
+        assert!(!is_shop_id_subdomain("shop.alpha"));
+        assert!(!is_shop_id_subdomain("alpha"));
+    }
+
+    #[test]
+    fn resolve_from_host_uses_shop_id_subdomain_directly() {
+        let headers = vec![("Host".to_string(), "shop_alpha-1.tana.gg".to_string())];
+
+        let info = resolve_tenant_info_from_host(&headers).unwrap();
+
+        assert_eq!(info.shop_id, "shop_alpha-1");
+        assert_eq!(info.account_id, None);
+        assert_eq!(info.preview_ref, None);
+    }
+
+    #[test]
+    fn resolve_preview_from_host_uses_shop_id_subdomain_directly() {
+        let headers = vec![(
+            "Host".to_string(),
+            "preview-a1b2c3d-shop_alpha-1.tana.gg".to_string(),
+        )];
+
+        let info = resolve_tenant_info_from_host(&headers).unwrap();
+
+        assert_eq!(info.shop_id, "shop_alpha-1");
+        assert_eq!(info.account_id, None);
+        assert_eq!(info.preview_ref.as_deref(), Some("a1b2c3d"));
     }
 
     #[test]
