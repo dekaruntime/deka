@@ -134,7 +134,7 @@ pub(crate) async fn handle_update_issue(
         Err(response) => return response,
     };
 
-    match issues::update_issue(&owner, &repo, number, update_req).await {
+    match issues::update_issue(&owner, &repo, number, &auth_user.owner, update_req).await {
         Ok(Some(issue)) => {
             audit_issue_action(
                 &auth_user,

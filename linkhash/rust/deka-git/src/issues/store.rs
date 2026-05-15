@@ -1,4 +1,4 @@
-use crate::db;
+use crate::{db, redaction};
 
 use super::records::{CreateIssueRequest, Issue, ListIssuesQuery, UpdateIssueRequest};
 
@@ -38,6 +38,32 @@ pub async fn create_issue(
 ) -> Result<Issue, sqlx::Error> {
     let pool = db::pool();
     let number = get_next_issue_number(repo_owner, repo_name).await?;
+    let redacted_title = redaction::redact_secret_strings(&req.title);
+    redaction::log_redactions("issue.title.create", &redacted_title.redactions);
+    redaction::alert_redactions(
+        redaction::RedactionAlertContext {
+            repo_owner,
+            repo_name,
+            location: "issue.title.create",
+            subject: Some(format!("#{}", number)),
+            caller: author,
+        },
+        &redacted_title.redactions,
+    )
+    .await;
+    let (redacted_body, body_redactions) = redaction::redact_optional_secret_strings(req.body);
+    redaction::log_redactions("issue.body.create", &body_redactions);
+    redaction::alert_redactions(
+        redaction::RedactionAlertContext {
+            repo_owner,
+            repo_name,
+            location: "issue.body.create",
+            subject: Some(format!("#{}", number)),
+            caller: author,
+        },
+        &body_redactions,
+    )
+    .await;
 
     let issue = sqlx::query_as::<_, Issue>(
         r#"
@@ -49,8 +75,8 @@ pub async fn create_issue(
     .bind(repo_owner)
     .bind(repo_name)
     .bind(number)
-    .bind(&req.title)
-    .bind(&req.body)
+    .bind(redacted_title.text)
+    .bind(redacted_body)
     .bind(author)
     .bind(&req.assignee)
     .bind(req.priority.as_deref().unwrap_or("p2"))
@@ -127,6 +153,7 @@ pub async fn update_issue(
     repo_owner: &str,
     repo_name: &str,
     number: i64,
+    caller: &str,
     req: UpdateIssueRequest,
 ) -> Result<Option<Issue>, sqlx::Error> {
     let pool = db::pool();
@@ -137,8 +164,34 @@ pub async fn update_issue(
         None => return Ok(None),
     };
 
-    let new_title = req.title.unwrap_or(existing.title);
-    let new_body = req.body.or(existing.body);
+    let new_title_raw = req.title.unwrap_or(existing.title);
+    let new_body_raw = req.body.or(existing.body);
+    let new_title = redaction::redact_secret_strings(&new_title_raw);
+    redaction::log_redactions("issue.title.update", &new_title.redactions);
+    redaction::alert_redactions(
+        redaction::RedactionAlertContext {
+            repo_owner,
+            repo_name,
+            location: "issue.title.update",
+            subject: Some(format!("#{}", number)),
+            caller,
+        },
+        &new_title.redactions,
+    )
+    .await;
+    let (new_body, body_redactions) = redaction::redact_optional_secret_strings(new_body_raw);
+    redaction::log_redactions("issue.body.update", &body_redactions);
+    redaction::alert_redactions(
+        redaction::RedactionAlertContext {
+            repo_owner,
+            repo_name,
+            location: "issue.body.update",
+            subject: Some(format!("#{}", number)),
+            caller,
+        },
+        &body_redactions,
+    )
+    .await;
     let new_state = req.state.unwrap_or(existing.state.clone());
     let new_assignee = req.assignee.or(existing.assignee);
     let new_priority = req.priority.or(existing.priority);
@@ -163,8 +216,8 @@ pub async fn update_issue(
         RETURNING *
         "#,
     )
-    .bind(&new_title)
-    .bind(&new_body)
+    .bind(new_title.text)
+    .bind(new_body)
     .bind(&new_state)
     .bind(&new_assignee)
     .bind(&new_priority)

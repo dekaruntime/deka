@@ -132,7 +132,7 @@ pub(crate) async fn handle_update_pull(
             )
         }
     };
-    match pulls::update_pull(&owner, &repo, number, update_req).await {
+    match pulls::update_pull(&owner, &repo, number, &auth_user.owner, update_req).await {
         Ok(Some(pr)) => {
             auth::log_audit(
                 Some(auth_user.token_id),
