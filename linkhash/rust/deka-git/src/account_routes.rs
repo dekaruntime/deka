@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, Request},
+    extract::{Extension, Path, Request},
     http::StatusCode,
     response::IntoResponse,
     Json,
@@ -151,13 +151,13 @@ pub(crate) async fn handle_list_accounts(req: Request) -> impl IntoResponse {
 
 pub(crate) async fn handle_register_ssh_key(
     Path(account): Path<String>,
-    req: Request,
+    Extension(auth_user): Extension<auth::AuthUser>,
     Json(payload): Json<SshKeyPayload>,
 ) -> impl IntoResponse {
-    let auth_user = match require_admin(&req) {
-        Ok(user) => user,
-        Err(response) => return response,
-    };
+    if let Err(response) = require_admin_user(&auth_user) {
+        return response;
+    }
+
     let fingerprint = ssh_fingerprint(&payload.public_key);
     let pool = crate::db::pool();
 
@@ -224,13 +224,13 @@ pub(crate) async fn handle_register_ssh_key(
 
 pub(crate) async fn handle_grant_repo_acl(
     Path((owner, repo)): Path<(String, String)>,
-    req: Request,
+    Extension(auth_user): Extension<auth::AuthUser>,
     Json(payload): Json<RepoAclPayload>,
 ) -> impl IntoResponse {
-    let auth_user = match require_admin(&req) {
-        Ok(user) => user,
-        Err(response) => return response,
-    };
+    if let Err(response) = require_admin_user(&auth_user) {
+        return response;
+    }
+
     if payload.access != "read" && payload.access != "write" {
         return (
             StatusCode::BAD_REQUEST,
@@ -281,13 +281,12 @@ pub(crate) async fn handle_grant_repo_acl(
 
 pub(crate) async fn handle_grant_secret_acl(
     Path((owner, repo)): Path<(String, String)>,
-    req: Request,
+    Extension(auth_user): Extension<auth::AuthUser>,
     Json(payload): Json<SecretAclPayload>,
 ) -> impl IntoResponse {
-    let auth_user = match require_admin(&req) {
-        Ok(user) => user,
-        Err(response) => return response,
-    };
+    if let Err(response) = require_admin_user(&auth_user) {
+        return response;
+    }
 
     match sqlx::query(
         r#"
@@ -373,18 +372,9 @@ pub(crate) async fn handle_env_acl(
 
 pub(crate) async fn handle_create_webhook(
     Path((owner, repo)): Path<(String, String)>,
-    req: Request,
+    Extension(auth_user): Extension<auth::AuthUser>,
     Json(payload): Json<WebhookPayload>,
 ) -> impl IntoResponse {
-    let auth_user = match auth::get_auth_user(&req) {
-        Some(user) => user,
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({ "error": "Authentication required" })),
-            )
-        }
-    };
     let full_repo = format!("{}/{}", owner, repo);
     if !auth_user.has_scope("repo:write")
         || (!auth_user.can_write_repo(&full_repo) && !auth_user.can_write_repo(&repo))
@@ -491,6 +481,14 @@ fn require_admin(req: &Request) -> Result<&auth::AuthUser, (StatusCode, Json<ser
         )
     })?;
 
+    require_admin_user(auth_user)?;
+
+    Ok(auth_user)
+}
+
+fn require_admin_user(
+    auth_user: &auth::AuthUser,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     if !auth_user.has_scope("admin:write") {
         return Err((
             StatusCode::FORBIDDEN,
@@ -498,7 +496,7 @@ fn require_admin(req: &Request) -> Result<&auth::AuthUser, (StatusCode, Json<ser
         ));
     }
 
-    Ok(auth_user)
+    Ok(())
 }
 
 fn ssh_fingerprint(public_key: &str) -> String {

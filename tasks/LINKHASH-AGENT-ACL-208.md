@@ -13,7 +13,7 @@
 - Fresh clone/fetch from Samira workspace on 2026-05-15 succeeded for `feat/208-linkhash-agent-acl`.
 - `git ls-remote origin feat/208-linkhash-agent-acl` resolved to `c2aee1f7c25baf949321226873ec2fb4ed40bdb9` before the v3 handoff commit.
 - Narrow issue creation initially returned `{"error":"issues:write scope required"}` for the provided `TANA_GIT_TOKEN`; a short-lived `issues:write` token from `POST /api/tokens` created `tana/deka#45`.
-- Local Rust validation is blocked in the Samira workspace because `cargo` and `rustc` are not installed on `PATH`.
+- Local Rust validation on 2026-05-15 passed from `linkhash/rust/deka-git` with `cargo check` and `cargo test` using the shared Rust toolchain and Samira-owned Cargo cache.
 
 Still tracked by umbrella tana#208:
 
