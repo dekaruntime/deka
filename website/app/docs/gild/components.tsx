@@ -5,11 +5,13 @@ export function GildPage({
   slug,
   title,
   description,
+  lastUpdated = '2026-05-13',
   children,
 }: {
   slug?: string
   title: string
   description: string
+  lastUpdated?: string
   children: React.ReactNode
 }) {
   return (
@@ -24,7 +26,7 @@ export function GildPage({
         />
 
         <p className="not-prose text-sm text-muted-foreground mb-3">
-          Last updated 2026-05-13
+          Last updated {lastUpdated}
         </p>
         <h1 className="text-4xl font-bold text-foreground mb-2 not-prose">
           {title}
