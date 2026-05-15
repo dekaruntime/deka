@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub const LOCKFILE_NAME: &str = "deka.lock";
 
@@ -47,15 +47,19 @@ fn lock_path() -> Option<PathBuf> {
 }
 
 pub fn read_lockfile() -> DekaLock {
-    let path = lock_path();
-    if let Some(path) = path {
-        if path.exists() {
-            if let Ok(mut file) = File::open(&path) {
-                let mut buf = String::new();
-                if file.read_to_string(&mut buf).is_ok() {
-                    if let Ok(parsed) = serde_json::from_str::<DekaLock>(&buf) {
-                        return parsed;
-                    }
+    match lock_path() {
+        Some(path) => read_lockfile_at(&path),
+        None => DekaLock::default(),
+    }
+}
+
+pub fn read_lockfile_at(path: &Path) -> DekaLock {
+    if path.exists() {
+        if let Ok(mut file) = File::open(path) {
+            let mut buf = String::new();
+            if file.read_to_string(&mut buf).is_ok() {
+                if let Ok(parsed) = serde_json::from_str::<DekaLock>(&buf) {
+                    return parsed;
                 }
             }
         }
@@ -65,6 +69,10 @@ pub fn read_lockfile() -> DekaLock {
 
 pub fn write_lockfile(lock: &DekaLock) -> Result<()> {
     let path = lock_path().ok_or_else(|| anyhow!("lock path not available"))?;
+    write_lockfile_at(&path, lock)
+}
+
+pub fn write_lockfile_at(path: &Path, lock: &DekaLock) -> Result<()> {
     let file = File::create(&path)?;
     serde_json::to_writer_pretty(file, lock)?;
     Ok(())
@@ -78,7 +86,22 @@ pub fn update_lock_entry(
     metadata: Value,
     integrity: String,
 ) -> Result<()> {
-    let mut lock = read_lockfile();
+    let path = lock_path().ok_or_else(|| anyhow!("lock path not available"))?;
+    update_lock_entry_at(
+        &path, ecosystem, name, descriptor, resolved, metadata, integrity,
+    )
+}
+
+pub fn update_lock_entry_at(
+    path: &Path,
+    ecosystem: &str,
+    name: &str,
+    descriptor: String,
+    resolved: String,
+    metadata: Value,
+    integrity: String,
+) -> Result<()> {
+    let mut lock = read_lockfile_at(path);
     let entry = (descriptor, resolved, metadata, integrity);
     match ecosystem {
         "node" => {
@@ -91,6 +114,6 @@ pub fn update_lock_entry(
             return Err(anyhow!("unknown ecosystem {}", other));
         }
     }
-    write_lockfile(&lock)?;
+    write_lockfile_at(path, &lock)?;
     Ok(())
 }
