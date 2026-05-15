@@ -80,6 +80,13 @@ pub(crate) async fn handle_preflight_publish(req: Request) -> impl IntoResponse 
             )
         }
     };
+    let publish_repo = format!("{}/{}", auth_user.owner, publish_req.repo);
+    if !auth_user.can_write_repo(&publish_repo) && !auth_user.can_write_repo(&publish_req.repo) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "repo write ACL required for package preflight" })),
+        );
+    }
 
     auth::log_audit(
         Some(auth_user.token_id),
@@ -139,6 +146,13 @@ pub(crate) async fn handle_publish_package(req: Request) -> impl IntoResponse {
             )
         }
     };
+    let publish_repo = format!("{}/{}", auth_user.owner, publish_req.repo);
+    if !auth_user.can_write_repo(&publish_repo) && !auth_user.can_write_repo(&publish_req.repo) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "repo write ACL required for package publish" })),
+        );
+    }
 
     auth::log_audit(
         Some(auth_user.token_id),

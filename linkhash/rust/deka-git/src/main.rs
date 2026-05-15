@@ -6,7 +6,9 @@ use std::net::SocketAddr;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod audit_routes;
+mod account_routes;
 mod auth;
+mod authz;
 mod config;
 mod db;
 mod git;
@@ -26,6 +28,7 @@ mod token_routes;
 mod visibility_routes;
 
 use audit_routes::*;
+use account_routes::*;
 use config::Config;
 use git_routes::*;
 use issue_routes::*;
@@ -147,10 +150,38 @@ async fn main() {
             post(handle_create_pull_comment),
         )
         // Token management
+        .route("/api/auth/me", get(handle_auth_me))
         .route("/api/tokens", get(handle_list_tokens))
         .route(
             "/api/tokens/:id",
             axum::routing::delete(handle_revoke_token),
+        )
+        // Account and ACL management
+        .route("/api/accounts", get(handle_list_accounts))
+        .route(
+            "/api/accounts/agents/bootstrap",
+            post(handle_bootstrap_agents),
+        )
+        .route(
+            "/api/accounts/:account/ssh-keys",
+            post(handle_register_ssh_key),
+        )
+        .route(
+            "/api/repos/:owner/:repo/acl",
+            axum::routing::put(handle_grant_repo_acl),
+        )
+        .route(
+            "/api/repos/:owner/:repo/secrets/acl",
+            axum::routing::put(handle_grant_secret_acl),
+        )
+        .route("/api/repos/:owner/:repo/env", get(handle_env_acl))
+        .route(
+            "/api/repos/:owner/:repo/webhooks",
+            get(handle_list_webhooks),
+        )
+        .route(
+            "/api/repos/:owner/:repo/webhooks",
+            post(handle_create_webhook),
         )
         // Audit log
         .route("/api/audit", get(handle_audit_log))

@@ -8,6 +8,8 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::authz::{self, RepoAccess, RepoGrant, SecretGrant};
+
 mod audit;
 mod labels;
 mod tokens;
@@ -29,6 +31,8 @@ pub struct AuthUser {
     pub owner: String,
     pub scopes: Vec<String>,
     pub repos: Vec<String>,
+    pub repo_grants: Vec<RepoGrant>,
+    pub secret_grants: Vec<SecretGrant>,
 }
 
 impl AuthUser {
@@ -37,7 +41,15 @@ impl AuthUser {
     }
 
     pub fn can_access_repo(&self, repo: &str) -> bool {
-        self.repos.iter().any(|r| r == "*" || r == repo)
+        authz::can_read_repo(&self.repos, &self.repo_grants, repo)
+    }
+
+    pub fn can_write_repo(&self, repo: &str) -> bool {
+        authz::can_write_repo(&self.repos, &self.repo_grants, repo)
+    }
+
+    pub fn can_read_secret(&self, repo: &str, secret_name: &str) -> bool {
+        authz::can_read_secret(&self.secret_grants, repo, secret_name)
     }
 }
 
@@ -105,6 +117,14 @@ pub async fn require_auth(mut req: Request, next: Next) -> Result<Response, Resp
         serde_json::from_str(&row.scopes).unwrap_or_else(|_| vec!["repo:read".to_string()]);
     let repos: Vec<String> =
         serde_json::from_str(&row.repos).unwrap_or_else(|_| vec!["*".to_string()]);
+    let repo_grants = load_repo_grants(&row.owner).await.map_err(|e| {
+        tracing::error!("Repo ACL lookup failed: {}", e);
+        unauthorized_response("Authentication backend error")
+    })?;
+    let secret_grants = load_secret_grants(&row.owner).await.map_err(|e| {
+        tracing::error!("Secret ACL lookup failed: {}", e);
+        unauthorized_response("Authentication backend error")
+    })?;
 
     req.extensions_mut().insert(AuthUser {
         token_id: row.id,
@@ -112,6 +132,8 @@ pub async fn require_auth(mut req: Request, next: Next) -> Result<Response, Resp
         owner: row.owner,
         scopes,
         repos,
+        repo_grants,
+        secret_grants,
     });
 
     Ok(next.run(req).await)
@@ -195,6 +217,14 @@ pub async fn optional_auth(mut req: Request, next: Next) -> Response {
                         serde_json::from_str(&row.scopes).unwrap_or_else(|_| vec!["repo:read".to_string()]);
                     let repos: Vec<String> =
                         serde_json::from_str(&row.repos).unwrap_or_else(|_| vec!["*".to_string()]);
+                    let repo_grants = load_repo_grants(&row.owner).await.unwrap_or_else(|e| {
+                        tracing::error!("Repo ACL lookup failed: {}", e);
+                        Vec::new()
+                    });
+                    let secret_grants = load_secret_grants(&row.owner).await.unwrap_or_else(|e| {
+                        tracing::error!("Secret ACL lookup failed: {}", e);
+                        Vec::new()
+                    });
 
                     req.extensions_mut().insert(AuthUser {
                         token_id: row.id,
@@ -202,6 +232,8 @@ pub async fn optional_auth(mut req: Request, next: Next) -> Response {
                         owner: row.owner,
                         scopes,
                         repos,
+                        repo_grants,
+                        secret_grants,
                     });
                 }
             }
@@ -209,4 +241,56 @@ pub async fn optional_auth(mut req: Request, next: Next) -> Response {
     }
 
     next.run(req).await
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct RepoGrantRow {
+    repo_owner: String,
+    repo_name: String,
+    access: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct SecretGrantRow {
+    repo_owner: String,
+    repo_name: String,
+    secret_pattern: String,
+}
+
+async fn load_repo_grants(account: &str) -> Result<Vec<RepoGrant>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, RepoGrantRow>(
+        "SELECT repo_owner, repo_name, access FROM repo_acl WHERE account = ?",
+    )
+    .bind(account)
+    .fetch_all(crate::db::pool())
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| RepoGrant {
+            repo: format!("{}/{}", row.repo_owner, row.repo_name),
+            access: if row.access == "write" {
+                RepoAccess::Write
+            } else {
+                RepoAccess::Read
+            },
+        })
+        .collect())
+}
+
+async fn load_secret_grants(account: &str) -> Result<Vec<SecretGrant>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, SecretGrantRow>(
+        "SELECT repo_owner, repo_name, secret_pattern FROM secret_acl WHERE account = ?",
+    )
+    .bind(account)
+    .fetch_all(crate::db::pool())
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| SecretGrant {
+            repo: format!("{}/{}", row.repo_owner, row.repo_name),
+            pattern: row.secret_pattern,
+        })
+        .collect())
 }
