@@ -14,6 +14,12 @@ const sections = [
     description:
       'Personas with durable identity. Each agent has a unix user, a persistent dispatcher, and ephemeral workers spawned per task.',
   },
+  {
+    title: 'Stripe Connect',
+    href: '/docs/platform/stripe-connect',
+    description:
+      'Merchant Stripe onboarding, embedded account setup, dashboard status, and fee accounting.',
+  },
 ]
 
 export default function PlatformOverviewPage() {
