@@ -1,4 +1,4 @@
-use deno_core::{JsRuntime, ModuleCodeString, RuntimeOptions};
+use deno_core::{JsRuntime, ModuleCodeString, ModuleSpecifier, RuntimeOptions};
 
 #[cfg(unix)]
 struct EnvGuard {
@@ -63,16 +63,21 @@ async fn deka_fs_read_file_sync_rejects_symlink_escape() {
         ..Default::default()
     });
 
-    runtime
-        .execute_script(
-            "load_php_extension.js",
-            ModuleCodeString::from("import('ext:php_core/php.js');".to_string()),
+    let php_loader = ModuleSpecifier::parse("ext:deka_test/load_php_extension.js")
+        .expect("parse PHP extension loader specifier");
+    let php_loader_id = runtime
+        .load_side_es_module_from_code(
+            &php_loader,
+            ModuleCodeString::from("import 'ext:php_core/php.js';".to_string()),
         )
-        .expect("start PHP extension import");
+        .await
+        .expect("load PHP extension module");
+    let php_loader_eval = runtime.mod_evaluate(php_loader_id);
     runtime
         .run_event_loop(deno_core::PollEventLoopOptions::default())
         .await
         .expect("load PHP extension");
+    php_loader_eval.await.expect("evaluate PHP extension module");
 
     let script = format!(
         r#"
