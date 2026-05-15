@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Pre-bundle general markdown docs into a static JSON file for Cloudflare Workers.
+ * Pre-bundle help markdown docs into a static JSON file for Cloudflare Workers.
  */
 
 import fs from 'fs'
@@ -49,7 +49,7 @@ function parseArgs(argv: string[]) {
     }
   }
 
-  const source = String(args.get('--source') || 'content/docs')
+  const source = String(args.get('--source') || 'content/help')
   const lang = String(args.get('--lang') || 'en')
   const out = args.get('--out')
 
