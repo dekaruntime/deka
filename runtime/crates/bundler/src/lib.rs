@@ -1,5 +1,6 @@
 pub mod bundler;
 pub mod cache;
+mod cached;
 pub mod css_bundler;
 pub mod parallel_bundler;
 
