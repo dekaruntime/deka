@@ -1,0 +1,95 @@
+---
+title: "Neo4j"
+description: "Connect to Neo4j, run Cypher queries, execute writes, and close graph database handles from PHPX."
+section: "phpx"
+category: "neo4j"
+categoryLabel: "Neo4j"
+categoryOrder: 58
+source: "php_modules/neo4j/index.phpx"
+---
+
+The `neo4j` module routes graph database calls through the runtime bridge. It exposes connection handles, parameterized Cypher queries, write execution, and a helper for values produced by the `cql` keyword.
+
+Runtime database permissions still apply. Configure the application environment and host capabilities before opening a connection.
+
+## Imports
+
+```phpx
+import { connect, query, execute, run_cql, close } from 'neo4j'
+```
+
+## Example
+
+```phpx
+import { connect, query, execute, close } from 'neo4j'
+
+$conn = connect('bolt://localhost:7687', 'neo4j', $password, 'neo4j')
+
+$created = execute($conn->handle, '
+  CREATE (u:User {id: $id, name: $name})
+', {
+  id: 'user-1',
+  name: 'Amina',
+})
+
+$users = query($conn->handle, '
+  MATCH (u:User)
+  RETURN u.id AS id, u.name AS name
+', {}, ['id', 'name'])
+
+close($conn->handle)
+```
+
+## CQL Values
+
+`run_cql` expects a value produced by the PHPX `cql` keyword. It validates the shape and then delegates to `query` with the embedded query string and parameters.
+
+```phpx
+import { run_cql } from 'neo4j'
+
+$rows = run_cql($conn->handle, cql`
+  MATCH (u:User {id: ${$id}})
+  RETURN u
+`)
+```
+
+## Functions
+
+<Function name="connect">
+  <Description>Open a Neo4j connection through the runtime bridge.</Description>
+  <Parameter name="$uri" type="string" required="false">Bolt URI. Defaults to `bolt://localhost:7687`.</Parameter>
+  <Parameter name="$user" type="string" required="false">Database user. Defaults to `neo4j`.</Parameter>
+  <Parameter name="$password" type="string" required="false">Database password.</Parameter>
+  <Parameter name="$db" type="string" required="false">Database name. Defaults to `neo4j`.</Parameter>
+  <ReturnType type="mixed" />
+</Function>
+
+<Function name="query">
+  <Description>Run a Cypher query and return rows from the runtime bridge.</Description>
+  <Parameter name="$handle" type="mixed" required="true">Connection handle returned by `connect`.</Parameter>
+  <Parameter name="$cypher" type="string" required="true">Cypher query text.</Parameter>
+  <Parameter name="$params" type="object" required="false">Query parameters.</Parameter>
+  <Parameter name="$columns" type="array" required="false">Expected column names for row shaping.</Parameter>
+  <ReturnType type="mixed" />
+</Function>
+
+<Function name="execute">
+  <Description>Run a Cypher write or command where rows are not the primary result.</Description>
+  <Parameter name="$handle" type="mixed" required="true">Connection handle returned by `connect`.</Parameter>
+  <Parameter name="$cypher" type="string" required="true">Cypher command text.</Parameter>
+  <Parameter name="$params" type="object" required="false">Command parameters.</Parameter>
+  <ReturnType type="mixed" />
+</Function>
+
+<Function name="close">
+  <Description>Close a Neo4j connection handle.</Description>
+  <Parameter name="$handle" type="mixed" required="true">Connection handle returned by `connect`.</Parameter>
+  <ReturnType type="mixed" />
+</Function>
+
+<Function name="run_cql">
+  <Description>Run a value produced by the `cql` keyword after validating its shape.</Description>
+  <Parameter name="$handle" type="mixed" required="true">Connection handle returned by `connect`.</Parameter>
+  <Parameter name="$cql_value" type="mixed" required="true">CQL value containing `query` and `params`.</Parameter>
+  <ReturnType type="mixed" />
+</Function>

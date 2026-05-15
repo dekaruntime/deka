@@ -1,0 +1,43 @@
+---
+title: "aes_256_gcm_encrypt"
+docid: "phpx/crypto/aes_256_gcm_encrypt()"
+section: "phpx"
+category: "crypto"
+version: "latest"
+categoryLabel: "Crypto"
+categoryOrder: 32
+source: "php_modules/crypto/index.phpx"
+description: "Encrypt bytes or a string with AES-256-GCM and return Result<bytes, string>."
+---
+
+<Function name="aes_256_gcm_encrypt">
+  <Description>
+    Encrypt bytes or a string with AES-256-GCM. The ciphertext returned in the
+    Ok value includes the 16-byte authentication tag appended to the encrypted bytes.
+  </Description>
+  <Parameter name="$key" type="mixed" required="true">
+    32-byte key as bytes or string.
+  </Parameter>
+  <Parameter name="$nonce" type="mixed" required="true">
+    12-byte nonce as bytes or string. It must be unique for each encryption with the same key.
+  </Parameter>
+  <Parameter name="$plaintext" type="mixed" required="true">
+    Plaintext bytes or string to encrypt.
+  </Parameter>
+  <Parameter name="$aad" type="mixed" required="false">
+    Associated data to authenticate without encrypting. Defaults to an empty string.
+  </Parameter>
+  <ReturnType type="Result" />
+</Function>
+
+```phpx
+import { random_bytes_result, aes_256_gcm_encrypt } from 'crypto'
+import { result_is_ok } from 'core/result'
+
+$key = random_bytes_result(32)
+$nonce = random_bytes_result(12)
+
+if (result_is_ok($key) && result_is_ok($nonce)) {
+  $ciphertext = aes_256_gcm_encrypt($key->value, $nonce->value, 'payload', 'v1')
+}
+```
