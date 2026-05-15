@@ -101,13 +101,11 @@ export function getRuntimeSidebar(
 
     categoryLabels.set(categorySlug, category)
 
-    if (!isCategoryIndex(doc)) {
-      categoryMap.get(categorySlug)!.push({
-        name,
-        slug: slugPath,
-        description,
-      })
-    }
+    categoryMap.get(categorySlug)!.push({
+      name: isCategoryIndex(doc) ? 'Overview' : name,
+      slug: isCategoryIndex(doc) ? categorySlug : slugPath,
+      description,
+    })
 
     if (typeof order === 'number') {
       const existing = categoryOrder.get(categorySlug)

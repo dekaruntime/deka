@@ -183,6 +183,16 @@
         "level": 3
       },
       {
+        "id": "blockchain-tables-ledger-service",
+        "text": "Blockchain Tables (Ledger Service)",
+        "level": 4
+      },
+      {
+        "id": "authentication-tables-identity-service",
+        "text": "Authentication Tables (Identity Service)",
+        "level": 4
+      },
+      {
         "id": "environment-configuration",
         "text": "Environment Configuration",
         "level": 3
@@ -2944,9 +2954,7 @@
     ]
   },
   {
-    "slug": [
-      "index"
-    ],
+    "slug": [],
     "metadata": {
       "title": "Tana Documentation",
       "description": "A blockchain with smart contracts written in TypeScript"

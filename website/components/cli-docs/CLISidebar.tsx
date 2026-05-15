@@ -33,6 +33,7 @@ const cliTools = [
     items: [
       { name: 'ps', slug: 'ps', description: 'List containers' },
       { name: 'run', slug: 'run', description: 'Create a container' },
+      { name: 'c run', slug: 'c-run', description: 'Create and start a container' },
       { name: 'exec', slug: 'exec', description: 'Run a command' },
       { name: 'attach', slug: 'attach', description: 'Attach to a container' },
       { name: 'rm', slug: 'rm', description: 'Remove a container' },

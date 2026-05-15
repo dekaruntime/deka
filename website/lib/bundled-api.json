@@ -1,7 +1,6 @@
 [
   {
     "slug": [
-      "api-reference",
       "balances",
       "index"
     ],
@@ -84,7 +83,6 @@
   },
   {
     "slug": [
-      "api-reference",
       "blocks",
       "index"
     ],
@@ -179,7 +177,6 @@
   },
   {
     "slug": [
-      "api-reference",
       "contracts",
       "index"
     ],
@@ -250,7 +247,6 @@
   },
   {
     "slug": [
-      "api-reference",
       "identity",
       "index"
     ],
@@ -365,7 +361,6 @@
   },
   {
     "slug": [
-      "api-reference",
       "intro"
     ],
     "metadata": {
@@ -431,7 +426,6 @@
   },
   {
     "slug": [
-      "api-reference",
       "keys",
       "id"
     ],
@@ -445,7 +439,6 @@
   },
   {
     "slug": [
-      "api-reference",
       "keys",
       "index"
     ],
@@ -459,7 +452,6 @@
   },
   {
     "slug": [
-      "api-reference",
       "modules",
       "kv"
     ],
@@ -554,7 +546,6 @@
   },
   {
     "slug": [
-      "api-reference",
       "rate-limit"
     ],
     "metadata": {
@@ -567,7 +558,6 @@
   },
   {
     "slug": [
-      "api-reference",
       "transactions",
       "index"
     ],
@@ -642,7 +632,6 @@
   },
   {
     "slug": [
-      "api-reference",
       "users",
       "create"
     ],
@@ -733,7 +722,6 @@
   },
   {
     "slug": [
-      "api-reference",
       "users",
       "signin"
     ],
