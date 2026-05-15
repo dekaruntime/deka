@@ -2317,9 +2317,20 @@ fn negative_number_literal() {
     assert!(js.contains("-") && js.contains("42"), "expected negative number, got:\n{}", js);
 }
 
-// ---- Type predicate IIFE: arg evaluated exactly once ----
+// ---- usort / uasort / uksort rewrites ----
 
-#[test]
+fn run_phpx_and_eval_json(source: &str, expression: &str) -> Result<String, String> {
+    let js = phpx_to_js(source).expect("should compile");
+    assert!(
+        !js.contains("globalThis.usort")
+            && !js.contains("globalThis.uasort")
+            && !js.contains("globalThis.uksort"),
+        "sort rewrites must not install globalThis polyfills, got:\n{}",
+        js
+    );
+    run_node(&format!("{js}\nconsole.log(JSON.stringify({expression}));"))
+}
+
 #[test]
 fn rewrite_usort_inline() {
     let js = phpx_to_js("$arr = [3, 1, 2];\n$ok = usort($arr, function($a, $b) { return $a - $b; });").expect("should compile");
@@ -2329,22 +2340,97 @@ fn rewrite_usort_inline() {
 }
 
 #[test]
+fn rewrite_usort_sorts_ascending_and_descending_with_comparator() {
+    let asc = run_phpx_and_eval_json(
+        "$arr = [3, 1, 2];\n$ok = usort($arr, function($a, $b) { return $a - $b; });",
+        "globalThis.arr",
+    );
+    match asc {
+        Err(e) if e.contains("node not available") => return,
+        Err(e) => panic!("node error: {e}"),
+        Ok(out) => assert_eq!(out, "[1,2,3]"),
+    }
+
+    let desc = run_phpx_and_eval_json(
+        "$arr = [3, 1, 2];\n$ok = usort($arr, function($a, $b) { return $b - $a; });",
+        "globalThis.arr",
+    );
+    match desc {
+        Err(e) if e.contains("node not available") => return,
+        Err(e) => panic!("node error: {e}"),
+        Ok(out) => assert_eq!(out, "[3,2,1]"),
+    }
+}
+
+#[test]
+fn rewrite_usort_supports_multi_key_comparator() {
+    let out = run_phpx_and_eval_json(
+        r#"$rows = [
+  ['name' => 'beta', 'rank' => 2],
+  ['name' => 'gamma', 'rank' => 1],
+  ['name' => 'alpha', 'rank' => 1]
+];
+$ok = usort($rows, function($a, $b) {
+  if ($a['rank'] == $b['rank']) {
+    return $a['name'] < $b['name'] ? -1 : ($a['name'] > $b['name'] ? 1 : 0);
+  }
+  return $a['rank'] - $b['rank'];
+});"#,
+        "globalThis.rows.map(r => r.name)",
+    );
+    match out {
+        Err(e) if e.contains("node not available") => return,
+        Err(e) => panic!("node error: {e}"),
+        Ok(out) => assert_eq!(out, "[\"alpha\",\"gamma\",\"beta\"]"),
+    }
+}
+
+#[test]
 fn rewrite_uasort_inline() {
     let js = phpx_to_js("$arr = [3, 1, 2];\n$ok = uasort($arr, function($a, $b) { return $a - $b; });").expect("should compile");
     assert!(js.contains(".sort("), "expected .sort() for uasort, got:\n{}", js);
-    assert!(js.contains(", true)"), "expected comma-true pattern for uasort, got:\n{}", js);
+    assert!(js.contains("return true"), "expected true return for uasort, got:\n{}", js);
     assert!(!js.contains("globalThis.uasort"), "should NOT contain globalThis.uasort, got:\n{}", js);
 }
 
 #[test]
+fn rewrite_uasort_preserves_associative_keys() {
+    let out = run_phpx_and_eval_json(
+        "$scores = ['third' => 30, 'first' => 10, 'second' => 20];\n$ok = uasort($scores, function($a, $b) { return $a - $b; });",
+        "Object.keys(globalThis.scores).map(k => [k, globalThis.scores[k]])",
+    );
+    match out {
+        Err(e) if e.contains("node not available") => return,
+        Err(e) => panic!("node error: {e}"),
+        Ok(out) => assert_eq!(out, "[[\"first\",10],[\"second\",20],[\"third\",30]]"),
+    }
+}
+
+#[test]
 fn rewrite_uksort_inline() {
-    let js = phpx_to_js("$obj = ['b' => 2, 'a' => 1];\n$ok = uksort($obj, function($a, $b) { return strcmp($a, $b); });").expect("should compile");
+    let js = phpx_to_js("$obj = ['b' => 2, 'a' => 1];\n$ok = uksort($obj, function($a, $b) { return $a < $b ? -1 : ($a > $b ? 1 : 0); });").expect("should compile");
     assert!(js.contains("Object.keys("), "expected Object.keys for uksort, got:\n{}", js);
     assert!(js.contains(".sort("), "expected .sort() for uksort, got:\n{}", js);
     assert!(js.contains("Object.assign("), "expected Object.assign for uksort key-rebuild, got:\n{}", js);
     assert!(!js.contains("globalThis.uksort"), "should NOT contain globalThis.uksort, got:\n{}", js);
 }
 
+#[test]
+fn rewrite_uksort_compares_keys() {
+    let out = run_phpx_and_eval_json(
+        "$obj = ['b' => 2, 'c' => 3, 'a' => 1];\n$ok = uksort($obj, function($a, $b) { return $b < $a ? -1 : ($b > $a ? 1 : 0); });",
+        "Object.keys(globalThis.obj)",
+    );
+    match out {
+        Err(e) if e.contains("node not available") => return,
+        Err(e) => panic!("node error: {e}"),
+        Ok(out) => assert_eq!(out, "[\"c\",\"b\",\"a\"]"),
+    }
+}
+
+// ---- Type predicate IIFE: arg evaluated exactly once ----
+
+#[test]
 fn type_predicates_evaluate_arg_exactly_once() {
     // Each type predicate must bind the argument into __v once via an IIFE so that a
     // side-effecting call-expression arg is only evaluated a single time.
