@@ -29,6 +29,11 @@ const docSections = [
     href: '/docs/platform'
   },
   {
+    title: 'Merchants',
+    description: 'Expected sign-up, shop setup, storefront, checkout, and fulfillment flow for merchant onboarding.',
+    href: '/docs/merchants'
+  },
+  {
     title: 'Gild — Agent Sandbox',
     description: 'Firecracker microVM isolation, userland, rollout status, and sandbox boundaries for Tana agent work.',
     href: '/docs/gild'
@@ -47,6 +52,10 @@ const commonQuestions = [
   {
     title: 'How do I configure the deploy server?',
     href: '/docs/deploy/intro'
+  },
+  {
+    title: 'What should the merchant onboarding flow do?',
+    href: '/docs/merchants'
   }
 ]
 
