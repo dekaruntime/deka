@@ -8,7 +8,7 @@ use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as HyperBuilder;
 
-use engine::{RuntimeState, execute_request_value};
+use engine::{RuntimeState, execute_request_parts};
 
 use crate::debug::http_debug_enabled;
 
@@ -37,16 +37,22 @@ async fn handle_request_fast(
     state: Arc<RuntimeState>,
     request: hyper::Request<Incoming>,
 ) -> Result<hyper::Response<Full<Bytes>>, hyper::Error> {
-    let _method = request.method().as_str();
-    let _uri = request.uri().to_string();
+    let method = request.method().as_str().to_string();
+    let uri = request.uri().to_string();
     if http_debug_enabled() {
-        tracing::info!("[http-fast] request {}", _uri);
+        tracing::info!("[http-fast] request {} {}", method, uri);
     }
-    let _headers: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let _ = request.into_body();
 
-    let request_value = state.perf_request_value.clone();
-    let response = match execute_request_value(Arc::clone(&state), request_value).await {
+    let response = match execute_request_parts(
+        Arc::clone(&state),
+        format!("http://localhost{}", uri),
+        method,
+        Vec::new(),
+        None,
+    )
+    .await
+    {
         Ok(response_envelope) => response_envelope,
         Err(err) => {
             tracing::error!("Handler execution failed: {}", err);
@@ -56,7 +62,7 @@ async fn handle_request_fast(
         }
     };
     if http_debug_enabled() {
-        tracing::info!("[http-fast] response {} {}", response.status, _uri);
+        tracing::info!("[http-fast] response {} {}", response.status, uri);
     }
 
     let mut builder = hyper::Response::builder().status(response.status);
