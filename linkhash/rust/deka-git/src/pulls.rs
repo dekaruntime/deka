@@ -92,10 +92,32 @@ pub async fn create_pull(
     let pool = crate::db::pool();
     let redacted_title = redaction::redact_secret_strings(req.title.trim());
     redaction::log_redactions("pull.title.create", &redacted_title.redactions);
+    redaction::alert_redactions(
+        redaction::RedactionAlertContext {
+            repo_owner,
+            repo_name,
+            location: "pull.title.create",
+            subject: Some(format!("#{}", number)),
+            caller: author,
+        },
+        &redacted_title.redactions,
+    )
+    .await;
     let (redacted_body, body_redactions) = redaction::redact_optional_secret_strings(
         req.body.map(|value| value.trim().to_string()),
     );
     redaction::log_redactions("pull.body.create", &body_redactions);
+    redaction::alert_redactions(
+        redaction::RedactionAlertContext {
+            repo_owner,
+            repo_name,
+            location: "pull.body.create",
+            subject: Some(format!("#{}", number)),
+            caller: author,
+        },
+        &body_redactions,
+    )
+    .await;
     sqlx::query_as::<_, PullRequest>(
         r#"
         INSERT INTO pull_requests (repo_owner, repo_name, number, title, body, state, author, source_ref, target_ref)
@@ -157,6 +179,7 @@ pub async fn update_pull(
     repo_owner: &str,
     repo_name: &str,
     number: i64,
+    caller: &str,
     req: UpdatePullRequest,
 ) -> Result<Option<PullRequest>, sqlx::Error> {
     let Some(existing) = get_pull(repo_owner, repo_name, number).await? else {
@@ -166,8 +189,30 @@ pub async fn update_pull(
     let body_raw = req.body.or(existing.body);
     let title = redaction::redact_secret_strings(&title_raw);
     redaction::log_redactions("pull.title.update", &title.redactions);
+    redaction::alert_redactions(
+        redaction::RedactionAlertContext {
+            repo_owner,
+            repo_name,
+            location: "pull.title.update",
+            subject: Some(format!("#{}", number)),
+            caller,
+        },
+        &title.redactions,
+    )
+    .await;
     let (body, body_redactions) = redaction::redact_optional_secret_strings(body_raw);
     redaction::log_redactions("pull.body.update", &body_redactions);
+    redaction::alert_redactions(
+        redaction::RedactionAlertContext {
+            repo_owner,
+            repo_name,
+            location: "pull.body.update",
+            subject: Some(format!("#{}", number)),
+            caller,
+        },
+        &body_redactions,
+    )
+    .await;
     let state = req.state.unwrap_or(existing.state);
     let closed_at = if state == "closed" || state == "merged" {
         Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string())
@@ -207,6 +252,17 @@ pub async fn add_pull_comment(
     let pool = crate::db::pool();
     let redacted_body = redaction::redact_secret_strings(req.body.trim());
     redaction::log_redactions("pull.comment.create", &redacted_body.redactions);
+    redaction::alert_redactions(
+        redaction::RedactionAlertContext {
+            repo_owner,
+            repo_name,
+            location: "pull.comment.create",
+            subject: Some(format!("#{}", number)),
+            caller: author,
+        },
+        &redacted_body.redactions,
+    )
+    .await;
     let comment = sqlx::query_as::<_, PullComment>(
         "INSERT INTO pull_comments (pull_id, body, author) VALUES (?, ?, ?) RETURNING *",
     )

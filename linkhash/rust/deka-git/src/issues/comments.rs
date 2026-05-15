@@ -20,6 +20,17 @@ pub async fn add_comment(
 
     let redacted_body = redaction::redact_secret_strings(req.body.trim());
     redaction::log_redactions("issue.comment.create", &redacted_body.redactions);
+    redaction::alert_redactions(
+        redaction::RedactionAlertContext {
+            repo_owner,
+            repo_name,
+            location: "issue.comment.create",
+            subject: Some(format!("#{}", number)),
+            caller: author,
+        },
+        &redacted_body.redactions,
+    )
+    .await;
 
     let comment = sqlx::query_as::<_, IssueComment>(
         r#"

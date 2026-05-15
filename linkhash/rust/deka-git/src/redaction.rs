@@ -1,5 +1,9 @@
 use regex::{Captures, Regex};
 use std::sync::OnceLock;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Redaction {
@@ -11,6 +15,15 @@ pub struct Redaction {
 pub struct RedactedText {
     pub text: String,
     pub redactions: Vec<Redaction>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RedactionAlertContext<'a> {
+    pub repo_owner: &'a str,
+    pub repo_name: &'a str,
+    pub location: &'a str,
+    pub subject: Option<String>,
+    pub caller: &'a str,
 }
 
 #[derive(Clone, Copy)]
@@ -36,7 +49,7 @@ pub fn redact_secret_strings(input: &str) -> RedactedText {
             .regex
             .replace_all(&text, |captures: &Captures<'_>| match replacement {
                 Replacement::WholeSecret => {
-                    let marker = marker_for(token_type, captures.get(0).unwrap().as_str());
+                    let marker = marker_for(token_type);
                     redactions.push(Redaction {
                         token_type,
                         marker: marker.clone(),
@@ -46,8 +59,7 @@ pub fn redact_secret_strings(input: &str) -> RedactedText {
                 Replacement::AssignmentValue => {
                     let key = captures.get(1).unwrap().as_str();
                     let sep = captures.get(2).unwrap().as_str();
-                    let value = captures.get(3).unwrap().as_str();
-                    let marker = marker_for(token_type, value);
+                    let marker = marker_for(token_type);
                     redactions.push(Redaction {
                         token_type,
                         marker: marker.clone(),
@@ -90,9 +102,125 @@ pub fn log_redactions(scope: &str, redactions: &[Redaction]) {
     );
 }
 
-fn marker_for(token_type: &'static str, secret: &str) -> String {
-    let prefix = secret.chars().take(4).collect::<String>();
-    format!("[REDACTED:{token_type}:{prefix}...]")
+pub async fn alert_redactions(context: RedactionAlertContext<'_>, redactions: &[Redaction]) {
+    if redactions.is_empty() {
+        return;
+    }
+
+    let secret = match std::env::var("TANA_INTERNAL_API_SECRET") {
+        Ok(value) if !value.is_empty() => value,
+        _ => {
+            tracing::warn!(
+                target: "security.redaction",
+                repo = format!("{}/{}", context.repo_owner, context.repo_name),
+                location = context.location,
+                "TANA_INTERNAL_API_SECRET unset; skipping Telegram redaction alert"
+            );
+            return;
+        }
+    };
+
+    let url = std::env::var("TANA_REDACTION_ALERT_URL")
+        .unwrap_or_else(|_| "http://localhost:9420/internal/notify".to_string());
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    let pattern_types = redactions
+        .iter()
+        .map(|redaction| redaction.token_type)
+        .collect::<Vec<_>>();
+    let pattern_text = pattern_types.join(", ");
+    let subject = context.subject.as_deref().unwrap_or("unknown");
+    let message = format!(
+        "[security] Secret redaction triggered\nrepo: {}/{}\ncontext: {} {}\npatterns: {}\ncaller: {}\ntimestamp: {}",
+        context.repo_owner,
+        context.repo_name,
+        context.location,
+        subject,
+        pattern_text,
+        context.caller,
+        timestamp
+    );
+    let body = serde_json::json!({
+        "kind": "secret_redaction",
+        "message": message,
+        "repo": format!("{}/{}", context.repo_owner, context.repo_name),
+        "context": {
+            "location": context.location,
+            "subject": subject,
+        },
+        "pattern_types": pattern_types,
+        "caller": context.caller,
+        "timestamp": timestamp,
+    });
+
+    let notify_result = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        post_internal_notify(&url, &secret, &body.to_string()),
+    )
+    .await;
+    if let Err(err) =
+        notify_result.unwrap_or_else(|_| Err(anyhow::anyhow!("alert endpoint timed out")))
+    {
+        tracing::warn!(
+            target: "security.redaction",
+            repo = format!("{}/{}", context.repo_owner, context.repo_name),
+            location = context.location,
+            error = %err,
+            "failed to send Telegram redaction alert"
+        );
+    }
+}
+
+async fn post_internal_notify(
+    url: &str,
+    secret: &str,
+    body: &str,
+) -> anyhow::Result<()> {
+    let endpoint = parse_http_url(url).ok_or_else(|| anyhow::anyhow!("unsupported alert URL"))?;
+    let mut stream = TcpStream::connect((endpoint.host.as_str(), endpoint.port)).await?;
+    let request = format!(
+        "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nX-Internal-Token: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        endpoint.path,
+        endpoint.host,
+        secret,
+        body.len(),
+        body
+    );
+    stream.write_all(request.as_bytes()).await?;
+
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).await?;
+    let status_ok = String::from_utf8_lossy(&response).starts_with("HTTP/1.1 2")
+        || String::from_utf8_lossy(&response).starts_with("HTTP/1.0 2");
+    if !status_ok {
+        return Err(anyhow::anyhow!("alert endpoint returned non-2xx status"));
+    }
+    Ok(())
+}
+
+struct HttpEndpoint {
+    host: String,
+    port: u16,
+    path: String,
+}
+
+fn parse_http_url(url: &str) -> Option<HttpEndpoint> {
+    let rest = url.strip_prefix("http://")?;
+    let (authority, path) = match rest.split_once('/') {
+        Some((authority, path)) => (authority, format!("/{path}")),
+        None => (rest, "/".to_string()),
+    };
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) => (host.to_string(), port.parse().ok()?),
+        None => (authority.to_string(), 80),
+    };
+    if host.is_empty() {
+        return None;
+    }
+    Some(HttpEndpoint { host, port, path })
+}
+
+fn marker_for(token_type: &'static str) -> String {
+    format!("[REDACTED:{token_type}]")
 }
 
 fn secret_patterns() -> &'static [SecretPattern] {
@@ -139,16 +267,19 @@ fn assignment(token_type: &'static str, regex: &str) -> SecretPattern {
 mod tests {
     use super::redact_secret_strings;
 
-    fn assert_redacts(input: String, token_type: &str, prefix: &str) {
+    fn assert_redacts(input: String, token_type: &str) {
         let redacted = redact_secret_strings(&input);
         assert!(!redacted.text.contains(&input));
         assert!(
             redacted
                 .text
-                .contains(&format!("[REDACTED:{token_type}:{prefix}...]")),
+                .contains(&format!("[REDACTED:{token_type}]")),
             "unexpected redacted text: {}",
             redacted.text
         );
+        assert!(!redacted.text.contains(":sk_"));
+        assert!(!redacted.text.contains(":sk-"));
+        assert!(!redacted.text.contains(":tg_"));
     }
 
     #[test]
@@ -156,7 +287,6 @@ mod tests {
         assert_redacts(
             format!("sk-ant-api03-{}", "A".repeat(93)),
             "anthropic-api-key",
-            "sk-a",
         );
     }
 
@@ -165,7 +295,6 @@ mod tests {
         assert_redacts(
             format!("sk-ant-{}", "b".repeat(50)),
             "anthropic-api-key",
-            "sk-a",
         );
     }
 
@@ -174,7 +303,6 @@ mod tests {
         assert_redacts(
             format!("sk-proj-{}", "C".repeat(120)),
             "openai-project-key",
-            "sk-p",
         );
     }
 
@@ -183,19 +311,18 @@ mod tests {
         assert_redacts(
             format!("sk-{}", "D".repeat(40)),
             "openai-api-key",
-            "sk-D",
         );
     }
 
     #[test]
     fn redacts_stripe_secret_and_restricted_keys() {
-        for (key, token_type, prefix) in [
-            (format!("sk_live_{}", "E".repeat(24)), "stripe-secret-key", "sk_l"),
-            (format!("sk_test_{}", "F".repeat(24)), "stripe-secret-key", "sk_t"),
-            (format!("rk_live_{}", "G".repeat(24)), "stripe-restricted-key", "rk_l"),
-            (format!("rk_test_{}", "H".repeat(24)), "stripe-restricted-key", "rk_t"),
+        for (key, token_type) in [
+            (format!("sk_live_{}", "E".repeat(24)), "stripe-secret-key"),
+            (format!("sk_test_{}", "F".repeat(24)), "stripe-secret-key"),
+            (format!("rk_live_{}", "G".repeat(24)), "stripe-restricted-key"),
+            (format!("rk_test_{}", "H".repeat(24)), "stripe-restricted-key"),
         ] {
-            assert_redacts(key, token_type, prefix);
+            assert_redacts(key, token_type);
         }
     }
 
@@ -204,12 +331,10 @@ mod tests {
         assert_redacts(
             format!("tg_usr_{}", "I".repeat(40)),
             "tana-git-token",
-            "tg_u",
         );
         assert_redacts(
             format!("tg_agt_{}", "J".repeat(40)),
             "tana-git-token",
-            "tg_a",
         );
     }
 
@@ -218,7 +343,6 @@ mod tests {
         assert_redacts(
             "eyJabcdefgh.eyJijklmnop.qrstuvwxyz".to_string(),
             "jwt",
-            "eyJa",
         );
     }
 
@@ -227,7 +351,6 @@ mod tests {
         assert_redacts(
             format!("$2b$12${}", "K".repeat(53)),
             "bcrypt-hash",
-            "$2b$",
         );
     }
 
@@ -236,7 +359,6 @@ mod tests {
         assert_redacts(
             "-----BEGIN PRIVATE KEY-----\nabc123\n-----END PRIVATE KEY-----".to_string(),
             "private-key",
-            "----",
         );
     }
 
@@ -245,12 +367,10 @@ mod tests {
         assert_redacts(
             format!("ghp_{}", "L".repeat(36)),
             "github-token",
-            "ghp_",
         );
         assert_redacts(
             format!("github_pat_{}", "M".repeat(40)),
             "github-token",
-            "gith",
         );
     }
 
@@ -259,13 +379,13 @@ mod tests {
         let redacted = redact_secret_strings("password=correcthorsebatterystaple");
         assert_eq!(
             redacted.text,
-            "password=[REDACTED:secret-assignment:corr...]"
+            "password=[REDACTED:secret-assignment]"
         );
 
         let redacted = redact_secret_strings("AGENT_DISPATCHER_HMAC_KEY=abcdef1234567890");
         assert_eq!(
             redacted.text,
-            "AGENT_DISPATCHER_HMAC_KEY=[REDACTED:env-secret-assignment:abcd...]"
+            "AGENT_DISPATCHER_HMAC_KEY=[REDACTED:env-secret-assignment]"
         );
     }
 
