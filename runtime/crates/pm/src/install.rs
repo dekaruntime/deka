@@ -8,17 +8,17 @@ use crate::{
     payload::InstallPayload,
     spec::{Ecosystem, parse_hinted_spec, parse_package_spec},
 };
-use anyhow::{Context, Result, bail, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
+use modules_php::integrity::compute_package_integrity;
 use runtime_core::module_spec::canonical_php_package_spec;
 use runtime_core::security_policy::{RuleList, SecurityPolicy, parse_deka_security_policy};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
-use modules_php::integrity::compute_package_integrity;
 use std::{
     collections::{BTreeMap, HashSet, VecDeque},
     fs,
     io::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
     time::Instant,
 };
@@ -359,7 +359,13 @@ async fn run_php_install(specs: Vec<String>, quiet: bool) -> Result<()> {
 }
 
 async fn rehash_php_packages(payload: &InstallPayload) -> Result<()> {
-    let lock = lock::read_lockfile();
+    let cwd = std::env::current_dir().context("failed to resolve current directory")?;
+    rehash_php_packages_in(payload, &cwd).await
+}
+
+async fn rehash_php_packages_in(payload: &InstallPayload, project_dir: &Path) -> Result<()> {
+    let lock_path = project_dir.join(lock::LOCKFILE_NAME);
+    let lock = lock::read_lockfile_at(&lock_path);
     let mut specs = payload.specs.clone();
     if specs.is_empty() {
         specs = lock.php.packages.keys().cloned().collect();
@@ -369,7 +375,7 @@ async fn rehash_php_packages(payload: &InstallPayload) -> Result<()> {
     }
 
     for name in specs {
-        let package_root = php_modules_path_for(&name)?;
+        let package_root = php_modules_path_for_in(project_dir, &name)?;
         if !package_root.is_dir() {
             bail!(
                 "package '{}' is missing from php_modules (expected {})",
@@ -393,7 +399,8 @@ async fn rehash_php_packages(payload: &InstallPayload) -> Result<()> {
                 json!({ "algo": "sha256", "hash": integrity.fs_graph }),
             );
         }
-        lock::update_lock_entry(
+        lock::update_lock_entry_at(
+            &lock_path,
             "php",
             &name,
             descriptor,
@@ -635,7 +642,11 @@ fn parse_scoped_package(name: &str) -> Result<(&str, &str)> {
 
 fn php_modules_path_for(package_name: &str) -> Result<PathBuf> {
     let cwd = std::env::current_dir().context("failed to resolve current directory")?;
-    let mut path = cwd.join("php_modules");
+    php_modules_path_for_in(&cwd, package_name)
+}
+
+fn php_modules_path_for_in(project_dir: &Path, package_name: &str) -> Result<PathBuf> {
+    let mut path = project_dir.join("php_modules");
     // Scoped packages (@scope/name) map to php_modules/@scope/name on disk.
     // This matches the layout produced by the bundler's module resolver and
     // the stdlib install layout. Unscoped names are still supported as-is.
@@ -652,10 +663,14 @@ fn php_modules_path_for(package_name: &str) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        PhpPackageRelease, enforce_release_policy, extract_release_capabilities, php_modules_path_for,
+        PhpPackageRelease, enforce_release_policy, extract_release_capabilities,
+        php_modules_path_for, rehash_php_packages_in,
     };
+    use crate::{lock, payload::InstallPayload};
+    use modules_php::integrity::compute_package_integrity;
     use runtime_core::security_policy::{RuleList, SecurityPolicy, SecurityScope};
     use serde_json::json;
+    use std::fs;
 
     fn sample_release(
         manifest: Option<serde_json::Value>,
@@ -757,6 +772,78 @@ mod tests {
         let cwd = std::env::current_dir().expect("cwd");
         let path = php_modules_path_for("legacy").expect("path");
         assert_eq!(path, cwd.join("php_modules").join("legacy"));
+    }
+
+    #[tokio::test]
+    async fn rehash_preserves_deka_scope_when_resolving_package_root() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let package_root = tmp
+            .path()
+            .join("php_modules")
+            .join("@deka")
+            .join("component");
+        fs::create_dir_all(&package_root).expect("mkdir package");
+        fs::write(
+            package_root.join("index.phpx"),
+            "import { ok } from '@deka/core';\nexport function component_ok() { return ok(); }\n",
+        )
+        .expect("write module");
+        fs::write(
+            tmp.path().join("deka.lock"),
+            json!({
+                "lockfileVersion": 1,
+                "node": { "packages": {} },
+                "php": {
+                    "packages": {
+                        "@deka/component": [
+                            "@deka/component@0.1.0",
+                            "linkhash:@deka/component",
+                            {
+                                "moduleGraph": { "algo": "sha256", "hash": "stale" },
+                                "fsGraph": { "algo": "sha256", "hash": "stale" }
+                            },
+                            "sha512-stale"
+                        ]
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .expect("write lock");
+
+        let payload = InstallPayload {
+            specs: Vec::new(),
+            ecosystem: Some("php".to_string()),
+            yes: true,
+            prompt: false,
+            quiet: true,
+            rehash: true,
+        };
+        rehash_php_packages_in(&payload, tmp.path())
+            .await
+            .expect("rehash");
+
+        let expected = compute_package_integrity(&package_root).expect("integrity");
+        let lock = lock::read_lockfile_at(&tmp.path().join("deka.lock"));
+        let (_, _, metadata, _) = lock
+            .php
+            .packages
+            .get("@deka/component")
+            .expect("lock entry");
+        assert_eq!(
+            metadata
+                .get("moduleGraph")
+                .and_then(|value| value.get("hash"))
+                .and_then(|value| value.as_str()),
+            Some(expected.module_graph.as_str())
+        );
+        assert_eq!(
+            metadata
+                .get("fsGraph")
+                .and_then(|value| value.get("hash"))
+                .and_then(|value| value.as_str()),
+            Some(expected.fs_graph.as_str())
+        );
     }
 }
 
