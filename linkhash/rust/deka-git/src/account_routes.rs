@@ -154,10 +154,10 @@ pub(crate) async fn handle_register_ssh_key(
     Extension(auth_user): Extension<auth::AuthUser>,
     Json(payload): Json<SshKeyPayload>,
 ) -> impl IntoResponse {
-    if let Err(response) = require_admin_user(&auth_user) {
-        return response;
-    }
-
+    let auth_user = match require_admin_user(&auth_user) {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
     let fingerprint = ssh_fingerprint(&payload.public_key);
     let pool = crate::db::pool();
 
@@ -227,10 +227,10 @@ pub(crate) async fn handle_grant_repo_acl(
     Extension(auth_user): Extension<auth::AuthUser>,
     Json(payload): Json<RepoAclPayload>,
 ) -> impl IntoResponse {
-    if let Err(response) = require_admin_user(&auth_user) {
-        return response;
-    }
-
+    let auth_user = match require_admin_user(&auth_user) {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
     if payload.access != "read" && payload.access != "write" {
         return (
             StatusCode::BAD_REQUEST,
@@ -284,9 +284,10 @@ pub(crate) async fn handle_grant_secret_acl(
     Extension(auth_user): Extension<auth::AuthUser>,
     Json(payload): Json<SecretAclPayload>,
 ) -> impl IntoResponse {
-    if let Err(response) = require_admin_user(&auth_user) {
-        return response;
-    }
+    let auth_user = match require_admin_user(&auth_user) {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
 
     match sqlx::query(
         r#"
@@ -481,22 +482,20 @@ fn require_admin(req: &Request) -> Result<&auth::AuthUser, (StatusCode, Json<ser
         )
     })?;
 
-    require_admin_user(auth_user)?;
-
-    Ok(auth_user)
+    require_admin_user(auth_user)
 }
 
 fn require_admin_user(
     auth_user: &auth::AuthUser,
-) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    if !auth_user.has_scope("admin:write") {
-        return Err((
+) -> Result<&auth::AuthUser, (StatusCode, Json<serde_json::Value>)> {
+    if auth_user.has_scope("admin:write") {
+        Ok(auth_user)
+    } else {
+        Err((
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({ "error": "admin:write scope required" })),
-        ));
+        ))
     }
-
-    Ok(())
 }
 
 fn ssh_fingerprint(public_key: &str) -> String {
