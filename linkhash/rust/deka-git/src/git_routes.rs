@@ -12,6 +12,7 @@ pub(crate) async fn handle_info_refs_public(
     req: Request,
 ) -> Response {
     let repo_name = repo.strip_suffix(".git").unwrap_or(&repo);
+    let full_repo = format!("{}/{}", owner, repo_name);
     let service = match params.get("service") {
         Some(s) => s.as_str(),
         None => return (StatusCode::BAD_REQUEST, "Missing service parameter").into_response(),
@@ -32,7 +33,10 @@ pub(crate) async fn handle_info_refs_public(
         if !auth_user.has_scope("repo:write") {
             return (StatusCode::FORBIDDEN, "repo:write scope required").into_response();
         }
-        if !auth_user.can_access_repo(repo_name) && !auth_user.can_access_repo(&repo) {
+        if !auth_user.can_write_repo(&full_repo)
+            && !auth_user.can_write_repo(repo_name)
+            && !auth_user.can_write_repo(&repo)
+        {
             return (StatusCode::FORBIDDEN, "Access denied to this repository").into_response();
         }
         auth::log_audit(
@@ -55,7 +59,10 @@ pub(crate) async fn handle_info_refs_public(
         if !auth_user.has_scope("repo:read") {
             return (StatusCode::FORBIDDEN, "repo:read scope required").into_response();
         }
-        if !auth_user.can_access_repo(repo_name) && !auth_user.can_access_repo(&repo) {
+        if !auth_user.can_access_repo(&full_repo)
+            && !auth_user.can_access_repo(repo_name)
+            && !auth_user.can_access_repo(&repo)
+        {
             return (StatusCode::FORBIDDEN, "Access denied to this repository").into_response();
         }
         auth::log_audit(
@@ -89,6 +96,7 @@ pub(crate) async fn handle_upload_pack_public(
     req: Request,
 ) -> Response {
     let repo_name = repo.strip_suffix(".git").unwrap_or(&repo);
+    let full_repo = format!("{}/{}", owner, repo_name);
     let is_public = auth::is_repo_public(&owner, repo_name).await;
     let git_protocol = git_protocol_header(&req);
 
@@ -100,7 +108,10 @@ pub(crate) async fn handle_upload_pack_public(
         if !auth_user.has_scope("repo:read") {
             return (StatusCode::FORBIDDEN, "repo:read scope required").into_response();
         }
-        if !auth_user.can_access_repo(repo_name) && !auth_user.can_access_repo(&repo) {
+        if !auth_user.can_access_repo(&full_repo)
+            && !auth_user.can_access_repo(repo_name)
+            && !auth_user.can_access_repo(&repo)
+        {
             return (StatusCode::FORBIDDEN, "Access denied to this repository").into_response();
         }
         let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
@@ -162,7 +173,11 @@ pub(crate) async fn handle_receive_pack(
     }
 
     let repo_name = repo.strip_suffix(".git").unwrap_or(&repo);
-    if !auth_user.can_access_repo(repo_name) && !auth_user.can_access_repo(&repo) {
+    let full_repo = format!("{}/{}", owner, repo_name);
+    if !auth_user.can_write_repo(&full_repo)
+        && !auth_user.can_write_repo(repo_name)
+        && !auth_user.can_write_repo(&repo)
+    {
         return (StatusCode::FORBIDDEN, "Access denied to this repository").into_response();
     }
 

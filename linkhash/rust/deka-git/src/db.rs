@@ -33,6 +33,39 @@ pub fn pool() -> &'static SqlitePool {
 async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
     sqlx::query(
         r#"
+        CREATE TABLE IF NOT EXISTS accounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            email TEXT NOT NULL,
+            account_type TEXT NOT NULL CHECK (account_type IN ('agent', 'user', 'customer', 'system')),
+            display_name TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS account_ssh_keys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id INTEGER NOT NULL,
+            key_name TEXT NOT NULL,
+            public_key TEXT NOT NULL UNIQUE,
+            fingerprint TEXT NOT NULL UNIQUE,
+            created_at TEXT DEFAULT (datetime('now')),
+            revoked INTEGER DEFAULT 0,
+            FOREIGN KEY (account_id) REFERENCES accounts(id)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
         CREATE TABLE IF NOT EXISTS access_tokens (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             key_hash TEXT NOT NULL UNIQUE,
@@ -44,6 +77,58 @@ async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
             expires_at TEXT,
             last_used_at TEXT,
             revoked INTEGER DEFAULT 0
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS repo_acl (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account TEXT NOT NULL,
+            repo_owner TEXT NOT NULL,
+            repo_name TEXT NOT NULL,
+            access TEXT NOT NULL CHECK (access IN ('read', 'write')),
+            granted_by TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(account, repo_owner, repo_name)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS secret_acl (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account TEXT NOT NULL,
+            repo_owner TEXT NOT NULL,
+            repo_name TEXT NOT NULL,
+            secret_pattern TEXT NOT NULL,
+            granted_by TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(account, repo_owner, repo_name, secret_pattern)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS webhook_subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            repo_owner TEXT NOT NULL,
+            repo_name TEXT NOT NULL,
+            url TEXT NOT NULL,
+            events TEXT NOT NULL DEFAULT '["push"]',
+            created_by TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now')),
+            active INTEGER DEFAULT 1,
+            UNIQUE(repo_owner, repo_name, url)
         )
         "#,
     )
@@ -281,6 +366,17 @@ async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
     .await?;
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp)",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_repo_acl_account ON repo_acl(account)")
+        .execute(pool)
+        .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_secret_acl_account ON secret_acl(account)")
+        .execute(pool)
+        .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_repo ON webhook_subscriptions(repo_owner, repo_name)",
     )
     .execute(pool)
     .await?;
