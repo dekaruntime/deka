@@ -261,7 +261,7 @@ impl AdminAuthResponse {
                 access: parse_repo_access(&grant.access),
             })
             .collect();
-        let secret_grants = self
+        let secret_grants: Vec<SecretGrant> = self
             .secret_grants
             .into_iter()
             .map(|grant| SecretGrant {
