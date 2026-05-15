@@ -1,0 +1,255 @@
+---
+title: "Payments"
+description: "Payment provider abstractions, fee math, provider account shapes, webhook verification, and security helpers for PHPX commerce flows."
+section: "phpx"
+category: "payments"
+categoryLabel: "Payments"
+categoryOrder: 70
+source: "php_modules/payments/index.phpx"
+---
+
+The `payments` module is the shared provider layer for commerce applications. It normalizes Stripe, Square, and PayPal operations behind common account, charge, refund, event, and account-status shapes.
+
+The module also owns platform-fee math and provider security helpers: OAuth state, return URL validation, webhook HMAC verification, refund authorization, refund audit logging, and encrypted provider-token storage.
+
+## Imports
+
+```phpx
+import {
+  platform_fee_cents,
+  new_charge,
+  verify_hmac_sha256,
+  oauth_state_issue,
+  oauth_state_consume,
+  validate_return_url,
+  authorize_refund,
+  require_refund_reason,
+  stripe_connect_url,
+  stripe_create_charge,
+  square_connect_url,
+  square_create_charge,
+  token_vault_encrypt,
+  token_vault_decrypt,
+} from 'payments'
+```
+
+## Common Flow
+
+```phpx
+import {
+  platform_fee_cents,
+  stripe_connect_url,
+  stripe_create_charge,
+} from 'payments'
+import { result_is_ok } from 'core/result'
+
+$connect = stripe_connect_url(
+  'https://store.example.com/payments/stripe/callback',
+  'shop_123',
+  'session_jti_456',
+  $http_transport
+)
+
+if (result_is_ok($connect)) {
+  echo $connect->value->url
+}
+
+$fee = platform_fee_cents(10000, 'standard')
+$charge = stripe_create_charge(
+  $account,
+  10000,
+  'usd',
+  $fee,
+  'checkout_abc123',
+  $http_transport
+)
+```
+
+## Fee Math
+
+<Function name="platform_fee_cents">
+  <Description>Calculate Tana's platform fee in cents for a charge amount and merchant tier. The fee is capped by tier and returns zero for non-positive amounts.</Description>
+  <Parameter name="$amount_cents" type="int" required="true" typeLink="/docs/php/types/int">
+    Charge amount in the smallest currency unit.
+  </Parameter>
+  <Parameter name="$tier" type="string" required="true" typeLink="/docs/php/types/string">
+    Merchant tier: `free`, `standard`, `premium`, or `enterprise`.
+  </Parameter>
+  <ReturnType type="int" typeLink="/docs/php/types/int" />
+</Function>
+
+Tier schedule:
+
+- `free`: 1.0%, capped at 200 cents
+- `standard`: 0.5%, capped at 100 cents
+- `premium`: 0.25%, capped at 50 cents
+- `enterprise`: no platform fee
+
+## Shared Shapes
+
+<Function name="new_connected_account">
+  <Description>Construct a normalized connected-account value for a provider account.</Description>
+  <Parameter name="$provider" type="string" required="true" typeLink="/docs/php/types/string">
+    Provider name such as `stripe`, `square`, or `paypal`.
+  </Parameter>
+  <Parameter name="$account_id" type="string" required="true" typeLink="/docs/php/types/string">
+    Provider account identifier.
+  </Parameter>
+  <Parameter name="$charges_enabled" type="bool" required="true" typeLink="/docs/php/types/bool">
+    Whether the provider currently allows charges.
+  </Parameter>
+  <Parameter name="$onboarded_at" type="int" required="true" typeLink="/docs/php/types/int">
+    Epoch millisecond onboarding timestamp.
+  </Parameter>
+  <Parameter name="$metadata" type="mixed" required="false" typeLink="/docs/php/types/mixed">
+    Provider-specific metadata.
+  </Parameter>
+  <ReturnType type="mixed" typeLink="/docs/php/types/mixed" />
+</Function>
+
+<Function name="new_charge">
+  <Description>Construct a normalized charge value.</Description>
+  <Parameter name="$id" type="string" required="true" typeLink="/docs/php/types/string">
+    Provider charge or payment identifier.
+  </Parameter>
+  <Parameter name="$provider" type="string" required="true" typeLink="/docs/php/types/string">
+    Provider name.
+  </Parameter>
+  <Parameter name="$amount_cents" type="int" required="true" typeLink="/docs/php/types/int">
+    Charge amount in cents.
+  </Parameter>
+  <Parameter name="$currency" type="string" required="true" typeLink="/docs/php/types/string">
+    Currency code.
+  </Parameter>
+  <Parameter name="$platform_fee_cents" type="int" required="true" typeLink="/docs/php/types/int">
+    Platform fee applied to the charge.
+  </Parameter>
+  <Parameter name="$status" type="string" required="true" typeLink="/docs/php/types/string">
+    Provider charge status.
+  </Parameter>
+  <ReturnType type="mixed" typeLink="/docs/php/types/mixed" />
+</Function>
+
+## Security Helpers
+
+<Function name="verify_hmac_sha256">
+  <Description>Verify a hex HMAC-SHA256 signature for a webhook body.</Description>
+  <Parameter name="$body" type="string" required="true" typeLink="/docs/php/types/string">
+    Raw webhook body.
+  </Parameter>
+  <Parameter name="$signature_hex" type="string" required="true" typeLink="/docs/php/types/string">
+    Expected signature in hex form.
+  </Parameter>
+  <Parameter name="$secret" type="string" required="true" typeLink="/docs/php/types/string">
+    Shared webhook secret.
+  </Parameter>
+  <ReturnType type="mixed" typeLink="/docs/php/types/mixed" />
+</Function>
+
+<Function name="oauth_state_issue">
+  <Description>Generate, store, and return a fresh provider OAuth state token bound to a shop, provider, and session.</Description>
+  <Parameter name="$shop_id" type="string" required="true" typeLink="/docs/php/types/string">
+    Shop identifier.
+  </Parameter>
+  <Parameter name="$provider" type="string" required="true" typeLink="/docs/php/types/string">
+    Provider name.
+  </Parameter>
+  <Parameter name="$session_jti" type="string" required="true" typeLink="/docs/php/types/string">
+    Session token identifier to bind to the state.
+  </Parameter>
+  <ReturnType type="mixed" typeLink="/docs/php/types/mixed" />
+</Function>
+
+<Function name="oauth_state_consume">
+  <Description>Verify an OAuth state token against the expected shop, provider, and session, then delete it for one-time use.</Description>
+  <Parameter name="$state" type="string" required="true" typeLink="/docs/php/types/string">
+    State token from the provider callback.
+  </Parameter>
+  <Parameter name="$expected_shop_id" type="string" required="true" typeLink="/docs/php/types/string">
+    Expected shop identifier.
+  </Parameter>
+  <Parameter name="$expected_provider" type="string" required="true" typeLink="/docs/php/types/string">
+    Expected provider name.
+  </Parameter>
+  <Parameter name="$expected_jti" type="string" required="true" typeLink="/docs/php/types/string">
+    Expected session token identifier.
+  </Parameter>
+  <ReturnType type="mixed" typeLink="/docs/php/types/mixed" />
+</Function>
+
+<Function name="validate_return_url">
+  <Description>Validate a provider onboarding return URL before starting OAuth or account-link flows.</Description>
+  <Parameter name="$return_url" type="string" required="true" typeLink="/docs/php/types/string">
+    Return URL supplied by the caller.
+  </Parameter>
+  <ReturnType type="mixed" typeLink="/docs/php/types/mixed" />
+</Function>
+
+<Function name="authorize_refund">
+  <Description>Check whether an actor may issue a refund for a shop and amount.</Description>
+  <Parameter name="$actor" type="mixed" required="true" typeLink="/docs/php/types/mixed">
+    Actor object or map with identity and role fields.
+  </Parameter>
+  <Parameter name="$shop_id" type="string" required="true" typeLink="/docs/php/types/string">
+    Shop identifier.
+  </Parameter>
+  <Parameter name="$amount_cents" type="int" required="true" typeLink="/docs/php/types/int">
+    Refund amount.
+  </Parameter>
+  <Parameter name="$charge_amount_cents" type="int" required="true" typeLink="/docs/php/types/int">
+    Original charge amount.
+  </Parameter>
+  <ReturnType type="mixed" typeLink="/docs/php/types/mixed" />
+</Function>
+
+## Provider Functions
+
+Stripe exports `stripe_connect_url`, `stripe_handle_callback`, `stripe_create_charge`, `stripe_refund`, `stripe_webhook_verify`, `stripe_account_status`, and `stripe_disconnect`.
+
+Square exports `square_connect_url`, `square_handle_callback`, `square_create_charge`, `square_refund`, `square_webhook_verify`, `square_account_status`, `square_refresh_token`, and `square_disconnect`.
+
+PayPal exports `paypal_connect_url`, `paypal_handle_callback`, `paypal_create_charge`, `paypal_refund`, `paypal_webhook_verify`, and `paypal_account_status`.
+
+## Token Vault
+
+<Function name="token_vault_encrypt">
+  <Description>Encrypt a provider OAuth token into the `v1:{keyid}:{nonce}:{ciphertext}` vault format.</Description>
+  <Parameter name="$plaintext" type="string" required="true" typeLink="/docs/php/types/string">
+    Provider token to encrypt.
+  </Parameter>
+  <Parameter name="$shop_id" type="string" required="true" typeLink="/docs/php/types/string">
+    Shop identifier bound into the ciphertext.
+  </Parameter>
+  <Parameter name="$keyid" type="string" required="false" typeLink="/docs/php/types/string">
+    Key identifier. Defaults to `primary`.
+  </Parameter>
+  <Parameter name="$key_override" type="mixed" required="false" typeLink="/docs/php/types/mixed">
+    Optional key bytes for tests or migrations.
+  </Parameter>
+  <ReturnType type="mixed" typeLink="/docs/php/types/mixed" />
+</Function>
+
+<Function name="token_vault_decrypt">
+  <Description>Decrypt a vault string back to plaintext, trying configured rotation keys when needed.</Description>
+  <Parameter name="$blob" type="string" required="true" typeLink="/docs/php/types/string">
+    Vault string to decrypt.
+  </Parameter>
+  <Parameter name="$shop_id" type="string" required="true" typeLink="/docs/php/types/string">
+    Shop identifier that must match the encrypted associated data.
+  </Parameter>
+  <ReturnType type="mixed" typeLink="/docs/php/types/mixed" />
+</Function>
+
+<Function name="token_vault_reencrypt">
+  <Description>Decrypt a vault string and encrypt it again under a target key identifier.</Description>
+  <Parameter name="$blob" type="string" required="true" typeLink="/docs/php/types/string">
+    Existing vault string.
+  </Parameter>
+  <Parameter name="$shop_id" type="string" required="true" typeLink="/docs/php/types/string">
+    Shop identifier bound into the ciphertext.
+  </Parameter>
+  <Parameter name="$target_keyid" type="string" required="true" typeLink="/docs/php/types/string">
+    Key identifier for the new ciphertext.
+  </Parameter>
+  <ReturnType type="mixed" typeLink="/docs/php/types/mixed" />
+</Function>
