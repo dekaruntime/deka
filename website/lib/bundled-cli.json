@@ -1,52 +1,18 @@
 [
   {
     "slug": [
-      "user-remove"
+      "agent-setup"
     ],
     "metadata": {
-      "title": "deka user remove",
-      "description": "Remove a user from this instance"
+      "title": "deka agent setup",
+      "description": "Configure deka-agent on this node"
     },
-    "content": "\n# deka user remove\n\nRemove a user (sovereign only).\n\n```bash\ndeka user remove <target>\n```\n\nAliases: `deka user rm`\n\n## Options\n\n- `-s, --server <url>` - Deka API URL\n- `-y, --yes` - Skip confirmation\n",
-    "html": "<h1>deka user remove</h1>\n<p>Remove a user (sovereign only).</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<p>Aliases: <code>deka user rm</code></p>\n<h2>Options</h2>\n<ul>\n<li><code>-s, --server &#x3C;url></code> - Deka API URL</li>\n<li><code>-y, --yes</code> - Skip confirmation</li>\n</ul>\n",
+    "content": "\n# deka agent setup\n\nInteractive setup for deka-agent.\n\n```bash\ndeka agent setup\n```\n\n## Options\n\n- `-s, --server <url>` - Primary instance URL (for secondary nodes)\n",
+    "html": "<h1>deka agent setup</h1>\n<p>Interactive setup for deka-agent.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>-s, --server &#x3C;url></code> - Primary instance URL (for secondary nodes)</li>\n</ul>\n",
     "codeBlocks": [
       {
         "lang": "bash",
-        "code": "deka user remove <target>"
-      }
-    ]
-  },
-  {
-    "slug": [
-      "t4-rm"
-    ],
-    "metadata": {
-      "title": "deka t4 rm",
-      "description": "Delete an object from a bucket"
-    },
-    "content": "\n# deka t4 rm\n\nDelete an object from a bucket.\n\n```bash\ndeka t4 rm <bucket> <key>\n```\n\n## Options\n\n- `-y, --yes` - Skip confirmation\n",
-    "html": "<h1>deka t4 rm</h1>\n<p>Delete an object from a bucket.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>-y, --yes</code> - Skip confirmation</li>\n</ul>\n",
-    "codeBlocks": [
-      {
-        "lang": "bash",
-        "code": "deka t4 rm <bucket> <key>"
-      }
-    ]
-  },
-  {
-    "slug": [
-      "repo-delete"
-    ],
-    "metadata": {
-      "title": "deka repo delete",
-      "description": "Delete a repository"
-    },
-    "content": "\n# deka repo delete\n\nDelete a repository from the deka server.\n\n```bash\ndeka repo delete [repo]\n```\n\n## Options\n\n- `--yes` - Skip confirmation (only when repo is specified)\n",
-    "html": "<h1>deka repo delete</h1>\n<p>Delete a repository from the deka server.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>--yes</code> - Skip confirmation (only when repo is specified)</li>\n</ul>\n",
-    "codeBlocks": [
-      {
-        "lang": "bash",
-        "code": "deka repo delete [repo]"
+        "code": "deka agent setup"
       }
     ]
   },
@@ -69,39 +35,18 @@
   },
   {
     "slug": [
-      "t4-ls"
+      "attach"
     ],
     "metadata": {
-      "title": "deka t4 ls",
-      "description": "List objects in a bucket"
+      "title": "deka c attach",
+      "description": "Attach to a running container"
     },
-    "content": "\n# deka t4 ls\n\nList objects in a T4 bucket.\n\n```bash\ndeka t4 ls <bucket>\n```\n\n## Options\n\n- `--prefix <prefix>` - Filter by prefix\n- `--json` - Output JSON\n\n## Example output\n\n```text\n$ deka t4 ls assets --prefix logos/\nlogos/deka.svg\nlogos/deka-dark.svg\n```\n",
-    "html": "<h1>deka t4 ls</h1>\n<p>List objects in a T4 bucket.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>--prefix &#x3C;prefix></code> - Filter by prefix</li>\n<li><code>--json</code> - Output JSON</li>\n</ul>\n<h2>Example output</h2>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n",
+    "content": "\n# deka c attach\n\nAttach to a running container with an interactive shell.\n\n```bash\ndeka c attach <container> [cmd]\n```\n\nIf no command is provided, the default is `/bin/sh`.\n",
+    "html": "<h1>deka c attach</h1>\n<p>Attach to a running container with an interactive shell.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<p>If no command is provided, the default is <code>/bin/sh</code>.</p>\n",
     "codeBlocks": [
       {
         "lang": "bash",
-        "code": "deka t4 ls <bucket>"
-      },
-      {
-        "lang": "text",
-        "code": "$ deka t4 ls assets --prefix logos/\nlogos/deka.svg\nlogos/deka-dark.svg"
-      }
-    ]
-  },
-  {
-    "slug": [
-      "repo-import"
-    ],
-    "metadata": {
-      "title": "deka repo import",
-      "description": "Import a GitHub repository"
-    },
-    "content": "\n# deka repo import\n\nImport a GitHub repository with issues and pull requests.\n\n```bash\ndeka repo import <source>\n```\n\n## Options\n\n- `-s, --server <url>` - Deka server URL (default: http://localhost:9090)\n",
-    "html": "<h1>deka repo import</h1>\n<p>Import a GitHub repository with issues and pull requests.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>-s, --server &#x3C;url></code> - Deka server URL (default: http://localhost:9090)</li>\n</ul>\n",
-    "codeBlocks": [
-      {
-        "lang": "bash",
-        "code": "deka repo import <source>"
+        "code": "deka c attach <container> [cmd]"
       }
     ]
   },
@@ -128,228 +73,43 @@
   },
   {
     "slug": [
-      "ps"
+      "check"
     ],
     "metadata": {
-      "title": "deka c ps",
-      "description": "List containers via deka-agent"
+      "title": "deka check",
+      "description": "Check for available image updates"
     },
-    "content": "\n# deka c ps\n\nList containers managed by the deka-agent.\n\n```bash\ndeka c ps\n```\n\n## Options\n\n- `-a, --all` - Show all containers (including stopped)\n- `--json` - Output JSON\n\n## Example output\n\n```text\n$ deka c ps\nNAME        IMAGE                          STATUS\nedge        ghcr.io/tananetwork/edge:1.12  running\npostgres    postgres:16                    running\n```\n",
-    "html": "<h1>deka c ps</h1>\n<p>List containers managed by the deka-agent.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>-a, --all</code> - Show all containers (including stopped)</li>\n<li><code>--json</code> - Output JSON</li>\n</ul>\n<h2>Example output</h2>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n",
+    "content": "\n# deka check\n\nCheck whether new images are available.\n\n```bash\ndeka check\n```\n\n## Example output\n\n```text\n$ deka check\nedge     update available (ghcr.io/tananetwork/edge:1.12.0)\ndeploy   up to date\n```\n",
+    "html": "<h1>deka check</h1>\n<p>Check whether new images are available.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Example output</h2>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n",
     "codeBlocks": [
       {
         "lang": "bash",
-        "code": "deka c ps"
+        "code": "deka check"
       },
       {
         "lang": "text",
-        "code": "$ deka c ps\nNAME        IMAGE                          STATUS\nedge        ghcr.io/tananetwork/edge:1.12  running\npostgres    postgres:16                    running"
+        "code": "$ deka check\nedge     update available (ghcr.io/tananetwork/edge:1.12.0)\ndeploy   up to date"
       }
     ]
   },
   {
     "slug": [
-      "upgrade"
+      "exec"
     ],
     "metadata": {
-      "title": "deka upgrade",
-      "description": "Upgrade services and clean up old images"
+      "title": "deka c exec",
+      "description": "Execute a command in a container"
     },
-    "content": "\n# deka upgrade\n\nStop, pull, restart outdated containers and cleanup old images.\n\n```bash\ndeka upgrade\n```\n\n## Options\n\n- `-q, --quiet` - Suppress progress output\n\n## Example output\n\n```text\n$ deka upgrade\nstopping edge\npulling ghcr.io/tananetwork/edge:1.12.0\nstarting edge\ncleaned up old images\n```\n",
-    "html": "<h1>deka upgrade</h1>\n<p>Stop, pull, restart outdated containers and cleanup old images.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>-q, --quiet</code> - Suppress progress output</li>\n</ul>\n<h2>Example output</h2>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n",
+    "content": "\n# deka c exec\n\nExecute a command in a running container.\n\n```bash\ndeka c exec <container> [cmd...]\n```\n\n## Options\n\n- `-i, --interactive` - Interactive mode (allocate TTY)\n\nExample:\n\n```bash\ndeka c exec edge ls -la\n```\n",
+    "html": "<h1>deka c exec</h1>\n<p>Execute a command in a running container.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>-i, --interactive</code> - Interactive mode (allocate TTY)</li>\n</ul>\n<p>Example:</p>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n",
     "codeBlocks": [
       {
         "lang": "bash",
-        "code": "deka upgrade"
-      },
-      {
-        "lang": "text",
-        "code": "$ deka upgrade\nstopping edge\npulling ghcr.io/tananetwork/edge:1.12.0\nstarting edge\ncleaned up old images"
-      }
-    ]
-  },
-  {
-    "slug": [
-      "rm"
-    ],
-    "metadata": {
-      "title": "deka c rm",
-      "description": "Remove a container"
-    },
-    "content": "\n# deka c rm\n\nRemove a container managed by deka-agent.\n\n```bash\ndeka c rm <container>\n```\n\n## Options\n\n- `-f, --force` - Force removal (kills if running)\n- `-y, --yes` - Skip confirmation\n",
-    "html": "<h1>deka c rm</h1>\n<p>Remove a container managed by deka-agent.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>-f, --force</code> - Force removal (kills if running)</li>\n<li><code>-y, --yes</code> - Skip confirmation</li>\n</ul>\n",
-    "codeBlocks": [
-      {
-        "lang": "bash",
-        "code": "deka c rm <container>"
-      }
-    ]
-  },
-  {
-    "slug": [
-      "agent-setup"
-    ],
-    "metadata": {
-      "title": "deka agent setup",
-      "description": "Configure deka-agent on this node"
-    },
-    "content": "\n# deka agent setup\n\nInteractive setup for deka-agent.\n\n```bash\ndeka agent setup\n```\n\n## Options\n\n- `-s, --server <url>` - Primary instance URL (for secondary nodes)\n",
-    "html": "<h1>deka agent setup</h1>\n<p>Interactive setup for deka-agent.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>-s, --server &#x3C;url></code> - Primary instance URL (for secondary nodes)</li>\n</ul>\n",
-    "codeBlocks": [
-      {
-        "lang": "bash",
-        "code": "deka agent setup"
-      }
-    ]
-  },
-  {
-    "slug": [
-      "monitor"
-    ],
-    "metadata": {
-      "title": "deka monitor",
-      "description": "Automatic update checking"
-    },
-    "content": "\n# deka monitor\n\nManage automatic update checks (runs every 5 minutes).\n\n## Start monitoring\n\n```bash\ndeka monitor start\n```\n\n## Options\n\n- `--upgrade` - Use upgrade instead of update (restarts containers)\n\n## Stop monitoring\n\n```bash\ndeka monitor stop\n```\n\n## Status\n\n```bash\ndeka monitor status\n```\n",
-    "html": "<h1>deka monitor</h1>\n<p>Manage automatic update checks (runs every 5 minutes).</p>\n<h2>Start monitoring</h2>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>--upgrade</code> - Use upgrade instead of update (restarts containers)</li>\n</ul>\n<h2>Stop monitoring</h2>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n<h2>Status</h2>\n<div class=\"code-block-placeholder\" data-index=\"2\"></div>\n",
-    "codeBlocks": [
-      {
-        "lang": "bash",
-        "code": "deka monitor start"
+        "code": "deka c exec <container> [cmd...]"
       },
       {
         "lang": "bash",
-        "code": "deka monitor stop"
-      },
-      {
-        "lang": "bash",
-        "code": "deka monitor status"
-      }
-    ]
-  },
-  {
-    "slug": [
-      "user-list"
-    ],
-    "metadata": {
-      "title": "deka user list",
-      "description": "List users on this instance"
-    },
-    "content": "\n# deka user list\n\nList users on this instance.\n\n```bash\ndeka user list\n```\n\nAliases: `deka user ls`\n\n## Options\n\n- `-s, --server <url>` - Deka API URL\n- `--json` - Output JSON\n",
-    "html": "<h1>deka user list</h1>\n<p>List users on this instance.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<p>Aliases: <code>deka user ls</code></p>\n<h2>Options</h2>\n<ul>\n<li><code>-s, --server &#x3C;url></code> - Deka API URL</li>\n<li><code>--json</code> - Output JSON</li>\n</ul>\n",
-    "codeBlocks": [
-      {
-        "lang": "bash",
-        "code": "deka user list"
-      }
-    ]
-  },
-  {
-    "slug": [
-      "overview"
-    ],
-    "metadata": {
-      "title": "Deka CLI",
-      "description": "Infrastructure as code. Batteries included."
-    },
-    "content": "\nimport { Terminal, Network, Boxes, Zap, Shield, Globe2, Code2, Server, Lock } from 'lucide-react'\n\n<div className=\"space-y-16\">\n\n{/* Hero Section */}\n<section className=\"text-center\">\n  <div className=\"inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-2 text-xs font-semibold tracking-[0.2em] text-primary mb-6\">\nDEKA CLI\n  </div>\n  <h1 className=\"text-5xl lg:text-7xl font-bold text-foreground mb-6 leading-tight\">\nInfrastructure as code. Batteries included.\n  </h1>\n  <p className=\"text-xl lg:text-2xl text-muted-foreground mb-12 max-w-3xl mx-auto\">\nCommand-line tools to deploy, manage, and scale your runtime infrastructure. Works with any framework.\n  </p>\n\n  <div className=\"flex flex-wrap gap-4 justify-center text-sm text-muted-foreground mb-12\">\n<div className=\"flex items-center gap-2\">\n  <Terminal className=\"w-4 h-4 text-primary\" />\n  <span>Single binary deployment</span>\n</div>\n<div className=\"flex items-center gap-2\">\n  <Network className=\"w-4 h-4 text-primary\" />\n  <span>Mesh networking built-in</span>\n</div>\n<div className=\"flex items-center gap-2\">\n  <Shield className=\"w-4 h-4 text-primary\" />\n  <span>Zero-trust security</span>\n</div>\n  </div>\n</section>\n\n{/* Command Examples */}\n<section>\n  <div className=\"text-center mb-12\">\n<h2 className=\"text-3xl font-bold text-foreground mb-4\">\n  Simple commands, powerful infrastructure\n</h2>\n<p className=\"text-lg text-muted-foreground max-w-3xl mx-auto\">\n  Deploy and manage your runtime with intuitive CLI commands. No complex configuration, just infrastructure that works.\n</p>\n  </div>\n\n  <div className=\"grid lg:grid-cols-2 gap-6\">\n{/* Deploy */}\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <div className=\"flex items-center gap-3 mb-4\">\n    <div className=\"p-2 bg-primary/10 rounded-lg\">\n      <Zap className=\"w-5 h-5 text-primary\" />\n    </div>\n    <h3 className=\"text-lg font-semibold text-foreground\">Deploy a handler</h3>\n  </div>\n  <div className=\"bg-muted/30 rounded-lg p-4 font-mono text-sm\">\n    <div className=\"text-muted-foreground mb-1\"># Deploy your handler</div>\n    <div className=\"text-foreground\">deka deploy handler.ts</div>\n    <div className=\"text-muted-foreground mt-3 mb-1\"># Deploy with environment</div>\n    <div className=\"text-foreground\">deka deploy handler.ts --env production</div>\n  </div>\n</div>\n\n{/* Runtime Management */}\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <div className=\"flex items-center gap-3 mb-4\">\n    <div className=\"p-2 bg-primary/10 rounded-lg\">\n      <Server className=\"w-5 h-5 text-primary\" />\n    </div>\n    <h3 className=\"text-lg font-semibold text-foreground\">Manage runtime</h3>\n  </div>\n  <div className=\"bg-muted/30 rounded-lg p-4 font-mono text-sm\">\n    <div className=\"text-muted-foreground mb-1\"># Start runtime</div>\n    <div className=\"text-foreground\">deka start</div>\n    <div className=\"text-muted-foreground mt-3 mb-1\"># Check status</div>\n    <div className=\"text-foreground\">deka status</div>\n  </div>\n</div>\n\n{/* Mesh Networking */}\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <div className=\"flex items-center gap-3 mb-4\">\n    <div className=\"p-2 bg-primary/10 rounded-lg\">\n      <Network className=\"w-5 h-5 text-primary\" />\n    </div>\n    <h3 className=\"text-lg font-semibold text-foreground\">Join mesh network</h3>\n  </div>\n  <div className=\"bg-muted/30 rounded-lg p-4 font-mono text-sm\">\n    <div className=\"text-muted-foreground mb-1\"># Connect to mesh</div>\n    <div className=\"text-foreground\">deka mesh join</div>\n    <div className=\"text-muted-foreground mt-3 mb-1\"># List peers</div>\n    <div className=\"text-foreground\">deka mesh peers</div>\n  </div>\n</div>\n\n{/* Logs & Debug */}\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <div className=\"flex items-center gap-3 mb-4\">\n    <div className=\"p-2 bg-primary/10 rounded-lg\">\n      <Terminal className=\"w-5 h-5 text-primary\" />\n    </div>\n    <h3 className=\"text-lg font-semibold text-foreground\">Monitor & debug</h3>\n  </div>\n  <div className=\"bg-muted/30 rounded-lg p-4 font-mono text-sm\">\n    <div className=\"text-muted-foreground mb-1\"># Stream logs</div>\n    <div className=\"text-foreground\">deka logs --follow</div>\n    <div className=\"text-muted-foreground mt-3 mb-1\"># Performance metrics</div>\n    <div className=\"text-foreground\">deka metrics</div>\n  </div>\n</div>\n  </div>\n</section>\n\n{/* Mesh Networking Section */}\n<section>\n  <div className=\"grid lg:grid-cols-2 gap-12 items-center\">\n<div>\n  <div className=\"inline-block bg-primary/10 rounded-full px-4 py-2 mb-4\">\n    <span className=\"text-primary font-semibold text-sm\">MESH NETWORKING</span>\n  </div>\n  <h2 className=\"text-3xl font-bold text-foreground mb-4\">\n    Tailscale-compatible mesh networking\n  </h2>\n  <p className=\"text-lg text-muted-foreground mb-6\">\n    Built-in mesh networking that's compatible with Tailscale. Connect your runtime nodes securely across regions, clouds, or on-premise infrastructure.\n  </p>\n  <ul className=\"space-y-3\">\n    <li className=\"flex items-start gap-3\">\n      <Lock className=\"w-5 h-5 text-primary mt-0.5 flex-shrink-0\" />\n      <span className=\"text-muted-foreground\">Zero-trust security with WireGuard encryption</span>\n    </li>\n    <li className=\"flex items-start gap-3\">\n      <Network className=\"w-5 h-5 text-primary mt-0.5 flex-shrink-0\" />\n      <span className=\"text-muted-foreground\">Automatic peer discovery and NAT traversal</span>\n    </li>\n    <li className=\"flex items-start gap-3\">\n      <Globe2 className=\"w-5 h-5 text-primary mt-0.5 flex-shrink-0\" />\n      <span className=\"text-muted-foreground\">Cross-region connectivity without complex VPN setup</span>\n    </li>\n    <li className=\"flex items-start gap-3\">\n      <Shield className=\"w-5 h-5 text-primary mt-0.5 flex-shrink-0\" />\n      <span className=\"text-muted-foreground\">Compatible with existing Tailscale networks</span>\n    </li>\n  </ul>\n</div>\n\n<div className=\"bg-card border border-border rounded-xl p-8\">\n  <h3 className=\"text-xl font-semibold text-foreground mb-6\">Mesh Network Architecture</h3>\n  <div className=\"space-y-4\">\n    <div className=\"flex items-center gap-4 p-4 bg-muted/30 rounded-lg\">\n      <div className=\"p-3 bg-primary/10 rounded-lg\">\n        <Server className=\"w-6 h-6 text-primary\" />\n      </div>\n      <div>\n        <div className=\"font-semibold text-foreground\">Runtime Node A</div>\n        <div className=\"text-sm text-muted-foreground\">us-east-1 • 100.64.1.2</div>\n      </div>\n    </div>\n    <div className=\"flex items-center justify-center\">\n      <Network className=\"w-6 h-6 text-primary\" />\n    </div>\n    <div className=\"flex items-center gap-4 p-4 bg-muted/30 rounded-lg\">\n      <div className=\"p-3 bg-primary/10 rounded-lg\">\n        <Server className=\"w-6 h-6 text-primary\" />\n      </div>\n      <div>\n        <div className=\"font-semibold text-foreground\">Runtime Node B</div>\n        <div className=\"text-sm text-muted-foreground\">eu-west-1 • 100.64.1.3</div>\n      </div>\n    </div>\n    <div className=\"flex items-center justify-center\">\n      <Network className=\"w-6 h-6 text-primary\" />\n    </div>\n    <div className=\"flex items-center gap-4 p-4 bg-muted/30 rounded-lg\">\n      <div className=\"p-3 bg-primary/10 rounded-lg\">\n        <Server className=\"w-6 h-6 text-primary\" />\n      </div>\n      <div>\n        <div className=\"font-semibold text-foreground\">Runtime Node C</div>\n        <div className=\"text-sm text-muted-foreground\">on-premise • 100.64.1.4</div>\n      </div>\n    </div>\n  </div>\n</div>\n  </div>\n</section>\n\n{/* Framework Agnostic Section */}\n<section>\n  <div className=\"text-center mb-12\">\n<h2 className=\"text-3xl font-bold text-foreground mb-4\">\n  Works with any framework\n</h2>\n<p className=\"text-lg text-muted-foreground max-w-3xl mx-auto\">\n  Deka provides the infrastructure layer. Use React, Vue, Svelte, or any framework you prefer. We support them all by building the runtime they depend on.\n</p>\n  </div>\n\n  <div className=\"grid md:grid-cols-3 gap-6\">\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <Code2 className=\"w-8 h-8 text-primary mb-3\" />\n  <h3 className=\"text-lg font-bold text-foreground mb-2\">Framework agnostic</h3>\n  <p className=\"text-muted-foreground text-sm\">\n    Deploy Next.js, Remix, SvelteKit, or any framework. Deka provides the runtime infrastructure.\n  </p>\n</div>\n\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <Boxes className=\"w-8 h-8 text-primary mb-3\" />\n  <h3 className=\"text-lg font-bold text-foreground mb-2\">Infrastructure primitives</h3>\n  <p className=\"text-muted-foreground text-sm\">\n    Built-in database, queues, cron, and secrets management. Framework handles UI, Deka handles infrastructure.\n  </p>\n</div>\n\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <Zap className=\"w-8 h-8 text-primary mb-3\" />\n  <h3 className=\"text-lg font-bold text-foreground mb-2\">Deploy anywhere</h3>\n  <p className=\"text-muted-foreground text-sm\">\n    Single binary deployment works on bare metal, VMs, containers, or edge locations.\n  </p>\n</div>\n  </div>\n</section>\n\n{/* CTA Section */}\n<section className=\"text-center\">\n  <h2 className=\"text-3xl lg:text-4xl font-bold text-foreground mb-6\">\nComing Soon: Infrastructure that works with everything.\n  </h2>\n  <p className=\"text-lg text-muted-foreground mb-8 max-w-2xl mx-auto\">\nDeka CLI is in active development. Follow our progress and be the first to know when it's ready.\n  </p>\n  <p className=\"text-sm text-muted-foreground\">\n<strong className=\"text-foreground\">Early Prototype:</strong> CLI tools and mesh networking under active development. Public release coming soon.\n  </p>\n</section>\n\n</div>\n",
-    "html": "<p>import { Terminal, Network, Boxes, Zap, Shield, Globe2, Code2, Server, Lock } from 'lucide-react'</p>\n<div className=\"space-y-16\">\n<p>{/* Hero Section */}</p>\n<section className=\"text-center\">\n  <div className=\"inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-2 text-xs font-semibold tracking-[0.2em] text-primary mb-6\">\nDEKA CLI\n  </div>\n  <h1 className=\"text-5xl lg:text-7xl font-bold text-foreground mb-6 leading-tight\">\nInfrastructure as code. Batteries included.\n  </h1>\n  <p className=\"text-xl lg:text-2xl text-muted-foreground mb-12 max-w-3xl mx-auto\">\nCommand-line tools to deploy, manage, and scale your runtime infrastructure. Works with any framework.\n  </p>\n  <div className=\"flex flex-wrap gap-4 justify-center text-sm text-muted-foreground mb-12\">\n<div className=\"flex items-center gap-2\">\n  <Terminal className=\"w-4 h-4 text-primary\" />\n  <span>Single binary deployment</span>\n</div>\n<div className=\"flex items-center gap-2\">\n  <Network className=\"w-4 h-4 text-primary\" />\n  <span>Mesh networking built-in</span>\n</div>\n<div className=\"flex items-center gap-2\">\n  <Shield className=\"w-4 h-4 text-primary\" />\n  <span>Zero-trust security</span>\n</div>\n  </div>\n</section>\n<p>{/* Command Examples */}</p>\n<section>\n  <div className=\"text-center mb-12\">\n<h2 className=\"text-3xl font-bold text-foreground mb-4\">\n  Simple commands, powerful infrastructure\n</h2>\n<p className=\"text-lg text-muted-foreground max-w-3xl mx-auto\">\n  Deploy and manage your runtime with intuitive CLI commands. No complex configuration, just infrastructure that works.\n</p>\n  </div>\n  <div className=\"grid lg:grid-cols-2 gap-6\">\n{/* Deploy */}\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <div className=\"flex items-center gap-3 mb-4\">\n    <div className=\"p-2 bg-primary/10 rounded-lg\">\n      <Zap className=\"w-5 h-5 text-primary\" />\n    </div>\n    <h3 className=\"text-lg font-semibold text-foreground\">Deploy a handler</h3>\n  </div>\n  <div className=\"bg-muted/30 rounded-lg p-4 font-mono text-sm\">\n    <div className=\"text-muted-foreground mb-1\"># Deploy your handler</div>\n    <div className=\"text-foreground\">deka deploy handler.ts</div>\n    <div className=\"text-muted-foreground mt-3 mb-1\"># Deploy with environment</div>\n    <div className=\"text-foreground\">deka deploy handler.ts --env production</div>\n  </div>\n</div>\n<p>{/* Runtime Management */}</p>\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <div className=\"flex items-center gap-3 mb-4\">\n    <div className=\"p-2 bg-primary/10 rounded-lg\">\n      <Server className=\"w-5 h-5 text-primary\" />\n    </div>\n    <h3 className=\"text-lg font-semibold text-foreground\">Manage runtime</h3>\n  </div>\n  <div className=\"bg-muted/30 rounded-lg p-4 font-mono text-sm\">\n    <div className=\"text-muted-foreground mb-1\"># Start runtime</div>\n    <div className=\"text-foreground\">deka start</div>\n    <div className=\"text-muted-foreground mt-3 mb-1\"># Check status</div>\n    <div className=\"text-foreground\">deka status</div>\n  </div>\n</div>\n<p>{/* Mesh Networking */}</p>\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <div className=\"flex items-center gap-3 mb-4\">\n    <div className=\"p-2 bg-primary/10 rounded-lg\">\n      <Network className=\"w-5 h-5 text-primary\" />\n    </div>\n    <h3 className=\"text-lg font-semibold text-foreground\">Join mesh network</h3>\n  </div>\n  <div className=\"bg-muted/30 rounded-lg p-4 font-mono text-sm\">\n    <div className=\"text-muted-foreground mb-1\"># Connect to mesh</div>\n    <div className=\"text-foreground\">deka mesh join</div>\n    <div className=\"text-muted-foreground mt-3 mb-1\"># List peers</div>\n    <div className=\"text-foreground\">deka mesh peers</div>\n  </div>\n</div>\n<p>{/* Logs &#x26; Debug */}</p>\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <div className=\"flex items-center gap-3 mb-4\">\n    <div className=\"p-2 bg-primary/10 rounded-lg\">\n      <Terminal className=\"w-5 h-5 text-primary\" />\n    </div>\n    <h3 className=\"text-lg font-semibold text-foreground\">Monitor & debug</h3>\n  </div>\n  <div className=\"bg-muted/30 rounded-lg p-4 font-mono text-sm\">\n    <div className=\"text-muted-foreground mb-1\"># Stream logs</div>\n    <div className=\"text-foreground\">deka logs --follow</div>\n    <div className=\"text-muted-foreground mt-3 mb-1\"># Performance metrics</div>\n    <div className=\"text-foreground\">deka metrics</div>\n  </div>\n</div>\n  </div>\n</section>\n<p>{/* Mesh Networking Section */}</p>\n<section>\n  <div className=\"grid lg:grid-cols-2 gap-12 items-center\">\n<div>\n  <div className=\"inline-block bg-primary/10 rounded-full px-4 py-2 mb-4\">\n    <span className=\"text-primary font-semibold text-sm\">MESH NETWORKING</span>\n  </div>\n  <h2 className=\"text-3xl font-bold text-foreground mb-4\">\n    Tailscale-compatible mesh networking\n  </h2>\n  <p className=\"text-lg text-muted-foreground mb-6\">\n    Built-in mesh networking that's compatible with Tailscale. Connect your runtime nodes securely across regions, clouds, or on-premise infrastructure.\n  </p>\n  <ul className=\"space-y-3\">\n    <li className=\"flex items-start gap-3\">\n      <Lock className=\"w-5 h-5 text-primary mt-0.5 flex-shrink-0\" />\n      <span className=\"text-muted-foreground\">Zero-trust security with WireGuard encryption</span>\n    </li>\n    <li className=\"flex items-start gap-3\">\n      <Network className=\"w-5 h-5 text-primary mt-0.5 flex-shrink-0\" />\n      <span className=\"text-muted-foreground\">Automatic peer discovery and NAT traversal</span>\n    </li>\n    <li className=\"flex items-start gap-3\">\n      <Globe2 className=\"w-5 h-5 text-primary mt-0.5 flex-shrink-0\" />\n      <span className=\"text-muted-foreground\">Cross-region connectivity without complex VPN setup</span>\n    </li>\n    <li className=\"flex items-start gap-3\">\n      <Shield className=\"w-5 h-5 text-primary mt-0.5 flex-shrink-0\" />\n      <span className=\"text-muted-foreground\">Compatible with existing Tailscale networks</span>\n    </li>\n  </ul>\n</div>\n<div className=\"bg-card border border-border rounded-xl p-8\">\n  <h3 className=\"text-xl font-semibold text-foreground mb-6\">Mesh Network Architecture</h3>\n  <div className=\"space-y-4\">\n    <div className=\"flex items-center gap-4 p-4 bg-muted/30 rounded-lg\">\n      <div className=\"p-3 bg-primary/10 rounded-lg\">\n        <Server className=\"w-6 h-6 text-primary\" />\n      </div>\n      <div>\n        <div className=\"font-semibold text-foreground\">Runtime Node A</div>\n        <div className=\"text-sm text-muted-foreground\">us-east-1 • 100.64.1.2</div>\n      </div>\n    </div>\n    <div className=\"flex items-center justify-center\">\n      <Network className=\"w-6 h-6 text-primary\" />\n    </div>\n    <div className=\"flex items-center gap-4 p-4 bg-muted/30 rounded-lg\">\n      <div className=\"p-3 bg-primary/10 rounded-lg\">\n        <Server className=\"w-6 h-6 text-primary\" />\n      </div>\n      <div>\n        <div className=\"font-semibold text-foreground\">Runtime Node B</div>\n        <div className=\"text-sm text-muted-foreground\">eu-west-1 • 100.64.1.3</div>\n      </div>\n    </div>\n    <div className=\"flex items-center justify-center\">\n      <Network className=\"w-6 h-6 text-primary\" />\n    </div>\n    <div className=\"flex items-center gap-4 p-4 bg-muted/30 rounded-lg\">\n      <div className=\"p-3 bg-primary/10 rounded-lg\">\n        <Server className=\"w-6 h-6 text-primary\" />\n      </div>\n      <div>\n        <div className=\"font-semibold text-foreground\">Runtime Node C</div>\n        <div className=\"text-sm text-muted-foreground\">on-premise • 100.64.1.4</div>\n      </div>\n    </div>\n  </div>\n</div>\n  </div>\n</section>\n<p>{/* Framework Agnostic Section */}</p>\n<section>\n  <div className=\"text-center mb-12\">\n<h2 className=\"text-3xl font-bold text-foreground mb-4\">\n  Works with any framework\n</h2>\n<p className=\"text-lg text-muted-foreground max-w-3xl mx-auto\">\n  Deka provides the infrastructure layer. Use React, Vue, Svelte, or any framework you prefer. We support them all by building the runtime they depend on.\n</p>\n  </div>\n  <div className=\"grid md:grid-cols-3 gap-6\">\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <Code2 className=\"w-8 h-8 text-primary mb-3\" />\n  <h3 className=\"text-lg font-bold text-foreground mb-2\">Framework agnostic</h3>\n  <p className=\"text-muted-foreground text-sm\">\n    Deploy Next.js, Remix, SvelteKit, or any framework. Deka provides the runtime infrastructure.\n  </p>\n</div>\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <Boxes className=\"w-8 h-8 text-primary mb-3\" />\n  <h3 className=\"text-lg font-bold text-foreground mb-2\">Infrastructure primitives</h3>\n  <p className=\"text-muted-foreground text-sm\">\n    Built-in database, queues, cron, and secrets management. Framework handles UI, Deka handles infrastructure.\n  </p>\n</div>\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <Zap className=\"w-8 h-8 text-primary mb-3\" />\n  <h3 className=\"text-lg font-bold text-foreground mb-2\">Deploy anywhere</h3>\n  <p className=\"text-muted-foreground text-sm\">\n    Single binary deployment works on bare metal, VMs, containers, or edge locations.\n  </p>\n</div>\n  </div>\n</section>\n<p>{/* CTA Section */}</p>\n<section className=\"text-center\">\n  <h2 className=\"text-3xl lg:text-4xl font-bold text-foreground mb-6\">\nComing Soon: Infrastructure that works with everything.\n  </h2>\n  <p className=\"text-lg text-muted-foreground mb-8 max-w-2xl mx-auto\">\nDeka CLI is in active development. Follow our progress and be the first to know when it's ready.\n  </p>\n  <p className=\"text-sm text-muted-foreground\">\n<strong className=\"text-foreground\">Early Prototype:</strong> CLI tools and mesh networking under active development. Public release coming soon.\n  </p>\n</section>\n</div>\n",
-    "codeBlocks": []
-  },
-  {
-    "slug": [
-      "stop"
-    ],
-    "metadata": {
-      "title": "deka stop",
-      "description": "Stop services and clean up volumes"
-    },
-    "content": "\n# deka stop\n\nStop Deka services or specific services by name.\n\n```bash\ndeka stop <services...>\n```\n\n## Options\n\n- `--volumes` - Remove volumes (data will be lost)\n\nTo stop everything and remove volumes:\n\n```bash\ndeka stop all --volumes\n```\n",
-    "html": "<h1>deka stop</h1>\n<p>Stop Deka services or specific services by name.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>--volumes</code> - Remove volumes (data will be lost)</li>\n</ul>\n<p>To stop everything and remove volumes:</p>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n",
-    "codeBlocks": [
-      {
-        "lang": "bash",
-        "code": "deka stop <services...>"
-      },
-      {
-        "lang": "bash",
-        "code": "deka stop all --volumes"
-      }
-    ]
-  },
-  {
-    "slug": [
-      "whoami"
-    ],
-    "metadata": {
-      "title": "deka whoami",
-      "description": "Show current user and role"
-    },
-    "content": "\n# deka whoami\n\nShow the current user and role on this instance.\n\n```bash\ndeka whoami\n```\n\n## Options\n\n- `-s, --server <url>` - Deka API URL (default: http://localhost:8520)\n\n## Example output\n\n```text\n$ deka whoami\n@samifouad (admin)\n```\n",
-    "html": "<h1>deka whoami</h1>\n<p>Show the current user and role on this instance.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>-s, --server &#x3C;url></code> - Deka API URL (default: http://localhost:8520)</li>\n</ul>\n<h2>Example output</h2>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n",
-    "codeBlocks": [
-      {
-        "lang": "bash",
-        "code": "deka whoami"
-      },
-      {
-        "lang": "text",
-        "code": "$ deka whoami\n@samifouad (admin)"
-      }
-    ]
-  },
-  {
-    "slug": [
-      "repo-list"
-    ],
-    "metadata": {
-      "title": "deka repo list",
-      "description": "List repositories"
-    },
-    "content": "\n# deka repo list\n\nList repositories on the deka server.\n\n```bash\ndeka repo list\n```\n\nAliases: `deka repo ls`\n\n## Options\n\n- `-q, --jq <expression>` - Filter JSON output using a jq expression\n- `--json [fields]` - Output JSON with the specified fields\n- `-l, --language <lang>` - Filter by primary coding language\n- `--topic <topics...>` - Filter by topic\n\n## Example output\n\n```text\n$ deka repo list\ncore/runtime\ncore/identity\napps/deka-dashboard\n```\n",
-    "html": "<h1>deka repo list</h1>\n<p>List repositories on the deka server.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<p>Aliases: <code>deka repo ls</code></p>\n<h2>Options</h2>\n<ul>\n<li><code>-q, --jq &#x3C;expression></code> - Filter JSON output using a jq expression</li>\n<li><code>--json [fields]</code> - Output JSON with the specified fields</li>\n<li><code>-l, --language &#x3C;lang></code> - Filter by primary coding language</li>\n<li><code>--topic &#x3C;topics...></code> - Filter by topic</li>\n</ul>\n<h2>Example output</h2>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n",
-    "codeBlocks": [
-      {
-        "lang": "bash",
-        "code": "deka repo list"
-      },
-      {
-        "lang": "text",
-        "code": "$ deka repo list\ncore/runtime\ncore/identity\napps/deka-dashboard"
-      }
-    ]
-  },
-  {
-    "slug": [
-      "t4-buckets"
-    ],
-    "metadata": {
-      "title": "deka t4 buckets",
-      "description": "List T4 buckets"
-    },
-    "content": "\n# deka t4 buckets\n\nList all buckets in T4 storage.\n\n```bash\ndeka t4 buckets\n```\n\n## Options\n\n- `-s, --server <url>` - Deka API URL\n- `--json` - Output JSON\n",
-    "html": "<h1>deka t4 buckets</h1>\n<p>List all buckets in T4 storage.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>-s, --server &#x3C;url></code> - Deka API URL</li>\n<li><code>--json</code> - Output JSON</li>\n</ul>\n",
-    "codeBlocks": [
-      {
-        "lang": "bash",
-        "code": "deka t4 buckets"
-      }
-    ]
-  },
-  {
-    "slug": [
-      "restart"
-    ],
-    "metadata": {
-      "title": "deka restart",
-      "description": "Restart services"
-    },
-    "content": "\n# deka restart\n\nRestart one or more services.\n\n```bash\ndeka restart <services...>\n```\n\nAliases: `deka r`\n",
-    "html": "<h1>deka restart</h1>\n<p>Restart one or more services.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<p>Aliases: <code>deka r</code></p>\n",
-    "codeBlocks": [
-      {
-        "lang": "bash",
-        "code": "deka restart <services...>"
+        "code": "deka c exec edge ls -la"
       }
     ]
   },
@@ -380,43 +140,165 @@
   },
   {
     "slug": [
-      "status"
+      "monitor"
     ],
     "metadata": {
-      "title": "deka status",
-      "description": "Show service status and health"
+      "title": "deka monitor",
+      "description": "Automatic update checking"
     },
-    "content": "\n# deka status\n\nShow the health and runtime status of each service.\n\n```bash\ndeka status\n```\n\nExample output:\n\n```text\n● [postgres] healthy :5432\n● [redis] healthy :6379\n● [edge] running :8506\n● [t4] running :8507\n● [deka-git] running :8508\n● [deploy] running :8509\n```\n\n## Example output\n\n```text\n$ deka status\n● [postgres] healthy :5432\n● [redis] healthy :6379\n● [edge] running :8506\n● [t4] running :8507\n● [deka-git] running :8508\n● [deploy] running :8509\n```\n",
-    "html": "<h1>deka status</h1>\n<p>Show the health and runtime status of each service.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<p>Example output:</p>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n<h2>Example output</h2>\n<div class=\"code-block-placeholder\" data-index=\"2\"></div>\n",
+    "content": "\n# deka monitor\n\nManage automatic update checks (runs every 5 minutes).\n\n## Start monitoring\n\n```bash\ndeka monitor start\n```\n\n## Options\n\n- `--upgrade` - Use upgrade instead of update (restarts containers)\n\n## Stop monitoring\n\n```bash\ndeka monitor stop\n```\n\n## Status\n\n```bash\ndeka monitor status\n```\n",
+    "html": "<h1>deka monitor</h1>\n<p>Manage automatic update checks (runs every 5 minutes).</p>\n<h2>Start monitoring</h2>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>--upgrade</code> - Use upgrade instead of update (restarts containers)</li>\n</ul>\n<h2>Stop monitoring</h2>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n<h2>Status</h2>\n<div class=\"code-block-placeholder\" data-index=\"2\"></div>\n",
     "codeBlocks": [
       {
         "lang": "bash",
-        "code": "deka status"
+        "code": "deka monitor start"
       },
       {
-        "lang": "text",
-        "code": "● [postgres] healthy :5432\n● [redis] healthy :6379\n● [edge] running :8506\n● [t4] running :8507\n● [deka-git] running :8508\n● [deploy] running :8509"
+        "lang": "bash",
+        "code": "deka monitor stop"
       },
       {
-        "lang": "text",
-        "code": "$ deka status\n● [postgres] healthy :5432\n● [redis] healthy :6379\n● [edge] running :8506\n● [t4] running :8507\n● [deka-git] running :8508\n● [deploy] running :8509"
+        "lang": "bash",
+        "code": "deka monitor status"
       }
     ]
   },
   {
     "slug": [
-      "t4-create"
+      "overview"
     ],
     "metadata": {
-      "title": "deka t4 create",
-      "description": "Create a T4 bucket"
+      "title": "Deka CLI",
+      "description": "Infrastructure as code. Batteries included."
     },
-    "content": "\n# deka t4 create\n\nCreate a new bucket in T4 storage.\n\n```bash\ndeka t4 create <name>\n```\n\n## Options\n\n- `-s, --server <url>` - Deka API URL\n- `-p, --public` - Enable public read access\n",
-    "html": "<h1>deka t4 create</h1>\n<p>Create a new bucket in T4 storage.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>-s, --server &#x3C;url></code> - Deka API URL</li>\n<li><code>-p, --public</code> - Enable public read access</li>\n</ul>\n",
+    "content": "\nimport { Terminal, Network, Boxes, Zap, Shield, Globe2, Code2, Server, Lock } from 'lucide-react'\n\n<div className=\"space-y-16\">\n\n{/* Hero Section */}\n<section className=\"text-center\">\n  <div className=\"inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-2 text-xs font-semibold tracking-[0.2em] text-primary mb-6\">\nDEKA CLI\n  </div>\n  <h1 className=\"text-5xl lg:text-7xl font-bold text-foreground mb-6 leading-tight\">\nInfrastructure as code. Batteries included.\n  </h1>\n  <p className=\"text-xl lg:text-2xl text-muted-foreground mb-12 max-w-3xl mx-auto\">\nCommand-line tools to deploy, manage, and scale your runtime infrastructure. Works with any framework.\n  </p>\n\n  <div className=\"flex flex-wrap gap-4 justify-center text-sm text-muted-foreground mb-12\">\n<div className=\"flex items-center gap-2\">\n  <Terminal className=\"w-4 h-4 text-primary\" />\n  <span>Single binary deployment</span>\n</div>\n<div className=\"flex items-center gap-2\">\n  <Network className=\"w-4 h-4 text-primary\" />\n  <span>Mesh networking built-in</span>\n</div>\n<div className=\"flex items-center gap-2\">\n  <Shield className=\"w-4 h-4 text-primary\" />\n  <span>Zero-trust security</span>\n</div>\n  </div>\n</section>\n\n{/* Command Examples */}\n<section>\n  <div className=\"text-center mb-12\">\n<h2 className=\"text-3xl font-bold text-foreground mb-4\">\n  Simple commands, powerful infrastructure\n</h2>\n<p className=\"text-lg text-muted-foreground max-w-3xl mx-auto\">\n  Deploy and manage your runtime with intuitive CLI commands. No complex configuration, just infrastructure that works.\n</p>\n  </div>\n\n  <div className=\"grid lg:grid-cols-2 gap-6\">\n{/* Deploy */}\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <div className=\"flex items-center gap-3 mb-4\">\n    <div className=\"p-2 bg-primary/10 rounded-lg\">\n      <Zap className=\"w-5 h-5 text-primary\" />\n    </div>\n    <h3 className=\"text-lg font-semibold text-foreground\">Deploy a handler</h3>\n  </div>\n  <div className=\"bg-muted/30 rounded-lg p-4 font-mono text-sm\">\n    <div className=\"text-muted-foreground mb-1\"># Deploy your handler</div>\n    <div className=\"text-foreground\">deka deploy handler.ts</div>\n    <div className=\"text-muted-foreground mt-3 mb-1\"># Deploy with environment</div>\n    <div className=\"text-foreground\">deka deploy handler.ts --env production</div>\n  </div>\n</div>\n\n{/* Runtime Management */}\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <div className=\"flex items-center gap-3 mb-4\">\n    <div className=\"p-2 bg-primary/10 rounded-lg\">\n      <Server className=\"w-5 h-5 text-primary\" />\n    </div>\n    <h3 className=\"text-lg font-semibold text-foreground\">Manage runtime</h3>\n  </div>\n  <div className=\"bg-muted/30 rounded-lg p-4 font-mono text-sm\">\n    <div className=\"text-muted-foreground mb-1\"># Start runtime</div>\n    <div className=\"text-foreground\">deka start</div>\n    <div className=\"text-muted-foreground mt-3 mb-1\"># Check status</div>\n    <div className=\"text-foreground\">deka status</div>\n  </div>\n</div>\n\n{/* Mesh Networking */}\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <div className=\"flex items-center gap-3 mb-4\">\n    <div className=\"p-2 bg-primary/10 rounded-lg\">\n      <Network className=\"w-5 h-5 text-primary\" />\n    </div>\n    <h3 className=\"text-lg font-semibold text-foreground\">Join mesh network</h3>\n  </div>\n  <div className=\"bg-muted/30 rounded-lg p-4 font-mono text-sm\">\n    <div className=\"text-muted-foreground mb-1\"># Connect to mesh</div>\n    <div className=\"text-foreground\">deka mesh join</div>\n    <div className=\"text-muted-foreground mt-3 mb-1\"># List peers</div>\n    <div className=\"text-foreground\">deka mesh peers</div>\n  </div>\n</div>\n\n{/* Logs & Debug */}\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <div className=\"flex items-center gap-3 mb-4\">\n    <div className=\"p-2 bg-primary/10 rounded-lg\">\n      <Terminal className=\"w-5 h-5 text-primary\" />\n    </div>\n    <h3 className=\"text-lg font-semibold text-foreground\">Monitor & debug</h3>\n  </div>\n  <div className=\"bg-muted/30 rounded-lg p-4 font-mono text-sm\">\n    <div className=\"text-muted-foreground mb-1\"># Stream logs</div>\n    <div className=\"text-foreground\">deka logs --follow</div>\n    <div className=\"text-muted-foreground mt-3 mb-1\"># Performance metrics</div>\n    <div className=\"text-foreground\">deka metrics</div>\n  </div>\n</div>\n  </div>\n</section>\n\n{/* Mesh Networking Section */}\n<section>\n  <div className=\"grid lg:grid-cols-2 gap-12 items-center\">\n<div>\n  <div className=\"inline-block bg-primary/10 rounded-full px-4 py-2 mb-4\">\n    <span className=\"text-primary font-semibold text-sm\">MESH NETWORKING</span>\n  </div>\n  <h2 className=\"text-3xl font-bold text-foreground mb-4\">\n    Tailscale-compatible mesh networking\n  </h2>\n  <p className=\"text-lg text-muted-foreground mb-6\">\n    Built-in mesh networking that's compatible with Tailscale. Connect your runtime nodes securely across regions, clouds, or on-premise infrastructure.\n  </p>\n  <ul className=\"space-y-3\">\n    <li className=\"flex items-start gap-3\">\n      <Lock className=\"w-5 h-5 text-primary mt-0.5 flex-shrink-0\" />\n      <span className=\"text-muted-foreground\">Zero-trust security with WireGuard encryption</span>\n    </li>\n    <li className=\"flex items-start gap-3\">\n      <Network className=\"w-5 h-5 text-primary mt-0.5 flex-shrink-0\" />\n      <span className=\"text-muted-foreground\">Automatic peer discovery and NAT traversal</span>\n    </li>\n    <li className=\"flex items-start gap-3\">\n      <Globe2 className=\"w-5 h-5 text-primary mt-0.5 flex-shrink-0\" />\n      <span className=\"text-muted-foreground\">Cross-region connectivity without complex VPN setup</span>\n    </li>\n    <li className=\"flex items-start gap-3\">\n      <Shield className=\"w-5 h-5 text-primary mt-0.5 flex-shrink-0\" />\n      <span className=\"text-muted-foreground\">Compatible with existing Tailscale networks</span>\n    </li>\n  </ul>\n</div>\n\n<div className=\"bg-card border border-border rounded-xl p-8\">\n  <h3 className=\"text-xl font-semibold text-foreground mb-6\">Mesh Network Architecture</h3>\n  <div className=\"space-y-4\">\n    <div className=\"flex items-center gap-4 p-4 bg-muted/30 rounded-lg\">\n      <div className=\"p-3 bg-primary/10 rounded-lg\">\n        <Server className=\"w-6 h-6 text-primary\" />\n      </div>\n      <div>\n        <div className=\"font-semibold text-foreground\">Runtime Node A</div>\n        <div className=\"text-sm text-muted-foreground\">us-east-1 • 100.64.1.2</div>\n      </div>\n    </div>\n    <div className=\"flex items-center justify-center\">\n      <Network className=\"w-6 h-6 text-primary\" />\n    </div>\n    <div className=\"flex items-center gap-4 p-4 bg-muted/30 rounded-lg\">\n      <div className=\"p-3 bg-primary/10 rounded-lg\">\n        <Server className=\"w-6 h-6 text-primary\" />\n      </div>\n      <div>\n        <div className=\"font-semibold text-foreground\">Runtime Node B</div>\n        <div className=\"text-sm text-muted-foreground\">eu-west-1 • 100.64.1.3</div>\n      </div>\n    </div>\n    <div className=\"flex items-center justify-center\">\n      <Network className=\"w-6 h-6 text-primary\" />\n    </div>\n    <div className=\"flex items-center gap-4 p-4 bg-muted/30 rounded-lg\">\n      <div className=\"p-3 bg-primary/10 rounded-lg\">\n        <Server className=\"w-6 h-6 text-primary\" />\n      </div>\n      <div>\n        <div className=\"font-semibold text-foreground\">Runtime Node C</div>\n        <div className=\"text-sm text-muted-foreground\">on-premise • 100.64.1.4</div>\n      </div>\n    </div>\n  </div>\n</div>\n  </div>\n</section>\n\n{/* Framework Agnostic Section */}\n<section>\n  <div className=\"text-center mb-12\">\n<h2 className=\"text-3xl font-bold text-foreground mb-4\">\n  Works with any framework\n</h2>\n<p className=\"text-lg text-muted-foreground max-w-3xl mx-auto\">\n  Deka provides the infrastructure layer. Use React, Vue, Svelte, or any framework you prefer. We support them all by building the runtime they depend on.\n</p>\n  </div>\n\n  <div className=\"grid md:grid-cols-3 gap-6\">\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <Code2 className=\"w-8 h-8 text-primary mb-3\" />\n  <h3 className=\"text-lg font-bold text-foreground mb-2\">Framework agnostic</h3>\n  <p className=\"text-muted-foreground text-sm\">\n    Deploy Next.js, Remix, SvelteKit, or any framework. Deka provides the runtime infrastructure.\n  </p>\n</div>\n\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <Boxes className=\"w-8 h-8 text-primary mb-3\" />\n  <h3 className=\"text-lg font-bold text-foreground mb-2\">Infrastructure primitives</h3>\n  <p className=\"text-muted-foreground text-sm\">\n    Built-in database, queues, cron, and secrets management. Framework handles UI, Deka handles infrastructure.\n  </p>\n</div>\n\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <Zap className=\"w-8 h-8 text-primary mb-3\" />\n  <h3 className=\"text-lg font-bold text-foreground mb-2\">Deploy anywhere</h3>\n  <p className=\"text-muted-foreground text-sm\">\n    Single binary deployment works on bare metal, VMs, containers, or edge locations.\n  </p>\n</div>\n  </div>\n</section>\n\n{/* CTA Section */}\n<section className=\"text-center\">\n  <h2 className=\"text-3xl lg:text-4xl font-bold text-foreground mb-6\">\nComing Soon: Infrastructure that works with everything.\n  </h2>\n  <p className=\"text-lg text-muted-foreground mb-8 max-w-2xl mx-auto\">\nDeka CLI is in active development. Follow our progress and be the first to know when it's ready.\n  </p>\n  <p className=\"text-sm text-muted-foreground\">\n<strong className=\"text-foreground\">Early Prototype:</strong> CLI tools and mesh networking under active development. Public release coming soon.\n  </p>\n</section>\n\n</div>\n",
+    "html": "<p>import { Terminal, Network, Boxes, Zap, Shield, Globe2, Code2, Server, Lock } from 'lucide-react'</p>\n<div className=\"space-y-16\">\n<p>{/* Hero Section */}</p>\n<section className=\"text-center\">\n  <div className=\"inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-2 text-xs font-semibold tracking-[0.2em] text-primary mb-6\">\nDEKA CLI\n  </div>\n  <h1 className=\"text-5xl lg:text-7xl font-bold text-foreground mb-6 leading-tight\">\nInfrastructure as code. Batteries included.\n  </h1>\n  <p className=\"text-xl lg:text-2xl text-muted-foreground mb-12 max-w-3xl mx-auto\">\nCommand-line tools to deploy, manage, and scale your runtime infrastructure. Works with any framework.\n  </p>\n  <div className=\"flex flex-wrap gap-4 justify-center text-sm text-muted-foreground mb-12\">\n<div className=\"flex items-center gap-2\">\n  <Terminal className=\"w-4 h-4 text-primary\" />\n  <span>Single binary deployment</span>\n</div>\n<div className=\"flex items-center gap-2\">\n  <Network className=\"w-4 h-4 text-primary\" />\n  <span>Mesh networking built-in</span>\n</div>\n<div className=\"flex items-center gap-2\">\n  <Shield className=\"w-4 h-4 text-primary\" />\n  <span>Zero-trust security</span>\n</div>\n  </div>\n</section>\n<p>{/* Command Examples */}</p>\n<section>\n  <div className=\"text-center mb-12\">\n<h2 className=\"text-3xl font-bold text-foreground mb-4\">\n  Simple commands, powerful infrastructure\n</h2>\n<p className=\"text-lg text-muted-foreground max-w-3xl mx-auto\">\n  Deploy and manage your runtime with intuitive CLI commands. No complex configuration, just infrastructure that works.\n</p>\n  </div>\n  <div className=\"grid lg:grid-cols-2 gap-6\">\n{/* Deploy */}\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <div className=\"flex items-center gap-3 mb-4\">\n    <div className=\"p-2 bg-primary/10 rounded-lg\">\n      <Zap className=\"w-5 h-5 text-primary\" />\n    </div>\n    <h3 className=\"text-lg font-semibold text-foreground\">Deploy a handler</h3>\n  </div>\n  <div className=\"bg-muted/30 rounded-lg p-4 font-mono text-sm\">\n    <div className=\"text-muted-foreground mb-1\"># Deploy your handler</div>\n    <div className=\"text-foreground\">deka deploy handler.ts</div>\n    <div className=\"text-muted-foreground mt-3 mb-1\"># Deploy with environment</div>\n    <div className=\"text-foreground\">deka deploy handler.ts --env production</div>\n  </div>\n</div>\n<p>{/* Runtime Management */}</p>\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <div className=\"flex items-center gap-3 mb-4\">\n    <div className=\"p-2 bg-primary/10 rounded-lg\">\n      <Server className=\"w-5 h-5 text-primary\" />\n    </div>\n    <h3 className=\"text-lg font-semibold text-foreground\">Manage runtime</h3>\n  </div>\n  <div className=\"bg-muted/30 rounded-lg p-4 font-mono text-sm\">\n    <div className=\"text-muted-foreground mb-1\"># Start runtime</div>\n    <div className=\"text-foreground\">deka start</div>\n    <div className=\"text-muted-foreground mt-3 mb-1\"># Check status</div>\n    <div className=\"text-foreground\">deka status</div>\n  </div>\n</div>\n<p>{/* Mesh Networking */}</p>\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <div className=\"flex items-center gap-3 mb-4\">\n    <div className=\"p-2 bg-primary/10 rounded-lg\">\n      <Network className=\"w-5 h-5 text-primary\" />\n    </div>\n    <h3 className=\"text-lg font-semibold text-foreground\">Join mesh network</h3>\n  </div>\n  <div className=\"bg-muted/30 rounded-lg p-4 font-mono text-sm\">\n    <div className=\"text-muted-foreground mb-1\"># Connect to mesh</div>\n    <div className=\"text-foreground\">deka mesh join</div>\n    <div className=\"text-muted-foreground mt-3 mb-1\"># List peers</div>\n    <div className=\"text-foreground\">deka mesh peers</div>\n  </div>\n</div>\n<p>{/* Logs &#x26; Debug */}</p>\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <div className=\"flex items-center gap-3 mb-4\">\n    <div className=\"p-2 bg-primary/10 rounded-lg\">\n      <Terminal className=\"w-5 h-5 text-primary\" />\n    </div>\n    <h3 className=\"text-lg font-semibold text-foreground\">Monitor & debug</h3>\n  </div>\n  <div className=\"bg-muted/30 rounded-lg p-4 font-mono text-sm\">\n    <div className=\"text-muted-foreground mb-1\"># Stream logs</div>\n    <div className=\"text-foreground\">deka logs --follow</div>\n    <div className=\"text-muted-foreground mt-3 mb-1\"># Performance metrics</div>\n    <div className=\"text-foreground\">deka metrics</div>\n  </div>\n</div>\n  </div>\n</section>\n<p>{/* Mesh Networking Section */}</p>\n<section>\n  <div className=\"grid lg:grid-cols-2 gap-12 items-center\">\n<div>\n  <div className=\"inline-block bg-primary/10 rounded-full px-4 py-2 mb-4\">\n    <span className=\"text-primary font-semibold text-sm\">MESH NETWORKING</span>\n  </div>\n  <h2 className=\"text-3xl font-bold text-foreground mb-4\">\n    Tailscale-compatible mesh networking\n  </h2>\n  <p className=\"text-lg text-muted-foreground mb-6\">\n    Built-in mesh networking that's compatible with Tailscale. Connect your runtime nodes securely across regions, clouds, or on-premise infrastructure.\n  </p>\n  <ul className=\"space-y-3\">\n    <li className=\"flex items-start gap-3\">\n      <Lock className=\"w-5 h-5 text-primary mt-0.5 flex-shrink-0\" />\n      <span className=\"text-muted-foreground\">Zero-trust security with WireGuard encryption</span>\n    </li>\n    <li className=\"flex items-start gap-3\">\n      <Network className=\"w-5 h-5 text-primary mt-0.5 flex-shrink-0\" />\n      <span className=\"text-muted-foreground\">Automatic peer discovery and NAT traversal</span>\n    </li>\n    <li className=\"flex items-start gap-3\">\n      <Globe2 className=\"w-5 h-5 text-primary mt-0.5 flex-shrink-0\" />\n      <span className=\"text-muted-foreground\">Cross-region connectivity without complex VPN setup</span>\n    </li>\n    <li className=\"flex items-start gap-3\">\n      <Shield className=\"w-5 h-5 text-primary mt-0.5 flex-shrink-0\" />\n      <span className=\"text-muted-foreground\">Compatible with existing Tailscale networks</span>\n    </li>\n  </ul>\n</div>\n<div className=\"bg-card border border-border rounded-xl p-8\">\n  <h3 className=\"text-xl font-semibold text-foreground mb-6\">Mesh Network Architecture</h3>\n  <div className=\"space-y-4\">\n    <div className=\"flex items-center gap-4 p-4 bg-muted/30 rounded-lg\">\n      <div className=\"p-3 bg-primary/10 rounded-lg\">\n        <Server className=\"w-6 h-6 text-primary\" />\n      </div>\n      <div>\n        <div className=\"font-semibold text-foreground\">Runtime Node A</div>\n        <div className=\"text-sm text-muted-foreground\">us-east-1 • 100.64.1.2</div>\n      </div>\n    </div>\n    <div className=\"flex items-center justify-center\">\n      <Network className=\"w-6 h-6 text-primary\" />\n    </div>\n    <div className=\"flex items-center gap-4 p-4 bg-muted/30 rounded-lg\">\n      <div className=\"p-3 bg-primary/10 rounded-lg\">\n        <Server className=\"w-6 h-6 text-primary\" />\n      </div>\n      <div>\n        <div className=\"font-semibold text-foreground\">Runtime Node B</div>\n        <div className=\"text-sm text-muted-foreground\">eu-west-1 • 100.64.1.3</div>\n      </div>\n    </div>\n    <div className=\"flex items-center justify-center\">\n      <Network className=\"w-6 h-6 text-primary\" />\n    </div>\n    <div className=\"flex items-center gap-4 p-4 bg-muted/30 rounded-lg\">\n      <div className=\"p-3 bg-primary/10 rounded-lg\">\n        <Server className=\"w-6 h-6 text-primary\" />\n      </div>\n      <div>\n        <div className=\"font-semibold text-foreground\">Runtime Node C</div>\n        <div className=\"text-sm text-muted-foreground\">on-premise • 100.64.1.4</div>\n      </div>\n    </div>\n  </div>\n</div>\n  </div>\n</section>\n<p>{/* Framework Agnostic Section */}</p>\n<section>\n  <div className=\"text-center mb-12\">\n<h2 className=\"text-3xl font-bold text-foreground mb-4\">\n  Works with any framework\n</h2>\n<p className=\"text-lg text-muted-foreground max-w-3xl mx-auto\">\n  Deka provides the infrastructure layer. Use React, Vue, Svelte, or any framework you prefer. We support them all by building the runtime they depend on.\n</p>\n  </div>\n  <div className=\"grid md:grid-cols-3 gap-6\">\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <Code2 className=\"w-8 h-8 text-primary mb-3\" />\n  <h3 className=\"text-lg font-bold text-foreground mb-2\">Framework agnostic</h3>\n  <p className=\"text-muted-foreground text-sm\">\n    Deploy Next.js, Remix, SvelteKit, or any framework. Deka provides the runtime infrastructure.\n  </p>\n</div>\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <Boxes className=\"w-8 h-8 text-primary mb-3\" />\n  <h3 className=\"text-lg font-bold text-foreground mb-2\">Infrastructure primitives</h3>\n  <p className=\"text-muted-foreground text-sm\">\n    Built-in database, queues, cron, and secrets management. Framework handles UI, Deka handles infrastructure.\n  </p>\n</div>\n<div className=\"bg-card border border-border rounded-lg p-6\">\n  <Zap className=\"w-8 h-8 text-primary mb-3\" />\n  <h3 className=\"text-lg font-bold text-foreground mb-2\">Deploy anywhere</h3>\n  <p className=\"text-muted-foreground text-sm\">\n    Single binary deployment works on bare metal, VMs, containers, or edge locations.\n  </p>\n</div>\n  </div>\n</section>\n<p>{/* CTA Section */}</p>\n<section className=\"text-center\">\n  <h2 className=\"text-3xl lg:text-4xl font-bold text-foreground mb-6\">\nComing Soon: Infrastructure that works with everything.\n  </h2>\n  <p className=\"text-lg text-muted-foreground mb-8 max-w-2xl mx-auto\">\nDeka CLI is in active development. Follow our progress and be the first to know when it's ready.\n  </p>\n  <p className=\"text-sm text-muted-foreground\">\n<strong className=\"text-foreground\">Early Prototype:</strong> CLI tools and mesh networking under active development. Public release coming soon.\n  </p>\n</section>\n</div>\n",
+    "codeBlocks": []
+  },
+  {
+    "slug": [
+      "ps"
+    ],
+    "metadata": {
+      "title": "deka c ps",
+      "description": "List containers via deka-agent"
+    },
+    "content": "\n# deka c ps\n\nList containers managed by the deka-agent.\n\n```bash\ndeka c ps\n```\n\n## Options\n\n- `-a, --all` - Show all containers (including stopped)\n- `--json` - Output JSON\n\n## Example output\n\n```text\n$ deka c ps\nNAME        IMAGE                          STATUS\nedge        ghcr.io/tananetwork/edge:1.12  running\npostgres    postgres:16                    running\n```\n",
+    "html": "<h1>deka c ps</h1>\n<p>List containers managed by the deka-agent.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>-a, --all</code> - Show all containers (including stopped)</li>\n<li><code>--json</code> - Output JSON</li>\n</ul>\n<h2>Example output</h2>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n",
     "codeBlocks": [
       {
         "lang": "bash",
-        "code": "deka t4 create <name>"
+        "code": "deka c ps"
+      },
+      {
+        "lang": "text",
+        "code": "$ deka c ps\nNAME        IMAGE                          STATUS\nedge        ghcr.io/tananetwork/edge:1.12  running\npostgres    postgres:16                    running"
+      }
+    ]
+  },
+  {
+    "slug": [
+      "repo-delete"
+    ],
+    "metadata": {
+      "title": "deka repo delete",
+      "description": "Delete a repository"
+    },
+    "content": "\n# deka repo delete\n\nDelete a repository from the deka server.\n\n```bash\ndeka repo delete [repo]\n```\n\n## Options\n\n- `--yes` - Skip confirmation (only when repo is specified)\n",
+    "html": "<h1>deka repo delete</h1>\n<p>Delete a repository from the deka server.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>--yes</code> - Skip confirmation (only when repo is specified)</li>\n</ul>\n",
+    "codeBlocks": [
+      {
+        "lang": "bash",
+        "code": "deka repo delete [repo]"
+      }
+    ]
+  },
+  {
+    "slug": [
+      "repo-import"
+    ],
+    "metadata": {
+      "title": "deka repo import",
+      "description": "Import a GitHub repository"
+    },
+    "content": "\n# deka repo import\n\nImport a GitHub repository with issues and pull requests.\n\n```bash\ndeka repo import <source>\n```\n\n## Options\n\n- `-s, --server <url>` - Deka server URL (default: http://localhost:9090)\n",
+    "html": "<h1>deka repo import</h1>\n<p>Import a GitHub repository with issues and pull requests.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>-s, --server &#x3C;url></code> - Deka server URL (default: http://localhost:9090)</li>\n</ul>\n",
+    "codeBlocks": [
+      {
+        "lang": "bash",
+        "code": "deka repo import <source>"
+      }
+    ]
+  },
+  {
+    "slug": [
+      "repo-list"
+    ],
+    "metadata": {
+      "title": "deka repo list",
+      "description": "List repositories"
+    },
+    "content": "\n# deka repo list\n\nList repositories on the deka server.\n\n```bash\ndeka repo list\n```\n\nAliases: `deka repo ls`\n\n## Options\n\n- `-q, --jq <expression>` - Filter JSON output using a jq expression\n- `--json [fields]` - Output JSON with the specified fields\n- `-l, --language <lang>` - Filter by primary coding language\n- `--topic <topics...>` - Filter by topic\n\n## Example output\n\n```text\n$ deka repo list\ncore/runtime\ncore/identity\napps/deka-dashboard\n```\n",
+    "html": "<h1>deka repo list</h1>\n<p>List repositories on the deka server.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<p>Aliases: <code>deka repo ls</code></p>\n<h2>Options</h2>\n<ul>\n<li><code>-q, --jq &#x3C;expression></code> - Filter JSON output using a jq expression</li>\n<li><code>--json [fields]</code> - Output JSON with the specified fields</li>\n<li><code>-l, --language &#x3C;lang></code> - Filter by primary coding language</li>\n<li><code>--topic &#x3C;topics...></code> - Filter by topic</li>\n</ul>\n<h2>Example output</h2>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n",
+    "codeBlocks": [
+      {
+        "lang": "bash",
+        "code": "deka repo list"
+      },
+      {
+        "lang": "text",
+        "code": "$ deka repo list\ncore/runtime\ncore/identity\napps/deka-dashboard"
+      }
+    ]
+  },
+  {
+    "slug": [
+      "repo-view"
+    ],
+    "metadata": {
+      "title": "deka repo view",
+      "description": "View repository details"
+    },
+    "content": "\n# deka repo view\n\nView details about a repository.\n\n```bash\ndeka repo view [repo]\n```\n\n## Options\n\n- `--json [fields]` - Output JSON with the specified fields\n",
+    "html": "<h1>deka repo view</h1>\n<p>View details about a repository.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>--json [fields]</code> - Output JSON with the specified fields</li>\n</ul>\n",
+    "codeBlocks": [
+      {
+        "lang": "bash",
+        "code": "deka repo view [repo]"
+      }
+    ]
+  },
+  {
+    "slug": [
+      "restart"
+    ],
+    "metadata": {
+      "title": "deka restart",
+      "description": "Restart services"
+    },
+    "content": "\n# deka restart\n\nRestart one or more services.\n\n```bash\ndeka restart <services...>\n```\n\nAliases: `deka r`\n",
+    "html": "<h1>deka restart</h1>\n<p>Restart one or more services.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<p>Aliases: <code>deka r</code></p>\n",
+    "codeBlocks": [
+      {
+        "lang": "bash",
+        "code": "deka restart <services...>"
+      }
+    ]
+  },
+  {
+    "slug": [
+      "rm"
+    ],
+    "metadata": {
+      "title": "deka c rm",
+      "description": "Remove a container"
+    },
+    "content": "\n# deka c rm\n\nRemove a container managed by deka-agent.\n\n```bash\ndeka c rm <container>\n```\n\n## Options\n\n- `-f, --force` - Force removal (kills if running)\n- `-y, --yes` - Skip confirmation\n",
+    "html": "<h1>deka c rm</h1>\n<p>Remove a container managed by deka-agent.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>-f, --force</code> - Force removal (kills if running)</li>\n<li><code>-y, --yes</code> - Skip confirmation</li>\n</ul>\n",
+    "codeBlocks": [
+      {
+        "lang": "bash",
+        "code": "deka c rm <container>"
       }
     ]
   },
@@ -447,18 +329,22 @@
   },
   {
     "slug": [
-      "user-add"
+      "setup"
     ],
     "metadata": {
-      "title": "deka user add",
-      "description": "Add a user to this instance"
+      "title": "deka setup",
+      "description": "Interactive first-run configuration"
     },
-    "content": "\n# deka user add\n\nAdd a user by username or public key.\n\n```bash\ndeka user add [username]\n```\n\n## Options\n\n- `--pubkey <key>` - Add user by public key directly\n- `--role <role>` - Role: admin or member (default: member)\n- `-s, --server <url>` - Deka API URL\n",
-    "html": "<h1>deka user add</h1>\n<p>Add a user by username or public key.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>--pubkey &#x3C;key></code> - Add user by public key directly</li>\n<li><code>--role &#x3C;role></code> - Role: admin or member (default: member)</li>\n<li><code>-s, --server &#x3C;url></code> - Deka API URL</li>\n</ul>\n",
+    "content": "\n# deka setup\n\nRun the interactive setup before your first deployment. It writes configuration and prepares your registry auth.\n\n```bash\ndeka setup\n```\n\n## What it configures\n\n- Container registry access\n- Runtime service defaults\n- Deployment preferences and storage paths\n\nConfig is stored under `~/.config/deka/` so you can re-run setup safely when you need to rotate credentials.\n\nIf registry authentication fails, you can also run:\n\n```bash\ndocker login ghcr.io\n```\n",
+    "html": "<h1>deka setup</h1>\n<p>Run the interactive setup before your first deployment. It writes configuration and prepares your registry auth.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>What it configures</h2>\n<ul>\n<li>Container registry access</li>\n<li>Runtime service defaults</li>\n<li>Deployment preferences and storage paths</li>\n</ul>\n<p>Config is stored under <code>~/.config/deka/</code> so you can re-run setup safely when you need to rotate credentials.</p>\n<p>If registry authentication fails, you can also run:</p>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n",
     "codeBlocks": [
       {
         "lang": "bash",
-        "code": "deka user add [username]"
+        "code": "deka setup"
+      },
+      {
+        "lang": "bash",
+        "code": "docker login ghcr.io"
       }
     ]
   },
@@ -485,35 +371,98 @@
   },
   {
     "slug": [
-      "attach"
+      "status"
     ],
     "metadata": {
-      "title": "deka c attach",
-      "description": "Attach to a running container"
+      "title": "deka status",
+      "description": "Show service status and health"
     },
-    "content": "\n# deka c attach\n\nAttach to a running container with an interactive shell.\n\n```bash\ndeka c attach <container> [cmd]\n```\n\nIf no command is provided, the default is `/bin/sh`.\n",
-    "html": "<h1>deka c attach</h1>\n<p>Attach to a running container with an interactive shell.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<p>If no command is provided, the default is <code>/bin/sh</code>.</p>\n",
+    "content": "\n# deka status\n\nShow the health and runtime status of each service.\n\n```bash\ndeka status\n```\n\nExample output:\n\n```text\n● [postgres] healthy :5432\n● [redis] healthy :6379\n● [edge] running :8506\n● [t4] running :8507\n● [deka-git] running :8508\n● [deploy] running :8509\n```\n\n## Example output\n\n```text\n$ deka status\n● [postgres] healthy :5432\n● [redis] healthy :6379\n● [edge] running :8506\n● [t4] running :8507\n● [deka-git] running :8508\n● [deploy] running :8509\n```\n",
+    "html": "<h1>deka status</h1>\n<p>Show the health and runtime status of each service.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<p>Example output:</p>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n<h2>Example output</h2>\n<div class=\"code-block-placeholder\" data-index=\"2\"></div>\n",
     "codeBlocks": [
       {
         "lang": "bash",
-        "code": "deka c attach <container> [cmd]"
+        "code": "deka status"
+      },
+      {
+        "lang": "text",
+        "code": "● [postgres] healthy :5432\n● [redis] healthy :6379\n● [edge] running :8506\n● [t4] running :8507\n● [deka-git] running :8508\n● [deploy] running :8509"
+      },
+      {
+        "lang": "text",
+        "code": "$ deka status\n● [postgres] healthy :5432\n● [redis] healthy :6379\n● [edge] running :8506\n● [t4] running :8507\n● [deka-git] running :8508\n● [deploy] running :8509"
       }
     ]
   },
   {
     "slug": [
-      "repo-view"
+      "stop"
     ],
     "metadata": {
-      "title": "deka repo view",
-      "description": "View repository details"
+      "title": "deka stop",
+      "description": "Stop services and clean up volumes"
     },
-    "content": "\n# deka repo view\n\nView details about a repository.\n\n```bash\ndeka repo view [repo]\n```\n\n## Options\n\n- `--json [fields]` - Output JSON with the specified fields\n",
-    "html": "<h1>deka repo view</h1>\n<p>View details about a repository.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>--json [fields]</code> - Output JSON with the specified fields</li>\n</ul>\n",
+    "content": "\n# deka stop\n\nStop Deka services or specific services by name.\n\n```bash\ndeka stop <services...>\n```\n\n## Options\n\n- `--volumes` - Remove volumes (data will be lost)\n\nTo stop everything and remove volumes:\n\n```bash\ndeka stop all --volumes\n```\n",
+    "html": "<h1>deka stop</h1>\n<p>Stop Deka services or specific services by name.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>--volumes</code> - Remove volumes (data will be lost)</li>\n</ul>\n<p>To stop everything and remove volumes:</p>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n",
     "codeBlocks": [
       {
         "lang": "bash",
-        "code": "deka repo view [repo]"
+        "code": "deka stop <services...>"
+      },
+      {
+        "lang": "bash",
+        "code": "deka stop all --volumes"
+      }
+    ]
+  },
+  {
+    "slug": [
+      "t4-buckets"
+    ],
+    "metadata": {
+      "title": "deka t4 buckets",
+      "description": "List T4 buckets"
+    },
+    "content": "\n# deka t4 buckets\n\nList all buckets in T4 storage.\n\n```bash\ndeka t4 buckets\n```\n\n## Options\n\n- `-s, --server <url>` - Deka API URL\n- `--json` - Output JSON\n",
+    "html": "<h1>deka t4 buckets</h1>\n<p>List all buckets in T4 storage.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>-s, --server &#x3C;url></code> - Deka API URL</li>\n<li><code>--json</code> - Output JSON</li>\n</ul>\n",
+    "codeBlocks": [
+      {
+        "lang": "bash",
+        "code": "deka t4 buckets"
+      }
+    ]
+  },
+  {
+    "slug": [
+      "t4-create"
+    ],
+    "metadata": {
+      "title": "deka t4 create",
+      "description": "Create a T4 bucket"
+    },
+    "content": "\n# deka t4 create\n\nCreate a new bucket in T4 storage.\n\n```bash\ndeka t4 create <name>\n```\n\n## Options\n\n- `-s, --server <url>` - Deka API URL\n- `-p, --public` - Enable public read access\n",
+    "html": "<h1>deka t4 create</h1>\n<p>Create a new bucket in T4 storage.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>-s, --server &#x3C;url></code> - Deka API URL</li>\n<li><code>-p, --public</code> - Enable public read access</li>\n</ul>\n",
+    "codeBlocks": [
+      {
+        "lang": "bash",
+        "code": "deka t4 create <name>"
+      }
+    ]
+  },
+  {
+    "slug": [
+      "t4-delete"
+    ],
+    "metadata": {
+      "title": "deka t4 delete",
+      "description": "Delete a T4 bucket"
+    },
+    "content": "\n# deka t4 delete\n\nDelete a bucket from T4 storage.\n\n```bash\ndeka t4 delete <name>\n```\n\n## Options\n\n- `-s, --server <url>` - Deka API URL\n- `-y, --yes` - Skip confirmation\n",
+    "html": "<h1>deka t4 delete</h1>\n<p>Delete a bucket from T4 storage.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>-s, --server &#x3C;url></code> - Deka API URL</li>\n<li><code>-y, --yes</code> - Skip confirmation</li>\n</ul>\n",
+    "codeBlocks": [
+      {
+        "lang": "bash",
+        "code": "deka t4 delete <name>"
       }
     ]
   },
@@ -536,64 +485,56 @@
   },
   {
     "slug": [
-      "setup"
+      "t4-ls"
     ],
     "metadata": {
-      "title": "deka setup",
-      "description": "Interactive first-run configuration"
+      "title": "deka t4 ls",
+      "description": "List objects in a bucket"
     },
-    "content": "\n# deka setup\n\nRun the interactive setup before your first deployment. It writes configuration and prepares your registry auth.\n\n```bash\ndeka setup\n```\n\n## What it configures\n\n- Container registry access\n- Runtime service defaults\n- Deployment preferences and storage paths\n\nConfig is stored under `~/.config/deka/` so you can re-run setup safely when you need to rotate credentials.\n\nIf registry authentication fails, you can also run:\n\n```bash\ndocker login ghcr.io\n```\n",
-    "html": "<h1>deka setup</h1>\n<p>Run the interactive setup before your first deployment. It writes configuration and prepares your registry auth.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>What it configures</h2>\n<ul>\n<li>Container registry access</li>\n<li>Runtime service defaults</li>\n<li>Deployment preferences and storage paths</li>\n</ul>\n<p>Config is stored under <code>~/.config/deka/</code> so you can re-run setup safely when you need to rotate credentials.</p>\n<p>If registry authentication fails, you can also run:</p>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n",
+    "content": "\n# deka t4 ls\n\nList objects in a T4 bucket.\n\n```bash\ndeka t4 ls <bucket>\n```\n\n## Options\n\n- `--prefix <prefix>` - Filter by prefix\n- `--json` - Output JSON\n\n## Example output\n\n```text\n$ deka t4 ls assets --prefix logos/\nlogos/deka.svg\nlogos/deka-dark.svg\n```\n",
+    "html": "<h1>deka t4 ls</h1>\n<p>List objects in a T4 bucket.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>--prefix &#x3C;prefix></code> - Filter by prefix</li>\n<li><code>--json</code> - Output JSON</li>\n</ul>\n<h2>Example output</h2>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n",
     "codeBlocks": [
       {
         "lang": "bash",
-        "code": "deka setup"
-      },
-      {
-        "lang": "bash",
-        "code": "docker login ghcr.io"
-      }
-    ]
-  },
-  {
-    "slug": [
-      "exec"
-    ],
-    "metadata": {
-      "title": "deka c exec",
-      "description": "Execute a command in a container"
-    },
-    "content": "\n# deka c exec\n\nExecute a command in a running container.\n\n```bash\ndeka c exec <container> [cmd...]\n```\n\n## Options\n\n- `-i, --interactive` - Interactive mode (allocate TTY)\n\nExample:\n\n```bash\ndeka c exec edge ls -la\n```\n",
-    "html": "<h1>deka c exec</h1>\n<p>Execute a command in a running container.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>-i, --interactive</code> - Interactive mode (allocate TTY)</li>\n</ul>\n<p>Example:</p>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n",
-    "codeBlocks": [
-      {
-        "lang": "bash",
-        "code": "deka c exec <container> [cmd...]"
-      },
-      {
-        "lang": "bash",
-        "code": "deka c exec edge ls -la"
-      }
-    ]
-  },
-  {
-    "slug": [
-      "check"
-    ],
-    "metadata": {
-      "title": "deka check",
-      "description": "Check for available image updates"
-    },
-    "content": "\n# deka check\n\nCheck whether new images are available.\n\n```bash\ndeka check\n```\n\n## Example output\n\n```text\n$ deka check\nedge     update available (ghcr.io/tananetwork/edge:1.12.0)\ndeploy   up to date\n```\n",
-    "html": "<h1>deka check</h1>\n<p>Check whether new images are available.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Example output</h2>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n",
-    "codeBlocks": [
-      {
-        "lang": "bash",
-        "code": "deka check"
+        "code": "deka t4 ls <bucket>"
       },
       {
         "lang": "text",
-        "code": "$ deka check\nedge     update available (ghcr.io/tananetwork/edge:1.12.0)\ndeploy   up to date"
+        "code": "$ deka t4 ls assets --prefix logos/\nlogos/deka.svg\nlogos/deka-dark.svg"
+      }
+    ]
+  },
+  {
+    "slug": [
+      "t4-put"
+    ],
+    "metadata": {
+      "title": "deka t4 put",
+      "description": "Upload a file to a bucket"
+    },
+    "content": "\n# deka t4 put\n\nUpload a file to a bucket.\n\n```bash\ndeka t4 put <bucket> <file> [key]\n```\n",
+    "html": "<h1>deka t4 put</h1>\n<p>Upload a file to a bucket.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n",
+    "codeBlocks": [
+      {
+        "lang": "bash",
+        "code": "deka t4 put <bucket> <file> [key]"
+      }
+    ]
+  },
+  {
+    "slug": [
+      "t4-rm"
+    ],
+    "metadata": {
+      "title": "deka t4 rm",
+      "description": "Delete an object from a bucket"
+    },
+    "content": "\n# deka t4 rm\n\nDelete an object from a bucket.\n\n```bash\ndeka t4 rm <bucket> <key>\n```\n\n## Options\n\n- `-y, --yes` - Skip confirmation\n",
+    "html": "<h1>deka t4 rm</h1>\n<p>Delete an object from a bucket.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>-y, --yes</code> - Skip confirmation</li>\n</ul>\n",
+    "codeBlocks": [
+      {
+        "lang": "bash",
+        "code": "deka t4 rm <bucket> <key>"
       }
     ]
   },
@@ -624,35 +565,94 @@
   },
   {
     "slug": [
-      "t4-put"
+      "upgrade"
     ],
     "metadata": {
-      "title": "deka t4 put",
-      "description": "Upload a file to a bucket"
+      "title": "deka upgrade",
+      "description": "Upgrade services and clean up old images"
     },
-    "content": "\n# deka t4 put\n\nUpload a file to a bucket.\n\n```bash\ndeka t4 put <bucket> <file> [key]\n```\n",
-    "html": "<h1>deka t4 put</h1>\n<p>Upload a file to a bucket.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n",
+    "content": "\n# deka upgrade\n\nStop, pull, restart outdated containers and cleanup old images.\n\n```bash\ndeka upgrade\n```\n\n## Options\n\n- `-q, --quiet` - Suppress progress output\n\n## Example output\n\n```text\n$ deka upgrade\nstopping edge\npulling ghcr.io/tananetwork/edge:1.12.0\nstarting edge\ncleaned up old images\n```\n",
+    "html": "<h1>deka upgrade</h1>\n<p>Stop, pull, restart outdated containers and cleanup old images.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>-q, --quiet</code> - Suppress progress output</li>\n</ul>\n<h2>Example output</h2>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n",
     "codeBlocks": [
       {
         "lang": "bash",
-        "code": "deka t4 put <bucket> <file> [key]"
+        "code": "deka upgrade"
+      },
+      {
+        "lang": "text",
+        "code": "$ deka upgrade\nstopping edge\npulling ghcr.io/tananetwork/edge:1.12.0\nstarting edge\ncleaned up old images"
       }
     ]
   },
   {
     "slug": [
-      "t4-delete"
+      "user-add"
     ],
     "metadata": {
-      "title": "deka t4 delete",
-      "description": "Delete a T4 bucket"
+      "title": "deka user add",
+      "description": "Add a user to this instance"
     },
-    "content": "\n# deka t4 delete\n\nDelete a bucket from T4 storage.\n\n```bash\ndeka t4 delete <name>\n```\n\n## Options\n\n- `-s, --server <url>` - Deka API URL\n- `-y, --yes` - Skip confirmation\n",
-    "html": "<h1>deka t4 delete</h1>\n<p>Delete a bucket from T4 storage.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>-s, --server &#x3C;url></code> - Deka API URL</li>\n<li><code>-y, --yes</code> - Skip confirmation</li>\n</ul>\n",
+    "content": "\n# deka user add\n\nAdd a user by username or public key.\n\n```bash\ndeka user add [username]\n```\n\n## Options\n\n- `--pubkey <key>` - Add user by public key directly\n- `--role <role>` - Role: admin or member (default: member)\n- `-s, --server <url>` - Deka API URL\n",
+    "html": "<h1>deka user add</h1>\n<p>Add a user by username or public key.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>--pubkey &#x3C;key></code> - Add user by public key directly</li>\n<li><code>--role &#x3C;role></code> - Role: admin or member (default: member)</li>\n<li><code>-s, --server &#x3C;url></code> - Deka API URL</li>\n</ul>\n",
     "codeBlocks": [
       {
         "lang": "bash",
-        "code": "deka t4 delete <name>"
+        "code": "deka user add [username]"
+      }
+    ]
+  },
+  {
+    "slug": [
+      "user-list"
+    ],
+    "metadata": {
+      "title": "deka user list",
+      "description": "List users on this instance"
+    },
+    "content": "\n# deka user list\n\nList users on this instance.\n\n```bash\ndeka user list\n```\n\nAliases: `deka user ls`\n\n## Options\n\n- `-s, --server <url>` - Deka API URL\n- `--json` - Output JSON\n",
+    "html": "<h1>deka user list</h1>\n<p>List users on this instance.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<p>Aliases: <code>deka user ls</code></p>\n<h2>Options</h2>\n<ul>\n<li><code>-s, --server &#x3C;url></code> - Deka API URL</li>\n<li><code>--json</code> - Output JSON</li>\n</ul>\n",
+    "codeBlocks": [
+      {
+        "lang": "bash",
+        "code": "deka user list"
+      }
+    ]
+  },
+  {
+    "slug": [
+      "user-remove"
+    ],
+    "metadata": {
+      "title": "deka user remove",
+      "description": "Remove a user from this instance"
+    },
+    "content": "\n# deka user remove\n\nRemove a user (sovereign only).\n\n```bash\ndeka user remove <target>\n```\n\nAliases: `deka user rm`\n\n## Options\n\n- `-s, --server <url>` - Deka API URL\n- `-y, --yes` - Skip confirmation\n",
+    "html": "<h1>deka user remove</h1>\n<p>Remove a user (sovereign only).</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<p>Aliases: <code>deka user rm</code></p>\n<h2>Options</h2>\n<ul>\n<li><code>-s, --server &#x3C;url></code> - Deka API URL</li>\n<li><code>-y, --yes</code> - Skip confirmation</li>\n</ul>\n",
+    "codeBlocks": [
+      {
+        "lang": "bash",
+        "code": "deka user remove <target>"
+      }
+    ]
+  },
+  {
+    "slug": [
+      "whoami"
+    ],
+    "metadata": {
+      "title": "deka whoami",
+      "description": "Show current user and role"
+    },
+    "content": "\n# deka whoami\n\nShow the current user and role on this instance.\n\n```bash\ndeka whoami\n```\n\n## Options\n\n- `-s, --server <url>` - Deka API URL (default: http://localhost:8520)\n\n## Example output\n\n```text\n$ deka whoami\n@samifouad (admin)\n```\n",
+    "html": "<h1>deka whoami</h1>\n<p>Show the current user and role on this instance.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>-s, --server &#x3C;url></code> - Deka API URL (default: http://localhost:8520)</li>\n</ul>\n<h2>Example output</h2>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n",
+    "codeBlocks": [
+      {
+        "lang": "bash",
+        "code": "deka whoami"
+      },
+      {
+        "lang": "text",
+        "code": "$ deka whoami\n@samifouad (admin)"
       }
     ]
   }

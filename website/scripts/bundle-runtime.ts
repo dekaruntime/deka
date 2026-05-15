@@ -344,7 +344,7 @@ async function getAllRuntimeDocs(): Promise<RuntimeDocFile[]> {
   }
 
   async function readDir(dir: string, relParts: string[] = []) {
-    const files = fs.readdirSync(dir)
+    const files = fs.readdirSync(dir).sort()
 
     for (const file of files) {
       const filePath = path.join(dir, file)

@@ -110,7 +110,7 @@ async function getAllDocs(): Promise<DocFile[]> {
 
   async function readDir(dir: string, slugParts: string[] = []) {
     if (!fs.existsSync(dir)) return
-    const files = fs.readdirSync(dir)
+    const files = fs.readdirSync(dir).sort()
 
     for (const file of files) {
       const filePath = path.join(dir, file)
