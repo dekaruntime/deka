@@ -1,6 +1,6 @@
 use axum::{
     extract::{Path, Query, Request},
-    http::StatusCode,
+    http::{header::HeaderName, StatusCode},
     response::{IntoResponse, Response},
 };
 
@@ -72,7 +72,9 @@ pub(crate) async fn handle_info_refs_public(
     }
     // Public repo read: no auth needed, proceed
 
-    match git::protocol::advertise_refs(&owner, &repo, service).await {
+    let git_protocol = git_protocol_header(&req);
+
+    match git::protocol::advertise_refs(&owner, &repo, service, git_protocol.as_deref()).await {
         Ok(response) => response,
         Err(e) => {
             tracing::error!("Failed to advertise refs: {}", e);
@@ -88,6 +90,7 @@ pub(crate) async fn handle_upload_pack_public(
 ) -> Response {
     let repo_name = repo.strip_suffix(".git").unwrap_or(&repo);
     let is_public = auth::is_repo_public(&owner, repo_name).await;
+    let git_protocol = git_protocol_header(&req);
 
     if !is_public {
         let auth_user = match auth::get_auth_user(&req) {
@@ -118,7 +121,7 @@ pub(crate) async fn handle_upload_pack_public(
             None,
         )
         .await;
-        match git::upload_pack::handle(&owner, &repo, body).await {
+        match git::upload_pack::handle(&owner, &repo, body, git_protocol.as_deref()).await {
             Ok(response) => response,
             Err(e) => {
                 tracing::error!("upload-pack failed: {}", e);
@@ -134,7 +137,7 @@ pub(crate) async fn handle_upload_pack_public(
                 return (StatusCode::BAD_REQUEST, "Failed to read body").into_response();
             }
         };
-        match git::upload_pack::handle(&owner, &repo, body).await {
+        match git::upload_pack::handle(&owner, &repo, body, git_protocol.as_deref()).await {
             Ok(response) => response,
             Err(e) => {
                 tracing::error!("upload-pack failed: {}", e);
@@ -152,6 +155,7 @@ pub(crate) async fn handle_receive_pack(
         Some(user) => user.clone(),
         None => return (StatusCode::UNAUTHORIZED, "Authentication required").into_response(),
     };
+    let git_protocol = git_protocol_header(&req);
 
     if !auth_user.has_scope("repo:write") {
         return (StatusCode::FORBIDDEN, "repo:write scope required").into_response();
@@ -185,7 +189,7 @@ pub(crate) async fn handle_receive_pack(
     // Keep a copy of the body for post-receive hook parsing
     let body_bytes = body.to_vec();
 
-    match git::receive_pack::handle(&owner, &repo, body).await {
+    match git::receive_pack::handle(&owner, &repo, body, git_protocol.as_deref()).await {
         Ok(response) => {
             // Post-receive hook: trigger rebuild if main was pushed
             let hook_owner = owner.clone();
@@ -211,4 +215,17 @@ pub(crate) async fn handle_receive_pack(
             (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
         }
     }
+}
+
+fn git_protocol_header(req: &Request) -> Option<String> {
+    let name = HeaderName::from_static("git-protocol");
+    req.headers()
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| {
+            value
+                .bytes()
+                .all(|byte| matches!(byte, b'\t' | b' '..=b'~'))
+        })
+        .map(str::to_owned)
 }
