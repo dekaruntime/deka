@@ -78,7 +78,49 @@ fn bundle_produces_valid_js() {
         provider,
     )
     .expect("bundle should succeed");
-    assert!(result.contains("42"), "expected value in bundle: {}", result);
+    assert!(
+        result.contains("42"),
+        "expected value in bundle: {}",
+        result
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn bundle_allows_parent_relative_phpx_import_from_subdirectory() {
+    let tmp = make_tmp_dir("parent_relative_phpx_bundle");
+    let api_dir = tmp.join("api");
+    std::fs::create_dir_all(&api_dir).expect("create api dir");
+
+    let entry = api_dir.join("checkout.phpx");
+    let entry_source =
+        "import { helperValue } from '../helpers';\nexport const result = helperValue + 1;\n";
+    std::fs::write(&entry, entry_source).expect("write entry");
+    std::fs::write(tmp.join("helpers.phpx"), "export const helperValue = 41;\n")
+        .expect("write helper");
+
+    let provider = Arc::new(SimpleVirtualSource {
+        entry: entry.clone(),
+        code: entry_source.to_string(),
+    });
+    let result = bundle_virtual_entry(
+        &entry,
+        BundleOptions {
+            project_root: tmp.clone(),
+            minify: false,
+            iife: false,
+            stdlib_path: None,
+        },
+        provider,
+    )
+    .expect("bundle should resolve ../helpers.phpx from api/checkout.phpx");
+
+    assert!(
+        result.contains("41") && result.contains("result"),
+        "expected parent helper module in bundle: {}",
+        result
+    );
+
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
