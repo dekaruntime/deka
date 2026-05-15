@@ -2696,11 +2696,15 @@ impl<'a> JsSubsetEmitter<'a> {
                 let a = emit_args(self, args)?;
                 Ok(Some(format!("({}.sort({}), true)", a[0], a[1])))
             }
-            // uasort($arr, $fn) -> ($arr.sort($fn), true)
-            // Same as usort; key association is preserved in JS arrays.
+            // uasort($arr, $fn) -> sort by values while preserving object keys.
+            // Arrays use native in-place sort; object-shaped associative arrays are
+            // rebuilt in comparator order without changing each entry's key.
             "uasort" if args.len() == 2 => {
                 let a = emit_args(self, args)?;
-                Ok(Some(format!("({}.sort({}), true)", a[0], a[1])))
+                Ok(Some(format!(
+                    "(() => {{ const __arr = {0}; const __fn = {1}; if (Array.isArray(__arr)) {{ __arr.sort(__fn); return true; }} const __entries = Object.keys(__arr).map(k => [k, __arr[k]]); __entries.sort((a, b) => __fn(a[1], b[1])); Object.keys(__arr).forEach(k => delete __arr[k]); __entries.forEach(([k, v]) => {{ __arr[k] = v; }}); return true; }})()",
+                    a[0], a[1]
+                )))
             }
             // uksort($arr, $fn) -> not directly mappable; emit sort by key as best-effort
             "uksort" if args.len() == 2 => {
