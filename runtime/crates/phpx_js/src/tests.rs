@@ -749,7 +749,7 @@ fn rewrite_base64_decode_strict_to_helper() {
 // would silently produce garbage bytes instead of returning false.
 #[test]
 fn base64_decode_strict_rejects_invalid_char_in_quartet() {
-    let js = phpx_to_js("$d = base64_decode('aGV!o=', true);").expect("should compile");
+    let js = phpx_to_js("$d = base64_decode('ab=Y', true);").expect("should compile");
     // Extract the helper JS so we can run it directly.
     let helpers: String = js
         .lines()
@@ -759,15 +759,13 @@ fn base64_decode_strict_rejects_invalid_char_in_quartet() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let script = format!(
-        "{helpers}\nconsole.log(String(__phpx_base64_decode('aGV!o=', true)));"
-    );
+    let script = format!("{helpers}\nconsole.log([String(__phpx_base64_decode('ab=Y', true)), String(__phpx_base64_decode('ab%=', true))].join('\\n'));");
     match run_node(&script) {
         Err(e) if e.contains("node not available") => return, // skip if no node
         Err(e) => panic!("node error: {e}"),
         Ok(out) => assert_eq!(
-            out, "false",
-            "strict base64_decode with invalid char 'aGV!o=' should return false, got: {out}"
+            out, "false\nfalse",
+            "strict base64_decode should reject malformed quartets 'ab=Y' and 'ab%=', got: {out}"
         ),
     }
 }
