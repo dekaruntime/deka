@@ -2,13 +2,13 @@ use axum::{
     http::{header, StatusCode},
     response::{IntoResponse, Response},
 };
-use std::fs;
-use std::path::Path;
+use std::process::Command;
 
 pub async fn advertise_refs(
     owner: &str,
     repo: &str,
     service: &str,
+    git_protocol: Option<&str>,
 ) -> Result<Response, anyhow::Error> {
     let repo_path = crate::repo::storage::get_repo_path(owner, repo);
 
@@ -16,29 +16,35 @@ pub async fn advertise_refs(
         return Ok((StatusCode::NOT_FOUND, "Repository not found").into_response());
     }
 
+    let git_service = match service {
+        "git-upload-pack" => "git-upload-pack",
+        "git-receive-pack" => "git-receive-pack",
+        _ => return Ok((StatusCode::BAD_REQUEST, "Unsupported service").into_response()),
+    };
+
     let mut lines = Vec::new();
-    lines.extend_from_slice(&pkt_line(&format!("# service={}\n", service)));
-    lines.extend_from_slice(&pkt_flush());
-
-    let refs = read_refs(&repo_path)?;
-
-    if refs.is_empty() {
-        lines.extend_from_slice(&pkt_line("0000000000000000000000000000000000000000 capabilities^{}\0report-status delete-refs side-band-64k quiet atomic ofs-delta agent=deka-git/0.7.0\n"));
-    } else {
-        let (ref_name, sha) = &refs[0];
-        let line = format!(
-            "{} {}\0report-status delete-refs side-band-64k quiet atomic ofs-delta agent=deka-git/0.7.0\n",
-            sha, ref_name
-        );
-        lines.extend_from_slice(&pkt_line(&line));
-
-        for (ref_name, sha) in refs.iter().skip(1) {
-            let line = format!("{} {}\n", sha, ref_name);
-            lines.extend_from_slice(&pkt_line(&line));
-        }
+    if !is_protocol_v2(git_protocol) {
+        lines.extend_from_slice(&pkt_line(&format!("# service={}\n", service)));
+        lines.extend_from_slice(&pkt_flush());
     }
 
-    lines.extend_from_slice(&pkt_flush());
+    let mut command = Command::new(git_service);
+    command
+        .arg("--stateless-rpc")
+        .arg("--advertise-refs")
+        .arg(&repo_path);
+    if let Some(protocol) = git_protocol {
+        command.env("GIT_PROTOCOL", protocol);
+    }
+
+    let output = command.output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        tracing::error!("{} --advertise-refs failed: {}", git_service, stderr);
+        return Ok((StatusCode::INTERNAL_SERVER_ERROR, "Failed to advertise refs").into_response());
+    }
+
+    lines.extend_from_slice(&output.stdout);
 
     Ok(Response::builder()
         .status(StatusCode::OK)
@@ -60,34 +66,10 @@ fn pkt_flush() -> Vec<u8> {
     b"0000".to_vec()
 }
 
-fn read_refs(repo_path: &Path) -> Result<Vec<(String, String)>, anyhow::Error> {
-    let mut refs = Vec::new();
-
-    let heads_dir = repo_path.join("refs/heads");
-    if heads_dir.exists() {
-        for entry in fs::read_dir(heads_dir)? {
-            let entry = entry?;
-            if entry.file_type()?.is_file() {
-                let ref_name = format!("refs/heads/{}", entry.file_name().to_string_lossy());
-                let sha = fs::read_to_string(entry.path())?.trim().to_string();
-                refs.push((ref_name, sha));
-            }
-        }
-    }
-
-    let tags_dir = repo_path.join("refs/tags");
-    if tags_dir.exists() {
-        for entry in fs::read_dir(tags_dir)? {
-            let entry = entry?;
-            if entry.file_type()?.is_file() {
-                let ref_name = format!("refs/tags/{}", entry.file_name().to_string_lossy());
-                let sha = fs::read_to_string(entry.path())?.trim().to_string();
-                refs.push((ref_name, sha));
-            }
-        }
-    }
-
-    Ok(refs)
+fn is_protocol_v2(git_protocol: Option<&str>) -> bool {
+    git_protocol
+        .map(|value| value.split(':').any(|part| part.trim() == "version=2"))
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -104,5 +86,13 @@ mod tests {
     fn test_pkt_flush() {
         let flush = pkt_flush();
         assert_eq!(flush, b"0000");
+    }
+
+    #[test]
+    fn test_protocol_v2_detection() {
+        assert!(is_protocol_v2(Some("version=2")));
+        assert!(is_protocol_v2(Some("foo=bar:version=2")));
+        assert!(!is_protocol_v2(Some("version=1")));
+        assert!(!is_protocol_v2(None));
     }
 }

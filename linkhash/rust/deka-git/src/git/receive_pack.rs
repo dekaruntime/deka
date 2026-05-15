@@ -8,6 +8,7 @@ pub async fn handle(
     owner: &str,
     repo: &str,
     body: bytes::Bytes,
+    git_protocol: Option<&str>,
 ) -> Result<Response, anyhow::Error> {
     let repo_path = crate::repo::storage::get_repo_path(owner, repo);
 
@@ -17,13 +18,18 @@ pub async fn handle(
 
     tracing::debug!("Spawning git-receive-pack for {}", repo_path.display());
 
-    let mut child = Command::new("git-receive-pack")
+    let mut command = Command::new("git-receive-pack");
+    command
         .arg("--stateless-rpc")
         .arg(&repo_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+        .stderr(Stdio::piped());
+    if let Some(protocol) = git_protocol {
+        command.env("GIT_PROTOCOL", protocol);
+    }
+
+    let mut child = command.spawn()?;
 
     if let Some(stdin) = child.stdin.take() {
         use tokio::io::AsyncWriteExt;
