@@ -445,6 +445,14 @@ async fn handle_platform_request(
             value.to_str().unwrap_or("").to_string(),
         ));
     }
+    if claims_cloudflare_ip_without_ray(&headers) {
+        return Response::builder()
+            .status(400)
+            .body(axum::body::Body::from(
+                "Bad Request: cf-connecting-ip requires cf-ray",
+            ))
+            .unwrap();
+    }
 
     // Read body
     let content_len = request
@@ -628,6 +636,73 @@ async fn handle_platform_request(
             .status(500)
             .body(axum::body::Body::from(format!("Handler execution failed: {}", err)))
             .unwrap(),
+    }
+}
+
+fn claims_cloudflare_ip_without_ray(headers: &[(String, String)]) -> bool {
+    let has_cf_connecting_ip = headers
+        .iter()
+        .any(|(key, value)| {
+            key.eq_ignore_ascii_case("cf-connecting-ip") && !value.trim().is_empty()
+        });
+    if !has_cf_connecting_ip {
+        return false;
+    }
+
+    !headers
+        .iter()
+        .any(|(key, value)| key.eq_ignore_ascii_case("cf-ray") && !value.trim().is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::claims_cloudflare_ip_without_ray;
+
+    fn headers(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn rejects_cf_connecting_ip_without_cf_ray() {
+        assert!(claims_cloudflare_ip_without_ray(&headers(&[(
+            "cf-connecting-ip",
+            "203.0.113.10",
+        )])));
+    }
+
+    #[test]
+    fn accepts_cf_connecting_ip_when_cf_ray_is_present() {
+        assert!(!claims_cloudflare_ip_without_ray(&headers(&[
+            ("cf-connecting-ip", "203.0.113.10"),
+            ("cf-ray", "abc123-SJC"),
+        ])));
+    }
+
+    #[test]
+    fn rejects_cf_connecting_ip_with_blank_cf_ray() {
+        assert!(claims_cloudflare_ip_without_ray(&headers(&[
+            ("cf-connecting-ip", "203.0.113.10"),
+            ("cf-ray", " "),
+        ])));
+    }
+
+    #[test]
+    fn accepts_requests_without_cf_connecting_ip() {
+        assert!(!claims_cloudflare_ip_without_ray(&headers(&[(
+            "x-forwarded-for",
+            "203.0.113.10",
+        )])));
+    }
+
+    #[test]
+    fn header_names_are_case_insensitive() {
+        assert!(!claims_cloudflare_ip_without_ray(&headers(&[
+            ("CF-Connecting-IP", "203.0.113.10"),
+            ("CF-Ray", "abc123-SJC"),
+        ])));
     }
 }
 
