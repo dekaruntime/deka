@@ -3388,26 +3388,24 @@ impl WorkerThread {
     }
 }
 
-/// Cached dev-mode flag.  Read once per process from `DEKA_DEV_MODE`
-/// (also accepts `NODE_ENV=development` as a secondary signal) so the
+/// Cached dev-mode flag. Read once per process from `DEKA_DEV_MODE` so the
 /// env lookup is never on the hot request path.
 static DEV_MODE: OnceLock<bool> = OnceLock::new();
 
 /// Returns `true` when the runtime is operating in development mode.
 ///
-/// Activated by either:
-/// - `DEKA_DEV_MODE=1`  (explicit, canonical)
-/// - `NODE_ENV=development` (convenience alias)
+/// Activated by `DEKA_DEV_MODE=1`.
 ///
 /// In dev mode `pick_shard_for_request` always returns shard 0 so every
 /// shop hits the local Docker Neo4j/Redis, regardless of `account_id`.
 /// This prevents the shard-hash from routing dev-created shops to a remote
 /// production shard that doesn't hold their data.
 pub(crate) fn is_dev_mode() -> bool {
-    *DEV_MODE.get_or_init(|| {
-        std::env::var("DEKA_DEV_MODE").as_deref() == Ok("1")
-            || std::env::var("NODE_ENV").as_deref() == Ok("development")
-    })
+    *DEV_MODE.get_or_init(|| is_dev_mode_from_env(|key| std::env::var(key).ok()))
+}
+
+fn is_dev_mode_from_env(mut env_get: impl FnMut(&str) -> Option<String>) -> bool {
+    env_get("DEKA_DEV_MODE").as_deref() == Some("1")
 }
 
 /// Select the owning shard for a request.
@@ -3415,8 +3413,8 @@ pub(crate) fn is_dev_mode() -> bool {
 /// Normal (production) path: hash `account_id` % shard_count to pick a shard,
 /// or fall through to shard 0 when `account_id` is empty.
 ///
-/// Dev-mode override (DEKA_DEV_MODE=1 or NODE_ENV=development): always return
-/// shard 0.  Dev shops are created against whatever Neo4j is local, so the
+/// Dev-mode override (DEKA_DEV_MODE=1): always return shard 0.
+/// Dev shops are created against whatever Neo4j is local, so the
 /// hash-based resolver would incorrectly route their requests to a remote shard
 /// that holds no data for them.  Pinning to shard 0 makes dev and CI
 /// deterministic: every shop, regardless of account_id, hits local services.
@@ -3834,7 +3832,7 @@ fn handler_is_unsupported_script(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::split_request_url;
+    use super::{is_dev_mode_from_env, split_request_url};
     use deka_shard::{ShardConfig, ShardInfo, ShardResolver};
 
     fn two_shard_resolver() -> ShardResolver {
@@ -3873,6 +3871,22 @@ mod tests {
         assert_eq!(pathname, "/docs/getting-started");
     }
 
+    #[test]
+    fn is_dev_mode_requires_explicit_deka_env() {
+        assert!(is_dev_mode_from_env(|key| match key {
+            "DEKA_DEV_MODE" => Some("1".into()),
+            _ => None,
+        }));
+    }
+
+    #[test]
+    fn is_dev_mode_ignores_node_env_development() {
+        assert!(!is_dev_mode_from_env(|key| match key {
+            "NODE_ENV" => Some("development".into()),
+            _ => None,
+        }));
+    }
+
     // --- pick_shard_for_request ---
 
     /// Empty account_id always falls back to shard 0 in production.
@@ -3889,7 +3903,7 @@ mod tests {
     /// shard 1 on a 2-shard cluster by brute-force search here.
     ///
     /// Note: if DEKA_DEV_MODE=1 is set in the test environment this test
-    /// will see shard 0 instead.  That's expected — dev mode overrides.
+    /// will see shard 0 instead. That's expected: dev mode overrides.
     #[test]
     fn pick_shard_production_hashes_account_id() {
         let r = two_shard_resolver();
