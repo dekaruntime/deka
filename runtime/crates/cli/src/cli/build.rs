@@ -533,6 +533,9 @@ fn resolve_web_entry(project_root: &Path) -> Result<PathBuf, String> {
 }
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+    if fs::read_dir(src).map_err(|err| format!("failed to read {}: {}", src.display(), err))?.next().is_none() {
+        return Ok(());
+    }
     fs::create_dir_all(dst)
         .map_err(|err| format!("failed to create {}: {}", dst.display(), err))?;
     let entries =
