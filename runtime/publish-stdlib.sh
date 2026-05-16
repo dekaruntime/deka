@@ -11,11 +11,13 @@ REGISTRY="${REGISTRY:-http://localhost:9418}"
 DEKA_TOKEN="${DEKA_TOKEN:?need DEKA_TOKEN env}"
 TANA_TOKEN="${TANA_TOKEN:?need TANA_TOKEN env}"
 
-STDLIB_DIR="$HOME/Projects/deka/runtime/php_modules"
-TANA_STORE_DIR="$HOME/Projects/tana/store/default/php_modules/@tana/store"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STDLIB_DIR="${STDLIB_DIR:-$SCRIPT_DIR/php_modules}"
+TANA_STORE_DIR="${TANA_STORE_DIR:-$HOME/Projects/tana/store/default/php_modules/@tana/store}"
 WORK_ROOT="$(mktemp -d -t linkhash-publish.XXXXXX)"
 
 VERSION="0.1.0"
+PUBLISH_PACKAGES="${PUBLISH_PACKAGES:-}"
 
 # Modules under $STDLIB_DIR that have ONE flat directory of .phpx files.
 # Skip: @user (user-space), _test, _tmp, encoding (has subdirs), stdlib.json, deka.php
@@ -49,8 +51,20 @@ NESTED_ENCODING=(
 )
 
 echo "=== Work dir: $WORK_ROOT ==="
+failures=0
 
 # ---------- helpers ----------
+
+should_publish() {
+  local package="$1"
+  if [ -z "$PUBLISH_PACKAGES" ]; then
+    return 0
+  fi
+  case " $PUBLISH_PACKAGES " in
+    *" $package "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 make_deka_json() {
   local name="$1"
@@ -68,9 +82,10 @@ make_deka_json() {
       j.version = '$VERSION';
       if (!j.description) j.description = '$description';
       if (!j.main) j.main = 'index.phpx';
-      if (!j['deka.security']) j['deka.security'] = { allow: { run: true } };
-      else if (!j['deka.security'].allow) j['deka.security'].allow = { run: true };
-      else if (j['deka.security'].allow.run === undefined) j['deka.security'].allow.run = true;
+      if (!j.security) j.security = { allow: { run: true } };
+      else if (!j.security.allow) j.security.allow = { run: true };
+      else if (j.security.allow.run === undefined) j.security.allow.run = true;
+      delete j['deka.security'];
       fs.writeFileSync(path, JSON.stringify(j, null, 2) + '\n');
     " 2>/dev/null || cat > "$target/deka.json" <<EOF
 {
@@ -78,7 +93,7 @@ make_deka_json() {
   "version": "$VERSION",
   "description": "$description",
   "main": "index.phpx",
-  "deka.security": { "allow": { "run": true } }
+  "security": { "allow": { "run": true } }
 }
 EOF
   else
@@ -88,7 +103,7 @@ EOF
   "version": "$VERSION",
   "description": "$description",
   "main": "index.phpx",
-  "deka.security": { "allow": { "run": true } }
+  "security": { "allow": { "run": true } }
 }
 EOF
   fi
@@ -121,8 +136,20 @@ ensure_repo() {
 set_visibility_public() {
   local owner="$1"
   local repo="$2"
-  sqlite3 "$HOME/Projects/tana/git-server/data/tana-git.db" \
-    "INSERT OR REPLACE INTO repo_visibility (repo_owner, repo_name, visibility) VALUES ('$owner','$repo','public');"
+  local token="$3"
+
+  local http_code
+  http_code=$(curl -s -o /tmp/repo-visibility.json -w "%{http_code}" \
+    -X PATCH "$REGISTRY/api/repos/$owner/$repo/visibility" \
+    -H "Authorization: Bearer $token" \
+    -H "Content-Type: application/json" \
+    -d '{"visibility":"public"}')
+
+  if [ "$http_code" = "200" ]; then
+    return 0
+  fi
+  echo "set_visibility_public warning ($http_code): $(cat /tmp/repo-visibility.json)" >&2
+  return 1
 }
 
 # Clone source files + deka.json into a working repo, git commit, tag, push.
@@ -196,8 +223,11 @@ publish_one() {
 
   # @deka/* and @tana/store: leave default (private) for @tana, flip to public for @deka
   if [ "$owner" = "deka" ]; then
-    set_visibility_public "$owner" "$repo"
-    echo "  visibility: public"
+    if set_visibility_public "$owner" "$repo" "$token"; then
+      echo "  visibility: public"
+    else
+      echo "  visibility: unchanged"
+    fi
   fi
 }
 
@@ -205,6 +235,10 @@ publish_one() {
 
 # Flat modules under deka scope
 for module in "${FLAT_MODULES[@]}"; do
+  package="@deka/$module"
+  if ! should_publish "$package"; then
+    continue
+  fi
   src="$STDLIB_DIR/$module"
   if [ ! -d "$src" ]; then
     echo "SKIP: $module (dir not found)" >&2
@@ -212,22 +246,35 @@ for module in "${FLAT_MODULES[@]}"; do
   fi
   publish_one "deka" "$module" "@deka/$module" "$src" "$DEKA_TOKEN" "PHPX stdlib: $module" || {
     echo "FAILED: @deka/$module" >&2
+    failures=$((failures + 1))
   }
 done
 
 # Encoding subdirs: encoding/json -> @deka/encoding-json, encoding/binary -> @deka/encoding-binary
 for sub in "${NESTED_ENCODING[@]}"; do
+  package="@deka/encoding-$sub"
+  if ! should_publish "$package"; then
+    continue
+  fi
   src="$STDLIB_DIR/encoding/$sub"
   if [ ! -d "$src" ]; then continue; fi
   publish_one "deka" "encoding-$sub" "@deka/encoding-$sub" "$src" "$DEKA_TOKEN" "PHPX stdlib: encoding/$sub" || {
     echo "FAILED: @deka/encoding-$sub" >&2
+    failures=$((failures + 1))
   }
 done
 
 # @tana/store
-publish_one "tana" "store" "@tana/store" "$TANA_STORE_DIR" "$TANA_TOKEN" "Tana storefront module" || {
-  echo "FAILED: @tana/store" >&2
-}
+if should_publish "@tana/store"; then
+  publish_one "tana" "store" "@tana/store" "$TANA_STORE_DIR" "$TANA_TOKEN" "Tana storefront module" || {
+    echo "FAILED: @tana/store" >&2
+    failures=$((failures + 1))
+  }
+fi
 
 echo ""
 echo "=== Done. Work dir: $WORK_ROOT ==="
+if [ "$failures" -gt 0 ]; then
+  echo "=== Failed publishes: $failures ===" >&2
+  exit 1
+fi
