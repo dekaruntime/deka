@@ -595,6 +595,7 @@ function runtimeWriteProbe($target) {
 }
 
 function Layout($props) {
+  $children = rowValue($props, 'children', false)
   return <div class="min-h-screen bg-gray-50 text-gray-900">
     <nav class="bg-white shadow-sm border-b">
       <div class="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
@@ -617,7 +618,7 @@ function Layout($props) {
       </div>
     </nav>
     <main class="mx-auto max-w-6xl px-6 py-10">
-      {$props.children}
+      {$children}
     </main>
     <footer class="border-t border-gray-200 bg-white">
       <div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-6 text-sm text-gray-500">
@@ -5774,7 +5775,7 @@ function PackageDetailPage($props) {
 
       {$repoAction !== '' ? <div class={'mx-6 mt-4 rounded border px-3 py-2 text-xs ' . ((strpos($repoAction, 'failed') !== false) ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700')}>
         {$repoMessage === '' ? $repoAction : $repoMessage}
-      </div> : null}
+      </div> : false}
 
       <div class="p-6" style="display:flex;gap:24px;align-items:flex-start;">
         <main class="space-y-4" style="flex:1 1 auto;min-width:0;">
@@ -5783,19 +5784,19 @@ function PackageDetailPage($props) {
               <span>{'Files (' . (string) count($fileSource) . ')'}</span>
               <span>{'entrypoint: ' . ($mainFile === '' ? 'index.phpx' : $mainFile)}</span>
             </div>
-            {$treeError !== '' ? <div class="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">{'Tree source: ' . $treeError}</div> : null}
+            {$treeError !== '' ? <div class="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">{'Tree source: ' . $treeError}</div> : false}
             <div style="display:grid;grid-template-columns:minmax(240px,34%) minmax(0,1fr);">
               <div class="max-h-[420px] overflow-auto border-r border-gray-200">
                 <ul class="grid gap-1 p-2">
                   {$fileItems}
                 </ul>
-                {$hasMoreFiles ? <div class="px-3 pb-2 text-xs text-gray-500">{'showing first ' . (string) $fileLimit . ' files'}</div> : null}
+                {$hasMoreFiles ? <div class="px-3 pb-2 text-xs text-gray-500">{'showing first ' . (string) $fileLimit . ' files'}</div> : false}
               </div>
               <div>
                 <div class="border-b border-gray-200 px-4 py-2 text-xs text-gray-600">
                   {$selectedFile !== '' ? $selectedFile : 'Select a file'}
                 </div>
-                {$selectedFileError !== '' ? <div class="px-4 py-2 text-xs text-amber-800">{'Blob source: ' . $selectedFileError}</div> : null}
+                {$selectedFileError !== '' ? <div class="px-4 py-2 text-xs text-amber-800">{'Blob source: ' . $selectedFileError}</div> : false}
                 {$selectedFileContent !== '' ? <pre class="max-h-[380px] overflow-auto bg-gray-900 p-4 text-[12px] leading-5 text-gray-100 whitespace-pre-wrap">{$selectedFileContent}</pre> : <div class="p-4 text-sm text-gray-500">Select a file from the list.</div>}
               </div>
             </div>
@@ -5814,11 +5815,11 @@ function PackageDetailPage($props) {
               <h3 class="text-sm font-semibold text-gray-900">API Docs</h3>
               <span class="text-xs text-gray-500">{is_array($docsSymbols) ? ((string) count($docsSymbols) . ' symbols') : '0 symbols'}</span>
             </div>
-            {$docsError !== '' ? <div class="mt-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{'Docs source: ' . $docsError}</div> : null}
+            {$docsError !== '' ? <div class="mt-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{'Docs source: ' . $docsError}</div> : false}
             <ul class="mt-3 grid gap-2">
               {$docRows}
             </ul>
-            {$hasMoreDocs ? <div class="mt-2 text-xs text-gray-500">{'showing first ' . (string) $docLimit . ' docs entries'}</div> : null}
+            {$hasMoreDocs ? <div class="mt-2 text-xs text-gray-500">{'showing first ' . (string) $docLimit . ' docs entries'}</div> : false}
           </section>
         </main>
 
@@ -5863,7 +5864,7 @@ function PackageDetailPage($props) {
             <h3 class="text-sm font-semibold text-gray-900">Issues</h3>
             <span class="text-xs text-gray-500">{is_array($issues) ? ((string) count($issues) . ' open') : '0 open'}</span>
           </div>
-          {$issuesError !== '' ? <div class="mt-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{'Issues source: ' . $issuesError . '. Set LINKHASH_GIT_TOKEN to enable issue APIs.'}</div> : null}
+          {$issuesError !== '' ? <div class="mt-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{'Issues source: ' . $issuesError . '. Set LINKHASH_GIT_TOKEN to enable issue APIs.'}</div> : false}
           <ul class="mt-3 grid gap-2">{$issueRows}</ul>
           <form class="mt-4 grid gap-2" method="POST" action={repoIssueCreateRoute()}>
             <input type="hidden" name="org" value={rowValue($props, 'org', '')} />
@@ -5872,7 +5873,7 @@ function PackageDetailPage($props) {
             <textarea class="min-h-[90px] rounded border border-gray-300 px-3 py-2 text-sm" name="body" placeholder="Describe the issue"></textarea>
             <button class="rounded bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700" type="submit">Create issue</button>
           </form>
-          {$activeIssueError !== '' ? <div class="mt-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{'Issue detail: ' . $activeIssueError}</div> : null}
+          {$activeIssueError !== '' ? <div class="mt-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{'Issue detail: ' . $activeIssueError}</div> : false}
           {is_array($activeIssue) ? <div class="mt-4 rounded border border-gray-200 bg-gray-50 p-3">
             <div class="text-sm font-semibold text-gray-900">{'#' . rowValue($activeIssue, 'number', 0) . ' ' . rowValue($activeIssue, 'title', '')}</div>
             <div class="mt-1 text-xs text-gray-600 whitespace-pre-wrap">{rowValue($activeIssue, 'body', '')}</div>
@@ -5885,7 +5886,7 @@ function PackageDetailPage($props) {
               <textarea class="min-h-[80px] rounded border border-gray-300 px-3 py-2 text-sm" name="body" placeholder="Add comment"></textarea>
               <button class="rounded border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-100" type="submit">Comment on issue</button>
             </form>
-          </div> : null}
+          </div> : false}
         </section>
 
         <section class="rounded-lg border border-gray-200 p-4">
@@ -5893,7 +5894,7 @@ function PackageDetailPage($props) {
             <h3 class="text-sm font-semibold text-gray-900">Pull Requests</h3>
             <span class="text-xs text-gray-500">{is_array($pulls) ? ((string) count($pulls) . ' open') : '0 open'}</span>
           </div>
-          {$pullsError !== '' ? <div class="mt-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{'Pulls source: ' . $pullsError . '. Set LINKHASH_GIT_TOKEN to enable pull APIs.'}</div> : null}
+          {$pullsError !== '' ? <div class="mt-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{'Pulls source: ' . $pullsError . '. Set LINKHASH_GIT_TOKEN to enable pull APIs.'}</div> : false}
           <ul class="mt-3 grid gap-2">{$pullRows}</ul>
           <form class="mt-4 grid gap-2" method="POST" action={repoPullCreateRoute()}>
             <input type="hidden" name="org" value={rowValue($props, 'org', '')} />
@@ -5904,7 +5905,7 @@ function PackageDetailPage($props) {
             <textarea class="min-h-[90px] rounded border border-gray-300 px-3 py-2 text-sm" name="body" placeholder="Describe the change"></textarea>
             <button class="rounded bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700" type="submit">Create pull request</button>
           </form>
-          {$activePullError !== '' ? <div class="mt-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{'Pull detail: ' . $activePullError}</div> : null}
+          {$activePullError !== '' ? <div class="mt-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">{'Pull detail: ' . $activePullError}</div> : false}
           {is_array($activePull) ? <div class="mt-4 rounded border border-gray-200 bg-gray-50 p-3">
             <div class="text-sm font-semibold text-gray-900">{'#' . rowValue($activePull, 'number', 0) . ' ' . rowValue($activePull, 'title', '')}</div>
             <div class="mt-1 text-xs text-gray-600">{rowValue($activePull, 'source_ref', rowValue($activePull, 'sourceRef', '?')) . ' -> ' . rowValue($activePull, 'target_ref', rowValue($activePull, 'targetRef', '?'))}</div>
@@ -5918,7 +5919,7 @@ function PackageDetailPage($props) {
               <textarea class="min-h-[80px] rounded border border-gray-300 px-3 py-2 text-sm" name="body" placeholder="Add comment"></textarea>
               <button class="rounded border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-100" type="submit">Comment on pull request</button>
             </form>
-          </div> : null}
+          </div> : false}
         </section>
       </div>
     </section>
@@ -5986,8 +5987,8 @@ function AccountPage($props) {
       <div class="text-sm font-semibold uppercase tracking-wide text-blue-600">Account</div>
       <h1 class="mt-2 text-3xl font-bold text-gray-900">{'@' . rowValue($user, 'handle', 'user')}</h1>
       <p class="mt-2 text-sm text-gray-600">{rowValue($user, 'did', '')}</p>
-      {$notice !== '' ? <div class="mt-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">{$notice}</div> : null}
-      {$newToken !== '' ? <div class="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{'New token: ' . $newToken}</div> : null}
+      {$notice !== '' ? <div class="mt-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">{$notice}</div> : false}
+      {$newToken !== '' ? <div class="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{'New token: ' . $newToken}</div> : false}
     </section>
 
     <section class="mt-6 grid gap-6 md:grid-cols-2">
@@ -6060,7 +6061,7 @@ function PlaygroundPage($props) {
         <input class="rounded-lg border border-gray-300 px-3 py-2 text-sm" name="version" placeholder="latest" value={$version} />
         <button class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700" type="submit">Resolve</button>
       </form>
-      {$error !== '' ? <div class="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{$error}</div> : null}
+      {$error !== '' ? <div class="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{$error}</div> : false}
       {is_array($resolved) ? <div class="mt-6 rounded-xl border border-gray-200 p-5">
         <div class="text-sm font-semibold text-gray-900">{'@' . $org . '/' . $name . ' @ ' . ('' . rowValue($resolved, 'version', $version))}</div>
         <div class="mt-2 text-sm text-gray-600">{'' . rowValue($resolved, 'description', '')}</div>
@@ -6072,12 +6073,12 @@ function PlaygroundPage($props) {
         </div>
         {is_array($install) ? <div class="mt-4 rounded-lg bg-gray-900 p-3 text-xs text-gray-100 whitespace-pre-wrap">{jsonReply($install)}</div> : false}
         <div class="mt-4 flex flex-wrap gap-2">
-          {$artifactUrl !== '' ? <a class="rounded border border-gray-300 px-3 py-1 text-xs text-gray-700 hover:bg-gray-50" href={$artifactUrl}>Download artifact</a> : null}
+          {$artifactUrl !== '' ? <a class="rounded border border-gray-300 px-3 py-1 text-xs text-gray-700 hover:bg-gray-50" href={$artifactUrl}>Download artifact</a> : false}
           <a class="rounded border border-gray-300 px-3 py-1 text-xs text-gray-700 hover:bg-gray-50" href={'/api/package?org=' . rawurlencode($org) . '&name=' . rawurlencode($name)}>Package API</a>
           <a class="rounded border border-gray-300 px-3 py-1 text-xs text-gray-700 hover:bg-gray-50" href={'/api/install?org=' . rawurlencode($org) . '&name=' . rawurlencode($name) . '&version=' . rawurlencode($version === '' ? 'latest' : $version)}>Install API</a>
         </div>
         <div class="mt-4 flex flex-wrap gap-2">{$versionItems}</div>
-      </div> : null}
+      </div> : false}
     </section>
   </Layout>
 }
