@@ -34,6 +34,44 @@ pub fn platform(context: &Context) {
     rt.block_on(platform_async(context));
 }
 
+fn platform_dev_mode_enabled() -> bool {
+    env_flag_enabled("DEKA_DEV_MODE")
+        || env_flag_enabled("DEKA_DEV")
+        || std::env::var("NODE_ENV").as_deref() == Ok("development")
+}
+
+fn env_flag_enabled(key: &str) -> bool {
+    std::env::var(key)
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn proxy_target_for_tenant<'a>(
+    tenant_info: Option<&pool::tenant::TenantInfo>,
+    resolver: &'a deka_shard::ShardResolver,
+    dev_mode: bool,
+) -> Option<&'a deka_shard::ShardInfo> {
+    if dev_mode {
+        return None;
+    }
+
+    let account_id = tenant_info
+        .and_then(|info| info.account_id.as_deref())
+        .filter(|account_id| !account_id.is_empty())?;
+
+    if resolver.owns(account_id) {
+        None
+    } else {
+        resolver.resolve(account_id)
+    }
+}
+
 /// A cached bundle entry with last-access tracking for preview cleanup.
 struct BundleEntry {
     code: String,
@@ -495,41 +533,40 @@ async fn handle_platform_request(
     // the Tailscale mesh. Requests without an account_id (legacy
     // Redis entries, admin paths, health checks) serve locally —
     // shard 0 is the de-facto owner of "uncharted" traffic.
-    if let Some(info) = tenant_info.as_ref() {
-        if let Some(account_id) = info.account_id.as_ref() {
-            let resolver = deka_shard::global();
-            if !resolver.owns(account_id) {
-                if let Some(target) = resolver.resolve(account_id) {
-                    if already_proxied {
-                        // A previous server thought we owned this shard
-                        // but we don't. Refuse to bounce it again so we
-                        // don't loop forever.
-                        stdio::error(
-                            "proxy",
-                            &format!(
-                                "refusing to re-proxy for account={} shop={} (target {}): loop guard triggered",
-                                account_id, shop_id, target.name
-                            ),
-                        );
-                        return Response::builder()
-                            .status(500)
-                            .body(axum::body::Body::from(
-                                "Internal Server Error: shard routing loop",
-                            ))
-                            .unwrap();
-                    }
-                    return proxy_to_shard(
-                        &target.name,
-                        &method,
-                        &uri,
-                        &headers,
-                        body_bytes,
-                        resolver.self_shard().map(|s| s.index),
-                    )
-                    .await;
-                }
-            }
+    let resolver = deka_shard::global();
+    if let Some(target) =
+        proxy_target_for_tenant(tenant_info.as_ref(), resolver, platform_dev_mode_enabled())
+    {
+        let account_id = tenant_info
+            .as_ref()
+            .and_then(|info| info.account_id.as_deref())
+            .unwrap_or("");
+        if already_proxied {
+            // A previous server thought we owned this shard but we don't.
+            // Refuse to bounce it again so we don't loop forever.
+            stdio::error(
+                "proxy",
+                &format!(
+                    "refusing to re-proxy for account={} shop={} (target {}): loop guard triggered",
+                    account_id, shop_id, target.name
+                ),
+            );
+            return Response::builder()
+                .status(500)
+                .body(axum::body::Body::from(
+                    "Internal Server Error: shard routing loop",
+                ))
+                .unwrap();
         }
+        return proxy_to_shard(
+            &target.name,
+            &method,
+            &uri,
+            &headers,
+            body_bytes,
+            resolver.self_shard().map(|s| s.index),
+        )
+        .await;
     }
 
     let body = body_bytes
@@ -872,5 +909,97 @@ mod stdio {
     }
     pub fn error(category: &str, message: &str) {
         eprintln!("[{}] ERROR: {}", category, message);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{env_flag_enabled, proxy_target_for_tenant};
+    use deka_shard::{ShardConfig, ShardInfo, ShardResolver};
+    use pool::tenant::TenantInfo;
+
+    fn two_shard_resolver(self_name: Option<&str>) -> ShardResolver {
+        ShardResolver::from_config(
+            ShardConfig {
+                shards: vec![
+                    ShardInfo {
+                        index: 0,
+                        name: "local".into(),
+                        neo4j: "bolt://127.0.0.1:7688".into(),
+                        redis: "redis://127.0.0.1:6380".into(),
+                    },
+                    ShardInfo {
+                        index: 1,
+                        name: "bugsy".into(),
+                        neo4j: "bolt://bugsy:7687".into(),
+                        redis: "redis://bugsy:6379".into(),
+                    },
+                ],
+            },
+            self_name,
+        )
+    }
+
+    fn account_for_shard(resolver: &ShardResolver, index: usize) -> String {
+        (0..10_000)
+            .map(|n| format!("dev-account-{n}"))
+            .find(|account_id| resolver.resolve(account_id).is_some_and(|s| s.index == index))
+            .expect("test resolver should produce an account for requested shard")
+    }
+
+    fn tenant(account_id: String) -> TenantInfo {
+        TenantInfo {
+            shop_id: "shop_dev_created".into(),
+            account_id: Some(account_id),
+            preview_ref: None,
+        }
+    }
+
+    #[test]
+    fn proxy_target_routes_remote_owner_in_production() {
+        let resolver = two_shard_resolver(Some("local"));
+        let account_id = account_for_shard(&resolver, 1);
+        let tenant = tenant(account_id);
+
+        let target = proxy_target_for_tenant(Some(&tenant), &resolver, false).unwrap();
+
+        assert_eq!(target.name, "bugsy");
+    }
+
+    #[test]
+    fn proxy_target_serves_locally_in_dev_even_for_remote_owner() {
+        let resolver = two_shard_resolver(Some("local"));
+        let account_id = account_for_shard(&resolver, 1);
+        let tenant = tenant(account_id);
+
+        assert!(proxy_target_for_tenant(Some(&tenant), &resolver, true).is_none());
+    }
+
+    #[test]
+    fn proxy_target_serves_locally_for_owned_or_legacy_tenants() {
+        let resolver = two_shard_resolver(Some("local"));
+        let local_account = account_for_shard(&resolver, 0);
+        let local_tenant = tenant(local_account);
+        let legacy_tenant = TenantInfo {
+            shop_id: "shop_legacy".into(),
+            account_id: None,
+            preview_ref: None,
+        };
+
+        assert!(proxy_target_for_tenant(Some(&local_tenant), &resolver, false).is_none());
+        assert!(proxy_target_for_tenant(Some(&legacy_tenant), &resolver, false).is_none());
+        assert!(proxy_target_for_tenant(None, &resolver, false).is_none());
+    }
+
+    #[test]
+    fn env_flag_enabled_accepts_truthy_values() {
+        unsafe { std::env::set_var("DEKA_RUNTIME_TEST_FLAG", "true") };
+        assert!(env_flag_enabled("DEKA_RUNTIME_TEST_FLAG"));
+
+        unsafe { std::env::set_var("DEKA_RUNTIME_TEST_FLAG", "0") };
+        assert!(!env_flag_enabled("DEKA_RUNTIME_TEST_FLAG"));
+
+        unsafe { std::env::remove_var("DEKA_RUNTIME_TEST_FLAG") };
+        assert!(!env_flag_enabled("DEKA_RUNTIME_TEST_FLAG"));
     }
 }
