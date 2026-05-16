@@ -29,6 +29,7 @@ const apiSections = [
     category: 'Blockchain API',
     items: [
       { name: 'Users', slug: 'users/create', description: 'User management' },
+      { name: 'User sign-in', slug: 'users/signin', description: 'User authentication' },
       { name: 'Balances', slug: 'balances/index', description: 'Balance queries' },
       { name: 'Transactions', slug: 'transactions/index', description: 'Transaction management' },
       { name: 'Blocks', slug: 'blocks/index', description: 'Block queries' },
@@ -39,6 +40,7 @@ const apiSections = [
     category: 'Developer Tools',
     items: [
       { name: 'Keys', slug: 'keys/index', description: 'Cryptographic keys' },
+      { name: 'Key details', slug: 'keys/id', description: 'Fetch a key by ID' },
       { name: 'Modules', slug: 'modules/kv', description: 'Storage modules' },
     ]
   }

@@ -68,7 +68,7 @@ function slugify(value: string): string {
 
 function extractTableOfContents(content: string) {
   const items: Array<{ id: string; text: string; level: number }> = []
-  const headingPattern = /^(#{2,3})\s+(.+)$/gm
+  const headingPattern = /^(#{2,4})\s+(.+)$/gm
   let match: RegExpExecArray | null
 
   while ((match = headingPattern.exec(content)) !== null) {
@@ -122,7 +122,7 @@ async function getAllDocs(): Promise<DocFile[]> {
         const fileContents = fs.readFileSync(filePath, 'utf8')
         const { data, content } = matter(fileContents)
         const fileName = file.replace(/\.mdx?$/, '')
-        const slug = [...slugParts, fileName]
+        const slug = fileName === 'index' ? slugParts : [...slugParts, fileName]
 
         const codeBlocks: Array<{ lang: string; code: string }> = []
         const contentWithPlaceholders = content.replace(/```(\w+)?\n([\s\S]*?)```/g, (_match, blockLang, code) => {

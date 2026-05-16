@@ -1,0 +1,189 @@
+---
+title: "Redis"
+description: "Redis connection and data-structure helpers for PHPX applications."
+section: "phpx"
+category: "redis"
+categoryLabel: "Redis"
+categoryOrder: 55
+source: "php_modules/redis/index.phpx"
+---
+
+The `redis` module exposes direct Redis operations through the runtime bridge. Use it for short-lived cache entries, counters, OAuth state, rate limits, and queue-like list data.
+
+All functions take an explicit Redis handle after `connect`. The runtime returns bridge-shaped values, so check the returned `ok` or `Result` shape used by the caller before trusting values.
+
+## Imports
+
+```phpx
+import {
+  connect,
+  get,
+  set,
+  del,
+  exists,
+  expire,
+  ttl,
+  incr,
+  decr,
+  hget,
+  hset,
+  hgetall,
+  hdel,
+  lpush,
+  rpush,
+  lpop,
+  rpop,
+  lrange,
+  llen,
+  ltrim,
+  sadd,
+  smembers,
+  srem,
+  sismember,
+  keys,
+  flush,
+  close,
+} from 'redis'
+```
+
+## Example
+
+```phpx
+import { connect, set, get, incr, expire, close } from 'redis'
+
+$conn = connect('redis://localhost:6379')
+$handle = $conn['handle']
+
+set($handle, 'session:user-1', 'active', 600)
+$session = get($handle, 'session:user-1')
+
+$count = incr($handle, 'rate:user-1')
+expire($handle, 'rate:user-1', 60)
+
+close($handle)
+```
+
+## Key-Value Functions
+
+<Function name="connect">
+  <Description>Open a Redis connection and return a runtime handle.</Description>
+  <Parameter name="$url" type="string" required="false" typeLink="/docs/php/types/string">
+    Redis connection URL. Defaults to `redis://localhost:6379`.
+  </Parameter>
+  <ReturnType type="mixed" typeLink="/docs/php/types/mixed" />
+</Function>
+
+<Function name="get">
+  <Description>Read a string value by key.</Description>
+  <Parameter name="$handle" type="mixed" required="true" typeLink="/docs/php/types/mixed">
+    Redis handle from `connect`.
+  </Parameter>
+  <Parameter name="$key" type="string" required="true" typeLink="/docs/php/types/string">
+    Key to read.
+  </Parameter>
+  <ReturnType type="mixed" typeLink="/docs/php/types/mixed" />
+</Function>
+
+<Function name="set">
+  <Description>Write a string value by key, optionally with a TTL in seconds.</Description>
+  <Parameter name="$handle" type="mixed" required="true" typeLink="/docs/php/types/mixed">
+    Redis handle from `connect`.
+  </Parameter>
+  <Parameter name="$key" type="string" required="true" typeLink="/docs/php/types/string">
+    Key to write.
+  </Parameter>
+  <Parameter name="$value" type="string" required="true" typeLink="/docs/php/types/string">
+    Value to store.
+  </Parameter>
+  <Parameter name="$ttl" type="int|null" required="false" typeLink="/docs/php/types/int">
+    Optional expiration in seconds.
+  </Parameter>
+  <ReturnType type="mixed" typeLink="/docs/php/types/mixed" />
+</Function>
+
+<Function name="del">
+  <Description>Delete a key.</Description>
+  <Parameter name="$handle" type="mixed" required="true" typeLink="/docs/php/types/mixed">
+    Redis handle from `connect`.
+  </Parameter>
+  <Parameter name="$key" type="string" required="true" typeLink="/docs/php/types/string">
+    Key to delete.
+  </Parameter>
+  <ReturnType type="mixed" typeLink="/docs/php/types/mixed" />
+</Function>
+
+<Function name="exists">
+  <Description>Check whether a key exists.</Description>
+  <Parameter name="$handle" type="mixed" required="true" typeLink="/docs/php/types/mixed">
+    Redis handle from `connect`.
+  </Parameter>
+  <Parameter name="$key" type="string" required="true" typeLink="/docs/php/types/string">
+    Key to check.
+  </Parameter>
+  <ReturnType type="mixed" typeLink="/docs/php/types/mixed" />
+</Function>
+
+<Function name="expire">
+  <Description>Set a key expiration in seconds.</Description>
+  <Parameter name="$handle" type="mixed" required="true" typeLink="/docs/php/types/mixed">
+    Redis handle from `connect`.
+  </Parameter>
+  <Parameter name="$key" type="string" required="true" typeLink="/docs/php/types/string">
+    Key to expire.
+  </Parameter>
+  <Parameter name="$seconds" type="int" required="true" typeLink="/docs/php/types/int">
+    TTL in seconds.
+  </Parameter>
+  <ReturnType type="mixed" typeLink="/docs/php/types/mixed" />
+</Function>
+
+<Function name="ttl">
+  <Description>Read the remaining TTL for a key.</Description>
+  <Parameter name="$handle" type="mixed" required="true" typeLink="/docs/php/types/mixed">
+    Redis handle from `connect`.
+  </Parameter>
+  <Parameter name="$key" type="string" required="true" typeLink="/docs/php/types/string">
+    Key to inspect.
+  </Parameter>
+  <ReturnType type="mixed" typeLink="/docs/php/types/mixed" />
+</Function>
+
+<Function name="incr">
+  <Description>Increment an integer key by a given amount.</Description>
+  <Parameter name="$handle" type="mixed" required="true" typeLink="/docs/php/types/mixed">
+    Redis handle from `connect`.
+  </Parameter>
+  <Parameter name="$key" type="string" required="true" typeLink="/docs/php/types/string">
+    Key to increment.
+  </Parameter>
+  <Parameter name="$by" type="int" required="false" typeLink="/docs/php/types/int">
+    Increment amount. Defaults to `1`.
+  </Parameter>
+  <ReturnType type="mixed" typeLink="/docs/php/types/mixed" />
+</Function>
+
+<Function name="decr">
+  <Description>Decrement an integer key by a given amount.</Description>
+  <Parameter name="$handle" type="mixed" required="true" typeLink="/docs/php/types/mixed">
+    Redis handle from `connect`.
+  </Parameter>
+  <Parameter name="$key" type="string" required="true" typeLink="/docs/php/types/string">
+    Key to decrement.
+  </Parameter>
+  <Parameter name="$by" type="int" required="false" typeLink="/docs/php/types/int">
+    Decrement amount. Defaults to `1`.
+  </Parameter>
+  <ReturnType type="mixed" typeLink="/docs/php/types/mixed" />
+</Function>
+
+## Hash, List, Set, and Admin Helpers
+
+Hash helpers: `hget`, `hset`, `hgetall`, and `hdel`.
+
+List helpers: `lpush`, `rpush`, `lpop`, `rpop`, `lrange`, `llen`, and `ltrim`.
+
+Set helpers: `sadd`, `smembers`, `srem`, and `sismember`.
+
+Administrative helpers: `keys`, `flush`, and `close`.
+
+Use `keys` and `flush` carefully in production code; they are broad operations and should normally be reserved for maintenance tooling or isolated test databases.

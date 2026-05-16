@@ -4,8 +4,8 @@
  * for Cloudflare Workers compatibility.
  *
  * Usage:
- *   bun scripts/bundle-api.ts --source content/api --lang en
- *   bun scripts/bundle-api.ts --source content-i18n/es/api --lang es
+ *   bun scripts/bundle-api.ts --source content/api/api-reference --lang en
+ *   bun scripts/bundle-api.ts --source content-i18n/es/api/api-reference --lang es
  */
 
 import fs from 'fs'
@@ -44,7 +44,7 @@ function parseArgs(argv: string[]) {
     }
   }
 
-  const source = String(args.get('--source') || 'content/api')
+  const source = String(args.get('--source') || 'content/api/api-reference')
   const lang = String(args.get('--lang') || 'en')
   const out = args.get('--out')
 
