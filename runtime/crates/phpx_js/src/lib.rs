@@ -451,6 +451,8 @@ impl<'a> JsSubsetEmitter<'a> {
     //   strtoupper   -> String($s).toUpperCase()
     //   array_key_exists -> ($a != null && typeof $a === 'object' && Object.prototype.hasOwnProperty.call($a, $k))
     //   in_array     -> (Array.isArray($h) && $h.includes($n))
+    //   array_map    -> $a.map($fn)
+    //   array_filter -> $a.filter($fn)
     //   explode      -> String($s).split(String($sep))
     //   implode      -> $a.join(String($g))
     //   count        -> (Array.isArray($x) ? $x : Object.keys($x)).length
@@ -517,7 +519,7 @@ impl<'a> JsSubsetEmitter<'a> {
         // Class (a) entries REMOVED: chr, ord, strlen, substr, ltrim, rtrim, trim,
         // strpos, strrpos, str_starts_with, str_ends_with, str_contains,
         // strtolower, strtoupper, array_key_exists, in_array, explode, implode,
-        // count, time, is_array — now compile-time rewrites in emit_expr.
+        // count, time, is_array, array_map, array_filter — now compile-time rewrites in emit_expr.
 
         // --- Class (c): mission helpers (continued) ---
         out.push_str("globalThis.getenv ??= (name) => { const key = String(name ?? ''); const env = globalThis.process && globalThis.process.env ? globalThis.process.env : null; if (!env || !Object.prototype.hasOwnProperty.call(env, key)) return false; const value = env[key]; return value === undefined || value === null ? false : String(value); };\n");
@@ -575,8 +577,9 @@ impl<'a> JsSubsetEmitter<'a> {
         // str_replace is a compile-time rewrite in try_rewrite_builtin. No globalThis polyfill needed.
         // preg_match / preg_replace / parse_url / microtime / strtotime / urlencode / urldecode
         // are compile-time rewrites in try_rewrite_builtin. No globalThis polyfills needed.
-        // rawurlencode / dechex / hexdec / intval / floatval / boolval / strval / array_slice
-        // are compile-time rewrites in try_rewrite_builtin. No globalThis polyfills needed.
+        // rawurlencode / dechex / hexdec / intval / floatval / boolval / strval /
+        // array_slice / array_map / array_filter are compile-time rewrites in try_rewrite_builtin.
+        // No globalThis polyfills needed.
         // dechex/hexdec are compile-time rewrites in JsSubsetEmitter::emit_builtin_call.
         // pack / date / gmdate — moved to emit_needed_helpers(); emitted only when needed.
         // No globalThis.pack / globalThis.date / globalThis.gmdate install.
@@ -2335,6 +2338,26 @@ impl<'a> JsSubsetEmitter<'a> {
                 Ok(Some(format!(
                     "(() => {{ const __v = {}; if (Array.isArray(__v)) return __v.slice(); return (__v && typeof __v === \"object\") ? Object.values(__v) : []; }})()",
                     a[0]
+                )))
+            }
+            // array_map($fn, $a) -> $a.map($fn)
+            // If $a is object-shaped, map over Object.values($a). Unsupported
+            // multi-array/zipping forms continue to resolve through stdlib imports.
+            "array_map" if args.len() == 2 => {
+                let a = emit_args(self, args)?;
+                Ok(Some(format!(
+                    "(() => {{ const __fn = {}; const __a = {}; const __values = Array.isArray(__a) ? __a : ((__a && typeof __a === \"object\") ? Object.values(__a) : []); return __values.map(__fn); }})()",
+                    a[0], a[1]
+                )))
+            }
+            // array_filter($a) -> $a.filter(Boolean)
+            // array_filter($a, $fn) -> $a.filter($fn)
+            "array_filter" if args.len() >= 1 && args.len() <= 2 => {
+                let a = emit_args(self, args)?;
+                let callback = if args.len() == 2 { a[1].clone() } else { "Boolean".to_string() };
+                Ok(Some(format!(
+                    "(() => {{ const __a = {}; const __fn = {}; const __values = Array.isArray(__a) ? __a : ((__a && typeof __a === \"object\") ? Object.values(__a) : []); return __values.filter(__fn); }})()",
+                    a[0], callback
                 )))
             }
             // is_array($x) -> inline with struct exclusion

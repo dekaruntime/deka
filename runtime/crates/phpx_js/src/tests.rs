@@ -368,6 +368,30 @@ fn rewrite_array_values_on_array_copies() {
 }
 
 #[test]
+fn rewrite_array_map_inline() {
+    let js = phpx_to_js("$fn = fn($x: int): int => $x + 1;\n$a = [1, 2, 3];\n$r = array_map($fn, $a);").expect("should compile");
+    assert!(js.contains(".map("), "expected .map() for array_map, got:\n{}", js);
+    assert!(js.contains("const __fn"), "expected callback to be bound once for array_map, got:\n{}", js);
+    assert!(!js.contains("globalThis.array_map"), "should NOT contain globalThis.array_map, got:\n{}", js);
+}
+
+#[test]
+fn rewrite_array_filter_inline() {
+    let js = phpx_to_js("$fn = fn($x: int): bool => $x > 1;\n$a = [1, 2, 3];\n$r = array_filter($a, $fn);").expect("should compile");
+    assert!(js.contains(".filter("), "expected .filter() for array_filter, got:\n{}", js);
+    assert!(js.contains("const __fn"), "expected callback to be bound once for array_filter, got:\n{}", js);
+    assert!(!js.contains("globalThis.array_filter"), "should NOT contain globalThis.array_filter, got:\n{}", js);
+}
+
+#[test]
+fn rewrite_array_filter_without_callback_uses_boolean() {
+    let js = phpx_to_js("$a = [0, 1, 2];\n$r = array_filter($a);").expect("should compile");
+    assert!(js.contains(".filter("), "expected .filter() for array_filter without callback, got:\n{}", js);
+    assert!(js.contains("Boolean"), "expected Boolean callback for array_filter without callback, got:\n{}", js);
+    assert!(!js.contains("globalThis.array_filter"), "should NOT contain globalThis.array_filter, got:\n{}", js);
+}
+
+#[test]
 fn rewrite_is_array_inline() {
     let js = phpx_to_js("$arr = [1];\n$b = is_array($arr);").expect("should compile");
     assert!(js.contains("Array.isArray"), "expected Array.isArray for is_array, got:\n{}", js);
@@ -413,6 +437,8 @@ fn prelude_no_removed_polyfills() {
     assert!(!js.contains("globalThis.is_array ="), "globalThis.is_array polyfill should be removed");
     assert!(!js.contains("globalThis.array_keys ??="), "globalThis.array_keys polyfill should not be added");
     assert!(!js.contains("globalThis.array_values ??="), "globalThis.array_values polyfill should not be added");
+    assert!(!js.contains("globalThis.array_map ??="), "globalThis.array_map polyfill should be removed");
+    assert!(!js.contains("globalThis.array_filter ??="), "globalThis.array_filter polyfill should be removed");
     // Type predicates are compile-time IIFE rewrites — no globalThis polyfill.
     assert!(!js.contains("globalThis.is_int ??="), "globalThis.is_int polyfill should be removed");
     assert!(!js.contains("globalThis.is_float ??="), "globalThis.is_float polyfill should be removed");
