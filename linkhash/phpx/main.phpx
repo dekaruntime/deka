@@ -609,6 +609,7 @@ function Layout($props) {
         <div class="flex items-center gap-4 text-sm">
           <Link to="/" layout="registry" class="text-blue-600 hover:text-blue-800">Home</Link>
           <Link to="/account" layout="registry" class="text-gray-600 hover:text-blue-600">Account</Link>
+          <Link to="/deploy-watchers" layout="registry" class="text-gray-600 hover:text-blue-600">Deploys</Link>
           <Link to="/playground" layout="registry" class="text-gray-600 hover:text-blue-600">Playground</Link>
           <Link to="/runtime" layout="registry" class="text-gray-600 hover:text-blue-600">Runtime Lab</Link>
           <Link to="/hmr-demo" layout="registry" class="text-gray-600 hover:text-blue-600">HMR Demo</Link>
@@ -627,6 +628,64 @@ function Layout($props) {
       </div>
     </footer>
   </div>
+}
+
+function DeployWatchersPage($props) {
+  $ok = rowValue($props, 'ok', false)
+  $watchers = rowValue($props, 'watchers', [])
+  $error = '' . rowValue($props, 'error', '')
+  $rows = []
+  if (is_array($watchers)) {
+    foreach ($watchers as $watcher) {
+      $repo = rowValue($watcher, 'repo_owner', rowValue($watcher, 'repoOwner', '')) . '/' . rowValue($watcher, 'repo_name', rowValue($watcher, 'repoName', ''))
+      $status = '' . rowValue($watcher, 'last_delivery_status', rowValue($watcher, 'lastDeliveryStatus', 'pending'))
+      $code = rowValue($watcher, 'last_delivery_code', rowValue($watcher, 'lastDeliveryCode', ''))
+      $branch = '' . rowValue($watcher, 'last_branch', rowValue($watcher, 'lastBranch', '-'))
+      $sha = '' . rowValue($watcher, 'last_sha', rowValue($watcher, 'lastSha', ''))
+      $shortSha = strlen($sha) > 12 ? substr($sha, 0, 12) : ($sha === '' ? '-' : $sha)
+      $errorText = '' . rowValue($watcher, 'last_delivery_error', rowValue($watcher, 'lastDeliveryError', ''))
+      $rows[] = <tr class="border-t border-gray-200">
+        <td class="px-4 py-3 font-mono text-xs text-gray-800">{$repo}</td>
+        <td class="px-4 py-3 text-xs text-gray-600">{'' . rowValue($watcher, 'watcher_url', rowValue($watcher, 'watcherUrl', ''))}</td>
+        <td class="px-4 py-3">
+          <span class={'rounded px-2 py-1 text-xs font-semibold ' . ($status === 'ok' ? 'bg-emerald-100 text-emerald-700' : ($status === 'failed' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'))}>{$status}</span>
+        </td>
+        <td class="px-4 py-3 text-xs text-gray-600">{$branch}</td>
+        <td class="px-4 py-3 font-mono text-xs text-gray-600">{$shortSha}</td>
+        <td class="px-4 py-3 text-xs text-gray-600">{'' . $code}</td>
+        <td class="px-4 py-3 text-xs text-red-700">{$errorText}</td>
+      </tr>
+    }
+  }
+  return <Layout>
+    <section class="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-900">Deploy Watchers</h1>
+          <p class="mt-2 text-sm text-gray-600">Watched repos and their last linkhash-to-fleet delivery status.</p>
+        </div>
+        <a class="rounded border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50" href="/api/deploy-watchers">JSON</a>
+      </div>
+      {!$ok ? <div class="mt-5 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">{$error === '' ? 'Deploy watcher status is unavailable.' : $error}</div> : null}
+      {$ok && count($rows) === 0 ? <div class="mt-5 rounded border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">No watched repos are enrolled yet.</div> : null}
+      {$ok && count($rows) > 0 ? <div class="mt-5 overflow-x-auto">
+        <table class="min-w-full text-left">
+          <thead>
+            <tr class="text-xs uppercase text-gray-500">
+              <th class="px-4 py-2">Repo</th>
+              <th class="px-4 py-2">Watcher URL</th>
+              <th class="px-4 py-2">Status</th>
+              <th class="px-4 py-2">Branch</th>
+              <th class="px-4 py-2">SHA</th>
+              <th class="px-4 py-2">HTTP</th>
+              <th class="px-4 py-2">Error</th>
+            </tr>
+          </thead>
+          <tbody>{$rows}</tbody>
+        </table>
+      </div> : null}
+    </section>
+  </Layout>
 }
 
 function Hero() {
@@ -1619,6 +1678,10 @@ function fetchRemoteGitJson($method, $path, $payload = null) {
     return [ 'ok' => false, 'error' => '' . rowValue($decoded, 'error', 'request rejected'), 'status' => $status, 'payload' => $decoded ]
   }
   return [ 'ok' => true, 'value' => $decoded, 'status' => $status ]
+}
+
+function fetchRemoteDeployWatchers() {
+  return fetchRemoteGitJson('GET', '/api/deploy-watchers')
 }
 
 function fetchRemoteRepoIssues($org, $name, $state = 'open') {
@@ -6675,6 +6738,10 @@ if (strpos($path, '/package/') === 0) {
       packageUrl={'/package/' . $targetOwner . '/' . $targetRepo}
     />
   </Layout>
+} else if ($path === '/deploy-watchers') {
+  $res = fetchRemoteDeployWatchers()
+  $value = rowValue($res, 'value', [])
+  $node = <DeployWatchersPage ok={rowValue($res, 'ok', false)} watchers={rowValue($value, 'watchers', [])} error={rowValue($res, 'error', '')} />
 } else if ($path === '/account') {
   $auth = authWithScope(1)
   if (!$auth['ok']) {
