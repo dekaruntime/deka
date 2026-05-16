@@ -1,9 +1,9 @@
 use anyhow::Result;
 use core::{CommandSpec, Context, FlagSpec, ParamSpec, Registry};
-use linkhash_client::{LinkhashClient, is_phpx_package};
-use pm::{InstallPayload, run_install};
+use linkhash_client::{is_phpx_package, LinkhashClient};
+use pm::{run_install, InstallPayload};
 use runtime_core::module_spec::canonical_php_package_spec;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use stdio;
 
 const INSTALL_COMMAND: CommandSpec = CommandSpec {
@@ -97,6 +97,20 @@ pub fn cmd(context: &Context) {
     // Set registry env vars from flags/env before delegating to pm
     apply_registry_env(context);
 
+    if context.args.flags.contains_key("--rehash") {
+        let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let specs = rehash_specs(context);
+        match rehash_phpx_packages(&project_dir, &specs) {
+            Ok(packages) => {
+                stdio::log("install", &format!("rehashed {}", packages.join(", ")));
+            }
+            Err(err) => {
+                stdio::error("install", &format!("rehash failed: {}", err));
+            }
+        }
+        return;
+    }
+
     // Check if any positional args are scoped PHPX packages
     let specs: Vec<String> = context.args.positionals.clone();
     let phpx_specs: Vec<&String> = specs.iter().filter(|s| is_phpx_package(s)).collect();
@@ -119,7 +133,8 @@ pub fn cmd(context: &Context) {
         }
 
         // If there are also non-phpx specs, fall through to pm
-        let non_phpx: Vec<String> = specs.iter()
+        let non_phpx: Vec<String> = specs
+            .iter()
             .filter(|s| !is_phpx_package(s))
             .cloned()
             .collect();
@@ -163,7 +178,8 @@ pub fn cmd_update(context: &Context) {
         specs = collect_deka_json_deps();
     }
 
-    let phpx_specs: Vec<String> = specs.iter()
+    let phpx_specs: Vec<String> = specs
+        .iter()
         .filter(|s| is_phpx_package(s))
         .cloned()
         .collect();
@@ -237,7 +253,10 @@ fn run_shop_update(context: &Context, project_dir: &std::path::Path) -> Result<(
         .unwrap_or("<shop>")
         .to_string();
 
-    stdio::log("update", &format!("shop-mode: bumping deps for {}", shop_id));
+    stdio::log(
+        "update",
+        &format!("shop-mode: bumping deps for {}", shop_id),
+    );
 
     // Read current versions from deka.lock (authoritative) before bump.
     let before = read_php_lock_versions(project_dir);
@@ -340,7 +359,11 @@ fn read_php_lock_versions(dir: &std::path::Path) -> std::collections::BTreeMap<S
     };
     for (name, entry) in pkgs {
         // Lock entries are [version, resolved, metadata, integrity].
-        if let Some(v) = entry.as_array().and_then(|a| a.first()).and_then(|v| v.as_str()) {
+        if let Some(v) = entry
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|v| v.as_str())
+        {
             out.insert(name.clone(), v.to_string());
         }
     }
@@ -393,7 +416,10 @@ fn collect_deka_json_deps_in(dir: &std::path::Path) -> Vec<String> {
     deps.iter()
         .map(|(name, version)| {
             if let Some(v) = version.as_str() {
-                let clean = v.trim_start_matches('^').trim_start_matches('~').trim_start_matches(">=");
+                let clean = v
+                    .trim_start_matches('^')
+                    .trim_start_matches('~')
+                    .trim_start_matches(">=");
                 format!("{}@{}", name, clean)
             } else {
                 name.clone()
@@ -411,8 +437,7 @@ fn run_verify_build(project_dir: &std::path::Path) -> Result<(), String> {
     // context, while this path is called from the CLI after the context
     // is already committed to the update flow. Using the current
     // executable keeps behavior aligned with what a human would see.
-    let exe = std::env::current_exe()
-        .map_err(|e| format!("resolve self: {}", e))?;
+    let exe = std::env::current_exe().map_err(|e| format!("resolve self: {}", e))?;
     let out = std::process::Command::new(&exe)
         .arg("build")
         .current_dir(project_dir)
@@ -422,7 +447,11 @@ fn run_verify_build(project_dir: &std::path::Path) -> Result<(), String> {
         Ok(())
     } else {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        Err(stderr.lines().next().unwrap_or("unknown build failure").to_string())
+        Err(stderr
+            .lines()
+            .next()
+            .unwrap_or("unknown build failure")
+            .to_string())
     }
 }
 
@@ -487,22 +516,34 @@ fn git_commit_shop_update(project_dir: &std::path::Path, subject: &str) -> Resul
 /// This ensures the pm crate picks up the right values.
 fn apply_registry_env(context: &Context) {
     if let Some(registry) = context.args.params.get("--registry") {
-        unsafe { std::env::set_var("LINKHASH_REGISTRY_URL", registry); }
+        unsafe {
+            std::env::set_var("LINKHASH_REGISTRY_URL", registry);
+        }
     } else if std::env::var("LINKHASH_REGISTRY_URL").is_err() {
         if let Ok(val) = std::env::var("LINKHASH_REGISTRY") {
-            unsafe { std::env::set_var("LINKHASH_REGISTRY_URL", val); }
+            unsafe {
+                std::env::set_var("LINKHASH_REGISTRY_URL", val);
+            }
         } else if let Ok(val) = std::env::var("TANA_GIT_SERVER") {
-            unsafe { std::env::set_var("LINKHASH_REGISTRY_URL", val); }
+            unsafe {
+                std::env::set_var("LINKHASH_REGISTRY_URL", val);
+            }
         } else {
-            unsafe { std::env::set_var("LINKHASH_REGISTRY_URL", "http://localhost:9418"); }
+            unsafe {
+                std::env::set_var("LINKHASH_REGISTRY_URL", "http://localhost:9418");
+            }
         }
     }
 
     if let Some(token) = context.args.params.get("--token") {
-        unsafe { std::env::set_var("LINKHASH_TOKEN", token); }
+        unsafe {
+            std::env::set_var("LINKHASH_TOKEN", token);
+        }
     } else if std::env::var("LINKHASH_TOKEN").is_err() {
         if let Ok(val) = std::env::var("TANA_GIT_TOKEN") {
-            unsafe { std::env::set_var("LINKHASH_TOKEN", val); }
+            unsafe {
+                std::env::set_var("LINKHASH_TOKEN", val);
+            }
         }
     }
 }
@@ -575,7 +616,11 @@ fn build_update_payload(context: &Context) -> Result<InstallPayload> {
         specs = collect_deka_json_deps();
     }
 
-    let ecosystem = context.args.params.get("--ecosystem").cloned()
+    let ecosystem = context
+        .args
+        .params
+        .get("--ecosystem")
+        .cloned()
         .unwrap_or_else(|| "php".to_string());
 
     if ecosystem == "php" {
@@ -619,7 +664,10 @@ fn collect_deka_json_deps() -> Vec<String> {
         .map(|(name, version)| {
             if let Some(v) = version.as_str() {
                 // Strip semver range prefixes for resolution
-                let clean = v.trim_start_matches('^').trim_start_matches('~').trim_start_matches(">=");
+                let clean = v
+                    .trim_start_matches('^')
+                    .trim_start_matches('~')
+                    .trim_start_matches(">=");
                 format!("{}@{}", name, clean)
             } else {
                 name.clone()
@@ -678,14 +726,20 @@ fn resolve_php_spec(raw: &str) -> Result<String> {
 
 /// Extract registry URL and token from CLI context / env.
 fn get_registry_config(context: &Context) -> (String, Option<String>) {
-    let registry = context.args.params.get("--registry")
+    let registry = context
+        .args
+        .params
+        .get("--registry")
         .cloned()
         .or_else(|| std::env::var("LINKHASH_REGISTRY_URL").ok())
         .or_else(|| std::env::var("LINKHASH_REGISTRY").ok())
         .or_else(|| std::env::var("TANA_GIT_SERVER").ok())
         .unwrap_or_else(|| "http://localhost:9418".to_string());
 
-    let token = context.args.params.get("--token")
+    let token = context
+        .args
+        .params
+        .get("--token")
         .cloned()
         .or_else(|| std::env::var("LINKHASH_TOKEN").ok())
         .or_else(|| std::env::var("TANA_GIT_TOKEN").ok());
@@ -707,6 +761,63 @@ fn parse_spec_with_version(spec: &str) -> (String, String) {
     } else {
         (spec.to_string(), "latest".to_string())
     }
+}
+
+fn rehash_specs(context: &Context) -> Vec<String> {
+    let mut specs = context
+        .args
+        .params
+        .get("--spec")
+        .map(|value| parse_spec_list(value))
+        .unwrap_or_default();
+    if specs.is_empty() {
+        specs = context.args.positionals.clone();
+    }
+    specs
+}
+
+fn rehash_phpx_packages(project_dir: &Path, specs: &[String]) -> Result<Vec<String>> {
+    let versions = read_php_lock_versions(project_dir);
+    let packages = if specs.is_empty() {
+        versions.keys().cloned().collect::<Vec<_>>()
+    } else {
+        let mut packages = Vec::new();
+        for spec in specs {
+            let resolved = resolve_php_spec(spec)?;
+            let (name, _) = parse_spec_with_version(&resolved);
+            packages.push(name);
+        }
+        packages
+    };
+
+    if packages.is_empty() {
+        return Err(anyhow::anyhow!("no php packages found to rehash"));
+    }
+
+    for name in &packages {
+        let version = versions
+            .get(name)
+            .ok_or_else(|| anyhow::anyhow!("{} is missing from deka.lock", name))?;
+        let target = project_dir.join("php_modules").join(name);
+        if !target.is_dir() {
+            return Err(anyhow::anyhow!(
+                "{} is missing from php_modules at {}",
+                name,
+                target.display()
+            ));
+        }
+        let integrity = modules_php::integrity::compute_package_integrity(&target)
+            .map_err(|err| anyhow::anyhow!("integrity hash failed for {}: {}", name, err))?;
+        update_deka_lock(
+            project_dir,
+            name,
+            version,
+            &integrity.module_graph,
+            &integrity.fs_graph,
+        )?;
+    }
+
+    Ok(packages)
 }
 
 /// Install a scoped PHPX package using linkhash-client.
@@ -737,7 +848,13 @@ fn install_phpx_package(
         .map_err(|err| anyhow::anyhow!("integrity hash failed for {}: {}", name, err))?;
 
     // Update deka.lock with the resolved version + integrity hashes
-    update_deka_lock(project_dir, name, &resolved.version, &integrity.module_graph, &integrity.fs_graph)?;
+    update_deka_lock(
+        project_dir,
+        name,
+        &resolved.version,
+        &integrity.module_graph,
+        &integrity.fs_graph,
+    )?;
 
     Ok(resolved.version)
 }
@@ -770,10 +887,7 @@ fn update_deka_lock(
         lock["node"] = serde_json::json!({ "packages": {} });
     }
     // Migrate a bare top-level "packages" (old format) into php.packages.
-    let legacy_packages = lock
-        .get("packages")
-        .and_then(|v| v.as_object())
-        .cloned();
+    let legacy_packages = lock.get("packages").and_then(|v| v.as_object()).cloned();
     if !lock.get("php").and_then(|v| v.get("packages")).is_some() {
         lock["php"] = serde_json::json!({ "packages": {} });
     }
@@ -875,8 +989,14 @@ mod shop_update_tests {
         .expect("write");
 
         let versions = read_php_lock_versions(tmp.path());
-        assert_eq!(versions.get("@deka/redis").map(String::as_str), Some("0.1.0"));
-        assert_eq!(versions.get("@tana/store").map(String::as_str), Some("0.2.3"));
+        assert_eq!(
+            versions.get("@deka/redis").map(String::as_str),
+            Some("0.1.0")
+        );
+        assert_eq!(
+            versions.get("@tana/store").map(String::as_str),
+            Some("0.2.3")
+        );
     }
 
     #[test]
@@ -916,7 +1036,10 @@ mod shop_update_tests {
             ("@tana/store".into(), Some("0.4.1".into()), "0.5.0".into()),
         ];
         let line = format_diff_line(&diff);
-        assert_eq!(line, "@deka/redis 1.2.0 -> 1.3.0, @tana/store 0.4.1 -> 0.5.0");
+        assert_eq!(
+            line,
+            "@deka/redis 1.2.0 -> 1.3.0, @tana/store 0.4.1 -> 0.5.0"
+        );
     }
 
     #[test]
@@ -924,6 +1047,50 @@ mod shop_update_tests {
         let diff = vec![("@deka/new".into(), None, "0.1.0".into())];
         let line = format_diff_line(&diff);
         assert_eq!(line, "@deka/new added@0.1.0");
+    }
+
+    #[test]
+    fn rehash_phpx_packages_updates_lock_integrity_without_network() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let package_dir = tmp.path().join("php_modules").join("@deka").join("core");
+        std::fs::create_dir_all(&package_dir).expect("package dir");
+        std::fs::write(
+            package_dir.join("index.phpx"),
+            "export function ok(): int { return 1 }",
+        )
+        .expect("package file");
+        std::fs::write(
+            tmp.path().join("deka.lock"),
+            serde_json::json!({
+                "lockfileVersion": 1,
+                "node": { "packages": {} },
+                "php": {
+                    "packages": {
+                        "@deka/core": [
+                            "0.1.0",
+                            "linkhash:@deka/core",
+                            {
+                                "moduleGraph": { "hash": "stale-module" },
+                                "fsGraph": { "hash": "stale-fs" }
+                            },
+                            ""
+                        ]
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .expect("lock");
+
+        let changed =
+            rehash_phpx_packages(tmp.path(), &["@deka/core".to_string()]).expect("rehash");
+
+        assert_eq!(changed, vec!["@deka/core".to_string()]);
+        let raw = std::fs::read_to_string(tmp.path().join("deka.lock")).expect("read lock");
+        let lock: serde_json::Value = serde_json::from_str(&raw).expect("json");
+        let metadata = &lock["php"]["packages"]["@deka/core"][2];
+        assert_ne!(metadata["moduleGraph"]["hash"], "stale-module");
+        assert_ne!(metadata["fsGraph"]["hash"], "stale-fs");
     }
 
     #[test]
@@ -952,10 +1119,14 @@ mod shop_update_tests {
         // Must return None even if a deka.json is present nearby.
         let detected = detect_shop_working_tree();
         assert!(
-            detected.is_none() || detected.as_ref().map(|p| {
-                let s = p.to_string_lossy();
-                s.contains("/store/tenants/") || s.contains("\\store\\tenants\\")
-            }).unwrap_or(true),
+            detected.is_none()
+                || detected
+                    .as_ref()
+                    .map(|p| {
+                        let s = p.to_string_lossy();
+                        s.contains("/store/tenants/") || s.contains("\\store\\tenants\\")
+                    })
+                    .unwrap_or(true),
             "detect_shop_working_tree must only fire inside store/tenants/"
         );
     }
