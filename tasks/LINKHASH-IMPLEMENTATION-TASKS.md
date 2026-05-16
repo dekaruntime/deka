@@ -37,8 +37,14 @@ This track is linkhash app/product work that consumes runtime capabilities.
 1. [x] `deka install` can install published PHPX package from linkhash
 1. [x] docs for local dev config and token setup
 
+6. [x] Gild OCI pull workflow documentation
+1. [x] document registry ping, manifest, and blob endpoints for gild
+1. [x] document `LINKHASH_OCI_ROOT` filesystem layout and lookup order
+1. [x] document digest verification and cache-key expectations
+
 ## Acceptance
 
 1. [x] User can login and publish a package in local dev.
 1. [x] Another project can install package using `deka install`.
 1. [x] Private package access is denied without proper role/scope.
+1. [x] Gild has a documented OCI pull contract for Linkhash-hosted rootfs images.
