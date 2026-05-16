@@ -1,0 +1,173 @@
+---
+title: "Encoding"
+description: "JSON and binary encoding helpers for PHPX values, byte buffers, and protocol fields."
+section: "phpx"
+category: "encoding"
+categoryLabel: "Encoding"
+categoryOrder: 33
+source: "php_modules/encoding"
+---
+
+The `encoding` modules cover structured JSON and fixed-width binary values. JSON helpers live at `encoding/json`; binary packing and reading helpers live at `encoding/binary`.
+
+Use the JSON module when a PHPX application needs PHP-compatible `json_encode`, `json_decode`, `json_validate`, or explicit `Result`-style decode errors. Use the binary module when building or parsing byte-oriented protocols with unsigned 16-bit and 32-bit integers.
+
+## Imports
+
+```phpx
+import { json_encode, json_decode_result, json_validate } from 'encoding/json'
+import { u16_be, read_u32_le, append_u16_be } from 'encoding/binary'
+```
+
+## JSON
+
+`json_decode_result` is the safer form for application code because callers can handle invalid JSON without relying on global JSON error state.
+
+```phpx
+import { json_decode_result } from 'encoding/json'
+import { result_is_ok } from 'core/result'
+
+$decoded = json_decode_result('{"ok":true}', true)
+if (result_is_ok($decoded)) {
+  echo $decoded->value['ok']
+}
+```
+
+## Binary Values
+
+The binary helpers return bytes for writers and structured maps for readers. Reader maps contain `ok`, `value`, and `next` on success, or `ok: false` with an error string on short reads.
+
+```phpx
+import { u16_be, append_u32_le, read_u16_be } from 'encoding/binary'
+
+$packet = append_u32_le(u16_be(7), 1024)
+$field = read_u16_be($packet, 0)
+```
+
+## JSON Functions
+
+<Function name="json_encode">
+  <Description>Encode a PHPX value as JSON. Returns false on encoding failure.</Description>
+  <Parameter name="$value" type="mixed" required="true">Value to encode.</Parameter>
+  <Parameter name="$flags" type="int" required="false">JSON flags.</Parameter>
+  <Parameter name="$depth" type="int" required="false">Maximum nesting depth.</Parameter>
+  <ReturnType type="string|false" />
+</Function>
+
+<Function name="json_decode">
+  <Description>Decode a JSON string into a PHPX value and update the JSON error state.</Description>
+  <Parameter name="$json" type="string" required="true">JSON input.</Parameter>
+  <Parameter name="$assoc" type="bool" required="false">Return objects as associative arrays when true.</Parameter>
+  <Parameter name="$depth" type="int" required="false">Maximum nesting depth.</Parameter>
+  <Parameter name="$flags" type="int" required="false">JSON flags.</Parameter>
+  <ReturnType type="mixed" />
+</Function>
+
+<Function name="json_decode_result">
+  <Description>Decode JSON and return `Result&lt;mixed, array&gt;` with error code and message on failure.</Description>
+  <Parameter name="$json" type="string" required="true">JSON input.</Parameter>
+  <Parameter name="$assoc" type="bool" required="false">Return objects as associative arrays when true.</Parameter>
+  <Parameter name="$depth" type="int" required="false">Maximum nesting depth.</Parameter>
+  <Parameter name="$flags" type="int" required="false">JSON flags.</Parameter>
+  <ReturnType type="Result" />
+</Function>
+
+<Function name="json_last_error">
+  <Description>Return the last JSON error code for the current request.</Description>
+  <ReturnType type="int" />
+</Function>
+
+<Function name="json_last_error_msg">
+  <Description>Return the last JSON error message for the current request.</Description>
+  <ReturnType type="string" />
+</Function>
+
+<Function name="json_validate">
+  <Description>Validate JSON input without returning the decoded value.</Description>
+  <Parameter name="$json" type="string" required="true">JSON input.</Parameter>
+  <Parameter name="$depth" type="int" required="false">Maximum nesting depth.</Parameter>
+  <Parameter name="$flags" type="int" required="false">JSON flags.</Parameter>
+  <ReturnType type="bool" />
+</Function>
+
+## Binary Functions
+
+<Function name="u16_be">
+  <Description>Encode an integer as two big-endian bytes.</Description>
+  <Parameter name="$value" type="int" required="true">Value to encode.</Parameter>
+  <ReturnType type="bytes" />
+</Function>
+
+<Function name="u16_le">
+  <Description>Encode an integer as two little-endian bytes.</Description>
+  <Parameter name="$value" type="int" required="true">Value to encode.</Parameter>
+  <ReturnType type="bytes" />
+</Function>
+
+<Function name="u32_be">
+  <Description>Encode an integer as four big-endian bytes.</Description>
+  <Parameter name="$value" type="int" required="true">Value to encode.</Parameter>
+  <ReturnType type="bytes" />
+</Function>
+
+<Function name="u32_le">
+  <Description>Encode an integer as four little-endian bytes.</Description>
+  <Parameter name="$value" type="int" required="true">Value to encode.</Parameter>
+  <ReturnType type="bytes" />
+</Function>
+
+<Function name="read_u16_be">
+  <Description>Read a big-endian unsigned 16-bit integer from bytes at an offset.</Description>
+  <Parameter name="$bytes" type="bytes" required="true">Input bytes.</Parameter>
+  <Parameter name="$offset" type="int" required="false">Start offset. Defaults to 0.</Parameter>
+  <ReturnType type="object" />
+</Function>
+
+<Function name="read_u16_le">
+  <Description>Read a little-endian unsigned 16-bit integer from bytes at an offset.</Description>
+  <Parameter name="$bytes" type="bytes" required="true">Input bytes.</Parameter>
+  <Parameter name="$offset" type="int" required="false">Start offset. Defaults to 0.</Parameter>
+  <ReturnType type="object" />
+</Function>
+
+<Function name="read_u32_be">
+  <Description>Read a big-endian unsigned 32-bit integer from bytes at an offset.</Description>
+  <Parameter name="$bytes" type="bytes" required="true">Input bytes.</Parameter>
+  <Parameter name="$offset" type="int" required="false">Start offset. Defaults to 0.</Parameter>
+  <ReturnType type="object" />
+</Function>
+
+<Function name="read_u32_le">
+  <Description>Read a little-endian unsigned 32-bit integer from bytes at an offset.</Description>
+  <Parameter name="$bytes" type="bytes" required="true">Input bytes.</Parameter>
+  <Parameter name="$offset" type="int" required="false">Start offset. Defaults to 0.</Parameter>
+  <ReturnType type="object" />
+</Function>
+
+<Function name="append_u16_be">
+  <Description>Append a big-endian unsigned 16-bit integer to existing bytes.</Description>
+  <Parameter name="$bytes" type="bytes" required="true">Existing bytes.</Parameter>
+  <Parameter name="$value" type="int" required="true">Value to append.</Parameter>
+  <ReturnType type="bytes" />
+</Function>
+
+<Function name="append_u16_le">
+  <Description>Append a little-endian unsigned 16-bit integer to existing bytes.</Description>
+  <Parameter name="$bytes" type="bytes" required="true">Existing bytes.</Parameter>
+  <Parameter name="$value" type="int" required="true">Value to append.</Parameter>
+  <ReturnType type="bytes" />
+</Function>
+
+<Function name="append_u32_be">
+  <Description>Append a big-endian unsigned 32-bit integer to existing bytes.</Description>
+  <Parameter name="$bytes" type="bytes" required="true">Existing bytes.</Parameter>
+  <Parameter name="$value" type="int" required="true">Value to append.</Parameter>
+  <ReturnType type="bytes" />
+</Function>
+
+<Function name="append_u32_le">
+  <Description>Append a little-endian unsigned 32-bit integer to existing bytes.</Description>
+  <Parameter name="$bytes" type="bytes" required="true">Existing bytes.</Parameter>
+  <Parameter name="$value" type="int" required="true">Value to append.</Parameter>
+  <ReturnType type="bytes" />
+</Function>

@@ -1,0 +1,41 @@
+---
+title: "aes_256_gcm_decrypt"
+docid: "phpx/crypto/aes_256_gcm_decrypt()"
+section: "phpx"
+category: "crypto"
+version: "latest"
+categoryLabel: "Crypto"
+categoryOrder: 32
+source: "php_modules/crypto/index.phpx"
+description: "Decrypt AES-256-GCM ciphertext with its appended tag and return Result<bytes, string>."
+---
+
+<Function name="aes_256_gcm_decrypt">
+  <Description>
+    Decrypt AES-256-GCM ciphertext. The ciphertext must include the 16-byte GCM tag
+    appended by `aes_256_gcm_encrypt`; authentication failures return Err.
+  </Description>
+  <Parameter name="$key" type="mixed" required="true">
+    32-byte key as bytes or string.
+  </Parameter>
+  <Parameter name="$nonce" type="mixed" required="true">
+    12-byte nonce used for encryption.
+  </Parameter>
+  <Parameter name="$ciphertext" type="mixed" required="true">
+    Ciphertext bytes or string with the appended 16-byte authentication tag.
+  </Parameter>
+  <Parameter name="$aad" type="mixed" required="false">
+    Associated data that must match the encryption call. Defaults to an empty string.
+  </Parameter>
+  <ReturnType type="Result" />
+</Function>
+
+```phpx
+import { aes_256_gcm_decrypt } from 'crypto'
+import { result_is_ok } from 'core/result'
+
+$opened = aes_256_gcm_decrypt($key, $nonce, $ciphertext, 'v1')
+if (result_is_ok($opened)) {
+  echo $opened->value
+}
+```
