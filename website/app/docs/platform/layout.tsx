@@ -13,6 +13,7 @@ const platformSections = [
     items: [
       { name: 'Overview', slug: '', description: 'How Tana is structured' },
       { name: 'Agents', slug: 'agents', description: 'Personas, dispatchers, and ephemeral workers' },
+      { name: 'Stripe Connect', slug: 'stripe-connect', description: 'Merchant onboarding, dashboard status, and fee accounting' },
     ],
   },
 ]
