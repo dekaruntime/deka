@@ -137,6 +137,30 @@ async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
 
     sqlx::query(
         r#"
+        CREATE TABLE IF NOT EXISTS deploy_watchers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            repo_owner TEXT NOT NULL,
+            repo_name TEXT NOT NULL,
+            watcher_url TEXT NOT NULL,
+            active INTEGER NOT NULL DEFAULT 1,
+            created_by TEXT NOT NULL DEFAULT 'system',
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now')),
+            last_branch TEXT,
+            last_sha TEXT,
+            last_delivery_status TEXT,
+            last_delivery_code INTEGER,
+            last_delivery_error TEXT,
+            last_delivery_at TEXT,
+            UNIQUE(repo_owner, repo_name)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
         CREATE TABLE IF NOT EXISTS audit_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             token_id INTEGER,
@@ -377,6 +401,11 @@ async fn run_migrations(pool: &SqlitePool) -> anyhow::Result<()> {
         .await?;
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_repo ON webhook_subscriptions(repo_owner, repo_name)",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_deploy_watchers_active ON deploy_watchers(repo_owner, repo_name, active)",
     )
     .execute(pool)
     .await?;

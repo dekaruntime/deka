@@ -184,6 +184,8 @@ async fn main() {
             "/api/repos/:owner/:repo/webhooks",
             post(handle_create_webhook),
         )
+        .route("/api/deploy-watchers", get(handle_list_deploy_watchers))
+        .route("/api/deploy-watchers", post(handle_upsert_deploy_watcher))
         // Audit log
         .route("/api/audit", get(handle_audit_log))
         // Convenience: flat issue list across all repos

@@ -56,6 +56,14 @@ pub(crate) struct WebhookPayload {
     events: Option<Vec<String>>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct DeployWatcherPayload {
+    repo_owner: String,
+    repo_name: String,
+    watcher_url: String,
+    active: Option<bool>,
+}
+
 pub(crate) async fn handle_auth_me(req: Request) -> impl IntoResponse {
     let auth_user = match auth::get_auth_user(&req) {
         Some(user) => user,
@@ -458,6 +466,82 @@ pub(crate) async fn handle_list_webhooks(
         Ok(webhooks) => (
             StatusCode::OK,
             Json(serde_json::json!({ "repo": full_repo, "webhooks": webhooks })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+pub(crate) async fn handle_list_deploy_watchers(
+    Extension(auth_user): Extension<auth::AuthUser>,
+) -> impl IntoResponse {
+    if let Err(response) = require_admin_user(&auth_user) {
+        return response;
+    };
+
+    match crate::hooks::list_deploy_watchers().await {
+        Ok(watchers) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "watchers": watchers })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+pub(crate) async fn handle_upsert_deploy_watcher(
+    Extension(auth_user): Extension<auth::AuthUser>,
+    Json(payload): Json<DeployWatcherPayload>,
+) -> impl IntoResponse {
+    if let Err(response) = require_admin_user(&auth_user) {
+        return response;
+    }
+
+    let owner = payload.repo_owner.trim();
+    let repo = payload
+        .repo_name
+        .trim()
+        .strip_suffix(".git")
+        .unwrap_or(payload.repo_name.trim());
+    let url = payload.watcher_url.trim();
+    if owner.is_empty() || repo.is_empty() || url.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(
+                serde_json::json!({ "error": "repo_owner, repo_name, and watcher_url are required" }),
+            ),
+        );
+    }
+    if !url.starts_with("https://")
+        && !url.starts_with("http://127.0.0.1")
+        && !url.starts_with("http://localhost")
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(
+                serde_json::json!({ "error": "watcher_url must be https, localhost, or 127.0.0.1" }),
+            ),
+        );
+    }
+
+    match crate::hooks::upsert_deploy_watcher(
+        owner,
+        repo,
+        url,
+        payload.active.unwrap_or(true),
+        &auth_user.owner,
+    )
+    .await
+    {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(
+                serde_json::json!({ "ok": true, "repo": format!("{}/{}", owner, repo), "watcher_url": url }),
+            ),
         ),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
