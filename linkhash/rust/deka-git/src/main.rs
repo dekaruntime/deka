@@ -19,6 +19,7 @@ mod issues;
 mod label_routes;
 mod package_routes;
 mod packages;
+mod pipeline_yaml;
 mod pull_routes;
 mod pulls;
 mod redaction;
