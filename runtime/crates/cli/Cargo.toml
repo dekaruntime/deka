@@ -34,7 +34,7 @@ anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 reqwest = { version = "0.11", features = ["json"] }
-tokio = { version = "1.35", features = ["rt-multi-thread"], optional = true }
+tokio = { version = "1.35", features = ["rt-multi-thread", "net", "io-util"], optional = true }
 postgres = { version = "0.19", optional = true }
 php-rs = { path = "../php-rs", optional = true }
 phpx_lsp = { path = "../phpx_lsp", optional = true }
@@ -44,6 +44,7 @@ bumpalo = "3.12"
 rusqlite = { version = "0.32", optional = true }
 deno_task_shell = "0.29.0"
 glob = "0.3.1"
+serde_yaml = "0.9"
 bundler = { path = "../bundler", optional = true }
 
 [dev-dependencies]

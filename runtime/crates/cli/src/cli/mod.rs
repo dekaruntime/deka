@@ -16,6 +16,8 @@ pub mod compile;
 pub mod db;
 #[cfg(target_arch = "wasm32")]
 pub mod db_wasm;
+#[cfg(feature = "native")]
+pub mod deploy;
 pub mod init;
 #[cfg(feature = "native")]
 pub mod install;
@@ -40,6 +42,8 @@ pub mod task;
 #[cfg(feature = "native")]
 pub mod test;
 pub mod user;
+#[cfg(feature = "native")]
+pub mod pipeline_yaml;
 
 pub fn register_global_flags(registry: &mut Registry) {
     registry.add_flag(FlagSpec {
