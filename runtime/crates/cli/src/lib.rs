@@ -18,6 +18,7 @@ pub fn build_registry() -> Registry {
     {
         cli::auth::register(&mut registry);
         cli::build::register(&mut registry);
+        cli::deploy::register(&mut registry);
         cli::compile::register(&mut registry);
         cli::db::register(&mut registry);
         cli::install::register(&mut registry);
