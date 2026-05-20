@@ -25,6 +25,12 @@ const sections = [
     description:
       'The local audit database, runs API, Prometheus metrics, and guard-rail work that is still landing.',
   },
+  {
+    title: 'Operations runbook',
+    href: '/docs/gild/operations',
+    description:
+      'Rootfs invariants, gild-guest mount/env requirements, host quirks, and deka-git protocol gotchas — caught during the agents-in-gild pilot.',
+  },
 ]
 
 export default function GildOverviewPage() {

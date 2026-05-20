@@ -15,6 +15,7 @@ const gildSections = [
       { name: 'The gild OS userland', slug: 'userland' },
       { name: 'Threat model + boundaries', slug: 'threat-model' },
       { name: 'Audit subsystem', slug: 'audit' },
+      { name: 'Operations runbook', slug: 'operations' },
     ],
   },
 ]
