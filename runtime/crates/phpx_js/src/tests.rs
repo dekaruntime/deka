@@ -372,6 +372,7 @@ fn rewrite_array_map_inline() {
     let js = phpx_to_js("$fn = fn($x: int): int => $x + 1;\n$a = [1, 2, 3];\n$r = array_map($fn, $a);").expect("should compile");
     assert!(js.contains(".map("), "expected .map() for array_map, got:\n{}", js);
     assert!(js.contains("const __fn"), "expected callback to be bound once for array_map, got:\n{}", js);
+    assert!(js.contains("Object.values(__a)"), "expected object fallback for array_map, got:\n{}", js);
     assert!(!js.contains("globalThis.array_map"), "should NOT contain globalThis.array_map, got:\n{}", js);
 }
 
@@ -380,6 +381,7 @@ fn rewrite_array_filter_inline() {
     let js = phpx_to_js("$fn = fn($x: int): bool => $x > 1;\n$a = [1, 2, 3];\n$r = array_filter($a, $fn);").expect("should compile");
     assert!(js.contains(".filter("), "expected .filter() for array_filter, got:\n{}", js);
     assert!(js.contains("const __fn"), "expected callback to be bound once for array_filter, got:\n{}", js);
+    assert!(js.contains("Object.values(__a)"), "expected object fallback for array_filter, got:\n{}", js);
     assert!(!js.contains("globalThis.array_filter"), "should NOT contain globalThis.array_filter, got:\n{}", js);
 }
 
