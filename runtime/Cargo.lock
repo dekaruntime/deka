@@ -5555,6 +5555,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tana-secrets"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "tana-vault-agent"
 version = "0.1.0"
 dependencies = [
