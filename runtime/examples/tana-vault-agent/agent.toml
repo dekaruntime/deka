@@ -1,0 +1,4 @@
+# vault_url is optional for the skeleton. When omitted or unreachable, the
+# agent returns {"value":"stub-<key>"} after peer resolution and JWT minting.
+vault_url = "http://localhost:9501"
+socket_path = "/run/tana-vault.sock"

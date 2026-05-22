@@ -28,6 +28,7 @@ members = [
     "crates/cypher",
     "crates/linkhash-client",
     "crates/shard",
+    "crates/tana-vault-agent",
 ]
 
 [workspace.dependencies]
