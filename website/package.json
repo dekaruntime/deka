@@ -17,6 +17,7 @@
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "start": "next start",
+    "test:e2e": "playwright test -c tests/e2e/playwright.config.ts",
     "lint": "eslint"
   },
   "dependencies": {

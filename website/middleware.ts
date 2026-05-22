@@ -8,6 +8,7 @@ export async function middleware(request: NextRequest) {
   // Allow NextAuth API routes and static assets
   if (
     pathname.startsWith('/api/auth') ||
+    pathname === '/signin' ||
     pathname.startsWith('/_next/static') ||
     pathname.startsWith('/_next/image') ||
     pathname === '/favicon.ico'
@@ -22,7 +23,7 @@ export async function middleware(request: NextRequest) {
   })
 
   if (!token) {
-    const signInUrl = new URL('/api/auth/signin', request.url)
+    const signInUrl = new URL('/signin', request.url)
     signInUrl.searchParams.set(
       'callbackUrl',
       request.nextUrl.pathname + request.nextUrl.search
