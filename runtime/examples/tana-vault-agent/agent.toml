@@ -1,4 +1,10 @@
-# vault_url is optional for the skeleton. When omitted or unreachable, the
-# agent returns {"value":"stub-<key>"} after peer resolution and JWT minting.
+# vault_url must be HTTPS outside loopback. HTTP is accepted only for local dev
+# vault processes on localhost/127.0.0.1/[::1].
 vault_url = "http://localhost:9501"
 socket_path = "/run/tana-vault.sock"
+
+# Production default is fail-closed. Set only for local skeleton development.
+allow_stub_secrets = true
+
+max_connections = 64
+read_timeout_ms = 1000
