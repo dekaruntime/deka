@@ -37,12 +37,25 @@ fn dispatch_with_missing_agent_returns_clear_error() {
 
 #[test]
 fn dispatch_with_invalid_runtime_returns_clear_error() {
-    let output = command_with_agent_fixture()
-        .args(["dispatch", "agent-test1", "task", "--runtime", "nonsense"])
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_gild"))
+        .args(["dispatch", "agent-tariq", "task", "--runtime", "nonsense"])
         .output()
         .expect("spawn gild");
 
     assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // Assert the error came from clap's enum validation, not a connection error
+    assert!(
+        stderr.contains("invalid value")
+            || stderr.contains("possible values")
+            || stderr.contains("unknown runtime"),
+        "expected runtime validation error, got: {}",
+        stderr
+    );
+    assert!(
+        !stderr.contains("Connection refused"),
+        "test fell through to network call"
+    );
 }
 
 #[test]

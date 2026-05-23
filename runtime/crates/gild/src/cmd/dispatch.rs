@@ -1,4 +1,4 @@
-use clap::Args;
+use clap::{Args, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -9,9 +9,26 @@ pub struct DispatchArgs {
     pub agent: String,
     pub task: String,
     #[arg(long, default_value = "codex")]
-    pub runtime: String,
+    pub runtime: Runtime,
     #[arg(long, default_value_t = 300)]
     pub time_budget: u64,
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+pub enum Runtime {
+    Codex,
+    Opencode,
+    Claude,
+}
+
+impl Runtime {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Runtime::Codex => "codex",
+            Runtime::Opencode => "opencode",
+            Runtime::Claude => "claude",
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -37,7 +54,7 @@ pub async fn run(args: DispatchArgs) -> Result<()> {
 
     let payload = DispatchRequest {
         task: &args.task,
-        runtime: &args.runtime,
+        runtime: args.runtime.as_str(),
         time_budget: args.time_budget,
     };
     let body = serde_json::to_vec(&payload)?;
