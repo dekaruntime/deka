@@ -1,8 +1,7 @@
 use anyhow::{Context, Result, bail};
-use futures_util::StreamExt;
 use gild_chain::{
-    Action, Chain, Policy, StateStore, apply_event, event_chain_id, new_chain, parse_pulse_event,
-    parse_sse_frames, state_db_path,
+    Action, Chain, Policy, PulseEvent, StateStore, apply_event, new_chain, state_db_path,
+    subscribe_once,
 };
 use std::io::{self, Write};
 
@@ -23,8 +22,18 @@ async fn main() -> Result<()> {
 
 async fn daemon(args: &[String]) -> Result<()> {
     let pulse_url = option_value(args, "--pulse-url").context("--pulse-url URL is required")?;
+    let dispatcher_url = option_value(args, "--dispatcher-url").map(str::to_string);
+    let git_api_url = option_value(args, "--git-api-url").map(str::to_string);
+    let git_token = option_value(args, "--git-token")
+        .map(str::to_string)
+        .or_else(|| std::env::var("GILD_CHAIN_GIT_TOKEN").ok());
     let store = StateStore::open(state_db_path())?;
-    subscribe_forever(&store, pulse_url).await
+    let executor = ActionExecutor {
+        dispatcher_url,
+        git_api_url,
+        git_token,
+    };
+    subscribe_forever(&store, pulse_url, &executor).await
 }
 
 async fn run_once(args: &[String]) -> Result<()> {
@@ -68,70 +77,116 @@ fn list_active() -> Result<()> {
     Ok(())
 }
 
-async fn subscribe_forever(store: &StateStore, pulse_url: &str) -> Result<()> {
+async fn subscribe_forever(
+    store: &StateStore,
+    pulse_url: &str,
+    executor: &ActionExecutor,
+) -> Result<()> {
     loop {
-        if let Err(err) = subscribe_once(store, pulse_url).await {
+        if let Err(err) = subscribe_once(pulse_url, None, |event| {
+            handle_event(store, executor, event)
+        })
+        .await
+        {
             eprintln!("gild-chain pulse subscription error: {err:#}");
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
     }
 }
 
-async fn subscribe_once(store: &StateStore, pulse_url: &str) -> Result<()> {
-    let response = reqwest::Client::new()
-        .get(pulse_url)
-        .query(&[("kind", "agent.run.completed")])
-        .send()
-        .await
-        .with_context(|| format!("connect to pulse SSE {pulse_url}"))?
-        .error_for_status()
-        .context("pulse SSE status")?;
-    let mut stream = response.bytes_stream();
-    let mut buffer = String::new();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.context("read pulse SSE chunk")?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
-        while let Some(index) = buffer.find("\n\n") {
-            let frame_text = buffer[..index + 2].to_string();
-            buffer.drain(..index + 2);
-            for frame in parse_sse_frames(&frame_text) {
-                if let Some(event) = parse_pulse_event(&frame)? {
-                    handle_event(store, event)?;
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-fn handle_event(store: &StateStore, event: gild_chain::PulseEvent) -> Result<()> {
-    let chain_id = event_chain_id(&event).to_string();
-    let Some(mut chain) = store.get_chain(&chain_id)? else {
-        eprintln!("ignoring event for unknown chain {chain_id}");
+fn handle_event(store: &StateStore, executor: &ActionExecutor, event: PulseEvent) -> Result<()> {
+    let Some(mut chain) = store.find_chain_for_event(&event)? else {
+        eprintln!(
+            "ignoring event for unknown chain: {}",
+            gild_chain::event_name(&event)
+        );
         return Ok(());
     };
     let actions = apply_event(&mut chain, &event);
     store.save_chain(&chain)?;
-    store.record_event(&chain_id, &event, &actions)?;
+    store.record_event(&chain.id, &event, &actions)?;
     for action in actions {
-        emit_action(&action);
+        executor.emit_action(&action)?;
     }
     Ok(())
 }
 
-fn emit_action(action: &Action) {
-    match action {
-        Action::RequestReview {
-            reviewer,
-            pr_number,
-        } => println!("stub: request {reviewer} review for PR #{pr_number}"),
-        Action::MergePullRequest { pr_number } => {
-            println!("stub: merge PR #{pr_number} through git-server API")
+struct ActionExecutor {
+    dispatcher_url: Option<String>,
+    git_api_url: Option<String>,
+    git_token: Option<String>,
+}
+
+impl ActionExecutor {
+    fn emit_action(&self, action: &Action) -> Result<()> {
+        match action {
+            Action::RequestReview {
+                reviewer,
+                repo,
+                pr_number,
+            } => self.request_review(reviewer, repo.as_deref(), *pr_number)?,
+            Action::MergePullRequest { repo, pr_number } => {
+                self.merge_pull_request(repo.as_deref(), *pr_number)?
+            }
+            Action::Log(message) => println!("note: {message}"),
         }
-        Action::CloseIssue => println!("stub: close linked issue"),
-        Action::Log(message) => println!("note: {message}"),
+        let _ = io::stdout().flush();
+        Ok(())
     }
-    let _ = io::stdout().flush();
+
+    fn request_review(&self, reviewer: &str, repo: Option<&str>, pr_number: i64) -> Result<()> {
+        let Some(dispatcher_url) = &self.dispatcher_url else {
+            println!("stub: request {reviewer} review for PR #{pr_number}");
+            return Ok(());
+        };
+        let task = match repo {
+            Some(repo) => format!("Review {repo} PR #{pr_number}"),
+            None => format!("Review PR #{pr_number}"),
+        };
+        let response = reqwest::blocking::Client::new()
+            .post(format!("{}/task", dispatcher_url.trim_end_matches('/')))
+            .json(&serde_json::json!({
+                "agent": reviewer,
+                "task": task,
+                "runtime": "codex"
+            }))
+            .send()
+            .context("dispatch review request")?
+            .error_for_status()
+            .context("review dispatcher status")?;
+        println!(
+            "requested {reviewer} review for PR #{pr_number}: {}",
+            response.status()
+        );
+        Ok(())
+    }
+
+    fn merge_pull_request(&self, repo: Option<&str>, pr_number: i64) -> Result<()> {
+        let Some(git_api_url) = &self.git_api_url else {
+            println!("stub: merge PR #{pr_number} through git-server API");
+            return Ok(());
+        };
+        let repo = repo.context("repo is required to merge pull request")?;
+        let (owner, name) = repo
+            .split_once('/')
+            .context("repo must be formatted as owner/name")?;
+        let mut request = reqwest::blocking::Client::new()
+            .patch(format!(
+                "{}/api/repos/{owner}/{name}/pulls/{pr_number}",
+                git_api_url.trim_end_matches('/')
+            ))
+            .json(&serde_json::json!({ "state": "merged" }));
+        if let Some(token) = &self.git_token {
+            request = request.bearer_auth(token);
+        }
+        let response = request
+            .send()
+            .context("merge pull request")?
+            .error_for_status()
+            .context("git-server merge status")?;
+        println!("merged {repo} PR #{pr_number}: {}", response.status());
+        Ok(())
+    }
 }
 
 fn print_chain(chain: &Chain) {
@@ -142,6 +197,12 @@ fn print_chain(chain: &Chain) {
     println!("task: {}", chain.task);
     if let Some(pr_number) = chain.pr_number {
         println!("pr: #{pr_number}");
+    }
+    if let Some(run_id) = &chain.run_id {
+        println!("run: {run_id}");
+    }
+    if let Some(repo) = &chain.repo {
+        println!("repo: {repo}");
     }
     if let Some(review_status) = &chain.review_status {
         println!("review: {review_status}");
