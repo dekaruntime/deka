@@ -20,10 +20,10 @@ RUN useradd -m -u 1000 tana && \
     chown -R tana:tana /data
 
 # Copy pre-built binary (TARGETARCH is "amd64" or "arm64")
-COPY binaries/linux-${TARGETARCH}/deka-git /usr/local/bin/deka-git
+COPY binaries/linux-${TARGETARCH}/gild-vcs /usr/local/bin/gild-vcs
 
 # Set ownership and permissions
-RUN chmod +x /usr/local/bin/deka-git
+RUN chmod +x /usr/local/bin/gild-vcs
 
 # Switch to non-root user
 USER tana
@@ -31,7 +31,7 @@ USER tana
 # Environment variables with sensible defaults
 ENV PORT=8508
 ENV REPOS_DIR=/data/repos
-ENV RUST_LOG=deka_git=info
+ENV RUST_LOG=gild_vcs=info
 
 # Expose port
 EXPOSE 8508
@@ -41,4 +41,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:${PORT}/health || exit 1
 
 # Run the git server
-CMD ["deka-git"]
+CMD ["gild-vcs"]

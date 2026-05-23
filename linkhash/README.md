@@ -6,7 +6,7 @@ runtime artifacts for gild.
 
 ## Layout
 - `phpx/`: Linkhash application (PHPX runtime, modules, DB migrations, app config)
-- `rust/`: Rust services for Linkhash (`deka-git` fork)
+- `rust/`: Rust services for Linkhash (`gild-vcs` fork)
 
 ## Gild OCI Pull Workflow
 

@@ -1,9 +1,9 @@
-# Linkhash Deka-Git Fork MVP Plan
+# Linkhash Gild-VCS Fork MVP Plan
 
-Goal: fork `deka-git` into Linkhash and customize it as the canonical Git/package backend for PHPX/Deka, with no wrapper layer.
+Goal: fork `gild-vcs` into Linkhash and customize it as the canonical Git/package backend for PHPX/Deka, with no wrapper layer.
 
 ## Scope
-- Fork lives at `linkhash/rust/deka-git`.
+- Fork lives at `linkhash/rust/gild-vcs`.
 - Move off blockchain JWT/ledger auth.
 - Use standard user identity + SSH key registration model (ed25519 public keys from `~/.ssh`).
 - Keep Smart HTTP Git fully operational.
@@ -20,7 +20,7 @@ Goal: fork `deka-git` into Linkhash and customize it as the canonical Git/packag
 - [x] 8. End-to-end runbook + docs for push + install flow
 
 ## Execution Rules
-- One commit per completed task in `linkhash/rust/deka-git` (and in `mvp` for tracker/docs changes).
+- One commit per completed task in `linkhash/rust/gild-vcs` (and in `mvp` for tracker/docs changes).
 - Update this file after each task with:
   - date/time
   - key decisions
@@ -58,7 +58,7 @@ Goal: fork `deka-git` into Linkhash and customize it as the canonical Git/packag
   - Default Linkhash registry base URL is now `http://localhost:8508` (override: `LINKHASH_REGISTRY_URL`).
   - `deka publish` default registry URL updated to `http://localhost:8508`.
   - Live test executed end-to-end:
-    - pushed git repo to forked `deka-git`
+    - pushed git repo to forked `gild-vcs`
     - published `stdlib/core@0.1.0`
     - ran `deka install --ecosystem php --spec stdlib/core@0.1.0`
     - verified files in `php_modules/stdlib/core/*` and lock entry in `deka.lock`.

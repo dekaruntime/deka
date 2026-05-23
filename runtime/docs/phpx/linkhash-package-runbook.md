@@ -8,7 +8,7 @@ This runbook covers the Git push + package publish + `deka install` flow for Lin
 - Override with `LINKHASH_REGISTRY_URL`.
 - `deka install --ecosystem php` uses Linkhash package endpoints.
 
-## 1) Start Linkhash deka-git fork
+## 1) Start Linkhash gild-vcs fork
 
 Provide `config.toml` (example):
 
@@ -23,7 +23,7 @@ bootstrap_token = "test-token"
 Start service:
 
 ```bash
-cd linkhash/rust/deka-git
+cd linkhash/rust/gild-vcs
 cargo run
 ```
 

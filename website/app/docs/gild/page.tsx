@@ -29,7 +29,7 @@ const sections = [
     title: 'Operations runbook',
     href: '/docs/gild/operations',
     description:
-      'Rootfs invariants, gild-guest mount/env requirements, host quirks, and deka-git protocol gotchas — caught during the agents-in-gild pilot.',
+      'Rootfs invariants, gild-guest mount/env requirements, host quirks, and gild-vcs protocol gotchas — caught during the agents-in-gild pilot.',
   },
 ]
 

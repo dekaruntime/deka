@@ -1,4 +1,4 @@
--- deka-git service schema (owned by PHPX migrations)
+-- gild-vcs service schema (owned by PHPX migrations)
 
 CREATE TABLE IF NOT EXISTS "users" (
   "id" BIGSERIAL PRIMARY KEY,

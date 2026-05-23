@@ -3,7 +3,7 @@ import { GildPage } from '../components'
 export const metadata = {
   title: 'Gild operations runbook | Deka',
   description:
-    'Rootfs invariants, gild-guest mount/env requirements, host quirks, and deka-git protocol gotchas — catalogued during the agents-in-gild pilot.',
+    'Rootfs invariants, gild-guest mount/env requirements, host quirks, and gild-vcs protocol gotchas — catalogued during the agents-in-gild pilot.',
 }
 
 export default function GildOperationsPage() {
@@ -226,14 +226,14 @@ export default function GildOperationsPage() {
       </ul>
 
       <h2 className="text-2xl font-semibold text-foreground mt-10 not-prose">
-        deka-git protocol quirks
+        gild-vcs protocol quirks
       </h2>
       <ul className="list-disc pl-6 space-y-2">
         <li>
-          <strong><code>bad band #65/#78</code> on fetch.</strong> deka-git
+          <strong><code>bad band #65/#78</code> on fetch.</strong> gild-vcs
           {"'"}s protocol-v2 sideband implementation occasionally corrupts
           pack frames mid-fetch. Workaround: use a fresh clone with{' '}
-          <code>-c protocol.version=0</code>. Tracked as deka-git issue #67.
+          <code>-c protocol.version=0</code>. Tracked as gild-vcs issue #67.
         </li>
         <li>
           <strong>

@@ -1,6 +1,6 @@
-# deka-git (Linkhash fork)
+# gild-vcs (Linkhash fork)
 
-`deka-git` is Linkhash's canonical Git + package backend.
+`gild-vcs` is Linkhash's canonical Git + package backend.
 
 This fork removes blockchain JWT/ledger auth and uses local identity with PAT/token auth and SSH key registration.
 

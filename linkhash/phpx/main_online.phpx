@@ -158,7 +158,7 @@ function reposRoot(): string {
   if ($env !== false && ('' . $env) !== '') {
     return '' . $env
   }
-  return '/Users/sami/Projects/deka/linkhash/rust/deka-git/repos'
+  return '/Users/sami/Projects/deka/linkhash/rust/gild-vcs/repos'
 }
 
 function mapLookup($value: mixed, $key: string): mixed {
