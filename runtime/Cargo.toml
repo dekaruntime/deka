@@ -14,6 +14,7 @@ members = [
     "crates/transport",
     "crates/pool",
     "crates/engine",
+    "crates/gild",
     "crates/modules_common",
     "crates/modules_php",
     "crates/php-rs",
