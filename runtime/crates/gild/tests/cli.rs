@@ -244,3 +244,26 @@ sandbox = "gild"
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("run-from-test"));
 }
+
+#[test]
+fn chain_help_and_policy_listing_work() {
+    for args in [
+        vec!["chain", "--help"],
+        vec!["chain", "run", "--help"],
+        vec!["chain", "status", "--help"],
+        vec!["chain", "stop", "--help"],
+    ] {
+        let output = Command::new(gild_bin()).args(args).output().unwrap();
+        assert!(output.status.success());
+    }
+
+    let output = Command::new(gild_bin())
+        .args(["chain", "run", "--list-policies"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        "default-flow"
+    );
+}
