@@ -10,9 +10,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use sha2::{Digest, Sha256};
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
 
 const TEST_DISPATCH_SECRET: &[u8] = b"dispatch-test-secret";
+
+type HmacSha256 = Hmac<Sha256>;
 
 fn gild_bin() -> &'static str {
     env!("CARGO_BIN_EXE_gild")
@@ -61,30 +64,9 @@ impl Drop for TestDir {
 }
 
 fn hmac_sha256_hex(key: &[u8], message: &[u8]) -> String {
-    const BLOCK_SIZE: usize = 64;
-    let mut key_block = [0u8; BLOCK_SIZE];
-    if key.len() > BLOCK_SIZE {
-        key_block[..32].copy_from_slice(&Sha256::digest(key));
-    } else {
-        key_block[..key.len()].copy_from_slice(key);
-    }
-
-    let mut outer = [0x5c; BLOCK_SIZE];
-    let mut inner = [0x36; BLOCK_SIZE];
-    for index in 0..BLOCK_SIZE {
-        outer[index] ^= key_block[index];
-        inner[index] ^= key_block[index];
-    }
-
-    let mut inner_hash = Sha256::new();
-    inner_hash.update(inner);
-    inner_hash.update(message);
-    let inner_digest = inner_hash.finalize();
-
-    let mut outer_hash = Sha256::new();
-    outer_hash.update(outer);
-    outer_hash.update(inner_digest);
-    hex(&outer_hash.finalize())
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key");
+    mac.update(message);
+    hex(&mac.finalize().into_bytes())
 }
 
 fn hex(bytes: &[u8]) -> String {
