@@ -1959,7 +1959,7 @@ function linkhashIsStaffEmailInNeo4j($email) {
   if (!is_array($conn) || !$conn['ok']) {
     return [ 'ok' => false, 'error' => rowValue($conn, 'error', 'neo4j connect failed') ]
   }
-  $handle = rowValue($conn, 'handle', rowValue($conn, 'value', null))
+  $handle = rowValue($conn, 'handle', rowValue($conn, 'value', ''))
   $rows = neo4jQuery(
     $handle,
     'MATCH (u:User {email: $email}) RETURN u.is_staff AS is_staff',
