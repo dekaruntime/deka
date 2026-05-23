@@ -23,11 +23,11 @@ pub async fn advertise_refs(
     let refs = read_refs(&repo_path)?;
 
     if refs.is_empty() {
-        lines.extend_from_slice(&pkt_line("0000000000000000000000000000000000000000 capabilities^{}\0report-status delete-refs side-band-64k quiet atomic ofs-delta agent=deka-git/0.7.0\n"));
+        lines.extend_from_slice(&pkt_line("0000000000000000000000000000000000000000 capabilities^{}\0report-status delete-refs side-band-64k quiet atomic ofs-delta agent=gild-vcs/0.7.0\n"));
     } else {
         let (ref_name, sha) = &refs[0];
         let line = format!(
-            "{} {}\0report-status delete-refs side-band-64k quiet atomic ofs-delta agent=deka-git/0.7.0\n",
+            "{} {}\0report-status delete-refs side-band-64k quiet atomic ofs-delta agent=gild-vcs/0.7.0\n",
             sha, ref_name
         );
         lines.extend_from_slice(&pkt_line(&line));

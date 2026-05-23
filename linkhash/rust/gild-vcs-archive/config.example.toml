@@ -2,8 +2,8 @@
 # ======================
 # Copy this file to one of:
 #   - ./config.toml (current directory, highest priority)
-#   - ~/.config/deka-git/config.toml (user config)
-#   - /etc/deka-git/config.toml (system config)
+#   - ~/.config/gild-vcs/config.toml (user config)
+#   - /etc/gild-vcs/config.toml (system config)
 
 port = 8508
 database_url = "postgres://deka:deka_dev_password@localhost:5434/deka"

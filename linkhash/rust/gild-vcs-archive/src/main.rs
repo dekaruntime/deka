@@ -26,7 +26,7 @@ async fn main() {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "deka_git=debug,tower_http=debug".into()),
+                .unwrap_or_else(|_| "gild_vcs=debug,tower_http=debug".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
@@ -179,7 +179,7 @@ async fn main() {
         .route("/health", get(handle_health));
 
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
-    tracing::info!("deka-git listening on {}", addr);
+    tracing::info!("gild-vcs listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();

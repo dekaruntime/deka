@@ -208,7 +208,7 @@ pub fn create_and_seed_repo(
     }
 
     // Create a temporary working directory to stage the template files
-    let tmp_dir = std::env::temp_dir().join(format!("deka-git-seed-{}-{}", owner, repo));
+    let tmp_dir = std::env::temp_dir().join(format!("gild-vcs-seed-{}-{}", owner, repo));
     if tmp_dir.exists() {
         let _ = fs::remove_dir_all(&tmp_dir);
     }

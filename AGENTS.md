@@ -107,7 +107,7 @@ Note: Semicolons are optional in PHPX (JS-style automatic semicolon insertion).
 - `redis`: 6379
 - `edge` (runtime): 8506
 - `t4`: 8507
-- `deka-git`: 8508
+- `gild-vcs`: 8508
 - `deploy`: 8509
 
 ## PHPX Module System

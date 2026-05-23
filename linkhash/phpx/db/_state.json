@@ -25,6 +25,6 @@
     "0001_init.sql",
     "0002_constraints.sql",
     "0003_nullable_revoked_at.sql",
-    "0004_deka_git_service_schema.sql"
+    "0004_gild_vcs_service_schema.sql"
   ]
 }

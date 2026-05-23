@@ -47,14 +47,14 @@ async fn main() {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "deka_git=debug,tower_http=debug".into()),
+                .unwrap_or_else(|_| "gild_vcs=debug,tower_http=debug".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
 
     let config = Config::load();
 
-    tracing::info!("Linkhash (deka-git) starting on port {}", config.port);
+    tracing::info!("Linkhash (gild-vcs) starting on port {}", config.port);
 
     // Ensure data directory exists
     std::fs::create_dir_all(config.db_dir()).expect("Failed to create database directory");

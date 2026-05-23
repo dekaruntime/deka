@@ -141,7 +141,7 @@ struct Download {
   $userAgent: string @map("user_agent")
 }
 
-// deka-git service tables (source of truth for Rust API storage)
+// gild-vcs service tables (source of truth for Rust API storage)
 struct User {
   $id: int @id @autoIncrement
   $username: string @unique

@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::fs;
 use std::path::PathBuf;
 
-pub const SERVICE_NAME: &str = "deka-git";
+pub const SERVICE_NAME: &str = "gild-vcs";
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {

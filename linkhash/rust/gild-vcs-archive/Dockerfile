@@ -35,7 +35,7 @@ RUN useradd -m -u 1000 tana && \
     chown -R tana:tana /data
 
 # Copy binary from builder
-COPY --from=builder /build/target/release/deka-git /usr/local/bin/
+COPY --from=builder /build/target/release/gild-vcs /usr/local/bin/
 
 USER tana
 WORKDIR /data
@@ -43,11 +43,11 @@ WORKDIR /data
 # Environment variables with sensible defaults
 ENV PORT=8508
 ENV REPOS_DIR=/data/repos
-ENV RUST_LOG=deka_git=info
+ENV RUST_LOG=gild_vcs=info
 
 EXPOSE 8508
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:${PORT}/health || exit 1
 
-CMD ["deka-git"]
+CMD ["gild-vcs"]

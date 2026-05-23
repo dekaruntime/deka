@@ -45,7 +45,7 @@ for the original `agent.run.completed` path.
 2. `agent.pr.opened` links the PR to its parent run in SQLite and requests an
    Amina review once the run is completed.
 3. `agent.review.posted` records the verdict. If the verdict is approved and the
-   PR is still open, `gild-chain` asks deka-git to merge it.
+   PR is still open, `gild-chain` asks gild-vcs to merge it.
 4. `agent.pr.merged` marks the chain closed.
 
 Without `--dispatcher-url` or `--git-api-url`, actions are logged as stubs. With
