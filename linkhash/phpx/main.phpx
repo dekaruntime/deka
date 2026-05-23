@@ -19,6 +19,7 @@ import { tls_upgrade, tls_write, tls_read, tls_close } from 'tls'
 import { open_handle as dbOpenHandle, close as dbCloseRaw } from 'db'
 import { result_is_ok, result_unwrap, result_ok, result_err } from 'core/result'
 import { canonical_id as registryCanonicalId, artifact_key as registryArtifactKey } from 'registry/artifacts'
+import { connect as neo4jConnect, query as neo4jQuery, close as neo4jClose } from 'neo4j'
 
 function envValue($name, $fallback = null) {
   $envBag = (isset($GLOBALS) && is_array($GLOBALS) && array_key_exists('_ENV', $GLOBALS) && is_array($GLOBALS['_ENV']))
@@ -1906,6 +1907,96 @@ function oauthFetchProfile($accessToken, $cfg) {
   return [ 'ok' => true, 'did' => $did, 'handle' => $handle, 'displayName' => $display, 'profile' => $profile ]
 }
 
+function oauthProfileEmail($profileRes) {
+  $profile = rowValue($profileRes, 'profile', [])
+  if (is_array($profile) && array_key_exists('email', $profile)) {
+    $email = strtolower(trim('' . $profile['email']))
+    if ($email !== '') {
+      return $email
+    }
+  }
+  return ''
+}
+
+function linkhashStaffAllowlistEmails() {
+  $raw = '' . envValue('LINKHASH_STAFF_ALLOWLIST_EMAILS', '')
+  if ($raw === '') {
+    $raw = '' . envValue('STAFF_ALLOWLIST_EMAILS', '')
+  }
+  $emails = []
+  foreach (explode(',', $raw) as $item) {
+    $email = strtolower(trim('' . $item))
+    if ($email !== '') {
+      $emails[$email] = true
+    }
+  }
+  return $emails
+}
+
+function linkhashAllowViaEnvFallback($email, $reason) {
+  $normalized = strtolower(trim('' . $email))
+  if ($normalized === '') {
+    return false
+  }
+  $allowlist = linkhashStaffAllowlistEmails()
+  if (!array_key_exists($normalized, $allowlist)) {
+    return false
+  }
+  logEvent('warn', 'auth.staff_allowlist_fallback', [ 'email' => $normalized, 'reason' => '' . $reason ])
+  return true
+}
+
+function linkhashIsStaffEmailInNeo4j($email) {
+  $normalized = strtolower(trim('' . $email))
+  if ($normalized === '') {
+    return [ 'ok' => true, 'isStaff' => false ]
+  }
+  $uri = '' . envValue('NEO4J_URI', envValue('NEO4J_URL', 'bolt://localhost:7688'))
+  $user = '' . envValue('NEO4J_USER', 'neo4j')
+  $password = '' . envValue('NEO4J_PASSWORD', 'password')
+  $database = '' . envValue('NEO4J_DATABASE', 'neo4j')
+  $conn = neo4jConnect($uri, $user, $password, $database)
+  if (!is_array($conn) || !$conn['ok']) {
+    return [ 'ok' => false, 'error' => rowValue($conn, 'error', 'neo4j connect failed') ]
+  }
+  $handle = rowValue($conn, 'handle', rowValue($conn, 'value', ''))
+  $rows = neo4jQuery(
+    $handle,
+    'MATCH (u:User {email: $email}) RETURN u.is_staff AS is_staff',
+    { email: $normalized },
+    [ 'is_staff' ]
+  )
+  neo4jClose($handle)
+  if (!is_array($rows) || !$rows['ok']) {
+    return [ 'ok' => false, 'error' => rowValue($rows, 'error', 'neo4j query failed') ]
+  }
+  $values = rowValue($rows, 'rows', [])
+  $first = is_array($values) && count($values) > 0 ? $values[0] : []
+  return [ 'ok' => true, 'isStaff' => rowValue($first, 'is_staff', false) === true ]
+}
+
+function authorizeLinkhashStaffEmail($email) {
+  $normalized = strtolower(trim('' . $email))
+  if ($normalized === '') {
+    return [ 'ok' => false, 'error' => 'not_authorized' ]
+  }
+  $staff = linkhashIsStaffEmailInNeo4j($normalized)
+  if (!$staff['ok']) {
+    if (linkhashAllowViaEnvFallback($normalized, 'neo4j_lookup_failed')) {
+      return [ 'ok' => true ]
+    }
+    logEvent('error', 'auth.staff_lookup_failed', [ 'email' => $normalized, 'error' => $staff['error'] ])
+    return [ 'ok' => false, 'error' => 'not_authorized' ]
+  }
+  if ($staff['isStaff']) {
+    return [ 'ok' => true ]
+  }
+  if (linkhashAllowViaEnvFallback($normalized, 'neo4j_is_staff_false')) {
+    return [ 'ok' => true ]
+  }
+  return [ 'ok' => false, 'error' => 'not_authorized' ]
+}
+
 function oauthPackContext($state, $pkceVerifier) {
   return ('' . $state) . '.' . ('' . $pkceVerifier)
 }
@@ -3249,6 +3340,14 @@ function apiAuthCallback() {
   $profileRes = oauthFetchProfile($accessToken, $cfg)
   if (!$profileRes['ok']) {
     echo jsonReply([ 'ok' => false, 'error' => 'failed to fetch oauth profile', 'details' => $profileRes ])
+    return
+  }
+  $email = oauthProfileEmail($profileRes)
+  $staffAuth = authorizeLinkhashStaffEmail($email)
+  if (!$staffAuth['ok']) {
+    header('HTTP/1.1 403 Forbidden')
+    auditEvent('auth.callback', [ 'ok' => false ], 'error', 'staff', $email, [ 'error' => $staffAuth['error'] ])
+    echo jsonReply([ 'ok' => false, 'error' => 'not_authorized' ])
     return
   }
 
