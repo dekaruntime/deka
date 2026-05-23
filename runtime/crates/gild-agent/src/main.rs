@@ -635,8 +635,9 @@ fn atomic_write_unit(path: &Path, contents: &[u8], owner: Option<(u32, u32)>) ->
             if sha256_hex(&existing) != sha256_hex(contents) {
                 Err(anyhow!("unit already exists with different sha256"))
             } else {
-                fs::rename(&tmp_path, path)
-                    .with_context(|| format!("rename {} to {}", tmp_path.display(), path.display()))
+                fs::remove_file(&tmp_path)
+                    .with_context(|| format!("remove {}", tmp_path.display()))?;
+                Ok(())
             }
         }
         Err(err) => {
@@ -1202,6 +1203,7 @@ fn secure_socket(path: &Path, gid: u32) -> Result<()> {
 mod tests {
     use super::*;
     use std::collections::VecDeque;
+    use std::os::unix::fs::MetadataExt;
     use std::sync::{Barrier, Mutex};
     use std::time::SystemTime;
     use tokio::net::UnixStream;
@@ -1672,6 +1674,38 @@ mod tests {
         assert_eq!(audit_json["sha256"], first.sha256);
         assert_eq!(audit_json["by_uid"], 1001);
         assert_eq!(audit_json["by_pid"], 4242);
+    }
+
+    #[test]
+    fn atomic_write_unit_same_sha_preserves_existing_file_metadata() {
+        let runner = FakeRunner::new(vec![]);
+        let state = test_state(runner);
+        let unit = "gg.tana.gild-dispatcher@agent-idempotent.service";
+        let path = state.systemd_unit_root.join(unit);
+        let contents = b"[Unit]\nDescription=agent idempotent\n[Service]\nExecStart=/bin/true\n";
+
+        atomic_write_unit(&path, contents, None).unwrap();
+        let before = fs::metadata(&path).unwrap();
+
+        std::thread::sleep(Duration::from_millis(5));
+        atomic_write_unit(&path, contents, None).unwrap();
+
+        let after = fs::metadata(&path).unwrap();
+        assert_eq!(before.dev(), after.dev());
+        assert_eq!(before.ino(), after.ino());
+        assert_eq!(before.mtime(), after.mtime());
+        assert_eq!(before.mtime_nsec(), after.mtime_nsec());
+
+        let prefix = format!("{unit}.tmp.");
+        let leftovers: Vec<PathBuf> = fs::read_dir(&state.systemd_unit_root)
+            .unwrap()
+            .filter_map(|entry| {
+                let path = entry.unwrap().path();
+                let name = path.file_name()?.to_str()?;
+                name.starts_with(&prefix).then_some(path)
+            })
+            .collect();
+        assert!(leftovers.is_empty(), "leftover tmp files: {leftovers:?}");
     }
 
     #[test]
