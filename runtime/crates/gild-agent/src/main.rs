@@ -1,14 +1,17 @@
 use anyhow::{Context, Result, anyhow, bail};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io;
+use std::io::Write;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::sync::OnceLock;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::time::timeout;
@@ -44,6 +47,13 @@ struct RemoveAgentRequest {
 
 #[derive(Debug, Deserialize)]
 struct RestartUnitRequest {
+    unit: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SystemctlRequest {
+    op: String,
+    action: String,
     unit: String,
 }
 
@@ -230,12 +240,19 @@ async fn handle_request(
                 ServiceReply::json_value(400, serde_json::json!({ "error": err.to_string() }))
             }
         },
+        ("POST", "/v1/systemctl") => match parse_json::<SystemctlRequest>(request) {
+            Ok(body) => handle_systemctl_request(state, &body, peer),
+            Err(err) => {
+                ServiceReply::json_value(400, serde_json::json!({ "error": err.to_string() }))
+            }
+        },
         (_, "/v1/health")
         | (_, "/v1/agent/create")
         | (_, "/v1/agent/remove")
         | (_, "/v1/systemd/restart")
         | (_, "/v1/systemd/reload")
-        | (_, "/v1/hmac/rotate") => {
+        | (_, "/v1/hmac/rotate")
+        | (_, "/v1/systemctl") => {
             ServiceReply::json_value(405, serde_json::json!({ "error": "method not allowed" }))
         }
         _ => ServiceReply::json_value(404, serde_json::json!({ "error": "not found" })),
@@ -343,6 +360,129 @@ fn remove_agent(
             pending: vec!["systemd disable"],
         },
     )
+}
+
+fn handle_systemctl_request(
+    state: &AppState,
+    request: &SystemctlRequest,
+    peer: PeerCredentials,
+) -> ServiceReply {
+    if request.op != "systemctl" {
+        return ServiceReply::json_value(
+            400,
+            serde_json::json!({ "error": "op must be systemctl" }),
+        );
+    }
+    if let Err(err) = validate_systemctl_action(&request.action) {
+        return ServiceReply::json_value(400, serde_json::json!({ "error": err.to_string() }));
+    }
+    if let Err(err) = validate_systemctl_unit(&request.unit) {
+        return ServiceReply::json_value(400, serde_json::json!({ "error": err.to_string() }));
+    }
+
+    let args = [request.action.as_str(), request.unit.as_str()];
+    let output = match state.command_runner.output("/usr/bin/systemctl", &args) {
+        Ok(result) => result,
+        Err(err) => {
+            let audit = write_systemctl_audit(
+                &state.audit_log_path,
+                &request.action,
+                &request.unit,
+                None,
+                peer,
+            );
+            let audit_error = audit.err().map(|err| err.to_string());
+            return ServiceReply::json_value(
+                500,
+                serde_json::json!({
+                    "ok": false,
+                    "op": "systemctl",
+                    "action": request.action,
+                    "unit": request.unit,
+                    "exit": null,
+                    "stdout": "",
+                    "stderr": "",
+                    "error": err.to_string(),
+                    "audit_error": audit_error
+                }),
+            );
+        }
+    };
+
+    let audit_error = write_systemctl_audit(
+        &state.audit_log_path,
+        &request.action,
+        &request.unit,
+        output.exit,
+        peer,
+    )
+    .err()
+    .map(|err| err.to_string());
+    let ok = output.success;
+    ServiceReply::json_value(
+        if ok { 200 } else { 500 },
+        serde_json::json!({
+            "ok": ok,
+            "op": "systemctl",
+            "action": request.action,
+            "unit": request.unit,
+            "exit": output.exit,
+            "stdout": output.stdout,
+            "stderr": output.stderr,
+            "audit_error": audit_error
+        }),
+    )
+}
+
+fn validate_systemctl_action(action: &str) -> Result<()> {
+    match action {
+        "start" | "stop" | "restart" | "reload" | "enable" | "disable" | "status" => Ok(()),
+        _ => bail!("invalid systemctl action"),
+    }
+}
+
+fn validate_systemctl_unit(unit: &str) -> Result<()> {
+    static UNIT_RE: OnceLock<Regex> = OnceLock::new();
+    let re = UNIT_RE.get_or_init(|| {
+        Regex::new(r"^gg\.tana\.[a-z][a-z0-9.-]+\.(service|timer)$")
+            .expect("systemctl unit regex compiles")
+    });
+    if re.is_match(unit) {
+        Ok(())
+    } else {
+        bail!("invalid systemctl unit")
+    }
+}
+
+fn write_systemctl_audit(
+    path: &Path,
+    action: &str,
+    unit: &str,
+    exit: Option<i32>,
+    peer: PeerCredentials,
+) -> Result<()> {
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .with_context(|| format!("open audit log {}", path.display()))?;
+    let line = serde_json::json!({
+        "ts": timestamp_millis().to_string(),
+        "op": "systemctl",
+        "action": action,
+        "unit": unit,
+        "exit": exit,
+        "by_uid": peer.uid,
+        "by_pid": peer.pid
+    });
+    writeln!(file, "{line}").context("write audit log")
+}
+
+fn timestamp_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
 }
 
 fn not_implemented(operation: &str, target: &str) -> ServiceReply {
@@ -1073,5 +1213,80 @@ mod tests {
             calls[1].1,
             vec!["--remove".to_string(), "agent-zed".to_string()]
         );
+    }
+
+    #[test]
+    fn validates_systemctl_action_whitelist() {
+        for action in [
+            "start", "stop", "restart", "reload", "enable", "disable", "status",
+        ] {
+            assert!(validate_systemctl_action(action).is_ok(), "{action}");
+        }
+
+        assert!(validate_systemctl_action("daemon-reload").is_err());
+        assert!(validate_systemctl_action("reboot").is_err());
+        assert!(validate_systemctl_action("").is_err());
+    }
+
+    #[test]
+    fn validates_systemctl_unit_pattern() {
+        assert!(validate_systemctl_unit("gg.tana.agent-foo.service").is_ok());
+        assert!(validate_systemctl_unit("gg.tana.agent.foo-1.timer").is_ok());
+
+        assert!(validate_systemctl_unit("nginx.service").is_err());
+        assert!(validate_systemctl_unit("../../etc/passwd").is_err());
+        assert!(validate_systemctl_unit("gg.tana.AgentFoo.service").is_err());
+        assert!(validate_systemctl_unit("gg.tana.agent-foo.socket").is_err());
+    }
+
+    #[test]
+    fn systemctl_handler_invokes_runner_and_audits() {
+        let runner = FakeRunner::new(vec![Ok(FakeRunner::exit(0, "started\n", ""))]);
+        let state = test_state(runner.clone());
+        let request = SystemctlRequest {
+            op: "systemctl".to_string(),
+            action: "start".to_string(),
+            unit: "gg.tana.agent-foo.service".to_string(),
+        };
+
+        let reply = handle_systemctl_request(&state, &request, test_peer());
+
+        assert_eq!(reply.status, 200);
+        let json: serde_json::Value = serde_json::from_str(&reply.body).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["exit"], 0);
+        assert_eq!(json["stdout"], "started\n");
+        assert_eq!(
+            runner.calls.lock().unwrap().as_slice(),
+            [(
+                "/usr/bin/systemctl".to_string(),
+                vec!["start".to_string(), "gg.tana.agent-foo.service".to_string()]
+            )]
+        );
+
+        let audit = fs::read_to_string(&state.audit_log_path).unwrap();
+        let audit_json: serde_json::Value = serde_json::from_str(audit.trim()).unwrap();
+        assert_eq!(audit_json["op"], "systemctl");
+        assert_eq!(audit_json["action"], "start");
+        assert_eq!(audit_json["unit"], "gg.tana.agent-foo.service");
+        assert_eq!(audit_json["exit"], 0);
+        assert_eq!(audit_json["by_uid"], 1001);
+        assert_eq!(audit_json["by_pid"], 4242);
+    }
+
+    #[test]
+    fn systemctl_handler_rejects_invalid_request_before_runner() {
+        let runner = FakeRunner::new(vec![Ok(FakeRunner::success())]);
+        let state = test_state(runner.clone());
+        let request = SystemctlRequest {
+            op: "systemctl".to_string(),
+            action: "restart".to_string(),
+            unit: "nginx.service".to_string(),
+        };
+
+        let reply = handle_systemctl_request(&state, &request, test_peer());
+
+        assert_eq!(reply.status, 400);
+        assert!(runner.calls.lock().unwrap().is_empty());
     }
 }
