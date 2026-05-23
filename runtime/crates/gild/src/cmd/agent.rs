@@ -17,7 +17,7 @@ use crate::{
 
 const DEFAULT_GILD_AGENT_SOCKET: &str = "/run/gild-agent.sock";
 const DISPATCHER_BINARY: &str = "/usr/local/bin/gild-dispatcher";
-const DISPATCHER_GROUP: &str = "gild-orchestrator";
+const DISPATCHER_GROUP: &str = "gild-agents";
 
 #[derive(Debug, Args)]
 pub struct AgentArgs {
@@ -165,7 +165,12 @@ async fn create_agent(slug: &str, dry_run: bool) -> Result<()> {
     validate_agent_slug(slug)?;
 
     let unit = dispatcher_unit_name(slug);
-    let unit_contents = dispatcher_unit_contents(slug);
+    let port = if dry_run {
+        dispatcher_port(slug).unwrap_or(0)
+    } else {
+        dispatcher_port(slug)?
+    };
+    let unit_contents = dispatcher_unit_contents(slug, port);
     let socket_path = gild_agent_socket_path();
 
     if dry_run {
@@ -185,7 +190,7 @@ async fn create_agent(slug: &str, dry_run: bool) -> Result<()> {
     let client = GildAgentClient::new(socket_path);
     client.useradd(slug).await?;
     let hmac = client.hmac_rotate(slug).await?;
-    let write_unit = match client.write_unit(&unit, &unit_contents).await {
+    let write_unit = match client.write_unit(slug, port).await {
         Ok(response) => response,
         Err(err) if err.status() == Some(409) => {
             return Err(format!(
@@ -376,7 +381,14 @@ fn dispatcher_unit_name(slug: &str) -> String {
     format!("gg.tana.gild-dispatcher@{slug}.service")
 }
 
-fn dispatcher_unit_contents(slug: &str) -> String {
+fn dispatcher_port(slug: &str) -> Result<u16> {
+    AgentRegistry::load()?
+        .find(slug)
+        .and_then(|agent| agent.port)
+        .ok_or_else(|| format!("agent {slug} has no dispatcher port in the registry").into())
+}
+
+fn dispatcher_unit_contents(slug: &str, port: u16) -> String {
     format!(
         r#"[Unit]
 Description=Tana gild dispatcher for {slug}
@@ -389,6 +401,7 @@ User={slug}
 Group={DISPATCHER_GROUP}
 WorkingDirectory=/home/{slug}
 Environment=AGENT_SLUG={slug}
+Environment=PORT={port}
 ExecStart={DISPATCHER_BINARY}
 Restart=on-failure
 RestartSec=5s
@@ -433,11 +446,12 @@ mod tests {
 
     #[test]
     fn dispatcher_unit_substitutes_slug() {
-        let unit = dispatcher_unit_contents("agent-zed");
+        let unit = dispatcher_unit_contents("agent-zed", 9430);
         assert!(unit.contains("User=agent-zed"));
-        assert!(unit.contains("Group=gild-orchestrator"));
+        assert!(unit.contains("Group=gild-agents"));
         assert!(unit.contains("WorkingDirectory=/home/agent-zed"));
         assert!(unit.contains("Environment=AGENT_SLUG=agent-zed"));
+        assert!(unit.contains("Environment=PORT=9430"));
         assert!(unit.contains(DISPATCHER_BINARY));
     }
 

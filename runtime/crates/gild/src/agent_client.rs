@@ -170,24 +170,24 @@ impl GildAgentClient {
         .await
     }
 
-    pub async fn write_unit(
-        &self,
-        unit: &str,
-        contents: &str,
-    ) -> AgentClientResult<WriteUnitResponse> {
+    pub async fn write_unit(&self, slug: &str, port: u16) -> AgentClientResult<WriteUnitResponse> {
         #[derive(Serialize)]
         struct Request<'a> {
             op: &'static str,
-            unit: &'a str,
-            contents: &'a str,
+            slug: &'a str,
+            kind: &'static str,
+            port: u16,
+            extra_env: std::collections::BTreeMap<String, String>,
         }
 
         self.post_json(
             "/v1/write_unit",
             &Request {
                 op: "write_unit",
-                unit,
-                contents,
+                slug,
+                kind: "dispatcher",
+                port,
+                extra_env: std::collections::BTreeMap::new(),
             },
         )
         .await
@@ -433,15 +433,15 @@ mod tests {
         );
         let client = GildAgentClient::new(&socket);
 
-        let err = client
-            .write_unit("gg.tana.gild-dispatcher@agent-zed.service", "[Unit]\n")
-            .await
-            .unwrap_err();
+        let err = client.write_unit("agent-zed", 9430).await.unwrap_err();
         let request = server.await.unwrap();
 
         assert_eq!(err.status(), Some(409));
         assert_eq!(err.message(), "unit already exists with different sha256");
         assert!(request.starts_with("POST /v1/write_unit HTTP/1.1"));
+        assert!(request.contains(r#""slug":"agent-zed""#));
+        assert!(request.contains(r#""kind":"dispatcher""#));
+        assert!(request.contains(r#""port":9430"#));
     }
 
     #[tokio::test]
