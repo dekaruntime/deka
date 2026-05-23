@@ -16,7 +16,8 @@ fn command_with_agent_fixture() -> Command {
     let mut command = Command::new(gild_bin());
     command
         .env("AGENT_PORTS_FILE", &fixture)
-        .env("GILD_AGENT_PORTS_CONFIG", fixture);
+        .env("GILD_AGENT_PORTS_CONFIG", fixture)
+        .env("GILD_SYSTEMCTL_BIN", "/bin/false");
     command
 }
 

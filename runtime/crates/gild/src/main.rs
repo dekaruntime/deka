@@ -81,8 +81,13 @@ mod tests {
     fn parses_agent_commands() {
         for args in [
             vec!["gild", "agent", "ls"],
+            vec!["gild", "agent", "ls", "--json"],
             vec!["gild", "agent", "create", "agent-zed"],
-            vec!["gild", "agent", "enable", "agent-zed", "--sandbox", "vm"],
+            vec!["gild", "agent", "enable", "agent-zed"],
+            vec!["gild", "agent", "enable", "agent-zed", "--no-start"],
+            vec!["gild", "agent", "disable", "agent-zed"],
+            vec!["gild", "agent", "disable", "agent-zed", "--no-stop"],
+            vec!["gild", "agent", "delete", "agent-zed", "--yes"],
         ] {
             let cli = Cli::try_parse_from(args).unwrap();
             assert!(matches!(cli.command, Commands::Agent(_)));
