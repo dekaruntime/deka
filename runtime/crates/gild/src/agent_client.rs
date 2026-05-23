@@ -90,6 +90,13 @@ pub struct WriteUnitResponse {
     pub sha256: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct DeleteUnitResponse {
+    pub ok: bool,
+    pub path: String,
+    pub existed: bool,
+}
+
 impl GildAgentClient {
     pub fn new(socket_path: impl Into<PathBuf>) -> Self {
         Self {
@@ -181,6 +188,23 @@ impl GildAgentClient {
                 op: "write_unit",
                 unit,
                 contents,
+            },
+        )
+        .await
+    }
+
+    pub async fn delete_unit(&self, unit: &str) -> AgentClientResult<DeleteUnitResponse> {
+        #[derive(Serialize)]
+        struct Request<'a> {
+            op: &'static str,
+            unit: &'a str,
+        }
+
+        self.post_json(
+            "/v1/delete_unit",
+            &Request {
+                op: "delete_unit",
+                unit,
             },
         )
         .await
@@ -418,6 +442,33 @@ mod tests {
         assert_eq!(err.status(), Some(409));
         assert_eq!(err.message(), "unit already exists with different sha256");
         assert!(request.starts_with("POST /v1/write_unit HTTP/1.1"));
+    }
+
+    #[tokio::test]
+    async fn delete_unit_serializes_unit_and_parses_response() {
+        let socket = temp_socket("delete-unit");
+        let server = serve_once(
+            socket.clone(),
+            200,
+            r#"{"ok":true,"path":"/etc/systemd/system/gg.tana.gild-dispatcher@agent-zed.service","existed":true}"#,
+        );
+        let client = GildAgentClient::new(&socket);
+
+        let response = client
+            .delete_unit("gg.tana.gild-dispatcher@agent-zed.service")
+            .await
+            .unwrap();
+        let request = server.await.unwrap();
+
+        assert!(response.ok);
+        assert!(response.existed);
+        assert_eq!(
+            response.path,
+            "/etc/systemd/system/gg.tana.gild-dispatcher@agent-zed.service"
+        );
+        assert!(request.starts_with("POST /v1/delete_unit HTTP/1.1"));
+        assert!(request.contains(r#""op":"delete_unit""#));
+        assert!(request.contains(r#""unit":"gg.tana.gild-dispatcher@agent-zed.service""#));
     }
 
     #[tokio::test]
