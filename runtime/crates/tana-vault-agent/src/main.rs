@@ -1,5 +1,7 @@
 use anyhow::{Context, Result, anyhow, bail};
-use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+mod attestation;
+
+use attestation::AttestationProvider;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::fs::File;
@@ -24,11 +26,11 @@ const DEFAULT_MAX_CONNECTIONS: usize = 64;
 const DEFAULT_READ_TIMEOUT_MS: u64 = 1_000;
 const MAX_SECRET_KEY_LEN: usize = 256;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct AppState {
     config: AgentConfig,
     workloads: WorkloadsConfig,
-    jwt_key: Arc<Vec<u8>>,
+    attestation: AttestationProvider,
     client: reqwest::Client,
     connection_limit: Arc<Semaphore>,
 }
@@ -111,14 +113,14 @@ async fn load_state(config_dir: &Path) -> Result<AppState> {
     validate_root_owned_dir(config_dir)?;
     let config = load_agent_config(&config_dir.join("agent.toml"))?;
     let workloads = load_workloads(&config_dir.join("workloads.toml"))?;
-    let jwt_key = load_hs256_key(&config_dir.join("dev-key"))?;
     validate_agent_config(&config)?;
+    let attestation = AttestationProvider::load(config_dir)?;
 
     Ok(AppState {
         connection_limit: Arc::new(Semaphore::new(config.max_connections)),
         config,
         workloads,
-        jwt_key: Arc::new(jwt_key),
+        attestation,
         client: reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(2))
             .build()
@@ -210,7 +212,7 @@ async fn handle_request(
         .ok_or_else(|| anyhow!("unknown route {}", request.path))?;
     validate_secret_key(key)?;
 
-    let token = mint_jwt(&state.jwt_key, workload, now_epoch_seconds()?)?;
+    let token = state.attestation.mint_jwt(workload, now_epoch_seconds()?)?;
     eprintln!(
         "minted vault token for sub={} scope=vault:read:{}/* key={}",
         workload.identity, workload.namespace, key
@@ -413,21 +415,6 @@ fn workload_matches(rule: &WorkloadRule, process: &ProcessIdentity) -> bool {
     rule.cgroup_contains
         .iter()
         .all(|needle| process.cgroup.contains(needle))
-}
-
-fn mint_jwt(key: &[u8], workload: &ResolvedWorkload, now: u64) -> Result<String> {
-    let claims = VaultClaims {
-        sub: workload.identity.clone(),
-        scope: format!("vault:read:{}/*", workload.namespace),
-        iat: now,
-        exp: now + TOKEN_TTL_SECONDS,
-    };
-    encode(
-        &Header::new(Algorithm::HS256),
-        &claims,
-        &EncodingKey::from_secret(key),
-    )
-    .context("mint HS256 JWT")
 }
 
 fn now_epoch_seconds() -> Result<u64> {
@@ -673,7 +660,7 @@ fn open_no_follow(path: &Path) -> Result<File> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jsonwebtoken::{DecodingKey, Validation, decode};
+    use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 
     fn test_uid_gid() -> (u32, u32) {
         #[cfg(unix)]
@@ -690,7 +677,7 @@ mod tests {
         AppState {
             config,
             workloads: WorkloadsConfig { workloads: vec![] },
-            jwt_key: Arc::new(b"dev-secret".to_vec()),
+            attestation: AttestationProvider::Hs256Dev(Arc::new(b"dev-secret".to_vec())),
             client: reqwest::Client::builder()
                 .timeout(Duration::from_millis(100))
                 .build()
@@ -763,7 +750,9 @@ mod tests {
             namespace: "prod/deka.gg".to_string(),
         };
 
-        let token = mint_jwt(b"dev-secret", &workload, 1_779_420_000).expect("mint jwt");
+        let token = AttestationProvider::Hs256Dev(Arc::new(b"dev-secret".to_vec()))
+            .mint_jwt(&workload, 1_779_420_000)
+            .expect("mint jwt");
         let mut validation = Validation::new(Algorithm::HS256);
         validation.validate_exp = false;
         let data = decode::<VaultClaims>(

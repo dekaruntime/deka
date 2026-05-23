@@ -7,6 +7,8 @@ Wants=network-online.target
 Type=simple
 User=root
 Group=root
+SupplementaryGroups=tss
+Environment=TANA_VAULT_AGENT_ATTESTATION=hs256-dev
 ExecStart=/usr/local/bin/tana-vault-agent
 Restart=on-failure
 RestartSec=2
@@ -17,6 +19,8 @@ PrivateTmp=true
 NoNewPrivileges=true
 ReadWritePaths=/run
 ReadOnlyPaths=/etc/tana-vault-agent
+DeviceAllow=/dev/tpm0 rw
+DeviceAllow=/dev/tpmrm0 rw
 
 [Install]
 WantedBy=multi-user.target
