@@ -1,0 +1,15 @@
+[package]
+name = "gild-agent"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "gild-agent"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+libc = "0.2"
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
