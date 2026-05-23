@@ -3,6 +3,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::ffi::CString;
 use std::fs::{self, OpenOptions};
 use std::io;
 use std::io::Write;
@@ -625,26 +626,98 @@ fn atomic_write_unit(path: &Path, contents: &[u8], owner: Option<(u32, u32)>) ->
         .parent()
         .ok_or_else(|| anyhow!("unit path has no parent"))?;
     fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    let tmp_path = tmp_path(path);
-    {
-        let mut file = OpenOptions::new()
-            .create(true)
-            .truncate(true)
+
+    let tmp_path = write_unique_unit_tmp(path, contents, owner)?;
+    let result = match rename_noreplace(&tmp_path, path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+            let existing = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+            if sha256_hex(&existing) != sha256_hex(contents) {
+                Err(anyhow!("unit already exists with different sha256"))
+            } else {
+                fs::rename(&tmp_path, path)
+                    .with_context(|| format!("rename {} to {}", tmp_path.display(), path.display()))
+            }
+        }
+        Err(err) => {
+            Err(err).with_context(|| format!("rename {} to {}", tmp_path.display(), path.display()))
+        }
+    };
+
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp_path);
+    }
+    result
+}
+
+fn write_unique_unit_tmp(
+    path: &Path,
+    contents: &[u8],
+    owner: Option<(u32, u32)>,
+) -> Result<PathBuf> {
+    for _ in 0..16 {
+        let tmp_path = unique_tmp_path(path);
+        match OpenOptions::new()
+            .create_new(true)
             .write(true)
             .mode(0o644)
             .open(&tmp_path)
-            .with_context(|| format!("open {}", tmp_path.display()))?;
-        file.write_all(contents)
-            .with_context(|| format!("write {}", tmp_path.display()))?;
-        file.sync_all()
-            .with_context(|| format!("sync {}", tmp_path.display()))?;
+        {
+            Ok(mut file) => {
+                file.write_all(contents)
+                    .with_context(|| format!("write {}", tmp_path.display()))?;
+                file.sync_all()
+                    .with_context(|| format!("sync {}", tmp_path.display()))?;
+                fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o644))
+                    .with_context(|| format!("chmod 0644 {}", tmp_path.display()))?;
+                chown_path(&tmp_path, owner)?;
+                return Ok(tmp_path);
+            }
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err).with_context(|| format!("open {}", tmp_path.display())),
+        }
     }
-    fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o644))
-        .with_context(|| format!("chmod 0644 {}", tmp_path.display()))?;
-    chown_path(&tmp_path, owner)?;
-    fs::rename(&tmp_path, path)
-        .with_context(|| format!("rename {} to {}", tmp_path.display(), path.display()))?;
-    Ok(())
+
+    bail!("could not allocate unique temporary unit path")
+}
+
+fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        match renameat2_noreplace(from, to) {
+            Ok(()) => return Ok(()),
+            Err(err)
+                if err.raw_os_error() == Some(libc::ENOSYS)
+                    || err.raw_os_error() == Some(libc::EINVAL) => {}
+            Err(err) => return Err(err),
+        }
+    }
+
+    fs::hard_link(from, to)?;
+    fs::remove_file(from)
+}
+
+#[cfg(target_os = "linux")]
+fn renameat2_noreplace(from: &Path, to: &Path) -> io::Result<()> {
+    let from = CString::new(from.as_os_str().as_encoded_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "source path contains NUL"))?;
+    let to = CString::new(to.as_os_str().as_encoded_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "target path contains NUL"))?;
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            from.as_ptr(),
+            libc::AT_FDCWD,
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
 }
 
 fn write_unit_audit(path: &Path, unit: &str, sha256: &str, peer: PeerCredentials) -> Result<()> {
@@ -678,9 +751,13 @@ fn chown_path(path: &Path, owner: Option<(u32, u32)>) -> Result<()> {
     Ok(())
 }
 
-fn tmp_path(path: &Path) -> PathBuf {
+fn unique_tmp_path(path: &Path) -> PathBuf {
     let mut tmp = path.as_os_str().to_os_string();
-    tmp.push(".tmp");
+    tmp.push(format!(
+        ".tmp.{}.{}",
+        std::process::id(),
+        rand::random::<u64>()
+    ));
     PathBuf::from(tmp)
 }
 
@@ -1125,7 +1202,7 @@ fn secure_socket(path: &Path, gid: u32) -> Result<()> {
 mod tests {
     use super::*;
     use std::collections::VecDeque;
-    use std::sync::Mutex;
+    use std::sync::{Barrier, Mutex};
     use std::time::SystemTime;
     use tokio::net::UnixStream;
 
@@ -1595,6 +1672,57 @@ mod tests {
         assert_eq!(audit_json["sha256"], first.sha256);
         assert_eq!(audit_json["by_uid"], 1001);
         assert_eq!(audit_json["by_pid"], 4242);
+    }
+
+    #[test]
+    fn concurrent_write_unit_same_unit_conflicts_without_tmp_orphans() {
+        let runner = FakeRunner::new(vec![]);
+        let state = test_state(runner);
+        let unit = "gg.tana.gild-dispatcher@agent-race.service".to_string();
+        let first_contents =
+            "[Unit]\nDescription=agent race one\n[Service]\nExecStart=/bin/true\n".to_string();
+        let second_contents =
+            "[Unit]\nDescription=agent race two\n[Service]\nExecStart=/bin/true\n".to_string();
+        let barrier = Arc::new(Barrier::new(3));
+
+        let handles = [first_contents.clone(), second_contents.clone()].map(|contents| {
+            let state = state.clone();
+            let unit = unit.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                let request = WriteUnitRequest {
+                    op: "write_unit".to_string(),
+                    unit,
+                    contents,
+                };
+                barrier.wait();
+                handle_write_unit_request(&state, &request, test_peer())
+            })
+        });
+
+        barrier.wait();
+        let replies: Vec<ServiceReply> = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect();
+        let mut statuses: Vec<u16> = replies.iter().map(|reply| reply.status).collect();
+        statuses.sort_unstable();
+        assert_eq!(statuses, vec![200, 409]);
+
+        let target = state.systemd_unit_root.join(&unit);
+        let written = fs::read_to_string(&target).unwrap();
+        assert!(written == first_contents || written == second_contents);
+
+        let prefix = format!("{unit}.tmp.");
+        let leftovers: Vec<PathBuf> = fs::read_dir(&state.systemd_unit_root)
+            .unwrap()
+            .filter_map(|entry| {
+                let path = entry.unwrap().path();
+                let name = path.file_name()?.to_str()?;
+                name.starts_with(&prefix).then_some(path)
+            })
+            .collect();
+        assert!(leftovers.is_empty(), "leftover tmp files: {leftovers:?}");
     }
 
     #[tokio::test]
