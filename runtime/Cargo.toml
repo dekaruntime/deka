@@ -16,6 +16,7 @@ members = [
     "crates/engine",
     "crates/gild",
     "crates/gild-agent",
+    "crates/gild-chain",
     "crates/modules_common",
     "crates/modules_php",
     "crates/php-rs",
