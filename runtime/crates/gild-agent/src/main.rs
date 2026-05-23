@@ -1,12 +1,14 @@
 use anyhow::{Context, Result, anyhow, bail};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::ffi::CString;
 use std::fs::{self, OpenOptions};
 use std::io;
 use std::io::Write;
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+use std::os::unix::fs::{FileTypeExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
@@ -26,6 +28,7 @@ const MAX_BODY_BYTES: usize = 64 * 1024;
 const DEFAULT_AUDIT_LOG_PATH: &str = "/var/log/gild-agent.log";
 const PASSWD_PATH: &str = "/etc/passwd";
 const GILD_AGENT_ROOT: &str = "/etc/gild/agents";
+const DEFAULT_SYSTEMD_UNIT_ROOT: &str = "/etc/systemd/system";
 
 #[derive(Clone)]
 struct AppState {
@@ -34,6 +37,8 @@ struct AppState {
     orchestrator_gid: u32,
     audit_log_path: PathBuf,
     passwd_path: PathBuf,
+    systemd_unit_root: PathBuf,
+    systemd_unit_owner: Option<(u32, u32)>,
     command_runner: Arc<dyn CommandRunner>,
 }
 
@@ -64,6 +69,13 @@ struct SystemctlRequest {
 struct RotateHmacRequest {
     op: String,
     slug: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct WriteUnitRequest {
+    op: String,
+    unit: String,
+    contents: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -163,6 +175,10 @@ fn load_state() -> Result<AppState> {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(DEFAULT_AUDIT_LOG_PATH)),
         passwd_path: PathBuf::from(PASSWD_PATH),
+        systemd_unit_root: std::env::var("GILD_AGENT_SYSTEMD_UNIT_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(DEFAULT_SYSTEMD_UNIT_ROOT)),
+        systemd_unit_owner: Some((0, 0)),
         command_runner: Arc::new(SystemCommandRunner),
     })
 }
@@ -256,13 +272,20 @@ async fn handle_request(
                 ServiceReply::json_value(400, serde_json::json!({ "error": err.to_string() }))
             }
         },
+        ("POST", "/v1/write_unit") => match parse_json::<WriteUnitRequest>(request) {
+            Ok(body) => handle_write_unit_request(state, &body, peer),
+            Err(err) => {
+                ServiceReply::json_value(400, serde_json::json!({ "error": err.to_string() }))
+            }
+        },
         (_, "/v1/health")
         | (_, "/v1/agent/create")
         | (_, "/v1/agent/remove")
         | (_, "/v1/systemd/restart")
         | (_, "/v1/systemd/reload")
         | (_, "/v1/hmac/rotate")
-        | (_, "/v1/systemctl") => {
+        | (_, "/v1/systemctl")
+        | (_, "/v1/write_unit") => {
             ServiceReply::json_value(405, serde_json::json!({ "error": "method not allowed" }))
         }
         _ => ServiceReply::json_value(404, serde_json::json!({ "error": "not found" })),
@@ -486,6 +509,272 @@ fn write_systemctl_audit(
         "by_pid": peer.pid
     });
     writeln!(file, "{line}").context("write audit log")
+}
+
+fn handle_write_unit_request(
+    state: &AppState,
+    request: &WriteUnitRequest,
+    peer: PeerCredentials,
+) -> ServiceReply {
+    match write_unit(
+        request,
+        &state.systemd_unit_root,
+        &state.audit_log_path,
+        peer,
+        state.systemd_unit_owner,
+    ) {
+        Ok(reply) => ServiceReply::json_value(
+            200,
+            serde_json::json!({
+                "ok": true,
+                "path": reply.path,
+                "sha256": reply.sha256
+            }),
+        ),
+        Err(err) => {
+            let status = if err
+                .to_string()
+                .contains("already exists with different sha256")
+            {
+                409
+            } else {
+                400
+            };
+            ServiceReply::json_value(status, serde_json::json!({ "error": err.to_string() }))
+        }
+    }
+}
+
+#[derive(Debug)]
+struct WriteUnitReply {
+    path: String,
+    sha256: String,
+}
+
+fn write_unit(
+    request: &WriteUnitRequest,
+    unit_root: &Path,
+    audit_path: &Path,
+    peer: PeerCredentials,
+    owner: Option<(u32, u32)>,
+) -> Result<WriteUnitReply> {
+    if request.op != "write_unit" {
+        bail!("op must be write_unit");
+    }
+    validate_write_unit_name(&request.unit)?;
+    validate_unit_contents(&request.contents)?;
+
+    let path = unit_root.join(&request.unit);
+    let contents = request.contents.as_bytes();
+    let sha256 = sha256_hex(contents);
+
+    match fs::read(&path) {
+        Ok(existing) => {
+            let existing_sha256 = sha256_hex(&existing);
+            if existing_sha256 != sha256 {
+                bail!("unit already exists with different sha256");
+            }
+            write_unit_audit(audit_path, &request.unit, &sha256, peer)?;
+            return Ok(WriteUnitReply {
+                path: path.display().to_string(),
+                sha256,
+            });
+        }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err).with_context(|| format!("read {}", path.display())),
+    }
+
+    atomic_write_unit(&path, contents, owner)?;
+    write_unit_audit(audit_path, &request.unit, &sha256, peer)?;
+    Ok(WriteUnitReply {
+        path: path.display().to_string(),
+        sha256,
+    })
+}
+
+fn validate_write_unit_name(unit: &str) -> Result<()> {
+    static UNIT_RE: OnceLock<Regex> = OnceLock::new();
+    let re = UNIT_RE.get_or_init(|| {
+        Regex::new(r"^gg\.tana\.[a-z][a-z0-9.@-]+\.(service|timer)$")
+            .expect("write_unit regex compiles")
+    });
+    if re.is_match(unit) {
+        Ok(())
+    } else {
+        bail!("invalid unit")
+    }
+}
+
+fn validate_unit_contents(contents: &str) -> Result<()> {
+    if !has_unit_section(contents, "Unit") {
+        bail!("unit contents must contain [Unit] section");
+    }
+    if has_unit_section(contents, "Service") || has_unit_section(contents, "Timer") {
+        Ok(())
+    } else {
+        bail!("unit contents must contain [Service] or [Timer] section")
+    }
+}
+
+fn has_unit_section(contents: &str, section: &str) -> bool {
+    let expected = format!("[{section}]");
+    contents.lines().any(|line| line.trim() == expected)
+}
+
+fn atomic_write_unit(path: &Path, contents: &[u8], owner: Option<(u32, u32)>) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("unit path has no parent"))?;
+    fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+
+    let tmp_path = write_unique_unit_tmp(path, contents, owner)?;
+    let result = match rename_noreplace(&tmp_path, path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+            let existing = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+            if sha256_hex(&existing) != sha256_hex(contents) {
+                Err(anyhow!("unit already exists with different sha256"))
+            } else {
+                fs::remove_file(&tmp_path)
+                    .with_context(|| format!("remove {}", tmp_path.display()))?;
+                Ok(())
+            }
+        }
+        Err(err) => {
+            Err(err).with_context(|| format!("rename {} to {}", tmp_path.display(), path.display()))
+        }
+    };
+
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp_path);
+    }
+    result
+}
+
+fn write_unique_unit_tmp(
+    path: &Path,
+    contents: &[u8],
+    owner: Option<(u32, u32)>,
+) -> Result<PathBuf> {
+    for _ in 0..16 {
+        let tmp_path = unique_tmp_path(path);
+        match OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o644)
+            .open(&tmp_path)
+        {
+            Ok(mut file) => {
+                file.write_all(contents)
+                    .with_context(|| format!("write {}", tmp_path.display()))?;
+                file.sync_all()
+                    .with_context(|| format!("sync {}", tmp_path.display()))?;
+                fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o644))
+                    .with_context(|| format!("chmod 0644 {}", tmp_path.display()))?;
+                chown_path(&tmp_path, owner)?;
+                return Ok(tmp_path);
+            }
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err).with_context(|| format!("open {}", tmp_path.display())),
+        }
+    }
+
+    bail!("could not allocate unique temporary unit path")
+}
+
+fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        match renameat2_noreplace(from, to) {
+            Ok(()) => return Ok(()),
+            Err(err)
+                if err.raw_os_error() == Some(libc::ENOSYS)
+                    || err.raw_os_error() == Some(libc::EINVAL) => {}
+            Err(err) => return Err(err),
+        }
+    }
+
+    fs::hard_link(from, to)?;
+    fs::remove_file(from)
+}
+
+#[cfg(target_os = "linux")]
+fn renameat2_noreplace(from: &Path, to: &Path) -> io::Result<()> {
+    let from = CString::new(from.as_os_str().as_encoded_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "source path contains NUL"))?;
+    let to = CString::new(to.as_os_str().as_encoded_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "target path contains NUL"))?;
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            from.as_ptr(),
+            libc::AT_FDCWD,
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+fn write_unit_audit(path: &Path, unit: &str, sha256: &str, peer: PeerCredentials) -> Result<()> {
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .with_context(|| format!("open audit log {}", path.display()))?;
+    let line = serde_json::json!({
+        "ts": timestamp_millis().to_string(),
+        "op": "write_unit",
+        "unit": unit,
+        "sha256": sha256,
+        "by_uid": peer.uid,
+        "by_pid": peer.pid
+    });
+    writeln!(file, "{line}").context("write audit log")
+}
+
+fn chown_path(path: &Path, owner: Option<(u32, u32)>) -> Result<()> {
+    let Some((uid, gid)) = owner else {
+        return Ok(());
+    };
+    let c_path =
+        std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).context("path contains NUL")?;
+    let rc = unsafe { libc::chown(c_path.as_ptr(), uid, gid) };
+    if rc != 0 {
+        return Err(io::Error::last_os_error())
+            .with_context(|| format!("chown {uid}:{gid} {}", path.display()));
+    }
+    Ok(())
+}
+
+fn unique_tmp_path(path: &Path) -> PathBuf {
+    let mut tmp = path.as_os_str().to_os_string();
+    tmp.push(format!(
+        ".tmp.{}.{}",
+        std::process::id(),
+        rand::random::<u64>()
+    ));
+    PathBuf::from(tmp)
+}
+
+fn sha256_hex(contents: &[u8]) -> String {
+    let digest = Sha256::digest(contents);
+    hex_encode(&digest)
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 fn timestamp_millis() -> u128 {
@@ -914,7 +1203,8 @@ fn secure_socket(path: &Path, gid: u32) -> Result<()> {
 mod tests {
     use super::*;
     use std::collections::VecDeque;
-    use std::sync::Mutex;
+    use std::os::unix::fs::MetadataExt;
+    use std::sync::{Barrier, Mutex};
     use std::time::SystemTime;
     use tokio::net::UnixStream;
 
@@ -981,6 +1271,8 @@ mod tests {
             orchestrator_gid: 1,
             audit_log_path: dir.join("gild-agent.log"),
             passwd_path,
+            systemd_unit_root: dir.join("systemd"),
+            systemd_unit_owner: None,
             command_runner,
         }
     }
@@ -1035,6 +1327,8 @@ mod tests {
             orchestrator_gid: 1,
             audit_log_path: PathBuf::from("/tmp/gild-agent-test.log"),
             passwd_path: PathBuf::from("/tmp/gild-agent-test-passwd"),
+            systemd_unit_root: std::env::temp_dir().join("gild-agent-test-systemd"),
+            systemd_unit_owner: None,
             command_runner: Arc::new(SystemCommandRunner),
         };
         let request =
@@ -1289,5 +1583,211 @@ mod tests {
 
         assert_eq!(reply.status, 400);
         assert!(runner.calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn validates_write_unit_name_pattern() {
+        assert!(validate_write_unit_name("gg.tana.gild-dispatcher@agent-foo.service").is_ok());
+        assert!(validate_write_unit_name("gg.tana.agent.foo-1.timer").is_ok());
+
+        assert!(validate_write_unit_name("nginx.service").is_err());
+        assert!(validate_write_unit_name("../../etc/passwd").is_err());
+        assert!(validate_write_unit_name("gg.tana.AgentFoo.service").is_err());
+        assert!(validate_write_unit_name("gg.tana.1agent.service").is_err());
+        assert!(validate_write_unit_name("gg.tana.agent_foo.service").is_err());
+        assert!(validate_write_unit_name("gg.tana.agent-foo.socket").is_err());
+    }
+
+    #[test]
+    fn validates_unit_contents_shape() {
+        assert!(
+            validate_unit_contents("[Unit]\nDescription=x\n[Service]\nExecStart=/bin/true\n")
+                .is_ok()
+        );
+        assert!(validate_unit_contents("[Unit]\nDescription=x\n[Timer]\nOnBootSec=1m\n").is_ok());
+
+        assert!(validate_unit_contents("[Service]\nExecStart=/bin/true\n").is_err());
+        assert!(validate_unit_contents("[Unit]\nDescription=x\n").is_err());
+        assert!(validate_unit_contents("not a unit").is_err());
+    }
+
+    #[test]
+    fn write_unit_is_idempotent_but_rejects_different_existing_contents() {
+        let runner = FakeRunner::new(vec![]);
+        let state = test_state(runner);
+        let audit = state.audit_log_path.clone();
+        let request = WriteUnitRequest {
+            op: "write_unit".to_string(),
+            unit: "gg.tana.gild-dispatcher@agent-foo.service".to_string(),
+            contents: "[Unit]\nDescription=agent foo\n[Service]\nExecStart=/bin/true\n".to_string(),
+        };
+
+        let first = write_unit(
+            &request,
+            &state.systemd_unit_root,
+            &audit,
+            test_peer(),
+            None,
+        )
+        .unwrap();
+        let second = write_unit(
+            &request,
+            &state.systemd_unit_root,
+            &audit,
+            test_peer(),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(first.sha256, second.sha256);
+        let path = state.systemd_unit_root.join(&request.unit);
+        assert_eq!(first.path, path.display().to_string());
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+        assert!(!path.with_extension("service.tmp").exists());
+
+        let changed = WriteUnitRequest {
+            contents: "[Unit]\nDescription=changed\n[Service]\nExecStart=/bin/true\n".to_string(),
+            ..request
+        };
+        let err = write_unit(
+            &changed,
+            &state.systemd_unit_root,
+            &audit,
+            test_peer(),
+            None,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("different sha256"));
+
+        let audit_lines = fs::read_to_string(&audit).unwrap();
+        assert_eq!(audit_lines.lines().count(), 2);
+        let audit_json: serde_json::Value =
+            serde_json::from_str(audit_lines.lines().next().unwrap()).unwrap();
+        assert_eq!(audit_json["op"], "write_unit");
+        assert_eq!(
+            audit_json["unit"],
+            "gg.tana.gild-dispatcher@agent-foo.service"
+        );
+        assert_eq!(audit_json["sha256"], first.sha256);
+        assert_eq!(audit_json["by_uid"], 1001);
+        assert_eq!(audit_json["by_pid"], 4242);
+    }
+
+    #[test]
+    fn atomic_write_unit_same_sha_preserves_existing_file_metadata() {
+        let runner = FakeRunner::new(vec![]);
+        let state = test_state(runner);
+        let unit = "gg.tana.gild-dispatcher@agent-idempotent.service";
+        let path = state.systemd_unit_root.join(unit);
+        let contents = b"[Unit]\nDescription=agent idempotent\n[Service]\nExecStart=/bin/true\n";
+
+        atomic_write_unit(&path, contents, None).unwrap();
+        let before = fs::metadata(&path).unwrap();
+
+        std::thread::sleep(Duration::from_millis(5));
+        atomic_write_unit(&path, contents, None).unwrap();
+
+        let after = fs::metadata(&path).unwrap();
+        assert_eq!(before.dev(), after.dev());
+        assert_eq!(before.ino(), after.ino());
+        assert_eq!(before.mtime(), after.mtime());
+        assert_eq!(before.mtime_nsec(), after.mtime_nsec());
+
+        let prefix = format!("{unit}.tmp.");
+        let leftovers: Vec<PathBuf> = fs::read_dir(&state.systemd_unit_root)
+            .unwrap()
+            .filter_map(|entry| {
+                let path = entry.unwrap().path();
+                let name = path.file_name()?.to_str()?;
+                name.starts_with(&prefix).then_some(path)
+            })
+            .collect();
+        assert!(leftovers.is_empty(), "leftover tmp files: {leftovers:?}");
+    }
+
+    #[test]
+    fn concurrent_write_unit_same_unit_conflicts_without_tmp_orphans() {
+        let runner = FakeRunner::new(vec![]);
+        let state = test_state(runner);
+        let unit = "gg.tana.gild-dispatcher@agent-race.service".to_string();
+        let first_contents =
+            "[Unit]\nDescription=agent race one\n[Service]\nExecStart=/bin/true\n".to_string();
+        let second_contents =
+            "[Unit]\nDescription=agent race two\n[Service]\nExecStart=/bin/true\n".to_string();
+        let barrier = Arc::new(Barrier::new(3));
+
+        let handles = [first_contents.clone(), second_contents.clone()].map(|contents| {
+            let state = state.clone();
+            let unit = unit.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                let request = WriteUnitRequest {
+                    op: "write_unit".to_string(),
+                    unit,
+                    contents,
+                };
+                barrier.wait();
+                handle_write_unit_request(&state, &request, test_peer())
+            })
+        });
+
+        barrier.wait();
+        let replies: Vec<ServiceReply> = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect();
+        let mut statuses: Vec<u16> = replies.iter().map(|reply| reply.status).collect();
+        statuses.sort_unstable();
+        assert_eq!(statuses, vec![200, 409]);
+
+        let target = state.systemd_unit_root.join(&unit);
+        let written = fs::read_to_string(&target).unwrap();
+        assert!(written == first_contents || written == second_contents);
+
+        let prefix = format!("{unit}.tmp.");
+        let leftovers: Vec<PathBuf> = fs::read_dir(&state.systemd_unit_root)
+            .unwrap()
+            .filter_map(|entry| {
+                let path = entry.unwrap().path();
+                let name = path.file_name()?.to_str()?;
+                name.starts_with(&prefix).then_some(path)
+            })
+            .collect();
+        assert!(leftovers.is_empty(), "leftover tmp files: {leftovers:?}");
+    }
+
+    #[tokio::test]
+    async fn write_unit_route_writes_to_configured_root() {
+        let runner = FakeRunner::new(vec![]);
+        let state = test_state(runner);
+        let body = serde_json::json!({
+            "op": "write_unit",
+            "unit": "gg.tana.gild-dispatcher@agent-bar.service",
+            "contents": "[Unit]\nDescription=agent bar\n[Service]\nExecStart=/bin/true\n"
+        })
+        .to_string();
+        let raw = format!(
+            "POST /v1/write_unit HTTP/1.1\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        let request = parse_http_request(&raw).unwrap();
+
+        let reply = handle_request(&state, &request, test_peer()).await;
+
+        assert_eq!(reply.status, 200);
+        let json: serde_json::Value = serde_json::from_str(&reply.body).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(
+            json["path"],
+            state
+                .systemd_unit_root
+                .join("gg.tana.gild-dispatcher@agent-bar.service")
+                .display()
+                .to_string()
+        );
+        assert!(json["sha256"].as_str().unwrap().len() == 64);
     }
 }
