@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs,
     io::{Read, Write},
     net::TcpListener,
@@ -6,8 +7,12 @@ use std::{
     process::Command,
     sync::mpsc,
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
+
+use sha2::{Digest, Sha256};
+
+const TEST_DISPATCH_SECRET: &[u8] = b"dispatch-test-secret";
 
 fn gild_bin() -> &'static str {
     env!("CARGO_BIN_EXE_gild")
@@ -28,6 +33,79 @@ fn command_with_agent_fixture() -> Command {
         .env("GILD_AGENT_PORTS_CONFIG", fixture)
         .env("GILD_SYSTEMCTL_BIN", "/bin/false");
     command
+}
+
+struct TestDir {
+    path: PathBuf,
+}
+
+impl TestDir {
+    fn new(prefix: &str) -> Self {
+        let path = std::env::temp_dir().join(format!("{}-{}", prefix, std::process::id()));
+        if path.exists() {
+            fs::remove_dir_all(&path).expect("remove stale test dir");
+        }
+        fs::create_dir_all(&path).expect("create test dir");
+        Self { path }
+    }
+
+    fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+}
+
+impl Drop for TestDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+fn hmac_sha256_hex(key: &[u8], message: &[u8]) -> String {
+    const BLOCK_SIZE: usize = 64;
+    let mut key_block = [0u8; BLOCK_SIZE];
+    if key.len() > BLOCK_SIZE {
+        key_block[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        key_block[..key.len()].copy_from_slice(key);
+    }
+
+    let mut outer = [0x5c; BLOCK_SIZE];
+    let mut inner = [0x36; BLOCK_SIZE];
+    for index in 0..BLOCK_SIZE {
+        outer[index] ^= key_block[index];
+        inner[index] ^= key_block[index];
+    }
+
+    let mut inner_hash = Sha256::new();
+    inner_hash.update(inner);
+    inner_hash.update(message);
+    let inner_digest = inner_hash.finalize();
+
+    let mut outer_hash = Sha256::new();
+    outer_hash.update(outer);
+    outer_hash.update(inner_digest);
+    hex(&outer_hash.finalize())
+}
+
+fn hex(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(TABLE[(byte >> 4) as usize] as char);
+        encoded.push(TABLE[(byte & 0x0f) as usize] as char);
+    }
+    encoded
+}
+
+fn header_map(headers: &str) -> HashMap<String, String> {
+    headers
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            Some((name.to_ascii_lowercase(), value.trim().to_string()))
+        })
+        .collect()
 }
 
 #[test]
@@ -80,8 +158,11 @@ fn dispatch_to_real_agent_returns_run_id() {
             request.extend_from_slice(&buffer[..read]);
         }
 
-        let request = String::from_utf8_lossy(&request).to_string();
-        request_tx.send(request).expect("record dispatch request");
+        let headers = String::from_utf8_lossy(&request[..header_end]).to_string();
+        let body = request[header_end..header_end + content_length].to_vec();
+        request_tx
+            .send((headers, body))
+            .expect("record dispatch request");
 
         let body = r#"{"run_id":"run_12345abc"}"#;
         write!(
@@ -93,15 +174,8 @@ fn dispatch_to_real_agent_returns_run_id() {
         .expect("write dispatch response");
     });
 
-    let dir = std::env::temp_dir().join(format!(
-        "gild-dispatch-e2e-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock")
-            .as_nanos()
-    ));
-    fs::create_dir_all(&dir).expect("create test dir");
-    let config = dir.join("agents.toml");
+    let dir = TestDir::new("gild-dispatch-e2e");
+    let config = dir.path().join("agents.toml");
     fs::write(
         &config,
         format!(
@@ -118,13 +192,16 @@ sandbox = "codex"
     let output = Command::new(gild_bin())
         .args(["dispatch", "agent-test", "echo OK", "--runtime", "codex"])
         .env("GILD_AGENTS_CONFIG", &config)
-        .env("GILD_DISPATCH_SECRET", "dispatch-test-secret")
+        .env(
+            "GILD_DISPATCH_SECRET",
+            String::from_utf8(TEST_DISPATCH_SECRET.to_vec()).unwrap(),
+        )
         .env_remove("GILD_DISPATCH_SECRET_FILE")
         .env_remove("GILD_DISPATCH_SECRET_TEST")
         .output()
         .expect("spawn gild dispatch");
 
-    let request = request_rx
+    let (headers, body) = request_rx
         .recv_timeout(Duration::from_secs(5))
         .unwrap_or_else(|_| {
             panic!(
@@ -152,11 +229,24 @@ sandbox = "codex"
         "run_id was: {run_id}"
     );
 
-    assert!(request.starts_with("POST /task HTTP/1.1"), "{request}");
-    assert!(request.contains("x-gild-timestamp:"), "{request}");
-    assert!(request.contains("x-gild-signature:"), "{request}");
-    assert!(request.contains(r#""task":"echo OK""#), "{request}");
-    assert!(request.contains(r#""runtime":"codex""#), "{request}");
+    let headers_map = header_map(&headers);
+    let timestamp = headers_map
+        .get("x-gild-timestamp")
+        .expect("x-gild-timestamp header");
+    let mut signed_message = timestamp.as_bytes().to_vec();
+    signed_message.push(b'.');
+    signed_message.extend_from_slice(&body);
+    let expected_sig = hmac_sha256_hex(TEST_DISPATCH_SECRET, &signed_message);
+    assert_eq!(
+        headers_map.get("x-gild-signature"),
+        Some(&expected_sig),
+        "HMAC mismatch"
+    );
+
+    let body = String::from_utf8(body).expect("request body utf8");
+    assert!(headers.starts_with("POST /task HTTP/1.1"), "{headers}");
+    assert!(body.contains(r#""task":"echo OK""#), "{body}");
+    assert!(body.contains(r#""runtime":"codex""#), "{body}");
 }
 
 #[test]
