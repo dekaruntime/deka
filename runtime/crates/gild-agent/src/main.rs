@@ -16,6 +16,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::time::timeout;
 
+mod handlers;
+
 const DEFAULT_SOCKET_PATH: &str = "/run/gild-agent.sock";
 const ORCHESTRATOR_GROUP: &str = "gild-orchestrator";
 const READ_TIMEOUT_MS: u64 = 1_000;
@@ -23,6 +25,7 @@ const MAX_HEADER_BYTES: usize = 16 * 1024;
 const MAX_BODY_BYTES: usize = 64 * 1024;
 const DEFAULT_AUDIT_LOG_PATH: &str = "/var/log/gild-agent.log";
 const PASSWD_PATH: &str = "/etc/passwd";
+const GILD_AGENT_ROOT: &str = "/etc/gild/agents";
 
 #[derive(Clone)]
 struct AppState {
@@ -59,7 +62,8 @@ struct SystemctlRequest {
 
 #[derive(Debug, Deserialize)]
 struct RotateHmacRequest {
-    agent_slug: String,
+    op: String,
+    slug: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -235,7 +239,13 @@ async fn handle_request(
         },
         ("POST", "/v1/systemd/reload") => not_implemented("systemd.reload", "daemon-reload"),
         ("POST", "/v1/hmac/rotate") => match parse_json::<RotateHmacRequest>(request) {
-            Ok(body) => not_implemented("hmac.rotate", &format!("agent {}", body.agent_slug)),
+            Ok(body) => handlers::hmac_rotate::handle_hmac_rotate_request(
+                &body,
+                peer,
+                Path::new(GILD_AGENT_ROOT),
+                &state.audit_log_path,
+                Some((0, 0)),
+            ),
             Err(err) => {
                 ServiceReply::json_value(400, serde_json::json!({ "error": err.to_string() }))
             }
@@ -505,20 +515,11 @@ fn parse_json<T: for<'de> Deserialize<'de>>(request: &HttpRequest) -> Result<T> 
 }
 
 fn validate_slug(slug: &str) -> Result<()> {
-    let Some(rest) = slug.strip_prefix("agent-") else {
-        bail!("slug must match ^agent-[a-z][a-z0-9-]{{1,30}}$");
-    };
-    if !(2..=31).contains(&rest.len()) {
-        bail!("slug must match ^agent-[a-z][a-z0-9-]{{1,30}}$");
-    }
-    let mut bytes = rest.bytes();
-    let Some(first) = bytes.next() else {
-        bail!("slug must match ^agent-[a-z][a-z0-9-]{{1,30}}$");
-    };
-    if !first.is_ascii_lowercase() {
-        bail!("slug must match ^agent-[a-z][a-z0-9-]{{1,30}}$");
-    }
-    if !bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') {
+    static SLUG_RE: OnceLock<Regex> = OnceLock::new();
+    let re = SLUG_RE.get_or_init(|| {
+        Regex::new(r"^agent-[a-z][a-z0-9-]{1,30}$").expect("agent slug regex compiles")
+    });
+    if !re.is_match(slug) {
         bail!("slug must match ^agent-[a-z][a-z0-9-]{{1,30}}$");
     }
     Ok(())
