@@ -22,18 +22,31 @@ run() {
   fi
 }
 
+has_group() {
+  local user="$1"
+  local group="$2"
+  id -nG "$user" | tr ' ' '\n' | awk -v group="$group" '$0 == group { found = 1 } END { exit found ? 0 : 1 }'
+}
+
 if ! getent group gild-agents >/dev/null; then
   run groupadd --system gild-agents
+  echo "[migrate] created group gild-agents"
 fi
 
-getent passwd \
-  | awk -F: '$1 ~ /^agent-/ { print $1 }' \
-  | while IFS= read -r user; do
-      [[ -n "$user" ]] || continue
-      if id -nG "$user" | tr ' ' '\n' | grep -qx gild-orchestrator; then
-        run gpasswd -d "$user" gild-orchestrator
-      fi
-      if ! id -nG "$user" | tr ' ' '\n' | grep -qx gild-agents; then
-        run gpasswd -a "$user" gild-agents
-      fi
-    done
+for user in $(getent passwd | awk -F: '$1 ~ /^agent-/ { print $1 }'); do
+  primary=$(id -gn "$user")
+  if [[ "$primary" == "gild-orchestrator" ]]; then
+    run usermod -g gild-agents "$user"
+    echo "[migrate] $user: primary group gild-orchestrator -> gild-agents"
+  fi
+
+  if has_group "$user" gild-orchestrator; then
+    run gpasswd -d "$user" gild-orchestrator 2>/dev/null || true
+    echo "[migrate] $user: removed supplementary gild-orchestrator"
+  fi
+
+  if ! has_group "$user" gild-agents; then
+    run gpasswd -a "$user" gild-agents
+    echo "[migrate] $user: added supplementary gild-agents"
+  fi
+done

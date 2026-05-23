@@ -91,6 +91,15 @@ fn write_unique_private_tmp(
     contents: &[u8],
     owner: Option<(u32, u32)>,
 ) -> Result<PathBuf> {
+    write_unique_private_tmp_with_chown(path, contents, owner, chown_path)
+}
+
+fn write_unique_private_tmp_with_chown(
+    path: &Path,
+    contents: &[u8],
+    owner: Option<(u32, u32)>,
+    chown: impl Fn(&Path, Option<(u32, u32)>) -> Result<()>,
+) -> Result<PathBuf> {
     for _ in 0..16 {
         let tmp_path = tmp_path(path);
         match OpenOptions::new()
@@ -100,13 +109,20 @@ fn write_unique_private_tmp(
             .open(&tmp_path)
         {
             Ok(mut file) => {
-                file.write_all(contents)
-                    .with_context(|| format!("write {}", tmp_path.display()))?;
-                file.sync_all()
-                    .with_context(|| format!("sync {}", tmp_path.display()))?;
-                fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o600))
-                    .with_context(|| format!("chmod 0600 {}", tmp_path.display()))?;
-                chown_path(&tmp_path, owner)?;
+                let result = (|| -> Result<()> {
+                    file.write_all(contents)
+                        .with_context(|| format!("write {}", tmp_path.display()))?;
+                    file.sync_all()
+                        .with_context(|| format!("sync {}", tmp_path.display()))?;
+                    fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o600))
+                        .with_context(|| format!("chmod 0600 {}", tmp_path.display()))?;
+                    chown(&tmp_path, owner)?;
+                    Ok(())
+                })();
+                if result.is_err() {
+                    let _ = fs::remove_file(&tmp_path);
+                }
+                result?;
                 return Ok(tmp_path);
             }
             Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
@@ -280,6 +296,30 @@ mod tests {
         assert!(fingerprints.contains(&final_fingerprint));
         assert_eq!(fs::metadata(&key_path).unwrap().mode() & 0o777, 0o600);
         let leftovers = fs::read_dir(root.join("agent-race"))
+            .unwrap()
+            .filter_map(|entry| {
+                let path = entry.unwrap().path();
+                let name = path.file_name()?.to_str()?;
+                name.contains(".tmp.").then_some(path)
+            })
+            .collect::<Vec<_>>();
+        assert!(leftovers.is_empty(), "leftover tmp files: {leftovers:?}");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn temp_file_is_removed_when_post_create_setup_fails() {
+        let root = temp_root("tmp-cleanup");
+        fs::create_dir_all(&root).unwrap();
+        let key_path = root.join(HMAC_KEY_FILE);
+
+        let result = write_unique_private_tmp_with_chown(&key_path, b"secret", None, |_, _| {
+            bail!("injected chown failure")
+        });
+
+        assert!(result.is_err());
+        let leftovers = fs::read_dir(&root)
             .unwrap()
             .filter_map(|entry| {
                 let path = entry.unwrap().path();
