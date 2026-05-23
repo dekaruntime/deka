@@ -78,6 +78,12 @@ struct WriteUnitRequest {
     contents: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct DeleteUnitRequest {
+    op: String,
+    unit: String,
+}
+
 #[derive(Debug, Serialize)]
 struct OperationReply {
     ok: bool,
@@ -278,6 +284,12 @@ async fn handle_request(
                 ServiceReply::json_value(400, serde_json::json!({ "error": err.to_string() }))
             }
         },
+        ("POST", "/v1/delete_unit") => match parse_json::<DeleteUnitRequest>(request) {
+            Ok(body) => handle_delete_unit_request(state, &body, peer),
+            Err(err) => {
+                ServiceReply::json_value(400, serde_json::json!({ "error": err.to_string() }))
+            }
+        },
         (_, "/v1/health")
         | (_, "/v1/agent/create")
         | (_, "/v1/agent/remove")
@@ -285,7 +297,8 @@ async fn handle_request(
         | (_, "/v1/systemd/reload")
         | (_, "/v1/hmac/rotate")
         | (_, "/v1/systemctl")
-        | (_, "/v1/write_unit") => {
+        | (_, "/v1/write_unit")
+        | (_, "/v1/delete_unit") => {
             ServiceReply::json_value(405, serde_json::json!({ "error": "method not allowed" }))
         }
         _ => ServiceReply::json_value(404, serde_json::json!({ "error": "not found" })),
@@ -554,10 +567,39 @@ fn handle_write_unit_request(
     }
 }
 
+fn handle_delete_unit_request(
+    state: &AppState,
+    request: &DeleteUnitRequest,
+    peer: PeerCredentials,
+) -> ServiceReply {
+    match delete_unit(
+        request,
+        &state.systemd_unit_root,
+        &state.audit_log_path,
+        peer,
+    ) {
+        Ok(reply) => ServiceReply::json_value(
+            200,
+            serde_json::json!({
+                "ok": true,
+                "path": reply.path,
+                "existed": reply.existed
+            }),
+        ),
+        Err(err) => ServiceReply::json_value(400, serde_json::json!({ "error": err.to_string() })),
+    }
+}
+
 #[derive(Debug)]
 struct WriteUnitReply {
     path: String,
     sha256: String,
+}
+
+#[derive(Debug)]
+struct DeleteUnitReply {
+    path: String,
+    existed: bool,
 }
 
 fn write_unit(
@@ -570,7 +612,7 @@ fn write_unit(
     if request.op != "write_unit" {
         bail!("op must be write_unit");
     }
-    validate_write_unit_name(&request.unit)?;
+    validate_unit_name(&request.unit)?;
     validate_unit_contents(&request.contents)?;
 
     let path = unit_root.join(&request.unit);
@@ -601,16 +643,64 @@ fn write_unit(
     })
 }
 
-fn validate_write_unit_name(unit: &str) -> Result<()> {
+fn validate_unit_name(unit: &str) -> Result<()> {
     static UNIT_RE: OnceLock<Regex> = OnceLock::new();
     let re = UNIT_RE.get_or_init(|| {
-        Regex::new(r"^gg\.tana\.[a-z][a-z0-9.@-]+\.(service|timer)$")
-            .expect("write_unit regex compiles")
+        Regex::new(r"^gg\.tana\.[a-z][a-z0-9.@-]+\.(service|timer)$").expect("unit regex compiles")
     });
     if re.is_match(unit) {
         Ok(())
     } else {
         bail!("invalid unit")
+    }
+}
+
+fn delete_unit(
+    request: &DeleteUnitRequest,
+    unit_root: &Path,
+    audit_path: &Path,
+    peer: PeerCredentials,
+) -> Result<DeleteUnitReply> {
+    if request.op != "delete_unit" {
+        bail!("op must be delete_unit");
+    }
+    validate_unit_name(&request.unit)?;
+
+    let path = unit_root.join(&request.unit);
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            return Ok(DeleteUnitReply {
+                path: path.display().to_string(),
+                existed: false,
+            });
+        }
+        Err(err) => return Err(err).with_context(|| format!("stat {}", path.display())),
+    };
+
+    if metadata.file_type().is_symlink() {
+        refuse_symlink_escape(&path, unit_root)?;
+    }
+
+    let contents = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+    let sha256 = sha256_hex(&contents);
+    fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
+    write_delete_unit_audit(audit_path, &request.unit, &sha256, peer)?;
+    Ok(DeleteUnitReply {
+        path: path.display().to_string(),
+        existed: true,
+    })
+}
+
+fn refuse_symlink_escape(path: &Path, unit_root: &Path) -> Result<()> {
+    let root = fs::canonicalize(unit_root)
+        .with_context(|| format!("canonicalize {}", unit_root.display()))?;
+    let target =
+        fs::canonicalize(path).with_context(|| format!("canonicalize {}", path.display()))?;
+    if target.starts_with(&root) {
+        Ok(())
+    } else {
+        bail!("refusing to delete symlink outside systemd unit root")
     }
 }
 
@@ -741,6 +831,29 @@ fn write_unit_audit(path: &Path, unit: &str, sha256: &str, peer: PeerCredentials
         "op": "write_unit",
         "unit": unit,
         "sha256": sha256,
+        "by_uid": peer.uid,
+        "by_pid": peer.pid
+    });
+    writeln!(file, "{line}").context("write audit log")
+}
+
+fn write_delete_unit_audit(
+    path: &Path,
+    unit: &str,
+    sha256_removed: &str,
+    peer: PeerCredentials,
+) -> Result<()> {
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .with_context(|| format!("open audit log {}", path.display()))?;
+    let line = serde_json::json!({
+        "ts": timestamp_millis().to_string(),
+        "op": "delete_unit",
+        "unit": unit,
+        "sha256_removed": sha256_removed,
+        "existed": true,
         "by_uid": peer.uid,
         "by_pid": peer.pid
     });
@@ -1633,15 +1746,28 @@ mod tests {
 
     #[test]
     fn validates_write_unit_name_pattern() {
-        assert!(validate_write_unit_name("gg.tana.gild-dispatcher@agent-foo.service").is_ok());
-        assert!(validate_write_unit_name("gg.tana.agent.foo-1.timer").is_ok());
+        assert!(validate_unit_name("gg.tana.gild-dispatcher@agent-foo.service").is_ok());
+        assert!(validate_unit_name("gg.tana.agent.foo-1.timer").is_ok());
 
-        assert!(validate_write_unit_name("nginx.service").is_err());
-        assert!(validate_write_unit_name("../../etc/passwd").is_err());
-        assert!(validate_write_unit_name("gg.tana.AgentFoo.service").is_err());
-        assert!(validate_write_unit_name("gg.tana.1agent.service").is_err());
-        assert!(validate_write_unit_name("gg.tana.agent_foo.service").is_err());
-        assert!(validate_write_unit_name("gg.tana.agent-foo.socket").is_err());
+        assert!(validate_unit_name("nginx.service").is_err());
+        assert!(validate_unit_name("../../etc/passwd").is_err());
+        assert!(validate_unit_name("gg.tana.AgentFoo.service").is_err());
+        assert!(validate_unit_name("gg.tana.1agent.service").is_err());
+        assert!(validate_unit_name("gg.tana.agent_foo.service").is_err());
+        assert!(validate_unit_name("gg.tana.agent-foo.socket").is_err());
+    }
+
+    #[test]
+    fn validates_delete_unit_name_pattern() {
+        assert!(validate_unit_name("gg.tana.gild-dispatcher@agent-foo.service").is_ok());
+        assert!(validate_unit_name("gg.tana.agent.foo-1.timer").is_ok());
+
+        assert!(validate_unit_name("nginx.service").is_err());
+        assert!(validate_unit_name("../../etc/passwd").is_err());
+        assert!(validate_unit_name("gg.tana.AgentFoo.service").is_err());
+        assert!(validate_unit_name("gg.tana.1agent.service").is_err());
+        assert!(validate_unit_name("gg.tana.agent_foo.service").is_err());
+        assert!(validate_unit_name("gg.tana.agent-foo.socket").is_err());
     }
 
     #[test]
@@ -1835,5 +1961,130 @@ mod tests {
                 .to_string()
         );
         assert!(json["sha256"].as_str().unwrap().len() == 64);
+    }
+
+    #[test]
+    fn delete_unit_removes_existing_file_and_audits_removed_sha() {
+        let runner = FakeRunner::new(vec![]);
+        let state = test_state(runner);
+        fs::create_dir_all(&state.systemd_unit_root).unwrap();
+        let unit = "gg.tana.gild-dispatcher@agent-delete.service";
+        let path = state.systemd_unit_root.join(unit);
+        let contents = b"[Unit]\nDescription=delete me\n[Service]\nExecStart=/bin/true\n";
+        fs::write(&path, contents).unwrap();
+        let request = DeleteUnitRequest {
+            op: "delete_unit".to_string(),
+            unit: unit.to_string(),
+        };
+
+        let reply = delete_unit(
+            &request,
+            &state.systemd_unit_root,
+            &state.audit_log_path,
+            test_peer(),
+        )
+        .unwrap();
+
+        assert!(reply.existed);
+        assert_eq!(reply.path, path.display().to_string());
+        assert!(!path.exists());
+
+        let audit = fs::read_to_string(&state.audit_log_path).unwrap();
+        let audit_json: serde_json::Value = serde_json::from_str(audit.trim()).unwrap();
+        assert_eq!(audit_json["op"], "delete_unit");
+        assert_eq!(audit_json["unit"], unit);
+        assert_eq!(audit_json["sha256_removed"], sha256_hex(contents));
+        assert_eq!(audit_json["existed"], true);
+        assert_eq!(audit_json["by_uid"], 1001);
+        assert_eq!(audit_json["by_pid"], 4242);
+    }
+
+    #[test]
+    fn delete_unit_missing_is_idempotent_without_audit() {
+        let runner = FakeRunner::new(vec![]);
+        let state = test_state(runner);
+        let unit = "gg.tana.gild-dispatcher@agent-missing.service";
+        let request = DeleteUnitRequest {
+            op: "delete_unit".to_string(),
+            unit: unit.to_string(),
+        };
+
+        let reply = delete_unit(
+            &request,
+            &state.systemd_unit_root,
+            &state.audit_log_path,
+            test_peer(),
+        )
+        .unwrap();
+
+        assert!(!reply.existed);
+        assert_eq!(
+            reply.path,
+            state.systemd_unit_root.join(unit).display().to_string()
+        );
+        assert!(!state.audit_log_path.exists());
+    }
+
+    #[test]
+    fn delete_unit_refuses_symlink_escape() {
+        let runner = FakeRunner::new(vec![]);
+        let state = test_state(runner);
+        fs::create_dir_all(&state.systemd_unit_root).unwrap();
+        let outside = state
+            .systemd_unit_root
+            .parent()
+            .unwrap()
+            .join("outside.service");
+        fs::write(&outside, "outside").unwrap();
+        let unit = "gg.tana.gild-dispatcher@agent-link.service";
+        let path = state.systemd_unit_root.join(unit);
+        std::os::unix::fs::symlink(&outside, &path).unwrap();
+        let request = DeleteUnitRequest {
+            op: "delete_unit".to_string(),
+            unit: unit.to_string(),
+        };
+
+        let err = delete_unit(
+            &request,
+            &state.systemd_unit_root,
+            &state.audit_log_path,
+            test_peer(),
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("outside systemd unit root"));
+        assert!(path.exists());
+        assert!(outside.exists());
+        assert!(!state.audit_log_path.exists());
+    }
+
+    #[tokio::test]
+    async fn delete_unit_route_uses_configured_root() {
+        let runner = FakeRunner::new(vec![]);
+        let state = test_state(runner);
+        fs::create_dir_all(&state.systemd_unit_root).unwrap();
+        let unit = "gg.tana.gild-dispatcher@agent-route.service";
+        fs::write(state.systemd_unit_root.join(unit), "route").unwrap();
+        let body = serde_json::json!({
+            "op": "delete_unit",
+            "unit": unit
+        })
+        .to_string();
+        let raw = format!(
+            "POST /v1/delete_unit HTTP/1.1\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        let request = parse_http_request(&raw).unwrap();
+
+        let reply = handle_request(&state, &request, test_peer()).await;
+
+        assert_eq!(reply.status, 200);
+        let json: serde_json::Value = serde_json::from_str(&reply.body).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["existed"], true);
+        assert_eq!(
+            json["path"],
+            state.systemd_unit_root.join(unit).display().to_string()
+        );
     }
 }

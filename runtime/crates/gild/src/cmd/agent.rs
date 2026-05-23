@@ -8,7 +8,9 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 use crate::{
-    agent_client::{AgentClientResult, GildAgentClient, SystemctlResponse, UserdelResponse},
+    agent_client::{
+        AgentClientResult, DeleteUnitResponse, GildAgentClient, SystemctlResponse, UserdelResponse,
+    },
     config::AgentRegistry,
     Result,
 };
@@ -232,10 +234,6 @@ async fn delete_agent(slug: &str, yes: bool) -> Result<()> {
     for action in summary.actions {
         println!("- {action}");
     }
-    println!(
-        "NOTE: {} was left in place; gild-agent does not have a delete_unit handler yet",
-        summary.orphaned_unit
-    );
     Ok(())
 }
 
@@ -256,7 +254,6 @@ struct EnableSummary {
 #[derive(Debug, PartialEq, Eq)]
 struct DeleteSummary {
     actions: Vec<String>,
-    orphaned_unit: String,
 }
 
 type BoxAgentFuture<'a, T> = Pin<Box<dyn Future<Output = AgentClientResult<T>> + Send + 'a>>;
@@ -268,6 +265,7 @@ trait AgentOps {
         action: &'a str,
         unit: &'a str,
     ) -> BoxAgentFuture<'a, SystemctlResponse>;
+    fn delete_unit<'a>(&'a self, unit: &'a str) -> BoxAgentFuture<'a, DeleteUnitResponse>;
 }
 
 impl AgentOps for GildAgentClient {
@@ -281,6 +279,10 @@ impl AgentOps for GildAgentClient {
         unit: &'a str,
     ) -> BoxAgentFuture<'a, SystemctlResponse> {
         Box::pin(self.systemctl(action, unit))
+    }
+
+    fn delete_unit<'a>(&'a self, unit: &'a str) -> BoxAgentFuture<'a, DeleteUnitResponse> {
+        Box::pin(self.delete_unit(unit))
     }
 }
 
@@ -328,10 +330,16 @@ async fn delete_agent_with_client<C: AgentOps>(client: &C, slug: &str) -> Result
     }
     client.userdel(slug).await?;
     actions.push(format!("removed Linux user {slug}"));
-    Ok(DeleteSummary {
-        actions,
-        orphaned_unit: unit,
-    })
+    match client.delete_unit(&unit).await {
+        Ok(response) if response.existed => {
+            actions.push(format!("deleted unit {}", response.path));
+        }
+        Ok(response) => {
+            actions.push(format!("unit already absent {}", response.path));
+        }
+        Err(err) => actions.push(format!("delete_unit best-effort failed: {err}")),
+    }
+    Ok(DeleteSummary { actions })
 }
 
 fn parse_active_state(stdout: &str) -> String {
@@ -521,12 +529,11 @@ mod tests {
                 "systemctl stop gg.tana.gild-dispatcher@agent-zed.service",
                 "systemctl disable gg.tana.gild-dispatcher@agent-zed.service",
                 "userdel agent-zed",
+                "delete_unit gg.tana.gild-dispatcher@agent-zed.service",
             ]
         );
-        assert_eq!(
-            summary.orphaned_unit,
-            "gg.tana.gild-dispatcher@agent-zed.service"
-        );
+        assert!(summary.actions.iter().any(|action| action
+            == "deleted unit /etc/systemd/system/gg.tana.gild-dispatcher@agent-zed.service"));
     }
 
     #[derive(Default)]
@@ -581,6 +588,20 @@ mod tests {
                     stderr: String::new(),
                     error: None,
                     audit_error: None,
+                })
+            })
+        }
+
+        fn delete_unit<'a>(&'a self, unit: &'a str) -> BoxAgentFuture<'a, DeleteUnitResponse> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("delete_unit {unit}"));
+            Box::pin(async move {
+                Ok(DeleteUnitResponse {
+                    ok: true,
+                    path: format!("/etc/systemd/system/{unit}"),
+                    existed: true,
                 })
             })
         }
