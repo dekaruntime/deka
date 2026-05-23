@@ -2,7 +2,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
 use std::fs::{self, OpenOptions};
 use std::io;
@@ -22,6 +22,8 @@ mod handlers;
 
 const DEFAULT_SOCKET_PATH: &str = "/run/gild-agent.sock";
 const ORCHESTRATOR_GROUP: &str = "gild-orchestrator";
+const AGENT_RUNTIME_GROUP: &str = "gild-agents";
+const DISPATCHER_BINARY: &str = "/usr/local/bin/gild-dispatcher";
 const READ_TIMEOUT_MS: u64 = 1_000;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 const MAX_BODY_BYTES: usize = 64 * 1024;
@@ -74,8 +76,11 @@ struct RotateHmacRequest {
 #[derive(Debug, Deserialize)]
 struct WriteUnitRequest {
     op: String,
-    unit: String,
-    contents: String,
+    slug: String,
+    kind: String,
+    port: u16,
+    #[serde(default)]
+    extra_env: HashMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -130,7 +135,12 @@ struct SystemCommandRunner;
 
 impl CommandRunner for SystemCommandRunner {
     fn output(&self, program: &str, args: &[&str]) -> io::Result<CommandOutput> {
-        let output = Command::new(program).args(args).output()?;
+        let output = Command::new(program)
+            .args(args)
+            .env_clear()
+            .env("PATH", "/usr/sbin:/usr/bin:/bin")
+            .env("LANG", "C.UTF-8")
+            .output()?;
         Ok(CommandOutput {
             success: output.status.success(),
             exit: output.status.code(),
@@ -171,6 +181,7 @@ fn load_state() -> Result<AppState> {
     let group = std::env::var("GILD_AGENT_GROUP").unwrap_or_else(|_| ORCHESTRATOR_GROUP.into());
     let orchestrator_gid =
         group_gid(&group)?.ok_or_else(|| anyhow!("group {group:?} not found"))?;
+    warn_agent_members_in_orchestrator(PASSWD_PATH, "/etc/group", &group, orchestrator_gid);
     Ok(AppState {
         started_at: Instant::now(),
         socket_path: std::env::var("GILD_AGENT_SOCKET")
@@ -336,6 +347,46 @@ fn create_agent(
         }
     }
 
+    let group_output = state.command_runner.output(
+        "/usr/sbin/groupadd",
+        &["--system", "--force", AGENT_RUNTIME_GROUP],
+    );
+    match group_output {
+        Ok(output) if output.success => {}
+        Ok(output) => {
+            let _ = audit(state, "groupadd", AGENT_RUNTIME_GROUP, output.exit, peer);
+            return ServiceReply::json_value(
+                500,
+                serde_json::json!({
+                    "ok": false,
+                    "operation": "agent.create",
+                    "message": format!("groupadd failed for {AGENT_RUNTIME_GROUP}"),
+                    "exit": output.exit,
+                    "stdout": output.stdout,
+                    "stderr": output.stderr,
+                    "error": format!("groupadd failed with exit {:?}", output.exit),
+                    "pending": ["useradd", "systemd unit write", "sudoers setup"]
+                }),
+            );
+        }
+        Err(err) => {
+            let _ = audit(state, "groupadd", AGENT_RUNTIME_GROUP, None, peer);
+            return ServiceReply::json_value(
+                500,
+                serde_json::json!({
+                    "ok": false,
+                    "operation": "agent.create",
+                    "message": format!("groupadd failed for {AGENT_RUNTIME_GROUP}"),
+                    "exit": null,
+                    "stdout": "",
+                    "stderr": "",
+                    "error": err.to_string(),
+                    "pending": ["useradd", "systemd unit write", "sudoers setup"]
+                }),
+            );
+        }
+    }
+
     let output = state.command_runner.output(
         "/usr/sbin/useradd",
         &[
@@ -343,7 +394,7 @@ fn create_agent(
             "--shell",
             "/bin/bash",
             "--gid",
-            ORCHESTRATOR_GROUP,
+            AGENT_RUNTIME_GROUP,
             &request.slug,
         ],
     );
@@ -516,11 +567,7 @@ fn write_systemctl_audit(
     exit: Option<i32>,
     peer: PeerCredentials,
 ) -> Result<()> {
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .with_context(|| format!("open audit log {}", path.display()))?;
+    let mut file = open_audit_log(path)?;
     let line = serde_json::json!({
         "ts": timestamp_millis().to_string(),
         "op": "systemctl",
@@ -612,11 +659,15 @@ fn write_unit(
     if request.op != "write_unit" {
         bail!("op must be write_unit");
     }
-    validate_unit_name(&request.unit)?;
-    validate_unit_contents(&request.contents)?;
+    validate_slug(&request.slug)?;
+    validate_dispatcher_unit_kind(&request.kind)?;
+    validate_env_map(&request.extra_env)?;
 
-    let path = unit_root.join(&request.unit);
-    let contents = request.contents.as_bytes();
+    let unit = dispatcher_unit_name(&request.slug);
+    let rendered = render_dispatcher_unit(request);
+    validate_unit_name(&unit)?;
+    let path = unit_root.join(&unit);
+    let contents = rendered.as_bytes();
     let sha256 = sha256_hex(contents);
 
     match fs::read(&path) {
@@ -625,7 +676,7 @@ fn write_unit(
             if existing_sha256 != sha256 {
                 bail!("unit already exists with different sha256");
             }
-            write_unit_audit(audit_path, &request.unit, &sha256, peer)?;
+            write_unit_audit(audit_path, &unit, &sha256, peer)?;
             return Ok(WriteUnitReply {
                 path: path.display().to_string(),
                 sha256,
@@ -636,7 +687,7 @@ fn write_unit(
     }
 
     atomic_write_unit(&path, contents, owner)?;
-    write_unit_audit(audit_path, &request.unit, &sha256, peer)?;
+    write_unit_audit(audit_path, &unit, &sha256, peer)?;
     Ok(WriteUnitReply {
         path: path.display().to_string(),
         sha256,
@@ -653,6 +704,80 @@ fn validate_unit_name(unit: &str) -> Result<()> {
     } else {
         bail!("invalid unit")
     }
+}
+
+fn dispatcher_unit_name(slug: &str) -> String {
+    format!("gg.tana.gild-dispatcher@{slug}.service")
+}
+
+fn validate_dispatcher_unit_kind(kind: &str) -> Result<()> {
+    if kind == "dispatcher" {
+        Ok(())
+    } else {
+        bail!("kind must be dispatcher")
+    }
+}
+
+fn validate_env_map(extra_env: &HashMap<String, String>) -> Result<()> {
+    static ENV_NAME_RE: OnceLock<Regex> = OnceLock::new();
+    let re = ENV_NAME_RE
+        .get_or_init(|| Regex::new(r"^[A-Z][A-Z0-9_]{0,63}$").expect("env var regex compiles"));
+    for (key, value) in extra_env {
+        if !re.is_match(key) {
+            bail!("invalid extra_env key {key:?}");
+        }
+        if value.contains('\n') || value.contains('\0') || value.len() > 512 {
+            bail!("invalid extra_env value for {key}");
+        }
+    }
+    Ok(())
+}
+
+fn render_dispatcher_unit(request: &WriteUnitRequest) -> String {
+    let mut env = request
+        .extra_env
+        .iter()
+        .map(|(key, value)| format!("Environment={}={}", key, systemd_escape_env_value(value)))
+        .collect::<Vec<_>>();
+    env.sort();
+    let extra_env = if env.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", env.join("\n"))
+    };
+    format!(
+        "[Unit]\n\
+Description=Tana gild dispatcher for {slug}\n\
+After=network-online.target\n\
+Wants=network-online.target\n\
+\n\
+[Service]\n\
+Type=simple\n\
+User={slug}\n\
+Group={group}\n\
+WorkingDirectory=/home/{slug}\n\
+Environment=AGENT_SLUG={slug}\n\
+Environment=PORT={port}\n\
+{extra_env}\
+ExecStart={binary}\n\
+Restart=on-failure\n\
+RestartSec=5s\n\
+\n\
+[Install]\n\
+WantedBy=multi-user.target\n",
+        slug = request.slug,
+        group = AGENT_RUNTIME_GROUP,
+        port = request.port,
+        binary = DISPATCHER_BINARY,
+        extra_env = extra_env,
+    )
+}
+
+fn systemd_escape_env_value(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace(' ', "\\x20")
 }
 
 fn delete_unit(
@@ -702,22 +827,6 @@ fn refuse_symlink_escape(path: &Path, unit_root: &Path) -> Result<()> {
     } else {
         bail!("refusing to delete symlink outside systemd unit root")
     }
-}
-
-fn validate_unit_contents(contents: &str) -> Result<()> {
-    if !has_unit_section(contents, "Unit") {
-        bail!("unit contents must contain [Unit] section");
-    }
-    if has_unit_section(contents, "Service") || has_unit_section(contents, "Timer") {
-        Ok(())
-    } else {
-        bail!("unit contents must contain [Service] or [Timer] section")
-    }
-}
-
-fn has_unit_section(contents: &str, section: &str) -> bool {
-    let expected = format!("[{section}]");
-    contents.lines().any(|line| line.trim() == expected)
 }
 
 fn atomic_write_unit(path: &Path, contents: &[u8], owner: Option<(u32, u32)>) -> Result<()> {
@@ -821,11 +930,7 @@ fn renameat2_noreplace(from: &Path, to: &Path) -> io::Result<()> {
 }
 
 fn write_unit_audit(path: &Path, unit: &str, sha256: &str, peer: PeerCredentials) -> Result<()> {
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .with_context(|| format!("open audit log {}", path.display()))?;
+    let mut file = open_audit_log(path)?;
     let line = serde_json::json!({
         "ts": timestamp_millis().to_string(),
         "op": "write_unit",
@@ -843,11 +948,7 @@ fn write_delete_unit_audit(
     sha256_removed: &str,
     peer: PeerCredentials,
 ) -> Result<()> {
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .with_context(|| format!("open audit log {}", path.display()))?;
+    let mut file = open_audit_log(path)?;
     let line = serde_json::json!({
         "ts": timestamp_millis().to_string(),
         "op": "delete_unit",
@@ -860,7 +961,7 @@ fn write_delete_unit_audit(
     writeln!(file, "{line}").context("write audit log")
 }
 
-fn chown_path(path: &Path, owner: Option<(u32, u32)>) -> Result<()> {
+pub(crate) fn chown_path(path: &Path, owner: Option<(u32, u32)>) -> Result<()> {
     let Some((uid, gid)) = owner else {
         return Ok(());
     };
@@ -882,6 +983,30 @@ fn unique_tmp_path(path: &Path) -> PathBuf {
         rand::random::<u64>()
     ));
     PathBuf::from(tmp)
+}
+
+pub(crate) fn open_audit_log(path: &Path) -> Result<fs::File> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    let file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o640)
+        .open(path)
+        .with_context(|| format!("open audit log {}", path.display()))?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o640))
+        .with_context(|| format!("chmod 0640 {}", path.display()))?;
+    chown_path(path, audit_log_owner())?;
+    Ok(file)
+}
+
+fn audit_log_owner() -> Option<(u32, u32)> {
+    if unsafe { libc::geteuid() } != 0 {
+        return None;
+    }
+    let gid = group_gid("adm").ok().flatten().unwrap_or(0);
+    Some((0, gid))
 }
 
 fn sha256_hex(contents: &[u8]) -> String {
@@ -1046,15 +1171,8 @@ fn audit(
         by_uid: peer.uid,
         by_pid: peer.pid,
     })?;
-    if let Some(parent) = state.audit_log_path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
     use std::io::Write;
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&state.audit_log_path)
-        .with_context(|| format!("open audit log {}", state.audit_log_path.display()))?;
+    let mut file = open_audit_log(&state.audit_log_path)?;
     writeln!(file, "{line}").context("write audit log")?;
     eprintln!("{line}");
     Ok(())
@@ -1251,6 +1369,84 @@ fn group_gid(group: &str) -> Result<Option<u32>> {
         let gid = fields.next()?;
         (name == group).then(|| gid.parse::<u32>().ok()).flatten()
     }))
+}
+
+fn warn_agent_members_in_orchestrator(
+    passwd_path: &str,
+    group_path: &str,
+    group_name: &str,
+    group_gid: u32,
+) {
+    match agent_users_in_group(
+        Path::new(passwd_path),
+        Path::new(group_path),
+        group_name,
+        group_gid,
+    ) {
+        Ok(users) if !users.is_empty() => {
+            eprintln!(
+                "WARNING: agent users still belong to {group_name}: {}; run gild-agent-migrate-groups.sh",
+                users.join(", ")
+            );
+        }
+        Ok(_) => {}
+        Err(err) => eprintln!("WARNING: could not audit {group_name} agent membership: {err:#}"),
+    }
+}
+
+fn agent_users_in_group(
+    passwd_path: &Path,
+    group_path: &Path,
+    group_name: &str,
+    group_gid: u32,
+) -> Result<Vec<String>> {
+    let passwd = fs::read_to_string(passwd_path)
+        .with_context(|| format!("read {}", passwd_path.display()))?;
+    let agent_users = passwd
+        .lines()
+        .filter_map(passwd_agent_user)
+        .collect::<Vec<_>>();
+    let agent_set = agent_users
+        .iter()
+        .map(|(name, _)| name.clone())
+        .collect::<HashSet<_>>();
+    let mut unsafe_users = HashSet::new();
+
+    for (name, primary_gid) in agent_users {
+        if primary_gid == group_gid {
+            unsafe_users.insert(name);
+        }
+    }
+
+    let groups =
+        fs::read_to_string(group_path).with_context(|| format!("read {}", group_path.display()))?;
+    for line in groups.lines() {
+        let mut fields = line.split(':');
+        let Some(name) = fields.next() else { continue };
+        let _password = fields.next();
+        let _gid = fields.next();
+        let members = fields.next().unwrap_or_default();
+        if name == group_name {
+            for member in members.split(',').filter(|member| !member.is_empty()) {
+                if agent_set.contains(member) {
+                    unsafe_users.insert(member.to_string());
+                }
+            }
+        }
+    }
+
+    let mut users = unsafe_users.into_iter().collect::<Vec<_>>();
+    users.sort();
+    Ok(users)
+}
+
+fn passwd_agent_user(line: &str) -> Option<(String, u32)> {
+    let mut fields = line.split(':');
+    let name = fields.next()?;
+    let _password = fields.next()?;
+    let _uid = fields.next()?;
+    let gid = fields.next()?.parse::<u32>().ok()?;
+    name.starts_with("agent-").then(|| (name.to_string(), gid))
 }
 
 fn user_group_ids(uid: u32) -> Result<Vec<u32>> {
@@ -1519,6 +1715,35 @@ mod tests {
     }
 
     #[test]
+    fn startup_check_finds_agent_users_in_orchestrator() {
+        let dir = std::env::temp_dir().join(format!(
+            "gild-agent-groups-{}",
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let passwd = dir.join("passwd");
+        let group = dir.join("group");
+        fs::write(
+            &passwd,
+            "root:x:0:0:root:/root:/bin/bash\nagent-primary:x:1001:777::/home/agent-primary:/bin/bash\nagent-member:x:1002:1002::/home/agent-member:/bin/bash\nagent-safe:x:1003:1003::/home/agent-safe:/bin/bash\n",
+        )
+        .unwrap();
+        fs::write(
+            &group,
+            "gild-orchestrator:x:777:ava,agent-member\ngild-agents:x:778:agent-safe\n",
+        )
+        .unwrap();
+
+        let users = agent_users_in_group(&passwd, &group, "gild-orchestrator", 777).unwrap();
+
+        assert_eq!(users, vec!["agent-member", "agent-primary"]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn validates_slug() {
         assert!(validate_slug("agent-khalid").is_ok());
         assert!(validate_slug("agent-zed").is_ok());
@@ -1536,7 +1761,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_agent_invokes_useradd_and_audits_peercred() {
-        let runner = FakeRunner::new(vec![Ok(FakeRunner::success())]);
+        let runner = FakeRunner::new(vec![Ok(FakeRunner::success()), Ok(FakeRunner::success())]);
         let state = test_state(runner.clone());
         let request = parse_http_request(
             "POST /v1/agent/create HTTP/1.1\r\nContent-Length: 49\r\n\r\n{\"slug\":\"agent-zed\",\"persona_ref\":\"personas/zed\"}",
@@ -1548,17 +1773,36 @@ mod tests {
         assert_eq!(reply.status, 200);
         assert_eq!(
             runner.calls.lock().unwrap().as_slice(),
-            [(
-                "/usr/sbin/useradd".to_string(),
-                vec![
-                    "--create-home".to_string(),
-                    "--shell".to_string(),
-                    "/bin/bash".to_string(),
-                    "--gid".to_string(),
-                    "gild-orchestrator".to_string(),
-                    "agent-zed".to_string(),
-                ],
-            )]
+            [
+                (
+                    "/usr/sbin/groupadd".to_string(),
+                    vec![
+                        "--system".to_string(),
+                        "--force".to_string(),
+                        "gild-agents".to_string(),
+                    ],
+                ),
+                (
+                    "/usr/sbin/useradd".to_string(),
+                    vec![
+                        "--create-home".to_string(),
+                        "--shell".to_string(),
+                        "/bin/bash".to_string(),
+                        "--gid".to_string(),
+                        "gild-agents".to_string(),
+                        "agent-zed".to_string(),
+                    ],
+                )
+            ]
+        );
+        assert!(
+            !runner
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .flat_map(|(_, args)| args)
+                .any(|arg| arg == "gild-orchestrator")
         );
         let audit = fs::read_to_string(&state.audit_log_path).unwrap();
         let line: serde_json::Value = serde_json::from_str(audit.trim()).unwrap();
@@ -1699,6 +1943,23 @@ mod tests {
     }
 
     #[test]
+    fn audit_log_is_created_with_0640_mode() {
+        let runner = FakeRunner::new(vec![Ok(FakeRunner::exit(0, "started\n", ""))]);
+        let state = test_state(runner);
+        let request = SystemctlRequest {
+            op: "systemctl".to_string(),
+            action: "start".to_string(),
+            unit: "gg.tana.agent-foo.service".to_string(),
+        };
+
+        let reply = handle_systemctl_request(&state, &request, test_peer());
+
+        assert_eq!(reply.status, 200);
+        let mode = fs::metadata(&state.audit_log_path).unwrap().mode() & 0o777;
+        assert_eq!(mode, 0o640);
+    }
+
+    #[test]
     fn systemctl_daemon_reload_omits_unit_arg_but_audits_unit_context() {
         let runner = FakeRunner::new(vec![Ok(FakeRunner::exit(0, "", ""))]);
         let state = test_state(runner.clone());
@@ -1771,16 +2032,44 @@ mod tests {
     }
 
     #[test]
-    fn validates_unit_contents_shape() {
-        assert!(
-            validate_unit_contents("[Unit]\nDescription=x\n[Service]\nExecStart=/bin/true\n")
-                .is_ok()
-        );
-        assert!(validate_unit_contents("[Unit]\nDescription=x\n[Timer]\nOnBootSec=1m\n").is_ok());
+    fn renders_dispatcher_unit_from_structured_request() {
+        let request = WriteUnitRequest {
+            op: "write_unit".to_string(),
+            slug: "agent-foo".to_string(),
+            kind: "dispatcher".to_string(),
+            port: 9430,
+            extra_env: HashMap::from([("GILD_MODE".to_string(), "sandbox".to_string())]),
+        };
+        let unit = render_dispatcher_unit(&request);
 
-        assert!(validate_unit_contents("[Service]\nExecStart=/bin/true\n").is_err());
-        assert!(validate_unit_contents("[Unit]\nDescription=x\n").is_err());
-        assert!(validate_unit_contents("not a unit").is_err());
+        assert!(unit.contains("User=agent-foo\n"));
+        assert!(unit.contains("Group=gild-agents\n"));
+        assert!(unit.contains("ExecStart=/usr/local/bin/gild-dispatcher\n"));
+        assert!(unit.contains("Environment=PORT=9430\n"));
+        assert!(unit.contains("Environment=GILD_MODE=sandbox\n"));
+        assert!(!unit.contains("gild-orchestrator"));
+    }
+
+    #[test]
+    fn write_unit_rejects_raw_contents_shape() {
+        let runner = FakeRunner::new(vec![]);
+        let state = test_state(runner);
+        let body = serde_json::json!({
+            "op": "write_unit",
+            "unit": "gg.tana.gild-dispatcher@agent-bar.service",
+            "contents": "[Unit]\nDescription=agent bar\n[Service]\nExecStart=/bin/true\n"
+        })
+        .to_string();
+        let request = parse_http_request(&format!(
+            "POST /v1/write_unit HTTP/1.1\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        ))
+        .unwrap();
+
+        let parsed = parse_json::<WriteUnitRequest>(&request);
+
+        assert!(parsed.is_err());
+        assert!(!state.systemd_unit_root.exists());
     }
 
     #[test]
@@ -1790,8 +2079,10 @@ mod tests {
         let audit = state.audit_log_path.clone();
         let request = WriteUnitRequest {
             op: "write_unit".to_string(),
-            unit: "gg.tana.gild-dispatcher@agent-foo.service".to_string(),
-            contents: "[Unit]\nDescription=agent foo\n[Service]\nExecStart=/bin/true\n".to_string(),
+            slug: "agent-foo".to_string(),
+            kind: "dispatcher".to_string(),
+            port: 9430,
+            extra_env: HashMap::new(),
         };
 
         let first = write_unit(
@@ -1812,7 +2103,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(first.sha256, second.sha256);
-        let path = state.systemd_unit_root.join(&request.unit);
+        let unit = dispatcher_unit_name(&request.slug);
+        let path = state.systemd_unit_root.join(&unit);
         assert_eq!(first.path, path.display().to_string());
         assert_eq!(
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,
@@ -1821,7 +2113,7 @@ mod tests {
         assert!(!path.with_extension("service.tmp").exists());
 
         let changed = WriteUnitRequest {
-            contents: "[Unit]\nDescription=changed\n[Service]\nExecStart=/bin/true\n".to_string(),
+            extra_env: HashMap::from([("CHANGED".to_string(), "yes".to_string())]),
             ..request
         };
         let err = write_unit(
@@ -1885,21 +2177,20 @@ mod tests {
         let runner = FakeRunner::new(vec![]);
         let state = test_state(runner);
         let unit = "gg.tana.gild-dispatcher@agent-race.service".to_string();
-        let first_contents =
-            "[Unit]\nDescription=agent race one\n[Service]\nExecStart=/bin/true\n".to_string();
-        let second_contents =
-            "[Unit]\nDescription=agent race two\n[Service]\nExecStart=/bin/true\n".to_string();
+        let first_env = HashMap::from([("RACE".to_string(), "one".to_string())]);
+        let second_env = HashMap::from([("RACE".to_string(), "two".to_string())]);
         let barrier = Arc::new(Barrier::new(3));
 
-        let handles = [first_contents.clone(), second_contents.clone()].map(|contents| {
+        let handles = [first_env.clone(), second_env.clone()].map(|extra_env| {
             let state = state.clone();
-            let unit = unit.clone();
             let barrier = Arc::clone(&barrier);
             std::thread::spawn(move || {
                 let request = WriteUnitRequest {
                     op: "write_unit".to_string(),
-                    unit,
-                    contents,
+                    slug: "agent-race".to_string(),
+                    kind: "dispatcher".to_string(),
+                    port: 9430,
+                    extra_env,
                 };
                 barrier.wait();
                 handle_write_unit_request(&state, &request, test_peer())
@@ -1917,7 +2208,9 @@ mod tests {
 
         let target = state.systemd_unit_root.join(&unit);
         let written = fs::read_to_string(&target).unwrap();
-        assert!(written == first_contents || written == second_contents);
+        assert!(
+            written.contains("Environment=RACE=one") || written.contains("Environment=RACE=two")
+        );
 
         let prefix = format!("{unit}.tmp.");
         let leftovers: Vec<PathBuf> = fs::read_dir(&state.systemd_unit_root)
@@ -1937,8 +2230,10 @@ mod tests {
         let state = test_state(runner);
         let body = serde_json::json!({
             "op": "write_unit",
-            "unit": "gg.tana.gild-dispatcher@agent-bar.service",
-            "contents": "[Unit]\nDescription=agent bar\n[Service]\nExecStart=/bin/true\n"
+            "slug": "agent-bar",
+            "kind": "dispatcher",
+            "port": 9431,
+            "extra_env": {"GILD_ENV": "test"}
         })
         .to_string();
         let raw = format!(
