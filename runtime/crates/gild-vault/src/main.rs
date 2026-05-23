@@ -137,7 +137,7 @@ async fn serve(state: Arc<AppState>) -> Result<()> {
         .with_context(|| format!("chmod 0666 {}", state.config.socket_path.display()))?;
 
     eprintln!(
-        "tana-vault-agent listening on {}",
+        "gild-vault listening on {}",
         state.config.socket_path.display()
     );
 
@@ -156,7 +156,7 @@ async fn serve(state: Arc<AppState>) -> Result<()> {
         tokio::spawn(async move {
             let _permit = permit;
             if let Err(err) = handle_connection(stream, state).await {
-                eprintln!("tana-vault-agent connection error: {err:#}");
+                eprintln!("gild-vault connection error: {err:#}");
             }
         });
     }
@@ -182,10 +182,10 @@ async fn handle_connection(mut stream: UnixStream, state: Arc<AppState>) -> Resu
     let response = match handle_request(&state, &workload, &request).await {
         Ok(reply) => http_response(reply.status, &reply.body),
         Err(err) => {
-            eprintln!("tana-vault-agent request error: {err:#}");
+            eprintln!("gild-vault request error: {err:#}");
             http_response(
                 503,
-                &serde_json::json!({ "error": "tana-vault-agent request failed" }).to_string(),
+                &serde_json::json!({ "error": "gild-vault request failed" }).to_string(),
             )
         }
     };

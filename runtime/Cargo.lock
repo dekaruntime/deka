@@ -1982,6 +1982,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "gild-vault"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "jsonwebtoken",
+ "libc",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "toml",
+ "tss-esapi",
+]
+
+[[package]]
+name = "gild-vault-client"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "glob"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5862,33 +5889,6 @@ checksum = "a75fb188eb626b924683e3b95e3a48e63551fcfb51949de2f06a9d91dbee93c9"
 dependencies = [
  "core-foundation-sys",
  "libc",
-]
-
-[[package]]
-name = "tana-secrets"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "tempfile",
- "tokio",
-]
-
-[[package]]
-name = "tana-vault-agent"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "jsonwebtoken",
- "libc",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "tokio",
- "toml",
- "tss-esapi",
 ]
 
 [[package]]
