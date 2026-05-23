@@ -34,7 +34,7 @@ impl AttestationProvider {
 
                 #[cfg(not(feature = "tpm"))]
                 bail!(
-                    "TANA_VAULT_AGENT_ATTESTATION=tpm requires building tana-vault-agent with --features tpm"
+                    "TANA_VAULT_AGENT_ATTESTATION=tpm requires building gild-vault with --features tpm"
                 );
             }
             other => bail!(

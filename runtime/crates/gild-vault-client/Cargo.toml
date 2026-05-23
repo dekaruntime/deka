@@ -1,8 +1,8 @@
 [package]
-name = "tana-secrets"
+name = "gild-vault-client"
 version = "0.1.0"
 edition = "2021"
-description = "Rust SDK for reading secrets from tana-vault-agent"
+description = "Rust SDK for reading secrets from gild-vault"
 
 [dependencies]
 serde_json = { workspace = true }

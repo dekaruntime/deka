@@ -1,8 +1,8 @@
-# tana-secrets
+# gild-vault-client
 
-Rust SDK for reading process secrets from `tana-vault-agent`.
+Rust SDK for reading process secrets from `gild-vault`.
 
-The crate assumes `tana-vault-agent` is already running on the host and
+The crate assumes `gild-vault` is already running on the host and
 listening on `/run/tana-vault.sock`. The agent owns workload identity, upstream
 vault auth, auditing, and TTL policy. This SDK keeps a process-local in-memory
 cache with no TTL.
@@ -10,9 +10,9 @@ cache with no TTL.
 ## Usage
 
 ```rust
-use tana_secrets::Secrets;
+use gild_vault_client::Secrets;
 
-# async fn example() -> Result<(), tana_secrets::SecretsError> {
+# async fn example() -> Result<(), gild_vault_client::SecretsError> {
 let secrets = Secrets::from_socket()?;
 let stripe_key = secrets.get("STRIPE_SECRET_KEY").await?;
 
@@ -35,7 +35,7 @@ The wire protocol is HTTP-shaped over a Unix socket:
 
 ```text
 GET /v1/secret/{key} HTTP/1.1
-Host: tana-vault-agent
+Host: gild-vault
 Accept: application/json
 ```
 

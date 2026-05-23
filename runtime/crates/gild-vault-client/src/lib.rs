@@ -68,7 +68,7 @@ impl Secrets {
             .map_err(SecretsError::Io)?;
         let request = format!(
             "GET /v1/secret/{key} HTTP/1.1\r\n\
-             Host: tana-vault-agent\r\n\
+             Host: gild-vault\r\n\
              Accept: application/json\r\n\
              Connection: close\r\n\
              \r\n"

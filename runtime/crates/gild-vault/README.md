@@ -1,4 +1,4 @@
-# tana-vault-agent
+# gild-vault
 
 Host-local secrets proxy for Tana services. Workloads connect over
 `/run/tana-vault.sock`; the agent identifies the caller with `SO_PEERCRED`,
@@ -25,7 +25,7 @@ key never leaves the TPM.
 Build the agent with TPM support on the Linux host:
 
 ```sh
-cargo build --release -p tana-vault-agent --features tpm
+cargo build --release -p gild-vault --features tpm
 sudo install -m 0755 target/release/tana-vault-agent /usr/local/bin/tana-vault-agent
 ```
 
@@ -83,11 +83,11 @@ Run the TPM tests in another shell:
 
 ```sh
 export TSS2_TCTI="swtpm:host=127.0.0.1,port=2321"
-cargo test --release -p tana-vault-agent --features tpm -- --ignored tpm
+cargo test --release -p gild-vault --features tpm -- --ignored tpm
 ```
 
 Default tests do not require TPM libraries:
 
 ```sh
-cargo test --release -p tana-vault-agent
+cargo test --release -p gild-vault
 ```
