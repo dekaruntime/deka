@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
@@ -18,12 +18,17 @@ const ORCHESTRATOR_GROUP: &str = "gild-orchestrator";
 const READ_TIMEOUT_MS: u64 = 1_000;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 const MAX_BODY_BYTES: usize = 64 * 1024;
+const DEFAULT_AUDIT_LOG_PATH: &str = "/var/log/gild-agent.log";
+const PASSWD_PATH: &str = "/etc/passwd";
 
 #[derive(Clone)]
 struct AppState {
     started_at: Instant,
     socket_path: PathBuf,
     orchestrator_gid: u32,
+    audit_log_path: PathBuf,
+    passwd_path: PathBuf,
+    command_runner: Arc<dyn CommandRunner>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,11 +53,59 @@ struct RotateHmacRequest {
 }
 
 #[derive(Debug, Serialize)]
-struct OperationReply<'a> {
+struct OperationReply {
     ok: bool,
-    operation: &'a str,
+    operation: &'static str,
     message: String,
-    pending: Vec<&'a str>,
+    exit: Option<i32>,
+    stdout: String,
+    stderr: String,
+    error: Option<String>,
+    pending: Vec<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+struct AuditRecord<'a> {
+    ts: u64,
+    op: &'a str,
+    slug: &'a str,
+    exit: Option<i32>,
+    by_uid: u32,
+    by_pid: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CommandOutput {
+    success: bool,
+    exit: Option<i32>,
+    stdout: String,
+    stderr: String,
+}
+
+struct CommandReplySpec<'a> {
+    audit_op: &'static str,
+    operation: &'static str,
+    slug: &'a str,
+    success_message: String,
+    pending: Vec<&'static str>,
+}
+
+trait CommandRunner: Send + Sync {
+    fn output(&self, program: &str, args: &[&str]) -> io::Result<CommandOutput>;
+}
+
+struct SystemCommandRunner;
+
+impl CommandRunner for SystemCommandRunner {
+    fn output(&self, program: &str, args: &[&str]) -> io::Result<CommandOutput> {
+        let output = Command::new(program).args(args).output()?;
+        Ok(CommandOutput {
+            success: output.status.success(),
+            exit: output.status.code(),
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        })
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -92,6 +145,11 @@ fn load_state() -> Result<AppState> {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(DEFAULT_SOCKET_PATH)),
         orchestrator_gid,
+        audit_log_path: std::env::var("GILD_AGENT_AUDIT_LOG")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(DEFAULT_AUDIT_LOG_PATH)),
+        passwd_path: PathBuf::from(PASSWD_PATH),
+        command_runner: Arc::new(SystemCommandRunner),
     })
 }
 
@@ -130,11 +188,15 @@ async fn handle_connection(mut stream: UnixStream, state: Arc<AppState>) -> Resu
     )
     .await
     .context("request read timed out")??;
-    let reply = handle_request(&state, &request).await;
+    let reply = handle_request(&state, &request, peer).await;
     write_reply(&mut stream, reply).await
 }
 
-async fn handle_request(state: &AppState, request: &HttpRequest) -> ServiceReply {
+async fn handle_request(
+    state: &AppState,
+    request: &HttpRequest,
+    peer: PeerCredentials,
+) -> ServiceReply {
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", "/v1/health") => ServiceReply::json_value(
             200,
@@ -144,13 +206,13 @@ async fn handle_request(state: &AppState, request: &HttpRequest) -> ServiceReply
             }),
         ),
         ("POST", "/v1/agent/create") => match parse_json::<CreateAgentRequest>(request) {
-            Ok(body) => create_agent(&body),
+            Ok(body) => create_agent(state, peer, &body),
             Err(err) => {
                 ServiceReply::json_value(400, serde_json::json!({ "error": err.to_string() }))
             }
         },
         ("POST", "/v1/agent/remove") => match parse_json::<RemoveAgentRequest>(request) {
-            Ok(body) => remove_agent(&body),
+            Ok(body) => remove_agent(state, peer, &body),
             Err(err) => {
                 ServiceReply::json_value(400, serde_json::json!({ "error": err.to_string() }))
             }
@@ -180,57 +242,107 @@ async fn handle_request(state: &AppState, request: &HttpRequest) -> ServiceReply
     }
 }
 
-fn create_agent(request: &CreateAgentRequest) -> ServiceReply {
+fn create_agent(
+    state: &AppState,
+    peer: PeerCredentials,
+    request: &CreateAgentRequest,
+) -> ServiceReply {
     if let Err(err) = validate_slug(&request.slug) {
+        let _ = audit(state, "useradd", &request.slug, None, peer);
         return ServiceReply::json_value(400, serde_json::json!({ "error": err.to_string() }));
     }
     if request.persona_ref.trim().is_empty() {
+        let _ = audit(state, "useradd", &request.slug, None, peer);
         return ServiceReply::json_value(
             400,
             serde_json::json!({ "error": "persona_ref is required" }),
         );
     }
+    match user_exists(&request.slug, &state.passwd_path) {
+        Ok(true) => {
+            let _ = audit(state, "useradd", &request.slug, None, peer);
+            return ServiceReply::json_value(
+                409,
+                serde_json::json!({ "error": format!("user {} already exists", request.slug) }),
+            );
+        }
+        Ok(false) => {}
+        Err(err) => {
+            let _ = audit(state, "useradd", &request.slug, None, peer);
+            return ServiceReply::json_value(500, serde_json::json!({ "error": err.to_string() }));
+        }
+    }
 
-    match run_command(
-        "useradd",
+    let output = state.command_runner.output(
+        "/usr/sbin/useradd",
         &[
-            "--system",
             "--create-home",
             "--shell",
-            "/usr/sbin/nologin",
+            "/bin/bash",
+            "--gid",
+            ORCHESTRATOR_GROUP,
             &request.slug,
         ],
-    ) {
-        Ok(()) => ServiceReply::json_value(
-            200,
-            serde_json::json!(OperationReply {
-                ok: true,
-                operation: "agent.create",
-                message: format!("created system user {}", request.slug),
-                pending: vec!["systemd unit write", "sudoers setup"],
-            }),
-        ),
-        Err(err) => ServiceReply::json_value(500, serde_json::json!({ "error": err.to_string() })),
-    }
+    );
+    command_reply(
+        state,
+        peer,
+        output,
+        CommandReplySpec {
+            audit_op: "useradd",
+            operation: "agent.create",
+            slug: &request.slug,
+            success_message: format!("created Linux user {}", request.slug),
+            pending: vec!["systemd unit write", "sudoers setup"],
+        },
+    )
 }
 
-fn remove_agent(request: &RemoveAgentRequest) -> ServiceReply {
+fn remove_agent(
+    state: &AppState,
+    peer: PeerCredentials,
+    request: &RemoveAgentRequest,
+) -> ServiceReply {
     if let Err(err) = validate_slug(&request.slug) {
+        let _ = audit(state, "userdel", &request.slug, None, peer);
         return ServiceReply::json_value(400, serde_json::json!({ "error": err.to_string() }));
     }
 
-    match run_command("userdel", &["--remove", &request.slug]) {
-        Ok(()) => ServiceReply::json_value(
-            200,
-            serde_json::json!(OperationReply {
-                ok: true,
-                operation: "agent.remove",
-                message: format!("removed system user {}", request.slug),
-                pending: vec!["systemd disable"],
-            }),
-        ),
-        Err(err) => ServiceReply::json_value(500, serde_json::json!({ "error": err.to_string() })),
+    match running_processes(state, &request.slug) {
+        Ok(Some(processes)) => {
+            let _ = audit(state, "userdel", &request.slug, None, peer);
+            return ServiceReply::json_value(
+                409,
+                serde_json::json!({
+                    "ok": false,
+                    "operation": "agent.remove",
+                    "error": format!("user {} still has running processes", request.slug),
+                    "processes": processes,
+                }),
+            );
+        }
+        Ok(None) => {}
+        Err(err) => {
+            let _ = audit(state, "userdel", &request.slug, None, peer);
+            return ServiceReply::json_value(500, serde_json::json!({ "error": err.to_string() }));
+        }
     }
+
+    let output = state
+        .command_runner
+        .output("/usr/sbin/userdel", &["--remove", &request.slug]);
+    command_reply(
+        state,
+        peer,
+        output,
+        CommandReplySpec {
+            audit_op: "userdel",
+            operation: "agent.remove",
+            slug: &request.slug,
+            success_message: format!("removed Linux user {}", request.slug),
+            pending: vec!["systemd disable"],
+        },
+    )
 }
 
 fn not_implemented(operation: &str, target: &str) -> ServiceReply {
@@ -253,27 +365,146 @@ fn parse_json<T: for<'de> Deserialize<'de>>(request: &HttpRequest) -> Result<T> 
 }
 
 fn validate_slug(slug: &str) -> Result<()> {
-    if slug.is_empty() || slug.len() > 32 {
-        bail!("slug must be 1-32 characters");
+    let Some(rest) = slug.strip_prefix("agent-") else {
+        bail!("slug must match ^agent-[a-z][a-z0-9-]{{1,30}}$");
+    };
+    if !(2..=31).contains(&rest.len()) {
+        bail!("slug must match ^agent-[a-z][a-z0-9-]{{1,30}}$");
     }
-    if !slug
-        .bytes()
-        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-    {
-        bail!("slug may only contain lowercase ASCII letters, digits, and hyphens");
+    let mut bytes = rest.bytes();
+    let Some(first) = bytes.next() else {
+        bail!("slug must match ^agent-[a-z][a-z0-9-]{{1,30}}$");
+    };
+    if !first.is_ascii_lowercase() {
+        bail!("slug must match ^agent-[a-z][a-z0-9-]{{1,30}}$");
+    }
+    if !bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') {
+        bail!("slug must match ^agent-[a-z][a-z0-9-]{{1,30}}$");
     }
     Ok(())
 }
 
-fn run_command(program: &str, args: &[&str]) -> Result<()> {
-    let output = Command::new(program)
-        .args(args)
-        .output()
-        .with_context(|| format!("run {program}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("{program} failed with {}: {}", output.status, stderr.trim());
+fn command_reply(
+    state: &AppState,
+    peer: PeerCredentials,
+    output: io::Result<CommandOutput>,
+    spec: CommandReplySpec<'_>,
+) -> ServiceReply {
+    match output {
+        Ok(output) => {
+            let _ = audit(state, spec.audit_op, spec.slug, output.exit, peer);
+            let error = (!output.success).then(|| {
+                format!(
+                    "{} failed with exit {:?}: {}",
+                    spec.audit_op,
+                    output.exit,
+                    output.stderr.trim()
+                )
+            });
+            let status = if output.success { 200 } else { 500 };
+            ServiceReply::json_value(
+                status,
+                serde_json::json!(OperationReply {
+                    ok: output.success,
+                    operation: spec.operation,
+                    message: if output.success {
+                        spec.success_message
+                    } else {
+                        format!("{} failed for {}", spec.audit_op, spec.slug)
+                    },
+                    exit: output.exit,
+                    stdout: output.stdout,
+                    stderr: output.stderr,
+                    error,
+                    pending: spec.pending,
+                }),
+            )
+        }
+        Err(err) => {
+            let _ = audit(state, spec.audit_op, spec.slug, None, peer);
+            ServiceReply::json_value(
+                500,
+                serde_json::json!(OperationReply {
+                    ok: false,
+                    operation: spec.operation,
+                    message: format!("{} failed for {}", spec.audit_op, spec.slug),
+                    exit: None,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    error: Some(err.to_string()),
+                    pending: spec.pending,
+                }),
+            )
+        }
     }
+}
+
+fn user_exists(username: &str, passwd_path: &Path) -> Result<bool> {
+    let raw = match fs::read_to_string(passwd_path) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err).with_context(|| format!("read {}", passwd_path.display())),
+    };
+    Ok(raw.lines().any(|line| {
+        line.split_once(':')
+            .map(|(name, _)| name == username)
+            .unwrap_or(false)
+    }))
+}
+
+fn running_processes(state: &AppState, username: &str) -> Result<Option<Vec<u32>>> {
+    let output = state
+        .command_runner
+        .output("/usr/bin/pgrep", &["-u", username])
+        .context("run /usr/bin/pgrep")?;
+    match output.exit {
+        Some(0) => {
+            let processes = output
+                .stdout
+                .lines()
+                .filter_map(|line| line.trim().parse::<u32>().ok())
+                .collect::<Vec<_>>();
+            Ok(Some(processes))
+        }
+        Some(1) => Ok(None),
+        _ => bail!(
+            "pgrep failed with exit {:?}: {}",
+            output.exit,
+            output.stderr.trim()
+        ),
+    }
+}
+
+fn audit(
+    state: &AppState,
+    op: &'static str,
+    slug: &str,
+    exit: Option<i32>,
+    peer: PeerCredentials,
+) -> Result<()> {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .context("system clock is before UNIX epoch")?
+        .as_secs();
+    let line = serde_json::to_string(&AuditRecord {
+        ts,
+        op,
+        slug,
+        exit,
+        by_uid: peer.uid,
+        by_pid: peer.pid,
+    })?;
+    if let Some(parent) = state.audit_log_path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    use std::io::Write;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&state.audit_log_path)
+        .with_context(|| format!("open audit log {}", state.audit_log_path.display()))?;
+    writeln!(file, "{line}").context("write audit log")?;
+    eprintln!("{line}");
     Ok(())
 }
 
@@ -390,6 +621,7 @@ fn http_response(status: u16, body: &str) -> String {
         403 => "Forbidden",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        409 => "Conflict",
         500 => "Internal Server Error",
         501 => "Not Implemented",
         _ => "OK",
@@ -540,7 +772,85 @@ fn secure_socket(path: &Path, gid: u32) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+    use std::time::SystemTime;
     use tokio::net::UnixStream;
+
+    struct FakeRunner {
+        calls: Mutex<Vec<(String, Vec<String>)>>,
+        outputs: Mutex<VecDeque<io::Result<CommandOutput>>>,
+    }
+
+    impl FakeRunner {
+        fn new(outputs: Vec<io::Result<CommandOutput>>) -> Arc<Self> {
+            Arc::new(Self {
+                calls: Mutex::new(Vec::new()),
+                outputs: Mutex::new(outputs.into()),
+            })
+        }
+
+        fn success() -> CommandOutput {
+            CommandOutput {
+                success: true,
+                exit: Some(0),
+                stdout: "ok\n".to_string(),
+                stderr: String::new(),
+            }
+        }
+
+        fn exit(exit: i32, stdout: &str, stderr: &str) -> CommandOutput {
+            CommandOutput {
+                success: exit == 0,
+                exit: Some(exit),
+                stdout: stdout.to_string(),
+                stderr: stderr.to_string(),
+            }
+        }
+    }
+
+    impl CommandRunner for FakeRunner {
+        fn output(&self, program: &str, args: &[&str]) -> io::Result<CommandOutput> {
+            self.calls.lock().unwrap().push((
+                program.to_string(),
+                args.iter().map(|arg| arg.to_string()).collect(),
+            ));
+            self.outputs
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| Ok(Self::success()))
+        }
+    }
+
+    fn test_state(command_runner: Arc<dyn CommandRunner>) -> AppState {
+        let dir = std::env::temp_dir().join(format!(
+            "gild-agent-test-{}",
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let passwd_path = dir.join("passwd");
+        fs::write(&passwd_path, "root:x:0:0:root:/root:/bin/bash\n").unwrap();
+        AppState {
+            started_at: Instant::now(),
+            socket_path: dir.join("gild-agent-test.sock"),
+            orchestrator_gid: 1,
+            audit_log_path: dir.join("gild-agent.log"),
+            passwd_path,
+            command_runner,
+        }
+    }
+
+    fn test_peer() -> PeerCredentials {
+        PeerCredentials {
+            pid: 4242,
+            uid: 1001,
+            gid: 1001,
+        }
+    }
 
     #[test]
     fn parses_post_request_with_json_body() {
@@ -582,10 +892,13 @@ mod tests {
             started_at: Instant::now(),
             socket_path: PathBuf::from("/tmp/gild-agent-test.sock"),
             orchestrator_gid: 1,
+            audit_log_path: PathBuf::from("/tmp/gild-agent-test.log"),
+            passwd_path: PathBuf::from("/tmp/gild-agent-test-passwd"),
+            command_runner: Arc::new(SystemCommandRunner),
         };
         let request =
             parse_http_request("GET /v1/health HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
-        let reply = handle_request(&state, &request).await;
+        let reply = handle_request(&state, &request, test_peer()).await;
         assert_eq!(reply.status, 200);
         let json: serde_json::Value = serde_json::from_str(&reply.body).unwrap();
         assert_eq!(json["ok"], true);
@@ -651,7 +964,114 @@ mod tests {
     #[test]
     fn validates_slug() {
         assert!(validate_slug("agent-khalid").is_ok());
+        assert!(validate_slug("agent-zed").is_ok());
+        assert!(validate_slug("agent-a1").is_ok());
+        assert!(validate_slug("agent-a-b").is_ok());
+        assert!(validate_slug("agent-khalid-123456789012345678").is_ok());
+        assert!(validate_slug("khalid").is_err());
+        assert!(validate_slug("agent-a").is_err());
         assert!(validate_slug("AgentKhalid").is_err());
         assert!(validate_slug("agent_khalid").is_err());
+        assert!(validate_slug("agent-1a").is_err());
+        assert!(validate_slug("agent-a_b").is_err());
+        assert!(validate_slug("agent-khalid-1234567890123456789012345").is_err());
+    }
+
+    #[tokio::test]
+    async fn create_agent_invokes_useradd_and_audits_peercred() {
+        let runner = FakeRunner::new(vec![Ok(FakeRunner::success())]);
+        let state = test_state(runner.clone());
+        let request = parse_http_request(
+            "POST /v1/agent/create HTTP/1.1\r\nContent-Length: 49\r\n\r\n{\"slug\":\"agent-zed\",\"persona_ref\":\"personas/zed\"}",
+        )
+        .unwrap();
+
+        let reply = handle_request(&state, &request, test_peer()).await;
+
+        assert_eq!(reply.status, 200);
+        assert_eq!(
+            runner.calls.lock().unwrap().as_slice(),
+            [(
+                "/usr/sbin/useradd".to_string(),
+                vec![
+                    "--create-home".to_string(),
+                    "--shell".to_string(),
+                    "/bin/bash".to_string(),
+                    "--gid".to_string(),
+                    "gild-orchestrator".to_string(),
+                    "agent-zed".to_string(),
+                ],
+            )]
+        );
+        let audit = fs::read_to_string(&state.audit_log_path).unwrap();
+        let line: serde_json::Value = serde_json::from_str(audit.trim()).unwrap();
+        assert_eq!(line["op"], "useradd");
+        assert_eq!(line["slug"], "agent-zed");
+        assert_eq!(line["exit"], 0);
+        assert_eq!(line["by_uid"], 1001);
+        assert_eq!(line["by_pid"], 4242);
+        assert!(line["ts"].as_u64().is_some());
+    }
+
+    #[tokio::test]
+    async fn create_agent_refuses_existing_user_without_useradd() {
+        let runner = FakeRunner::new(vec![Ok(FakeRunner::success())]);
+        let state = test_state(runner.clone());
+        fs::write(
+            &state.passwd_path,
+            "root:x:0:0:root:/root:/bin/bash\nagent-zed:x:1002:1002::/home/agent-zed:/bin/bash\n",
+        )
+        .unwrap();
+        let request = parse_http_request(
+            "POST /v1/agent/create HTTP/1.1\r\nContent-Length: 49\r\n\r\n{\"slug\":\"agent-zed\",\"persona_ref\":\"personas/zed\"}",
+        )
+        .unwrap();
+
+        let reply = handle_request(&state, &request, test_peer()).await;
+
+        assert_eq!(reply.status, 409);
+        assert!(runner.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn remove_agent_refuses_running_processes() {
+        let runner = FakeRunner::new(vec![Ok(FakeRunner::exit(0, "123\n456\n", ""))]);
+        let state = test_state(runner.clone());
+        let request = parse_http_request(
+            "POST /v1/agent/remove HTTP/1.1\r\nContent-Length: 20\r\n\r\n{\"slug\":\"agent-zed\"}",
+        )
+        .unwrap();
+
+        let reply = handle_request(&state, &request, test_peer()).await;
+
+        assert_eq!(reply.status, 409);
+        let calls = runner.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "/usr/bin/pgrep");
+        assert_eq!(calls[0].1, vec!["-u".to_string(), "agent-zed".to_string()]);
+        assert!(reply.body.contains("running processes"));
+    }
+
+    #[tokio::test]
+    async fn remove_agent_invokes_userdel_after_empty_pgrep() {
+        let runner = FakeRunner::new(vec![
+            Ok(FakeRunner::exit(1, "", "")),
+            Ok(FakeRunner::success()),
+        ]);
+        let state = test_state(runner.clone());
+        let request = parse_http_request(
+            "POST /v1/agent/remove HTTP/1.1\r\nContent-Length: 20\r\n\r\n{\"slug\":\"agent-zed\"}",
+        )
+        .unwrap();
+
+        let reply = handle_request(&state, &request, test_peer()).await;
+
+        assert_eq!(reply.status, 200);
+        let calls = runner.calls.lock().unwrap();
+        assert_eq!(calls[1].0, "/usr/sbin/userdel");
+        assert_eq!(
+            calls[1].1,
+            vec!["--remove".to_string(), "agent-zed".to_string()]
+        );
     }
 }
