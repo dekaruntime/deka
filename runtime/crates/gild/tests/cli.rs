@@ -54,6 +54,50 @@ sandbox = "gild"
 }
 
 #[test]
+fn agent_create_help_shows_dry_run() {
+    let output = Command::new(gild_bin())
+        .args(["agent", "create", "--help"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Create a new agent"));
+    assert!(stdout.contains("--dry-run"));
+}
+
+#[test]
+fn agent_create_dry_run_does_not_need_socket() {
+    let output = Command::new(gild_bin())
+        .args(["agent", "create", "agent-zed", "--dry-run"])
+        .env("GILD_AGENT_SOCKET", "/tmp/gild-agent-test-missing.sock")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("dry run: would create agent agent-zed"));
+    assert!(stdout.contains("useradd agent-zed"));
+    assert!(stdout.contains("hmac_rotate agent-zed"));
+    assert!(stdout.contains("gg.tana.gild-dispatcher@agent-zed.service"));
+    assert!(stdout.contains("Environment=AGENT_SLUG=agent-zed"));
+}
+
+#[test]
+fn agent_create_rejects_invalid_slug_before_socket() {
+    let output = Command::new(gild_bin())
+        .args(["agent", "create", "agent-1bad"])
+        .env("GILD_AGENT_SOCKET", "/tmp/gild-agent-test-missing.sock")
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("slug must match"), "{stderr}");
+    assert!(!stderr.contains("No such file"), "{stderr}");
+}
+
+#[test]
 fn dispatch_sets_hmac_headers_with_configured_secret() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();

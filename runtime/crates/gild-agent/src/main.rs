@@ -413,7 +413,7 @@ fn handle_systemctl_request(
         return ServiceReply::json_value(400, serde_json::json!({ "error": err.to_string() }));
     }
 
-    let args = [request.action.as_str(), request.unit.as_str()];
+    let args = systemctl_args(&request.action, &request.unit);
     let output = match state.command_runner.output("/usr/bin/systemctl", &args) {
         Ok(result) => result,
         Err(err) => {
@@ -469,15 +469,24 @@ fn handle_systemctl_request(
 
 fn validate_systemctl_action(action: &str) -> Result<()> {
     match action {
-        "start" | "stop" | "restart" | "reload" | "enable" | "disable" | "status" => Ok(()),
+        "daemon-reload" | "start" | "stop" | "restart" | "reload" | "enable" | "disable"
+        | "status" => Ok(()),
         _ => bail!("invalid systemctl action"),
+    }
+}
+
+fn systemctl_args<'a>(action: &'a str, unit: &'a str) -> Vec<&'a str> {
+    if action == "daemon-reload" {
+        vec![action]
+    } else {
+        vec![action, unit]
     }
 }
 
 fn validate_systemctl_unit(unit: &str) -> Result<()> {
     static UNIT_RE: OnceLock<Regex> = OnceLock::new();
     let re = UNIT_RE.get_or_init(|| {
-        Regex::new(r"^gg\.tana\.[a-z][a-z0-9.-]+\.(service|timer)$")
+        Regex::new(r"^gg\.tana\.[a-z][a-z0-9.@-]+\.(service|timer)$")
             .expect("systemctl unit regex compiles")
     });
     if re.is_match(unit) {
@@ -1513,12 +1522,18 @@ mod tests {
     #[test]
     fn validates_systemctl_action_whitelist() {
         for action in [
-            "start", "stop", "restart", "reload", "enable", "disable", "status",
+            "daemon-reload",
+            "start",
+            "stop",
+            "restart",
+            "reload",
+            "enable",
+            "disable",
+            "status",
         ] {
             assert!(validate_systemctl_action(action).is_ok(), "{action}");
         }
 
-        assert!(validate_systemctl_action("daemon-reload").is_err());
         assert!(validate_systemctl_action("reboot").is_err());
         assert!(validate_systemctl_action("").is_err());
     }
@@ -1527,6 +1542,7 @@ mod tests {
     fn validates_systemctl_unit_pattern() {
         assert!(validate_systemctl_unit("gg.tana.agent-foo.service").is_ok());
         assert!(validate_systemctl_unit("gg.tana.agent.foo-1.timer").is_ok());
+        assert!(validate_systemctl_unit("gg.tana.gild-dispatcher@agent-foo.service").is_ok());
 
         assert!(validate_systemctl_unit("nginx.service").is_err());
         assert!(validate_systemctl_unit("../../etc/passwd").is_err());
@@ -1567,6 +1583,36 @@ mod tests {
         assert_eq!(audit_json["exit"], 0);
         assert_eq!(audit_json["by_uid"], 1001);
         assert_eq!(audit_json["by_pid"], 4242);
+    }
+
+    #[test]
+    fn systemctl_daemon_reload_omits_unit_arg_but_audits_unit_context() {
+        let runner = FakeRunner::new(vec![Ok(FakeRunner::exit(0, "", ""))]);
+        let state = test_state(runner.clone());
+        let request = SystemctlRequest {
+            op: "systemctl".to_string(),
+            action: "daemon-reload".to_string(),
+            unit: "gg.tana.gild-dispatcher@agent-foo.service".to_string(),
+        };
+
+        let reply = handle_systemctl_request(&state, &request, test_peer());
+
+        assert_eq!(reply.status, 200);
+        assert_eq!(
+            runner.calls.lock().unwrap().as_slice(),
+            [(
+                "/usr/bin/systemctl".to_string(),
+                vec!["daemon-reload".to_string()]
+            )]
+        );
+
+        let audit = fs::read_to_string(&state.audit_log_path).unwrap();
+        let audit_json: serde_json::Value = serde_json::from_str(audit.trim()).unwrap();
+        assert_eq!(audit_json["action"], "daemon-reload");
+        assert_eq!(
+            audit_json["unit"],
+            "gg.tana.gild-dispatcher@agent-foo.service"
+        );
     }
 
     #[test]

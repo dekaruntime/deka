@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 
+pub mod agent_client;
 mod cmd;
 mod config;
 mod hmac;
