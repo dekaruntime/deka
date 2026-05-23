@@ -26,6 +26,10 @@ impl Policy {
             _ => bail!("unknown policy {value:?}"),
         }
     }
+
+    pub fn supported_cli_policies() -> &'static [&'static str] {
+        &["default-flow"]
+    }
 }
 
 impl fmt::Display for Policy {
@@ -723,6 +727,30 @@ impl StateStore {
         Ok(chains)
     }
 
+    pub fn summary(&self) -> Result<ChainSummary> {
+        let active_runs = self.count_where("status NOT IN ('closed', 'failed')")?;
+        let completed_flows = self.count_where("status = 'closed'")?;
+        let failed_flows = self.count_where("status = 'failed'")?;
+        let pending_merges =
+            self.count_where("status = 'approved' AND COALESCE(pr_state, '') != 'merged'")?;
+        Ok(ChainSummary {
+            active_runs,
+            completed_flows,
+            failed_flows,
+            pending_merges,
+        })
+    }
+
+    fn count_where(&self, predicate: &str) -> Result<i64> {
+        self.conn
+            .query_row(
+                &format!("SELECT COUNT(*) FROM chains WHERE {predicate}"),
+                [],
+                |row| row.get(0),
+            )
+            .context("count chain rows")
+    }
+
     pub fn record_event(
         &self,
         chain_id: &str,
@@ -795,6 +823,14 @@ impl StateStore {
         }
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ChainSummary {
+    pub active_runs: i64,
+    pub completed_flows: i64,
+    pub failed_flows: i64,
+    pub pending_merges: i64,
 }
 
 fn row_to_chain(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chain> {

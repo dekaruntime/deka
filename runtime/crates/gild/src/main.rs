@@ -72,9 +72,16 @@ mod tests {
 
     #[test]
     fn parses_chain_run() {
-        let cli =
-            Cli::try_parse_from(["gild", "chain", "run", "--policy", "default-flow"]).unwrap();
-        assert!(matches!(cli.command, Commands::Chain(_)));
+        for args in [
+            vec!["gild", "chain", "run", "--policy", "default-flow"],
+            vec!["gild", "chain", "run", "--list-policies"],
+            vec!["gild", "chain", "status"],
+            vec!["gild", "chain", "status", "--json"],
+            vec!["gild", "chain", "stop"],
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert!(matches!(cli.command, Commands::Chain(_)));
+        }
     }
 
     #[test]

@@ -21,13 +21,20 @@ async fn main() -> Result<()> {
 }
 
 async fn daemon(args: &[String]) -> Result<()> {
+    let policy = Policy::parse(option_value(args, "--policy").unwrap_or("default-flow"))?;
+    if policy != Policy::DefaultFlow {
+        bail!("gild-chain daemon currently supports only default-flow");
+    }
     let pulse_url = option_value(args, "--pulse-url").context("--pulse-url URL is required")?;
     let dispatcher_url = option_value(args, "--dispatcher-url").map(str::to_string);
     let git_api_url = option_value(args, "--git-api-url").map(str::to_string);
     let git_token = option_value(args, "--git-token")
         .map(str::to_string)
         .or_else(|| std::env::var("GILD_CHAIN_GIT_TOKEN").ok());
-    let store = StateStore::open(state_db_path())?;
+    let state_db = option_value(args, "--state-db")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(state_db_path);
+    let store = StateStore::open(state_db)?;
     let executor = ActionExecutor {
         dispatcher_url,
         git_api_url,
@@ -58,7 +65,10 @@ async fn run_once(args: &[String]) -> Result<()> {
 
 fn status(args: &[String]) -> Result<()> {
     let chain_id = args.first().context("chain_id is required")?;
-    let store = StateStore::open(state_db_path())?;
+    let state_db = option_value(args, "--state-db")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(state_db_path);
+    let store = StateStore::open(state_db)?;
     match store.get_chain(chain_id)? {
         Some(chain) => print_chain(&chain),
         None => bail!("chain {chain_id} not found"),
@@ -220,6 +230,6 @@ fn option_value<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
 
 fn print_usage() {
     eprintln!(
-        "usage:\n  gild-chain daemon --pulse-url URL\n  gild-chain run --policy default --dispatch agent-X --task '...'\n  gild-chain status <chain_id>\n  gild-chain ls"
+        "usage:\n  gild-chain daemon --policy default-flow --state-db PATH --pulse-url URL\n  gild-chain run --policy default --dispatch agent-X --task '...'\n  gild-chain status <chain_id>\n  gild-chain ls"
     );
 }
