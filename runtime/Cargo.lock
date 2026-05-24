@@ -1968,6 +1968,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "gild-vault-proxy"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "gild-vault-client",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tower 0.5.3",
+]
+
+[[package]]
 name = "glob"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
