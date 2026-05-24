@@ -1902,6 +1902,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "gild-chain",
+ "gild-vault-client",
  "hmac",
  "libc",
  "regex",
@@ -1956,6 +1957,7 @@ dependencies = [
 name = "gild-vault-client"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
