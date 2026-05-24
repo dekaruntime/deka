@@ -4,7 +4,7 @@ use std::{
     io::{Read, Write},
     os::unix::net::UnixListener,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -12,6 +12,46 @@ use std::{
 
 fn gild_bin() -> &'static str {
     env!("CARGO_BIN_EXE_gild")
+}
+
+fn vault_bin() -> PathBuf {
+    if let Ok(path) = std::env::var("GILD_VAULT_BIN") {
+        return PathBuf::from(path);
+    }
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_gild-vault") {
+        return PathBuf::from(path);
+    }
+
+    let mut path = PathBuf::from(gild_bin());
+    path.pop();
+    if path.file_name().is_some_and(|name| name == "deps") {
+        path.pop();
+    }
+    path.push("gild-vault");
+    build_gild_vault_bin(&path);
+    path
+}
+
+fn build_gild_vault_bin(path: &Path) {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("workspace root");
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let status = Command::new(cargo)
+        .args(["build", "--release", "-p", "gild-vault"])
+        .current_dir(workspace)
+        .status()
+        .expect("build gild-vault binary");
+    assert!(
+        status.success(),
+        "cargo build --release -p gild-vault failed"
+    );
+    assert!(
+        path.exists(),
+        "missing {}; cargo build --release -p gild-vault did not produce the vault binary",
+        path.display()
+    );
 }
 
 struct TestDir {
@@ -48,6 +88,7 @@ impl Drop for TestDir {
 #[serde(tag = "op", rename_all = "lowercase")]
 enum VaultRequest {
     Put { key: String, value: String },
+    Get { key: String },
     List,
     Delete { key: String },
 }
@@ -84,6 +125,10 @@ fn spawn_mock_vault(
                     server_store.lock().unwrap().insert(key, value);
                     serde_json::json!({ "ok": true })
                 }
+                VaultRequest::Get { key } => match server_store.lock().unwrap().get(&key) {
+                    Some(value) => serde_json::json!({ "ok": true, "value": value }),
+                    None => serde_json::json!({ "ok": false, "error": "not_found" }),
+                },
                 VaultRequest::List => {
                     let keys = server_store
                         .lock()
@@ -227,6 +272,91 @@ fn service_link_ls_unlink_flow_uses_vault_socket() {
         store.get("AGENT_AMINA_CLAUDE_TOKEN").map(String::as_str),
         Some("sk-ant-test")
     );
+}
+
+#[test]
+fn service_link_round_trips_against_real_vault_agent_socket() {
+    let vault_bin = vault_bin();
+
+    let dir = TestDir::new("gild-service-real-vault");
+    let socket = dir.path().join("vault.sock");
+    let store_path = dir.path().join("secrets.json");
+    let audit_log = dir.path().join("audit.log");
+
+    let mut vault = spawn_vault_agent(&vault_bin, &socket, &store_path, &audit_log);
+    wait_for_socket(&socket);
+
+    let output = Command::new(gild_bin())
+        .args([
+            "service",
+            "link",
+            "--agent",
+            "agent-amina",
+            "--provider",
+            "codex",
+            "--token",
+            "sk-real-roundtrip",
+        ])
+        .env("GILD_VAULT_SOCKET", &socket)
+        .output()
+        .expect("run service link");
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let value = read_secret_json(&socket, "AGENT_AMINA_CODEX_TOKEN");
+    assert_eq!(value, "sk-real-roundtrip");
+
+    let _ = vault.kill();
+    let _ = vault.wait();
+}
+
+fn spawn_vault_agent(bin: &Path, socket: &Path, state_path: &Path, audit_log: &Path) -> Child {
+    Command::new(bin)
+        .args([
+            "--socket",
+            socket.to_str().expect("socket path utf8"),
+            "--state-path",
+            state_path.to_str().expect("state path utf8"),
+            "--audit-log",
+            audit_log.to_str().expect("audit log path utf8"),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn vault agent")
+}
+
+fn wait_for_socket(socket: &Path) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        if socket.exists() {
+            return;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    panic!("vault socket did not appear at {}", socket.display());
+}
+
+fn read_secret_json(socket: &Path, key: &str) -> String {
+    let mut stream = std::os::unix::net::UnixStream::connect(socket).expect("connect vault");
+    write!(stream, r#"{{"op":"get","key":"{key}"}}"#).expect("write JSON request");
+    stream
+        .shutdown(std::net::Shutdown::Write)
+        .expect("shutdown request");
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .expect("read JSON response");
+    serde_json::from_str::<serde_json::Value>(&response)
+        .expect("secret JSON")
+        .get("value")
+        .and_then(|value| value.as_str())
+        .expect("value field")
+        .to_string()
 }
 
 #[test]
