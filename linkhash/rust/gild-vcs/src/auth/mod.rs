@@ -5,6 +5,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use gild_vault_client::{Secrets, SecretsError};
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -167,7 +168,7 @@ struct AdminSecretGrant {
 
 static AUTH_CACHE: OnceLock<RwLock<HashMap<String, CachedAuthUser>>> = OnceLock::new();
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-static ADMIN_AUTH_UNCONFIGURED_LOGGED: AtomicBool = AtomicBool::new(false);
+static ADMIN_AUTH_KEY_SOURCE_LOGGED: AtomicBool = AtomicBool::new(false);
 
 fn auth_cache() -> &'static RwLock<HashMap<String, CachedAuthUser>> {
     AUTH_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
@@ -219,16 +220,16 @@ async fn cached_auth_user(token_hash: &str) -> Option<AuthUser> {
 }
 
 async fn fetch_auth_user_from_admin(token: &str) -> Result<Option<AuthUser>, anyhow::Error> {
-    let hmac_key = match std::env::var("TANA_INTERNAL_HMAC_KEY") {
-        Ok(key) => key,
-        Err(_) => {
-            if !ADMIN_AUTH_UNCONFIGURED_LOGGED.swap(true, Ordering::Relaxed) {
-                tracing::info!(
-                    "tana-admin auth integration not configured (TANA_INTERNAL_HMAC_KEY unset)"
-                );
-            }
-            return Ok(None);
-        }
+    let vault = Secrets::from_socket()?;
+    fetch_auth_user_from_admin_with_vault(token, &vault).await
+}
+
+async fn fetch_auth_user_from_admin_with_vault(
+    token: &str,
+    vault: &Secrets,
+) -> Result<Option<AuthUser>, anyhow::Error> {
+    let Some(hmac_key) = resolve_internal_hmac_key_with_vault(vault).await else {
+        return Ok(None);
     };
     let admin_url = std::env::var("TANA_ADMIN_URL")
         .unwrap_or_else(|_| "http://localhost:3000".to_string())
@@ -261,6 +262,57 @@ async fn fetch_auth_user_from_admin(token: &str) -> Result<Option<AuthUser>, any
 
     let admin_user = response.json::<AdminAuthResponse>().await?;
     Ok(Some(admin_user.into_auth_user()))
+}
+
+#[derive(Debug, Clone, Copy)]
+enum HmacKeySource {
+    Vault,
+    Env,
+    None,
+}
+
+async fn resolve_internal_hmac_key_with_vault(vault: &Secrets) -> Option<String> {
+    match vault.get("TANA_INTERNAL_HMAC_KEY").await {
+        Ok(key) => {
+            log_admin_auth_key_source(HmacKeySource::Vault);
+            return Some(key);
+        }
+        Err(SecretsError::AgentStatus { status: 404, .. }) => {}
+        Err(err) => {
+            tracing::debug!("vault lookup for TANA_INTERNAL_HMAC_KEY failed: {}", err);
+        }
+    }
+
+    match std::env::var("TANA_INTERNAL_HMAC_KEY") {
+        Ok(key) => {
+            log_admin_auth_key_source(HmacKeySource::Env);
+            Some(key)
+        }
+        Err(_) => {
+            log_admin_auth_key_source(HmacKeySource::None);
+            None
+        }
+    }
+}
+
+fn log_admin_auth_key_source(source: HmacKeySource) {
+    if ADMIN_AUTH_KEY_SOURCE_LOGGED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+
+    match source {
+        HmacKeySource::Vault => {
+            tracing::info!(source = "vault", "tana-admin auth integration configured")
+        }
+        HmacKeySource::Env => tracing::info!(
+            source = "env",
+            "tana-admin auth integration configured from env fallback"
+        ),
+        HmacKeySource::None => tracing::info!(
+            source = "none",
+            "tana-admin auth integration not configured (TANA_INTERNAL_HMAC_KEY missing)"
+        ),
+    }
 }
 
 impl AdminAuthResponse {
@@ -402,18 +454,278 @@ pub async fn optional_auth(mut req: Request, next: Next) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        collections::HashMap,
+        path::PathBuf,
+        sync::{
+            atomic::{AtomicUsize, Ordering as AtomicOrdering},
+            Arc,
+        },
+    };
+    use tempfile::TempDir;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::{TcpListener, UnixListener},
+        sync::Mutex,
+    };
+
+    #[tokio::test]
+    async fn fetch_auth_user_from_admin_uses_vault_hmac_key() {
+        let _guard = env_lock().lock().await;
+        let _env = EnvGuard::capture(&["TANA_INTERNAL_HMAC_KEY", "TANA_ADMIN_URL"]);
+        std::env::remove_var("TANA_INTERNAL_HMAC_KEY");
+        let vault = MockVault::start(&[("TANA_INTERNAL_HMAC_KEY", "vault-secret")]).await;
+        let admin = MockAdmin::start("vault-secret").await;
+        std::env::set_var("TANA_ADMIN_URL", &admin.url);
+
+        let user = fetch_auth_user_from_admin_with_vault(
+            "test-token",
+            &Secrets::from_socket_path(&vault.socket_path),
+        )
+        .await
+        .expect("admin fetch should not error")
+        .expect("vault hmac key should authenticate admin request");
+
+        assert_eq!(user.owner, "vault-user");
+        assert_eq!(admin.requests.load(AtomicOrdering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn fetch_auth_user_from_admin_falls_back_to_env_hmac_key() {
+        let _guard = env_lock().lock().await;
+        let _env = EnvGuard::capture(&["TANA_INTERNAL_HMAC_KEY", "TANA_ADMIN_URL"]);
+        std::env::set_var("TANA_INTERNAL_HMAC_KEY", "env-secret");
+        let vault = MockVault::start(&[]).await;
+        let admin = MockAdmin::start("env-secret").await;
+        std::env::set_var("TANA_ADMIN_URL", &admin.url);
+
+        let user = fetch_auth_user_from_admin_with_vault(
+            "test-token",
+            &Secrets::from_socket_path(&vault.socket_path),
+        )
+        .await
+        .expect("admin fetch should not error")
+        .expect("env hmac key should authenticate admin request");
+
+        assert_eq!(user.owner, "vault-user");
+        assert_eq!(admin.requests.load(AtomicOrdering::SeqCst), 1);
+    }
 
     #[tokio::test]
     async fn fetch_auth_user_from_admin_noops_without_hmac_key() {
-        let previous_hmac_key = std::env::var_os("TANA_INTERNAL_HMAC_KEY");
+        let _guard = env_lock().lock().await;
+        let _env = EnvGuard::capture(&["TANA_INTERNAL_HMAC_KEY", "TANA_ADMIN_URL"]);
         std::env::remove_var("TANA_INTERNAL_HMAC_KEY");
+        std::env::remove_var("TANA_ADMIN_URL");
+        let vault = MockVault::start(&[]).await;
 
-        let user = fetch_auth_user_from_admin("test-token").await;
+        let user = fetch_auth_user_from_admin_with_vault(
+            "test-token",
+            &Secrets::from_socket_path(&vault.socket_path),
+        )
+        .await;
 
         assert!(user.expect("missing hmac key should not error").is_none());
+    }
 
-        if let Some(previous_hmac_key) = previous_hmac_key {
-            std::env::set_var("TANA_INTERNAL_HMAC_KEY", previous_hmac_key);
+    fn env_lock() -> &'static Mutex<()> {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        ENV_LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct EnvGuard {
+        values: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    }
+
+    impl EnvGuard {
+        fn capture(keys: &[&'static str]) -> Self {
+            Self {
+                values: keys
+                    .iter()
+                    .map(|key| (*key, std::env::var_os(key)))
+                    .collect(),
+            }
         }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in &self.values {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+
+    struct MockVault {
+        socket_path: PathBuf,
+        _temp: TempDir,
+    }
+
+    impl MockVault {
+        async fn start(secrets: &[(&str, &str)]) -> Self {
+            let temp = TempDir::new().unwrap();
+            let socket_path = temp.path().join("vault.sock");
+            let listener = UnixListener::bind(&socket_path).unwrap();
+            let secrets = Arc::new(
+                secrets
+                    .iter()
+                    .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+                    .collect::<HashMap<_, _>>(),
+            );
+
+            tokio::spawn({
+                let secrets = Arc::clone(&secrets);
+                async move {
+                    loop {
+                        let Ok((mut stream, _)) = listener.accept().await else {
+                            return;
+                        };
+                        let secrets = Arc::clone(&secrets);
+                        tokio::spawn(async move {
+                            let mut request = Vec::new();
+                            let _ = stream.read_to_end(&mut request).await;
+                            let key = vault_request_key(&request).unwrap_or_default();
+                            let (status, body) = match secrets.get(&key) {
+                                Some(value) => ("200 OK", serde_json::json!({ "value": value })),
+                                None => {
+                                    ("404 Not Found", serde_json::json!({ "error": "missing" }))
+                                }
+                            };
+                            let body = body.to_string();
+                            let response = format!(
+                                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                                body.len()
+                            );
+                            let _ = stream.write_all(response.as_bytes()).await;
+                            let _ = stream.shutdown().await;
+                        });
+                    }
+                }
+            });
+
+            Self {
+                socket_path,
+                _temp: temp,
+            }
+        }
+    }
+
+    fn vault_request_key(request: &[u8]) -> Option<String> {
+        let request = std::str::from_utf8(request).ok()?;
+        let path = request.split_whitespace().nth(1)?;
+        path.strip_prefix("/v1/secret/").map(ToOwned::to_owned)
+    }
+
+    struct MockAdmin {
+        url: String,
+        requests: Arc<AtomicUsize>,
+    }
+
+    impl MockAdmin {
+        async fn start(expected_hmac_key: &'static str) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let requests = Arc::new(AtomicUsize::new(0));
+
+            tokio::spawn({
+                let requests = Arc::clone(&requests);
+                async move {
+                    let Ok((mut stream, _)) = listener.accept().await else {
+                        return;
+                    };
+                    requests.fetch_add(1, AtomicOrdering::SeqCst);
+                    let request = read_http_request(&mut stream).await;
+                    let status = if admin_request_signature_is_valid(&request, expected_hmac_key) {
+                        "200 OK"
+                    } else {
+                        "401 Unauthorized"
+                    };
+                    let body = serde_json::json!({
+                        "username": "vault-user",
+                        "labels": ["agent"],
+                        "repo_grants": [{ "repo": "tana/deka", "access": "write" }],
+                        "secret_grants": []
+                    })
+                    .to_string();
+                    let response = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                    let _ = stream.shutdown().await;
+                }
+            });
+
+            Self {
+                url: format!("http://{addr}"),
+                requests,
+            }
+        }
+    }
+
+    async fn read_http_request(stream: &mut tokio::net::TcpStream) -> Vec<u8> {
+        let mut request = Vec::new();
+        let mut buffer = [0; 1024];
+        let mut content_length = None;
+        loop {
+            let read = stream.read(&mut buffer).await.unwrap();
+            if read == 0 {
+                break;
+            }
+            request.extend_from_slice(&buffer[..read]);
+            if content_length.is_none() {
+                if let Some(header_end) = find_header_end(&request) {
+                    let headers = String::from_utf8_lossy(&request[..header_end]);
+                    content_length = headers.lines().find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())
+                            .flatten()
+                    });
+                }
+            }
+            if let (Some(header_end), Some(content_length)) =
+                (find_header_end(&request), content_length)
+            {
+                if request.len() >= header_end + 4 + content_length {
+                    break;
+                }
+            }
+        }
+        request
+    }
+
+    fn admin_request_signature_is_valid(request: &[u8], expected_hmac_key: &str) -> bool {
+        let Some(header_end) = find_header_end(request) else {
+            return false;
+        };
+        let headers = String::from_utf8_lossy(&request[..header_end]);
+        let body = &request[header_end + 4..];
+        let mut timestamp = None;
+        let mut signature = None;
+        for line in headers.lines() {
+            let Some((name, value)) = line.split_once(':') else {
+                continue;
+            };
+            if name.eq_ignore_ascii_case("x-tana-timestamp") {
+                timestamp = value.trim().parse::<u64>().ok();
+            }
+            if name.eq_ignore_ascii_case("x-tana-signature") {
+                signature = Some(value.trim().to_string());
+            }
+        }
+
+        let Some(timestamp) = timestamp else {
+            return false;
+        };
+        let expected = sign_internal_request(expected_hmac_key, timestamp, body).unwrap();
+        signature.as_deref() == Some(expected.as_str())
+    }
+
+    fn find_header_end(request: &[u8]) -> Option<usize> {
+        request.windows(4).position(|window| window == b"\r\n\r\n")
     }
 }
