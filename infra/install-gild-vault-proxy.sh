@@ -4,6 +4,22 @@ set -euo pipefail
 # Install files for gild-vault-proxy on demon.
 # This script intentionally does not enable or start the service.
 
+dry_run="${DRY_RUN:-0}"
+if [[ "${dry_run}" == "1" ]]; then
+  cat <<'EOF'
+DRY_RUN=1 gild-vault-proxy install plan:
+  - ensure system group: gild
+  - ensure system user: gild-vault-proxy
+  - add supplementary group: gild
+  - install binary: /usr/local/bin/gild-vault-proxy
+  - install token file: /etc/gild/vault-proxy-token (root:gild 0640)
+  - install systemd unit: /etc/systemd/system/gg.tana.gild-vault-proxy.service
+  - proxy vault socket: VAULT_SOCKET=/run/gild-vault/sock
+  - expected vault socket mode/group: 0660 gild
+EOF
+  exit 0
+fi
+
 if [[ "$(id -u)" != "0" ]]; then
   echo "Run as root on demon." >&2
   exit 1
