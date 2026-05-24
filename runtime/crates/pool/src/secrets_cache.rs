@@ -47,7 +47,11 @@ impl ShopSecretsSource for GildVaultShopSecrets {
             }
 
             let prefix = format!("shops/{shop_id}/");
-            let keys = self.client.list().await.map_err(|err| err.to_string())?;
+            let keys = self
+                .client
+                .list_for_shop(shop_id)
+                .await
+                .map_err(|err| err.to_string())?;
             let mut out = HashMap::new();
             for key in keys {
                 let Some(name) = key.strip_prefix(&prefix) else {
@@ -56,7 +60,11 @@ impl ShopSecretsSource for GildVaultShopSecrets {
                 if name.is_empty() || name.contains('/') {
                     continue;
                 }
-                let value = self.client.get(&key).await.map_err(|err| err.to_string())?;
+                let value = self
+                    .client
+                    .get_for_shop(&key, shop_id)
+                    .await
+                    .map_err(|err| err.to_string())?;
                 out.insert(name.to_string(), value);
             }
             Ok(out)
@@ -133,7 +141,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::TempDir;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::UnixListener;
+    use tokio::net::{UnixListener, UnixStream};
     use tokio::time::sleep;
 
     struct MockSource {
@@ -262,8 +270,20 @@ mod tests {
                             let _ = stream.read_to_end(&mut request).await;
                             let parsed: serde_json::Value =
                                 serde_json::from_slice(&request).unwrap();
+                            let requested_shop_id =
+                                parsed.get("shop_id").and_then(|shop_id| shop_id.as_str());
                             let response = match parsed.get("op").and_then(|op| op.as_str()) {
                                 Some("list") => {
+                                    if requested_shop_id != Some("shop_a") {
+                                        return write_mock_response(
+                                            stream,
+                                            serde_json::json!({
+                                                "ok": false,
+                                                "error": "missing_shop_scope"
+                                            }),
+                                        )
+                                        .await;
+                                    }
                                     let mut keys = secrets.keys().cloned().collect::<Vec<_>>();
                                     keys.sort();
                                     serde_json::json!({ "ok": true, "keys": keys })
@@ -273,6 +293,18 @@ mod tests {
                                         .get("key")
                                         .and_then(|key| key.as_str())
                                         .unwrap_or_default();
+                                    if requested_shop_id != Some("shop_a")
+                                        || !key.starts_with("shops/shop_a/")
+                                    {
+                                        return write_mock_response(
+                                            stream,
+                                            serde_json::json!({
+                                                "ok": false,
+                                                "error": "missing_shop_scope"
+                                            }),
+                                        )
+                                        .await;
+                                    }
                                     match secrets.get(key) {
                                         Some(value) => {
                                             serde_json::json!({ "ok": true, "value": value })
@@ -284,8 +316,7 @@ mod tests {
                                 }
                                 _ => serde_json::json!({ "ok": false, "error": "bad_op" }),
                             };
-                            let _ = stream.write_all(response.to_string().as_bytes()).await;
-                            let _ = stream.shutdown().await;
+                            write_mock_response(stream, response).await;
                         });
                     }
                 }
@@ -296,5 +327,10 @@ mod tests {
                 _temp: temp,
             }
         }
+    }
+
+    async fn write_mock_response(mut stream: UnixStream, response: serde_json::Value) {
+        let _ = stream.write_all(response.to_string().as_bytes()).await;
+        let _ = stream.shutdown().await;
     }
 }
