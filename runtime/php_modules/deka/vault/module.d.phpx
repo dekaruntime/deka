@@ -1,0 +1,2 @@
+export function get($name: string): array
+export function list(): array

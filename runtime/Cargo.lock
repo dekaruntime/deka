@@ -3790,6 +3790,7 @@ dependencies = [
  "deka-validation",
  "deno_core",
  "deno_error",
+ "gild-vault-client",
  "libc",
  "mach2",
  "nanoid",
@@ -3804,6 +3805,7 @@ dependencies = [
  "swc_ecma_ast",
  "swc_ecma_parser 31.0.0",
  "swc_ecma_visit",
+ "tempfile",
  "tokio",
  "tracing",
 ]

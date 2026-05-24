@@ -1,0 +1,46 @@
+import { bridge } from 'core/bridge'
+
+function normalize_assoc($raw) {
+    if (is_array($raw)) {
+        $out = []
+        foreach ($raw as $entry) {
+            if (is_array($entry) && count($entry) === 2 && is_string($entry[0])) {
+                $out[$entry[0]] = $entry[1]
+            }
+        }
+        if (array_key_exists('ok', $out)) {
+            return $out
+        }
+    }
+    if (is_object($raw)) {
+        $out = []
+        foreach ($raw as $k => $v) {
+            $out[$k] = $v
+        }
+        if (array_key_exists('ok', $out)) {
+            return $out
+        }
+    }
+    return ['ok' => false, 'error' => 'invalid_vault_response']
+}
+
+/// docid: phpx/deka/vault/get()
+/// <Function name="get">
+///   <Description>Read one secret for the current shop. The shop id is runtime-scoped and cannot be overridden by callers.</Description>
+///   <Parameter name="$name" type="string" required="true">
+///     Secret name.
+///   </Parameter>
+///   <ReturnType type="array" />
+/// </Function>
+export function get($name) {
+    return normalize_assoc(bridge('vault', 'get', { name: '' . $name }))
+}
+
+/// docid: phpx/deka/vault/list()
+/// <Function name="list">
+///   <Description>List secret names for the current shop without returning values.</Description>
+///   <ReturnType type="array" />
+/// </Function>
+export function list() {
+    return normalize_assoc(bridge('vault', 'list', {}))
+}
