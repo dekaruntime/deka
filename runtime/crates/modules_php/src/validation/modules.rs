@@ -1,13 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use crate::integrity::compute_package_integrity;
 use bumpalo::Bump;
 use php_rs::parser::ast::visitor::{Visitor, walk_expr};
 use php_rs::parser::ast::{Expr, ExprId, Program, Stmt};
 use php_rs::parser::lexer::Lexer;
 use php_rs::parser::parser::{Parser, ParserMode};
 use serde_json::Value;
-use crate::integrity::compute_package_integrity;
 
 use super::{ErrorKind, Severity, ValidationError};
 use crate::validation::exports::{parse_export_function, parse_export_list_line};
@@ -45,7 +45,11 @@ pub fn validate_module_resolution(source: &str, file_path: &str) -> Vec<Validati
         .map(scan_phpx_modules)
         .unwrap_or_default();
 
-    let mut graph = ModuleGraph::new(modules_root.clone(), available_modules.clone(), stdlib_root.clone());
+    let mut graph = ModuleGraph::new(
+        modules_root.clone(),
+        available_modules.clone(),
+        stdlib_root.clone(),
+    );
     if !imports.is_empty() {
         graph.ensure_loaded("<entry>", Path::new(file_path), &mut errors);
     }
@@ -148,7 +152,11 @@ struct ModuleGraph {
 }
 
 impl ModuleGraph {
-    fn new(modules_root: Option<PathBuf>, available_modules: HashSet<String>, stdlib_root: Option<PathBuf>) -> Self {
+    fn new(
+        modules_root: Option<PathBuf>,
+        available_modules: HashSet<String>,
+        stdlib_root: Option<PathBuf>,
+    ) -> Self {
         Self {
             modules_root,
             stdlib_root,
@@ -473,7 +481,10 @@ pub(crate) fn resolve_modules_root(file_path: &str) -> Option<PathBuf> {
     resolve_modules_root_with_env(file_path, env_val.as_deref())
 }
 
-fn resolve_modules_root_with_env(file_path: &str, env_module_root: Option<&str>) -> Option<PathBuf> {
+fn resolve_modules_root_with_env(
+    file_path: &str,
+    env_module_root: Option<&str>,
+) -> Option<PathBuf> {
     let path = Path::new(file_path);
     let dir = if path.is_dir() {
         path.to_path_buf()
@@ -1059,10 +1070,7 @@ fn describe_lock_status(current_file_path: &str) -> String {
     format!("{local}; {global}")
 }
 
-fn validate_package_integrity<'a, I>(
-    modules_root: &Path,
-    module_ids: I,
-) -> Vec<ValidationError>
+fn validate_package_integrity<'a, I>(modules_root: &Path, module_ids: I) -> Vec<ValidationError>
 where
     I: Iterator<Item = &'a String>,
 {
@@ -1209,10 +1217,7 @@ where
                 1,
                 1,
                 name.len().max(1),
-                format!(
-                    "Package '{}' lock entry is missing integrity hashes.",
-                    name
-                ),
+                format!("Package '{}' lock entry is missing integrity hashes.", name),
                 "Reinstall the package to regenerate integrity hashes.",
             ));
             continue;
@@ -1233,10 +1238,7 @@ where
                             1,
                             1,
                             name.len().max(1),
-                            format!(
-                                "Failed to compute integrity for '{}': {}",
-                                name, err
-                            ),
+                            format!("Failed to compute integrity for '{}': {}", name, err),
                             "Ensure the package directory exists and is readable.",
                         ));
                         continue;
@@ -1323,7 +1325,9 @@ fn wasm_error(
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_modules_root_with_env, validate_module_resolution, validate_target_capabilities};
+    use super::{
+        resolve_modules_root_with_env, validate_module_resolution, validate_target_capabilities,
+    };
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};

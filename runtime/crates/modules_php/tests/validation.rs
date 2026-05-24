@@ -148,7 +148,10 @@ fn import_relative_path_missing_file_reports_module_error() {
     assert_has_error(&result, ErrorKind::ModuleError);
     // Confirm the old ImportError is gone.
     assert!(
-        !result.errors.iter().any(|e| e.kind == ErrorKind::ImportError),
+        !result
+            .errors
+            .iter()
+            .any(|e| e.kind == ErrorKind::ImportError),
         "ImportError for ../relative path should be gone after issue #36 fix"
     );
 }

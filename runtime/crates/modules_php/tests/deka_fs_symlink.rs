@@ -33,8 +33,14 @@ async fn deka_fs_read_file_sync_rejects_symlink_escape() {
     let tenant_a = tempfile::tempdir().expect("tenant A tempdir");
     let tenant_b = tempfile::tempdir().expect("tenant B tempdir");
 
-    let root_a = tenant_a.path().canonicalize().expect("canonicalize tenant A");
-    let root_b = tenant_b.path().canonicalize().expect("canonicalize tenant B");
+    let root_a = tenant_a
+        .path()
+        .canonicalize()
+        .expect("canonicalize tenant A");
+    let root_b = tenant_b
+        .path()
+        .canonicalize()
+        .expect("canonicalize tenant B");
 
     let a_secret = root_a.join("secret.txt");
     let b_secret = root_b.join("secret.txt");
@@ -77,7 +83,9 @@ async fn deka_fs_read_file_sync_rejects_symlink_escape() {
         .run_event_loop(deno_core::PollEventLoopOptions::default())
         .await
         .expect("load PHP extension");
-    php_loader_eval.await.expect("evaluate PHP extension module");
+    php_loader_eval
+        .await
+        .expect("evaluate PHP extension module");
 
     let script = format!(
         r#"
@@ -100,10 +108,7 @@ async fn deka_fs_read_file_sync_rejects_symlink_escape() {
     );
 
     runtime
-        .execute_script(
-            "symlink_escape_test.js",
-            ModuleCodeString::from(script),
-        )
+        .execute_script("symlink_escape_test.js", ModuleCodeString::from(script))
         .expect("__dekaFs symlink escape check");
 }
 

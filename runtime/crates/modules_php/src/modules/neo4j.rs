@@ -116,7 +116,10 @@ fn shard_route_neo4j(args: &Value) -> String {
 pub(crate) fn has_configured_cluster() -> bool {
     let r = deka_shard::global();
     r.shard_count() > 1
-        || r.shards().first().map(|s| s.name != "local").unwrap_or(false)
+        || r.shards()
+            .first()
+            .map(|s| s.name != "local")
+            .unwrap_or(false)
 }
 
 /// Heuristic: does `url` look like a single-machine dev default?
@@ -196,7 +199,9 @@ fn neo4j_connect(args: &Value) -> Value {
                 "neo4j: overriding dev-default URL {} with shard-routed {} (account={})",
                 u,
                 shard_routed,
-                args.get("__account_id").and_then(|v| v.as_str()).unwrap_or("<none>"),
+                args.get("__account_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("<none>"),
             ));
             shard_routed
         }
@@ -207,7 +212,9 @@ fn neo4j_connect(args: &Value) -> Value {
         .get("user")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
-        .unwrap_or_else(|| std::env::var("DEKA_NEO4J_USER").unwrap_or_else(|_| "neo4j".to_string()));
+        .unwrap_or_else(|| {
+            std::env::var("DEKA_NEO4J_USER").unwrap_or_else(|_| "neo4j".to_string())
+        });
     let password = args
         .get("password")
         .and_then(|v| v.as_str())
@@ -233,15 +240,23 @@ fn neo4j_connect(args: &Value) -> Value {
         // indefinitely (see Phase 6 hang diagnosis).
         tokio::time::timeout(CONNECT_TIMEOUT, Graph::connect(config))
             .await
-            .map_err(|_| format!("neo4j connect timeout after {}s for {}",
-                CONNECT_TIMEOUT.as_secs(), uri_for_err))?
+            .map_err(|_| {
+                format!(
+                    "neo4j connect timeout after {}s for {}",
+                    CONNECT_TIMEOUT.as_secs(),
+                    uri_for_err
+                )
+            })?
             .map_err(|e| format!("{}", e))
     });
 
     match result {
         Ok(graph) => {
             let handle = NEXT_HANDLE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            connections().lock().unwrap().insert(handle, Arc::new(graph));
+            connections()
+                .lock()
+                .unwrap()
+                .insert(handle, Arc::new(graph));
             json!({ "ok": true, "handle": handle })
         }
         Err(e) => json!({ "ok": false, "error": e }),
@@ -256,7 +271,9 @@ fn neo4j_query(args: &Value) -> Value {
     };
     let params = args.get("params").cloned().unwrap_or(json!({}));
     let columns: Vec<String> = if let Some(cols) = args.get("columns").and_then(|v| v.as_array()) {
-        cols.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
+        cols.iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect()
     } else {
         Vec::new()
     };
@@ -264,7 +281,9 @@ fn neo4j_query(args: &Value) -> Value {
     let graph = connections().lock().unwrap().get(&handle).cloned();
     let graph = match graph {
         Some(g) => g,
-        None => return json!({ "ok": false, "error": format!("invalid connection handle {}", handle) }),
+        None => {
+            return json!({ "ok": false, "error": format!("invalid connection handle {}", handle) });
+        }
     };
 
     let result = block_on_async(async move {
@@ -281,8 +300,7 @@ fn neo4j_query(args: &Value) -> Value {
         // single handler can block waiting on Neo4j.
         let mut result = tokio::time::timeout(QUERY_TIMEOUT, graph.execute(q))
             .await
-            .map_err(|_| format!("neo4j query timeout after {}s",
-                QUERY_TIMEOUT.as_secs()))?
+            .map_err(|_| format!("neo4j query timeout after {}s", QUERY_TIMEOUT.as_secs()))?
             .map_err(|e| format!("{}", e))?;
         let mut rows = Vec::new();
 
@@ -322,7 +340,9 @@ fn neo4j_execute(args: &Value) -> Value {
     let graph = connections().lock().unwrap().get(&handle).cloned();
     let graph = match graph {
         Some(g) => g,
-        None => return json!({ "ok": false, "error": format!("invalid connection handle {}", handle) }),
+        None => {
+            return json!({ "ok": false, "error": format!("invalid connection handle {}", handle) });
+        }
     };
 
     let result = block_on_async(async move {
@@ -336,8 +356,7 @@ fn neo4j_execute(args: &Value) -> Value {
         // Same hard timeout as neo4j_query to cap worker blocking.
         tokio::time::timeout(QUERY_TIMEOUT, graph.run(q))
             .await
-            .map_err(|_| format!("neo4j execute timeout after {}s",
-                QUERY_TIMEOUT.as_secs()))?
+            .map_err(|_| format!("neo4j execute timeout after {}s", QUERY_TIMEOUT.as_secs()))?
             .map_err(|e| format!("{}", e))?;
         Ok::<(), String>(())
     });
@@ -376,10 +395,13 @@ fn bind_param(q: neo4rs::Query, key: &str, val: &Value) -> neo4rs::Query {
         Value::Array(arr) => {
             // Convert to Vec<String> for simplicity — Neo4j supports typed lists
             // but JSON arrays are heterogeneous
-            let strings: Vec<String> = arr.iter().map(|v| match v {
-                Value::String(s) => s.clone(),
-                _ => v.to_string(),
-            }).collect();
+            let strings: Vec<String> = arr
+                .iter()
+                .map(|v| match v {
+                    Value::String(s) => s.clone(),
+                    _ => v.to_string(),
+                })
+                .collect();
             q.param(key, strings)
         }
         Value::Object(_) => {
@@ -453,8 +475,12 @@ mod tests {
             "user": "neo4j",
             "password": "deka_dev_password"
         }));
-        assert_eq!(result.get("ok").and_then(|v| v.as_bool()), Some(true),
-            "failed to connect: {:?}", result);
+        assert_eq!(
+            result.get("ok").and_then(|v| v.as_bool()),
+            Some(true),
+            "failed to connect: {:?}",
+            result
+        );
         let handle = result.get("handle").and_then(|v| v.as_u64()).unwrap();
         assert!(handle > 0);
 
@@ -477,8 +503,12 @@ mod tests {
             "cypher": "CREATE (n:DekaTest {name: $name}) RETURN n",
             "params": { "name": "test_product" }
         }));
-        assert_eq!(exec_result.get("ok").and_then(|v| v.as_bool()), Some(true),
-            "execute failed: {:?}", exec_result);
+        assert_eq!(
+            exec_result.get("ok").and_then(|v| v.as_bool()),
+            Some(true),
+            "execute failed: {:?}",
+            exec_result
+        );
 
         // Query it back
         let query_result = neo4j_query(&json!({
@@ -487,11 +517,18 @@ mod tests {
             "params": { "name": "test_product" },
             "columns": ["name"]
         }));
-        assert_eq!(query_result.get("ok").and_then(|v| v.as_bool()), Some(true),
-            "query failed: {:?}", query_result);
+        assert_eq!(
+            query_result.get("ok").and_then(|v| v.as_bool()),
+            Some(true),
+            "query failed: {:?}",
+            query_result
+        );
         let rows = query_result.get("rows").and_then(|v| v.as_array()).unwrap();
         assert!(!rows.is_empty());
-        assert_eq!(rows[0].get("name").and_then(|v| v.as_str()), Some("test_product"));
+        assert_eq!(
+            rows[0].get("name").and_then(|v| v.as_str()),
+            Some("test_product")
+        );
 
         // Clean up test data
         neo4j_execute(&json!({

@@ -41,7 +41,9 @@ async fn handle_request(
                 value.to_str().unwrap_or("").to_string(),
             ));
         }
-        return crate::api::handle_api_request(&path, &headers).await.into_response();
+        return crate::api::handle_api_request(&path, &headers)
+            .await
+            .into_response();
     }
 
     let hmr_path = path == "/_deka/hmr";

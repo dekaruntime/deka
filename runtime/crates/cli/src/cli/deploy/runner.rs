@@ -75,9 +75,8 @@ pub async fn gild_execute_unix(
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::UnixStream;
 
-    let body = serde_json::to_string(req).map_err(|e| {
-        GildError::Protocol(format!("failed to serialize request: {}", e))
-    })?;
+    let body = serde_json::to_string(req)
+        .map_err(|e| GildError::Protocol(format!("failed to serialize request: {}", e)))?;
 
     let request = format!(
         "POST /execute HTTP/1.1\r\n\
@@ -93,24 +92,27 @@ pub async fn gild_execute_unix(
         body
     );
 
-    let stream = UnixStream::connect(socket_path).await.map_err(|e| {
-        GildError::Unreachable(format!("connect to {}: {}", socket_path, e))
-    })?;
+    let stream = UnixStream::connect(socket_path)
+        .await
+        .map_err(|e| GildError::Unreachable(format!("connect to {}: {}", socket_path, e)))?;
 
     let (mut reader, mut writer) = stream.into_split();
 
-    writer.write_all(request.as_bytes()).await.map_err(|e| {
-        GildError::Unreachable(format!("write to gild socket: {}", e))
-    })?;
-    writer.shutdown().await.map_err(|e| {
-        GildError::Unreachable(format!("shutdown gild socket: {}", e))
-    })?;
+    writer
+        .write_all(request.as_bytes())
+        .await
+        .map_err(|e| GildError::Unreachable(format!("write to gild socket: {}", e)))?;
+    writer
+        .shutdown()
+        .await
+        .map_err(|e| GildError::Unreachable(format!("shutdown gild socket: {}", e)))?;
     drop(writer);
 
     let mut response_buf = Vec::new();
-    reader.read_to_end(&mut response_buf).await.map_err(|e| {
-        GildError::Unreachable(format!("read from gild socket: {}", e))
-    })?;
+    reader
+        .read_to_end(&mut response_buf)
+        .await
+        .map_err(|e| GildError::Unreachable(format!("read from gild socket: {}", e)))?;
 
     parse_http_response(&response_buf)
 }
@@ -147,16 +149,11 @@ fn parse_http_response(raw: &[u8]) -> Result<GildExecuteResponse, GildError> {
     let body = &body[..content_length.min(body.len())];
 
     if status_code >= 200 && status_code < 300 {
-        let response: GildExecuteResponse =
-            serde_json::from_str(body).map_err(|e| {
-                GildError::Protocol(format!("parse response json: {}", e))
-            })?;
+        let response: GildExecuteResponse = serde_json::from_str(body)
+            .map_err(|e| GildError::Protocol(format!("parse response json: {}", e)))?;
         Ok(response)
     } else if status_code == 502 || status_code == 503 || status_code == 504 {
-        Err(GildError::Unreachable(format!(
-            "gild HTTP {}",
-            status_code
-        )))
+        Err(GildError::Unreachable(format!("gild HTTP {}", status_code)))
     } else {
         Err(GildError::Http(status_code, body.to_string()))
     }

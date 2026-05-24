@@ -386,7 +386,10 @@ mod tests {
 
         let resolved = resolve_handler_path(dir.to_str().expect("path")).expect("resolve");
         let resolved_canon = resolved.path.canonicalize().expect("resolved canonicalize");
-        let configured_canon = dir.join("main.phpx").canonicalize().expect("configured canonicalize");
+        let configured_canon = dir
+            .join("main.phpx")
+            .canonicalize()
+            .expect("configured canonicalize");
         assert_eq!(resolved_canon, configured_canon);
     }
 
@@ -449,7 +452,11 @@ pub fn load_database_config(directory: &std::path::Path) {
 
         // Redis config
         if let Some(redis) = root.get("redis") {
-            if let Some(url) = redis.get("url").or_else(|| redis.get("uri")).and_then(|v| v.as_str()) {
+            if let Some(url) = redis
+                .get("url")
+                .or_else(|| redis.get("uri"))
+                .and_then(|v| v.as_str())
+            {
                 std::env::set_var("DEKA_REDIS_URL", url);
             }
         }

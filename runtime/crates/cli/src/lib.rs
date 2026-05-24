@@ -1,3 +1,5 @@
+#![allow(clippy::all, dead_code, unused_variables, unused_assignments)]
+
 use core::Registry;
 #[cfg(target_arch = "wasm32")]
 use serde::{Deserialize, Serialize};
@@ -94,9 +96,7 @@ fn run_for_wasm(args: Vec<String>) -> WasmRunOutput {
             let output = stdio::end_capture();
             return WasmRunOutput { code: 0, output };
         }
-        if cmd.flags.contains_key("--update")
-            || cmd.flags.contains_key("-U")
-        {
+        if cmd.flags.contains_key("--update") || cmd.flags.contains_key("-U") {
             cli::update();
             let output = stdio::end_capture();
             return WasmRunOutput { code: 0, output };

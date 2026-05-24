@@ -10,10 +10,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use axum::Router;
 use axum::extract::{Request, State};
 use axum::http::header::CONTENT_LENGTH;
 use axum::response::{IntoResponse, Response};
-use axum::Router;
 use core::Context;
 use engine::config as runtime_config;
 use engine::{RuntimeEngine, set_engine};
@@ -98,8 +98,16 @@ impl PlatformState {
     /// Caches the result so subsequent requests are fast.
     ///
     /// `cache_key` is `shop_id` for main builds, `shop_id:{hash}` for previews.
-    fn resolve_handler(&self, shop_id: &str, cache_key: &str) -> (HandlerKey, String, Option<String>) {
-        let display_key = if cache_key.is_empty() { "default" } else { cache_key };
+    fn resolve_handler(
+        &self,
+        shop_id: &str,
+        cache_key: &str,
+    ) -> (HandlerKey, String, Option<String>) {
+        let display_key = if cache_key.is_empty() {
+            "default"
+        } else {
+            cache_key
+        };
 
         // Check cache first
         {
@@ -107,7 +115,11 @@ impl PlatformState {
             if let Some(entry) = cache.get_mut(display_key) {
                 entry.last_accessed = Instant::now();
                 return (
-                    HandlerKey::new(if shop_id.is_empty() { "default".to_string() } else { format!("tenant:{}", display_key) }),
+                    HandlerKey::new(if shop_id.is_empty() {
+                        "default".to_string()
+                    } else {
+                        format!("tenant:{}", display_key)
+                    }),
                     entry.code.clone(),
                     None,
                 );
@@ -119,7 +131,11 @@ impl PlatformState {
             self.root.join("default").join("main.phpx")
         } else {
             let tenant = self.root.join("tenants").join(shop_id).join("main.phpx");
-            if tenant.exists() { tenant } else { self.root.join("default").join("main.phpx") }
+            if tenant.exists() {
+                tenant
+            } else {
+                self.root.join("default").join("main.phpx")
+            }
         };
 
         // Bundle using the same pipeline as `deka serve`.
@@ -128,25 +144,40 @@ impl PlatformState {
         let handler_str = handler_path.to_string_lossy().to_string();
         let code = match build_phpx_handler_bundle(&handler_str) {
             Ok(bundled) => {
-                stdio::log("platform", &format!("bundled {} ({} bytes)", display_key, bundled.len()));
+                stdio::log(
+                    "platform",
+                    &format!("bundled {} ({} bytes)", display_key, bundled.len()),
+                );
                 bundled
             }
             Err(err) => {
-                stdio::error("platform", &format!("bundle failed for {}: {}", display_key, err));
+                stdio::error(
+                    "platform",
+                    &format!("bundle failed for {}: {}", display_key, err),
+                );
                 let default_path = self.root.join("default").join("main.phpx");
                 let default_str = default_path.to_string_lossy().to_string();
                 if handler_path != default_path {
                     match build_phpx_handler_bundle(&default_str) {
                         Ok(bundled) => {
-                            stdio::log("platform", &format!(
-                                "fallback to default for {} ({} bytes)", display_key, bundled.len()
-                            ));
+                            stdio::log(
+                                "platform",
+                                &format!(
+                                    "fallback to default for {} ({} bytes)",
+                                    display_key,
+                                    bundled.len()
+                                ),
+                            );
                             bundled
                         }
                         Err(err2) => {
-                            stdio::error("platform", &format!(
-                                "default fallback also failed for {}: {}", display_key, err2
-                            ));
+                            stdio::error(
+                                "platform",
+                                &format!(
+                                    "default fallback also failed for {}: {}",
+                                    display_key, err2
+                                ),
+                            );
                             String::new()
                         }
                     }
@@ -159,14 +190,21 @@ impl PlatformState {
         // Cache the bundled code
         {
             let mut cache = self.bundle_cache.lock().unwrap();
-            cache.insert(display_key.to_string(), BundleEntry {
-                code: code.clone(),
-                last_accessed: Instant::now(),
-            });
+            cache.insert(
+                display_key.to_string(),
+                BundleEntry {
+                    code: code.clone(),
+                    last_accessed: Instant::now(),
+                },
+            );
         }
 
         (
-            HandlerKey::new(if shop_id.is_empty() { "default".to_string() } else { format!("tenant:{}", display_key) }),
+            HandlerKey::new(if shop_id.is_empty() {
+                "default".to_string()
+            } else {
+                format!("tenant:{}", display_key)
+            }),
             code,
             None,
         )
@@ -185,7 +223,10 @@ impl PlatformState {
             }
             let age = now.duration_since(entry.last_accessed);
             if age > PREVIEW_TTL {
-                stdio::log("cleanup", &format!("expired preview bundle: {} (idle {:?})", key, age));
+                stdio::log(
+                    "cleanup",
+                    &format!("expired preview bundle: {} (idle {:?})", key, age),
+                );
                 false
             } else {
                 true
@@ -217,10 +258,7 @@ async fn platform_async(context: &Context) {
                 .unwrap_or_else(|| "<none>".to_string());
             stdio::log(
                 "shard",
-                &format!(
-                    "resolver loaded: {} shard(s), self = {}",
-                    shards, self_name
-                ),
+                &format!("resolver loaded: {} shard(s), self = {}", shards, self_name),
             );
             let _ = deka_shard::set_global(resolver);
         }
@@ -233,7 +271,10 @@ async fn platform_async(context: &Context) {
     unsafe {
         std::env::set_var("DEKA_SECURITY_ENFORCE", "1");
         std::env::set_var("DEKA_SECURITY_NO_PROMPT", "1");
-        std::env::set_var("PHPX_MODULE_ROOT", root.join("default").to_string_lossy().as_ref());
+        std::env::set_var(
+            "PHPX_MODULE_ROOT",
+            root.join("default").to_string_lossy().as_ref(),
+        );
     }
 
     // Validate directory structure
@@ -242,9 +283,10 @@ async fn platform_async(context: &Context) {
     let default_handler = default_dir.join("main.phpx");
 
     if !default_handler.exists() {
-        stdio::error("platform", &format!(
-            "missing default/main.phpx at {}", default_dir.display()
-        ));
+        stdio::error(
+            "platform",
+            &format!("missing default/main.phpx at {}", default_dir.display()),
+        );
         std::process::exit(1);
     }
 
@@ -256,21 +298,37 @@ async fn platform_async(context: &Context) {
     let default_handler_str = default_handler.to_string_lossy().to_string();
     match build_phpx_handler_bundle(&default_handler_str) {
         Ok(bundled) => {
-            stdio::log("platform", &format!("default handler bundled ({} bytes)", bundled.len()));
+            stdio::log(
+                "platform",
+                &format!("default handler bundled ({} bytes)", bundled.len()),
+            );
         }
         Err(err) => {
-            stdio::error("platform", &format!("failed to bundle default handler: {}", err));
+            stdio::error(
+                "platform",
+                &format!("failed to bundle default handler: {}", err),
+            );
             std::process::exit(1);
         }
     }
 
     let tenant_count = std::fs::read_dir(&tenants_dir)
-        .map(|entries| entries.filter_map(|e| e.ok()).filter(|e| e.path().is_dir()).count())
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().is_dir())
+                .count()
+        })
         .unwrap_or(0);
 
-    stdio::log("platform", &format!(
-        "root: {}, default: ok, tenants: {}", root.display(), tenant_count
-    ));
+    stdio::log(
+        "platform",
+        &format!(
+            "root: {}, default: ok, tenants: {}",
+            root.display(),
+            tenant_count
+        ),
+    );
 
     // Build pool config
     let pool_config = PoolConfig::from_env();
@@ -320,7 +378,10 @@ async fn platform_async(context: &Context) {
     let listener = match TcpListener::bind(format!("{}:{}", bind_addr, port)) {
         Ok(l) => l,
         Err(err) => {
-            stdio::error("platform", &format!("failed to bind port {}: {}", port, err));
+            stdio::error(
+                "platform",
+                &format!("failed to bind port {}: {}", port, err),
+            );
             std::process::exit(1);
         }
     };
@@ -336,14 +397,20 @@ async fn platform_async(context: &Context) {
                 tokio::time::sleep(CLEANUP_INTERVAL).await;
                 let removed = cleanup_state.cleanup_stale_previews();
                 if removed > 0 {
-                    stdio::log("cleanup", &format!("removed {} stale preview bundle(s)", removed));
+                    stdio::log(
+                        "cleanup",
+                        &format!("removed {} stale preview bundle(s)", removed),
+                    );
                 }
             }
         });
     }
 
     let app = Router::new()
-        .route("/__admin/rebuild", axum::routing::post(handle_admin_rebuild))
+        .route(
+            "/__admin/rebuild",
+            axum::routing::post(handle_admin_rebuild),
+        )
         .fallback(handle_platform_request)
         .with_state(state);
 
@@ -398,7 +465,11 @@ async fn handle_admin_rebuild(
         None => shop_id.clone(),
     };
 
-    let label = if git_ref.is_some() { "preview rebuild" } else { "rebuild" };
+    let label = if git_ref.is_some() {
+        "preview rebuild"
+    } else {
+        "rebuild"
+    };
     let started = Instant::now();
     stdio::log(label, &format!("triggered for {}", cache_key));
 
@@ -523,10 +594,19 @@ async fn handle_platform_request(
     // tracker — it needs them to resolve the shop_id on the worker thread.
     let request_headers_for_analytics = headers.clone();
 
-    // Resolve tenant from Host header only (preview-aware).
-    let tenant_info = pool::tenant::resolve_tenant_info_from_host(&headers);
-    let shop_id = tenant_info.as_ref().map(|t| t.shop_id.clone()).unwrap_or_default();
-    let cache_key = tenant_info.as_ref().map(|t| t.cache_key()).unwrap_or_else(|| shop_id.clone());
+    // Resolve tenant from server-routed Host/subdomain data only
+    // (preview-aware). Do not use the dev `DEKA_SHOP_ID` fallback in the
+    // multi-tenant platform path; unrouted/admin requests must not inherit a
+    // tenant env.
+    let tenant_info = pool::tenant::resolve_tenant_info_from_host_strict(&headers);
+    let shop_id = tenant_info
+        .as_ref()
+        .map(|t| t.shop_id.clone())
+        .unwrap_or_default();
+    let cache_key = tenant_info
+        .as_ref()
+        .map(|t| t.cache_key())
+        .unwrap_or_else(|| shop_id.clone());
 
     // Cross-shard routing: if we know the shop's account_id and a
     // different shard owns it, transparently proxy the request over
@@ -579,9 +659,13 @@ async fn handle_platform_request(
     let (handler_key, handler_code, handler_entry) = if handler_code.is_empty() {
         if let Some(ref info) = tenant_info {
             if info.preview_ref.is_some() {
-                stdio::log("platform", &format!(
-                    "preview bundle unavailable for {}, falling back to main", cache_key
-                ));
+                stdio::log(
+                    "platform",
+                    &format!(
+                        "preview bundle unavailable for {}, falling back to main",
+                        cache_key
+                    ),
+                );
                 state.resolve_handler(&shop_id, &shop_id)
             } else {
                 (handler_key, handler_code, handler_entry)
@@ -596,12 +680,18 @@ async fn handle_platform_request(
     // Guard: if the bundle failed completely (empty code), return HTTP 500
     // instead of sending empty JS to V8 which causes a HandleScope panic.
     if handler_code.is_empty() {
-        stdio::error("platform", &format!(
-            "no handler code for tenant '{}' — bundle failed, returning 500", shop_id
-        ));
+        stdio::error(
+            "platform",
+            &format!(
+                "no handler code for tenant '{}' — bundle failed, returning 500",
+                shop_id
+            ),
+        );
         return Response::builder()
             .status(500)
-            .body(axum::body::Body::from("Internal Server Error: store bundle unavailable"))
+            .body(axum::body::Body::from(
+                "Internal Server Error: store bundle unavailable",
+            ))
             .unwrap();
     }
 
@@ -623,7 +713,9 @@ async fn handle_platform_request(
     match state.engine.execute(handler_key, request_data).await {
         Ok(pool_response) => {
             if !pool_response.success {
-                let err = pool_response.error.unwrap_or_else(|| "Unknown error".to_string());
+                let err = pool_response
+                    .error
+                    .unwrap_or_else(|| "Unknown error".to_string());
                 return Response::builder()
                     .status(500)
                     .body(axum::body::Body::from(format!("Handler error: {}", err)))
@@ -654,9 +746,7 @@ async fn handle_platform_request(
                         } else {
                             envelope.body.into_bytes()
                         };
-                        response
-                            .body(axum::body::Body::from(body_bytes))
-                            .unwrap()
+                        response.body(axum::body::Body::from(body_bytes)).unwrap()
                     }
                     Err(err) => Response::builder()
                         .status(500)
@@ -671,17 +761,18 @@ async fn handle_platform_request(
         }
         Err(err) => Response::builder()
             .status(500)
-            .body(axum::body::Body::from(format!("Handler execution failed: {}", err)))
+            .body(axum::body::Body::from(format!(
+                "Handler execution failed: {}",
+                err
+            )))
             .unwrap(),
     }
 }
 
 fn claims_cloudflare_ip_without_ray(headers: &[(String, String)]) -> bool {
-    let has_cf_connecting_ip = headers
-        .iter()
-        .any(|(key, value)| {
-            key.eq_ignore_ascii_case("cf-connecting-ip") && !value.trim().is_empty()
-        });
+    let has_cf_connecting_ip = headers.iter().any(|(key, value)| {
+        key.eq_ignore_ascii_case("cf-connecting-ip") && !value.trim().is_empty()
+    });
     if !has_cf_connecting_ip {
         return false;
     }
@@ -796,7 +887,9 @@ async fn proxy_to_shard(
             stdio::error("proxy", &format!("client build failed: {}", err));
             return Response::builder()
                 .status(502)
-                .body(axum::body::Body::from("Bad Gateway: proxy client build failed"))
+                .body(axum::body::Body::from(
+                    "Bad Gateway: proxy client build failed",
+                ))
                 .unwrap();
         }
     };
@@ -839,7 +932,10 @@ async fn proxy_to_shard(
         req = req.header("Host", original_host.clone());
         req = req.header("X-Forwarded-Host", original_host);
     }
-    req = req.header(PROXY_LOOP_HEADER, self_index.unwrap_or(usize::MAX).to_string());
+    req = req.header(
+        PROXY_LOOP_HEADER,
+        self_index.unwrap_or(usize::MAX).to_string(),
+    );
 
     if let Some(b) = body {
         req = req.body(b);
@@ -848,10 +944,7 @@ async fn proxy_to_shard(
     let upstream = match req.send().await {
         Ok(r) => r,
         Err(err) => {
-            stdio::error(
-                "proxy",
-                &format!("upstream {} failed: {}", target_url, err),
-            );
+            stdio::error("proxy", &format!("upstream {} failed: {}", target_url, err));
             return Response::builder()
                 .status(502)
                 .body(axum::body::Body::from(format!(
@@ -888,7 +981,9 @@ async fn proxy_to_shard(
             stdio::error("proxy", &format!("body read failed: {}", err));
             return Response::builder()
                 .status(502)
-                .body(axum::body::Body::from("Bad Gateway: upstream body read failed"))
+                .body(axum::body::Body::from(
+                    "Bad Gateway: upstream body read failed",
+                ))
                 .unwrap();
         }
     };
@@ -943,7 +1038,11 @@ mod tests {
     fn account_for_shard(resolver: &ShardResolver, index: usize) -> String {
         (0..10_000)
             .map(|n| format!("dev-account-{n}"))
-            .find(|account_id| resolver.resolve(account_id).is_some_and(|s| s.index == index))
+            .find(|account_id| {
+                resolver
+                    .resolve(account_id)
+                    .is_some_and(|s| s.index == index)
+            })
             .expect("test resolver should produce an account for requested shard")
     }
 

@@ -1,3 +1,5 @@
+#![allow(clippy::all)]
+
 use core::Context;
 
 mod env;

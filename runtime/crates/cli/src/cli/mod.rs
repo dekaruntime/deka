@@ -24,7 +24,11 @@ pub mod install;
 #[cfg(feature = "native")]
 pub mod lsp;
 #[cfg(feature = "native")]
+pub mod pipeline_yaml;
+#[cfg(feature = "native")]
 pub mod pkg;
+#[cfg(feature = "native")]
+pub mod platform;
 #[cfg(feature = "native")]
 pub mod publish;
 #[cfg(feature = "native")]
@@ -34,16 +38,12 @@ pub mod run;
 #[cfg(feature = "native")]
 pub mod self_cmd;
 #[cfg(feature = "native")]
-pub mod platform;
-#[cfg(feature = "native")]
 pub mod serve;
 #[cfg(feature = "native")]
 pub mod task;
 #[cfg(feature = "native")]
 pub mod test;
 pub mod user;
-#[cfg(feature = "native")]
-pub mod pipeline_yaml;
 
 pub fn register_global_flags(registry: &mut Registry) {
     registry.add_flag(FlagSpec {
@@ -313,9 +313,7 @@ pub fn execute(registry: &Registry) {
             version(verbose);
             return;
         }
-        if args.flags.contains_key("--update")
-            || args.flags.contains_key("-U")
-        {
+        if args.flags.contains_key("--update") || args.flags.contains_key("-U") {
             update();
             return;
         }
@@ -403,9 +401,7 @@ pub fn execute(registry: &Registry) {
                 let verbose = cmd.flags.contains_key("--verbose");
                 version(verbose);
             }
-            if cmd.flags.contains_key("--update")
-                || cmd.flags.contains_key("-U")
-            {
+            if cmd.flags.contains_key("--update") || cmd.flags.contains_key("-U") {
                 update();
             }
         }

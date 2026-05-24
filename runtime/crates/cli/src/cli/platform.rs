@@ -1,4 +1,4 @@
-use core::{CommandSpec, Context, FlagSpec, Registry};
+use core::{CommandSpec, Context, Registry};
 
 const COMMAND: CommandSpec = CommandSpec {
     name: "platform",

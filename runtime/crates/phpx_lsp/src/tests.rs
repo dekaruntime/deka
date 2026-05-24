@@ -197,8 +197,8 @@ fn finds_php_modules_from_workspace_roots_fallback() {
     fs::create_dir_all(&project).expect("mkdir project");
     fs::write(&file, "import { x } from 'core/result'").expect("write file");
 
-    let resolved = find_php_modules_root(&file, std::slice::from_ref(&workspace))
-        .expect("resolve modules");
+    let resolved =
+        find_php_modules_root(&file, std::slice::from_ref(&workspace)).expect("resolve modules");
     assert_eq!(resolved, php_modules);
 }
 
@@ -297,8 +297,7 @@ fn completes_jsx_props_from_interface_shape() {
         ..SymbolIndex::default()
     };
     let offset = source.find("/>").expect("/>");
-    let items =
-        completion_for_jsx_props(&index, source.as_bytes(), offset).expect("completion");
+    let items = completion_for_jsx_props(&index, source.as_bytes(), offset).expect("completion");
     let labels: Vec<String> = items.into_iter().map(|item| item.label).collect();
     assert!(
         labels.iter().any(|label| label == "name"),
@@ -308,8 +307,7 @@ fn completes_jsx_props_from_interface_shape() {
         labels.iter().any(|label| label == "title"),
         "labels={labels:?}"
     );
-    let items =
-        completion_for_jsx_props(&index, source.as_bytes(), offset).expect("completion");
+    let items = completion_for_jsx_props(&index, source.as_bytes(), offset).expect("completion");
     let name_item = items
         .iter()
         .find(|item| item.label == "name")
@@ -354,8 +352,7 @@ fn jsx_props_completion_skips_already_used_props() {
         ..SymbolIndex::default()
     };
     let offset = source.find("/>").expect("/>");
-    let items =
-        completion_for_jsx_props(&index, source.as_bytes(), offset).expect("completion");
+    let items = completion_for_jsx_props(&index, source.as_bytes(), offset).expect("completion");
     let labels: Vec<String> = items.into_iter().map(|item| item.label).collect();
     assert!(
         !labels.iter().any(|label| label == "name"),
@@ -488,9 +485,9 @@ function fullName($name: string): string {
     let result = compile_phpx(source, "/tmp/var_typo.phpx", &arena);
     let messages: Vec<String> = result.errors.iter().map(|e| e.message.clone()).collect();
     assert!(
-        messages.iter().any(
-            |m| m.contains("Unknown variable '$nam'") && m.contains("did you mean '$name'")
-        ),
+        messages
+            .iter()
+            .any(|m| m.contains("Unknown variable '$nam'") && m.contains("did you mean '$name'")),
         "messages={messages:?}"
     );
 }

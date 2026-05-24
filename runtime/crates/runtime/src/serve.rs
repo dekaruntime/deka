@@ -888,9 +888,9 @@ fn should_ignore_watch_path(path: &FsPath) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::flag_or_env_truthy_with;
-    use super::ensure_http_port_available;
     use super::build_static_handler_code;
+    use super::ensure_http_port_available;
+    use super::flag_or_env_truthy_with;
     use runtime_core::env::is_truthy;
     use std::collections::HashMap;
     use std::net::TcpListener;

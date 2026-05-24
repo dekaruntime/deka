@@ -1,3 +1,5 @@
+#![allow(clippy::all, dead_code, unused_imports)]
+
 use deno_core::Extension;
 
 pub mod compiler_api;

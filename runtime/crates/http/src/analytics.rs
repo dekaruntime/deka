@@ -57,7 +57,7 @@ const DAILY_TTL_SECS: u64 = 90 * 24 * 60 * 60;
 #[derive(Debug, Clone)]
 pub struct PageviewEvent {
     /// Exactly the `(name, value)` header pairs that were presented to the
-    /// runtime — only the `Host` / `X-Shop-ID` entries are read, but we keep
+    /// runtime — only the server-routed `Host` entry is read, but we keep
     /// the vec shape so the existing `pool::tenant::resolve_tenant_from_headers`
     /// can be called directly.
     pub headers: Vec<(String, String)>,
@@ -344,9 +344,8 @@ mod tests {
     #[test]
     fn track_pageview_returns_false_on_filter_miss() {
         let h = header_map(&[("content-type", "application/json")]);
-        let req_headers: Vec<(String, String)> = vec![
-            ("host".to_string(), "shop_alpha.tana.gg".to_string()),
-        ];
+        let req_headers: Vec<(String, String)> =
+            vec![("host".to_string(), "shop_alpha.tana.gg".to_string())];
         // Filter rejects before the worker is touched.
         assert!(!track_pageview(&req_headers, 200, &h));
     }
@@ -354,9 +353,8 @@ mod tests {
     #[test]
     fn track_pageview_returns_false_for_non_2xx() {
         let h = header_map(&[("content-type", "text/html")]);
-        let req_headers: Vec<(String, String)> = vec![
-            ("host".to_string(), "shop_alpha.tana.gg".to_string()),
-        ];
+        let req_headers: Vec<(String, String)> =
+            vec![("host".to_string(), "shop_alpha.tana.gg".to_string())];
         assert!(!track_pageview(&req_headers, 404, &h));
         assert!(!track_pageview(&req_headers, 302, &h));
     }
@@ -407,9 +405,8 @@ mod tests {
             .unwrap();
 
         let response_headers = header_map(&[("Content-Type", "text/html; charset=utf-8")]);
-        let request_headers: Vec<(String, String)> = vec![
-            ("Host".to_string(), format!("{}.tana.gg", subdomain)),
-        ];
+        let request_headers: Vec<(String, String)> =
+            vec![("Host".to_string(), format!("{}.tana.gg", subdomain))];
         assert!(track_pageview(&request_headers, 200, &response_headers));
         assert!(track_pageview(&request_headers, 200, &response_headers));
         assert!(track_pageview(&request_headers, 200, &response_headers));

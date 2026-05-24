@@ -418,9 +418,7 @@ impl FigFont {
         let mut lines = vec![String::new(); self.height];
         for ch in text.chars() {
             let glyph = self.glyphs.get(&ch).or_else(|| self.glyphs.get(&'?'));
-            let Some(glyph) = glyph else {
-                return None;
-            };
+            let glyph = glyph?;
             for (idx, line) in lines.iter_mut().enumerate() {
                 if let Some(part) = glyph.get(idx) {
                     line.push_str(part);

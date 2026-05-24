@@ -1,3 +1,5 @@
+#![allow(clippy::all)]
+
 pub mod config;
 pub mod dispatch;
 pub mod engine;

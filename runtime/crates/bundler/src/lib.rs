@@ -1,3 +1,5 @@
+#![allow(clippy::all, dead_code, unused_imports)]
+
 pub mod bundler;
 pub mod cache;
 mod cached;
