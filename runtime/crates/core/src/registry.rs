@@ -68,9 +68,9 @@ impl Registry {
     }
 
     pub fn command_for(&self, token: &str) -> Option<&CommandSpec> {
-        self.commands.iter().find(|command| {
-            command.name == token || command.aliases.iter().any(|alias| *alias == token)
-        })
+        self.commands
+            .iter()
+            .find(|command| command.name == token || command.aliases.contains(&token))
     }
 
     pub fn command_named(&self, name: &str) -> Option<&CommandSpec> {
@@ -83,7 +83,7 @@ impl Registry {
         token: &str,
     ) -> Option<&'a SubcommandSpec> {
         command.subcommands.iter().find(|subcommand| {
-            subcommand.name == token || subcommand.aliases.iter().any(|alias| *alias == token)
+            subcommand.name == token || subcommand.aliases.contains(&token)
         })
     }
 

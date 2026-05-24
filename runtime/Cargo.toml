@@ -37,9 +37,9 @@ members = [
 
 [workspace.dependencies]
 # V8 Runtime (Deno Core)
-deno_core = "0.385.0"
-deno_napi = "0.162.0"
-deno_permissions = "0.90.0"
+deno_core = "0.400.0"
+deno_napi = "0.178.0"
+deno_permissions = "0.106.0"
 deno_error = "0.7.1"
 
 # Async Runtime

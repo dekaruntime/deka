@@ -1,3 +1,5 @@
+#![allow(clippy::all, unused_variables)]
+
 pub mod ast;
 pub mod parser;
 

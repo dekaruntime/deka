@@ -1,7 +1,7 @@
 use anyhow::Result;
 use core::{CommandSpec, Context, FlagSpec, ParamSpec, Registry};
-use linkhash_client::{is_phpx_package, LinkhashClient};
-use pm::{run_install, InstallPayload};
+use linkhash_client::{LinkhashClient, is_phpx_package};
+use pm::{InstallPayload, run_install};
 use runtime_core::module_spec::canonical_php_package_spec;
 use std::path::{Path, PathBuf};
 use stdio;

@@ -13,10 +13,10 @@ where
     if flags.contains_key(long_flag) {
         return true;
     }
-    if let Some(short) = short_flag {
-        if flags.contains_key(short) {
-            return true;
-        }
+    if let Some(short) = short_flag
+        && flags.contains_key(short)
+    {
+        return true;
     }
     env_truthy_with(env_var, env_get)
 }
@@ -74,10 +74,10 @@ where
     Set: FnMut(&str, &str),
     Bin: Fn() -> Option<String>,
 {
-    if !extra_args.is_empty() {
-        if let Ok(encoded) = serde_json::to_string(extra_args) {
-            env_set("DEKA_ARGS", &encoded);
-        }
+    if !extra_args.is_empty()
+        && let Ok(encoded) = serde_json::to_string(extra_args)
+    {
+        env_set("DEKA_ARGS", &encoded);
     }
 
     if let Some(bin) = bin_name() {

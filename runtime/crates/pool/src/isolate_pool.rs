@@ -3506,17 +3506,7 @@ fn pick_shard_for_request<'a>(
 }
 
 fn resolve_request_tenant(headers: &[(String, String)]) -> Option<crate::tenant::TenantInfo> {
-    if let Some(info) = crate::tenant::resolve_tenant_info_from_host(headers) {
-        Some(info)
-    } else {
-        crate::tenant::resolve_tenant_from_headers(headers).map(|shop_id| {
-            crate::tenant::TenantInfo {
-                shop_id,
-                account_id: None,
-                preview_ref: None,
-            }
-        })
-    }
+    crate::tenant::resolve_tenant_info_from_host_strict(headers)
 }
 
 fn set_request_globals(
@@ -3659,6 +3649,20 @@ fn set_request_globals(
         serde_v8::to_v8(scope, deka_args).map_err(|err| format!("deka args to v8: {}", err))?;
     deka_obj.set(scope, args_key.into(), args_val);
 
+    let resolved_tenant_info = request_parts.and_then(|parts| {
+        tenant_info
+            .cloned()
+            .or_else(|| resolve_request_tenant(&parts.headers))
+    });
+    let has_routed_shop = resolved_tenant_info
+        .as_ref()
+        .is_some_and(|info| !info.shop_id.is_empty());
+    let env_snapshot = if has_routed_shop {
+        runtime_core::platform_env::snapshot_env_from_process()
+    } else {
+        Vec::new()
+    };
+
     // Platform → tenant env-var injection. The platform process holds
     // a small set of allowlisted secrets (Stripe publishable key,
     // TANA_INTERNAL_API_SECRET, etc.) that storefront PHPX needs to
@@ -3677,11 +3681,10 @@ fn set_request_globals(
         if let Some(server_key) = v8::String::new(scope, "_SERVER") {
             if let Some(server_val) = global.get(scope, server_key.into()) {
                 if let Some(server_obj) = server_val.to_object(scope) {
-                    for (name, value) in runtime_core::platform_env::snapshot_env_from_process() {
-                        if let (Some(k), Some(v)) = (
-                            v8::String::new(scope, &name),
-                            v8::String::new(scope, &value),
-                        ) {
+                    for (name, value) in &env_snapshot {
+                        if let (Some(k), Some(v)) =
+                            (v8::String::new(scope, name), v8::String::new(scope, value))
+                        {
                             server_obj.set(scope, k.into(), v.into());
                         }
                     }
@@ -3692,7 +3695,6 @@ fn set_request_globals(
         // tenant code can read secrets via $_ENV['NAME'] (not just
         // $_SERVER). Also sync process.env so getenv() and buildPrelude
         // see current values in warm isolates.
-        let env_snapshot = runtime_core::platform_env::snapshot_env_from_process();
         let env_obj = v8::Object::new(scope);
         for (name, value) in &env_snapshot {
             if let (Some(k), Some(v)) =
@@ -3704,13 +3706,58 @@ fn set_request_globals(
         if let Some(env_key) = v8::String::new(scope, "_ENV") {
             global.set(scope, env_key.into(), env_obj.into());
         }
+
+        let process_obj = if let Some(process_key) = v8::String::new(scope, "process") {
+            if let Some(process_val) = global.get(scope, process_key.into()) {
+                if process_val.is_object() {
+                    process_val.to_object(scope).unwrap()
+                } else {
+                    let obj = v8::Object::new(scope);
+                    global.set(scope, process_key.into(), obj.into());
+                    obj
+                }
+            } else {
+                let obj = v8::Object::new(scope);
+                global.set(scope, process_key.into(), obj.into());
+                obj
+            }
+        } else {
+            return Err("process key".to_string());
+        };
+        let process_env_obj = v8::Object::new(scope);
+        for (name, value) in &env_snapshot {
+            if let (Some(k), Some(v)) =
+                (v8::String::new(scope, name), v8::String::new(scope, value))
+            {
+                process_env_obj.set(scope, k.into(), v.into());
+            }
+        }
+        if let Some(env_key) = v8::String::new(scope, "env") {
+            process_obj.set(scope, env_key.into(), process_env_obj.into());
+        }
+    }
+
+    if has_routed_shop {
+        if let Some(env_key) = v8::String::new(scope, "_ENV") {
+            if let Some(env_val) = global.get(scope, env_key.into()) {
+                if let Some(env_obj) = env_val.to_object(scope) {
+                    for (name, value) in shop_secrets {
+                        if let (Some(k), Some(v)) =
+                            (v8::String::new(scope, name), v8::String::new(scope, value))
+                        {
+                            env_obj.set(scope, k.into(), v.into());
+                        }
+                    }
+                }
+            }
+        }
         if let Some(process_key) = v8::String::new(scope, "process") {
             if let Some(process_val) = global.get(scope, process_key.into()) {
                 if let Some(process_obj) = process_val.to_object(scope) {
                     if let Some(env_key) = v8::String::new(scope, "env") {
                         if let Some(env_val) = process_obj.get(scope, env_key.into()) {
                             if let Some(env_obj) = env_val.to_object(scope) {
-                                for (name, value) in &env_snapshot {
+                                for (name, value) in shop_secrets {
                                     if let (Some(k), Some(v)) = (
                                         v8::String::new(scope, name),
                                         v8::String::new(scope, value),
@@ -3726,18 +3773,12 @@ fn set_request_globals(
         }
     }
 
-    // Tenant context: resolve shop_id + account_id from Host header
-    // and inject as globals. X-Shop-ID is still honoured as an explicit
-    // override for trusted callers (dev tools, admin utilities). Platform
-    // mode strips it before we get here.
+    // Tenant context: resolve shop_id + account_id from the server-side
+    // Host/subdomain routing path and inject as globals. Client-controlled
+    // headers such as X-Shop-ID must never influence this context.
     if let Some(parts) = request_parts {
-        // Prefer the richer resolver (returns both shop_id + account_id
-        // from the new JSON subdomain format); fall back to the legacy
-        // header/env-based path for X-Shop-ID overrides.
-        let resolved = tenant_info
-            .cloned()
-            .or_else(|| resolve_request_tenant(&parts.headers));
-        let (shop_id, account_id) = resolved
+        let _ = parts;
+        let (shop_id, account_id) = resolved_tenant_info
             .as_ref()
             .map(|info| {
                 (
@@ -3762,40 +3803,6 @@ fn set_request_globals(
                         if let Some(k) = v8::String::new(scope, "SHOP_ID") {
                             if let Some(v) = v8::String::new(scope, &shop_id) {
                                 server_obj.set(scope, k.into(), v.into());
-                            }
-                        }
-                    }
-                }
-            }
-
-            if let Some(env_key) = v8::String::new(scope, "_ENV") {
-                if let Some(env_val) = global.get(scope, env_key.into()) {
-                    if let Some(env_obj) = env_val.to_object(scope) {
-                        for (name, value) in shop_secrets {
-                            if let (Some(k), Some(v)) =
-                                (v8::String::new(scope, name), v8::String::new(scope, value))
-                            {
-                                env_obj.set(scope, k.into(), v.into());
-                            }
-                        }
-                    }
-                }
-            }
-            if let Some(process_key) = v8::String::new(scope, "process") {
-                if let Some(process_val) = global.get(scope, process_key.into()) {
-                    if let Some(process_obj) = process_val.to_object(scope) {
-                        if let Some(env_key) = v8::String::new(scope, "env") {
-                            if let Some(env_val) = process_obj.get(scope, env_key.into()) {
-                                if let Some(env_obj) = env_val.to_object(scope) {
-                                    for (name, value) in shop_secrets {
-                                        if let (Some(k), Some(v)) = (
-                                            v8::String::new(scope, name),
-                                            v8::String::new(scope, value),
-                                        ) {
-                                            env_obj.set(scope, k.into(), v.into());
-                                        }
-                                    }
-                                }
                             }
                         }
                     }

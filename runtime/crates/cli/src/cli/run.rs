@@ -223,10 +223,7 @@ fn enforce_subprocess_policy(
                 lines.push(format!("{} at {}: {}", diag.code, diag.path, diag.message));
             }
         }
-        return Err(format!(
-            "invalid security policy:\n{}",
-            lines.join("\n")
-        ));
+        return Err(format!("invalid security policy:\n{}", lines.join("\n")));
     }
 
     let overrides = SecurityCliOverrides::from_flags(&context.args.flags);

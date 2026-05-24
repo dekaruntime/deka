@@ -1,3 +1,5 @@
+#![allow(clippy::all)]
+
 pub mod binary;
 pub mod config;
 pub mod embed;

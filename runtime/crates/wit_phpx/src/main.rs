@@ -504,7 +504,7 @@ fn sanitize_ident(name: &str) -> String {
 
 fn to_pascal_case(name: &str) -> String {
     let mut out = String::new();
-    for part in name.split(|c: char| c == '-' || c == '_' || c == ' ' || c == '.') {
+    for part in name.split(['-', '_', ' ', '.']) {
         if part.is_empty() {
             continue;
         }

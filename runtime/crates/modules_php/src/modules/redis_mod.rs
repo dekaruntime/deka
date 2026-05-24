@@ -107,14 +107,17 @@ fn redis_connect(args: &Value) -> Value {
         .map(|s| s.to_string());
     let shard_routed = shard_route_redis(args);
     let url_owned = match explicit {
-        Some(u) if super::neo4j::should_override_dev_default(&u)
-            && super::neo4j::has_configured_cluster() =>
+        Some(u)
+            if super::neo4j::should_override_dev_default(&u)
+                && super::neo4j::has_configured_cluster() =>
         {
             eprintln!(
                 "[shard] redis: overriding dev-default URL {} with shard-routed {} (account={})",
                 u,
                 shard_routed,
-                args.get("__account_id").and_then(|v| v.as_str()).unwrap_or("<none>"),
+                args.get("__account_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("<none>"),
             );
             shard_routed
         }
@@ -132,9 +135,7 @@ fn redis_connect(args: &Value) -> Value {
     // unreachable Redis (e.g. `redis://localhost:6380` on a shard that
     // only exposes 6379) blocks the worker thread forever. Matches the
     // 5s cap on the neo4j side.
-    let conn = match client
-        .get_connection_with_timeout(std::time::Duration::from_secs(5))
-    {
+    let conn = match client.get_connection_with_timeout(std::time::Duration::from_secs(5)) {
         Ok(c) => c,
         Err(e) => return json!({ "ok": false, "error": format!("{}", e) }),
     };
@@ -159,12 +160,10 @@ fn redis_get(args: &Value) -> Value {
         Some(k) => k.to_string(),
         None => return json!({ "ok": false, "error": "missing 'key'" }),
     };
-    with_conn(handle, |conn| {
-        match conn.get::<_, Option<String>>(&key) {
-            Ok(Some(val)) => json!({ "ok": true, "value": val }),
-            Ok(None) => json!({ "ok": true, "value": null }),
-            Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
-        }
+    with_conn(handle, |conn| match conn.get::<_, Option<String>>(&key) {
+        Ok(Some(val)) => json!({ "ok": true, "value": val }),
+        Ok(None) => json!({ "ok": true, "value": null }),
+        Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
     })
 }
 
@@ -200,11 +199,9 @@ fn redis_del(args: &Value) -> Value {
         Some(k) => k.to_string(),
         None => return json!({ "ok": false, "error": "missing 'key'" }),
     };
-    with_conn(handle, |conn| {
-        match conn.del::<_, i64>(&key) {
-            Ok(count) => json!({ "ok": true, "deleted": count }),
-            Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
-        }
+    with_conn(handle, |conn| match conn.del::<_, i64>(&key) {
+        Ok(count) => json!({ "ok": true, "deleted": count }),
+        Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
     })
 }
 
@@ -214,11 +211,9 @@ fn redis_exists(args: &Value) -> Value {
         Some(k) => k.to_string(),
         None => return json!({ "ok": false, "error": "missing 'key'" }),
     };
-    with_conn(handle, |conn| {
-        match conn.exists::<_, bool>(&key) {
-            Ok(exists) => json!({ "ok": true, "exists": exists }),
-            Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
-        }
+    with_conn(handle, |conn| match conn.exists::<_, bool>(&key) {
+        Ok(exists) => json!({ "ok": true, "exists": exists }),
+        Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
     })
 }
 
@@ -229,11 +224,9 @@ fn redis_expire(args: &Value) -> Value {
         None => return json!({ "ok": false, "error": "missing 'key'" }),
     };
     let seconds = args.get("seconds").and_then(|v| v.as_i64()).unwrap_or(0);
-    with_conn(handle, |conn| {
-        match conn.expire::<_, bool>(&key, seconds) {
-            Ok(set) => json!({ "ok": true, "set": set }),
-            Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
-        }
+    with_conn(handle, |conn| match conn.expire::<_, bool>(&key, seconds) {
+        Ok(set) => json!({ "ok": true, "set": set }),
+        Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
     })
 }
 
@@ -243,11 +236,9 @@ fn redis_ttl(args: &Value) -> Value {
         Some(k) => k.to_string(),
         None => return json!({ "ok": false, "error": "missing 'key'" }),
     };
-    with_conn(handle, |conn| {
-        match conn.ttl::<_, i64>(&key) {
-            Ok(ttl) => json!({ "ok": true, "ttl": ttl }),
-            Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
-        }
+    with_conn(handle, |conn| match conn.ttl::<_, i64>(&key) {
+        Ok(ttl) => json!({ "ok": true, "ttl": ttl }),
+        Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
     })
 }
 
@@ -258,11 +249,9 @@ fn redis_incr(args: &Value) -> Value {
         None => return json!({ "ok": false, "error": "missing 'key'" }),
     };
     let by = args.get("by").and_then(|v| v.as_i64()).unwrap_or(1);
-    with_conn(handle, |conn| {
-        match conn.incr::<_, _, i64>(&key, by) {
-            Ok(val) => json!({ "ok": true, "value": val }),
-            Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
-        }
+    with_conn(handle, |conn| match conn.incr::<_, _, i64>(&key, by) {
+        Ok(val) => json!({ "ok": true, "value": val }),
+        Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
     })
 }
 
@@ -273,11 +262,9 @@ fn redis_decr(args: &Value) -> Value {
         None => return json!({ "ok": false, "error": "missing 'key'" }),
     };
     let by = args.get("by").and_then(|v| v.as_i64()).unwrap_or(1);
-    with_conn(handle, |conn| {
-        match conn.decr::<_, _, i64>(&key, by) {
-            Ok(val) => json!({ "ok": true, "value": val }),
-            Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
-        }
+    with_conn(handle, |conn| match conn.decr::<_, _, i64>(&key, by) {
+        Ok(val) => json!({ "ok": true, "value": val }),
+        Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
     })
 }
 
@@ -355,11 +342,9 @@ fn redis_hdel(args: &Value) -> Value {
         Some(f) => f.to_string(),
         None => return json!({ "ok": false, "error": "missing 'field'" }),
     };
-    with_conn(handle, |conn| {
-        match conn.hdel::<_, _, bool>(&key, &field) {
-            Ok(_) => json!({ "ok": true }),
-            Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
-        }
+    with_conn(handle, |conn| match conn.hdel::<_, _, bool>(&key, &field) {
+        Ok(_) => json!({ "ok": true }),
+        Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
     })
 }
 
@@ -376,11 +361,9 @@ fn redis_lpush(args: &Value) -> Value {
         Some(v) => v.to_string(),
         None => return json!({ "ok": false, "error": "missing 'value'" }),
     };
-    with_conn(handle, |conn| {
-        match conn.lpush::<_, _, i64>(&key, &value) {
-            Ok(len) => json!({ "ok": true, "length": len }),
-            Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
-        }
+    with_conn(handle, |conn| match conn.lpush::<_, _, i64>(&key, &value) {
+        Ok(len) => json!({ "ok": true, "length": len }),
+        Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
     })
 }
 
@@ -395,11 +378,9 @@ fn redis_rpush(args: &Value) -> Value {
         Some(v) => v.to_string(),
         None => return json!({ "ok": false, "error": "missing 'value'" }),
     };
-    with_conn(handle, |conn| {
-        match conn.rpush::<_, _, i64>(&key, &value) {
-            Ok(len) => json!({ "ok": true, "length": len }),
-            Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
-        }
+    with_conn(handle, |conn| match conn.rpush::<_, _, i64>(&key, &value) {
+        Ok(len) => json!({ "ok": true, "length": len }),
+        Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
     })
 }
 
@@ -455,11 +436,9 @@ fn redis_llen(args: &Value) -> Value {
         Some(k) => k.to_string(),
         None => return json!({ "ok": false, "error": "missing 'key'" }),
     };
-    with_conn(handle, |conn| {
-        match conn.llen::<_, i64>(&key) {
-            Ok(len) => json!({ "ok": true, "length": len }),
-            Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
-        }
+    with_conn(handle, |conn| match conn.llen::<_, i64>(&key) {
+        Ok(len) => json!({ "ok": true, "length": len }),
+        Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
     })
 }
 
@@ -490,11 +469,9 @@ fn redis_smembers(args: &Value) -> Value {
         Some(k) => k.to_string(),
         None => return json!({ "ok": false, "error": "missing 'key'" }),
     };
-    with_conn(handle, |conn| {
-        match conn.smembers::<_, Vec<String>>(&key) {
-            Ok(members) => json!({ "ok": true, "members": members }),
-            Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
-        }
+    with_conn(handle, |conn| match conn.smembers::<_, Vec<String>>(&key) {
+        Ok(members) => json!({ "ok": true, "members": members }),
+        Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
     })
 }
 
@@ -541,11 +518,9 @@ fn redis_sismember(args: &Value) -> Value {
 fn redis_keys(args: &Value) -> Value {
     let handle = get_handle(args);
     let pattern = args.get("pattern").and_then(|v| v.as_str()).unwrap_or("*");
-    with_conn(handle, |conn| {
-        match conn.keys::<_, Vec<String>>(pattern) {
-            Ok(keys) => json!({ "ok": true, "keys": keys }),
-            Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
-        }
+    with_conn(handle, |conn| match conn.keys::<_, Vec<String>>(pattern) {
+        Ok(keys) => json!({ "ok": true, "keys": keys }),
+        Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
     })
 }
 
@@ -561,9 +536,8 @@ fn redis_flush(args: &Value) -> Value {
 
 fn redis_close(args: &Value) -> Value {
     let handle = get_handle(args);
-    let removed = CONNECTIONS.with(|c: &RefCell<HashMap<u64, Connection>>| {
-        c.borrow_mut().remove(&handle).is_some()
-    });
+    let removed = CONNECTIONS
+        .with(|c: &RefCell<HashMap<u64, Connection>>| c.borrow_mut().remove(&handle).is_some());
     if removed {
         json!({ "ok": true })
     } else {
@@ -578,8 +552,12 @@ mod tests {
     #[test]
     fn connect_and_set_get() {
         let conn = redis_connect(&json!({ "url": "redis://localhost:6380" }));
-        assert_eq!(conn.get("ok").and_then(|v| v.as_bool()), Some(true),
-            "connect failed: {:?}", conn);
+        assert_eq!(
+            conn.get("ok").and_then(|v| v.as_bool()),
+            Some(true),
+            "connect failed: {:?}",
+            conn
+        );
         let handle = conn.get("handle").and_then(|v| v.as_u64()).unwrap();
 
         // SET
@@ -591,7 +569,10 @@ mod tests {
         // GET
         let get_result = redis_get(&json!({ "handle": handle, "key": "deka:test:hello" }));
         assert_eq!(get_result.get("ok").and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(get_result.get("value").and_then(|v| v.as_str()), Some("world"));
+        assert_eq!(
+            get_result.get("value").and_then(|v| v.as_str()),
+            Some("world")
+        );
 
         // SET with TTL
         let set_ttl = redis_set(&json!({
@@ -612,10 +593,15 @@ mod tests {
         let conn = redis_connect(&json!({ "url": "redis://localhost:6380" }));
         let handle = conn.get("handle").and_then(|v| v.as_u64()).unwrap();
 
-        redis_hset(&json!({ "handle": handle, "key": "deka:test:hash", "field": "name", "value": "alice" }));
-        redis_hset(&json!({ "handle": handle, "key": "deka:test:hash", "field": "age", "value": "30" }));
+        redis_hset(
+            &json!({ "handle": handle, "key": "deka:test:hash", "field": "name", "value": "alice" }),
+        );
+        redis_hset(
+            &json!({ "handle": handle, "key": "deka:test:hash", "field": "age", "value": "30" }),
+        );
 
-        let get = redis_hget(&json!({ "handle": handle, "key": "deka:test:hash", "field": "name" }));
+        let get =
+            redis_hget(&json!({ "handle": handle, "key": "deka:test:hash", "field": "name" }));
         assert_eq!(get.get("value").and_then(|v| v.as_str()), Some("alice"));
 
         let all = redis_hgetall(&json!({ "handle": handle, "key": "deka:test:hash" }));
@@ -639,7 +625,9 @@ mod tests {
         let len = redis_llen(&json!({ "handle": handle, "key": "deka:test:list" }));
         assert_eq!(len.get("length").and_then(|v| v.as_i64()), Some(3));
 
-        let range = redis_lrange(&json!({ "handle": handle, "key": "deka:test:list", "start": 0, "stop": -1 }));
+        let range = redis_lrange(
+            &json!({ "handle": handle, "key": "deka:test:list", "start": 0, "stop": -1 }),
+        );
         let vals = range.get("values").and_then(|v| v.as_array()).unwrap();
         assert_eq!(vals.len(), 3);
 

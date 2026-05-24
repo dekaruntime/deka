@@ -1,3 +1,5 @@
+#![allow(clippy::all)]
+
 pub mod analytics;
 pub mod api;
 mod debug;

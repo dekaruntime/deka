@@ -84,8 +84,7 @@ pub fn effective_allowlist<F>(env_get: &F) -> Vec<String>
 where
     F: Fn(&str) -> Option<String>,
 {
-    let mut set: BTreeSet<String> =
-        DEFAULT_ALLOWLIST.iter().map(|s| s.to_string()).collect();
+    let mut set: BTreeSet<String> = DEFAULT_ALLOWLIST.iter().map(|s| s.to_string()).collect();
 
     if let Some(extra) = env_get(RUNTIME_ALLOWLIST_ENV) {
         for raw in extra.split(',') {

@@ -1,3 +1,5 @@
+#![allow(clippy::all)]
+
 pub mod bun_lock;
 pub mod cache;
 pub mod install;

@@ -202,10 +202,7 @@ async fn run_pipeline(
         let passed = total_jobs as u32 - if any_failed { 1 } else { 0 };
         stdio::log(
             "deploy",
-            &format!(
-                "pipeline finished: {}/{} jobs passed",
-                passed, total_jobs
-            ),
+            &format!("pipeline finished: {}/{} jobs passed", passed, total_jobs),
         );
     }
 
@@ -278,13 +275,11 @@ mod tests {
         let job = Job {
             runs_on: "gild".to_string(),
             target: Some("x86_64-unknown-linux-gnu".to_string()),
-            steps: vec![
-                Step {
-                    run: Some("cargo build --target ${{ job.target }}".to_string()),
-                    uses: None,
-                    with: HashMap::new(),
-                },
-            ],
+            steps: vec![Step {
+                run: Some("cargo build --target ${{ job.target }}".to_string()),
+                uses: None,
+                with: HashMap::new(),
+            }],
         };
         let argv = build_job_argv(&job);
         assert_eq!(argv.len(), 1);

@@ -239,8 +239,7 @@ fn tasks_to_json(tasks: &BTreeMap<String, TaskDef>) -> Value {
             obj.insert(
                 "dependencies".to_string(),
                 Value::Array(
-                    task
-                        .dependencies
+                    task.dependencies
                         .iter()
                         .map(|dep| Value::String(dep.clone()))
                         .collect(),
@@ -303,7 +302,10 @@ fn run_task(
     if exit_code == 0 {
         Ok(())
     } else {
-        Err(format!("task `{}` failed with exit code {}", name, exit_code))
+        Err(format!(
+            "task `{}` failed with exit code {}",
+            name, exit_code
+        ))
     }
 }
 
@@ -362,11 +364,7 @@ enum TaskState {
 }
 
 impl TaskRunner {
-    fn new(
-        tasks: &BTreeMap<String, TaskDef>,
-        project_root: &Path,
-        init_cwd: &Path,
-    ) -> Self {
+    fn new(tasks: &BTreeMap<String, TaskDef>, project_root: &Path, init_cwd: &Path) -> Self {
         Self {
             tasks: Arc::new(tasks.clone()),
             project_root: project_root.to_path_buf(),
@@ -475,19 +473,9 @@ mod tests {
             description: None,
             dependencies: Vec::new(),
         };
-        run_task(
-            "init",
-            &task,
-            project_root.path(),
-            init_cwd.path(),
-        )
-        .expect("task should succeed");
-        let contents =
-            fs::read_to_string(project_root.path().join("init.txt")).unwrap();
-        assert_eq!(
-            contents.trim(),
-            init_cwd.path().to_string_lossy().as_ref()
-        );
+        run_task("init", &task, project_root.path(), init_cwd.path()).expect("task should succeed");
+        let contents = fs::read_to_string(project_root.path().join("init.txt")).unwrap();
+        assert_eq!(contents.trim(), init_cwd.path().to_string_lossy().as_ref());
     }
 
     #[test]
@@ -511,8 +499,7 @@ mod tests {
                 dependencies: vec!["prepare".to_string()],
             },
         );
-        run_tasks("build", &tasks, project_root.path(), init_cwd)
-            .expect("task should succeed");
+        run_tasks("build", &tasks, project_root.path(), init_cwd).expect("task should succeed");
         assert!(project_root.path().join("ready.txt").is_file());
         assert!(project_root.path().join("build.txt").is_file());
     }
@@ -546,8 +533,7 @@ mod tests {
                 dependencies: vec!["prep".to_string()],
             },
         );
-        run_tasks("build-*", &tasks, project_root.path(), init_cwd)
-            .expect("tasks should succeed");
+        run_tasks("build-*", &tasks, project_root.path(), init_cwd).expect("tasks should succeed");
         let log = fs::read_to_string(project_root.path().join("log.txt")).unwrap();
         assert_eq!(log.lines().count(), 1);
     }
@@ -573,8 +559,7 @@ mod tests {
                 dependencies: Vec::new(),
             },
         );
-        run_tasks("lint-*", &tasks, project_root.path(), init_cwd)
-            .expect("tasks should succeed");
+        run_tasks("lint-*", &tasks, project_root.path(), init_cwd).expect("tasks should succeed");
         assert!(project_root.path().join("a.txt").is_file());
         assert!(project_root.path().join("b.txt").is_file());
     }
@@ -638,8 +623,8 @@ mod tests {
                 dependencies: vec!["b".to_string(), "a".to_string()],
             },
         );
-        let err = run_tasks("root", &tasks, project_root.path(), init_cwd)
-            .expect_err("should fail");
+        let err =
+            run_tasks("root", &tasks, project_root.path(), init_cwd).expect_err("should fail");
         assert!(err.contains("task `a` failed"));
     }
 }

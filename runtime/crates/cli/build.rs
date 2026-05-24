@@ -13,13 +13,13 @@ fn main() {
     let head_path = git_dir.join("HEAD");
 
     println!("cargo:rerun-if-changed={}", head_path.display());
-    if let Ok(head) = std::fs::read_to_string(&head_path) {
-        if let Some(reference) = head.strip_prefix("ref: ").map(str::trim) {
-            println!(
-                "cargo:rerun-if-changed={}",
-                git_dir.join(reference).display()
-            );
-        }
+    if let Ok(head) = std::fs::read_to_string(&head_path)
+        && let Some(reference) = head.strip_prefix("ref: ").map(str::trim)
+    {
+        println!(
+            "cargo:rerun-if-changed={}",
+            git_dir.join(reference).display()
+        );
     }
 
     let git_sha = Command::new("git")
@@ -49,14 +49,14 @@ fn resolve_git_dir(repo_root: &std::path::Path) -> std::path::PathBuf {
     if dot_git.is_dir() {
         return dot_git;
     }
-    if let Ok(contents) = std::fs::read_to_string(&dot_git) {
-        if let Some(path) = contents.strip_prefix("gitdir: ").map(str::trim) {
-            let resolved = std::path::Path::new(path);
-            if resolved.is_absolute() {
-                return resolved.to_path_buf();
-            }
-            return repo_root.join(resolved);
+    if let Ok(contents) = std::fs::read_to_string(&dot_git)
+        && let Some(path) = contents.strip_prefix("gitdir: ").map(str::trim)
+    {
+        let resolved = std::path::Path::new(path);
+        if resolved.is_absolute() {
+            return resolved.to_path_buf();
         }
+        return repo_root.join(resolved);
     }
     dot_git
 }

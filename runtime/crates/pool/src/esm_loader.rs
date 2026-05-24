@@ -1,8 +1,8 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::rc::Rc;
 
 use deno_core::ModuleLoadOptions;
 use deno_core::ModuleLoadReferrer;
@@ -16,10 +16,10 @@ use deno_core::ResolutionKind;
 use deno_core::resolve_import;
 use deno_error::JsErrorBox;
 
+use phpx_js::SourceModuleMeta;
 use phpx_js::build_stdlib_prelude;
 use phpx_js::compile_phpx_source_to_js;
 use phpx_js::parse_source_module_meta;
-use phpx_js::SourceModuleMeta;
 use runtime_core::module_spec::{is_bare_module_specifier, module_spec_aliases};
 
 #[derive(Clone)]
@@ -38,8 +38,9 @@ pub struct PhpxEsmLoader {
 impl PhpxEsmLoader {
     pub fn new(project_root: PathBuf, entry_path: PathBuf) -> Result<Self, JsErrorBox> {
         let cache_dir = project_root.join(".cache").join("phpx_js");
-        std::fs::create_dir_all(&cache_dir)
-            .map_err(|err| JsErrorBox::generic(format!("failed to create {}: {}", cache_dir.display(), err)))?;
+        std::fs::create_dir_all(&cache_dir).map_err(|err| {
+            JsErrorBox::generic(format!("failed to create {}: {}", cache_dir.display(), err))
+        })?;
         let entry_is_app_directory = entry_path.is_dir();
         let app_directory_path = if entry_is_app_directory {
             Some(entry_path.clone())
@@ -85,8 +86,7 @@ impl PhpxEsmLoader {
     }
 
     fn load_js_source(&self, path: &Path) -> Result<ModuleSourceCode, JsErrorBox> {
-        let text = std::fs::read_to_string(path)
-            .map_err(|err| JsErrorBox::from_err(err))?;
+        let text = std::fs::read_to_string(path).map_err(|err| JsErrorBox::from_err(err))?;
         Ok(ModuleSourceCode::String(text.into()))
     }
 
@@ -94,11 +94,11 @@ impl PhpxEsmLoader {
         let input = path
             .to_str()
             .ok_or_else(|| JsErrorBox::generic(format!("invalid path: {}", path.display())))?;
-        let source = std::fs::read_to_string(path)
-            .map_err(|err| JsErrorBox::generic(format!("Failed to read {}: {}", path.display(), err)))?;
+        let source = std::fs::read_to_string(path).map_err(|err| {
+            JsErrorBox::generic(format!("Failed to read {}: {}", path.display(), err))
+        })?;
         let meta = parse_source_module_meta(&source);
-        ensure_project_layout(&self.project_root, &meta)
-            .map_err(|err| JsErrorBox::generic(err))?;
+        ensure_project_layout(&self.project_root, &meta).map_err(|err| JsErrorBox::generic(err))?;
         let js = compile_phpx_source_to_js(&source, input, meta)
             .map_err(|err| JsErrorBox::generic(err))?;
 
@@ -131,7 +131,10 @@ impl PhpxEsmLoader {
         if resolved.scheme() == "file" || resolved.scheme() == "ext" {
             return Ok(resolved);
         }
-        Err(JsErrorBox::generic(format!("unsupported module scheme: {}", resolved)))
+        Err(JsErrorBox::generic(format!(
+            "unsupported module scheme: {}",
+            resolved
+        )))
     }
 
     fn load_source(&self, specifier: &ModuleSpecifier) -> Result<ModuleSource, JsErrorBox> {
@@ -158,7 +161,9 @@ impl PhpxEsmLoader {
                 .as_ref()
                 .ok_or_else(|| JsErrorBox::generic("missing app directory path"))?;
             let app_root_json = serde_json::to_string(&app_root.to_string_lossy().to_string())
-                .map_err(|err| JsErrorBox::generic(format!("failed to encode app root: {}", err)))?;
+                .map_err(|err| {
+                    JsErrorBox::generic(format!("failed to encode app root: {}", err))
+                })?;
             return Ok(ModuleSource::new(
                 ModuleType::JavaScript,
                 ModuleSourceCode::String(app_directory_entry_source(&app_root_json).into()),
@@ -197,7 +202,12 @@ impl PhpxEsmLoader {
         if specifier == &self.entry_specifier {
             code = append_entry_footer(code);
         }
-        Ok(ModuleSource::new(ModuleType::JavaScript, code, specifier, None))
+        Ok(ModuleSource::new(
+            ModuleType::JavaScript,
+            code,
+            specifier,
+            None,
+        ))
     }
 
     fn wrapper_source(&self) -> String {
@@ -326,7 +336,7 @@ const app = servePhp({});\n\
 export default app;\n",
         app_root_json
     )
-        .to_string()
+    .to_string()
 }
 
 pub fn hash_module_graph(entry_path: &Path) -> Result<u64, String> {
@@ -354,8 +364,7 @@ pub fn hash_module_graph(entry_path: &Path) -> Result<u64, String> {
         if ext == "phpx" {
             let meta = parse_source_module_meta(&source);
             for decl in meta.imports {
-                if let Some(resolved) =
-                    resolve_import_path(&project_root, &path, decl.from.trim())
+                if let Some(resolved) = resolve_import_path(&project_root, &path, decl.from.trim())
                 {
                     stack.push(resolved);
                 }
@@ -537,9 +546,10 @@ fn resolve_phpx_module_spec(project_root: &Path, specifier: &str) -> Option<Path
                 // inside project_root. If canonicalize fails (path doesn't
                 // exist, etc.) we fall through to the next resolver — never
                 // return a path that might escape.
-                if let (Ok(resolved_canon), Ok(root_canon)) =
-                    (std::fs::canonicalize(&resolved), std::fs::canonicalize(project_root))
-                {
+                if let (Ok(resolved_canon), Ok(root_canon)) = (
+                    std::fs::canonicalize(&resolved),
+                    std::fs::canonicalize(project_root),
+                ) {
                     if resolved_canon.starts_with(&root_canon) {
                         return Some(resolved);
                     }
@@ -560,7 +570,9 @@ fn resolve_phpx_module_spec(project_root: &Path, specifier: &str) -> Option<Path
     }
     for alias in aliases.iter() {
         let base = if alias.starts_with("@user/") {
-            modules_dir.join("@user").join(alias.trim_start_matches("@user/"))
+            modules_dir
+                .join("@user")
+                .join(alias.trim_start_matches("@user/"))
         } else {
             modules_dir.join(alias)
         };
@@ -589,11 +601,7 @@ fn resolve_phpx_module_spec(project_root: &Path, specifier: &str) -> Option<Path
     None
 }
 
-fn resolve_import_path(
-    project_root: &Path,
-    referrer: &Path,
-    specifier: &str,
-) -> Option<PathBuf> {
+fn resolve_import_path(project_root: &Path, referrer: &Path, specifier: &str) -> Option<PathBuf> {
     if is_bare_specifier(specifier) {
         return resolve_phpx_module_spec(project_root, specifier);
     }
@@ -605,10 +613,7 @@ fn resolve_import_path(
     let base = if specifier.starts_with('/') {
         PathBuf::from(specifier)
     } else {
-        referrer
-            .parent()
-            .unwrap_or(Path::new("."))
-            .join(specifier)
+        referrer.parent().unwrap_or(Path::new(".")).join(specifier)
     };
     resolve_with_candidates(&base)
 }

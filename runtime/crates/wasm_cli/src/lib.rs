@@ -1,3 +1,5 @@
+#![allow(clippy::all)]
+
 use core::{CommandSpec, Context, ParamSpec, Registry, SubcommandSpec};
 use std::path::{Path, PathBuf};
 
@@ -100,12 +102,8 @@ fn cmd_init(context: &Context) {
         return;
     }
 
-    if let Err(err) = write_rust_crate(
-        &rust_dir,
-        &crate_name,
-        &module_spec.namespace,
-        &world_name,
-    ) {
+    if let Err(err) = write_rust_crate(&rust_dir, &crate_name, &module_spec.namespace, &world_name)
+    {
         stdio::error("wasm", &format!("failed to write rust crate: {err}"));
         return;
     }

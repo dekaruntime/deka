@@ -1,5 +1,5 @@
-use crate::validation::modules::collect_import_specs;
 use crate::validation::imports::ImportKind;
+use crate::validation::modules::collect_import_specs;
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::Read;
@@ -182,7 +182,7 @@ fn normalize_rel(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_module_graph_hash, compute_fs_graph_hash};
+    use super::{compute_fs_graph_hash, compute_module_graph_hash};
     use std::fs;
     use tempfile::tempdir;
 

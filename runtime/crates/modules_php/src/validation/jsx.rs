@@ -814,7 +814,9 @@ mod tests {
     #[test]
     fn async_component_requires_suspense_wrapper() {
         // This check is gated by PHPX_STRICT_ASYNC_SUSPENSE env var
-        unsafe { std::env::set_var("PHPX_STRICT_ASYNC_SUSPENSE", "1"); }
+        unsafe {
+            std::env::set_var("PHPX_STRICT_ASYNC_SUSPENSE", "1");
+        }
         let source = r#"
 async function Card($props: Object<{ label: string }>): Promise<VNode> {
     return <div>{$props.label}</div>
@@ -826,7 +828,9 @@ async function Card($props: Object<{ label: string }>): Promise<VNode> {
             Parser::new_with_mode(Lexer::new(source.as_bytes()), &arena, ParserMode::Phpx);
         let program = parser.parse_program();
         let errors = validate_components(&program, source);
-        unsafe { std::env::remove_var("PHPX_STRICT_ASYNC_SUSPENSE"); }
+        unsafe {
+            std::env::remove_var("PHPX_STRICT_ASYNC_SUSPENSE");
+        }
         assert!(
             errors
                 .iter()

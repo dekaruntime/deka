@@ -1,12 +1,11 @@
 /// Issue #10 — Tenant handler resolution tests.
 ///
-/// Tests the tenant resolution logic: subdomain extraction, X-Shop-ID header
+/// Tests the tenant resolution logic: subdomain extraction, untrusted header
 /// handling, and the handler path resolution pattern used by the platform.
 ///
 /// Redis-dependent paths (actual `resolve_tenant` lookups) are not tested here
 /// because they require a running Redis instance. Only the pure-logic paths
 /// are exercised.
-
 use pool::tenant::{extract_subdomain, resolve_tenant_from_headers};
 use std::path::PathBuf;
 
@@ -45,26 +44,24 @@ fn ip_address_returns_none() {
     assert_eq!(extract_subdomain("192.168.1.100:8080"), None);
 }
 
-// ── resolve_tenant_from_headers (X-Shop-ID path) ───────────────────────
+// ── resolve_tenant_from_headers (untrusted header handling) ────────────
 
 #[test]
-fn x_shop_id_header_overrides_host() {
+fn x_shop_id_header_is_ignored() {
     let headers = vec![
-        ("Host".to_string(), "unknown.tana.gg".to_string()),
+        ("Host".to_string(), "localhost:8530".to_string()),
         ("X-Shop-ID".to_string(), "shop_alpha".to_string()),
     ];
-    assert_eq!(
+    assert_ne!(
         resolve_tenant_from_headers(&headers),
         Some("shop_alpha".to_string())
     );
 }
 
 #[test]
-fn x_shop_id_case_insensitive() {
-    let headers = vec![
-        ("x-shop-id".to_string(), "shop_beta".to_string()),
-    ];
-    assert_eq!(
+fn x_shop_id_case_insensitive_is_ignored() {
+    let headers = vec![("x-shop-id".to_string(), "shop_beta".to_string())];
+    assert_ne!(
         resolve_tenant_from_headers(&headers),
         Some("shop_beta".to_string())
     );
@@ -133,7 +130,10 @@ fn tenant_resolution_finds_handler() {
     );
 
     let content = std::fs::read_to_string(&path).expect("read tenant handler");
-    assert!(content.contains("tenant"), "handler should be the tenant one");
+    assert!(
+        content.contains("tenant"),
+        "handler should be the tenant one"
+    );
 
     let _ = std::fs::remove_dir_all(&tmp);
 }

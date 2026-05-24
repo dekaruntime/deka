@@ -161,15 +161,11 @@ fn req_stream_consumers() -> &'static Mutex<HashMap<u64, RequestStreamConsumer>>
 // concurrently without the bridge's single-threaded call pattern
 // deadlocking on itself.
 type WsSink = futures_util::stream::SplitSink<
-    tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
     Message,
 >;
 type WsStream = futures_util::stream::SplitStream<
-    tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
 >;
 
 struct WsEntry {
@@ -205,8 +201,7 @@ fn host_of(url_str: &str) -> Option<String> {
 /// (platform server / framework) is already exempted by the shared
 /// `enforce_net` helper.
 pub(crate) fn enforce_host_allowed(url_str: &str) -> Result<(), String> {
-    let host = host_of(url_str)
-        .ok_or_else(|| format!("invalid url: '{}'", url_str))?;
+    let host = host_of(url_str).ok_or_else(|| format!("invalid url: '{}'", url_str))?;
     match crate::modules::php::enforce_net_public(&host) {
         Ok(()) => Ok(()),
         Err(err) => Err(format!("host_not_allowed: {} ({})", host, err)),
@@ -231,11 +226,7 @@ fn host_checked_redirect_policy(max_hops: usize) -> reqwest::redirect::Policy {
         // Snapshot what we need from `attempt` before any terminal
         // call consumes it — `attempt.error()` / `attempt.follow()`
         // / `attempt.stop()` all take `self` by value.
-        let host = attempt
-            .url()
-            .host_str()
-            .unwrap_or("")
-            .to_ascii_lowercase();
+        let host = attempt.url().host_str().unwrap_or("").to_ascii_lowercase();
         let url = attempt.url().to_string();
 
         if attempt.previous().len() >= max_hops {
@@ -245,10 +236,7 @@ fn host_checked_redirect_policy(max_hops: usize) -> reqwest::redirect::Policy {
             });
         }
         if let Err(err) = enforce_host_allowed(&url) {
-            return attempt.error(RedirectHostDenied {
-                host,
-                reason: err,
-            });
+            return attempt.error(RedirectHostDenied { host, reason: err });
         }
         attempt.follow()
     })
@@ -269,7 +257,11 @@ struct RedirectHostDenied {
 
 impl std::fmt::Display for RedirectHostDenied {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "redirect host not allowed: {} ({})", self.host, self.reason)
+        write!(
+            f,
+            "redirect host not allowed: {} ({})",
+            self.host, self.reason
+        )
     }
 }
 
@@ -387,7 +379,11 @@ fn request(payload: &Value) -> Value {
 
     // If streaming body, detach the consumer side of the channel now.
     let stream_consumer = if let BodyKind::Stream(handle) = &body_kind {
-        match req_stream_consumers().lock().ok().and_then(|mut g| g.remove(handle)) {
+        match req_stream_consumers()
+            .lock()
+            .ok()
+            .and_then(|mut g| g.remove(handle))
+        {
             Some(c) => Some(c),
             None => {
                 return json!({ "ok": false, "error": "invalid_stream_handle", "message": handle });
@@ -543,8 +539,7 @@ fn encode_reqwest_error(e: &reqwest::Error) -> Value {
     // so PHPX callers don't have to distinguish "disallowed initial
     // host" from "disallowed redirect hop".
     {
-        let mut src: Option<&(dyn std::error::Error + 'static)> =
-            std::error::Error::source(e);
+        let mut src: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(e);
         while let Some(cause) = src {
             if let Some(denied) =
                 <dyn std::error::Error + 'static>::downcast_ref::<RedirectHostDenied>(cause)
@@ -598,7 +593,10 @@ fn stream_read(payload: &Value) -> Value {
         Some(h) => h,
         None => return json!({ "ok": false, "error": "invalid_stream_handle" }),
     };
-    let timeout_ms = payload.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(30_000);
+    let timeout_ms = payload
+        .get("timeout_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(30_000);
 
     // Pull the Receiver out of the map, await on it, then put it back.
     // std Mutex is not Send across awaits, so we never hold it across
@@ -681,8 +679,14 @@ fn stream_close(payload: &Value) -> Value {
 fn req_stream_new(_payload: &Value) -> Value {
     let (tx, rx) = mpsc::channel::<Result<bytes::Bytes, String>>(16);
     let handle = new_handle();
-    req_streams().lock().unwrap().insert(handle, RequestStreamProducer { tx });
-    req_stream_consumers().lock().unwrap().insert(handle, RequestStreamConsumer { rx });
+    req_streams()
+        .lock()
+        .unwrap()
+        .insert(handle, RequestStreamProducer { tx });
+    req_stream_consumers()
+        .lock()
+        .unwrap()
+        .insert(handle, RequestStreamConsumer { rx });
     json!({ "ok": true, "stream_handle": handle })
 }
 
@@ -701,7 +705,11 @@ fn req_stream_write(payload: &Value) -> Value {
         return json!({ "ok": false, "error": "invalid_chunk" });
     };
 
-    let tx_opt = req_streams().lock().unwrap().get(&handle).map(|p| p.tx.clone());
+    let tx_opt = req_streams()
+        .lock()
+        .unwrap()
+        .get(&handle)
+        .map(|p| p.tx.clone());
     let Some(tx) = tx_opt else {
         return json!({ "ok": false, "error": "invalid_stream_handle" });
     };
@@ -760,7 +768,9 @@ fn client_new(payload: &Value) -> Value {
 
     let client = match b.build() {
         Ok(c) => c,
-        Err(e) => return json!({ "ok": false, "error": "transport_error", "message": e.to_string() }),
+        Err(e) => {
+            return json!({ "ok": false, "error": "transport_error", "message": e.to_string() });
+        }
     };
 
     let handle = new_handle();
@@ -864,7 +874,9 @@ fn ws_connect(payload: &Value) -> Value {
         use tokio_tungstenite::tungstenite::client::IntoClientRequest;
         let mut request = match url_str.as_str().into_client_request() {
             Ok(r) => r,
-            Err(e) => return json!({ "ok": false, "error": "invalid_url", "message": e.to_string() }),
+            Err(e) => {
+                return json!({ "ok": false, "error": "invalid_url", "message": e.to_string() });
+            }
         };
         for (k, v) in headers_map.iter() {
             if let Some(vs) = v.as_str() {
@@ -907,7 +919,11 @@ fn ws_send_text(payload: &Value) -> Value {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    let sink = match websockets().lock().ok().and_then(|g| g.get(&handle).map(|e| e.sink.clone())) {
+    let sink = match websockets()
+        .lock()
+        .ok()
+        .and_then(|g| g.get(&handle).map(|e| e.sink.clone()))
+    {
         Some(s) => s,
         None => return json!({ "ok": false, "error": "invalid_ws_handle" }),
     };
@@ -926,13 +942,19 @@ fn ws_send_binary(payload: &Value) -> Value {
         None => return json!({ "ok": false, "error": "invalid_ws_handle" }),
     };
     let bytes: Vec<u8> = if let Some(arr) = payload.get("bytes").and_then(|v| v.as_array()) {
-        arr.iter().filter_map(|v| v.as_u64().map(|n| n.min(255) as u8)).collect()
+        arr.iter()
+            .filter_map(|v| v.as_u64().map(|n| n.min(255) as u8))
+            .collect()
     } else if let Some(s) = payload.get("bytes").and_then(|v| v.as_str()) {
         s.as_bytes().to_vec()
     } else {
         return json!({ "ok": false, "error": "invalid_bytes" });
     };
-    let sink = match websockets().lock().ok().and_then(|g| g.get(&handle).map(|e| e.sink.clone())) {
+    let sink = match websockets()
+        .lock()
+        .ok()
+        .and_then(|g| g.get(&handle).map(|e| e.sink.clone()))
+    {
         Some(s) => s,
         None => return json!({ "ok": false, "error": "invalid_ws_handle" }),
     };
@@ -950,12 +972,14 @@ fn ws_recv(payload: &Value) -> Value {
         Some(h) => h,
         None => return json!({ "ok": false, "error": "invalid_ws_handle" }),
     };
-    let timeout_ms = payload.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(30_000);
-    let (stream, sink, max_frame) = match websockets()
-        .lock()
-        .ok()
-        .and_then(|g| g.get(&handle).map(|e| (e.stream.clone(), e.sink.clone(), e.max_frame_bytes)))
-    {
+    let timeout_ms = payload
+        .get("timeout_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(30_000);
+    let (stream, sink, max_frame) = match websockets().lock().ok().and_then(|g| {
+        g.get(&handle)
+            .map(|e| (e.stream.clone(), e.sink.clone(), e.max_frame_bytes))
+    }) {
         Some(x) => x,
         None => return json!({ "ok": false, "error": "invalid_ws_handle" }),
     };
@@ -1012,12 +1036,19 @@ fn ws_ping(payload: &Value) -> Value {
         Some(h) => h,
         None => return json!({ "ok": false, "error": "invalid_ws_handle" }),
     };
-    let payload_bytes: Vec<u8> = if let Some(arr) = payload.get("bytes").and_then(|v| v.as_array()) {
-        arr.iter().filter_map(|v| v.as_u64().map(|n| n.min(255) as u8)).collect()
+    let payload_bytes: Vec<u8> = if let Some(arr) = payload.get("bytes").and_then(|v| v.as_array())
+    {
+        arr.iter()
+            .filter_map(|v| v.as_u64().map(|n| n.min(255) as u8))
+            .collect()
     } else {
         Vec::new()
     };
-    let sink = match websockets().lock().ok().and_then(|g| g.get(&handle).map(|e| e.sink.clone())) {
+    let sink = match websockets()
+        .lock()
+        .ok()
+        .and_then(|g| g.get(&handle).map(|e| e.sink.clone()))
+    {
         Some(s) => s,
         None => return json!({ "ok": false, "error": "invalid_ws_handle" }),
     };
@@ -1036,8 +1067,16 @@ fn ws_close(payload: &Value) -> Value {
         None => return json!({ "ok": false, "error": "invalid_ws_handle" }),
     };
     let code = payload.get("code").and_then(|v| v.as_u64()).unwrap_or(1000) as u16;
-    let reason = payload.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let entry = match websockets().lock().ok().and_then(|g| g.get(&handle).map(|e| (e.sink.clone(), e.stream.clone()))) {
+    let reason = payload
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let entry = match websockets()
+        .lock()
+        .ok()
+        .and_then(|g| g.get(&handle).map(|e| (e.sink.clone(), e.stream.clone())))
+    {
         Some(x) => x,
         None => return json!({ "ok": false, "error": "invalid_ws_handle" }),
     };

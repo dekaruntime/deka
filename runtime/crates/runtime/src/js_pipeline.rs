@@ -3,9 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use bundler::{bundle_virtual_entry, BundleOptions, VirtualSource};
+use bundler::{BundleOptions, VirtualSource, bundle_virtual_entry};
 use phpx_js::{
-    build_stdlib_prelude, compile_phpx_source_to_js, parse_source_module_meta, SourceModuleMeta,
+    SourceModuleMeta, build_stdlib_prelude, compile_phpx_source_to_js, parse_source_module_meta,
 };
 use runtime_core::module_spec::{is_bare_module_specifier, module_spec_aliases};
 
@@ -27,7 +27,11 @@ pub fn build_phpx_handler_bundle(handler_path: &str) -> Result<String, String> {
     // build_stdlib_prelude needs php_modules/stdlib.json under the project root.
     // If the tenant has not provided one, skip prelude generation entirely —
     // there is no system stdlib fallback.
-    let prelude = if project_root.join("php_modules").join("stdlib.json").is_file() {
+    let prelude = if project_root
+        .join("php_modules")
+        .join("stdlib.json")
+        .is_file()
+    {
         build_stdlib_prelude(&project_root)?
     } else {
         String::new()
@@ -37,16 +41,10 @@ pub fn build_phpx_handler_bundle(handler_path: &str) -> Result<String, String> {
     // php/php.js at extension-init time) can enforce per-tenant path
     // confinement.  The root is the canonicalised project_root — i.e. the
     // directory containing deka.json for this tenant.
-    let canonical_root = fs::canonicalize(&project_root)
-        .unwrap_or_else(|_| project_root.clone());
-    let root_json = serde_json::to_string(
-        &canonical_root.to_string_lossy().to_string()
-    )
-    .unwrap_or_else(|_| "\"\"".to_string());
-    let tenant_root_injection = format!(
-        "globalThis.__dekaFsTenantRoot = {};\n",
-        root_json
-    );
+    let canonical_root = fs::canonicalize(&project_root).unwrap_or_else(|_| project_root.clone());
+    let root_json = serde_json::to_string(&canonical_root.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "\"\"".to_string());
+    let tenant_root_injection = format!("globalThis.__dekaFsTenantRoot = {};\n", root_json);
 
     entry_js = format!("{prelude}\n{tenant_root_injection}{entry_js}");
     let entry_path = fs::canonicalize(input_path)

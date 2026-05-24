@@ -233,10 +233,7 @@ jobs:
 "#;
         let pipeline = parse_pipeline_yaml_from_str(yaml).unwrap();
         let build = pipeline.jobs.get("build").unwrap();
-        assert_eq!(
-            build.target.as_deref(),
-            Some("x86_64-unknown-linux-gnu")
-        );
+        assert_eq!(build.target.as_deref(), Some("x86_64-unknown-linux-gnu"));
     }
 
     #[test]

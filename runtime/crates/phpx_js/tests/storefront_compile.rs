@@ -6,8 +6,7 @@
 /// The storefront imports `@tana/store` and `@deka/*` stdlib modules. Both live in
 /// `tana/store/default/php_modules/`. We symlink that directory (and its deka.lock)
 /// into a temp project so module resolution finds them.
-
-use phpx_js::{compile_phpx_source_to_js, SourceModuleMeta};
+use phpx_js::{SourceModuleMeta, compile_phpx_source_to_js};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Path to the default storefront directory (contains main.phpx, php_modules/, deka.lock).
@@ -42,16 +41,10 @@ fn storefront_handler_compiles() {
     // because the storefront ships its own @tana/store and @deka/* packages.
     #[cfg(unix)]
     {
-        std::os::unix::fs::symlink(
-            storefront_dir.join("php_modules"),
-            tmp.join("php_modules"),
-        )
-        .expect("symlink php_modules");
-        std::os::unix::fs::symlink(
-            storefront_dir.join("deka.lock"),
-            tmp.join("deka.lock"),
-        )
-        .expect("symlink deka.lock");
+        std::os::unix::fs::symlink(storefront_dir.join("php_modules"), tmp.join("php_modules"))
+            .expect("symlink php_modules");
+        std::os::unix::fs::symlink(storefront_dir.join("deka.lock"), tmp.join("deka.lock"))
+            .expect("symlink deka.lock");
     }
     #[cfg(not(unix))]
     {
@@ -72,10 +65,7 @@ fn storefront_handler_compiles() {
 
     let js = result.unwrap_or_else(|err| panic!("storefront compilation failed:\n{}", err));
 
-    assert!(
-        !js.is_empty(),
-        "storefront compiled to empty JS output"
-    );
+    assert!(!js.is_empty(), "storefront compiled to empty JS output");
 
     // The compiled output must contain a function — the storefront defines `App`.
     assert!(

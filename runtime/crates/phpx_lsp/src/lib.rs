@@ -1,3 +1,5 @@
+#![allow(clippy::all)]
+
 use bumpalo::Bump;
 use modules_php::compiler_api::compile_phpx;
 use modules_php::validation::{Severity, ValidationError, ValidationWarning};

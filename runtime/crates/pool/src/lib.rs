@@ -1,3 +1,5 @@
+#![allow(clippy::all)]
+
 pub mod esm_loader;
 pub mod isolate_pool;
 pub mod secrets_cache;

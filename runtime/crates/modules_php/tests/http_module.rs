@@ -121,7 +121,11 @@ fn capability_gate_dns_wildcard_matches_subdomains() {
         }),
     );
     let err = sub.get("error").and_then(|v| v.as_str()).unwrap_or("");
-    assert_ne!(err, "host_not_allowed", "subdomain should be allowed: {}", sub);
+    assert_ne!(
+        err, "host_not_allowed",
+        "subdomain should be allowed: {}",
+        sub
+    );
 }
 
 #[test]
@@ -225,7 +229,10 @@ fn cookie_jar_persists_across_requests() {
         }),
     );
     assert_eq!(client.get("ok").and_then(|v| v.as_bool()), Some(true));
-    let handle = client.get("client_handle").and_then(|v| v.as_u64()).unwrap();
+    let handle = client
+        .get("client_handle")
+        .and_then(|v| v.as_u64())
+        .unwrap();
 
     // httpbin /cookies/set/<name>/<value> returns Set-Cookie.
     let _ = http_call(
@@ -261,9 +268,10 @@ fn cookie_jar_persists_across_requests() {
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
-    assert!(list
-        .iter()
-        .any(|c| c.get("name").and_then(|v| v.as_str()) == Some("dekatest")));
+    assert!(
+        list.iter()
+            .any(|c| c.get("name").and_then(|v| v.as_str()) == Some("dekatest"))
+    );
 
     // Cross-origin should NOT see the cookie.
     let cross = http_call(
@@ -278,16 +286,9 @@ fn cookie_jar_persists_across_requests() {
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
-    assert!(
-        xlist.is_empty(),
-        "cookies leaked cross-origin: {:?}",
-        xlist
-    );
+    assert!(xlist.is_empty(), "cookies leaked cross-origin: {:?}", xlist);
 
-    let _ = http_call(
-        "client_close",
-        &json!({ "client_handle": handle }),
-    );
+    let _ = http_call("client_close", &json!({ "client_handle": handle }));
 }
 
 #[test]
@@ -309,10 +310,7 @@ fn streaming_response_reads_chunks() {
         "{}",
         resp
     );
-    let handle = resp
-        .get("stream_handle")
-        .and_then(|v| v.as_u64())
-        .unwrap();
+    let handle = resp.get("stream_handle").and_then(|v| v.as_u64()).unwrap();
 
     let mut total = 0usize;
     loop {
@@ -337,10 +335,7 @@ fn streaming_response_reads_chunks() {
         }
     }
     assert!(total > 0, "no bytes streamed");
-    let _ = http_call(
-        "stream_close",
-        &json!({ "stream_handle": handle }),
-    );
+    let _ = http_call("stream_close", &json!({ "stream_handle": handle }));
 }
 
 #[test]
@@ -348,7 +343,10 @@ fn streaming_response_reads_chunks() {
 fn streaming_upload_100mb_constant_memory() {
     let _g = PolicyGuard::allow_net(&["httpbin.org"]);
     let stream = http_call("req_stream_new", &json!({}));
-    let handle = stream.get("stream_handle").and_then(|v| v.as_u64()).unwrap();
+    let handle = stream
+        .get("stream_handle")
+        .and_then(|v| v.as_u64())
+        .unwrap();
 
     // Dispatch the request on a background thread so we can feed the
     // body concurrently.
@@ -382,10 +380,7 @@ fn streaming_upload_100mb_constant_memory() {
         );
         assert_eq!(r.get("ok").and_then(|v| v.as_bool()), Some(true));
     }
-    let _ = http_call(
-        "req_stream_end",
-        &json!({ "stream_handle": handle }),
-    );
+    let _ = http_call("req_stream_end", &json!({ "stream_handle": handle }));
     let resp = t.join().unwrap();
     assert_eq!(
         resp.get("ok").and_then(|v| v.as_bool()),
@@ -509,10 +504,7 @@ fn websocket_local_echo_text_and_binary() {
     assert_eq!(got, vec![1, 2, 3, 255]);
 
     // Ping/pong — server auto-pongs.
-    let _ = http_call(
-        "ws_ping",
-        &json!({ "ws_handle": handle, "bytes": [9, 9] }),
-    );
+    let _ = http_call("ws_ping", &json!({ "ws_handle": handle, "bytes": [9, 9] }));
     let pong = http_call(
         "ws_recv",
         &json!({ "ws_handle": handle, "timeout_ms": 2000 }),
