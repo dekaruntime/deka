@@ -5,8 +5,8 @@ use axum::{
 use std::net::SocketAddr;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-mod audit_routes;
 mod account_routes;
+mod audit_routes;
 mod auth;
 mod authz;
 mod config;
@@ -29,8 +29,8 @@ mod scoped_package_routes;
 mod token_routes;
 mod visibility_routes;
 
-use audit_routes::*;
 use account_routes::*;
+use audit_routes::*;
 use config::Config;
 use git_routes::*;
 use issue_routes::*;
@@ -51,6 +51,16 @@ async fn main() {
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
+
+    if let Some(command) = std::env::args().nth(1) {
+        if command == "migrate-tokens-to-vault" {
+            if let Err(err) = run_migrate_tokens_to_vault().await {
+                tracing::error!("token vault migration failed: {}", err);
+                std::process::exit(1);
+            }
+            return;
+        }
+    }
 
     let config = Config::load();
 
@@ -271,4 +281,19 @@ async fn main() {
 
 async fn handle_health() -> &'static str {
     "OK"
+}
+
+async fn run_migrate_tokens_to_vault() -> anyhow::Result<()> {
+    let config = Config::load();
+    std::fs::create_dir_all(config.db_dir())?;
+    db::init(&config.db_path).await?;
+
+    let vault_url =
+        std::env::var("TANA_VAULT_URL").unwrap_or_else(|_| "http://localhost:9501".to_string());
+    let admin_token = std::env::var("TANA_VAULT_ADMIN_TOKEN")
+        .or_else(|_| std::env::var("GILD_VAULT_ADMIN_TOKEN"))?;
+    let migrated = auth::migrate_tokens_to_vault(&vault_url, &admin_token).await?;
+    tracing::info!(migrated, "migrated gild-vcs tokens to vault");
+    println!("migrated {migrated} tokens to vault");
+    Ok(())
 }

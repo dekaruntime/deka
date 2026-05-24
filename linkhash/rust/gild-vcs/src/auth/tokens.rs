@@ -2,6 +2,7 @@ use rand::{distributions::Alphanumeric, Rng};
 use serde::{Deserialize, Serialize};
 
 use super::sha256_hex;
+use crate::authz::{RepoAccess, RepoGrant};
 
 #[derive(Debug, Deserialize)]
 pub struct CreateTokenRequest {
@@ -47,6 +48,23 @@ struct TokenListRow {
     expires_at: Option<String>,
     last_used_at: Option<String>,
     revoked: i32,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct TokenMigrationRow {
+    key_hash: String,
+    key_type: String,
+    owner: String,
+    scopes: String,
+    repos: String,
+}
+
+#[derive(Debug, Serialize)]
+struct VaultAuthUserPayload {
+    username: String,
+    labels: Vec<String>,
+    repo_grants: Vec<RepoGrant>,
+    secret_grants: Vec<serde_json::Value>,
 }
 
 pub async fn create_token(req: CreateTokenRequest) -> anyhow::Result<CreateTokenResponse> {
@@ -123,6 +141,43 @@ pub async fn revoke_token(token_id: i64) -> anyhow::Result<bool> {
     Ok(result.rows_affected() > 0)
 }
 
+pub async fn migrate_tokens_to_vault(vault_url: &str, admin_token: &str) -> anyhow::Result<usize> {
+    let rows = sqlx::query_as::<_, TokenMigrationRow>(
+        r#"
+        SELECT key_hash, key_type, owner, scopes, repos
+        FROM access_tokens
+        WHERE revoked = 0
+          AND (expires_at IS NULL OR expires_at > datetime('now'))
+        ORDER BY id
+        "#,
+    )
+    .fetch_all(crate::db::pool())
+    .await?;
+
+    let client = reqwest::Client::new();
+    let base_url = vault_url.trim_end_matches('/');
+
+    for row in &rows {
+        let Some(hash_prefix) = row.key_hash.get(..16) else {
+            anyhow::bail!("token hash for owner {} is too short", row.owner);
+        };
+        let key = format!("GIT_TOKEN_{hash_prefix}");
+        let payload = row.to_vault_payload();
+        let value = serde_json::to_string(&payload)?;
+        let url = format!("{base_url}/v1/secret/{key}");
+
+        client
+            .put(url)
+            .bearer_auth(admin_token)
+            .json(&serde_json::json!({ "value": value }))
+            .send()
+            .await?
+            .error_for_status()?;
+    }
+
+    Ok(rows.len())
+}
+
 fn generate_token(key_type: &str) -> String {
     let prefix = match key_type {
         "system" => "tg_sys",
@@ -136,4 +191,37 @@ fn generate_token(key_type: &str) -> String {
         .map(char::from)
         .collect();
     format!("{}_{}", prefix, suffix)
+}
+
+impl TokenMigrationRow {
+    fn to_vault_payload(&self) -> VaultAuthUserPayload {
+        let scopes: Vec<String> = serde_json::from_str(&self.scopes).unwrap_or_default();
+        let repos: Vec<String> = serde_json::from_str(&self.repos).unwrap_or_default();
+        let access = if scopes
+            .iter()
+            .any(|scope| scope == "*" || scope == "repo:write")
+        {
+            RepoAccess::Write
+        } else {
+            RepoAccess::Read
+        };
+
+        let mut labels = vec![self.key_type.clone()];
+        if scopes.iter().any(|scope| scope == "*") {
+            labels.push("admin".to_string());
+        }
+
+        VaultAuthUserPayload {
+            username: self.owner.clone(),
+            labels,
+            repo_grants: repos
+                .into_iter()
+                .map(|repo| RepoGrant {
+                    repo,
+                    access: access.clone(),
+                })
+                .collect(),
+            secret_grants: Vec::new(),
+        }
+    }
 }
