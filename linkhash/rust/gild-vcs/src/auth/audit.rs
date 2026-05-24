@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+#[allow(clippy::too_many_arguments)]
 pub async fn log_audit(
     token_id: Option<i64>,
     key_type: &str,

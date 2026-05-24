@@ -32,7 +32,7 @@ pub use tokens::{
     create_token, list_tokens, migrate_tokens_to_vault, revoke_token, CreateTokenRequest,
 };
 #[allow(unused_imports)]
-pub use tokens::{CreateTokenResponse, TokenInfo};
+pub use tokens::{migrate_tokens_to_vault_with_clients, CreateTokenResponse, TokenInfo};
 pub use visibility::{get_repo_visibility, is_repo_public, set_repo_visibility};
 
 type HmacSha256 = Hmac<Sha256>;
@@ -252,7 +252,10 @@ async fn fetch_auth_user_from_vault_with_vault(
         Err(err) => return Err(err.into()),
     };
 
-    let user = serde_json::from_str::<AdminAuthResponse>(&value)?.into_auth_user();
+    let user = match serde_json::from_str::<AuthUser>(&value) {
+        Ok(user) => user,
+        Err(_) => serde_json::from_str::<AdminAuthResponse>(&value)?.into_auth_user(),
+    };
     Ok(Some(user))
 }
 

@@ -1,8 +1,9 @@
 use rand::{distributions::Alphanumeric, Rng};
 use serde::{Deserialize, Serialize};
 
-use super::sha256_hex;
+use super::{sha256_hex, AuthUser};
 use crate::authz::{RepoAccess, RepoGrant};
+use gild_vault_client::{Secrets, SecretsError, VaultClient};
 
 #[derive(Debug, Deserialize)]
 pub struct CreateTokenRequest {
@@ -52,6 +53,7 @@ struct TokenListRow {
 
 #[derive(Debug, sqlx::FromRow)]
 struct TokenMigrationRow {
+    id: i64,
     key_hash: String,
     key_type: String,
     owner: String,
@@ -59,12 +61,11 @@ struct TokenMigrationRow {
     repos: String,
 }
 
-#[derive(Debug, Serialize)]
-struct VaultAuthUserPayload {
-    username: String,
-    labels: Vec<String>,
-    repo_grants: Vec<RepoGrant>,
-    secret_grants: Vec<serde_json::Value>,
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TokenMigrationSummary {
+    pub migrated: usize,
+    pub skipped: usize,
+    pub failed: usize,
 }
 
 pub async fn create_token(req: CreateTokenRequest) -> anyhow::Result<CreateTokenResponse> {
@@ -141,41 +142,78 @@ pub async fn revoke_token(token_id: i64) -> anyhow::Result<bool> {
     Ok(result.rows_affected() > 0)
 }
 
-pub async fn migrate_tokens_to_vault(vault_url: &str, admin_token: &str) -> anyhow::Result<usize> {
+pub async fn migrate_tokens_to_vault(
+    socket_path: impl AsRef<std::path::Path>,
+) -> anyhow::Result<TokenMigrationSummary> {
+    let secrets = Secrets::from_socket_path(socket_path.as_ref());
+    let vault = VaultClient::from_socket_path(socket_path);
+    migrate_tokens_to_vault_with_clients(crate::db::pool(), &secrets, &vault).await
+}
+
+pub async fn migrate_tokens_to_vault_with_clients(
+    pool: &sqlx::SqlitePool,
+    secrets: &Secrets,
+    vault: &VaultClient,
+) -> anyhow::Result<TokenMigrationSummary> {
     let rows = sqlx::query_as::<_, TokenMigrationRow>(
         r#"
-        SELECT key_hash, key_type, owner, scopes, repos
+        SELECT id, key_hash, key_type, owner, scopes, repos
         FROM access_tokens
         WHERE revoked = 0
           AND (expires_at IS NULL OR expires_at > datetime('now'))
         ORDER BY id
         "#,
     )
-    .fetch_all(crate::db::pool())
+    .fetch_all(pool)
     .await?;
 
-    let client = reqwest::Client::new();
-    let base_url = vault_url.trim_end_matches('/');
-
+    let mut summary = TokenMigrationSummary::default();
     for row in &rows {
-        let Some(hash_prefix) = row.key_hash.get(..16) else {
-            anyhow::bail!("token hash for owner {} is too short", row.owner);
+        let key = match row.vault_key() {
+            Ok(key) => key,
+            Err(err) => {
+                summary.failed += 1;
+                tracing::error!(owner = %row.owner, error = %err, "failed to derive token vault key");
+                continue;
+            }
         };
-        let key = format!("GIT_TOKEN_{hash_prefix}");
-        let payload = row.to_vault_payload();
-        let value = serde_json::to_string(&payload)?;
-        let url = format!("{base_url}/v1/secret/{key}");
 
-        client
-            .put(url)
-            .bearer_auth(admin_token)
-            .json(&serde_json::json!({ "value": value }))
-            .send()
-            .await?
-            .error_for_status()?;
+        match secrets.get(&key).await {
+            Ok(_) => {
+                summary.skipped += 1;
+                tracing::info!(key = %key, username = %row.owner, "skipped existing token vault key");
+                continue;
+            }
+            Err(SecretsError::AgentStatus { status: 404, .. }) => {}
+            Err(err) => {
+                summary.failed += 1;
+                tracing::error!(key = %key, username = %row.owner, error = %err, "failed to check token vault key");
+                continue;
+            }
+        }
+
+        let value = match serde_json::to_string(&row.to_auth_user()) {
+            Ok(value) => value,
+            Err(err) => {
+                summary.failed += 1;
+                tracing::error!(key = %key, username = %row.owner, error = %err, "failed to serialize token vault payload");
+                continue;
+            }
+        };
+
+        match vault.put(&key, &value).await {
+            Ok(()) => {
+                summary.migrated += 1;
+                tracing::info!(key = %key, username = %row.owner, "migrated token vault key");
+            }
+            Err(err) => {
+                summary.failed += 1;
+                tracing::error!(key = %key, username = %row.owner, error = %err, "failed to migrate token vault key");
+            }
+        }
     }
 
-    Ok(rows.len())
+    Ok(summary)
 }
 
 fn generate_token(key_type: &str) -> String {
@@ -194,7 +232,14 @@ fn generate_token(key_type: &str) -> String {
 }
 
 impl TokenMigrationRow {
-    fn to_vault_payload(&self) -> VaultAuthUserPayload {
+    fn vault_key(&self) -> anyhow::Result<String> {
+        let Some(hash_prefix) = self.key_hash.get(..16) else {
+            anyhow::bail!("token hash for owner {} is too short", self.owner);
+        };
+        Ok(format!("GIT_TOKEN_{hash_prefix}"))
+    }
+
+    fn to_auth_user(&self) -> AuthUser {
         let scopes: Vec<String> = serde_json::from_str(&self.scopes).unwrap_or_default();
         let repos: Vec<String> = serde_json::from_str(&self.repos).unwrap_or_default();
         let access = if scopes
@@ -206,14 +251,12 @@ impl TokenMigrationRow {
             RepoAccess::Read
         };
 
-        let mut labels = vec![self.key_type.clone()];
-        if scopes.iter().any(|scope| scope == "*") {
-            labels.push("admin".to_string());
-        }
-
-        VaultAuthUserPayload {
-            username: self.owner.clone(),
-            labels,
+        AuthUser {
+            token_id: self.id,
+            key_type: self.key_type.clone(),
+            owner: self.owner.clone(),
+            scopes,
+            repos: repos.clone(),
             repo_grants: repos
                 .into_iter()
                 .map(|repo| RepoGrant {

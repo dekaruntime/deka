@@ -1,8 +1,16 @@
+#![allow(
+    clippy::unnecessary_sort_by,
+    clippy::while_immutable_condition,
+    dead_code,
+    unused_variables
+)]
+
 use axum::{
     routing::{get, post},
     Router,
 };
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod account_routes;
@@ -41,6 +49,8 @@ use repo_routes::*;
 use scoped_package_routes::*;
 use token_routes::*;
 use visibility_routes::*;
+
+const DEFAULT_GILD_VAULT_SOCKET_PATH: &str = "/run/gild-vault/sock";
 
 #[tokio::main]
 async fn main() {
@@ -288,12 +298,38 @@ async fn run_migrate_tokens_to_vault() -> anyhow::Result<()> {
     std::fs::create_dir_all(config.db_dir())?;
     db::init(&config.db_path).await?;
 
-    let vault_url =
-        std::env::var("TANA_VAULT_URL").unwrap_or_else(|_| "http://localhost:9501".to_string());
-    let admin_token = std::env::var("TANA_VAULT_ADMIN_TOKEN")
-        .or_else(|_| std::env::var("GILD_VAULT_ADMIN_TOKEN"))?;
-    let migrated = auth::migrate_tokens_to_vault(&vault_url, &admin_token).await?;
-    tracing::info!(migrated, "migrated gild-vcs tokens to vault");
-    println!("migrated {migrated} tokens to vault");
+    let socket_path = migrate_tokens_socket_path(std::env::args().skip(2))?;
+    let summary = auth::migrate_tokens_to_vault(&socket_path).await?;
+    tracing::info!(
+        migrated = summary.migrated,
+        skipped = summary.skipped,
+        failed = summary.failed,
+        socket = %socket_path.display(),
+        "migrated gild-vcs tokens to vault"
+    );
+    println!(
+        "migrated {}, skipped {}, failed {}",
+        summary.migrated, summary.skipped, summary.failed
+    );
     Ok(())
+}
+
+fn migrate_tokens_socket_path(mut args: impl Iterator<Item = String>) -> anyhow::Result<PathBuf> {
+    let mut socket_path = std::env::var("GILD_VAULT_SOCKET")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(DEFAULT_GILD_VAULT_SOCKET_PATH));
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--socket" => {
+                let Some(value) = args.next() else {
+                    anyhow::bail!("--socket requires a path");
+                };
+                socket_path = PathBuf::from(value);
+            }
+            other => anyhow::bail!("unknown migrate-tokens-to-vault option: {other}"),
+        }
+    }
+
+    Ok(socket_path)
 }
