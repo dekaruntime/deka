@@ -561,6 +561,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn missing_git_token_in_vault_falls_through_to_admin() {
+        let _guard = env_lock().lock().await;
+        let _env = EnvGuard::capture(&[
+            "TANA_INTERNAL_HMAC_KEY",
+            "TANA_ADMIN_URL",
+            "TANA_GIT_AUTH_CACHE_TTL_SECONDS",
+        ]);
+        clear_auth_cache().await;
+        std::env::remove_var("TANA_INTERNAL_HMAC_KEY");
+        std::env::set_var("TANA_GIT_AUTH_CACHE_TTL_SECONDS", "0");
+
+        let token_hash = sha256_hex("admin-token");
+        let vault = MockVault::start(&[("TANA_INTERNAL_HMAC_KEY", "vault-secret")]).await;
+        let admin = MockAdmin::start("vault-secret").await;
+        std::env::set_var("TANA_ADMIN_URL", &admin.url);
+
+        let user = resolve_auth_user_with_vault(
+            "admin-token",
+            &token_hash,
+            &Secrets::from_socket_path(&vault.socket_path),
+        )
+        .await
+        .expect("vault 404 should be treated as auth miss")
+        .expect("admin fallback should return auth user");
+
+        assert_eq!(user.owner, "vault-user");
+        assert_eq!(admin.requests.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(vault.requests.load(AtomicOrdering::SeqCst), 2);
+    }
+
+    #[tokio::test]
     async fn vault_and_admin_miss_returns_none() {
         let _guard = env_lock().lock().await;
         let _env = EnvGuard::capture(&[
