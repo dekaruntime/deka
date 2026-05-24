@@ -28,7 +28,9 @@ mod visibility;
 pub use audit::AuditEntry;
 pub use audit::{log_audit, query_audit_log, AuditQuery};
 pub use labels::seed_labels;
-pub use tokens::{create_token, list_tokens, revoke_token, CreateTokenRequest};
+pub use tokens::{
+    create_token, list_tokens, migrate_tokens_to_vault, revoke_token, CreateTokenRequest,
+};
 #[allow(unused_imports)]
 pub use tokens::{CreateTokenResponse, TokenInfo};
 pub use visibility::{get_repo_visibility, is_repo_public, set_repo_visibility};
@@ -182,11 +184,27 @@ async fn resolve_auth_user(
     token: &str,
     token_hash: &str,
 ) -> Result<Option<AuthUser>, anyhow::Error> {
+    let vault = Secrets::from_socket()?;
+    resolve_auth_user_with_vault(token, token_hash, &vault).await
+}
+
+async fn resolve_auth_user_with_vault(
+    token: &str,
+    token_hash: &str,
+    vault: &Secrets,
+) -> Result<Option<AuthUser>, anyhow::Error> {
     if let Some(user) = cached_auth_user(token_hash).await {
+        tracing::debug!(source = "cache", "auth user resolved");
         return Ok(Some(user));
     }
 
-    let Some(user) = fetch_auth_user_from_admin(token).await? else {
+    let user = if let Some(user) = fetch_auth_user_from_vault_with_vault(token_hash, vault).await? {
+        tracing::debug!(source = "vault", "auth user resolved");
+        user
+    } else if let Some(user) = fetch_auth_user_from_admin_with_vault(token, vault).await? {
+        tracing::debug!(source = "admin", "auth user resolved");
+        user
+    } else {
         return Ok(None);
     };
 
@@ -219,9 +237,23 @@ async fn cached_auth_user(token_hash: &str) -> Option<AuthUser> {
     None
 }
 
-async fn fetch_auth_user_from_admin(token: &str) -> Result<Option<AuthUser>, anyhow::Error> {
-    let vault = Secrets::from_socket()?;
-    fetch_auth_user_from_admin_with_vault(token, &vault).await
+async fn fetch_auth_user_from_vault_with_vault(
+    token_hash: &str,
+    vault: &Secrets,
+) -> Result<Option<AuthUser>, anyhow::Error> {
+    let Some(hash_prefix) = token_hash.get(..16) else {
+        anyhow::bail!("token hash is too short for vault auth lookup");
+    };
+    let key = format!("GIT_TOKEN_{hash_prefix}");
+
+    let value = match vault.get(&key).await {
+        Ok(value) => value,
+        Err(SecretsError::AgentStatus { status: 404, .. }) => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
+
+    let user = serde_json::from_str::<AdminAuthResponse>(&value)?.into_auth_user();
+    Ok(Some(user))
 }
 
 async fn fetch_auth_user_from_admin_with_vault(
@@ -381,7 +413,10 @@ fn sign_internal_request(
 }
 
 fn derive_key_type(labels: &[String]) -> String {
-    if labels.iter().any(|label| label.eq_ignore_ascii_case("agent")) {
+    if labels
+        .iter()
+        .any(|label| label.eq_ignore_ascii_case("agent"))
+    {
         "agent".to_string()
     } else {
         "user".to_string()
@@ -470,6 +505,117 @@ mod tests {
     };
 
     #[tokio::test]
+    async fn vault_hit_returns_user_from_vault() {
+        clear_auth_cache().await;
+        let token_hash = sha256_hex("vault-token");
+        let vault_key = format!("GIT_TOKEN_{}", &token_hash[..16]);
+        let vault_value = serde_json::json!({
+            "username": "vault-user",
+            "labels": ["agent"],
+            "repo_grants": [{ "repo": "tana/deka", "access": "write" }],
+            "secret_grants": []
+        })
+        .to_string();
+        let vault = MockVault::start(&[(&vault_key, &vault_value)]).await;
+
+        let user = fetch_auth_user_from_vault_with_vault(
+            &token_hash,
+            &Secrets::from_socket_path(&vault.socket_path),
+        )
+        .await
+        .expect("vault lookup should not error")
+        .expect("vault should return auth user");
+
+        assert_eq!(user.owner, "vault-user");
+        assert!(user.can_write_repo("tana/deka"));
+        assert_eq!(vault.requests.load(AtomicOrdering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn vault_miss_admin_hit_returns_user_from_admin() {
+        let _guard = env_lock().lock().await;
+        let _env = EnvGuard::capture(&[
+            "TANA_INTERNAL_HMAC_KEY",
+            "TANA_ADMIN_URL",
+            "TANA_GIT_AUTH_CACHE_TTL_SECONDS",
+        ]);
+        clear_auth_cache().await;
+        std::env::remove_var("TANA_INTERNAL_HMAC_KEY");
+        std::env::set_var("TANA_GIT_AUTH_CACHE_TTL_SECONDS", "0");
+
+        let vault = MockVault::start(&[("TANA_INTERNAL_HMAC_KEY", "vault-secret")]).await;
+        let admin = MockAdmin::start("vault-secret").await;
+        std::env::set_var("TANA_ADMIN_URL", &admin.url);
+
+        let user = resolve_auth_user_with_vault(
+            "admin-token",
+            &sha256_hex("admin-token"),
+            &Secrets::from_socket_path(&vault.socket_path),
+        )
+        .await
+        .expect("auth lookup should not error")
+        .expect("admin fallback should return auth user");
+
+        assert_eq!(user.owner, "vault-user");
+        assert_eq!(admin.requests.load(AtomicOrdering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn vault_and_admin_miss_returns_none() {
+        let _guard = env_lock().lock().await;
+        let _env = EnvGuard::capture(&[
+            "TANA_INTERNAL_HMAC_KEY",
+            "TANA_ADMIN_URL",
+            "TANA_GIT_AUTH_CACHE_TTL_SECONDS",
+        ]);
+        clear_auth_cache().await;
+        std::env::remove_var("TANA_INTERNAL_HMAC_KEY");
+        std::env::remove_var("TANA_ADMIN_URL");
+        std::env::set_var("TANA_GIT_AUTH_CACHE_TTL_SECONDS", "0");
+        let vault = MockVault::start(&[]).await;
+
+        let user = resolve_auth_user_with_vault(
+            "missing-token",
+            &sha256_hex("missing-token"),
+            &Secrets::from_socket_path(&vault.socket_path),
+        )
+        .await
+        .expect("auth miss should not error");
+
+        assert!(user.is_none());
+    }
+
+    #[tokio::test]
+    async fn cache_hit_returns_immediately() {
+        clear_auth_cache().await;
+        let token_hash = sha256_hex("cached-token");
+        auth_cache().write().await.insert(
+            token_hash.clone(),
+            CachedAuthUser {
+                user: AuthUser {
+                    token_id: 7,
+                    key_type: "agent".to_string(),
+                    owner: "cached-user".to_string(),
+                    scopes: vec!["repo:read".to_string()],
+                    repos: vec!["tana/deka".to_string()],
+                    repo_grants: Vec::new(),
+                    secret_grants: Vec::new(),
+                },
+                expires_at: Instant::now() + Duration::from_secs(60),
+            },
+        );
+        let temp = TempDir::new().unwrap();
+        let missing_vault = Secrets::from_socket_path(temp.path().join("missing.sock"));
+
+        let user = resolve_auth_user_with_vault("cached-token", &token_hash, &missing_vault)
+            .await
+            .expect("cache hit should not touch vault")
+            .expect("cache should return auth user");
+
+        assert_eq!(user.owner, "cached-user");
+    }
+
+    #[tokio::test]
     async fn fetch_auth_user_from_admin_uses_vault_hmac_key() {
         let _guard = env_lock().lock().await;
         let _env = EnvGuard::capture(&["TANA_INTERNAL_HMAC_KEY", "TANA_ADMIN_URL"]);
@@ -533,6 +679,10 @@ mod tests {
         ENV_LOCK.get_or_init(|| Mutex::new(()))
     }
 
+    async fn clear_auth_cache() {
+        auth_cache().write().await.clear();
+    }
+
     struct EnvGuard {
         values: Vec<(&'static str, Option<std::ffi::OsString>)>,
     }
@@ -562,6 +712,7 @@ mod tests {
     struct MockVault {
         socket_path: PathBuf,
         _temp: TempDir,
+        requests: Arc<AtomicUsize>,
     }
 
     impl MockVault {
@@ -575,16 +726,20 @@ mod tests {
                     .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
                     .collect::<HashMap<_, _>>(),
             );
+            let requests = Arc::new(AtomicUsize::new(0));
 
             tokio::spawn({
                 let secrets = Arc::clone(&secrets);
+                let requests = Arc::clone(&requests);
                 async move {
                     loop {
                         let Ok((mut stream, _)) = listener.accept().await else {
                             return;
                         };
                         let secrets = Arc::clone(&secrets);
+                        let requests = Arc::clone(&requests);
                         tokio::spawn(async move {
+                            requests.fetch_add(1, AtomicOrdering::SeqCst);
                             let mut request = Vec::new();
                             let _ = stream.read_to_end(&mut request).await;
                             let key = vault_request_key(&request).unwrap_or_default();
@@ -609,6 +764,7 @@ mod tests {
             Self {
                 socket_path,
                 _temp: temp,
+                requests,
             }
         }
     }
