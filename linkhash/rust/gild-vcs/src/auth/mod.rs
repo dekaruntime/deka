@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeSet, HashMap},
+    sync::atomic::{AtomicBool, Ordering},
     sync::OnceLock,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -166,6 +167,7 @@ struct AdminSecretGrant {
 
 static AUTH_CACHE: OnceLock<RwLock<HashMap<String, CachedAuthUser>>> = OnceLock::new();
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+static ADMIN_AUTH_UNCONFIGURED_LOGGED: AtomicBool = AtomicBool::new(false);
 
 fn auth_cache() -> &'static RwLock<HashMap<String, CachedAuthUser>> {
     AUTH_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
@@ -217,11 +219,21 @@ async fn cached_auth_user(token_hash: &str) -> Option<AuthUser> {
 }
 
 async fn fetch_auth_user_from_admin(token: &str) -> Result<Option<AuthUser>, anyhow::Error> {
+    let hmac_key = match std::env::var("TANA_INTERNAL_HMAC_KEY") {
+        Ok(key) => key,
+        Err(_) => {
+            if !ADMIN_AUTH_UNCONFIGURED_LOGGED.swap(true, Ordering::Relaxed) {
+                tracing::info!(
+                    "tana-admin auth integration not configured (TANA_INTERNAL_HMAC_KEY unset)"
+                );
+            }
+            return Ok(None);
+        }
+    };
     let admin_url = std::env::var("TANA_ADMIN_URL")
         .unwrap_or_else(|_| "http://localhost:3000".to_string())
         .trim_end_matches('/')
         .to_string();
-    let hmac_key = std::env::var("TANA_INTERNAL_HMAC_KEY")?;
     let body = serde_json::to_vec(&AdminAuthRequest { token })?;
     let timestamp = unix_timestamp_seconds();
     let signature = sign_internal_request(&hmac_key, timestamp, &body)?;
@@ -385,4 +397,23 @@ pub async fn optional_auth(mut req: Request, next: Next) -> Response {
     }
 
     next.run(req).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn fetch_auth_user_from_admin_noops_without_hmac_key() {
+        let previous_hmac_key = std::env::var_os("TANA_INTERNAL_HMAC_KEY");
+        std::env::remove_var("TANA_INTERNAL_HMAC_KEY");
+
+        let user = fetch_auth_user_from_admin("test-token").await;
+
+        assert!(user.expect("missing hmac key should not error").is_none());
+
+        if let Some(previous_hmac_key) = previous_hmac_key {
+            std::env::set_var("TANA_INTERNAL_HMAC_KEY", previous_hmac_key);
+        }
+    }
 }
