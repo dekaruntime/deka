@@ -1,0 +1,30 @@
+[Unit]
+Description=Tana Gild Vault HTTP proxy
+After=network-online.target gg.tana.gild-vault.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gild-vault-proxy
+SupplementaryGroups=gild
+Environment=VAULT_PROXY_TOKEN_FILE=/etc/gild/vault-proxy-token
+Environment=GILD_VAULT_SOCKET=/run/gild-vault/sock
+ExecStart=/usr/local/bin/gild-vault-proxy --port 9444
+Restart=on-failure
+RestartSec=2s
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictRealtime=true
+ReadOnlyPaths=/etc/gild/vault-proxy-token /run/gild-vault/sock
+
+[Install]
+WantedBy=multi-user.target

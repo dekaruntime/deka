@@ -33,6 +33,7 @@ members = [
     "crates/shard",
     "crates/gild-vault",
     "crates/gild-vault-client",
+    "crates/gild-vault-proxy",
 ]
 
 [workspace.dependencies]
