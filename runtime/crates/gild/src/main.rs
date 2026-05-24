@@ -117,8 +117,66 @@ mod tests {
                 "--from",
                 "/tmp/auth.json",
             ],
+            vec![
+                "gild",
+                "service",
+                "link",
+                "--agent",
+                "agent-khalid",
+                "--provider",
+                "claude",
+                "--token",
+                "sk-ant-test",
+            ],
+            vec!["gild", "service", "ls"],
+            vec!["gild", "service", "ls", "--agent", "agent-khalid"],
+            vec![
+                "gild",
+                "service",
+                "unlink",
+                "--agent",
+                "agent-khalid",
+                "--provider",
+                "opencode",
+            ],
         ] {
             Cli::try_parse_from(args).unwrap();
         }
+    }
+
+    #[test]
+    fn rejects_invalid_service_provider() {
+        let err = Cli::try_parse_from([
+            "gild",
+            "service",
+            "link",
+            "--agent",
+            "agent-khalid",
+            "--provider",
+            "openai",
+            "--token",
+            "token",
+        ])
+        .unwrap_err();
+        assert!(err.to_string().contains("invalid value"));
+    }
+
+    #[test]
+    fn rejects_ambiguous_service_link_source() {
+        let err = Cli::try_parse_from([
+            "gild",
+            "service",
+            "link",
+            "--agent",
+            "agent-khalid",
+            "--provider",
+            "codex",
+            "--from",
+            "/tmp/auth.json",
+            "--token",
+            "token",
+        ])
+        .unwrap_err();
+        assert!(err.to_string().contains("cannot be used with"));
     }
 }
