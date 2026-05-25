@@ -2,7 +2,7 @@ use age::secrecy::ExposeSecret;
 use clap::{Args, Subcommand};
 use rcgen::{
     BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType,
-    ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose,
+    ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose, SanType,
 };
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
@@ -10,6 +10,7 @@ use std::io::Write;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use time::{Duration, OffsetDateTime};
 
 use crate::Result;
 
@@ -20,6 +21,7 @@ const DEFAULT_ENCRYPTED_STATE_PATH: &str = "/var/lib/gild-vault/keys.age";
 const DEFAULT_VAULT_PROXY_CA_CERT_PATH: &str = "/etc/gild/vault-proxy-ca.pem";
 const DEFAULT_VAULT_PROXY_CA_KEY_PATH: &str = "/etc/gild/vault-proxy-ca.key";
 const PROMOTION_EPOCH_BUMP: u64 = 1000;
+const VAULT_PROXY_CERT_LIFETIME_DAYS: i64 = 365;
 
 #[derive(Debug, Args)]
 pub struct VaultArgs {
@@ -73,7 +75,9 @@ enum VaultCommand {
 
 #[derive(Debug, Subcommand)]
 enum VaultCaCommand {
-    /// Generate the self-signed local vault proxy CA.
+    /// Generate the self-signed local vault proxy CA, valid for 365 days.
+    ///
+    /// Certs expire after 365 days. Plan to re-issue (or automate rotation via deka#65) before expiry.
     Init {
         /// Overwrite an existing CA certificate or key.
         #[arg(long)]
@@ -83,7 +87,9 @@ enum VaultCaCommand {
         #[arg(long, hide = true)]
         ca_key_path: Option<PathBuf>,
     },
-    /// Issue a client certificate signed by the local CA and print it to stdout.
+    /// Issue a 365-day client certificate signed by the local CA and print it to stdout.
+    ///
+    /// Certs expire after 365 days. Plan to re-issue (or automate rotation via deka#65) before expiry.
     Issue {
         cn: String,
         #[arg(long, hide = true)]
@@ -250,7 +256,7 @@ fn init_vault_proxy_ca(ca_cert_path: &Path, ca_key_path: &Path, force: bool) -> 
     ensure_gild_config_dir(ca_cert_path)?;
     ensure_gild_config_dir(ca_key_path)?;
 
-    let mut params = CertificateParams::new(vec!["tana-gild-vault-proxy-ca".to_string()]);
+    let mut params = vault_proxy_cert_params(vec!["tana-gild-vault-proxy-ca".to_string()]);
     params.distinguished_name = DistinguishedName::new();
     params
         .distinguished_name
@@ -286,7 +292,7 @@ fn issue_vault_proxy_cert(
     let ca_params = CertificateParams::from_ca_cert_pem(&ca_cert_pem, ca_key)?;
     let ca_cert = Certificate::from_params(ca_params)?;
 
-    let mut params = CertificateParams::new(vec![cn.to_string()]);
+    let mut params = vault_proxy_cert_params(vec![cn.to_string()]);
     params.distinguished_name = DistinguishedName::new();
     params.distinguished_name.push(DnType::CommonName, cn);
     params.is_ca = IsCa::NoCa;
@@ -304,6 +310,27 @@ fn issue_vault_proxy_cert(
         cert.serialize_pem_with_signer(&ca_cert)?,
         cert.serialize_private_key_pem()
     ))
+}
+
+fn vault_proxy_cert_params(subject_alt_names: Vec<String>) -> CertificateParams {
+    let mut params = CertificateParams::default();
+    params.subject_alt_names = subject_alt_names
+        .into_iter()
+        .map(|name| match name.parse() {
+            Ok(ip) => SanType::IpAddress(ip),
+            Err(_) => SanType::DnsName(name),
+        })
+        .collect();
+    apply_vault_proxy_cert_lifetime(&mut params);
+    params
+}
+
+fn apply_vault_proxy_cert_lifetime(params: &mut CertificateParams) {
+    let not_before = OffsetDateTime::now_utc()
+        .replace_nanosecond(0)
+        .expect("zero nanosecond timestamp is valid");
+    params.not_before = not_before;
+    params.not_after = not_before + Duration::days(VAULT_PROXY_CERT_LIFETIME_DAYS);
 }
 
 fn validate_cn(cn: &str) -> Result<()> {
@@ -724,5 +751,17 @@ mod tests {
             .as_str()
             .unwrap();
         assert_eq!(cn, "storefront-do-01");
+
+        let now = OffsetDateTime::now_utc();
+        let not_after = cert.validity().not_after.to_datetime();
+        assert!(
+            not_after
+                <= now + Duration::days(VAULT_PROXY_CERT_LIFETIME_DAYS) + Duration::minutes(5),
+            "issued cert expires too far in the future: {not_after}"
+        );
+        assert!(
+            not_after > now + Duration::days(VAULT_PROXY_CERT_LIFETIME_DAYS - 1),
+            "issued cert lifetime is unexpectedly short: {not_after}"
+        );
     }
 }
