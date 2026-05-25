@@ -12,6 +12,7 @@ use crate::Result;
 const DEFAULT_MASTER_KEY_PATH: &str = "/etc/gild/vault-master.key";
 const DEFAULT_PLAINTEXT_STATE_PATH: &str = "/run/gild-vault/keys.json";
 const DEFAULT_ENCRYPTED_STATE_PATH: &str = "/var/lib/gild-vault/keys.age";
+const PROMOTION_EPOCH_BUMP: u64 = 1000;
 
 #[derive(Debug, Args)]
 pub struct VaultArgs {
@@ -37,6 +38,11 @@ enum VaultCommand {
         master_key_path: Option<PathBuf>,
         #[arg(long, hide = true)]
         plaintext_path: Option<PathBuf>,
+        #[arg(long, hide = true)]
+        state_path: Option<PathBuf>,
+    },
+    /// Mark this node as the operator-confirmed canonical authoritative.
+    ForceAuthoritative {
         #[arg(long, hide = true)]
         state_path: Option<PathBuf>,
     },
@@ -78,6 +84,19 @@ pub async fn run(args: VaultArgs) -> Result<()> {
             println!(
                 "now restart gg.tana.gild-vault.service. Verify keys present. Then delete /run/gild-vault/keys.json manually."
             );
+            Ok(())
+        }
+        VaultCommand::ForceAuthoritative { state_path } => {
+            let state_path =
+                state_path.unwrap_or_else(|| PathBuf::from(DEFAULT_ENCRYPTED_STATE_PATH));
+            let meta = force_authoritative(&state_path)?;
+            println!(
+                "vault authoritative fence reset at {}: epoch={}, version={}",
+                replication_meta_path(&state_path).display(),
+                meta.epoch,
+                meta.version
+            );
+            println!("restart gg.tana.gild-vault.service on this node; demote all other nodes.");
             Ok(())
         }
     }
@@ -207,6 +226,69 @@ fn persist_encrypted_state(
     Ok(())
 }
 
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct ReplicationMeta {
+    epoch: u64,
+    version: u64,
+    fenced: bool,
+}
+
+fn force_authoritative(state_path: &Path) -> Result<ReplicationMeta> {
+    let meta_path = replication_meta_path(state_path);
+    let mut meta = load_replication_meta(&meta_path)?;
+    meta.epoch = meta.epoch.saturating_add(PROMOTION_EPOCH_BUMP);
+    meta.fenced = false;
+    persist_replication_meta(&meta_path, &meta)?;
+    Ok(meta)
+}
+
+fn replication_meta_path(state_path: &Path) -> PathBuf {
+    state_path.with_extension("replication.json")
+}
+
+fn load_replication_meta(path: &Path) -> Result<ReplicationMeta> {
+    match fs::read(path) {
+        Ok(bytes) if bytes.is_empty() => Ok(ReplicationMeta {
+            epoch: 0,
+            version: 0,
+            fenced: false,
+        }),
+        Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(ReplicationMeta {
+            epoch: 0,
+            version: 0,
+            fenced: false,
+        }),
+        Err(err) => Err(Box::new(err)),
+    }
+}
+
+fn persist_replication_meta(path: &Path, meta: &ReplicationMeta) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| error("replication metadata path must have a parent"))?;
+    fs::create_dir_all(parent)?;
+    fs::set_permissions(parent, fs::Permissions::from_mode(0o750))?;
+    try_chown(parent, Some("gild-vault"), Some("gild"));
+
+    let tmp_path = path.with_extension(format!("replication.json.tmp.{}", std::process::id()));
+    let mut file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(&tmp_path)?;
+    try_chown(&tmp_path, Some("gild-vault"), None);
+    serde_json::to_writer(&mut file, meta)?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
+    fs::rename(&tmp_path, path)?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    try_chown(path, Some("gild-vault"), None);
+    sync_dir(parent)?;
+    Ok(())
+}
+
 fn sync_dir(path: &Path) -> Result<()> {
     fs::File::open(path)?.sync_all()?;
     Ok(())
@@ -320,5 +402,30 @@ mod tests {
             fs::read(&state_path).unwrap(),
             fs::read(&plaintext_path).unwrap()
         );
+    }
+
+    #[test]
+    fn force_authoritative_bumps_epoch_and_clears_fence() {
+        let dir = tempdir().unwrap();
+        let state_path = dir.path().join("keys.age");
+        let meta_path = replication_meta_path(&state_path);
+        persist_replication_meta(
+            &meta_path,
+            &ReplicationMeta {
+                epoch: 42,
+                version: 9,
+                fenced: true,
+            },
+        )
+        .unwrap();
+
+        let meta = force_authoritative(&state_path).unwrap();
+        let persisted = load_replication_meta(&meta_path).unwrap();
+
+        assert_eq!(meta.epoch, 42 + PROMOTION_EPOCH_BUMP);
+        assert_eq!(meta.version, 9);
+        assert!(!meta.fenced);
+        assert_eq!(persisted.epoch, meta.epoch);
+        assert!(!persisted.fenced);
     }
 }
