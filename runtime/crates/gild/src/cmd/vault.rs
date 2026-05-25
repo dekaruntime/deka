@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use crate::Result;
 
 const DEFAULT_MASTER_KEY_PATH: &str = "/etc/gild/vault-master.key";
+const DEFAULT_REPLICATION_TOKEN_PATH: &str = "/etc/gild/vault-replication-token";
 const DEFAULT_PLAINTEXT_STATE_PATH: &str = "/run/gild-vault/keys.json";
 const DEFAULT_ENCRYPTED_STATE_PATH: &str = "/var/lib/gild-vault/keys.age";
 const PROMOTION_EPOCH_BUMP: u64 = 1000;
@@ -31,6 +32,17 @@ enum VaultCommand {
         force: bool,
         #[arg(long, hide = true)]
         master_key_path: Option<PathBuf>,
+    },
+    /// Generate the shared vault replication bearer token.
+    InitReplicationToken {
+        /// Overwrite an existing replication token.
+        #[arg(long)]
+        force: bool,
+        /// Owner for the token file.
+        #[arg(long, default_value = "gild-vault")]
+        owner: String,
+        #[arg(long, hide = true)]
+        path: Option<PathBuf>,
     },
     /// Encrypt the legacy plaintext tmpfs vault state into persistent storage.
     MigrateFromPlaintext {
@@ -62,6 +74,13 @@ pub async fn run(args: VaultArgs) -> Result<()> {
             let public_key = init_master_key(&path, force)?;
             println!("vault master key initialized at {}", path.display());
             println!("public key fingerprint: {public_key}");
+            Ok(())
+        }
+        VaultCommand::InitReplicationToken { force, owner, path } => {
+            let path = path.unwrap_or_else(|| PathBuf::from(DEFAULT_REPLICATION_TOKEN_PATH));
+            init_replication_token(&path, force, &owner)?;
+            println!("vault replication token initialized at {}", path.display());
+            println!("copy this exact file to each replica during provisioning");
             Ok(())
         }
         VaultCommand::MigrateFromPlaintext {
@@ -100,6 +119,50 @@ pub async fn run(args: VaultArgs) -> Result<()> {
             Ok(())
         }
     }
+}
+
+fn init_replication_token(path: &Path, force: bool, owner: &str) -> Result<()> {
+    if path.exists() && !force {
+        return Err(error(format!(
+            "{} already exists; pass --force to overwrite",
+            path.display()
+        )));
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o750))?;
+        try_chown(parent, Some("root"), Some("gild"));
+    }
+
+    let token = random_hex_token()?;
+    let mut options = OpenOptions::new();
+    options.write(true).mode(0o400);
+    if force {
+        if path.exists() {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        }
+        options.create(true).truncate(true);
+    } else {
+        options.create_new(true);
+    }
+
+    let mut file = options.open(path)?;
+    try_chown(path, Some(owner), None);
+    writeln!(file, "{token}")?;
+    file.sync_all()?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o400))?;
+    try_chown(path, Some(owner), None);
+    if let Some(parent) = path.parent() {
+        sync_dir(parent)?;
+    }
+    Ok(())
+}
+
+fn random_hex_token() -> Result<String> {
+    let mut bytes = [0_u8; 16];
+    let mut random = fs::File::open("/dev/urandom")?;
+    std::io::Read::read_exact(&mut random, &mut bytes)?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 fn init_master_key(path: &Path, force: bool) -> Result<String> {

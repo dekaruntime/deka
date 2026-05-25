@@ -285,9 +285,18 @@ fn service_link_round_trips_against_real_vault_agent_socket() {
     let store_path = dir.path().join("secrets.age");
     let audit_log = dir.path().join("audit.log");
     let master_key = dir.path().join("vault-master.key");
+    let replication_token = dir.path().join("vault-replication-token");
     write_master_key(&master_key);
+    fs::write(&replication_token, "test-replication-token\n").expect("write replication token");
 
-    let mut vault = spawn_vault_agent(&vault_bin, &socket, &store_path, &audit_log, &master_key);
+    let mut vault = spawn_vault_agent(
+        &vault_bin,
+        &socket,
+        &store_path,
+        &audit_log,
+        &master_key,
+        &replication_token,
+    );
     wait_for_socket(&socket);
 
     let output = Command::new(gild_bin())
@@ -324,6 +333,7 @@ fn spawn_vault_agent(
     state_path: &Path,
     audit_log: &Path,
     master_key: &Path,
+    replication_token: &Path,
 ) -> Child {
     Command::new(bin)
         .args([
@@ -335,6 +345,7 @@ fn spawn_vault_agent(
             audit_log.to_str().expect("audit log path utf8"),
         ])
         .env("GILD_VAULT_MASTER_KEY_PATH", master_key)
+        .env("GILD_VAULT_REPLICATION_TOKEN_FILE", replication_token)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
