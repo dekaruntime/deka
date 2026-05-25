@@ -1,0 +1,11 @@
+name: smoke-pause-then-resume
+duration: 30s
+faults:
+  - at: 5s
+    host: demon
+    cmd: process pause --service gild-vault --secs 5 --undo-by 10s
+assertions:
+  - at: 20s
+    kind: systemd
+    host: demon
+    check: gild-vault is-active
