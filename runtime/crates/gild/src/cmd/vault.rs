@@ -1,5 +1,9 @@
 use age::secrecy::ExposeSecret;
 use clap::{Args, Subcommand};
+use rcgen::{
+    BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType,
+    ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose,
+};
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -13,6 +17,8 @@ const DEFAULT_MASTER_KEY_PATH: &str = "/etc/gild/vault-master.key";
 const DEFAULT_REPLICATION_TOKEN_PATH: &str = "/etc/gild/vault-replication-token";
 const DEFAULT_PLAINTEXT_STATE_PATH: &str = "/run/gild-vault/keys.json";
 const DEFAULT_ENCRYPTED_STATE_PATH: &str = "/var/lib/gild-vault/keys.age";
+const DEFAULT_VAULT_PROXY_CA_CERT_PATH: &str = "/etc/gild/vault-proxy-ca.pem";
+const DEFAULT_VAULT_PROXY_CA_KEY_PATH: &str = "/etc/gild/vault-proxy-ca.key";
 const PROMOTION_EPOCH_BUMP: u64 = 1000;
 
 #[derive(Debug, Args)]
@@ -57,6 +63,35 @@ enum VaultCommand {
     ForceAuthoritative {
         #[arg(long, hide = true)]
         state_path: Option<PathBuf>,
+    },
+    /// Manage the local gild-vault-proxy mTLS certificate authority.
+    Ca {
+        #[command(subcommand)]
+        command: VaultCaCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum VaultCaCommand {
+    /// Generate the self-signed local vault proxy CA.
+    Init {
+        /// Overwrite an existing CA certificate or key.
+        #[arg(long)]
+        force: bool,
+        #[arg(long, hide = true)]
+        ca_cert_path: Option<PathBuf>,
+        #[arg(long, hide = true)]
+        ca_key_path: Option<PathBuf>,
+    },
+    /// Issue a client certificate signed by the local CA and print it to stdout.
+    Issue {
+        cn: String,
+        #[arg(long, hide = true)]
+        server: bool,
+        #[arg(long, hide = true)]
+        ca_cert_path: Option<PathBuf>,
+        #[arg(long, hide = true)]
+        ca_key_path: Option<PathBuf>,
     },
 }
 
@@ -118,6 +153,41 @@ pub async fn run(args: VaultArgs) -> Result<()> {
             println!("restart gg.tana.gild-vault.service on this node; demote all other nodes.");
             Ok(())
         }
+        VaultCommand::Ca { command } => match command {
+            VaultCaCommand::Init {
+                force,
+                ca_cert_path,
+                ca_key_path,
+            } => {
+                let ca_cert_path =
+                    ca_cert_path.unwrap_or_else(|| PathBuf::from(DEFAULT_VAULT_PROXY_CA_CERT_PATH));
+                let ca_key_path =
+                    ca_key_path.unwrap_or_else(|| PathBuf::from(DEFAULT_VAULT_PROXY_CA_KEY_PATH));
+                init_vault_proxy_ca(&ca_cert_path, &ca_key_path, force)?;
+                println!("vault proxy CA initialized at {}", ca_cert_path.display());
+                println!("vault proxy CA key written to {}", ca_key_path.display());
+                Ok(())
+            }
+            VaultCaCommand::Issue {
+                cn,
+                server,
+                ca_cert_path,
+                ca_key_path,
+            } => {
+                let ca_cert_path =
+                    ca_cert_path.unwrap_or_else(|| PathBuf::from(DEFAULT_VAULT_PROXY_CA_CERT_PATH));
+                let ca_key_path =
+                    ca_key_path.unwrap_or_else(|| PathBuf::from(DEFAULT_VAULT_PROXY_CA_KEY_PATH));
+                let usage = if server {
+                    VaultProxyCertUsage::Server
+                } else {
+                    VaultProxyCertUsage::Client
+                };
+                let issued = issue_vault_proxy_cert(&ca_cert_path, &ca_key_path, &cn, usage)?;
+                print!("{issued}");
+                Ok(())
+            }
+        },
     }
 }
 
@@ -163,6 +233,124 @@ fn random_hex_token() -> Result<String> {
     let mut random = fs::File::open("/dev/urandom")?;
     std::io::Read::read_exact(&mut random, &mut bytes)?;
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn init_vault_proxy_ca(ca_cert_path: &Path, ca_key_path: &Path, force: bool) -> Result<()> {
+    if !force {
+        for path in [ca_cert_path, ca_key_path] {
+            if path.exists() {
+                return Err(error(format!(
+                    "{} already exists; pass --force to overwrite",
+                    path.display()
+                )));
+            }
+        }
+    }
+
+    ensure_gild_config_dir(ca_cert_path)?;
+    ensure_gild_config_dir(ca_key_path)?;
+
+    let mut params = CertificateParams::new(vec!["tana-gild-vault-proxy-ca".to_string()]);
+    params.distinguished_name = DistinguishedName::new();
+    params
+        .distinguished_name
+        .push(DnType::CommonName, "tana-gild-vault-proxy-ca");
+    params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    params.key_usages = vec![
+        KeyUsagePurpose::KeyCertSign,
+        KeyUsagePurpose::CrlSign,
+        KeyUsagePurpose::DigitalSignature,
+    ];
+    let cert = Certificate::from_params(params)?;
+    write_private_file(ca_key_path, &cert.serialize_private_key_pem(), force)?;
+    write_private_file(ca_cert_path, &cert.serialize_pem()?, force)?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+enum VaultProxyCertUsage {
+    Client,
+    Server,
+}
+
+fn issue_vault_proxy_cert(
+    ca_cert_path: &Path,
+    ca_key_path: &Path,
+    cn: &str,
+    usage: VaultProxyCertUsage,
+) -> Result<String> {
+    validate_cn(cn)?;
+    let ca_cert_pem = fs::read_to_string(ca_cert_path)?;
+    let ca_key_pem = fs::read_to_string(ca_key_path)?;
+    let ca_key = KeyPair::from_pem(&ca_key_pem)?;
+    let ca_params = CertificateParams::from_ca_cert_pem(&ca_cert_pem, ca_key)?;
+    let ca_cert = Certificate::from_params(ca_params)?;
+
+    let mut params = CertificateParams::new(vec![cn.to_string()]);
+    params.distinguished_name = DistinguishedName::new();
+    params.distinguished_name.push(DnType::CommonName, cn);
+    params.is_ca = IsCa::NoCa;
+    params.key_usages = vec![
+        KeyUsagePurpose::DigitalSignature,
+        KeyUsagePurpose::KeyEncipherment,
+    ];
+    params.extended_key_usages = vec![match usage {
+        VaultProxyCertUsage::Client => ExtendedKeyUsagePurpose::ClientAuth,
+        VaultProxyCertUsage::Server => ExtendedKeyUsagePurpose::ServerAuth,
+    }];
+    let cert = Certificate::from_params(params)?;
+    Ok(format!(
+        "{}{}",
+        cert.serialize_pem_with_signer(&ca_cert)?,
+        cert.serialize_private_key_pem()
+    ))
+}
+
+fn validate_cn(cn: &str) -> Result<()> {
+    if cn.is_empty()
+        || cn.len() > 128
+        || !cn
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b'_')
+    {
+        Err(error(
+            "client certificate CN must be 1-128 chars of [A-Za-z0-9._-]",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn ensure_gild_config_dir(path: &Path) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o750))?;
+        try_chown(parent, Some("root"), Some("gild"));
+        sync_dir(parent)?;
+    }
+    Ok(())
+}
+
+fn write_private_file(path: &Path, contents: &str, force: bool) -> Result<()> {
+    let mut options = OpenOptions::new();
+    options.write(true).mode(0o400);
+    if force {
+        if path.exists() {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        }
+        options.create(true).truncate(true);
+    } else {
+        options.create_new(true);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(contents.as_bytes())?;
+    file.sync_all()?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o400))?;
+    try_chown(path, Some("root"), None);
+    if let Some(parent) = path.parent() {
+        sync_dir(parent)?;
+    }
+    Ok(())
 }
 
 fn init_master_key(path: &Path, force: bool) -> Result<String> {
@@ -410,6 +598,7 @@ fn error(message: impl Into<String>) -> Box<dyn std::error::Error + Send + Sync>
 mod tests {
     use super::*;
     use tempfile::tempdir;
+    use x509_parser::prelude::{FromDer, X509Certificate};
 
     #[test]
     fn init_refuses_to_overwrite_without_force() {
@@ -490,5 +679,50 @@ mod tests {
         assert!(!meta.fenced);
         assert_eq!(persisted.epoch, meta.epoch);
         assert!(!persisted.fenced);
+    }
+
+    #[test]
+    fn vault_proxy_ca_init_and_issue_round_trip() {
+        let dir = tempdir().unwrap();
+        let ca_cert_path = dir.path().join("vault-proxy-ca.pem");
+        let ca_key_path = dir.path().join("vault-proxy-ca.key");
+
+        init_vault_proxy_ca(&ca_cert_path, &ca_key_path, false).unwrap();
+        let issued = issue_vault_proxy_cert(
+            &ca_cert_path,
+            &ca_key_path,
+            "storefront-do-01",
+            VaultProxyCertUsage::Client,
+        )
+        .unwrap();
+
+        assert!(issued.contains("BEGIN CERTIFICATE"));
+        assert!(issued.contains("BEGIN PRIVATE KEY"));
+        assert_eq!(
+            fs::metadata(&ca_cert_path).unwrap().permissions().mode() & 0o777,
+            0o400
+        );
+        assert_eq!(
+            fs::metadata(&ca_key_path).unwrap().permissions().mode() & 0o777,
+            0o400
+        );
+        assert!(init_vault_proxy_ca(&ca_cert_path, &ca_key_path, false).is_err());
+
+        let cert_pem = issued
+            .split("-----END CERTIFICATE-----")
+            .next()
+            .unwrap()
+            .to_string()
+            + "-----END CERTIFICATE-----\n";
+        let (_, pem) = x509_parser::pem::parse_x509_pem(cert_pem.as_bytes()).unwrap();
+        let (_, cert) = X509Certificate::from_der(&pem.contents).unwrap();
+        let cn = cert
+            .subject()
+            .iter_common_name()
+            .next()
+            .unwrap()
+            .as_str()
+            .unwrap();
+        assert_eq!(cn, "storefront-do-01");
     }
 }

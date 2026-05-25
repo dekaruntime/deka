@@ -340,26 +340,6 @@ macro_rules! debugf {
     };
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_log_level_parsing() {
-        assert_eq!(LogLevel::from_str("error"), LogLevel::Error);
-        assert_eq!(LogLevel::from_str("info"), LogLevel::Info);
-        assert_eq!(LogLevel::from_str("debug"), LogLevel::Debug);
-        assert_eq!(LogLevel::from_str("INFO"), LogLevel::Info);
-        assert_eq!(LogLevel::from_str("unknown"), LogLevel::Info);
-    }
-
-    #[test]
-    fn test_log_level_ordering() {
-        assert!(LogLevel::Error < LogLevel::Info);
-        assert!(LogLevel::Info < LogLevel::Debug);
-    }
-}
-
 struct FigFont {
     height: usize,
     glyphs: HashMap<char, Vec<String>>,
@@ -426,5 +406,25 @@ impl FigFont {
             }
         }
         Some(lines.join("\n"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_log_level_parsing() {
+        assert_eq!(LogLevel::from_str("error"), LogLevel::Error);
+        assert_eq!(LogLevel::from_str("info"), LogLevel::Info);
+        assert_eq!(LogLevel::from_str("debug"), LogLevel::Debug);
+        assert_eq!(LogLevel::from_str("INFO"), LogLevel::Info);
+        assert_eq!(LogLevel::from_str("unknown"), LogLevel::Info);
+    }
+
+    #[test]
+    fn test_log_level_ordering() {
+        assert!(LogLevel::Error < LogLevel::Info);
+        assert!(LogLevel::Info < LogLevel::Debug);
     }
 }

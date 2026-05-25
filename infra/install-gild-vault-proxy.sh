@@ -5,6 +5,31 @@ set -euo pipefail
 # This script intentionally does not enable or start the service.
 
 dry_run="${DRY_RUN:-0}"
+with_mtls=0
+for arg in "$@"; do
+  case "${arg}" in
+    --with-mtls)
+      with_mtls=1
+      ;;
+    -h|--help)
+      cat <<'EOF'
+Usage: install-gild-vault-proxy.sh [--with-mtls]
+
+Default install keeps the existing bearer-only listener on 0.0.0.0:9444.
+--with-mtls initializes /etc/gild/vault-proxy-ca.{pem,key}, generates the
+proxy server certificate, and installs a drop-in that serves mTLS on :9445.
+Operators then issue per-machine client certs with:
+  gild vault ca issue <client-cn>
+EOF
+      exit 0
+      ;;
+    *)
+      echo "unknown argument: ${arg}" >&2
+      exit 1
+      ;;
+  esac
+done
+
 if [[ "${dry_run}" == "1" ]]; then
   cat <<'EOF'
 DRY_RUN=1 gild-vault-proxy install plan:
@@ -16,6 +41,7 @@ DRY_RUN=1 gild-vault-proxy install plan:
   - install systemd unit: /etc/systemd/system/gg.tana.gild-vault-proxy.service
   - proxy vault socket: VAULT_SOCKET=/run/gild-vault/sock
   - expected vault socket mode/group: 0660 gild
+  - optional mTLS: pass --with-mtls to initialize CA and :9445 TLS listener
 EOF
   exit 0
 fi
@@ -54,6 +80,33 @@ fi
 
 install -m 0644 "${repo_root}/infra/gg.tana.gild-vault-proxy.service" \
   /etc/systemd/system/gg.tana.gild-vault-proxy.service
+
+if [[ "${with_mtls}" == "1" ]]; then
+  /usr/local/bin/gild vault ca init
+  server_bundle="$(mktemp)"
+  /usr/local/bin/gild vault ca issue --server gild-vault-proxy-demon > "${server_bundle}"
+  awk '
+    /BEGIN CERTIFICATE/ { in_cert=1 }
+    in_cert { print }
+    /END CERTIFICATE/ { in_cert=0 }
+  ' "${server_bundle}" > /etc/gild/vault-proxy.pem
+  awk '
+    /BEGIN PRIVATE KEY/ { in_key=1 }
+    in_key { print }
+    /END PRIVATE KEY/ { in_key=0 }
+  ' "${server_bundle}" > /etc/gild/vault-proxy.key
+  rm -f "${server_bundle}"
+  chown root:gild /etc/gild/vault-proxy-ca.pem /etc/gild/vault-proxy.pem
+  chown root:root /etc/gild/vault-proxy-ca.key /etc/gild/vault-proxy.key
+  chmod 0440 /etc/gild/vault-proxy-ca.pem /etc/gild/vault-proxy.pem
+  chmod 0400 /etc/gild/vault-proxy-ca.key /etc/gild/vault-proxy.key
+  install -d -m 0755 /etc/systemd/system/gg.tana.gild-vault-proxy.service.d
+  cat >/etc/systemd/system/gg.tana.gild-vault-proxy.service.d/10-mtls.conf <<'EOF'
+[Service]
+ExecStart=
+ExecStart=/usr/local/bin/gild-vault-proxy --tls-bind 0.0.0.0:9445 --tls-ca /etc/gild/vault-proxy-ca.pem --tls-cert /etc/gild/vault-proxy.pem --tls-key /etc/gild/vault-proxy.key
+EOF
+fi
 systemctl daemon-reload
 
 cat <<'EOF'
@@ -65,4 +118,10 @@ Next manual steps:
   systemctl status gg.tana.gild-vault-proxy.service
 
 Share /etc/gild/vault-proxy-token with tana-admin as VAULT_PROXY_TOKEN.
+
+Upgrade path for mTLS:
+  1. Re-run this installer with --with-mtls.
+  2. Restart gg.tana.gild-vault-proxy.service.
+  3. Issue one client identity per caller: gild vault ca issue <machine-cn>.
+  4. Keep the bearer token configured; mTLS is an additional identity layer.
 EOF

@@ -10,7 +10,7 @@ User=gild-vault-proxy
 SupplementaryGroups=gild
 Environment=VAULT_PROXY_TOKEN_FILE=/etc/gild/vault-proxy-token
 Environment=VAULT_SOCKET=/run/gild-vault/sock
-ExecStart=/usr/local/bin/gild-vault-proxy --port 9444
+ExecStart=/usr/local/bin/gild-vault-proxy --bind 0.0.0.0:9444
 Restart=on-failure
 RestartSec=2s
 
@@ -25,7 +25,8 @@ ProtectKernelLogs=true
 ProtectControlGroups=true
 LockPersonality=true
 RestrictRealtime=true
-ReadOnlyPaths=/etc/gild/vault-proxy-token /run/gild-vault/sock
+ReadOnlyPaths=/etc/gild/vault-proxy-token /etc/gild/vault-proxy-ca.pem /etc/gild/vault-proxy.pem /etc/gild/vault-proxy.key /run/gild-vault/sock
+ReadWritePaths=/var/log/gild-vault-proxy-audit.log
 
 [Install]
 WantedBy=multi-user.target
