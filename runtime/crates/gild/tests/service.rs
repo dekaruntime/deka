@@ -10,6 +10,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use age::secrecy::ExposeSecret;
+
 fn gild_bin() -> &'static str {
     env!("CARGO_BIN_EXE_gild")
 }
@@ -280,10 +282,12 @@ fn service_link_round_trips_against_real_vault_agent_socket() {
 
     let dir = TestDir::new("gild-service-real-vault");
     let socket = dir.path().join("vault.sock");
-    let store_path = dir.path().join("secrets.json");
+    let store_path = dir.path().join("secrets.age");
     let audit_log = dir.path().join("audit.log");
+    let master_key = dir.path().join("vault-master.key");
+    write_master_key(&master_key);
 
-    let mut vault = spawn_vault_agent(&vault_bin, &socket, &store_path, &audit_log);
+    let mut vault = spawn_vault_agent(&vault_bin, &socket, &store_path, &audit_log, &master_key);
     wait_for_socket(&socket);
 
     let output = Command::new(gild_bin())
@@ -314,7 +318,13 @@ fn service_link_round_trips_against_real_vault_agent_socket() {
     let _ = vault.wait();
 }
 
-fn spawn_vault_agent(bin: &Path, socket: &Path, state_path: &Path, audit_log: &Path) -> Child {
+fn spawn_vault_agent(
+    bin: &Path,
+    socket: &Path,
+    state_path: &Path,
+    audit_log: &Path,
+    master_key: &Path,
+) -> Child {
     Command::new(bin)
         .args([
             "--socket",
@@ -324,10 +334,23 @@ fn spawn_vault_agent(bin: &Path, socket: &Path, state_path: &Path, audit_log: &P
             "--audit-log",
             audit_log.to_str().expect("audit log path utf8"),
         ])
+        .env("GILD_VAULT_MASTER_KEY_PATH", master_key)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
         .expect("spawn vault agent")
+}
+
+fn write_master_key(path: &Path) {
+    let identity = age::x25519::Identity::generate();
+    fs::write(path, format!("{}\n", identity.to_string().expose_secret()))
+        .expect("write test master key");
+    let mut perms = fs::metadata(path)
+        .expect("stat test master key")
+        .permissions();
+    use std::os::unix::fs::PermissionsExt;
+    perms.set_mode(0o400);
+    fs::set_permissions(path, perms).expect("chmod test master key");
 }
 
 fn wait_for_socket(socket: &Path) {

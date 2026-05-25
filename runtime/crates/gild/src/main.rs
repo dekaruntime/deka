@@ -105,6 +105,9 @@ mod tests {
     fn parses_vault_pool_and_service() {
         for args in [
             vec!["gild", "vault", "get", "OPENAI_API_KEY"],
+            vec!["gild", "vault", "init"],
+            vec!["gild", "vault", "init", "--force"],
+            vec!["gild", "vault", "migrate-from-plaintext"],
             vec!["gild", "pool", "status"],
             vec![
                 "gild",
