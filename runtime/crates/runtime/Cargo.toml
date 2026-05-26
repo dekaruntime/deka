@@ -19,6 +19,7 @@ stdio = { path = "../stdio" }
 modules_php = { path = "../modules_php" }
 phpx_js = { path = "../phpx_js" }
 bundler = { path = "../bundler" }
+compile = { path = "../compile" }
 axum = { workspace = true }
 base64 = "0.21"
 deno_core = { workspace = true }
@@ -28,3 +29,4 @@ serde_json = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tracing = "0.1"
 flate2 = "1.0"
+tempfile = "3.23.0"
