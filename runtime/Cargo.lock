@@ -1431,6 +1431,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "deka-router"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "bytes",
+ "deka-shard",
+ "redis",
+ "reqwest",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "deka-shard"
 version = "0.1.0"
 dependencies = [
