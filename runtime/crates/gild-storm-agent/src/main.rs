@@ -3,6 +3,7 @@ mod net;
 mod process;
 mod stress;
 mod supervisor;
+mod systemd_mask;
 
 use std::path::PathBuf;
 
@@ -27,6 +28,7 @@ enum Commands {
     Disk(disk::DiskArgs),
     Mem(stress::MemArgs),
     Cpu(stress::CpuArgs),
+    Recover,
     #[command(name = "__supervisor", hide = true)]
     Supervisor(SupervisorArgs),
 }
@@ -51,6 +53,7 @@ fn run() -> Result<()> {
         Commands::Disk(args) => disk::run(args),
         Commands::Mem(args) => stress::run_mem(args),
         Commands::Cpu(args) => stress::run_cpu(args),
+        Commands::Recover => systemd_mask::recover_orphaned_masks(),
         Commands::Supervisor(args) => supervisor::run_supervisor(&args.spec),
     }
 }
@@ -165,6 +168,39 @@ mod tests {
                 "5",
                 "--undo-by",
                 "10s",
+            ],
+            vec!["gild-storm-agent", "recover"],
+        ] {
+            Cli::try_parse_from(args).unwrap();
+        }
+    }
+
+    #[test]
+    fn parses_mask_restart_flags() {
+        for args in [
+            vec![
+                "gild-storm-agent",
+                "process",
+                "kill",
+                "--service",
+                "gild-vault",
+                "--signal",
+                "SIGKILL",
+                "--undo-by",
+                "5s",
+                "--mask-restart",
+            ],
+            vec![
+                "gild-storm-agent",
+                "process",
+                "pause",
+                "--service",
+                "gild-vault",
+                "--secs",
+                "3",
+                "--undo-by",
+                "5s",
+                "--mask-restart",
             ],
         ] {
             Cli::try_parse_from(args).unwrap();

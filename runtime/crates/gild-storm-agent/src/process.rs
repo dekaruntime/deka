@@ -4,6 +4,7 @@ use anyhow::{Result, bail};
 use clap::{Args, Subcommand, ValueEnum};
 
 use crate::supervisor::{self, UndoAction};
+use crate::systemd_mask;
 
 #[derive(Debug, Args)]
 pub struct ProcessArgs {
@@ -32,6 +33,8 @@ pub struct KillArgs {
     pub signal: Signal,
     #[arg(long, value_parser = parse_nonzero_duration)]
     pub undo_by: Duration,
+    #[arg(long)]
+    pub mask_restart: bool,
 }
 
 #[derive(Debug, Args)]
@@ -42,6 +45,8 @@ pub struct PauseArgs {
     pub secs: u64,
     #[arg(long, value_parser = parse_nonzero_duration)]
     pub undo_by: Duration,
+    #[arg(long)]
+    pub mask_restart: bool,
 }
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -63,30 +68,106 @@ impl Signal {
 pub fn run(args: ProcessArgs) -> Result<()> {
     match args.command {
         ProcessCommand::Kill(args) => {
-            supervisor::spawn_supervisor(
-                args.undo_by,
-                UndoAction::SystemctlStart {
-                    service: args.service.clone(),
-                },
-            )?;
-            run_systemctl(&["kill", "-s", args.signal.as_str(), &args.service])
+            if args.mask_restart {
+                run_masked_kill(args)
+            } else {
+                supervisor::spawn_supervisor(
+                    args.undo_by,
+                    UndoAction::SystemctlStart {
+                        service: args.service.clone(),
+                    },
+                )?;
+                run_systemctl(&["kill", "-s", args.signal.as_str(), &args.service])?;
+                supervisor::audit(format!(
+                    "kill issued service={} signal={}",
+                    args.service,
+                    args.signal.as_str()
+                ));
+                Ok(())
+            }
         }
         ProcessCommand::Start(args) => {
             supervisor::spawn_supervisor(Duration::from_secs(1), UndoAction::Noop)?;
-            run_systemctl(&["start", &args.service])
+            systemd_mask::clear_storm_mask_if_present(&args.service)?;
+            systemd_mask::ensure_started(&args.service)
         }
         ProcessCommand::Pause(args) => {
             ensure_undo_by_at_least(args.undo_by, args.secs, "process pause")?;
-            supervisor::spawn_supervisor(
-                args.undo_by,
-                UndoAction::SignalService {
-                    service: args.service.clone(),
-                    signal: "SIGCONT".to_string(),
-                },
-            )?;
-            run_systemctl(&["kill", "-s", "SIGSTOP", &args.service])
+            if args.mask_restart {
+                run_masked_pause(args)
+            } else {
+                supervisor::spawn_supervisor(
+                    Duration::from_secs(args.secs),
+                    UndoAction::SignalService {
+                        service: args.service.clone(),
+                        signal: "SIGCONT".to_string(),
+                    },
+                )?;
+                run_systemctl(&["kill", "-s", "SIGSTOP", &args.service])?;
+                supervisor::audit(format!(
+                    "pause issued service={} signal=SIGSTOP",
+                    args.service
+                ));
+                Ok(())
+            }
         }
     }
+}
+
+fn run_masked_kill(args: KillArgs) -> Result<()> {
+    let run_id = systemd_mask::new_run_id();
+    let guard = systemd_mask::acquire_mask(&args.service, run_id)?;
+    supervisor::spawn_supervisor(
+        args.undo_by,
+        UndoAction::RestoreMaskedKill {
+            service: guard.service.clone(),
+            run_id: guard.run_id.clone(),
+        },
+    )?;
+    if let Err(err) = systemd_mask::write_dropin(&guard) {
+        let _ = systemd_mask::remove_dropin(&guard.service, &guard.run_id);
+        return Err(err);
+    }
+    if let Err(err) = systemd_mask::daemon_reload()
+        .and_then(|()| systemd_mask::signal_service(&guard.service, args.signal.as_str()))
+    {
+        let _ = systemd_mask::restore_masked_kill(&guard.service, &guard.run_id);
+        return Err(err);
+    }
+    supervisor::audit(format!(
+        "kill issued service={} signal={} mask_restart=true run_id={}",
+        guard.service,
+        args.signal.as_str(),
+        guard.run_id
+    ));
+    Ok(())
+}
+
+fn run_masked_pause(args: PauseArgs) -> Result<()> {
+    let run_id = systemd_mask::new_run_id();
+    let guard = systemd_mask::acquire_mask(&args.service, run_id)?;
+    supervisor::spawn_supervisor(
+        Duration::from_secs(args.secs),
+        UndoAction::RestoreMaskedPause {
+            service: guard.service.clone(),
+            run_id: guard.run_id.clone(),
+        },
+    )?;
+    if let Err(err) = systemd_mask::write_dropin(&guard) {
+        let _ = systemd_mask::remove_dropin(&guard.service, &guard.run_id);
+        return Err(err);
+    }
+    if let Err(err) = systemd_mask::daemon_reload()
+        .and_then(|()| systemd_mask::signal_service(&guard.service, "SIGSTOP"))
+    {
+        let _ = systemd_mask::restore_masked_pause(&guard.service, &guard.run_id);
+        return Err(err);
+    }
+    supervisor::audit(format!(
+        "pause issued service={} signal=SIGSTOP mask_restart=true run_id={}",
+        guard.service, guard.run_id
+    ));
+    Ok(())
 }
 
 pub(crate) fn parse_nonzero_duration(value: &str) -> Result<Duration, String> {
