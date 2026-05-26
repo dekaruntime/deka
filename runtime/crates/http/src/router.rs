@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use axum::extract::ws::WebSocketUpgrade;
 use axum::http::header::CONTENT_LENGTH;
+use axum::middleware::from_fn_with_state;
 use axum::{
     Router,
     extract::{Request, State},
@@ -15,10 +16,23 @@ use crate::websocket::{handle_hmr_websocket, handle_websocket, set_hmr_runtime_s
 use engine::{RuntimeState, execute_request_parts};
 
 use crate::debug::http_debug_enabled;
+use crate::rate_limit::{RateLimiter, middleware as rate_limit_middleware};
 
 pub fn app_router(state: Arc<RuntimeState>) -> Router {
+    let rate_limiter = RateLimiter::from_env();
+    rate_limiter.spawn_janitor();
+    app_router_with_rate_limiter(state, rate_limiter)
+}
+
+pub fn app_router_with_rate_limiter(
+    state: Arc<RuntimeState>,
+    rate_limiter: Arc<RateLimiter>,
+) -> Router {
     set_hmr_runtime_state(Arc::clone(&state));
-    Router::new().fallback(handle_request).with_state(state)
+    Router::new()
+        .fallback(handle_request)
+        .with_state(state)
+        .layer(from_fn_with_state(rate_limiter, rate_limit_middleware))
 }
 
 async fn handle_request(

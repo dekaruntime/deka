@@ -224,7 +224,7 @@ fn build_job_argv(job: &crate::cli::pipeline_yaml::Job) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::pipeline_yaml::{Job, Pipeline, Step};
+    use crate::cli::pipeline_yaml::{Job, Step};
 
     #[test]
     fn build_job_argv_collects_run_commands() {

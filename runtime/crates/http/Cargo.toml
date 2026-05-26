@@ -7,6 +7,7 @@ edition = "2024"
 axum = { workspace = true, features = ["ws"] }
 base64 = "0.22"
 bytes = { workspace = true }
+dashmap = "5.5.3"
 futures-util = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true }
@@ -21,3 +22,6 @@ serde_json = { workspace = true }
 redis = { workspace = true }
 chrono = { workspace = true }
 neo4rs = { workspace = true }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

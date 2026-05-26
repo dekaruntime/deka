@@ -13,8 +13,10 @@ use std::time::{Duration, Instant};
 use axum::Router;
 use axum::extract::{Request, State};
 use axum::http::header::CONTENT_LENGTH;
+use axum::middleware::from_fn_with_state;
 use axum::response::{IntoResponse, Response};
 use core::Context;
+use deka_http::rate_limit::{RateLimiter, middleware as rate_limit_middleware};
 use engine::config as runtime_config;
 use engine::{RuntimeEngine, set_engine};
 use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData, RequestParts};
@@ -406,16 +408,25 @@ async fn platform_async(context: &Context) {
         });
     }
 
+    let rate_limiter = RateLimiter::from_env();
+    rate_limiter.spawn_janitor();
+
     let app = Router::new()
         .route(
             "/__admin/rebuild",
             axum::routing::post(handle_admin_rebuild),
         )
         .fallback(handle_platform_request)
-        .with_state(state);
+        .with_state(state)
+        .layer(from_fn_with_state(rate_limiter, rate_limit_middleware));
 
     let listener = tokio::net::TcpListener::from_std(listener).unwrap();
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await
+    .unwrap();
 }
 
 /// POST /__admin/rebuild?shop_id=xxx[&ref=hash]

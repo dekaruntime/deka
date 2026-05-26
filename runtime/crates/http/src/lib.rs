@@ -5,6 +5,7 @@ pub mod api;
 mod debug;
 mod fast;
 mod listener;
+pub mod rate_limit;
 mod router;
 mod server;
 mod utility_css;
