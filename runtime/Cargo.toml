@@ -38,6 +38,7 @@ members = [
     "crates/gild-vault-client",
     "crates/gild-vault-proxy",
     "crates/deka-dns",
+    "crates/deka-edge-publisher",
 ]
 
 [workspace.dependencies]

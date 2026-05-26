@@ -1,0 +1,23 @@
+[Unit]
+Description=Tana Deka edge Redis publisher
+After=network-online.target neo4j.service redis.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=NEO4J_URI=bolt://localhost:7687
+Environment=NEO4J_USER=neo4j
+Environment=REDIS_URL=redis://localhost:6379
+Environment=STATE_DIR=/var/lib/deka-edge-publisher
+Environment=POLL_INTERVAL_SECS=5
+EnvironmentFile=-/etc/tana/deka-edge-publisher.env
+ExecStart=/usr/local/bin/deka-edge-publisher
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/deka-edge-publisher
+
+[Install]
+WantedBy=multi-user.target
