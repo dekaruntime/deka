@@ -31,6 +31,7 @@ members = [
     "crates/cypher",
     "crates/linkhash-client",
     "crates/shard",
+    "crates/deka-router",
     "crates/gild-vault",
     "crates/gild-vault-client",
     "crates/gild-vault-proxy",
