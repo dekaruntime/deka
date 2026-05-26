@@ -3,7 +3,7 @@ duration: 60s
 faults:
   - at: 10s
     host: demon
-    cmd: process kill --service gg.tana.gild-vault --signal SIGKILL --undo-by 120s
+    cmd: process kill --service gg.tana.gild-vault --signal SIGKILL --mask-restart --undo-by 120s
   - at: 45s
     host: demon
     cmd: process start --service gg.tana.gild-vault
