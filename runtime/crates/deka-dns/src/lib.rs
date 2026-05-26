@@ -71,10 +71,10 @@ fn default_udp_port() -> u16 {
 }
 
 fn env_addr(addr_key: &str, port_key: &str, host: &str, port: u16) -> SocketAddr {
-    if let Ok(addr) = std::env::var(addr_key) {
-        if let Ok(parsed) = addr.parse() {
-            return parsed;
-        }
+    if let Ok(addr) = std::env::var(addr_key)
+        && let Ok(parsed) = addr.parse()
+    {
+        return parsed;
     }
 
     let port = std::env::var(port_key)
@@ -138,10 +138,9 @@ impl Store for RedisStore {
             .lock()
             .ok()
             .and_then(|cache| cache.get(&key).cloned())
+            && entry.expires_at > Instant::now()
         {
-            if entry.expires_at > Instant::now() {
-                return Ok(entry.value.map(|value| StoreValue { value, ttl: None }));
-            }
+            return Ok(entry.value.map(|value| StoreValue { value, ttl: None }));
         }
 
         let client = self.client.clone();
@@ -285,10 +284,10 @@ impl<S: Store> Resolver<S> {
         }
 
         if let Some(domain) = qname.strip_prefix("_tana-verify.") {
-            if matches_qtype(qtype, TYPE::TXT) {
-                if let Some(token) = self.read_key(format!("verify:{domain}")).await? {
-                    return txt_record(qname, token.value, DEFAULT_TTL).map(|rr| vec![rr]);
-                }
+            if matches_qtype(qtype, TYPE::TXT)
+                && let Some(token) = self.read_key(format!("verify:{domain}")).await?
+            {
+                return txt_record(qname, token.value, DEFAULT_TTL).map(|rr| vec![rr]);
             }
             return Ok(Vec::new());
         }
@@ -326,12 +325,11 @@ impl<S: Store> Resolver<S> {
             }
         }
 
-        if let Some(sub) = qname.strip_suffix(&format!(".{}", self.config.zone)) {
-            if !sub.contains('.') {
-                if self.read_key(format!("subdomain:{sub}")).await?.is_some() {
-                    return Ok(Some(qname.to_string()));
-                }
-            }
+        if let Some(sub) = qname.strip_suffix(&format!(".{}", self.config.zone))
+            && !sub.contains('.')
+            && self.read_key(format!("subdomain:{sub}")).await?.is_some()
+        {
+            return Ok(Some(qname.to_string()));
         }
 
         Ok(None)
@@ -354,10 +352,10 @@ impl<S: Store> Resolver<S> {
                 records.push(rr);
             }
         }
-        if matches_qtype(qtype, TYPE::SOA) || matches!(qtype, QTYPE::ANY) {
-            if let Ok(rr) = soa_record(&self.config) {
-                records.push(rr);
-            }
+        if (matches_qtype(qtype, TYPE::SOA) || matches!(qtype, QTYPE::ANY))
+            && let Ok(rr) = soa_record(&self.config)
+        {
+            records.push(rr);
         }
         records
     }
