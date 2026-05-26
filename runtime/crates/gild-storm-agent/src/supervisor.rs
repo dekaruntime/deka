@@ -11,6 +11,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::systemd_mask;
+
 const LOG_PATH: &str = "/var/log/gild-storm-agent.log";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -19,6 +21,8 @@ pub enum UndoAction {
     SystemctlStart { service: String },
     SystemctlStop { service: String },
     SignalService { service: String, signal: String },
+    RestoreMaskedKill { service: String, run_id: String },
+    RestoreMaskedPause { service: String, run_id: String },
     TailscaleUp,
     TcNetemDel { peer: String },
     RemoveFile { path: PathBuf },
@@ -90,6 +94,12 @@ pub fn run_action(action: &UndoAction) -> Result<()> {
                 .arg(signal)
                 .arg(service),
         ),
+        UndoAction::RestoreMaskedKill { service, run_id } => {
+            systemd_mask::restore_masked_kill(service, run_id)
+        }
+        UndoAction::RestoreMaskedPause { service, run_id } => {
+            systemd_mask::restore_masked_pause(service, run_id)
+        }
         UndoAction::TailscaleUp => run_status(Command::new("tailscale").arg("up")),
         UndoAction::TcNetemDel { peer } => {
             run_status(Command::new("tc").args(["qdisc", "del", "dev", peer, "root", "netem"]))
@@ -219,8 +229,9 @@ mod tests {
     fn supervisor_spec_round_trips() {
         let spec = SupervisorSpec::new(
             Duration::from_secs(2),
-            UndoAction::SystemctlStart {
+            UndoAction::RestoreMaskedKill {
                 service: "gild-vault".to_string(),
+                run_id: "run-a".to_string(),
             },
         );
         let json = serde_json::to_string(&spec).unwrap();
