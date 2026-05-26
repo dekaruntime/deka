@@ -10,7 +10,7 @@ use engine::{RuntimeEngine, config as runtime_config, set_engine};
 use modules_php::validation::{format_validation_error, modules::validate_module_resolution};
 use platform::Platform;
 use platform_server::ServerPlatform;
-use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData};
+use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData, RequestParts};
 use runtime_core::env::{set_default_log_level_with, set_handler_path_with, set_runtime_args_with};
 use runtime_core::handler::{
     handler_input_with, is_html_entry, is_php_entry, normalize_handler_path_with,
@@ -152,7 +152,12 @@ async fn run_async(context: &Context) -> Result<(), String> {
                 handler_code,
                 handler_entry: Some(normalized.clone()),
                 request_value,
-                request_parts: None,
+                request_parts: Some(RequestParts {
+                    url: "http://localhost/run".to_string(),
+                    method: "GET".to_string(),
+                    headers: Vec::new(),
+                    body: None,
+                }),
                 mode: execution_mode,
             },
         )

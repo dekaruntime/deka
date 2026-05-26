@@ -11,6 +11,7 @@ use tempfile::TempDir;
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(clippy::await_holding_lock)]
 async fn vault_secrets_are_loaded_from_real_gild_vault_per_shop_isolate() {
     let _env_guard = ENV_LOCK.lock().expect("env lock");
     let vault_bin = vault_bin();

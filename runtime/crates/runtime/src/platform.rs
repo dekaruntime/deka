@@ -783,7 +783,7 @@ fn claims_cloudflare_ip_without_ray(headers: &[(String, String)]) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+mod cloudflare_header_tests {
     use super::claims_cloudflare_ip_without_ray;
 
     fn headers(pairs: &[(&str, &str)]) -> Vec<(String, String)> {

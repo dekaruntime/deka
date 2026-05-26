@@ -3598,6 +3598,11 @@ fn set_request_globals(
             server.set(scope, script_key.into(), script_val.into());
         }
 
+        let argv_key = v8::String::new(scope, "argv").ok_or_else(|| "argv key".to_string())?;
+        let argv_val =
+            serde_v8::to_v8(scope, deka_args).map_err(|err| format!("argv to v8: {}", err))?;
+        server.set(scope, argv_key.into(), argv_val);
+
         let server_key =
             v8::String::new(scope, "_SERVER").ok_or_else(|| "_SERVER key".to_string())?;
         global.set(scope, server_key.into(), server.into());
