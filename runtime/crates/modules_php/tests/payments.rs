@@ -456,7 +456,7 @@ fn authorize_refund(
         return Err("refund_unauthorized: missing actor user_id");
     }
     let allowed = ["owner", "admin", "shop_owner", "platform_admin"];
-    if !allowed.iter().any(|r| *r == role) {
+    if !allowed.contains(&role) {
         return Err("refund_unauthorized");
     }
     if amount <= 0 {

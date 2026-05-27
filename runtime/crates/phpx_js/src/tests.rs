@@ -2770,9 +2770,12 @@ $y: int;
 }
 "#;
     let js = phpx_to_js(source).expect("should compile");
-    // Struct declarations are stored as schemas, may not produce direct output
-    // but should not error
-    assert!(js.len() >= 0, "struct should compile without error");
+    // Struct declarations are stored as schemas; field names should be retained.
+    assert!(
+        js.contains("x") && js.contains("y"),
+        "expected struct fields in output, got:\n{}",
+        js
+    );
 }
 
 #[test]
