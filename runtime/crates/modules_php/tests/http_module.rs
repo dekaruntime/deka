@@ -425,8 +425,9 @@ fn spawn_ws_echo() -> u16 {
                     while let Some(msg) = src.next().await {
                         match msg {
                             Ok(m) if m.is_text() || m.is_binary() => {
-                                if sink.send(m).await.is_err() {
-                                    return;
+                                match sink.send(m).await {
+                                    Ok(()) => {}
+                                    Err(_) => return,
                                 }
                             }
                             Ok(tokio_tungstenite::tungstenite::Message::Ping(p)) => {
