@@ -168,7 +168,7 @@ pub async fn middleware(
     }
 }
 
-fn source_ip(headers: &HeaderMap, peer_addr: Option<SocketAddr>) -> Option<IpAddr> {
+pub(crate) fn source_ip(headers: &HeaderMap, peer_addr: Option<SocketAddr>) -> Option<IpAddr> {
     header_ip(headers, "cf-connecting-ip")
         .or_else(|| x_forwarded_for_ip(headers))
         .or_else(|| peer_addr.map(|addr| addr.ip()))
