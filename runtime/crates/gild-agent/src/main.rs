@@ -23,7 +23,10 @@ mod handlers;
 const DEFAULT_SOCKET_PATH: &str = "/run/gild-agent.sock";
 const ORCHESTRATOR_GROUP: &str = "gild-orchestrator";
 const AGENT_RUNTIME_GROUP: &str = "gild-agents";
-const DISPATCHER_BINARY: &str = "/usr/local/bin/gild-dispatcher";
+const TANA_DIR: &str = "/home/sami/Projects/tana";
+const BUN_BIN: &str = "/home/sami/.bun/bin/bun";
+const GILD_SOCKET_PATH: &str = "/run/gild/sock";
+const DISPATCHER_HMAC_KEY_PLACEHOLDER: &str = "__SET_BY_GILD_AGENT__";
 const READ_TIMEOUT_MS: u64 = 1_000;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 const MAX_BODY_BYTES: usize = 64 * 1024;
@@ -730,6 +733,8 @@ fn validate_env_map(extra_env: &HashMap<String, String>) -> Result<()> {
 }
 
 fn render_dispatcher_unit(request: &WriteUnitRequest) -> String {
+    let hmac_key = std::env::var("AGENT_DISPATCHER_HMAC_KEY")
+        .unwrap_or_else(|_| DISPATCHER_HMAC_KEY_PLACEHOLDER.to_string());
     let mut env = request
         .extra_env
         .iter()
@@ -750,21 +755,42 @@ Wants=network-online.target\n\
 [Service]\n\
 Type=simple\n\
 User={slug}\n\
-Group={group}\n\
+Group={slug}\n\
 WorkingDirectory=/home/{slug}\n\
-Environment=AGENT_SLUG={slug}\n\
-Environment=PORT={port}\n\
+\n\
+Environment=\"PATH=/home/{slug}/.local/bin:/home/{slug}/.bun/bin:/usr/local/bin:/usr/bin:/bin\"\n\
+Environment=\"HOME=/home/{slug}\"\n\
+Environment=\"AGENT_SLUG={slug}\"\n\
+Environment=\"AGENT_DISPATCHER_PORT={port}\"\n\
+Environment=\"AGENT_WORKSPACE=/home/{slug}/repos\"\n\
+Environment=\"AGENT_DISPATCHER_HMAC_KEY={hmac_key}\"\n\
+Environment=\"AGENT_PORTS_FILE={tana_dir}/infra/agent-ports.json\"\n\
+Environment=\"AGENT_WORKER_SANDBOX=host\"\n\
+Environment=\"GILD_SOCKET_PATH={gild_socket_path}\"\n\
+Environment=\"GILD_BEARER_TOKEN_FILE=/home/{slug}/.config/tana/gild-bearer-token\"\n\
 {extra_env}\
-ExecStart={binary}\n\
-Restart=on-failure\n\
-RestartSec=5s\n\
+ExecStart={bun_bin} run {tana_dir}/agent-dispatcher/src/index.ts\n\
+ExecStartPost=/bin/sh -c 'for attempt in 1 2 3 4 5 6 7 8 9 10; do /usr/bin/curl -fsS --max-time 2 http://127.0.0.1:${{AGENT_DISPATCHER_PORT}}/health && exit 0; sleep 1; done; exit 1'\n\
+\n\
+Restart=always\n\
+RestartSec=3\n\
+StandardOutput=append:/var/log/gg.tana.gild-dispatcher-{slug}.log\n\
+StandardError=append:/var/log/gg.tana.gild-dispatcher-{slug}.log\n\
+\n\
+NoNewPrivileges=true\n\
+ProtectSystem=strict\n\
+ProtectHome=read-only\n\
+ReadWritePaths=/home/{slug} /var/log /tmp\n\
+PrivateTmp=true\n\
 \n\
 [Install]\n\
 WantedBy=multi-user.target\n",
         slug = request.slug,
-        group = AGENT_RUNTIME_GROUP,
         port = request.port,
-        binary = DISPATCHER_BINARY,
+        hmac_key = hmac_key,
+        tana_dir = TANA_DIR,
+        gild_socket_path = GILD_SOCKET_PATH,
+        bun_bin = BUN_BIN,
         extra_env = extra_env,
     )
 }
@@ -2080,9 +2106,13 @@ mod tests {
         let unit = render_dispatcher_unit(&request);
 
         assert!(unit.contains("User=agent-foo\n"));
-        assert!(unit.contains("Group=gild-agents\n"));
-        assert!(unit.contains("ExecStart=/usr/local/bin/gild-dispatcher\n"));
-        assert!(unit.contains("Environment=PORT=9430\n"));
+        assert!(unit.contains("Group=agent-foo\n"));
+        assert!(unit.contains(
+            "ExecStart=/home/sami/.bun/bin/bun run /home/sami/Projects/tana/agent-dispatcher/src/index.ts\n"
+        ));
+        assert!(unit.contains("Environment=\"AGENT_DISPATCHER_PORT=9430\"\n"));
+        assert!(unit.contains("Environment=\"AGENT_WORKER_SANDBOX=host\"\n"));
+        assert!(unit.contains("Environment=\"GILD_SOCKET_PATH=/run/gild/sock\"\n"));
         assert!(unit.contains("Environment=GILD_MODE=sandbox\n"));
         assert!(!unit.contains("gild-orchestrator"));
     }

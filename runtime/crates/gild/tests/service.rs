@@ -24,21 +24,21 @@ fn vault_bin() -> PathBuf {
         return PathBuf::from(path);
     }
 
-    let mut path = PathBuf::from(gild_bin());
-    path.pop();
-    if path.file_name().is_some_and(|name| name == "deps") {
-        path.pop();
-    }
-    path.push("gild-vault");
-    build_gild_vault_bin(&path);
+    let workspace = workspace_root();
+    let path = workspace.join("target").join("release").join("gild-vault");
+    build_gild_vault_bin(&workspace, &path);
     path
 }
 
-fn build_gild_vault_bin(path: &Path) {
-    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
-        .expect("workspace root");
+        .expect("workspace root")
+        .to_path_buf()
+}
+
+fn build_gild_vault_bin(workspace: &Path, path: &Path) {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
     let status = Command::new(cargo)
         .args(["build", "--release", "-p", "gild-vault"])

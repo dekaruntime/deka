@@ -158,8 +158,29 @@ fn agent_subcommands_show_help() {
 
 #[test]
 fn agent_create_dry_run_does_not_need_socket() {
+    let dir = std::env::temp_dir().join(format!(
+        "gild-cli-create-test-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&dir).unwrap();
+    let config = dir.join("agents.toml");
+    fs::write(
+        &config,
+        r#"
+[agents.agent-zed]
+port = 9430
+name = "Zed"
+sandbox = "host"
+"#,
+    )
+    .unwrap();
+
     let output = Command::new(gild_bin())
         .args(["agent", "create", "agent-zed", "--dry-run"])
+        .env("GILD_AGENTS_CONFIG", &config)
         .env("GILD_AGENT_SOCKET", "/tmp/gild-agent-test-missing.sock")
         .output()
         .unwrap();
@@ -170,7 +191,21 @@ fn agent_create_dry_run_does_not_need_socket() {
     assert!(stdout.contains("useradd agent-zed"));
     assert!(stdout.contains("hmac_rotate agent-zed"));
     assert!(stdout.contains("gg.tana.gild-dispatcher@agent-zed.service"));
-    assert!(stdout.contains("Environment=AGENT_SLUG=agent-zed"));
+    assert!(stdout.contains("Environment=\"AGENT_SLUG=agent-zed\""));
+    assert!(stdout.contains("Environment=\"AGENT_DISPATCHER_PORT=9430\""));
+    assert!(stdout.contains("Environment=\"AGENT_DISPATCHER_HMAC_KEY=__SET_BY_GILD_AGENT__\""));
+    assert!(stdout.contains("Environment=\"AGENT_WORKSPACE=/home/agent-zed/repos\""));
+    assert!(stdout.contains(
+        "Environment=\"AGENT_PORTS_FILE=/home/sami/Projects/tana/infra/agent-ports.json\""
+    ));
+    assert!(stdout.contains("Environment=\"AGENT_WORKER_SANDBOX=host\""));
+    assert!(stdout.contains("Environment=\"GILD_SOCKET_PATH=/run/gild/sock\""));
+    assert!(stdout.contains(
+        "Environment=\"GILD_BEARER_TOKEN_FILE=/home/agent-zed/.config/tana/gild-bearer-token\""
+    ));
+    assert!(stdout.contains(
+        "ExecStart=/home/sami/.bun/bin/bun run /home/sami/Projects/tana/agent-dispatcher/src/index.ts"
+    ));
 }
 
 #[test]
