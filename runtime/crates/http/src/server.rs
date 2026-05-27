@@ -26,7 +26,7 @@ pub async fn serve_http(
             .await
             .map_err(|err| format_bind_error(addr, &err.to_string()))?;
         if perf_mode {
-            serve_http_fast(listener, state).await;
+            serve_http_fast(listener, state, Arc::clone(&rate_limiter)).await;
             return Ok(());
         }
 
@@ -50,8 +50,9 @@ pub async fn serve_http(
     for listener in bound_listeners {
         let state = Arc::clone(&state);
         if perf_mode {
+            let rate_limiter = Arc::clone(&rate_limiter);
             handles.push(tokio::spawn(async move {
-                serve_http_fast(listener, state).await;
+                serve_http_fast(listener, state, rate_limiter).await;
                 Ok::<(), String>(())
             }));
         } else {
