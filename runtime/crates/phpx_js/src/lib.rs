@@ -2383,14 +2383,9 @@ impl<'a> JsSubsetEmitter<'a> {
                 )))
             }
             // array_map($fn, $a) -> $a.map($fn)
-            // If $a is object-shaped, map over Object.values($a). Unsupported
-            // multi-array/zipping forms continue to resolve through stdlib imports.
             "array_map" if args.len() == 2 => {
                 let a = emit_args(self, args)?;
-                Ok(Some(format!(
-                    "(() => {{ const __fn = {}; const __a = {}; const __values = Array.isArray(__a) ? __a : ((__a && typeof __a === \"object\") ? Object.values(__a) : []); return __values.map(__fn); }})()",
-                    a[0], a[1]
-                )))
+                Ok(Some(format!("{}.map({})", a[1], a[0])))
             }
             // array_filter($a) -> $a.filter(Boolean)
             // array_filter($a, $fn) -> $a.filter($fn)
@@ -2401,10 +2396,7 @@ impl<'a> JsSubsetEmitter<'a> {
                 } else {
                     "Boolean".to_string()
                 };
-                Ok(Some(format!(
-                    "(() => {{ const __a = {}; const __fn = {}; const __values = Array.isArray(__a) ? __a : ((__a && typeof __a === \"object\") ? Object.values(__a) : []); return __values.filter(__fn); }})()",
-                    a[0], callback
-                )))
+                Ok(Some(format!("{}.filter({})", a[0], callback)))
             }
             // is_array($x) -> inline with struct exclusion
             "is_array" if args.len() == 1 => {
