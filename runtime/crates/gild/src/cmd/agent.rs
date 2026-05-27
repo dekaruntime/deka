@@ -16,8 +16,10 @@ use crate::{
 };
 
 const DEFAULT_GILD_AGENT_SOCKET: &str = "/run/gild-agent.sock";
-const DISPATCHER_BINARY: &str = "/usr/local/bin/gild-dispatcher";
-const DISPATCHER_GROUP: &str = "gild-agents";
+const TANA_DIR: &str = "/home/sami/Projects/tana";
+const BUN_BIN: &str = "/home/sami/.bun/bin/bun";
+const GILD_SOCKET_PATH: &str = "/run/gild/sock";
+const DISPATCHER_HMAC_KEY_PLACEHOLDER: &str = "__SET_BY_GILD_AGENT__";
 
 #[derive(Debug, Args)]
 pub struct AgentArgs {
@@ -165,11 +167,7 @@ async fn create_agent(slug: &str, dry_run: bool) -> Result<()> {
     validate_agent_slug(slug)?;
 
     let unit = dispatcher_unit_name(slug);
-    let port = if dry_run {
-        dispatcher_port(slug).unwrap_or(0)
-    } else {
-        dispatcher_port(slug)?
-    };
+    let port = dispatcher_port(slug)?;
     let unit_contents = dispatcher_unit_contents(slug, port);
     let socket_path = gild_agent_socket_path();
 
@@ -398,13 +396,33 @@ Wants=network-online.target
 [Service]
 Type=simple
 User={slug}
-Group={DISPATCHER_GROUP}
+Group={slug}
 WorkingDirectory=/home/{slug}
-Environment=AGENT_SLUG={slug}
-Environment=PORT={port}
-ExecStart={DISPATCHER_BINARY}
-Restart=on-failure
-RestartSec=5s
+
+Environment="PATH=/home/{slug}/.local/bin:/home/{slug}/.bun/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="HOME=/home/{slug}"
+Environment="AGENT_SLUG={slug}"
+Environment="AGENT_DISPATCHER_PORT={port}"
+Environment="AGENT_WORKSPACE=/home/{slug}/repos"
+Environment="AGENT_DISPATCHER_HMAC_KEY={DISPATCHER_HMAC_KEY_PLACEHOLDER}"
+Environment="AGENT_PORTS_FILE={TANA_DIR}/infra/agent-ports.json"
+Environment="AGENT_WORKER_SANDBOX=host"
+Environment="GILD_SOCKET_PATH={GILD_SOCKET_PATH}"
+Environment="GILD_BEARER_TOKEN_FILE=/home/{slug}/.config/tana/gild-bearer-token"
+
+ExecStart={BUN_BIN} run {TANA_DIR}/agent-dispatcher/src/index.ts
+ExecStartPost=/bin/sh -c 'for attempt in 1 2 3 4 5 6 7 8 9 10; do /usr/bin/curl -fsS --max-time 2 http://127.0.0.1:${{AGENT_DISPATCHER_PORT}}/health && exit 0; sleep 1; done; exit 1'
+
+Restart=always
+RestartSec=3
+StandardOutput=append:/var/log/gg.tana.gild-dispatcher-{slug}.log
+StandardError=append:/var/log/gg.tana.gild-dispatcher-{slug}.log
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/{slug} /var/log /tmp
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
@@ -447,12 +465,48 @@ mod tests {
     #[test]
     fn dispatcher_unit_substitutes_slug() {
         let unit = dispatcher_unit_contents("agent-zed", 9430);
-        assert!(unit.contains("User=agent-zed"));
-        assert!(unit.contains("Group=gild-agents"));
-        assert!(unit.contains("WorkingDirectory=/home/agent-zed"));
-        assert!(unit.contains("Environment=AGENT_SLUG=agent-zed"));
-        assert!(unit.contains("Environment=PORT=9430"));
-        assert!(unit.contains(DISPATCHER_BINARY));
+        assert_eq!(
+            unit,
+            r#"[Unit]
+Description=Tana gild dispatcher for agent-zed
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agent-zed
+Group=agent-zed
+WorkingDirectory=/home/agent-zed
+
+Environment="PATH=/home/agent-zed/.local/bin:/home/agent-zed/.bun/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="HOME=/home/agent-zed"
+Environment="AGENT_SLUG=agent-zed"
+Environment="AGENT_DISPATCHER_PORT=9430"
+Environment="AGENT_WORKSPACE=/home/agent-zed/repos"
+Environment="AGENT_DISPATCHER_HMAC_KEY=__SET_BY_GILD_AGENT__"
+Environment="AGENT_PORTS_FILE=/home/sami/Projects/tana/infra/agent-ports.json"
+Environment="AGENT_WORKER_SANDBOX=host"
+Environment="GILD_SOCKET_PATH=/run/gild/sock"
+Environment="GILD_BEARER_TOKEN_FILE=/home/agent-zed/.config/tana/gild-bearer-token"
+
+ExecStart=/home/sami/.bun/bin/bun run /home/sami/Projects/tana/agent-dispatcher/src/index.ts
+ExecStartPost=/bin/sh -c 'for attempt in 1 2 3 4 5 6 7 8 9 10; do /usr/bin/curl -fsS --max-time 2 http://127.0.0.1:${AGENT_DISPATCHER_PORT}/health && exit 0; sleep 1; done; exit 1'
+
+Restart=always
+RestartSec=3
+StandardOutput=append:/var/log/gg.tana.gild-dispatcher-agent-zed.log
+StandardError=append:/var/log/gg.tana.gild-dispatcher-agent-zed.log
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/agent-zed /var/log /tmp
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+"#
+        );
     }
 
     #[test]
