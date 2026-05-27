@@ -221,11 +221,7 @@ async fn serve(state: Arc<AppState>) -> Result<()> {
 async fn handle_connection(mut stream: UnixStream, state: Arc<AppState>) -> Result<()> {
     let peer = peer_credentials(&stream)?;
     if !authorize_peer(peer, state.orchestrator_gid)? {
-        write_reply(
-            &mut stream,
-            ServiceReply::json_value(403, serde_json::json!({ "error": "forbidden" })),
-        )
-        .await?;
+        write_reply(&mut stream, forbidden_peer_reply()).await?;
         return Ok(());
     }
 
@@ -1356,6 +1352,15 @@ fn authorize_peer(peer: PeerCredentials, orchestrator_gid: u32) -> Result<bool> 
     Ok(user_group_ids(peer.uid)?.contains(&orchestrator_gid))
 }
 
+fn forbidden_peer_reply() -> ServiceReply {
+    ServiceReply::json_value(
+        403,
+        serde_json::json!({
+            "error": "forbidden: gild-agent only accepts root or gild-orchestrator peers; gild-agents members are not authorized"
+        }),
+    )
+}
+
 fn group_gid(group: &str) -> Result<Option<u32>> {
     let raw = match fs::read_to_string("/etc/group") {
         Ok(raw) => raw,
@@ -1691,6 +1696,38 @@ mod tests {
             gid: 789,
         };
         assert!(peer_credentials_from_ucred(cred).is_err());
+    }
+
+    #[test]
+    fn authorize_peer_accepts_orchestrator_member() {
+        let peer = PeerCredentials {
+            pid: 123,
+            uid: 1000,
+            gid: 777,
+        };
+
+        assert!(authorize_peer(peer, 777).unwrap());
+    }
+
+    #[test]
+    fn authorize_peer_rejects_gild_agents_member() {
+        let peer = PeerCredentials {
+            pid: 123,
+            uid: 999_999,
+            gid: 778,
+        };
+
+        assert!(!authorize_peer(peer, 777).unwrap());
+    }
+
+    #[test]
+    fn forbidden_peer_reply_names_gild_agents_rejection() {
+        let reply = forbidden_peer_reply();
+
+        assert_eq!(reply.status, 403);
+        assert!(reply.body.contains("gild-orchestrator"));
+        assert!(reply.body.contains("gild-agents"));
+        assert!(reply.body.contains("not authorized"));
     }
 
     #[tokio::test]
