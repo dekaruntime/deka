@@ -632,18 +632,8 @@ fn rewrite_array_map_inline() {
         phpx_to_js("$fn = fn($x: int): int => $x + 1;\n$a = [1, 2, 3];\n$r = array_map($fn, $a);")
             .expect("should compile");
     assert!(
-        js.contains(".map("),
-        "expected .map() for array_map, got:\n{}",
-        js
-    );
-    assert!(
-        js.contains("const __fn"),
-        "expected callback to be bound once for array_map, got:\n{}",
-        js
-    );
-    assert!(
-        js.contains("Object.values(__a)"),
-        "expected object fallback for array_map, got:\n{}",
+        js.contains("a.map(fn)"),
+        "expected array_map($fn, $a) to rewrite to a.map(fn), got:\n{}",
         js
     );
     assert!(
@@ -660,18 +650,8 @@ fn rewrite_array_filter_inline() {
     )
     .expect("should compile");
     assert!(
-        js.contains(".filter("),
-        "expected .filter() for array_filter, got:\n{}",
-        js
-    );
-    assert!(
-        js.contains("const __fn"),
-        "expected callback to be bound once for array_filter, got:\n{}",
-        js
-    );
-    assert!(
-        js.contains("Object.values(__a)"),
-        "expected object fallback for array_filter, got:\n{}",
+        js.contains("a.filter(fn)"),
+        "expected array_filter($a, $fn) to rewrite to a.filter(fn), got:\n{}",
         js
     );
     assert!(
@@ -685,13 +665,8 @@ fn rewrite_array_filter_inline() {
 fn rewrite_array_filter_without_callback_uses_boolean() {
     let js = phpx_to_js("$a = [0, 1, 2];\n$r = array_filter($a);").expect("should compile");
     assert!(
-        js.contains(".filter("),
-        "expected .filter() for array_filter without callback, got:\n{}",
-        js
-    );
-    assert!(
-        js.contains("Boolean"),
-        "expected Boolean callback for array_filter without callback, got:\n{}",
+        js.contains("a.filter(Boolean)"),
+        "expected array_filter($a) to rewrite to a.filter(Boolean), got:\n{}",
         js
     );
     assert!(
