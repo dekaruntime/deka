@@ -206,6 +206,10 @@ pub fn register_global_params(registry: &mut Registry) {
         name: "--registry-url",
         description: "linkhash registry base URL",
     });
+    registry.add_param(ParamSpec {
+        name: "--rust",
+        description: "emit a built-in Rust seam contract target",
+    });
 }
 
 // provide helpful info if no args are provided
