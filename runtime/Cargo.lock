@@ -2026,6 +2026,7 @@ version = "0.1.0"
 dependencies = [
  "deno_core",
  "pool",
+ "runtime_core",
  "rusqlite",
  "serde",
  "serde_json",
@@ -5376,6 +5377,7 @@ dependencies = [
 name = "runtime_core"
 version = "0.1.0"
 dependencies = [
+ "seam_ir",
  "serde",
  "serde_json",
 ]

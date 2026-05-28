@@ -9,5 +9,6 @@ serde_json = { workspace = true }
 tracing = "0.1"
 deno_core = { workspace = true }
 pool = { path = "../pool" }
+runtime_core = { path = "../runtime_core" }
 toml = { workspace = true }
 rusqlite = { version = "0.32", features = ["bundled"] }

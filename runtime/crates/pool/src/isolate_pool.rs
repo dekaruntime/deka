@@ -59,6 +59,7 @@ use crate::esm_loader::{
 };
 use crate::secrets_cache::{SecretsCache, SecretsMap};
 use crate::validation;
+use runtime_core::storefront_envelope::StorefrontRequest;
 
 // ========== OS-level Thread CPU Time ==========
 
@@ -268,6 +269,20 @@ pub struct RequestParts {
     pub method: String,
     pub headers: Vec<(String, String)>,
     pub body: Option<String>,
+}
+
+impl RequestParts {
+    fn to_storefront_request(&self) -> StorefrontRequest {
+        let (path, pathname) = split_request_url(&self.url);
+        StorefrontRequest {
+            url: self.url.clone(),
+            path,
+            pathname,
+            method: self.method.clone(),
+            headers: self.headers.iter().cloned().collect(),
+            body: self.body.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3527,51 +3542,13 @@ fn set_request_globals(
 
     if let Some(parts) = request_parts {
         let (request_uri, request_pathname) = split_request_url(&parts.url);
-        let obj = v8::Object::new(scope);
-
-        let url_key = v8::String::new(scope, "url").ok_or_else(|| "url key".to_string())?;
-        let url_val = v8::String::new(scope, &parts.url).ok_or_else(|| "url val".to_string())?;
-        obj.set(scope, url_key.into(), url_val.into());
-
-        let path_key = v8::String::new(scope, "path").ok_or_else(|| "path key".to_string())?;
-        let path_val =
-            v8::String::new(scope, &request_uri).ok_or_else(|| "path val".to_string())?;
-        obj.set(scope, path_key.into(), path_val.into());
-
-        let pathname_key =
-            v8::String::new(scope, "pathname").ok_or_else(|| "pathname key".to_string())?;
-        let pathname_val =
-            v8::String::new(scope, &request_pathname).ok_or_else(|| "pathname val".to_string())?;
-        obj.set(scope, pathname_key.into(), pathname_val.into());
-
-        let method_key =
-            v8::String::new(scope, "method").ok_or_else(|| "method key".to_string())?;
-        let method_val =
-            v8::String::new(scope, &parts.method).ok_or_else(|| "method val".to_string())?;
-        obj.set(scope, method_key.into(), method_val.into());
-
-        let headers_key =
-            v8::String::new(scope, "headers").ok_or_else(|| "headers key".to_string())?;
-        let headers_obj = v8::Object::new(scope);
-        for (key, value) in &parts.headers {
-            let k = v8::String::new(scope, key).ok_or_else(|| "header key".to_string())?;
-            let v = v8::String::new(scope, value).ok_or_else(|| "header val".to_string())?;
-            headers_obj.set(scope, k.into(), v.into());
-        }
-        obj.set(scope, headers_key.into(), headers_obj.into());
-
-        let body_key = v8::String::new(scope, "body").ok_or_else(|| "body key".to_string())?;
-        let body_val = match &parts.body {
-            Some(body) => v8::String::new(scope, body)
-                .ok_or_else(|| "body val".to_string())?
-                .into(),
-            None => v8::null(scope).into(),
-        };
-        obj.set(scope, body_key.into(), body_val);
+        let storefront_request = parts.to_storefront_request();
+        let obj = serde_v8::to_v8(scope, &storefront_request)
+            .map_err(|err| format!("storefront request to v8: {}", err))?;
 
         let request_key = v8::String::new(scope, "__requestData")
             .ok_or_else(|| "request data key".to_string())?;
-        global.set(scope, request_key.into(), obj.into());
+        global.set(scope, request_key.into(), obj);
 
         let server = v8::Object::new(scope);
         let request_uri_key =
