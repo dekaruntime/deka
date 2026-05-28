@@ -10,6 +10,7 @@ bumpalo = "3"
 bytes = "1"
 chrono = { version = "0.4", features = ["clock"] }
 php-rs = { path = "../php-rs" }
+seam_ir = { path = "../seam_ir" }
 cypher = { path = "../cypher" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
