@@ -21,6 +21,7 @@ members = [
     "crates/gild-chain",
     "crates/modules_common",
     "crates/modules_php",
+    "crates/seam_ir",
     "crates/php-rs",
     "crates/phpx_js",
     "crates/wasm_guest",

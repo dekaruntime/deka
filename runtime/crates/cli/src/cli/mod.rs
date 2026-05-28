@@ -13,6 +13,8 @@ pub mod build;
 #[cfg(feature = "native")]
 pub mod compile;
 #[cfg(feature = "native")]
+pub mod contract_extract;
+#[cfg(feature = "native")]
 pub mod db;
 #[cfg(target_arch = "wasm32")]
 pub mod db_wasm;
