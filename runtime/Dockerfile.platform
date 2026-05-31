@@ -1,0 +1,51 @@
+# syntax=docker/dockerfile:1.7
+
+FROM rust:1-bookworm AS build
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        clang \
+        cmake \
+        git \
+        libclang-dev \
+        lld \
+        pkg-config \
+        protobuf-compiler \
+        python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY . .
+
+ARG DEKA_GIT_SHA=unknown
+ARG DEKA_BUILD_UNIX=unknown
+ARG DEKA_TARGET=container-bookworm
+ARG DEKA_RUNTIME_ABI=glibc-2.36
+
+ENV DEKA_GIT_SHA=${DEKA_GIT_SHA} \
+    DEKA_BUILD_UNIX=${DEKA_BUILD_UNIX} \
+    DEKA_TARGET=${DEKA_TARGET} \
+    DEKA_RUNTIME_ABI=${DEKA_RUNTIME_ABI}
+
+RUN cargo build --release -p cli
+
+FROM debian:bookworm-slim AS runtime
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libgcc-s1 \
+        libssl3 \
+        libzstd1 \
+        zlib1g \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /src/target/release/cli /usr/local/bin/deka-cli
+
+WORKDIR /srv/tana/store
+EXPOSE 8530
+
+ENTRYPOINT ["/usr/local/bin/deka-cli", "platform"]
+CMD ["/srv/tana/store"]
