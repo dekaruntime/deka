@@ -7,6 +7,7 @@ edition = "2024"
 axum = { workspace = true }
 base64 = "0.22"
 bytes = { workspace = true }
+nix = { version = "0.30", features = ["socket", "uio", "net"] }
 redis = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
