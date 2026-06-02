@@ -1,0 +1,15 @@
+[package]
+name = "gild-virt"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gild = { path = "../gild" }
+
+objc2 = { version = "0.6", optional = true }
+objc2-foundation = { version = "0.3", optional = true }
+block2 = { version = "0.6", optional = true }
+
+[features]
+default = []
+macos = ["dep:objc2", "dep:objc2-foundation", "dep:block2"]

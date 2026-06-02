@@ -3,6 +3,10 @@ name = "gild"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "gild"
+path = "src/lib.rs"
+
 [[bin]]
 name = "gild"
 path = "src/main.rs"
