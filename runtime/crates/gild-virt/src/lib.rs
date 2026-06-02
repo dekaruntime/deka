@@ -7,3 +7,6 @@ mod stub;
 pub use macos::VirtualizationFrameworkBackend;
 #[cfg(not(all(feature = "macos", target_os = "macos")))]
 pub use stub::VirtualizationFrameworkBackend;
+
+#[cfg(all(feature = "macos", target_os = "macos"))]
+pub use macos::spawn_vm_exec_test;
