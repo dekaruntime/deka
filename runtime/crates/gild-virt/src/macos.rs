@@ -1,8 +1,13 @@
-use gild::backend::{VmBackend, VmConfig, VmHandle, Result};
+#![allow(non_snake_case)]
+#[link(name = "Virtualization", kind = "framework")]
+extern "C" {}
+
+use gild::backend::{VmBackend, VmConfig, VmHandle};
+use gild::backend::Result as GildResult;
 use std::process::Output;
 
 use objc2::rc::{Allocated, Retained};
-use objc2::{extern_class, extern_methods, ClassType};
+use objc2::{extern_class, extern_methods, AnyThread};
 use objc2_foundation::{NSError, NSObject, NSString, NSURL};
 use block2::Block;
 
@@ -23,8 +28,8 @@ impl VZVirtualMachineConfiguration {
         #[unsafe(method(setBootLoader:))]
         pub fn setBootLoader(&self, bootLoader: &VZLinuxBootLoader);
 
-        #[unsafe(method(setCPUsCount:))]
-        pub fn setCPUsCount(&self, count: usize);
+        #[unsafe(method(setCPUCount:))]
+        pub fn setCPUCount(&self, count: usize);
 
         #[unsafe(method(setMemorySize:))]
         pub fn setMemorySize(&self, size: u64);
@@ -116,7 +121,7 @@ impl VirtualizationFrameworkBackend {
 }
 
 impl VmBackend for VirtualizationFrameworkBackend {
-    fn spawn(&self, config: &VmConfig) -> Result<VmHandle> {
+    fn spawn(&self, config: &VmConfig) -> GildResult<VmHandle> {
         let vz_config = VZVirtualMachineConfiguration::new();
 
         let kernel_path = NSString::from_str(
@@ -129,7 +134,7 @@ impl VmBackend for VirtualizationFrameworkBackend {
             &kernel_url,
         );
         vz_config.setBootLoader(&boot_loader);
-        vz_config.setCPUsCount(config.vcpu_count as usize);
+        vz_config.setCPUCount(config.vcpu_count as usize);
         vz_config.setMemorySize(config.memory_mb * 1024 * 1024);
 
         if let Some(initrd) = &config.initrd_path {
@@ -154,7 +159,7 @@ impl VmBackend for VirtualizationFrameworkBackend {
         })
     }
 
-    fn exec(&self, _handle: &VmHandle, _cmd: &str) -> Result<Output> {
+    fn exec(&self, _handle: &VmHandle, _cmd: &str) -> GildResult<Output> {
         Ok(Output {
             status: std::process::ExitStatus::default(),
             stdout: Vec::new(),
@@ -162,7 +167,7 @@ impl VmBackend for VirtualizationFrameworkBackend {
         })
     }
 
-    fn kill(&self, _handle: VmHandle) -> Result<()> {
+    fn kill(&self, _handle: VmHandle) -> GildResult<()> {
         Ok(())
     }
 }
