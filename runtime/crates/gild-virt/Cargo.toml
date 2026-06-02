@@ -19,8 +19,10 @@ macos = ["dep:objc2", "dep:objc2-foundation", "dep:block2", "dep:libc"]
 name = "vm_exec"
 path = "tests/vm_exec.rs"
 harness = false
+required-features = ["macos"]
 
 [[test]]
 name = "spawn_vm_exec_test"
 path = "tests/spawn_vm_exec_test.rs"
 harness = false
+required-features = ["macos"]

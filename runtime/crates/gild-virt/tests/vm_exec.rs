@@ -1,3 +1,4 @@
+#![cfg(all(feature = "macos", target_os = "macos"))]
 use gild_virt::VirtualizationFrameworkBackend;
 use gild::backend::{VmBackend, VmConfig};
 use std::path::PathBuf;
