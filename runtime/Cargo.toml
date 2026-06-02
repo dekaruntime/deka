@@ -6,7 +6,7 @@ members = [
     "crates/runtime",
     "crates/runtime_core",
     "crates/compile",
-    "crates/stdio",
+    "crates/loop",
     "crates/http",
     "crates/platform",
     "crates/platform_server",
@@ -37,8 +37,8 @@ members = [
     "crates/shard",
     "crates/deka-router",
     "crates/gild-vault",
-    "crates/gild-vault-client",
     "crates/gild-vault-proxy",
+    "crates/gild-virt",
     "crates/deka-dns",
     "crates/deka-edge-publisher",
 ]
