@@ -1439,6 +1439,28 @@ fn op_php_aes_256_gcm_decrypt(
     }
 }
 
+fn bcrypt_verify_impl(password: String, hash: String) -> serde_json::Value {
+    match bcrypt::verify(password, &hash) {
+        Ok(valid) => serde_json::json!({
+            "ok": true,
+            "valid": valid,
+        }),
+        Err(_) => serde_json::json!({
+            "ok": false,
+            "error": "bcrypt_verify_failed",
+        }),
+    }
+}
+
+#[op2]
+#[serde]
+fn op_php_bcrypt_verify(
+    #[string] password: String,
+    #[string] hash: String,
+) -> serde_json::Value {
+    bcrypt_verify_impl(password, hash)
+}
+
 #[op2]
 #[serde]
 fn op_php_read_env() -> HashMap<String, String> {
@@ -4829,6 +4851,7 @@ deno_core::extension!(
         op_php_random_bytes,
         op_php_aes_256_gcm_encrypt,
         op_php_aes_256_gcm_decrypt,
+        op_php_bcrypt_verify,
         op_php_read_env,
         op_php_db_call_proto,
         op_php_db_proto_encode,
@@ -5274,6 +5297,19 @@ mod tests {
         assert!(db_call_proto_impl(&[0xff, 0x00, 0x01]).is_err());
         assert!(fs_call_proto_impl(&[0xff, 0x00, 0x01]).is_err());
         assert!(net_call_proto_impl(&[0xff, 0x00, 0x01]).is_err());
+    }
+
+    #[test]
+    fn bcrypt_verify_known_hash() {
+        // Hash of "password123" generated with bcrypt cost 10
+        let hash = "$2b$10$DqpfeHg1RhyMilY/GTQvgeahRja6yf5aL8dYoH6EwABQY.CZ.pnNu";
+        let result = bcrypt_verify_impl("password123".to_string(), hash.to_string());
+        assert_ok(&result);
+        assert_eq!(result.get("valid").and_then(|v| v.as_bool()), Some(true));
+
+        let bad = bcrypt_verify_impl("wrongpassword".to_string(), hash.to_string());
+        assert_ok(&bad);
+        assert_eq!(bad.get("valid").and_then(|v| v.as_bool()), Some(false));
     }
 }
 

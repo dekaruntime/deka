@@ -100,6 +100,26 @@ export function hmac_sha256_hex($value, $key) {
   return hash_hmac('sha256', to_string_value($value), to_string_value($key))
 }
 
+/// docid: phpx/crypto/bcrypt_verify()
+/// <Function name="bcrypt_verify">
+///   <Description>Verify a password against a bcrypt hash. Returns true on match, false otherwise.</Description>
+///   <ReturnType type="bool" />
+/// </Function>
+export function bcrypt_verify($password, $hash) {
+  $raw = bridge('crypto', 'bcrypt_verify', {
+    password: to_string_value($password),
+    hash: to_string_value($hash),
+  })
+  $assoc = to_assoc($raw)
+  if (!is_array($assoc) || !array_key_exists('ok', $assoc) || !$assoc['ok']) {
+    return false
+  }
+  if (!array_key_exists('valid', $assoc) || !is_bool($assoc['valid'])) {
+    return false
+  }
+  return $assoc['valid']
+}
+
 /// docid: phpx/crypto/hmac_sha256_bytes()
 /// <Function name="hmac_sha256_bytes">
 ///   <Description>PHPX standard module function `hmac_sha256_bytes` from `crypto`.</Description>

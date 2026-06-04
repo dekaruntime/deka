@@ -26,6 +26,7 @@ stdio = { path = "../stdio" }
 native-tls = "0.2"
 getrandom = "0.2"
 aes-gcm = "0.10"
+bcrypt = "0.15"
 neo4rs = { workspace = true }
 redis = { workspace = true }
 tokio = { workspace = true }
