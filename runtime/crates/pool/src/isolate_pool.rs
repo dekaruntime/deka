@@ -2418,6 +2418,16 @@ impl WorkerThread {
                                 }
                                 return Object.entries({ ok: false, error: (raw && raw.error) || 'aes_op_failed' });
                             }
+                            if (act === 'bcrypt_verify') {
+                                const req = payload || {};
+                                const password = String(req.password ?? '');
+                                const hash = String(req.hash ?? '');
+                                if (typeof ops.op_php_bcrypt_verify !== 'function') {
+                                    return { ok: false, error: 'op_php_bcrypt_verify unavailable' };
+                                }
+                                const raw = ops.op_php_bcrypt_verify(password, hash);
+                                return Object.entries(raw || { ok: false, error: 'bcrypt_verify_failed' });
+                            }
                             return { ok: false, error: `unknown crypto action '${act}'` };
                         }
                         if (kind === 'http') {
