@@ -12,3 +12,4 @@ deno_napi = { workspace = true }
 deno_permissions = { workspace = true }
 modules_common = { path = "../modules_common" }
 modules_php = { path = "../modules_php" }
+zega_backend = { path = "../zega_backend" }

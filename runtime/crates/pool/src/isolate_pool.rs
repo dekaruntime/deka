@@ -2198,6 +2198,13 @@ impl WorkerThread {
                             return { ok: false, error: 'db protobuf bridge ops unavailable' };
                         }
                         if (kind === 'neo4j') {
+                            const shopId = globalThis.__shopId;
+                            if (shopId && typeof ops.op_zega_backend === 'function' && ops.op_zega_backend(shopId) === 'zega') {
+                                if (typeof ops.op_zega_cql_call === 'function') {
+                                    return ops.op_zega_cql_call(shopId, String(action || ''), payload || {});
+                                }
+                                return { ok: false, error: 'zega CQL bridge op unavailable' };
+                            }
                             if (typeof ops.op_neo4j_call === 'function') {
                                 const p = payload || {};
                                 // Shard routing: always stamp __account_id on
@@ -2222,8 +2229,14 @@ impl WorkerThread {
                             return { ok: false, error: 'neo4j bridge op unavailable' };
                         }
                         if (kind === 'redis') {
+                            const shopId = globalThis.__shopId;
+                            if (shopId && typeof ops.op_zega_backend === 'function' && ops.op_zega_backend(shopId) === 'zega') {
+                                if (typeof ops.op_zega_kv_call === 'function') {
+                                    return ops.op_zega_kv_call(shopId, String(action || ''), payload || {});
+                                }
+                                return { ok: false, error: 'zega KV bridge op unavailable' };
+                            }
                             if (typeof ops.op_redis_call === 'function') {
-                                const shopId = globalThis.__shopId;
                                 const p = payload || {};
                                 // Auto-prefix Redis keys with tenant ID (transparent to PHPX code)
                                 if (shopId && p.key && action !== 'connect' && action !== 'close' && action !== 'flush' && action !== 'keys') {

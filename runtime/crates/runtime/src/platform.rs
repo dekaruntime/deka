@@ -196,6 +196,7 @@ async fn platform_async(context: &Context) {
         std::env::set_var("DEKA_SECURITY_ENFORCE", "1");
         std::env::set_var("DEKA_SECURITY_NO_PROMPT", "1");
         std::env::set_var("PHPX_MODULE_ROOT", root.join("default").to_string_lossy().as_ref());
+        std::env::set_var("DEKA_TENANTS_DIR", root.join("tenants"));
     }
 
     // Validate directory structure

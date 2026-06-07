@@ -1,0 +1,12 @@
+[package]
+name = "zega_backend"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+deno_core = { workspace = true }
+serde_json = { workspace = true }
+zega-core = { git = "https://git.tana.gg/tana/zega.git", rev = "703e5066dd2b22a00c1bd2a21ede3e040c0d0feb" }
+
+[dev-dependencies]
+tempfile = "3"

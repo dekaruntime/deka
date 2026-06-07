@@ -291,6 +291,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "base64ct"
+version = "1.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
+
+[[package]]
 name = "better_scoped_tls"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -744,6 +750,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75984efb6ed102a0d42db99afb6c1948f0380d1d91808d5529916e6c08b49d8d"
 
 [[package]]
+name = "const-oid"
+version = "0.9.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
+
+[[package]]
 name = "const-str"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1027,6 +1039,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "978747c1d849a7d2ee5e8adc0159961c48fb7e5db2f06af6723b80123bb53856"
 dependencies = [
  "cfg-if",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
+]
+
+[[package]]
+name = "dashmap"
+version = "6.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
  "hashbrown 0.14.5",
  "lock_api",
  "once_cell",
@@ -1333,6 +1359,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "der"
+version = "0.7.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7c1832837b905bbfb5101e07cc24c8deddf52f93225eee6ead5f4d63d53ddcb"
+dependencies = [
+ "const-oid",
+ "pem-rfc7468",
+ "zeroize",
+]
+
+[[package]]
 name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1359,6 +1396,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer",
+ "const-oid",
  "crypto-common",
  "subtle",
 ]
@@ -1756,8 +1794,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "wasi 0.11.1+wasi-snapshot-preview1",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -2486,6 +2526,9 @@ name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
+dependencies = [
+ "spin",
+]
 
 [[package]]
 name = "libc"
@@ -2563,7 +2606,7 @@ dependencies = [
  "const-str",
  "cssparser",
  "cssparser-color",
- "dashmap",
+ "dashmap 5.5.3",
  "data-encoding",
  "getrandom 0.3.4",
  "indexmap",
@@ -3045,6 +3088,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-bigint-dig"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e661dda6640fad38e827a6d4a310ff4763082116fe217f279885c97f511bb0b7"
+dependencies = [
+ "lazy_static",
+ "libm",
+ "num-integer",
+ "num-iter",
+ "num-traits",
+ "rand 0.8.5",
+ "smallvec",
+ "zeroize",
+]
+
+[[package]]
 name = "num-conv"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3070,12 +3129,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-iter"
+version = "0.1.45"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1429034a0490724d0075ebb2bc9e875d6503c3cf69e235a8941aa757d83ef5bf"
+dependencies = [
+ "autocfg",
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
+ "libm",
 ]
 
 [[package]]
@@ -3312,6 +3383,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pem-rfc7468"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88b39c9bfcfc231068454382784bb460aae594343fb030d46e9f50a645418412"
+dependencies = [
+ "base64ct",
+]
+
+[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3509,6 +3589,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
+name = "pkcs1"
+version = "0.7.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8ffb9f10fa047879315e6625af03c164b16962a5368d724ed16323b68ace47f"
+dependencies = [
+ "der",
+ "pkcs8",
+ "spki",
+]
+
+[[package]]
+name = "pkcs8"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f950b2377845cebe5cf8b5165cb3cc1a5e0fa5cfa3e1f7f55707d8fd82e0a7b7"
+dependencies = [
+ "der",
+ "spki",
+]
+
+[[package]]
 name = "pkg-config"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3542,6 +3643,7 @@ dependencies = [
  "modules_php",
  "platform",
  "rand 0.8.5",
+ "zega_backend",
 ]
 
 [[package]]
@@ -4222,6 +4324,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsa"
+version = "0.9.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8573f03f5883dcaebdfcf4725caa1ecb9c15b2ef50c43a07b816e06799bb12d"
+dependencies = [
+ "const-oid",
+ "digest",
+ "num-bigint-dig",
+ "num-integer",
+ "num-traits",
+ "pkcs1",
+ "pkcs8",
+ "rand_core 0.6.4",
+ "signature",
+ "spki",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
 name = "runtime"
 version = "0.1.0"
 dependencies = [
@@ -4703,6 +4825,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "signature"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
+dependencies = [
+ "digest",
+ "rand_core 0.6.4",
+]
+
+[[package]]
 name = "simd-abstraction"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4794,6 +4926,22 @@ dependencies = [
  "serde_json",
  "unicode-id-start",
  "url",
+]
+
+[[package]]
+name = "spin"
+version = "0.9.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
+
+[[package]]
+name = "spki"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d"
+dependencies = [
+ "base64ct",
+ "der",
 ]
 
 [[package]]
@@ -4980,7 +5128,7 @@ checksum = "72e90b52ee734ded867104612218101722ad87ff4cf74fe30383bd244a533f97"
 dependencies = [
  "anyhow",
  "bytes-str",
- "dashmap",
+ "dashmap 5.5.3",
  "globset",
  "indexmap",
  "once_cell",
@@ -5203,7 +5351,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee215e841db9d94ca1e0d3339de1d57941fc30a4020d067a5648bc59cd3d2fed"
 dependencies = [
  "bytes-str",
- "dashmap",
+ "dashmap 5.5.3",
  "indexmap",
  "once_cell",
  "par-core",
@@ -5227,7 +5375,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3bc5e01b1e5c696b4784a133a5ee28ca8b309800d858ab63509069df8fe30181"
 dependencies = [
  "bytes-str",
- "dashmap",
+ "dashmap 5.5.3",
  "indexmap",
  "once_cell",
  "par-core",
@@ -5944,7 +6092,7 @@ dependencies = [
  "async-trait",
  "auto_impl",
  "bytes",
- "dashmap",
+ "dashmap 5.5.3",
  "futures",
  "httparse",
  "lsp-types",
@@ -6891,6 +7039,81 @@ dependencies = [
  "quote",
  "syn 2.0.114",
  "synstructure",
+]
+
+[[package]]
+name = "zega-core"
+version = "0.1.0"
+source = "git+https://git.tana.gg/tana/zega.git?rev=703e5066dd2b22a00c1bd2a21ede3e040c0d0feb#703e5066dd2b22a00c1bd2a21ede3e040c0d0feb"
+dependencies = [
+ "base64 0.22.1",
+ "bincode",
+ "getrandom 0.2.17",
+ "hmac",
+ "rsa",
+ "serde",
+ "serde_json",
+ "sha2",
+ "smallvec",
+ "thiserror 1.0.69",
+ "tokio",
+ "zega-graph",
+ "zega-kv",
+ "zega-parser",
+ "zega-wal",
+]
+
+[[package]]
+name = "zega-graph"
+version = "0.1.0"
+source = "git+https://git.tana.gg/tana/zega.git?rev=703e5066dd2b22a00c1bd2a21ede3e040c0d0feb#703e5066dd2b22a00c1bd2a21ede3e040c0d0feb"
+dependencies = [
+ "serde",
+ "zega-parser",
+]
+
+[[package]]
+name = "zega-kv"
+version = "0.1.0"
+source = "git+https://git.tana.gg/tana/zega.git?rev=703e5066dd2b22a00c1bd2a21ede3e040c0d0feb#703e5066dd2b22a00c1bd2a21ede3e040c0d0feb"
+dependencies = [
+ "dashmap 6.1.0",
+ "serde",
+ "tokio",
+ "zega-parser",
+]
+
+[[package]]
+name = "zega-parser"
+version = "0.1.0"
+source = "git+https://git.tana.gg/tana/zega.git?rev=703e5066dd2b22a00c1bd2a21ede3e040c0d0feb#703e5066dd2b22a00c1bd2a21ede3e040c0d0feb"
+dependencies = [
+ "serde",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "zega-wal"
+version = "0.1.0"
+source = "git+https://git.tana.gg/tana/zega.git?rev=703e5066dd2b22a00c1bd2a21ede3e040c0d0feb#703e5066dd2b22a00c1bd2a21ede3e040c0d0feb"
+dependencies = [
+ "bincode",
+ "crc32fast",
+ "serde",
+ "thiserror 1.0.69",
+ "zega-graph",
+ "zega-kv",
+ "zega-parser",
+]
+
+[[package]]
+name = "zega_backend"
+version = "0.1.0"
+dependencies = [
+ "deno_core",
+ "serde_json",
+ "tempfile",
+ "zega-core",
 ]
 
 [[package]]

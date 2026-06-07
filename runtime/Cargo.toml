@@ -28,6 +28,7 @@ members = [
     "crates/cypher",
     "crates/linkhash-client",
     "crates/shard",
+    "crates/zega_backend",
 ]
 
 [workspace.dependencies]
