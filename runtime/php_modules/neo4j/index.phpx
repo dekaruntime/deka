@@ -31,7 +31,7 @@ export function close($handle) {
 }
 
 export function run_cql($handle, $cql_value) {
-    if (!is_array($cql_value) || !array_key_exists('__type', $cql_value) || $cql_value['__type'] !== 'cql') {
+    if (!isset($cql_value['__type']) || $cql_value['__type'] !== 'cql') {
         return { ok: false, error: 'run_cql expects a cql value (produced by the cql keyword)', rows: [] }
     }
     return query($handle, $cql_value['query'], $cql_value['params'])
