@@ -26,12 +26,14 @@ impl ZegaManager {
 
     pub fn backend_for(&self, shop_id: &str) -> Backend {
         if !valid_shop_id(shop_id) {
-            return Backend::Neo4j;
+            return Backend::Zega;
         }
         let marker = self.tenants_dir.join(shop_id).join("backend");
+        // Zega is THE backend for every shop. Neo4j is opt-in only — kept solely as a
+        // parity oracle via an explicit `backend=neo4j` marker. There are no Neo4j customers.
         match std::fs::read_to_string(marker) {
-            Ok(value) if value.trim().eq_ignore_ascii_case("zega") => Backend::Zega,
-            _ => Backend::Neo4j,
+            Ok(value) if value.trim().eq_ignore_ascii_case("neo4j") => Backend::Neo4j,
+            _ => Backend::Zega,
         }
     }
 
@@ -277,18 +279,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn selector_defaults_to_neo4j_and_reads_zega_marker() {
+    fn selector_defaults_to_zega_and_reads_neo4j_marker() {
         let dir = tempfile::tempdir().unwrap();
         let manager = ZegaManager::new(dir.path());
-        assert_eq!(manager.backend_for("shop_existing"), Backend::Neo4j);
+        // No marker -> Zega. Zega is the default (and only) production backend.
+        assert_eq!(manager.backend_for("shop_existing"), Backend::Zega);
 
-        let tenant = dir.path().join("shop_new");
+        let tenant = dir.path().join("shop_neo");
         std::fs::create_dir_all(&tenant).unwrap();
-        std::fs::write(tenant.join("backend"), "zega\n").unwrap();
-        assert_eq!(manager.backend_for("shop_new"), Backend::Zega);
-
         std::fs::write(tenant.join("backend"), "neo4j\n").unwrap();
-        assert_eq!(manager.backend_for("shop_new"), Backend::Neo4j);
+        assert_eq!(manager.backend_for("shop_neo"), Backend::Neo4j);
+
+        std::fs::write(tenant.join("backend"), "zega\n").unwrap();
+        assert_eq!(manager.backend_for("shop_neo"), Backend::Zega);
     }
 
     #[test]

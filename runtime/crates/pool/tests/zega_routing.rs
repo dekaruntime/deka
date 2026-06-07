@@ -192,21 +192,43 @@ async fn cql_envelope_routes_through_runtime_bridge_by_shop_backend() {
         json!({ "ok": false, "error": "missing 'key'" })
     );
 
-    for shop_id in ["shop_neo4j", "shop_unmarked"] {
-        let result = execute_shop(&pool, shop_id).await;
+    // shop_neo4j carries an explicit `backend=neo4j` marker (the parity oracle) ->
+    // falls through to the Neo4j/Redis dispatchers.
+    {
+        let result = execute_shop(&pool, "shop_neo4j").await;
         assert_eq!(
             result["cql_probe"],
             json!({ "ok": false, "error": "unknown neo4j action 'routing_probe'" }),
-            "{shop_id} should fall through to the Neo4j dispatcher"
+            "shop_neo4j should fall through to the Neo4j dispatcher"
         );
         assert_eq!(
             result["kv_probe"],
             json!({ "ok": false, "error": "unknown redis action 'routing_probe'" }),
-            "{shop_id} should fall through to the Redis dispatcher"
+            "shop_neo4j should fall through to the Redis dispatcher"
         );
         assert_eq!(
             result["routed"]["ok"], false,
-            "{shop_id} should not execute the CQL envelope in embedded Zega"
+            "shop_neo4j should not execute the CQL envelope in embedded Zega"
+        );
+    }
+
+    // shop_unmarked has NO backend marker -> defaults to embedded Zega.
+    // Zega is THE backend; an unmarked shop is a Zega shop.
+    {
+        let result = execute_shop(&pool, "shop_unmarked").await;
+        assert_eq!(
+            result["cql_probe"],
+            json!({ "ok": false, "error": "unknown Zega CQL action 'routing_probe'" }),
+            "unmarked shop should default to the embedded Zega CQL dispatcher"
+        );
+        assert_eq!(
+            result["kv_probe"],
+            json!({ "ok": false, "error": "missing 'key'" }),
+            "unmarked shop KV should default to embedded Zega"
+        );
+        assert_eq!(
+            result["routed"]["ok"], true,
+            "unmarked shop should execute the CQL envelope in embedded Zega"
         );
     }
 
