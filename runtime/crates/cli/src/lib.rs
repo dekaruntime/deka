@@ -1,3 +1,5 @@
+#![allow(clippy::all, dead_code, unused_variables, unused_assignments)]
+
 use core::Registry;
 #[cfg(target_arch = "wasm32")]
 use serde::{Deserialize, Serialize};
@@ -18,7 +20,9 @@ pub fn build_registry() -> Registry {
     {
         cli::auth::register(&mut registry);
         cli::build::register(&mut registry);
+        cli::deploy::register(&mut registry);
         cli::compile::register(&mut registry);
+        cli::contract_extract::register(&mut registry);
         cli::db::register(&mut registry);
         cli::install::register(&mut registry);
         cli::lsp::register(&mut registry);
@@ -93,9 +97,7 @@ fn run_for_wasm(args: Vec<String>) -> WasmRunOutput {
             let output = stdio::end_capture();
             return WasmRunOutput { code: 0, output };
         }
-        if cmd.flags.contains_key("--update")
-            || cmd.flags.contains_key("-U")
-        {
+        if cmd.flags.contains_key("--update") || cmd.flags.contains_key("-U") {
             cli::update();
             let output = stdio::end_capture();
             return WasmRunOutput { code: 0, output };

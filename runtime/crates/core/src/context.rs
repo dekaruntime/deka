@@ -44,7 +44,7 @@ impl HandlerContext {
     pub fn from_env(args: &Args) -> Result<Self, String> {
         let input = args
             .positionals
-            .get(0)
+            .first()
             .cloned()
             .or_else(|| std::env::var("HANDLER_PATH").ok())
             .unwrap_or_else(|| ".".to_string());

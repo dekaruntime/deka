@@ -1,0 +1,6 @@
+[[workloads]]
+identity = "prod/deka-platform"
+namespace = "prod/deka-platform"
+exe = "/usr/local/bin/deka"
+systemd_unit = "gg.tana.deka-platform.service"
+cgroup_contains = ["system.slice"]

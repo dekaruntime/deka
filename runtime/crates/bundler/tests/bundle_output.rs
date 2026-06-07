@@ -2,8 +2,7 @@
 ///
 /// Creates a temp directory with a minimal JS entry file, runs the bundler,
 /// and asserts the output is non-empty and parses as valid JS.
-
-use bundler::{bundle_virtual_entry, BundleOptions, VirtualSource};
+use bundler::{BundleOptions, VirtualSource, bundle_virtual_entry};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};

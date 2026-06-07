@@ -1,0 +1,28 @@
+[package]
+name = "gild-virt"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gild = { path = "../gild" }
+
+objc2 = { version = "0.6", optional = true }
+objc2-foundation = { version = "0.3", optional = true }
+block2 = { version = "0.6", optional = true }
+libc = { version = "0.2", optional = true }
+
+[features]
+default = []
+macos = ["dep:objc2", "dep:objc2-foundation", "dep:block2", "dep:libc"]
+
+[[test]]
+name = "vm_exec"
+path = "tests/vm_exec.rs"
+harness = false
+required-features = ["macos"]
+
+[[test]]
+name = "spawn_vm_exec_test"
+path = "tests/spawn_vm_exec_test.rs"
+harness = false
+required-features = ["macos"]

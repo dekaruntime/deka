@@ -386,15 +386,15 @@ fn parse_rule_list(
             ));
             return RuleList::None;
         }
-        if path.contains(".allow.") {
-            if let Some(message) = weak_allow_warning(path, item) {
-                diagnostics.push(diag(
-                    PolicyDiagnosticLevel::Warning,
-                    "SECURITY_POLICY_WEAK_ALLOW",
-                    path,
-                    &message,
-                ));
-            }
+        if path.contains(".allow.")
+            && let Some(message) = weak_allow_warning(path, item)
+        {
+            diagnostics.push(diag(
+                PolicyDiagnosticLevel::Warning,
+                "SECURITY_POLICY_WEAK_ALLOW",
+                path,
+                &message,
+            ));
         }
         return RuleList::List(vec![item.to_string()]);
     }
@@ -421,15 +421,15 @@ fn parse_rule_list(
                 ));
                 continue;
             }
-            if path.contains(".allow.") {
-                if let Some(message) = weak_allow_warning(path, trimmed) {
-                    diagnostics.push(diag(
-                        PolicyDiagnosticLevel::Warning,
-                        "SECURITY_POLICY_WEAK_ALLOW",
-                        &format!("{}[{}]", path, idx),
-                        &message,
-                    ));
-                }
+            if path.contains(".allow.")
+                && let Some(message) = weak_allow_warning(path, trimmed)
+            {
+                diagnostics.push(diag(
+                    PolicyDiagnosticLevel::Warning,
+                    "SECURITY_POLICY_WEAK_ALLOW",
+                    &format!("{}[{}]", path, idx),
+                    &message,
+                ));
             }
             set.insert(trimmed.to_string());
         }
@@ -730,12 +730,18 @@ mod tests {
             }
         }));
         assert!(
-            parsed.diagnostics.iter().any(|d| d.level == PolicyDiagnosticLevel::Warning
-                && d.code == "SECURITY_POLICY_BROAD_ALLOW")
+            parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.level == PolicyDiagnosticLevel::Warning
+                    && d.code == "SECURITY_POLICY_BROAD_ALLOW")
         );
         assert!(
-            parsed.diagnostics.iter().any(|d| d.level == PolicyDiagnosticLevel::Warning
-                && d.code == "SECURITY_POLICY_WEAK_ALLOW")
+            parsed
+                .diagnostics
+                .iter()
+                .any(|d| d.level == PolicyDiagnosticLevel::Warning
+                    && d.code == "SECURITY_POLICY_WEAK_ALLOW")
         );
     }
 }

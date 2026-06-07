@@ -10,6 +10,7 @@ bumpalo = "3"
 bytes = "1"
 chrono = { version = "0.4", features = ["clock"] }
 php-rs = { path = "../php-rs" }
+seam_ir = { path = "../seam_ir" }
 cypher = { path = "../cypher" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -25,6 +26,7 @@ stdio = { path = "../stdio" }
 native-tls = "0.2"
 getrandom = "0.2"
 aes-gcm = "0.10"
+bcrypt = "0.15"
 neo4rs = { workspace = true }
 redis = { workspace = true }
 tokio = { workspace = true }

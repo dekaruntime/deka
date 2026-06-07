@@ -102,7 +102,11 @@ fn build_request(context: &Context) -> Result<PublishRequest> {
     validate_scoped_package_name(&name)?;
 
     // Version: --pkg-version or --version flag, or deka.json version
-    let mut version = if let Some(v) = params.get("--pkg-version").or_else(|| params.get("--version")).cloned() {
+    let mut version = if let Some(v) = params
+        .get("--pkg-version")
+        .or_else(|| params.get("--version"))
+        .cloned()
+    {
         v
     } else if let Some(ref manifest) = local_manifest {
         manifest.version.clone()
@@ -168,7 +172,9 @@ fn build_request(context: &Context) -> Result<PublishRequest> {
             ));
             name = manifest.name.clone();
         }
-        if (params.contains_key("--pkg-version") || params.contains_key("--version")) && manifest.version != version {
+        if (params.contains_key("--pkg-version") || params.contains_key("--version"))
+            && manifest.version != version
+        {
             planned_fixes.push(format!(
                 "align --pkg-version from `{}` to deka.json version `{}`",
                 version, manifest.version
@@ -220,7 +226,10 @@ fn build_request(context: &Context) -> Result<PublishRequest> {
                     create_local_git_tag(tag)?;
                     stdio::log("publish", &format!("created local tag {}", tag));
                 } else {
-                    stdio::log("publish", &format!("would create local tag {} (dry-run)", tag));
+                    stdio::log(
+                        "publish",
+                        &format!("would create local tag {} (dry-run)", tag),
+                    );
                 }
             }
         } else {
@@ -373,7 +382,10 @@ async fn run_publish(request: PublishRequest) -> Result<()> {
     if request.dry_run {
         stdio::log(
             "publish",
-            &format!("dry-run complete for {}@{} (no changes made)", requested_name, requested_version),
+            &format!(
+                "dry-run complete for {}@{} (no changes made)",
+                requested_name, requested_version
+            ),
         );
         return Ok(());
     }
@@ -502,8 +514,14 @@ fn load_local_deka_manifest() -> Option<LocalManifest> {
     if name.is_empty() || version.is_empty() {
         return None;
     }
-    let description = json.get("description").and_then(|v| v.as_str()).map(|s| s.trim().to_string());
-    let repository = json.get("repository").and_then(|v| v.as_str()).map(|s| s.trim().to_string());
+    let description = json
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string());
+    let repository = json
+        .get("repository")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string());
     Some(LocalManifest {
         name,
         version,

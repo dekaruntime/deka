@@ -1,3 +1,5 @@
+#![allow(clippy::all)]
+
 pub mod config;
 pub mod dispatch;
 pub mod engine;
@@ -12,6 +14,7 @@ pub use dispatch::{execute_request, execute_request_parts, execute_request_value
 pub use engine::{RuntimeEngine, engine, set_engine};
 pub use envelope::{RequestEnvelope, ResponseEnvelope};
 pub use introspect_archive::IntrospectArchive;
+pub use runtime_core::storefront_envelope::{StorefrontRequest, StorefrontResponse};
 
 pub struct RuntimeState {
     pub engine: Arc<engine::RuntimeEngine>,

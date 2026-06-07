@@ -23,7 +23,7 @@ impl Default for ServerPlatform {
         Self {
             fs: ServerFs,
             env: ServerEnv,
-            io: ServerIo::default(),
+            io: ServerIo,
             process: ServerProcess,
             time: ServerTime,
             random: ServerRandom,
@@ -199,11 +199,11 @@ impl Ports for ServerPorts {
             .reserved
             .lock()
             .map_err(|_| anyhow!("failed to lock port registry"))?;
-        if let Some(port) = preferred {
-            if !reserved.contains(&port) {
-                reserved.push(port);
-                return Ok(port);
-            }
+        if let Some(port) = preferred
+            && !reserved.contains(&port)
+        {
+            reserved.push(port);
+            return Ok(port);
         }
         let mut candidate = 40000u16;
         while reserved.contains(&candidate) && candidate < u16::MAX {

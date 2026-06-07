@@ -1,6 +1,6 @@
-use bundler::{bundle_virtual_entry, BundleOptions, VirtualSource};
+use bundler::{BundleOptions, VirtualSource, bundle_virtual_entry};
 use core::{CommandSpec, Context, ParamSpec, Registry};
-use phpx_js::{compile_phpx_source_to_js, parse_source_module_meta, SourceModuleMeta};
+use phpx_js::{SourceModuleMeta, compile_phpx_source_to_js, parse_source_module_meta};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -533,7 +533,11 @@ fn resolve_web_entry(project_root: &Path) -> Result<PathBuf, String> {
 }
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
-    if fs::read_dir(src).map_err(|err| format!("failed to read {}: {}", src.display(), err))?.next().is_none() {
+    if fs::read_dir(src)
+        .map_err(|err| format!("failed to read {}: {}", src.display(), err))?
+        .next()
+        .is_none()
+    {
         return Ok(());
     }
     fs::create_dir_all(dst)
@@ -570,7 +574,11 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn inject_web_bootstrap_tags(index_html: &str, hydration_enabled: bool, bundle_enabled: bool) -> String {
+fn inject_web_bootstrap_tags(
+    index_html: &str,
+    hydration_enabled: bool,
+    bundle_enabled: bool,
+) -> String {
     let import_map_tag = r#"<script type="importmap" src="/importmap.json"></script>"#;
     let module_tag = r#"<script type="module" src="/assets/main.js"></script>"#;
 
@@ -826,14 +834,13 @@ impl VirtualSource for PhpxBundleProvider {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use bumpalo::Bump;
-    use phpx_js::{emit_js_from_ast, emit_js_scaffold_with_reason};
     use php_rs::parser::lexer::Lexer;
     use php_rs::parser::parser::{Parser, ParserMode};
+    use phpx_js::{emit_js_from_ast, emit_js_scaffold_with_reason};
 
     #[test]
     fn default_outdir_is_dist_js() {

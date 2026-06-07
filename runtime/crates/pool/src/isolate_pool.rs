@@ -54,10 +54,12 @@ thread_local! {
     static CURRENT_POOL_ID: Cell<Option<u64>> = Cell::new(None);
 }
 
-use crate::validation;
 use crate::esm_loader::{
     PhpxEsmLoader, entry_wrapper_path, hash_module_graph, resolve_project_root,
 };
+use crate::secrets_cache::{SecretsCache, SecretsMap};
+use crate::validation;
+use runtime_core::storefront_envelope::StorefrontRequest;
 
 // ========== OS-level Thread CPU Time ==========
 
@@ -267,6 +269,20 @@ pub struct RequestParts {
     pub method: String,
     pub headers: Vec<(String, String)>,
     pub body: Option<String>,
+}
+
+impl RequestParts {
+    fn to_storefront_request(&self) -> StorefrontRequest {
+        let (path, pathname) = split_request_url(&self.url);
+        StorefrontRequest {
+            url: self.url.clone(),
+            path,
+            pathname,
+            method: self.method.clone(),
+            headers: self.headers.iter().cloned().collect(),
+            body: self.body.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -729,6 +745,7 @@ pub struct IsolatePool {
     metrics: Arc<PoolMetrics>,
     request_seq: AtomicU64,
     introspect_profiling: Arc<AtomicBool>,
+    secrets_cache: Arc<SecretsCache>,
     pool_id: u64,
 }
 
@@ -740,6 +757,7 @@ impl IsolatePool {
     ) -> Self {
         let metrics = Arc::new(PoolMetrics::default());
         let introspect_profiling = Arc::new(AtomicBool::new(config.introspect_profiling));
+        let secrets_cache = Arc::new(SecretsCache::from_env());
         let mut workers = Vec::with_capacity(config.num_workers);
         let pool_id = POOL_IDS.fetch_add(1, Ordering::Relaxed);
         let core_ids = core_affinity::get_core_ids();
@@ -756,6 +774,7 @@ impl IsolatePool {
             let worker_config = config.clone();
             let worker_metrics = Arc::clone(&metrics);
             let ext_provider = Arc::clone(&extensions_provider);
+            let worker_secrets_cache = Arc::clone(&secrets_cache);
             let load = Arc::new(WorkerLoad::default());
             let worker_load = Arc::clone(&load);
             let profiling = Arc::clone(&introspect_profiling);
@@ -775,6 +794,7 @@ impl IsolatePool {
                     worker_load,
                     ext_provider,
                     profiling,
+                    worker_secrets_cache,
                 );
                 worker.run(rx, ctrl_rx);
             });
@@ -793,6 +813,7 @@ impl IsolatePool {
             metrics,
             request_seq: AtomicU64::new(0),
             introspect_profiling,
+            secrets_cache,
             pool_id,
         }
     }
@@ -912,6 +933,10 @@ impl IsolatePool {
     pub async fn set_introspect_profiling(&self, enabled: bool) -> usize {
         self.introspect_profiling.store(enabled, Ordering::Relaxed);
         self.evict_all().await
+    }
+
+    pub fn secrets_cache(&self) -> Arc<SecretsCache> {
+        Arc::clone(&self.secrets_cache)
     }
 
     /// Evict all cached isolates across all workers
@@ -1299,6 +1324,7 @@ struct WorkerThread {
     extensions_provider: Arc<dyn Fn() -> Vec<Extension> + Send + Sync>,
     request_history: VecDeque<RequestTrace>,
     deka_args: serde_json::Value,
+    secrets_cache: Arc<SecretsCache>,
 }
 
 enum ExecutionOutcome {
@@ -1316,6 +1342,7 @@ impl WorkerThread {
         load: Arc<WorkerLoad>,
         extensions_provider: Arc<dyn Fn() -> Vec<Extension> + Send + Sync>,
         introspect_profiling: Arc<AtomicBool>,
+        secrets_cache: Arc<SecretsCache>,
     ) -> Self {
         let deka_args = std::env::var("DEKA_ARGS").unwrap_or_else(|_| "[]".to_string());
         let deka_args = serde_json::from_str(&deka_args).unwrap_or_else(|_| serde_json::json!([]));
@@ -1332,6 +1359,7 @@ impl WorkerThread {
             extensions_provider,
             request_history: VecDeque::new(),
             deka_args,
+            secrets_cache,
         }
     }
 
@@ -1406,7 +1434,10 @@ impl WorkerThread {
                 }
             }
 
-            WorkerControl::EvictByPrefix { prefix, response_tx } => {
+            WorkerControl::EvictByPrefix {
+                prefix,
+                response_tx,
+            } => {
                 let matching: Vec<HandlerKey> = self
                     .isolates
                     .keys()
@@ -1553,7 +1584,11 @@ impl WorkerThread {
 
         // Check cache and get/create isolate
         let (cache_hit, warm_time) = match self
-            .ensure_isolate(&key, source_hash, request.request_data.handler_entry.as_deref())
+            .ensure_isolate(
+                &key,
+                source_hash,
+                request.request_data.handler_entry.as_deref(),
+            )
             .await
         {
             Ok(value) => value,
@@ -1949,6 +1984,7 @@ impl WorkerThread {
     ) -> (ExecutionOutcome, ExecutionProfile) {
         // Get mutable reference to isolate
         let use_code_cache = self.config.enable_code_cache;
+        let secrets_cache = Arc::clone(&self.secrets_cache);
         let (isolates, code_cache) = (&mut self.isolates, &mut self.code_cache);
         let isolate = isolates
             .get_mut(key)
@@ -2273,6 +2309,28 @@ impl WorkerThread {
                             }
                             return { ok: false, error: 'shard bridge op unavailable' };
                         }
+                        if (kind === 'vault') {
+                            const act = String(action || '');
+                            const secrets = globalThis.__dekaShopSecrets || {};
+                            if (!globalThis.__shopId) {
+                                return Object.entries({ ok: false, error: 'no_shop_context' });
+                            }
+                            if (act === 'get') {
+                                const req = payload || {};
+                                const name = String(req.name || req.key || '');
+                                if (!name || name.includes('/')) {
+                                    return Object.entries({ ok: false, error: 'invalid_key' });
+                                }
+                                if (Object.prototype.hasOwnProperty.call(secrets, name)) {
+                                    return Object.entries({ ok: true, value: String(secrets[name]) });
+                                }
+                                return Object.entries({ ok: false, error: 'not_found' });
+                            }
+                            if (act === 'list') {
+                                return Object.entries({ ok: true, keys: Object.keys(secrets).sort() });
+                            }
+                            return Object.entries({ ok: false, error: `unknown vault action '${act}'` });
+                        }
                         if (kind === 'net') {
                             if (typeof ops.op_php_net_call_proto === 'function' && typeof ops.op_php_net_proto_encode === 'function' && typeof ops.op_php_net_proto_decode === 'function') {
                                 const request = ops.op_php_net_proto_encode(String(action || ''), payload || {});
@@ -2372,6 +2430,16 @@ impl WorkerThread {
                                     return Object.entries({ ok: true, data: arr });
                                 }
                                 return Object.entries({ ok: false, error: (raw && raw.error) || 'aes_op_failed' });
+                            }
+                            if (act === 'bcrypt_verify') {
+                                const req = payload || {};
+                                const password = String(req.password ?? '');
+                                const hash = String(req.hash ?? '');
+                                if (typeof ops.op_php_bcrypt_verify !== 'function') {
+                                    return { ok: false, error: 'op_php_bcrypt_verify unavailable' };
+                                }
+                                const raw = ops.op_php_bcrypt_verify(password, hash);
+                                return Object.entries(raw || { ok: false, error: 'bcrypt_verify_failed' });
                             }
                             return { ok: false, error: `unknown crypto action '${act}'` };
                         }
@@ -2722,8 +2790,7 @@ impl WorkerThread {
         // code from resolving before __dekaExecuteRequest checks globalThis.app.
         let is_pre_bundled_iife = {
             let trimmed = request.request_data.handler_code.trim_start();
-            trimmed.starts_with("(async function()")
-                || trimmed.starts_with("(function()")
+            trimmed.starts_with("(async function()") || trimmed.starts_with("(function()")
         };
 
         let wrapped_handler_code = if !use_esm {
@@ -2731,7 +2798,8 @@ impl WorkerThread {
                 // Pre-bundled IIFE: run directly without re-wrapping.
                 // The bundler already stripped exports and wrapped in an
                 // async IIFE that sets globalThis.app.
-                let setup_code = "globalThis.app = undefined; globalThis.Deka = globalThis.Deka || {};";
+                let setup_code =
+                    "globalThis.app = undefined; globalThis.Deka = globalThis.Deka || {};";
                 if let Err(err) = isolate
                     .runtime
                     .execute_script("setup.js", ModuleCodeString::from(setup_code.to_string()))
@@ -2781,11 +2849,9 @@ impl WorkerThread {
                                 &key.name,
                             );
                             return (
-                                ExecutionOutcome::Err(
-                                    formatted.unwrap_or_else(|| {
-                                        format!("Handler execution failed: {}", err)
-                                    }),
-                                ),
+                                ExecutionOutcome::Err(formatted.unwrap_or_else(|| {
+                                    format!("Handler execution failed: {}", err)
+                                })),
                                 ExecutionProfile::empty(),
                             );
                         }
@@ -2864,7 +2930,8 @@ impl WorkerThread {
                     handler_code
                 );
 
-                let setup_code = "globalThis.app = undefined; globalThis.Deka = globalThis.Deka || {};";
+                let setup_code =
+                    "globalThis.app = undefined; globalThis.Deka = globalThis.Deka || {};";
                 if let Err(err) = isolate
                     .runtime
                     .execute_script("setup.js", ModuleCodeString::from(setup_code.to_string()))
@@ -2883,11 +2950,38 @@ impl WorkerThread {
             None
         };
 
+        let tenant_info = request
+            .request_data
+            .request_parts
+            .as_ref()
+            .and_then(|parts| resolve_request_tenant(&parts.headers));
+        let shop_secrets = if let Some(info) = tenant_info.as_ref() {
+            if info.shop_id.is_empty() {
+                HashMap::new()
+            } else {
+                match secrets_cache.get_secrets_for_shop(&info.shop_id).await {
+                    Ok(secrets) => secrets,
+                    Err(err) => {
+                        tracing::warn!(
+                            shop_id = %info.shop_id,
+                            error = %err,
+                            "failed to fetch shop secrets from gild-vault"
+                        );
+                        HashMap::new()
+                    }
+                }
+            }
+        } else {
+            HashMap::new()
+        };
+
         if let Err(err) = set_request_globals(
             &mut isolate.runtime,
             &request.request_data.request_value,
             request.request_data.request_parts.as_ref(),
             &self.deka_args,
+            tenant_info.as_ref(),
+            &shop_secrets,
         ) {
             isolate.active_requests = 0;
             isolate.state = IsolateState::Idle;
@@ -2937,10 +3031,10 @@ impl WorkerThread {
                         ExecutionProfile::empty(),
                     );
                 }
-            } else if let Err(err) = isolate
-                .runtime
-                .execute_script("handler.js", ModuleCodeString::from(wrapped_handler_code.to_string()))
-            {
+            } else if let Err(err) = isolate.runtime.execute_script(
+                "handler.js",
+                ModuleCodeString::from(wrapped_handler_code.to_string()),
+            ) {
                 let raw = err.to_string();
                 if parse_exit_code(&raw).is_none() {
                     isolate.active_requests = 0;
@@ -3443,8 +3537,14 @@ fn pick_shard_for_request<'a>(
         // No account_id — fall back to shard 0 (phobos).
         resolver.shards().first()
     } else {
-        resolver.resolve(account_id).or_else(|| resolver.shards().first())
+        resolver
+            .resolve(account_id)
+            .or_else(|| resolver.shards().first())
     }
+}
+
+fn resolve_request_tenant(headers: &[(String, String)]) -> Option<crate::tenant::TenantInfo> {
+    crate::tenant::resolve_tenant_info_from_host_strict(headers)
 }
 
 fn set_request_globals(
@@ -3452,6 +3552,8 @@ fn set_request_globals(
     request: &serde_json::Value,
     request_parts: Option<&RequestParts>,
     deka_args: &serde_json::Value,
+    tenant_info: Option<&crate::tenant::TenantInfo>,
+    shop_secrets: &SecretsMap,
 ) -> Result<(), String> {
     deno_core::scope!(scope, runtime);
     let context = scope.get_current_context();
@@ -3463,63 +3565,25 @@ fn set_request_globals(
 
     if let Some(parts) = request_parts {
         let (request_uri, request_pathname) = split_request_url(&parts.url);
-        let obj = v8::Object::new(scope);
-
-        let url_key = v8::String::new(scope, "url").ok_or_else(|| "url key".to_string())?;
-        let url_val = v8::String::new(scope, &parts.url).ok_or_else(|| "url val".to_string())?;
-        obj.set(scope, url_key.into(), url_val.into());
-
-        let path_key = v8::String::new(scope, "path").ok_or_else(|| "path key".to_string())?;
-        let path_val =
-            v8::String::new(scope, &request_uri).ok_or_else(|| "path val".to_string())?;
-        obj.set(scope, path_key.into(), path_val.into());
-
-        let pathname_key =
-            v8::String::new(scope, "pathname").ok_or_else(|| "pathname key".to_string())?;
-        let pathname_val = v8::String::new(scope, &request_pathname)
-            .ok_or_else(|| "pathname val".to_string())?;
-        obj.set(scope, pathname_key.into(), pathname_val.into());
-
-        let method_key =
-            v8::String::new(scope, "method").ok_or_else(|| "method key".to_string())?;
-        let method_val =
-            v8::String::new(scope, &parts.method).ok_or_else(|| "method val".to_string())?;
-        obj.set(scope, method_key.into(), method_val.into());
-
-        let headers_key =
-            v8::String::new(scope, "headers").ok_or_else(|| "headers key".to_string())?;
-        let headers_obj = v8::Object::new(scope);
-        for (key, value) in &parts.headers {
-            let k = v8::String::new(scope, key).ok_or_else(|| "header key".to_string())?;
-            let v = v8::String::new(scope, value).ok_or_else(|| "header val".to_string())?;
-            headers_obj.set(scope, k.into(), v.into());
-        }
-        obj.set(scope, headers_key.into(), headers_obj.into());
-
-        let body_key = v8::String::new(scope, "body").ok_or_else(|| "body key".to_string())?;
-        let body_val = match &parts.body {
-            Some(body) => v8::String::new(scope, body)
-                .ok_or_else(|| "body val".to_string())?
-                .into(),
-            None => v8::null(scope).into(),
-        };
-        obj.set(scope, body_key.into(), body_val);
+        let storefront_request = parts.to_storefront_request();
+        let obj = serde_v8::to_v8(scope, &storefront_request)
+            .map_err(|err| format!("storefront request to v8: {}", err))?;
 
         let request_key = v8::String::new(scope, "__requestData")
             .ok_or_else(|| "request data key".to_string())?;
-        global.set(scope, request_key.into(), obj.into());
+        global.set(scope, request_key.into(), obj);
 
         let server = v8::Object::new(scope);
         let request_uri_key =
             v8::String::new(scope, "REQUEST_URI").ok_or_else(|| "request uri key".to_string())?;
-        let request_uri_val = v8::String::new(scope, &request_uri)
-            .ok_or_else(|| "request uri val".to_string())?;
+        let request_uri_val =
+            v8::String::new(scope, &request_uri).ok_or_else(|| "request uri val".to_string())?;
         server.set(scope, request_uri_key.into(), request_uri_val.into());
 
         let path_info_key =
             v8::String::new(scope, "PATH_INFO").ok_or_else(|| "path info key".to_string())?;
-        let path_info_val = v8::String::new(scope, &request_pathname)
-            .ok_or_else(|| "path info val".to_string())?;
+        let path_info_val =
+            v8::String::new(scope, &request_pathname).ok_or_else(|| "path info val".to_string())?;
         server.set(scope, path_info_key.into(), path_info_val.into());
 
         let pwd_key = v8::String::new(scope, "PWD").ok_or_else(|| "pwd key".to_string())?;
@@ -3534,7 +3598,13 @@ fn set_request_globals(
             server.set(scope, script_key.into(), script_val.into());
         }
 
-        let server_key = v8::String::new(scope, "_SERVER").ok_or_else(|| "_SERVER key".to_string())?;
+        let argv_key = v8::String::new(scope, "argv").ok_or_else(|| "argv key".to_string())?;
+        let argv_val =
+            serde_v8::to_v8(scope, deka_args).map_err(|err| format!("argv to v8: {}", err))?;
+        server.set(scope, argv_key.into(), argv_val);
+
+        let server_key =
+            v8::String::new(scope, "_SERVER").ok_or_else(|| "_SERVER key".to_string())?;
         global.set(scope, server_key.into(), server.into());
 
         let get_key = v8::String::new(scope, "_GET").ok_or_else(|| "_GET key".to_string())?;
@@ -3557,6 +3627,12 @@ fn set_request_globals(
         .ok_or_else(|| "request context key".to_string())?;
     global.set(scope, ctx_key.into(), ctx_v8);
 
+    let shop_secrets_value = serde_v8::to_v8(scope, shop_secrets)
+        .map_err(|err| format!("shop secrets to v8: {}", err))?;
+    let shop_secrets_key = v8::String::new(scope, "__dekaShopSecrets")
+        .ok_or_else(|| "shop secrets key".to_string())?;
+    global.set(scope, shop_secrets_key.into(), shop_secrets_value);
+
     let deka_key = v8::String::new(scope, "Deka").ok_or_else(|| "deka key".to_string())?;
     let deka_val = global.get(scope, deka_key.into());
     let deka_obj = if let Some(val) = deka_val {
@@ -3578,6 +3654,20 @@ fn set_request_globals(
         serde_v8::to_v8(scope, deka_args).map_err(|err| format!("deka args to v8: {}", err))?;
     deka_obj.set(scope, args_key.into(), args_val);
 
+    let resolved_tenant_info = request_parts.and_then(|parts| {
+        tenant_info
+            .cloned()
+            .or_else(|| resolve_request_tenant(&parts.headers))
+    });
+    let has_routed_shop = resolved_tenant_info
+        .as_ref()
+        .is_some_and(|info| !info.shop_id.is_empty());
+    let env_snapshot = if has_routed_shop {
+        runtime_core::platform_env::snapshot_env_from_process()
+    } else {
+        Vec::new()
+    };
+
     // Platform → tenant env-var injection. The platform process holds
     // a small set of allowlisted secrets (Stripe publishable key,
     // TANA_INTERNAL_API_SECRET, etc.) that storefront PHPX needs to
@@ -3596,13 +3686,10 @@ fn set_request_globals(
         if let Some(server_key) = v8::String::new(scope, "_SERVER") {
             if let Some(server_val) = global.get(scope, server_key.into()) {
                 if let Some(server_obj) = server_val.to_object(scope) {
-                    for (name, value) in
-                        runtime_core::platform_env::snapshot_env_from_process()
-                    {
-                        if let (Some(k), Some(v)) = (
-                            v8::String::new(scope, &name),
-                            v8::String::new(scope, &value),
-                        ) {
+                    for (name, value) in &env_snapshot {
+                        if let (Some(k), Some(v)) =
+                            (v8::String::new(scope, name), v8::String::new(scope, value))
+                        {
                             server_obj.set(scope, k.into(), v.into());
                         }
                     }
@@ -3613,18 +3700,61 @@ fn set_request_globals(
         // tenant code can read secrets via $_ENV['NAME'] (not just
         // $_SERVER). Also sync process.env so getenv() and buildPrelude
         // see current values in warm isolates.
-        let env_snapshot = runtime_core::platform_env::snapshot_env_from_process();
         let env_obj = v8::Object::new(scope);
         for (name, value) in &env_snapshot {
-            if let (Some(k), Some(v)) = (
-                v8::String::new(scope, name),
-                v8::String::new(scope, value),
-            ) {
+            if let (Some(k), Some(v)) =
+                (v8::String::new(scope, name), v8::String::new(scope, value))
+            {
                 env_obj.set(scope, k.into(), v.into());
             }
         }
         if let Some(env_key) = v8::String::new(scope, "_ENV") {
             global.set(scope, env_key.into(), env_obj.into());
+        }
+
+        let process_obj = if let Some(process_key) = v8::String::new(scope, "process") {
+            if let Some(process_val) = global.get(scope, process_key.into()) {
+                if process_val.is_object() {
+                    process_val.to_object(scope).unwrap()
+                } else {
+                    let obj = v8::Object::new(scope);
+                    global.set(scope, process_key.into(), obj.into());
+                    obj
+                }
+            } else {
+                let obj = v8::Object::new(scope);
+                global.set(scope, process_key.into(), obj.into());
+                obj
+            }
+        } else {
+            return Err("process key".to_string());
+        };
+        let process_env_obj = v8::Object::new(scope);
+        for (name, value) in &env_snapshot {
+            if let (Some(k), Some(v)) =
+                (v8::String::new(scope, name), v8::String::new(scope, value))
+            {
+                process_env_obj.set(scope, k.into(), v.into());
+            }
+        }
+        if let Some(env_key) = v8::String::new(scope, "env") {
+            process_obj.set(scope, env_key.into(), process_env_obj.into());
+        }
+    }
+
+    if has_routed_shop {
+        if let Some(env_key) = v8::String::new(scope, "_ENV") {
+            if let Some(env_val) = global.get(scope, env_key.into()) {
+                if let Some(env_obj) = env_val.to_object(scope) {
+                    for (name, value) in shop_secrets {
+                        if let (Some(k), Some(v)) =
+                            (v8::String::new(scope, name), v8::String::new(scope, value))
+                        {
+                            env_obj.set(scope, k.into(), v.into());
+                        }
+                    }
+                }
+            }
         }
         if let Some(process_key) = v8::String::new(scope, "process") {
             if let Some(process_val) = global.get(scope, process_key.into()) {
@@ -3632,7 +3762,7 @@ fn set_request_globals(
                     if let Some(env_key) = v8::String::new(scope, "env") {
                         if let Some(env_val) = process_obj.get(scope, env_key.into()) {
                             if let Some(env_obj) = env_val.to_object(scope) {
-                                for (name, value) in &env_snapshot {
+                                for (name, value) in shop_secrets {
                                     if let (Some(k), Some(v)) = (
                                         v8::String::new(scope, name),
                                         v8::String::new(scope, value),
@@ -3648,31 +3778,27 @@ fn set_request_globals(
         }
     }
 
-    // Tenant context: resolve shop_id + account_id from Host header
-    // and inject as globals. X-Shop-ID is still honoured as an explicit
-    // override for trusted callers (dev tools, admin utilities). Platform
-    // mode strips it before we get here.
+    // Tenant context: resolve shop_id + account_id from the server-side
+    // Host/subdomain routing path and inject as globals. Client-controlled
+    // headers such as X-Shop-ID must never influence this context.
     if let Some(parts) = request_parts {
-        // Prefer the richer resolver (returns both shop_id + account_id
-        // from the new JSON subdomain format); fall back to the legacy
-        // header/env-based path for X-Shop-ID overrides.
-        let (shop_id, account_id) = if let Some(info) =
-            crate::tenant::resolve_tenant_info_from_host(&parts.headers)
-        {
-            (info.shop_id, info.account_id.unwrap_or_default())
-        } else {
-            (
-                crate::tenant::resolve_tenant_from_headers(&parts.headers).unwrap_or_default(),
-                String::new(),
-            )
-        };
+        let _ = parts;
+        let (shop_id, account_id) = resolved_tenant_info
+            .as_ref()
+            .map(|info| {
+                (
+                    info.shop_id.clone(),
+                    info.account_id.clone().unwrap_or_default(),
+                )
+            })
+            .unwrap_or_default();
 
         if !shop_id.is_empty() {
             // globalThis.__shopId — used by bridge layer for Redis prefixing
-            let shop_id_key = v8::String::new(scope, "__shopId")
-                .ok_or_else(|| "shop id key".to_string())?;
-            let shop_id_val = v8::String::new(scope, &shop_id)
-                .ok_or_else(|| "shop id val".to_string())?;
+            let shop_id_key =
+                v8::String::new(scope, "__shopId").ok_or_else(|| "shop id key".to_string())?;
+            let shop_id_val =
+                v8::String::new(scope, &shop_id).ok_or_else(|| "shop id val".to_string())?;
             global.set(scope, shop_id_key.into(), shop_id_val.into());
 
             // Also add to _SERVER for PHPX access as $_SERVER['SHOP_ID']
@@ -3698,8 +3824,8 @@ fn set_request_globals(
             // `shard_for()` introspection.
             let account_id_key = v8::String::new(scope, "__accountId")
                 .ok_or_else(|| "account id key".to_string())?;
-            let account_id_val = v8::String::new(scope, &account_id)
-                .ok_or_else(|| "account id val".to_string())?;
+            let account_id_val =
+                v8::String::new(scope, &account_id).ok_or_else(|| "account id val".to_string())?;
             global.set(scope, account_id_key.into(), account_id_val.into());
 
             // $_SERVER['ACCOUNT_ID'] mirrors SHOP_ID for PHPX callers.
@@ -3742,8 +3868,8 @@ fn set_request_globals(
                         .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string()),
                 ),
             };
-            let neo4j_user = std::env::var("DEKA_NEO4J_USER")
-                .unwrap_or_else(|_| "neo4j".to_string());
+            let neo4j_user =
+                std::env::var("DEKA_NEO4J_USER").unwrap_or_else(|_| "neo4j".to_string());
             let neo4j_password = std::env::var("DEKA_NEO4J_PASSWORD")
                 .or_else(|_| std::env::var("NEO4J_PASSWORD"))
                 .unwrap_or_default();
@@ -3765,10 +3891,9 @@ fn set_request_globals(
                             ("SHOP_NEO4J_USER", neo4j_user.as_str()),
                             ("SHOP_NEO4J_PASSWORD", neo4j_password.as_str()),
                         ] {
-                            if let (Some(k), Some(v)) = (
-                                v8::String::new(scope, key),
-                                v8::String::new(scope, val),
-                            ) {
+                            if let (Some(k), Some(v)) =
+                                (v8::String::new(scope, key), v8::String::new(scope, val))
+                            {
                                 server_obj.set(scope, k.into(), v.into());
                             }
                         }
@@ -3939,10 +4064,7 @@ mod tests {
     /// indirectly: a single-shard resolver can only return shard 0.
     #[test]
     fn pick_shard_single_shard_resolver_always_returns_zero() {
-        let r = ShardResolver::from_config(
-            ShardConfig::single_shard_localhost(),
-            None,
-        );
+        let r = ShardResolver::from_config(ShardConfig::single_shard_localhost(), None);
         // Any account_id resolves to the one shard.
         let id = "c0dc1618-20fc-4bdd-ac6f-e94909f8fad2";
         let shard = super::pick_shard_for_request(id, &r).unwrap();

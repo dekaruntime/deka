@@ -97,9 +97,7 @@ pub fn parse_preview_host(host: &str) -> Option<(String, String)> {
             if rest.len() > 8 {
                 let hash = &rest[..7];
                 let sep = rest.as_bytes()[7];
-                if sep == b'-'
-                    && hash.chars().all(|c| c.is_ascii_hexdigit())
-                {
+                if sep == b'-' && hash.chars().all(|c| c.is_ascii_hexdigit()) {
                     let shop_subdomain = rest[8..].to_string();
                     if !shop_subdomain.is_empty() {
                         return Some((hash.to_string(), shop_subdomain));
@@ -173,7 +171,9 @@ pub fn resolve_tenant_record(subdomain: &str) -> Option<SubdomainRecord> {
         if conn.is_none() {
             if let Ok(client) = Client::open(redis_url.as_str()) {
                 // Use a short timeout to avoid blocking the worker thread
-                if let Ok(c) = client.get_connection_with_timeout(std::time::Duration::from_millis(500)) {
+                if let Ok(c) =
+                    client.get_connection_with_timeout(std::time::Duration::from_millis(500))
+                {
                     *conn = Some(c);
                 }
             }
@@ -199,14 +199,21 @@ pub fn parse_subdomain_value(raw: &str) -> SubdomainRecord {
     let trimmed = raw.trim();
     if trimmed.starts_with('{') {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            let shop_id = v.get("shop_id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let shop_id = v
+                .get("shop_id")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
             let account_id = v
                 .get("account_id")
                 .and_then(|x| x.as_str())
                 .filter(|s| !s.is_empty())
                 .map(|s| s.to_string());
             if !shop_id.is_empty() {
-                return SubdomainRecord { shop_id, account_id };
+                return SubdomainRecord {
+                    shop_id,
+                    account_id,
+                };
             }
         }
     }
@@ -219,22 +226,7 @@ pub fn parse_subdomain_value(raw: &str) -> SubdomainRecord {
 /// Resolve tenant from request headers.
 /// Extracts Host header → subdomain → Redis lookup → shop_id.
 /// Falls back to `DEKA_SHOP_ID` env var for dev/testing.
-///
-/// NOTE: In platform (multi-tenant) mode, prefer `resolve_tenant_from_host`
-/// which ignores the `X-Shop-ID` header to prevent spoofing. This function
-/// trusts `X-Shop-ID` and is only suitable for trusted/internal callers.
 pub fn resolve_tenant_from_headers(headers: &[(String, String)]) -> Option<String> {
-    // Check for explicit X-Shop-ID header (testing/dev override)
-    if let Some(shop_id) = headers
-        .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case("x-shop-id"))
-        .map(|(_, v)| v.clone())
-    {
-        if !shop_id.is_empty() {
-            return Some(shop_id);
-        }
-    }
-
     resolve_tenant_from_host(headers)
 }
 
@@ -247,8 +239,27 @@ pub fn resolve_tenant_from_host(headers: &[(String, String)]) -> Option<String> 
 }
 
 /// Like `resolve_tenant_from_host` but also returns preview ref info.
-/// Used by the platform to decide which bundle cache key to use.
+/// Falls back to `DEKA_SHOP_ID` env var for local single-tenant dev/testing.
 pub fn resolve_tenant_info_from_host(headers: &[(String, String)]) -> Option<TenantInfo> {
+    resolve_tenant_info_from_host_strict(headers).or_else(|| {
+        std::env::var("DEKA_SHOP_ID")
+            .ok()
+            .map(|shop_id| TenantInfo {
+                shop_id,
+                account_id: std::env::var("DEKA_ACCOUNT_ID")
+                    .ok()
+                    .filter(|s| !s.is_empty()),
+                preview_ref: None,
+            })
+    })
+}
+
+/// Resolve tenant info from server-routed Host/subdomain data only.
+///
+/// This deliberately does not read request headers other than `Host`, and does
+/// not fall back to process env. Use it in platform multi-tenant request paths
+/// before injecting `SHOP_ID`, `$_ENV`, or vault-backed secrets.
+pub fn resolve_tenant_info_from_host_strict(headers: &[(String, String)]) -> Option<TenantInfo> {
     let host = headers
         .iter()
         .find(|(k, _)| k.eq_ignore_ascii_case("host"))
@@ -293,12 +304,7 @@ pub fn resolve_tenant_info_from_host(headers: &[(String, String)]) -> Option<Ten
         }
     }
 
-    // Fallback: env var for dev
-    std::env::var("DEKA_SHOP_ID").ok().map(|shop_id| TenantInfo {
-        shop_id,
-        account_id: std::env::var("DEKA_ACCOUNT_ID").ok().filter(|s| !s.is_empty()),
-        preview_ref: None,
-    })
+    None
 }
 
 #[cfg(test)]
@@ -307,8 +313,14 @@ mod tests {
 
     #[test]
     fn extract_subdomain_from_host() {
-        assert_eq!(extract_subdomain("sams-shoes.tana.com"), Some("sams-shoes".to_string()));
-        assert_eq!(extract_subdomain("shop-a.tana.com:443"), Some("shop-a".to_string()));
+        assert_eq!(
+            extract_subdomain("sams-shoes.tana.com"),
+            Some("sams-shoes".to_string())
+        );
+        assert_eq!(
+            extract_subdomain("shop-a.tana.com:443"),
+            Some("shop-a".to_string())
+        );
         assert_eq!(extract_subdomain("tana.com"), None);
         assert_eq!(extract_subdomain("localhost:8530"), None);
         assert_eq!(extract_subdomain("127.0.0.1:8530"), None);
@@ -328,16 +340,22 @@ mod tests {
     #[test]
     fn extract_subdomain_multiple_dots() {
         // e.g. "shop.eu.tana.com" -> the first part is the subdomain
-        assert_eq!(extract_subdomain("shop.eu.tana.com"), Some("shop".to_string()));
+        assert_eq!(
+            extract_subdomain("shop.eu.tana.com"),
+            Some("shop".to_string())
+        );
     }
 
     #[test]
-    fn resolve_from_headers_x_shop_id_takes_priority() {
+    fn resolve_from_headers_ignores_x_shop_id() {
         let headers = vec![
-            ("Host".to_string(), "real-shop.tana.com".to_string()),
+            ("Host".to_string(), "localhost:8530".to_string()),
             ("X-Shop-ID".to_string(), "override-id".to_string()),
         ];
-        assert_eq!(resolve_tenant_from_headers(&headers), Some("override-id".to_string()));
+        assert_ne!(
+            resolve_tenant_from_headers(&headers),
+            Some("override-id".to_string())
+        );
     }
 
     #[test]
@@ -353,12 +371,15 @@ mod tests {
     }
 
     #[test]
-    fn resolve_from_headers_with_explicit_header() {
+    fn resolve_from_headers_ignores_x_shop_id_case_insensitive() {
         let headers = vec![
-            ("host".to_string(), "anything.tana.com".to_string()),
+            ("host".to_string(), "localhost:8530".to_string()),
             ("x-shop-id".to_string(), "shop_override".to_string()),
         ];
-        assert_eq!(resolve_tenant_from_headers(&headers), Some("shop_override".to_string()));
+        assert_ne!(
+            resolve_tenant_from_headers(&headers),
+            Some("shop_override".to_string())
+        );
     }
 
     #[test]
@@ -401,7 +422,10 @@ mod tests {
     fn parse_preview_host_hyphenated_shop() {
         // Shop names can contain hyphens: preview-{7hex}-{shop-with-hyphens}.domain.tld
         let result = parse_preview_host("preview-a1b2c3d-my-cool-shop.tana.gg");
-        assert_eq!(result, Some(("a1b2c3d".to_string(), "my-cool-shop".to_string())));
+        assert_eq!(
+            result,
+            Some(("a1b2c3d".to_string(), "my-cool-shop".to_string()))
+        );
     }
 
     #[test]
@@ -475,7 +499,11 @@ mod tests {
 
     #[test]
     fn tenant_info_cache_key_main() {
-        let info = TenantInfo { shop_id: "shop_beta".to_string(), account_id: None, preview_ref: None };
+        let info = TenantInfo {
+            shop_id: "shop_beta".to_string(),
+            account_id: None,
+            preview_ref: None,
+        };
         assert_eq!(info.cache_key(), "shop_beta");
     }
 
@@ -522,7 +550,11 @@ mod tests {
 
     #[test]
     fn tenant_info_cache_key_preview() {
-        let info = TenantInfo { shop_id: "shop_beta".to_string(), account_id: None, preview_ref: Some("a1b2c3d".to_string()) };
+        let info = TenantInfo {
+            shop_id: "shop_beta".to_string(),
+            account_id: None,
+            preview_ref: Some("a1b2c3d".to_string()),
+        };
         assert_eq!(info.cache_key(), "shop_beta:a1b2c3d");
     }
 
@@ -545,7 +577,9 @@ mod tests {
         let _: () = conn.set("subdomain:test-shop", "shop_test_001").unwrap();
 
         // Set env so tenant resolver uses our test Redis
-        unsafe { std::env::set_var("DEKA_REDIS_URL", redis_url); }
+        unsafe {
+            std::env::set_var("DEKA_REDIS_URL", redis_url);
+        }
 
         let result = resolve_tenant("test-shop");
         assert_eq!(result, Some("shop_test_001".to_string()));

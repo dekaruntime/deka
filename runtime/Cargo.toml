@@ -6,7 +6,7 @@ members = [
     "crates/runtime",
     "crates/runtime_core",
     "crates/compile",
-    "crates/stdio",
+    "crates/loop",
     "crates/http",
     "crates/platform",
     "crates/platform_server",
@@ -14,8 +14,15 @@ members = [
     "crates/transport",
     "crates/pool",
     "crates/engine",
+    "crates/gild",
+    "crates/gild-agent",
+    "crates/gild-storm",
+    "crates/gild-storm-agent",
+    "crates/gild-chain",
     "crates/modules_common",
     "crates/modules_php",
+    "crates/seam_diff",
+    "crates/seam_ir",
     "crates/php-rs",
     "crates/phpx_js",
     "crates/wasm_guest",
@@ -34,13 +41,19 @@ members = [
     "crates/zega/zega-kv",
     "crates/zega/zega-parser",
     "crates/zega/zega-wal",
+    "crates/deka-router",
+    "crates/gild-vault",
+    "crates/gild-vault-proxy",
+    "crates/gild-virt",
+    "crates/deka-dns",
+    "crates/deka-edge-publisher",
 ]
 
 [workspace.dependencies]
 # V8 Runtime (Deno Core)
-deno_core = "0.385.0"
-deno_napi = "0.162.0"
-deno_permissions = "0.90.0"
+deno_core = "0.400.0"
+deno_napi = "0.178.0"
+deno_permissions = "0.106.0"
 deno_error = "0.7.1"
 
 # Async Runtime

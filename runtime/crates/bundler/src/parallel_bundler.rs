@@ -1,20 +1,20 @@
+use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use parking_lot::RwLock;
-use tokio::task::JoinSet;
 use tokio::sync::mpsc;
+use tokio::task::JoinSet;
 
-use swc_common::{FileName, Globals, Mark, SourceMap, sync::Lrc, GLOBALS};
-use swc_ecma_ast::{EsVersion, Module, Program, Pass};
-use swc_ecma_codegen::{text_writer::JsWriter, Emitter};
+use swc_common::{FileName, GLOBALS, Globals, Mark, SourceMap, sync::Lrc};
+use swc_ecma_ast::{EsVersion, Module, Pass, Program};
+use swc_ecma_codegen::{Emitter, text_writer::JsWriter};
+use swc_ecma_minifier::optimize;
+use swc_ecma_minifier::option::{CompressOptions, MangleOptions, MinifyOptions};
 use swc_ecma_parser::{EsSyntax, Parser, StringInput, Syntax, TsSyntax, lexer::Lexer};
 use swc_ecma_transforms_base::resolver;
 use swc_ecma_transforms_react::{Options as JsxOptions, Runtime as JsxRuntime, react};
 use swc_ecma_transforms_typescript::strip;
 use swc_ecma_visit::VisitWith;
-use swc_ecma_minifier::optimize;
-use swc_ecma_minifier::option::{MinifyOptions, MangleOptions, CompressOptions};
 
 /// Bundle output containing code and optional source map
 pub struct BundleOutput {
@@ -106,28 +106,55 @@ impl ParallelBundler {
         let t1 = Instant::now();
         let modules = self.discover_modules(entry).await?;
         let discovery_time = t1.elapsed();
-        stdio::debug("parallel", &format!("discovery: {} modules in {}ms", modules.len(), discovery_time.as_millis()));
+        stdio::debug(
+            "parallel",
+            &format!(
+                "discovery: {} modules in {}ms",
+                modules.len(),
+                discovery_time.as_millis()
+            ),
+        );
 
         // Phase 2: Sort modules in dependency order
         let t2 = Instant::now();
         let sorted = self.sort_modules(&modules)?;
         let sort_time = t2.elapsed();
-        stdio::debug("parallel", &format!("sort: {} modules in {}ms", sorted.len(), sort_time.as_millis()));
+        stdio::debug(
+            "parallel",
+            &format!(
+                "sort: {} modules in {}ms",
+                sorted.len(),
+                sort_time.as_millis()
+            ),
+        );
 
         // Phase 3: Concatenate modules
         let t3 = Instant::now();
         let output = self.concatenate_modules(&sorted, &modules)?;
         let concat_time = t3.elapsed();
-        stdio::debug("parallel", &format!("concatenation: {} bytes in {}ms", output.code.len(), concat_time.as_millis()));
+        stdio::debug(
+            "parallel",
+            &format!(
+                "concatenation: {} bytes in {}ms",
+                output.code.len(),
+                concat_time.as_millis()
+            ),
+        );
 
         Ok(output)
     }
 
     /// Discover all modules starting from entry, using parallel workers with channels
-    async fn discover_modules(&self, entry: &str) -> Result<HashMap<PathBuf, ParsedModule>, String> {
+    async fn discover_modules(
+        &self,
+        entry: &str,
+    ) -> Result<HashMap<PathBuf, ParsedModule>, String> {
         stdio::debug("parallel", "resolving entry path...");
         let entry_path = self.resolve_path(&self.root, entry)?;
-        stdio::debug("parallel", &format!("entry resolved to: {}", entry_path.display()));
+        stdio::debug(
+            "parallel",
+            &format!("entry resolved to: {}", entry_path.display()),
+        );
 
         // Create channels for work distribution
         let (work_tx, work_rx) = mpsc::unbounded_channel::<WorkMessage>();
@@ -141,7 +168,10 @@ impl ParallelBundler {
 
         // Mark entry as seen and send it
         seen.write().insert(entry_path.clone());
-        work_tx.send(WorkMessage { path: entry_path.clone() })
+        work_tx
+            .send(WorkMessage {
+                path: entry_path.clone(),
+            })
             .map_err(|e| format!("Failed to send entry work: {}", e))?;
 
         stdio::debug("parallel", &format!("spawning {} workers...", self.workers));
@@ -172,7 +202,10 @@ impl ParallelBundler {
 
                     processed_count += 1;
                     if stdio::is_debug() && processed_count % 100 == 0 {
-                        stdio::debug("worker", &format!("{} processed {} modules", worker_id, processed_count));
+                        stdio::debug(
+                            "worker",
+                            &format!("{} processed {} modules", worker_id, processed_count),
+                        );
                     }
 
                     // Parse module (CPU-intensive)
@@ -185,7 +218,13 @@ impl ParallelBundler {
                     });
                 }
 
-                stdio::debug("worker", &format!("{} completed ({} modules processed)", worker_id, processed_count));
+                stdio::debug(
+                    "worker",
+                    &format!(
+                        "{} completed ({} modules processed)",
+                        worker_id, processed_count
+                    ),
+                );
                 Ok::<(), String>(())
             });
         }
@@ -207,7 +246,12 @@ impl ParallelBundler {
                     let mut new_work = Vec::new();
 
                     for dep in &parsed.dependencies {
-                        if let Ok(dep_path) = Self::resolve_dependency(&self.root, &msg.path, dep, self.bundle_node_modules) {
+                        if let Ok(dep_path) = Self::resolve_dependency(
+                            &self.root,
+                            &msg.path,
+                            dep,
+                            self.bundle_node_modules,
+                        ) {
                             resolved_deps.push(dep_path.clone());
 
                             // Check if we've seen this dependency
@@ -225,7 +269,8 @@ impl ParallelBundler {
 
                     // Batch send new work (reduces contention)
                     for work_path in new_work {
-                        work_tx.send(WorkMessage { path: work_path })
+                        work_tx
+                            .send(WorkMessage { path: work_path })
                             .map_err(|e| format!("Failed to send work: {}", e))?;
                         pending_count += 1;
                     }
@@ -245,7 +290,10 @@ impl ParallelBundler {
         }
 
         stdio::debug("parallel", "all workers completed");
-        stdio::debug("parallel", &format!("extracted {} total modules", modules.len()));
+        stdio::debug(
+            "parallel",
+            &format!("extracted {} total modules", modules.len()),
+        );
 
         if stdio::is_debug() {
             // Sample first 10 paths
@@ -285,10 +333,14 @@ impl ParallelBundler {
 
                 // Debug: Log first few fast-path hits
                 if stdio::is_debug() {
-                    static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                    static COUNTER: std::sync::atomic::AtomicUsize =
+                        std::sync::atomic::AtomicUsize::new(0);
                     let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     if count < 5 {
-                        stdio::debug("fast-path", &format!("skipping SWC for: {}", path.display()));
+                        stdio::debug(
+                            "fast-path",
+                            &format!("skipping SWC for: {}", path.display()),
+                        );
                     }
                 }
 
@@ -312,7 +364,8 @@ impl ParallelBundler {
             let syntax = ParallelBundler::syntax_for_path(&path);
 
             // Parse
-            let fm = source_map.new_source_file(FileName::Real(path.clone()).into(), source.clone());
+            let fm =
+                source_map.new_source_file(FileName::Real(path.clone()).into(), source.clone());
             let lexer = Lexer::new(syntax, EsVersion::Es2022, StringInput::from(&*fm), None);
             let mut parser = Parser::new_from(lexer);
             let module = parser
@@ -338,10 +391,20 @@ impl ParallelBundler {
     }
 
     /// Transform module (strip TypeScript, transform JSX)
-    fn transform_module(module: Module, path: &Path, source_map: &Lrc<SourceMap>) -> Result<Module, String> {
+    fn transform_module(
+        module: Module,
+        path: &Path,
+        source_map: &Lrc<SourceMap>,
+    ) -> Result<Module, String> {
         let globals = Globals::new();
-        let is_ts = matches!(path.extension().and_then(|e| e.to_str()), Some("ts") | Some("tsx"));
-        let is_jsx = matches!(path.extension().and_then(|e| e.to_str()), Some("tsx") | Some("jsx"));
+        let is_ts = matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("ts") | Some("tsx")
+        );
+        let is_jsx = matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("tsx") | Some("jsx")
+        );
 
         GLOBALS.set(&globals, || {
             let unresolved_mark = Mark::new();
@@ -454,16 +517,19 @@ impl ParallelBundler {
 
         impl Visit for DependencyCollector {
             fn visit_import_decl(&mut self, n: &swc_ecma_ast::ImportDecl) {
-                self.deps.push(String::from_utf8_lossy((&*n.src.value).as_bytes()).into_owned());
+                self.deps
+                    .push(String::from_utf8_lossy((&*n.src.value).as_bytes()).into_owned());
             }
 
             fn visit_export_all(&mut self, n: &swc_ecma_ast::ExportAll) {
-                self.deps.push(String::from_utf8_lossy((&*n.src.value).as_bytes()).into_owned());
+                self.deps
+                    .push(String::from_utf8_lossy((&*n.src.value).as_bytes()).into_owned());
             }
 
             fn visit_named_export(&mut self, n: &swc_ecma_ast::NamedExport) {
                 if let Some(src) = &n.src {
-                    self.deps.push(String::from_utf8_lossy((&*src.value).as_bytes()).into_owned());
+                    self.deps
+                        .push(String::from_utf8_lossy((&*src.value).as_bytes()).into_owned());
                 }
             }
         }
@@ -474,15 +540,25 @@ impl ParallelBundler {
     }
 
     /// Resolve a dependency path
-    fn resolve_dependency(root: &Path, from: &Path, specifier: &str, bundle_node_modules: bool) -> Result<PathBuf, String> {
+    fn resolve_dependency(
+        root: &Path,
+        from: &Path,
+        specifier: &str,
+        bundle_node_modules: bool,
+    ) -> Result<PathBuf, String> {
         // Handle special cases (react, etc.)
-        if specifier == "react" || specifier == "react-dom/client" || specifier.starts_with("deka/") {
+        if specifier == "react" || specifier == "react-dom/client" || specifier.starts_with("deka/")
+        {
             // These are handled by vendor files - skip for now
             return Err("Special module".to_string());
         }
 
         // Skip node_modules unless explicitly requested
-        if !bundle_node_modules && !specifier.starts_with("./") && !specifier.starts_with("../") && !specifier.starts_with("/") {
+        if !bundle_node_modules
+            && !specifier.starts_with("./")
+            && !specifier.starts_with("../")
+            && !specifier.starts_with("/")
+        {
             // This is a bare import (e.g., "lodash", "@iconify-icons/...") - treat as external
             return Err("External module (node_modules)".to_string());
         }
@@ -508,8 +584,9 @@ impl ParallelBundler {
             for candidate in candidates {
                 if candidate.exists() && candidate.is_file() {
                     // CRITICAL: Canonicalize to prevent duplicate processing
-                    return candidate.canonicalize()
-                        .map_err(|e| format!("Failed to canonicalize {}: {}", candidate.display(), e));
+                    return candidate.canonicalize().map_err(|e| {
+                        format!("Failed to canonicalize {}: {}", candidate.display(), e)
+                    });
                 }
             }
         }
@@ -521,8 +598,13 @@ impl ParallelBundler {
                 let node_modules = dir.join("node_modules").join(specifier);
                 if node_modules.exists() {
                     // CRITICAL: Canonicalize node_modules paths too!
-                    return node_modules.canonicalize()
-                        .map_err(|e| format!("Failed to canonicalize node_modules path {}: {}", node_modules.display(), e));
+                    return node_modules.canonicalize().map_err(|e| {
+                        format!(
+                            "Failed to canonicalize node_modules path {}: {}",
+                            node_modules.display(),
+                            e
+                        )
+                    });
                 }
                 current = dir.parent();
             }
@@ -532,7 +614,10 @@ impl ParallelBundler {
     }
 
     /// Sort modules in dependency order using Kahn's algorithm (O(N+E))
-    fn sort_modules(&self, modules: &HashMap<PathBuf, ParsedModule>) -> Result<Vec<PathBuf>, String> {
+    fn sort_modules(
+        &self,
+        modules: &HashMap<PathBuf, ParsedModule>,
+    ) -> Result<Vec<PathBuf>, String> {
         use std::collections::VecDeque;
 
         // Calculate in-degree for each module
@@ -579,15 +664,22 @@ impl ParallelBundler {
 
         // Check for cycles
         if sorted.len() != modules.len() {
-            return Err(format!("Circular dependency detected: sorted {} of {} modules",
-                sorted.len(), modules.len()));
+            return Err(format!(
+                "Circular dependency detected: sorted {} of {} modules",
+                sorted.len(),
+                modules.len()
+            ));
         }
 
         Ok(sorted)
     }
 
     /// Concatenate modules into final output
-    fn concatenate_modules(&self, sorted: &[PathBuf], modules: &HashMap<PathBuf, ParsedModule>) -> Result<BundleOutput, String> {
+    fn concatenate_modules(
+        &self,
+        sorted: &[PathBuf],
+        modules: &HashMap<PathBuf, ParsedModule>,
+    ) -> Result<BundleOutput, String> {
         let mut output = String::new();
         output.push_str("// Parallel bundled output\n\n");
 
@@ -613,12 +705,13 @@ impl ParallelBundler {
                             wr: &mut writer,
                         };
 
-                        emitter.emit_module(&parsed.module)
+                        emitter
+                            .emit_module(&parsed.module)
                             .map_err(|e| format!("Failed to emit module: {:?}", e))?;
                     }
 
-                    let code = String::from_utf8(buf)
-                        .map_err(|e| format!("Invalid UTF-8: {}", e))?;
+                    let code =
+                        String::from_utf8(buf).map_err(|e| format!("Invalid UTF-8: {}", e))?;
 
                     output.push_str(&code);
                     output.push_str("\n\n");
@@ -631,7 +724,10 @@ impl ParallelBundler {
             // Note: Source map generation requires proper file tracking during emit
             // For now, we'll generate a basic source map structure
             // TODO: Implement proper source map generation with file positions
-            stdio::debug("sourcemap", "source map generation not fully implemented yet");
+            stdio::debug(
+                "sourcemap",
+                "source map generation not fully implemented yet",
+            );
             None
         } else {
             None
@@ -649,7 +745,8 @@ impl ParallelBundler {
         };
 
         // Canonicalize to ensure consistent paths
-        full_path.canonicalize()
+        full_path
+            .canonicalize()
             .map_err(|e| format!("Failed to resolve {}: {}", specifier, e))
     }
 
@@ -681,5 +778,4 @@ impl ParallelBundler {
             }),
         }
     }
-
 }

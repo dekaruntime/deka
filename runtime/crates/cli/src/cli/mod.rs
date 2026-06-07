@@ -13,16 +13,24 @@ pub mod build;
 #[cfg(feature = "native")]
 pub mod compile;
 #[cfg(feature = "native")]
+pub mod contract_extract;
+#[cfg(feature = "native")]
 pub mod db;
 #[cfg(target_arch = "wasm32")]
 pub mod db_wasm;
+#[cfg(feature = "native")]
+pub mod deploy;
 pub mod init;
 #[cfg(feature = "native")]
 pub mod install;
 #[cfg(feature = "native")]
 pub mod lsp;
 #[cfg(feature = "native")]
+pub mod pipeline_yaml;
+#[cfg(feature = "native")]
 pub mod pkg;
+#[cfg(feature = "native")]
+pub mod platform;
 #[cfg(feature = "native")]
 pub mod publish;
 #[cfg(feature = "native")]
@@ -31,8 +39,6 @@ pub mod release;
 pub mod run;
 #[cfg(feature = "native")]
 pub mod self_cmd;
-#[cfg(feature = "native")]
-pub mod platform;
 #[cfg(feature = "native")]
 pub mod serve;
 #[cfg(feature = "native")]
@@ -200,6 +206,10 @@ pub fn register_global_params(registry: &mut Registry) {
         name: "--registry-url",
         description: "linkhash registry base URL",
     });
+    registry.add_param(ParamSpec {
+        name: "--rust",
+        description: "emit a built-in Rust seam contract target",
+    });
 }
 
 // provide helpful info if no args are provided
@@ -279,7 +289,15 @@ pub fn error(msg: Option<&str>) {
 
 pub fn execute(registry: &Registry) {
     #[cfg(feature = "native")]
-    let has_user_args = std::env::args().nth(1).is_some();
+    {
+        if runtime::has_embedded_vfs() {
+            let args = std::env::args().skip(1).collect::<Vec<_>>();
+            if let Err(err) = runtime::run_embedded_vfs(args) {
+                error(Some(err.as_str()));
+            }
+            return;
+        }
+    }
 
     let parsed = core::parse_env(registry);
     if !parsed.errors.is_empty() {
@@ -309,50 +327,8 @@ pub fn execute(registry: &Registry) {
             version(verbose);
             return;
         }
-        if args.flags.contains_key("--update")
-            || args.flags.contains_key("-U")
-        {
+        if args.flags.contains_key("--update") || args.flags.contains_key("-U") {
             update();
-            return;
-        }
-    }
-
-    #[cfg(feature = "native")]
-    {
-        // Check for embedded VFS (compiled binary mode)
-        // When a binary is compiled with VFS, it should automatically start in the appropriate mode
-        if runtime::has_embedded_vfs() && !has_user_args {
-            let context = match Context::from_env(registry) {
-                Ok(context) => context,
-                Err(_) => {
-                    // For compiled binaries, create a minimal context
-                    let args = core::Args {
-                        flags: std::collections::HashMap::new(),
-                        params: std::collections::HashMap::new(),
-                        commands: Vec::new(),
-                        positionals: Vec::new(),
-                    };
-                    let env = core::EnvContext::load();
-                    let handler = match core::HandlerContext::from_env(&args) {
-                        Ok(h) => h,
-                        Err(_) => {
-                            // Use current directory as handler
-                            let resolved = core::resolve_handler_path(".").unwrap();
-                            let static_config = core::StaticServeConfig::load(&resolved.directory);
-                            core::HandlerContext {
-                                input: ".".to_string(),
-                                resolved,
-                                static_config,
-                                serve_config_path: None,
-                            }
-                        }
-                    };
-                    Context { args, env, handler }
-                }
-            };
-
-            // Automatically serve (which will detect desktop vs server mode from VFS)
-            runtime::serve(&context);
             return;
         }
     }
@@ -399,9 +375,7 @@ pub fn execute(registry: &Registry) {
                 let verbose = cmd.flags.contains_key("--verbose");
                 version(verbose);
             }
-            if cmd.flags.contains_key("--update")
-                || cmd.flags.contains_key("-U")
-            {
+            if cmd.flags.contains_key("--update") || cmd.flags.contains_key("-U") {
                 update();
             }
         }

@@ -1,6 +1,6 @@
 //! Package download via git clone with auth support.
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use std::path::Path;
 use std::process::Command;
 
@@ -20,7 +20,15 @@ pub(crate) fn download(
     let (scope, pkg_name) = crate::parse_scoped_name(name)?;
 
     // Try the tree/blob API first (works without git CLI)
-    match download_via_api(http, registry_url, token, &scope, &pkg_name, version, target_dir) {
+    match download_via_api(
+        http,
+        registry_url,
+        token,
+        &scope,
+        &pkg_name,
+        version,
+        target_dir,
+    ) {
         Ok(()) => return Ok(()),
         Err(_api_err) => {
             // Fall back to git clone
@@ -52,7 +60,8 @@ fn download_via_api(
         req = req.bearer_auth(t);
     }
 
-    let response = req.send()
+    let response = req
+        .send()
         .map_err(|e| anyhow::anyhow!("tree request failed: {}", e))?;
 
     let status = response.status();
@@ -60,10 +69,12 @@ fn download_via_api(
         bail!("tree API returned {}", status);
     }
 
-    let body: serde_json::Value = response.json()
+    let body: serde_json::Value = response
+        .json()
         .map_err(|e| anyhow::anyhow!("failed to parse tree response: {}", e))?;
 
-    let files = body.get("files")
+    let files = body
+        .get("files")
         .or_else(|| body.get("tree"))
         .or_else(|| body.get("entries"))
         .and_then(|v| v.as_array())
@@ -75,7 +86,8 @@ fn download_via_api(
 
     // Step 3: Download each file
     for file_entry in files {
-        let path = file_entry.get("path")
+        let path = file_entry
+            .get("path")
             .or_else(|| file_entry.get("name"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("file entry missing path"))?;
@@ -84,7 +96,8 @@ fn download_via_api(
         if path.starts_with(".git") {
             continue;
         }
-        let is_dir = file_entry.get("type")
+        let is_dir = file_entry
+            .get("type")
             .or_else(|| file_entry.get("kind"))
             .and_then(|v| v.as_str())
             .map(|t| t == "tree" || t == "dir")
@@ -104,22 +117,28 @@ fn download_via_api(
             blob_req = blob_req.bearer_auth(t);
         }
 
-        let blob_response = blob_req.send()
+        let blob_response = blob_req
+            .send()
             .map_err(|e| anyhow::anyhow!("blob request failed for {}: {}", path, e))?;
 
         if !blob_response.status().is_success() {
             bail!("blob API returned {} for {}", blob_response.status(), path);
         }
 
-        let content_bytes = blob_response.bytes()
+        let content_bytes = blob_response
+            .bytes()
             .map_err(|e| anyhow::anyhow!("failed to read blob for {}: {}", path, e))?;
 
         // Registry blob endpoint returns JSON { content, ... }; extract the raw content.
         // Fall back to raw bytes for non-JSON responses.
-        let file_bytes: Vec<u8> = match serde_json::from_slice::<serde_json::Value>(&content_bytes) {
-            Ok(v) if v.get("content").and_then(|c| c.as_str()).is_some() => {
-                v.get("content").and_then(|c| c.as_str()).unwrap().as_bytes().to_vec()
-            }
+        let file_bytes: Vec<u8> = match serde_json::from_slice::<serde_json::Value>(&content_bytes)
+        {
+            Ok(v) if v.get("content").and_then(|c| c.as_str()).is_some() => v
+                .get("content")
+                .and_then(|c| c.as_str())
+                .unwrap()
+                .as_bytes()
+                .to_vec(),
             _ => content_bytes.to_vec(),
         };
 
@@ -146,7 +165,8 @@ fn download_via_git(
     let tag = format!("v{}", version);
 
     // Clone to a temp dir first, then copy files (excluding .git/)
-    let temp_dir = std::env::temp_dir().join(format!("linkhash-dl-{}-{}-{}", scope, pkg_name, version));
+    let temp_dir =
+        std::env::temp_dir().join(format!("linkhash-dl-{}-{}-{}", scope, pkg_name, version));
     if temp_dir.exists() {
         std::fs::remove_dir_all(&temp_dir)?;
     }
@@ -162,7 +182,8 @@ fn download_via_git(
         );
     }
 
-    let status = cmd.status()
+    let status = cmd
+        .status()
         .map_err(|e| anyhow::anyhow!("failed to run git clone: {}", e))?;
 
     if !status.success() {

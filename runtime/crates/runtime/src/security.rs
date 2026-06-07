@@ -1,9 +1,9 @@
 use core::Context;
+use core::ServeMode;
 use runtime_core::security_policy::{
     RuleList, SecurityCliOverrides, merge_policy_with_cli, parse_deka_security_policy,
     policy_to_json,
 };
-use core::ServeMode;
 
 pub struct ResolvedSecurityPolicy {
     pub policy_json: String,
@@ -34,10 +34,7 @@ pub fn resolve_security_policy(context: &Context) -> Result<ResolvedSecurityPoli
                 lines.push(format!("{} at {}: {}", diag.code, diag.path, diag.message));
             }
         }
-        return Err(format!(
-            "invalid security policy:\n{}",
-            lines.join("\n")
-        ));
+        return Err(format!("invalid security policy:\n{}", lines.join("\n")));
     }
 
     let project_kind = ProjectKind::from_mode(&context.handler.resolved.mode);
@@ -80,15 +77,15 @@ pub fn resolve_security_policy(context: &Context) -> Result<ResolvedSecurityPoli
     })
 }
 
-fn apply_dev_defaults(policy: &mut runtime_core::security_policy::SecurityPolicy, root: &std::path::Path) {
+fn apply_dev_defaults(
+    policy: &mut runtime_core::security_policy::SecurityPolicy,
+    root: &std::path::Path,
+) {
     if matches!(policy.allow.read, RuleList::None) {
         policy.allow.read = RuleList::List(vec![root.to_string_lossy().to_string()]);
     }
     if matches!(policy.allow.write, RuleList::None) {
-        let cache_dirs = vec![
-            root.join(".cache"),
-            root.join("php_modules").join(".cache"),
-        ];
+        let cache_dirs = vec![root.join(".cache"), root.join("php_modules").join(".cache")];
         let entries = cache_dirs
             .into_iter()
             .map(|path| path.to_string_lossy().to_string())

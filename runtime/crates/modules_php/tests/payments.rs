@@ -158,14 +158,14 @@ const FEE_BOUNDARIES: &[(i64, &str, i64)] = &[
     (1, "premium", 0),    // 1 * 0.0025 = 0.0025 → floor = 0
     (1, "enterprise", 0), // always 0
     // --- $100 (10,000c) — hits the standard cap exactly, below free cap ---
-    (10_000, "free", 100),       // 1% of $100 = $1 → 100 cents (below cap)
-    (10_000, "standard", 50),    // 0.5% of $100 = $0.50 → 50 cents (below cap)
-    (10_000, "premium", 25),     // 0.25% of $100 = $0.25 → 25 cents (below cap)
+    (10_000, "free", 100),    // 1% of $100 = $1 → 100 cents (below cap)
+    (10_000, "standard", 50), // 0.5% of $100 = $0.50 → 50 cents (below cap)
+    (10_000, "premium", 25),  // 0.25% of $100 = $0.25 → 25 cents (below cap)
     (10_000, "enterprise", 0),
     // --- $200 (20,000c) — free cap hits exactly, standard cap hit ---
-    (20_000, "free", 200),       // 1% of $200 = $2 → exactly cap
-    (20_000, "standard", 100),   // 0.5% of $200 = $1 → exactly cap
-    (20_000, "premium", 50),     // 0.25% of $200 = $0.50 → exactly cap
+    (20_000, "free", 200),     // 1% of $200 = $2 → exactly cap
+    (20_000, "standard", 100), // 0.5% of $200 = $1 → exactly cap
+    (20_000, "premium", 50),   // 0.25% of $200 = $0.50 → exactly cap
     (20_000, "enterprise", 0),
     // --- $500 (50,000c) — all capped tiers sit at their cap ---
     (50_000, "free", 200),
@@ -446,12 +446,17 @@ fn stripe_sig_header_format_parses() {
 // same amount ordering rules. A drift between the two implementations
 // trips this test.
 
-fn authorize_refund(role: &str, user_id: &str, amount: i64, charge_amount: i64) -> Result<(), &'static str> {
+fn authorize_refund(
+    role: &str,
+    user_id: &str,
+    amount: i64,
+    charge_amount: i64,
+) -> Result<(), &'static str> {
     if user_id.is_empty() {
         return Err("refund_unauthorized: missing actor user_id");
     }
     let allowed = ["owner", "admin", "shop_owner", "platform_admin"];
-    if !allowed.iter().any(|r| *r == role) {
+    if !allowed.contains(&role) {
         return Err("refund_unauthorized");
     }
     if amount <= 0 {
@@ -603,12 +608,7 @@ fn token_vault_encrypt_wire(
     let aad = format!("shop:{}", shop_id);
     let ct = gcm_encrypt(key, nonce, pt, aad.as_bytes());
     let b64 = base64::engine::general_purpose::STANDARD;
-    format!(
-        "v1:{}:{}:{}",
-        keyid,
-        b64.encode(nonce),
-        b64.encode(&ct)
-    )
+    format!("v1:{}:{}:{}", keyid, b64.encode(nonce), b64.encode(&ct))
 }
 
 fn token_vault_decrypt_wire(
@@ -740,7 +740,10 @@ fn square_webhook_hmac_matches_known_vector() {
     assert_eq!(sig_b64.len(), 44); // 32-byte HMAC → 44 chars base64 (with padding)
 
     // Tamper test: change one char in the body, signature must not match.
-    let signed2 = format!("{}{}", url, r#"{"event_id":"evt_2","type":"payment.updated"}"#);
+    let signed2 = format!(
+        "{}{}",
+        url, r#"{"event_id":"evt_2","type":"payment.updated"}"#
+    );
     let mut mac2 = <HmacSha256 as Mac>::new_from_slice(key.as_bytes()).unwrap();
     mac2.update(signed2.as_bytes());
     let sig2_b64 = base64::engine::general_purpose::STANDARD.encode(mac2.finalize().into_bytes());

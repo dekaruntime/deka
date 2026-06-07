@@ -17,6 +17,7 @@ tracing = "0.1"
 deka-stdio = { path = "../stdio", package = "stdio" }
 phpx_js = { path = "../phpx_js" }
 runtime_core = { path = "../runtime_core" }
+gild-vault-client = { path = "../gild-vault-client" }
 
 # Validation
 swc_common = { workspace = true }
@@ -28,9 +29,9 @@ redis = { workspace = true }
 deka-validation = { path = "../../../deka-validation" }
 deka-shard = { path = "../shard" }
 
+[dev-dependencies]
+tempfile = "3"
+platform_server = { path = "../platform_server" }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 mach2 = "0.6.0"
-
-[dev-dependencies]
-platform_server = { path = "../platform_server" }
-tempfile = "3"

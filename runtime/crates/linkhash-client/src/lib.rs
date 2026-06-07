@@ -3,10 +3,10 @@
 //! Handles resolve, download, preflight, and publish operations for
 //! scoped PHPX packages against a linkhash-compatible registry.
 
-mod resolve;
 mod download;
+mod resolve;
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -60,7 +60,13 @@ impl LinkhashClient {
 
     /// Resolve a package version. Returns the exact version and metadata.
     pub fn resolve(&self, name: &str, version_range: &str) -> Result<ResolvedPackage> {
-        resolve::resolve(&self.http, &self.registry_url, self.token.as_deref(), name, version_range)
+        resolve::resolve(
+            &self.http,
+            &self.registry_url,
+            self.token.as_deref(),
+            name,
+            version_range,
+        )
     }
 
     /// List all versions of a package.
@@ -70,38 +76,67 @@ impl LinkhashClient {
 
     /// Download a package to a target directory using the tree/blob API.
     pub fn download(&self, name: &str, version: &str, target_dir: &Path) -> Result<()> {
-        download::download(&self.http, &self.registry_url, self.token.as_deref(), name, version, target_dir)
+        download::download(
+            &self.http,
+            &self.registry_url,
+            self.token.as_deref(),
+            name,
+            version,
+            target_dir,
+        )
     }
 
     /// Preflight a publish — dry-run validation.
     pub fn preflight(&self, req: &PublishRequest) -> Result<PreflightResult> {
-        let token = self.token.as_deref()
+        let token = self
+            .token
+            .as_deref()
             .ok_or_else(|| anyhow::anyhow!("auth token required for preflight"))?;
 
         let url = format!("{}/api/packages/preflight", self.registry_url);
-        let response = self.http.post(&url)
+        let response = self
+            .http
+            .post(&url)
             .bearer_auth(token)
             .json(req)
             .send()
             .map_err(|e| anyhow::anyhow!("preflight request failed: {}", e))?;
 
         let status = response.status();
-        let body: serde_json::Value = response.json()
+        let body: serde_json::Value = response
+            .json()
             .map_err(|e| anyhow::anyhow!("failed to parse preflight response: {}", e))?;
 
         if !status.is_success() {
-            let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("unknown error");
+            let err = body
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
             bail!("preflight failed ({}): {}", status, err);
         }
 
         if let Some(preflight) = body.get("preflight") {
             let result = PreflightResult {
-                allowed: preflight.get("allowed").and_then(|v| v.as_bool()).unwrap_or(true),
-                required_bump: preflight.get("required_bump").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                minimum_allowed_version: preflight.get("minimum_allowed_version").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                reasons: preflight.get("reasons").and_then(|v| v.as_array()).map(|arr| {
-                    arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
-                }),
+                allowed: preflight
+                    .get("allowed")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true),
+                required_bump: preflight
+                    .get("required_bump")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                minimum_allowed_version: preflight
+                    .get("minimum_allowed_version")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                reasons: preflight
+                    .get("reasons")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    }),
             };
             Ok(result)
         } else {
@@ -116,31 +151,48 @@ impl LinkhashClient {
 
     /// Publish a package to the registry.
     pub fn publish(&self, req: &PublishRequest) -> Result<PublishResult> {
-        let token = self.token.as_deref()
+        let token = self
+            .token
+            .as_deref()
             .ok_or_else(|| anyhow::anyhow!("auth token required for publish"))?;
 
         let url = format!("{}/api/packages/publish", self.registry_url);
-        let response = self.http.post(&url)
+        let response = self
+            .http
+            .post(&url)
             .bearer_auth(token)
             .json(req)
             .send()
             .map_err(|e| anyhow::anyhow!("publish request failed: {}", e))?;
 
         let status = response.status();
-        let body: serde_json::Value = response.json()
+        let body: serde_json::Value = response
+            .json()
             .map_err(|e| anyhow::anyhow!("failed to parse publish response: {}", e))?;
 
         if !status.is_success() {
-            let err = body.get("error").and_then(|v| v.as_str()).unwrap_or("unknown error");
+            let err = body
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
             bail!("publish failed ({}): {}", status, err);
         }
 
-        let release = body.get("release")
+        let release = body
+            .get("release")
             .ok_or_else(|| anyhow::anyhow!("publish response missing 'release' field"))?;
 
         Ok(PublishResult {
-            package_name: release.get("package_name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            version: release.get("version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            package_name: release
+                .get("package_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            version: release
+                .get("version")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
         })
     }
 }
@@ -161,7 +213,10 @@ pub fn parse_scoped_name(name: &str) -> Result<(String, String)> {
     let scope = parts.next().unwrap_or("").to_string();
     let pkg = parts.next().unwrap_or("").to_string();
     if scope.is_empty() || pkg.is_empty() || parts.next().is_some() {
-        bail!("invalid scoped package name: {} (expected @scope/name)", name);
+        bail!(
+            "invalid scoped package name: {} (expected @scope/name)",
+            name
+        );
     }
     Ok((scope, pkg))
 }

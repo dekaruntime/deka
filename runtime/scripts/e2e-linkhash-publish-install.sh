@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEKA_BIN="${DEKA_BIN:-$ROOT/target/release/cli}"
 LINKHASH_ROOT="${LINKHASH_ROOT:-/Users/sami/Projects/deka/linkhash}"
-DEKA_GIT_DIR="${DEKA_GIT_DIR:-$LINKHASH_ROOT/rust/deka-git}"
+GILD_VCS_DIR="${GILD_VCS_DIR:-$LINKHASH_ROOT/rust/gild-vcs}"
 REGISTRY_URL="${REGISTRY_URL:-http://127.0.0.1:8608}"
 REGISTRY_TOKEN="${REGISTRY_TOKEN:-test-token}"
 REGISTRY_OWNER="${REGISTRY_OWNER:-linkhash-admin}"
@@ -12,7 +12,7 @@ PKG_VERSION="${PKG_VERSION:-0.1.0}"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/deka-linkhash-e2e.XXXXXX")"
 RUN_ID="$(date +%s)"
 REGISTRY_REPO="${REGISTRY_REPO:-mvp2e2emodule-${RUN_ID}}"
-LOG="$WORK/deka-git.log"
+LOG="$WORK/gild-vcs.log"
 PKG_NAME="@${REGISTRY_OWNER}/${REGISTRY_REPO}"
 
 cleanup() {
@@ -29,8 +29,8 @@ if [[ ! -x "$DEKA_BIN" ]]; then
   exit 1
 fi
 
-if [[ ! -d "$DEKA_GIT_DIR" ]]; then
-  echo "[e2e] missing deka-git dir: $DEKA_GIT_DIR"
+if [[ ! -d "$GILD_VCS_DIR" ]]; then
+  echo "[e2e] missing gild-vcs dir: $GILD_VCS_DIR"
   exit 1
 fi
 
@@ -40,7 +40,7 @@ fi
 )
 
 (
-  cd "$DEKA_GIT_DIR"
+  cd "$GILD_VCS_DIR"
   cargo run >"$LOG" 2>&1
 ) &
 PID=$!
@@ -66,7 +66,7 @@ fi
 
 PKG_DIR="$WORK/publisher"
 CONSUMER_DIR="$WORK/consumer"
-REMOTE_DIR="$DEKA_GIT_DIR/repos/$REGISTRY_OWNER/$REGISTRY_REPO.git"
+REMOTE_DIR="$GILD_VCS_DIR/repos/$REGISTRY_OWNER/$REGISTRY_REPO.git"
 mkdir -p "$PKG_DIR" "$(dirname "$REMOTE_DIR")"
 
 cat > "$PKG_DIR/deka.json" <<JSON

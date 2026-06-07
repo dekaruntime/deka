@@ -117,9 +117,9 @@ pub enum PatternElement {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
-    Right,    // -[]->(
-    Left,     // <-[]-
-    Both,     // <-[]->
+    Right,      // -[]->(
+    Left,       // <-[]-
+    Both,       // <-[]->
     Undirected, // -[]-
 }
 
@@ -164,22 +164,19 @@ pub enum SetItem {
 #[derive(Debug, Clone, PartialEq)]
 pub enum RemoveItem {
     Property(Expr),
-    Label { variable: String, labels: Vec<String> },
+    Label {
+        variable: String,
+        labels: Vec<String>,
+    },
 }
 
 /// Expressions in Cypher.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     /// $param — external parameter reference
-    Param {
-        name: String,
-        span: Span,
-    },
+    Param { name: String, span: Span },
     /// Bare identifier (query-internal variable)
-    Ident {
-        name: String,
-        span: Span,
-    },
+    Ident { name: String, span: Span },
     /// Property access: expr.property
     Property {
         expr: Box<Expr>,

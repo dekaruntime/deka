@@ -51,12 +51,7 @@ impl CypherValidator<'_> {
         }
     }
 
-    fn push_warning(
-        &mut self,
-        span: PhpxSpan,
-        message: String,
-        help: &str,
-    ) {
+    fn push_warning(&mut self, span: PhpxSpan, message: String, help: &str) {
         if let Some(info) = span.line_info(self.source) {
             self.errors.push(ValidationError {
                 kind: ErrorKind::CypherError,
@@ -136,10 +131,8 @@ impl<'ast> Visitor<'ast> for CypherValidator<'_> {
                 // Check for assignments: $var = expr
                 if let Expr::Assign { var, .. } = expr {
                     if let Expr::Variable { name, .. } = var {
-                        let var_name = std::str::from_utf8(
-                            &self.source[name.start..name.end],
-                        )
-                        .unwrap_or("");
+                        let var_name =
+                            std::str::from_utf8(&self.source[name.start..name.end]).unwrap_or("");
                         // Strip the $ prefix if present
                         let clean = var_name.strip_prefix('$').unwrap_or(var_name);
                         if !clean.is_empty() {
@@ -151,10 +144,9 @@ impl<'ast> Visitor<'ast> for CypherValidator<'_> {
             Stmt::Function { params, .. } => {
                 // Function parameters are in scope
                 for p in params.iter() {
-                    let var_text = std::str::from_utf8(
-                        &self.source[p.name.span.start..p.name.span.end],
-                    )
-                    .unwrap_or("");
+                    let var_text =
+                        std::str::from_utf8(&self.source[p.name.span.start..p.name.span.end])
+                            .unwrap_or("");
                     let clean = var_text.strip_prefix('$').unwrap_or(var_text);
                     if !clean.is_empty() {
                         self.declared_vars.push(clean.to_string());
@@ -167,10 +159,7 @@ impl<'ast> Visitor<'ast> for CypherValidator<'_> {
     }
 
     fn visit_expr(&mut self, expr: ExprId<'ast>) {
-        if let Expr::Cql {
-            cypher, params, ..
-        } = expr
-        {
+        if let Expr::Cql { cypher, params, .. } = expr {
             self.validate_cql_expr(*cypher, params);
         }
         walk_expr(self, expr);
@@ -220,7 +209,10 @@ cql results = MATCH (c:Customer) WHERE c.id = $cusomer_id RETURN c;
         assert!(cypher_errors[0].message.contains("cusomer_id"));
         // Should suggest $customer_id
         assert!(
-            cypher_errors[0].suggestion.as_ref().is_some_and(|s| s.contains("customer_id")),
+            cypher_errors[0]
+                .suggestion
+                .as_ref()
+                .is_some_and(|s| s.contains("customer_id")),
             "expected suggestion for $customer_id, got: {:?}",
             cypher_errors[0].suggestion
         );
@@ -272,13 +264,20 @@ cql broken = MATCH (n:Person RETURN n;
             .collect();
         assert_eq!(cypher_errors.len(), 1);
 
-        let formatted = super::super::format_validation_error(source, "test.phpx", cypher_errors[0]);
+        let formatted =
+            super::super::format_validation_error(source, "test.phpx", cypher_errors[0]);
         // Should contain the file path
         assert!(formatted.contains("test.phpx"), "should contain file path");
         // Should contain the error kind
-        assert!(formatted.contains("Cypher Error"), "should contain 'Cypher Error'");
+        assert!(
+            formatted.contains("Cypher Error"),
+            "should contain 'Cypher Error'"
+        );
         // Should contain the suggestion
-        assert!(formatted.contains("customer_id"), "should contain suggestion 'customer_id'");
+        assert!(
+            formatted.contains("customer_id"),
+            "should contain suggestion 'customer_id'"
+        );
     }
 
     #[test]
@@ -317,9 +316,7 @@ fn levenshtein(a: &str, b: &str) -> usize {
         curr[0] = i;
         for j in 1..=b.len() {
             let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
-            curr[j] = (prev[j] + 1)
-                .min(curr[j - 1] + 1)
-                .min(prev[j - 1] + cost);
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
         }
         std::mem::swap(&mut prev, &mut curr);
     }

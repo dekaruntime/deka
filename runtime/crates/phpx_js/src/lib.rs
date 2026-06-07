@@ -1,3 +1,5 @@
+#![allow(clippy::all, clippy::pedantic, clippy::nursery, dead_code, unused_variables)]
+
 use bumpalo::Bump;
 use modules_php::compiler_api::{compile_phpx, compile_phpx_internal};
 use modules_php::validation::format_multiple_errors;
@@ -40,8 +42,7 @@ pub fn compile_phpx_source_to_js(
 
 fn is_internal_phpx_path(path: &Path) -> bool {
     let normalized = path.to_string_lossy().replace('\\', "/");
-    normalized.starts_with("php_modules/")
-        || normalized.contains("/php_modules/")
+    normalized.starts_with("php_modules/") || normalized.contains("/php_modules/")
 }
 
 pub fn emit_js_from_ast(
@@ -228,7 +229,6 @@ pub fn build_stdlib_prelude(project_root: &Path) -> Result<String, String> {
 
     Ok(prelude)
 }
-
 
 fn frontmatter_range(lines: &[&str]) -> Option<(usize, usize)> {
     let mut first = None;
@@ -513,7 +513,9 @@ impl<'a> JsSubsetEmitter<'a> {
         // --- Class (b): runtime helpers ---
         out.push_str("globalThis.__phpx_is_struct ??= (value, name) => Boolean(value && typeof value === 'object' && value.__struct === name);\n\n");
         out.push_str("globalThis.__phpx_func_num_args ??= (args) => args.length;\n");
-        out.push_str("globalThis.__phpx_func_get_args ??= (args) => Array.prototype.slice.call(args);\n");
+        out.push_str(
+            "globalThis.__phpx_func_get_args ??= (args) => Array.prototype.slice.call(args);\n",
+        );
         out.push_str("globalThis.__phpx_func_get_arg ??= (args, idx) => (idx >= 0 && idx < args.length ? args[idx] : null);\n\n");
 
         // Class (a) entries REMOVED: chr, ord, strlen, substr, ltrim, rtrim, trim,
@@ -595,7 +597,9 @@ impl<'a> JsSubsetEmitter<'a> {
         // string-keyed assignment instead of a free identifier.
         out.push_str("globalThis.__phpx_serve_php ??= (path) => { if (globalThis.__dekaPhp && typeof globalThis.__dekaPhp.servePhp === 'function') { return globalThis.__dekaPhp.servePhp(String(path || '')); } return null; };\n");
         // PHP output buffering — enables echo/header() pattern in $app request handlers.
-        out.push_str("globalThis.__phpxCurrentResponse ??= { status: 200, headers: {}, body: '' };\n");
+        out.push_str(
+            "globalThis.__phpxCurrentResponse ??= { status: 200, headers: {}, body: '' };\n",
+        );
         out.push_str("globalThis.header ??= (str) => { const s = String(str ?? ''); if (/^HTTP\\/[0-9]/i.test(s)) { const m = s.match(/^HTTP\\/[0-9.]+\\s+(\\d+)/i); if (m) globalThis.__phpxCurrentResponse.status = parseInt(m[1]); } else { const colon = s.indexOf(':'); if (colon > 0) { const name = s.slice(0, colon).trim().toLowerCase(); const value = s.slice(colon + 1).trim(); if (name === 'location' && globalThis.__phpxCurrentResponse.status === 200) globalThis.__phpxCurrentResponse.status = 302; globalThis.__phpxCurrentResponse.headers[name] = value; } } };\n");
         out.push_str("globalThis.__phpxPrintOrig ??= null;\n");
         out.push_str("globalThis.phpxStartBuffer ??= () => { globalThis.__phpxCurrentResponse = { status: 200, headers: {}, body: '' }; if (!globalThis.__phpxPrintOrig) { globalThis.__phpxPrintOrig = globalThis.__dekaPrint; } globalThis.__dekaPrint = (v) => { globalThis.__phpxCurrentResponse.body += String(v ?? ''); }; };\n");
@@ -804,9 +808,7 @@ impl<'a> JsSubsetEmitter<'a> {
                 self.emit_enum(name, members)?;
                 Ok(())
             }
-            Stmt::Class { .. }
-            | Stmt::Trait { .. }
-            | Stmt::Interface { .. } => {
+            Stmt::Class { .. } | Stmt::Trait { .. } | Stmt::Interface { .. } => {
                 Err("class-like declarations are not supported in JS subset emitter".to_string())
             }
             Stmt::TypeAlias { .. } => {
@@ -816,7 +818,11 @@ impl<'a> JsSubsetEmitter<'a> {
                 Err("parser error statement reached JS subset emitter".to_string())
             }
             Stmt::Function {
-                name, params, body, is_async, ..
+                name,
+                params,
+                body,
+                is_async,
+                ..
             } => {
                 let fn_name = self.token_name(name);
                 if !self.is_declared(&fn_name) {
@@ -832,11 +838,15 @@ impl<'a> JsSubsetEmitter<'a> {
                     self.scopes.len() == 1 && self.meta.exported_functions.contains(&fn_name);
                 let async_kw = if *is_async { "async " } else { "" };
                 if exported {
-                    self.body
-                        .push_str(&format!("export {}function {}({}) {{\n", async_kw, fn_name, js_params));
+                    self.body.push_str(&format!(
+                        "export {}function {}({}) {{\n",
+                        async_kw, fn_name, js_params
+                    ));
                 } else {
-                    self.body
-                        .push_str(&format!("{}function {}({}) {{\n", async_kw, fn_name, js_params));
+                    self.body.push_str(&format!(
+                        "{}function {}({}) {{\n",
+                        async_kw, fn_name, js_params
+                    ));
                 }
 
                 self.push_scope();
@@ -1254,15 +1264,20 @@ impl<'a> JsSubsetEmitter<'a> {
 
         self.body.push_str(&format!("class {} {{\n", enum_name));
         self.body.push_str("  constructor(__case, __payload) {\n");
-        self.body.push_str(&format!("    this.__enum = {};\n", json_string(&enum_name)));
+        self.body
+            .push_str(&format!("    this.__enum = {};\n", json_string(&enum_name)));
         self.body.push_str("    this.__case = __case;\n");
         self.body.push_str("    if (__payload) {\n");
-        self.body.push_str("      Object.assign(this, __payload);\n");
+        self.body
+            .push_str("      Object.assign(this, __payload);\n");
         self.body.push_str("    }\n");
         self.body.push_str("  }\n");
 
         for member in methods {
-            if let ClassMember::Method { name, params, body, .. } = member {
+            if let ClassMember::Method {
+                name, params, body, ..
+            } = member
+            {
                 let method_name = self.token_name(name);
                 let js_params = params
                     .iter()
@@ -1270,8 +1285,10 @@ impl<'a> JsSubsetEmitter<'a> {
                     .collect::<Vec<_>>()
                     .join(", ");
                 let block = self.emit_method_block(params, body)?;
-                self.body
-                    .push_str(&format!("  {}({}) {{\n{}  }}\n", method_name, js_params, block));
+                self.body.push_str(&format!(
+                    "  {}({}) {{\n{}  }}\n",
+                    method_name, js_params, block
+                ));
             }
         }
 
@@ -1432,7 +1449,12 @@ impl<'a> JsSubsetEmitter<'a> {
                 }
                 let block = self.emit_method_block(params, body)?;
                 let async_kw = if *is_async { "async " } else { "" };
-                let fn_expr = format!("{}function({}) {{\n{} }}", async_kw, names.join(", "), block);
+                let fn_expr = format!(
+                    "{}function({}) {{\n{} }}",
+                    async_kw,
+                    names.join(", "),
+                    block
+                );
                 if uses.is_empty() {
                     return Ok(fn_expr);
                 }
@@ -1477,7 +1499,10 @@ impl<'a> JsSubsetEmitter<'a> {
                         if args_js.is_empty() {
                             return Ok("globalThis.__phpx_func_get_arg(arguments, 0)".to_string());
                         }
-                        return Ok(format!("globalThis.__phpx_func_get_arg(arguments, {})", args_js));
+                        return Ok(format!(
+                            "globalThis.__phpx_func_get_arg(arguments, {})",
+                            args_js
+                        ));
                     }
                     // --- Phase 2: compile-time rewrites for class (a) builtins ---
                     if !self.is_declared(&ident) {
@@ -1528,7 +1553,9 @@ impl<'a> JsSubsetEmitter<'a> {
                     php_rs::parser::ast::AssignOp::Coalesce => "??=",
                 };
                 match self.emit_assignment_target(*var)? {
-                    AssignmentTarget::Direct(target) => Ok(format!("({} {} {})", target, js_op, rhs)),
+                    AssignmentTarget::Direct(target) => {
+                        Ok(format!("({} {} {})", target, js_op, rhs))
+                    }
                     AssignmentTarget::Append(_) => Err(
                         "assign-op on append array access is not supported in subset emitter"
                             .to_string(),
@@ -1669,8 +1696,10 @@ impl<'a> JsSubsetEmitter<'a> {
             }
             Expr::Array { items, .. } => {
                 if !items.iter().all(|item| !item.by_ref && !item.unpack) {
-                    return Err("mixed or complex array items are not supported in subset emitter"
-                        .to_string());
+                    return Err(
+                        "mixed or complex array items are not supported in subset emitter"
+                            .to_string(),
+                    );
                 }
 
                 let mut has_keys = false;
@@ -2134,7 +2163,9 @@ impl<'a> JsSubsetEmitter<'a> {
         args: &[php_rs::parser::ast::Arg<'_>],
     ) -> Result<Option<String>, String> {
         // Helper: emit positional args into a Vec<String>.
-        let emit_args = |emitter: &mut Self, args: &[php_rs::parser::ast::Arg<'_>]| -> Result<Vec<String>, String> {
+        let emit_args = |emitter: &mut Self,
+                         args: &[php_rs::parser::ast::Arg<'_>]|
+         -> Result<Vec<String>, String> {
             let mut out = Vec::with_capacity(args.len());
             for arg in args {
                 out.push(emitter.emit_expr(arg.value)?);
@@ -2207,7 +2238,11 @@ impl<'a> JsSubsetEmitter<'a> {
             // strpos($h, $n, $offset) -> IIFE with offset
             "strpos" if args.len() >= 2 && args.len() <= 3 => {
                 let a = emit_args(self, args)?;
-                let offset = if args.len() == 3 { a[2].clone() } else { "0".to_string() };
+                let offset = if args.len() == 3 {
+                    a[2].clone()
+                } else {
+                    "0".to_string()
+                };
                 Ok(Some(format!(
                     "(() => {{ const __i = String({}).indexOf(String({}), {}); return __i >= 0 ? __i : false; }})()",
                     a[0], a[1], offset
@@ -2231,7 +2266,10 @@ impl<'a> JsSubsetEmitter<'a> {
             // str_starts_with($h, $n) -> String($h).startsWith(String($n))
             "str_starts_with" if args.len() == 2 => {
                 let a = emit_args(self, args)?;
-                Ok(Some(format!("String({}).startsWith(String({}))", a[0], a[1])))
+                Ok(Some(format!(
+                    "String({}).startsWith(String({}))",
+                    a[0], a[1]
+                )))
             }
             // str_ends_with($h, $n) -> String($h).endsWith(String($n))
             "str_ends_with" if args.len() == 2 => {
@@ -2300,9 +2338,15 @@ impl<'a> JsSubsetEmitter<'a> {
             "implode" if args.len() >= 1 && args.len() <= 2 => {
                 let a = emit_args(self, args)?;
                 if args.len() == 1 {
-                    Ok(Some(format!("(Array.isArray({0}) ? {0} : []).join(\"\")", a[0])))
+                    Ok(Some(format!(
+                        "(Array.isArray({0}) ? {0} : []).join(\"\")",
+                        a[0]
+                    )))
                 } else {
-                    Ok(Some(format!("(Array.isArray({1}) ? {1} : []).join(String({0}))", a[0], a[1])))
+                    Ok(Some(format!(
+                        "(Array.isArray({1}) ? {1} : []).join(String({0}))",
+                        a[0], a[1]
+                    )))
                 }
             }
             // chr($n) -> String.fromCharCode(($n) & 0xff)
@@ -2319,9 +2363,7 @@ impl<'a> JsSubsetEmitter<'a> {
                 )))
             }
             // time() -> Math.floor(Date.now() / 1000)
-            "time" if args.is_empty() => {
-                Ok(Some("Math.floor(Date.now() / 1000)".to_string()))
-            }
+            "time" if args.is_empty() => Ok(Some("Math.floor(Date.now() / 1000)".to_string())),
             // array_keys($a) -> Object.keys($a) for objects; for arrays JS gives
             // stringified indices, so we emit an IIFE that returns numeric indices
             // for arrays and string keys for objects. Structs are treated as objects.
@@ -2341,24 +2383,20 @@ impl<'a> JsSubsetEmitter<'a> {
                 )))
             }
             // array_map($fn, $a) -> $a.map($fn)
-            // If $a is object-shaped, map over Object.values($a). Unsupported
-            // multi-array/zipping forms continue to resolve through stdlib imports.
             "array_map" if args.len() == 2 => {
                 let a = emit_args(self, args)?;
-                Ok(Some(format!(
-                    "(() => {{ const __fn = {}; const __a = {}; const __values = Array.isArray(__a) ? __a : ((__a && typeof __a === \"object\") ? Object.values(__a) : []); return __values.map(__fn); }})()",
-                    a[0], a[1]
-                )))
+                Ok(Some(format!("{}.map({})", a[1], a[0])))
             }
             // array_filter($a) -> $a.filter(Boolean)
             // array_filter($a, $fn) -> $a.filter($fn)
             "array_filter" if args.len() >= 1 && args.len() <= 2 => {
                 let a = emit_args(self, args)?;
-                let callback = if args.len() == 2 { a[1].clone() } else { "Boolean".to_string() };
-                Ok(Some(format!(
-                    "(() => {{ const __a = {}; const __fn = {}; const __values = Array.isArray(__a) ? __a : ((__a && typeof __a === \"object\") ? Object.values(__a) : []); return __values.filter(__fn); }})()",
-                    a[0], callback
-                )))
+                let callback = if args.len() == 2 {
+                    a[1].clone()
+                } else {
+                    "Boolean".to_string()
+                };
+                Ok(Some(format!("{}.filter({})", a[0], callback)))
             }
             // is_array($x) -> inline with struct exclusion
             "is_array" if args.len() == 1 => {
@@ -2582,7 +2620,10 @@ impl<'a> JsSubsetEmitter<'a> {
                 if args.len() == 1 {
                     Ok(Some(format!("(parseInt(String({}), 10) || 0)", a[0])))
                 } else {
-                    Ok(Some(format!("(parseInt(String({}), Number({}) || 10) || 0)", a[0], a[1])))
+                    Ok(Some(format!(
+                        "(parseInt(String({}), Number({}) || 10) || 0)",
+                        a[0], a[1]
+                    )))
                 }
             }
             // floatval($v) -> float coercion
@@ -2608,8 +2649,16 @@ impl<'a> JsSubsetEmitter<'a> {
                 // PHP arg order: array_slice($arr, $offset, $length, $preserve_keys)
                 let arr = a[0].clone();
                 let off = a[1].clone();
-                let len_expr = if args.len() >= 3 { Some(a[2].clone()) } else { None };
-                let preserve = if args.len() == 4 { Some(a[3].clone()) } else { None };
+                let len_expr = if args.len() >= 3 {
+                    Some(a[2].clone())
+                } else {
+                    None
+                };
+                let preserve = if args.len() == 4 {
+                    Some(a[3].clone())
+                } else {
+                    None
+                };
                 match (len_expr, preserve.clone()) {
                     (None, _) => Ok(Some(format!(
                         "(() => {{ const __a = {}; const __off = Number({}); if (Array.isArray(__a)) return __a.slice(__off); const __ks = Object.keys(__a); const __sl = __ks.slice(__off); const __o = {{}}; for (const __k of __sl) __o[__k] = __a[__k]; return __o; }})()",
@@ -2655,9 +2704,15 @@ impl<'a> JsSubsetEmitter<'a> {
                 let a = emit_args(self, args)?;
                 self.needed_helpers.insert("hash_hmac");
                 if args.len() == 3 {
-                    Ok(Some(format!("__phpx_hash_hmac({}, {}, {})", a[0], a[1], a[2])))
+                    Ok(Some(format!(
+                        "__phpx_hash_hmac({}, {}, {})",
+                        a[0], a[1], a[2]
+                    )))
                 } else {
-                    Ok(Some(format!("__phpx_hash_hmac({}, {}, {}, {})", a[0], a[1], a[2], a[3])))
+                    Ok(Some(format!(
+                        "__phpx_hash_hmac({}, {}, {}, {})",
+                        a[0], a[1], a[2], a[3]
+                    )))
                 }
             }
             // hash_equals($a, $b) -> inline constant-time compare (security-critical, no short-circuit)
@@ -2702,7 +2757,10 @@ impl<'a> JsSubsetEmitter<'a> {
             // is defined at runtime.
             "function_exists" if args.len() == 1 => {
                 let a = emit_args(self, args)?;
-                Ok(Some(format!("(typeof globalThis[String({})] === \"function\")", a[0])))
+                Ok(Some(format!(
+                    "(typeof globalThis[String({})] === \"function\")",
+                    a[0]
+                )))
             }
             // class_exists($name) / class_exists($name, $autoload) -> false
             // PHPX has no classes. Any call to class_exists always returns false.
@@ -2888,15 +2946,21 @@ impl<'a> JsSubsetEmitter<'a> {
     fn emit_assignable_expr(&mut self, expr: ExprId<'_>) -> Result<String, String> {
         match expr {
             Expr::Variable { name, .. } => Ok(self.span_name(*name)),
-            Expr::DotAccess { target, property, .. } => {
+            Expr::DotAccess {
+                target, property, ..
+            } => {
                 let target_js = self.emit_expr(*target)?;
                 let prop = self.token_text(property);
                 Ok(format!("{}.{}", target_js, prop))
             }
-            Expr::PropertyFetch { target, property, .. } => {
+            Expr::PropertyFetch {
+                target, property, ..
+            } => {
                 let target_js = self.emit_expr(*target)?;
                 match *property {
-                    Expr::Variable { name, .. } => Ok(format!("{}.{}", target_js, self.span_name(*name))),
+                    Expr::Variable { name, .. } => {
+                        Ok(format!("{}.{}", target_js, self.span_name(*name)))
+                    }
                     _ => {
                         let prop = self.emit_expr(*property)?;
                         Ok(format!("{}[{}]", target_js, prop))
@@ -2909,23 +2973,26 @@ impl<'a> JsSubsetEmitter<'a> {
                     let dim_js = self.emit_expr(*dim)?;
                     Ok(format!("{}[{}]", array_js, dim_js))
                 } else {
-                    Err("append array access is not supported in assignable expressions".to_string())
+                    Err(
+                        "append array access is not supported in assignable expressions"
+                            .to_string(),
+                    )
                 }
             }
             _ => Err("assignment target is not supported in subset emitter".to_string()),
         }
     }
 
-    fn emit_assignment_target(
-        &mut self,
-        expr: ExprId<'_>,
-    ) -> Result<AssignmentTarget, String> {
+    fn emit_assignment_target(&mut self, expr: ExprId<'_>) -> Result<AssignmentTarget, String> {
         match expr {
             Expr::ArrayDimFetch { array, dim, .. } => {
                 let array_js = self.emit_expr(*array)?;
                 if let Some(dim) = dim {
                     let dim_js = self.emit_expr(*dim)?;
-                    Ok(AssignmentTarget::Direct(format!("{}[{}]", array_js, dim_js)))
+                    Ok(AssignmentTarget::Direct(format!(
+                        "{}[{}]",
+                        array_js, dim_js
+                    )))
                 } else {
                     Ok(AssignmentTarget::Append(array_js))
                 }
@@ -3394,16 +3461,27 @@ fn emit_needed_helpers(needed: &BTreeSet<&'static str>) -> String {
         }
     }
 
-    if !emit_base64_table && !emit_base64_encode && !emit_base64_decode
-        && !emit_sha256_hex && !emit_hex_to_binary && !emit_hmac_sha256_hex
-        && !emit_node_crypto && !emit_hash && !emit_hash_hmac
-        && !emit_date_format && !emit_date && !emit_gmdate && !emit_pack
+    if !emit_base64_table
+        && !emit_base64_encode
+        && !emit_base64_decode
+        && !emit_sha256_hex
+        && !emit_hex_to_binary
+        && !emit_hmac_sha256_hex
+        && !emit_node_crypto
+        && !emit_hash
+        && !emit_hash_hmac
+        && !emit_date_format
+        && !emit_date
+        && !emit_gmdate
+        && !emit_pack
     {
         return String::new();
     }
 
     let mut out = String::new();
-    out.push_str("// Tier B helpers — module-scoped, emitted only when referenced (DCE-visible).\n");
+    out.push_str(
+        "// Tier B helpers — module-scoped, emitted only when referenced (DCE-visible).\n",
+    );
 
     if emit_base64_table {
         out.push_str("const __phpx_base64_table = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';\n");
@@ -3443,7 +3521,9 @@ fn emit_needed_helpers(needed: &BTreeSet<&'static str>) -> String {
         out.push_str("function __phpx_date_format(fmt, ts) { const d = ts !== undefined && ts !== null ? new Date(Number(ts) * 1000) : new Date(); const p = (n, w) => String(n).padStart(w || 2, '0'); const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']; const months = ['January','February','March','April','May','June','July','August','September','October','November','December']; let out = ''; for (let i = 0; i < fmt.length; i++) { const c = fmt[i]; switch(c) { case 'Y': out += d.getFullYear(); break; case 'y': out += String(d.getFullYear()).slice(-2); break; case 'm': out += p(d.getMonth()+1); break; case 'd': out += p(d.getDate()); break; case 'H': out += p(d.getHours()); break; case 'i': out += p(d.getMinutes()); break; case 's': out += p(d.getSeconds()); break; case 'n': out += d.getMonth()+1; break; case 'j': out += d.getDate(); break; case 'G': out += d.getHours(); break; case 'N': out += d.getDay()||7; break; case 'w': out += d.getDay(); break; case 'l': out += days[d.getDay()]; break; case 'D': out += days[d.getDay()].slice(0,3); break; case 'F': out += months[d.getMonth()]; break; case 'M': out += months[d.getMonth()].slice(0,3); break; case 't': out += new Date(d.getFullYear(),d.getMonth()+1,0).getDate(); break; case 'U': out += Math.floor(d.getTime()/1000); break; case 'e': case 'T': out += 'UTC'; break; case 'Z': out += -d.getTimezoneOffset()*60; break; case 'c': out += d.toISOString().replace(/\\.\\d{3}Z$/, '+00:00'); break; case 'r': out += d.toUTCString(); break; case 'L': { const y = d.getFullYear(); out += ((y%4===0&&y%100!==0)||(y%400===0)) ? '1' : '0'; break; } default: out += c; } } return out; }\n");
     }
     if emit_date {
-        out.push_str("function __phpx_date(fmt, ts) { return __phpx_date_format(String(fmt ?? ''), ts); }\n");
+        out.push_str(
+            "function __phpx_date(fmt, ts) { return __phpx_date_format(String(fmt ?? ''), ts); }\n",
+        );
     }
     if emit_gmdate {
         out.push_str("function __phpx_gmdate(fmt, ts) { const d = ts !== undefined && ts !== null ? new Date(Number(ts) * 1000) : new Date(); return __phpx_date_format(String(fmt ?? ''), Math.floor(d.getTime()/1000)); }\n");

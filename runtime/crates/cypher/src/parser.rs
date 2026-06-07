@@ -1,11 +1,11 @@
 use nom::{
-    IResult,
     branch::alt,
     bytes::complete::{tag, tag_no_case, take_while, take_while1},
     character::complete::{char, multispace0, multispace1},
     combinator::{opt, recognize},
     multi::separated_list1,
     sequence::{delimited, pair, preceded, terminated, tuple},
+    IResult,
 };
 
 use crate::ast::*;
@@ -55,9 +55,7 @@ pub fn parse_cypher(input: &str) -> ParseResult {
         }
         Err(e) => {
             let offset = match &e {
-                nom::Err::Error(e) | nom::Err::Failure(e) => {
-                    input.len() - e.input.len()
-                }
+                nom::Err::Error(e) | nom::Err::Failure(e) => input.len() - e.input.len(),
                 _ => 0,
             };
             ParseResult {
@@ -134,12 +132,49 @@ fn is_ident_cont(c: char) -> bool {
 fn is_reserved(s: &str) -> bool {
     matches!(
         s.to_uppercase().as_str(),
-        "MATCH" | "OPTIONAL" | "WHERE" | "RETURN" | "CREATE" | "DELETE" | "DETACH"
-        | "SET" | "REMOVE" | "MERGE" | "WITH" | "UNWIND" | "UNION" | "ORDER"
-        | "BY" | "SKIP" | "LIMIT" | "AS" | "AND" | "OR" | "XOR" | "NOT" | "IN"
-        | "IS" | "NULL" | "TRUE" | "FALSE" | "DISTINCT" | "ASC" | "DESC"
-        | "ON" | "CASE" | "WHEN" | "THEN" | "ELSE" | "END" | "STARTS" | "ENDS"
-        | "CONTAINS" | "EXISTS" | "ALL" | "CALL" | "YIELD"
+        "MATCH"
+            | "OPTIONAL"
+            | "WHERE"
+            | "RETURN"
+            | "CREATE"
+            | "DELETE"
+            | "DETACH"
+            | "SET"
+            | "REMOVE"
+            | "MERGE"
+            | "WITH"
+            | "UNWIND"
+            | "UNION"
+            | "ORDER"
+            | "BY"
+            | "SKIP"
+            | "LIMIT"
+            | "AS"
+            | "AND"
+            | "OR"
+            | "XOR"
+            | "NOT"
+            | "IN"
+            | "IS"
+            | "NULL"
+            | "TRUE"
+            | "FALSE"
+            | "DISTINCT"
+            | "ASC"
+            | "DESC"
+            | "ON"
+            | "CASE"
+            | "WHEN"
+            | "THEN"
+            | "ELSE"
+            | "END"
+            | "STARTS"
+            | "ENDS"
+            | "CONTAINS"
+            | "EXISTS"
+            | "ALL"
+            | "CALL"
+            | "YIELD"
     )
 }
 
@@ -195,10 +230,13 @@ fn parse_param<'a>(
         name: name.to_string(),
         span: sp,
     });
-    Ok((rest, Expr::Param {
-        name: name.to_string(),
-        span: sp,
-    }))
+    Ok((
+        rest,
+        Expr::Param {
+            name: name.to_string(),
+            span: sp,
+        },
+    ))
 }
 
 fn integer_literal(input: &str) -> IResult<&str, (i64, Span)> {
@@ -206,7 +244,11 @@ fn integer_literal(input: &str) -> IResult<&str, (i64, Span)> {
     let (rest, neg) = opt(char('-'))(input)?;
     let (rest, digits) = take_while1(|c: char| c.is_ascii_digit())(rest)?;
     // Make sure it's not a float
-    if rest.starts_with('.') && rest.get(1..2).is_some_and(|c| c.chars().next().unwrap().is_ascii_digit()) {
+    if rest.starts_with('.')
+        && rest
+            .get(1..2)
+            .is_some_and(|c| c.chars().next().unwrap().is_ascii_digit())
+    {
         return Err(nom::Err::Error(nom::error::Error::new(
             input,
             nom::error::ErrorKind::Float,
@@ -296,10 +338,7 @@ fn parse_statement<'a>(
     Ok((rest, CypherStatement { query, span: sp }))
 }
 
-fn parse_query<'a>(
-    input: &'a str,
-    params: &mut Vec<ParamRef>,
-) -> IResult<&'a str, Query> {
+fn parse_query<'a>(input: &'a str, params: &mut Vec<ParamRef>) -> IResult<&'a str, Query> {
     let (mut rest, first) = parse_single_query(input, params)?;
 
     let mut query = Query::Single(first);
@@ -371,16 +410,37 @@ fn parse_clause<'a>(
     original: &'a str,
 ) -> IResult<&'a str, Clause> {
     // Try each clause parser sequentially to avoid borrow conflicts with alt()
-    if let Ok(r) = parse_match_clause(input, params, original) { return Ok(r); }
-    if let Ok(r) = parse_create_clause(input, params, original) { return Ok(r); }
-    if let Ok(r) = parse_merge_clause(input, params, original) { return Ok(r); }
-    if let Ok(r) = parse_return_clause(input, params, original) { return Ok(r); }
-    if let Ok(r) = parse_with_clause(input, params, original) { return Ok(r); }
-    if let Ok(r) = parse_unwind_clause(input, params, original) { return Ok(r); }
-    if let Ok(r) = parse_delete_clause(input, params, original) { return Ok(r); }
-    if let Ok(r) = parse_set_clause(input, params, original) { return Ok(r); }
-    if let Ok(r) = parse_remove_clause(input, params, original) { return Ok(r); }
-    Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Alt)))
+    if let Ok(r) = parse_match_clause(input, params, original) {
+        return Ok(r);
+    }
+    if let Ok(r) = parse_create_clause(input, params, original) {
+        return Ok(r);
+    }
+    if let Ok(r) = parse_merge_clause(input, params, original) {
+        return Ok(r);
+    }
+    if let Ok(r) = parse_return_clause(input, params, original) {
+        return Ok(r);
+    }
+    if let Ok(r) = parse_with_clause(input, params, original) {
+        return Ok(r);
+    }
+    if let Ok(r) = parse_unwind_clause(input, params, original) {
+        return Ok(r);
+    }
+    if let Ok(r) = parse_delete_clause(input, params, original) {
+        return Ok(r);
+    }
+    if let Ok(r) = parse_set_clause(input, params, original) {
+        return Ok(r);
+    }
+    if let Ok(r) = parse_remove_clause(input, params, original) {
+        return Ok(r);
+    }
+    Err(nom::Err::Error(nom::error::Error::new(
+        input,
+        nom::error::ErrorKind::Alt,
+    )))
 }
 
 // ─── MATCH ─────────────────────────────────────────────────────
@@ -665,13 +725,7 @@ fn parse_set_item<'a>(
     let (rest, _) = char('=')(rest)?;
     let (rest, _) = ws(rest)?;
     let (rest, val) = parse_expr(rest, params, original)?;
-    Ok((
-        rest,
-        SetItem::Property {
-            target,
-            value: val,
-        },
-    ))
+    Ok((rest, SetItem::Property { target, value: val }))
 }
 
 // ─── REMOVE ────────────────────────────────────────────────────
@@ -766,7 +820,14 @@ fn parse_return_item<'a>(
         symbolic_name,
     ))(rest)?;
     let sp = span_from(start, rest, original);
-    Ok((rest, ReturnItem { expr, alias, span: sp }))
+    Ok((
+        rest,
+        ReturnItem {
+            expr,
+            alias,
+            span: sp,
+        },
+    ))
 }
 
 fn parse_order_by<'a>(
@@ -848,10 +909,7 @@ fn parse_pattern_part<'a>(
     let start = input;
 
     // Optional named pattern: var = (pattern)
-    let (rest, variable) = opt(terminated(
-        identifier,
-        delimited(ws, char('='), ws),
-    ))(input)?;
+    let (rest, variable) = opt(terminated(identifier, delimited(ws, char('='), ws)))(input)?;
 
     let rest = if variable.is_some() { rest } else { input };
 
@@ -953,11 +1011,7 @@ fn parse_relationship_pattern<'a>(
     let (rest, details) = opt(|i| parse_rel_detail(i, params, original))(rest)?;
 
     // If no bracket, just consume the dash/arrow
-    let rest = if details.is_none() {
-        rest
-    } else {
-        rest
-    };
+    let rest = if details.is_none() { rest } else { rest };
 
     // Determine direction from suffix
     let (rest, right_arrow) = opt(tag("->"))(rest)?;
@@ -975,9 +1029,8 @@ fn parse_relationship_pattern<'a>(
         (false, false) => Direction::Undirected,
     };
 
-    let (variable, rel_types, properties, length) = details
-        .map(|(v, t, p, l)| (v, t, p, l))
-        .unwrap_or_default();
+    let (variable, rel_types, properties, length) =
+        details.map(|(v, t, p, l)| (v, t, p, l)).unwrap_or_default();
 
     let sp = span_from(start, rest, original);
     Ok((
@@ -1202,19 +1255,25 @@ fn parse_comparison_expr<'a>(
             let (r5, _) = ws(r4)?;
             let (r6, _) = keyword("NULL")(r5)?;
             let sp = span_from(start, r6, original);
-            return Ok((r6, Expr::IsNull {
-                expr: Box::new(left),
-                negated: true,
-                span: sp,
-            }));
+            return Ok((
+                r6,
+                Expr::IsNull {
+                    expr: Box::new(left),
+                    negated: true,
+                    span: sp,
+                },
+            ));
         }
         let (r4, _) = keyword("NULL")(r3)?;
         let sp = span_from(start, r4, original);
-        return Ok((r4, Expr::IsNull {
-            expr: Box::new(left),
-            negated: false,
-            span: sp,
-        }));
+        return Ok((
+            r4,
+            Expr::IsNull {
+                expr: Box::new(left),
+                negated: false,
+                span: sp,
+            },
+        ));
     }
 
     // IN
@@ -1222,12 +1281,15 @@ fn parse_comparison_expr<'a>(
         let (r3, _) = ws(r2)?;
         let (r4, right) = parse_addition_expr(r3, params, original)?;
         let sp = span_from(start, r4, original);
-        return Ok((r4, Expr::In {
-            expr: Box::new(left),
-            list: Box::new(right),
-            negated: false,
-            span: sp,
-        }));
+        return Ok((
+            r4,
+            Expr::In {
+                expr: Box::new(left),
+                list: Box::new(right),
+                negated: false,
+                span: sp,
+            },
+        ));
     }
 
     // NOT IN
@@ -1237,12 +1299,15 @@ fn parse_comparison_expr<'a>(
             let (r5, _) = ws(r4)?;
             let (r6, right) = parse_addition_expr(r5, params, original)?;
             let sp = span_from(start, r6, original);
-            return Ok((r6, Expr::In {
-                expr: Box::new(left),
-                list: Box::new(right),
-                negated: true,
-                span: sp,
-            }));
+            return Ok((
+                r6,
+                Expr::In {
+                    expr: Box::new(left),
+                    list: Box::new(right),
+                    negated: true,
+                    span: sp,
+                },
+            ));
         }
     }
 
@@ -1253,12 +1318,15 @@ fn parse_comparison_expr<'a>(
         let (r5, _) = ws(r4)?;
         let (r6, right) = parse_addition_expr(r5, params, original)?;
         let sp = span_from(start, r6, original);
-        return Ok((r6, Expr::StringMatch {
-            expr: Box::new(left),
-            kind: StringMatchKind::StartsWith,
-            pattern: Box::new(right),
-            span: sp,
-        }));
+        return Ok((
+            r6,
+            Expr::StringMatch {
+                expr: Box::new(left),
+                kind: StringMatchKind::StartsWith,
+                pattern: Box::new(right),
+                span: sp,
+            },
+        ));
     }
     if let Ok((r2, _)) = keyword("ENDS")(r) {
         let (r3, _) = multispace1(r2)?;
@@ -1266,23 +1334,29 @@ fn parse_comparison_expr<'a>(
         let (r5, _) = ws(r4)?;
         let (r6, right) = parse_addition_expr(r5, params, original)?;
         let sp = span_from(start, r6, original);
-        return Ok((r6, Expr::StringMatch {
-            expr: Box::new(left),
-            kind: StringMatchKind::EndsWith,
-            pattern: Box::new(right),
-            span: sp,
-        }));
+        return Ok((
+            r6,
+            Expr::StringMatch {
+                expr: Box::new(left),
+                kind: StringMatchKind::EndsWith,
+                pattern: Box::new(right),
+                span: sp,
+            },
+        ));
     }
     if let Ok((r2, _)) = keyword("CONTAINS")(r) {
         let (r3, _) = ws(r2)?;
         let (r4, right) = parse_addition_expr(r3, params, original)?;
         let sp = span_from(start, r4, original);
-        return Ok((r4, Expr::StringMatch {
-            expr: Box::new(left),
-            kind: StringMatchKind::Contains,
-            pattern: Box::new(right),
-            span: sp,
-        }));
+        return Ok((
+            r4,
+            Expr::StringMatch {
+                expr: Box::new(left),
+                kind: StringMatchKind::Contains,
+                pattern: Box::new(right),
+                span: sp,
+            },
+        ));
     }
 
     // Comparison operators: =, <>, <, >, <=, >=, =~
@@ -1798,7 +1872,10 @@ mod tests {
         match &stmt.query {
             Query::Single(sq) => {
                 assert_eq!(sq.clauses.len(), 2); // MATCH + RETURN
-                if let Clause::Return { order_by, limit, .. } = &sq.clauses[1] {
+                if let Clause::Return {
+                    order_by, limit, ..
+                } = &sq.clauses[1]
+                {
                     assert!(order_by.is_some());
                     assert!(limit.is_some());
                 } else {
@@ -1832,25 +1909,19 @@ mod tests {
 
     #[test]
     fn parse_optional_match() {
-        let result = parse_cypher(
-            "MATCH (n:Person) OPTIONAL MATCH (n)-[:KNOWS]->(m) RETURN n, m",
-        );
+        let result = parse_cypher("MATCH (n:Person) OPTIONAL MATCH (n)-[:KNOWS]->(m) RETURN n, m");
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
     }
 
     #[test]
     fn parse_relationship_types() {
-        let result = parse_cypher(
-            "MATCH (a)-[r:KNOWS|LIKES]->(b) RETURN r",
-        );
+        let result = parse_cypher("MATCH (a)-[r:KNOWS|LIKES]->(b) RETURN r");
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
     }
 
     #[test]
     fn parse_variable_length_rel() {
-        let result = parse_cypher(
-            "MATCH (a)-[*1..3]->(b) RETURN a, b",
-        );
+        let result = parse_cypher("MATCH (a)-[*1..3]->(b) RETURN a, b");
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
     }
 
@@ -1864,18 +1935,14 @@ mod tests {
 
     #[test]
     fn parse_string_predicates() {
-        let result = parse_cypher(
-            "MATCH (n:Product) WHERE n.name STARTS WITH $prefix RETURN n",
-        );
+        let result = parse_cypher("MATCH (n:Product) WHERE n.name STARTS WITH $prefix RETURN n");
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
         assert_eq!(result.params.len(), 1);
     }
 
     #[test]
     fn parse_delete() {
-        let result = parse_cypher(
-            "MATCH (n:Temp) DETACH DELETE n",
-        );
+        let result = parse_cypher("MATCH (n:Temp) DETACH DELETE n");
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
     }
 

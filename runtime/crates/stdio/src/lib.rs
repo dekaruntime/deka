@@ -340,26 +340,6 @@ macro_rules! debugf {
     };
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_log_level_parsing() {
-        assert_eq!(LogLevel::from_str("error"), LogLevel::Error);
-        assert_eq!(LogLevel::from_str("info"), LogLevel::Info);
-        assert_eq!(LogLevel::from_str("debug"), LogLevel::Debug);
-        assert_eq!(LogLevel::from_str("INFO"), LogLevel::Info);
-        assert_eq!(LogLevel::from_str("unknown"), LogLevel::Info);
-    }
-
-    #[test]
-    fn test_log_level_ordering() {
-        assert!(LogLevel::Error < LogLevel::Info);
-        assert!(LogLevel::Info < LogLevel::Debug);
-    }
-}
-
 struct FigFont {
     height: usize,
     glyphs: HashMap<char, Vec<String>>,
@@ -418,9 +398,7 @@ impl FigFont {
         let mut lines = vec![String::new(); self.height];
         for ch in text.chars() {
             let glyph = self.glyphs.get(&ch).or_else(|| self.glyphs.get(&'?'));
-            let Some(glyph) = glyph else {
-                return None;
-            };
+            let glyph = glyph?;
             for (idx, line) in lines.iter_mut().enumerate() {
                 if let Some(part) = glyph.get(idx) {
                     line.push_str(part);
@@ -428,5 +406,25 @@ impl FigFont {
             }
         }
         Some(lines.join("\n"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_log_level_parsing() {
+        assert_eq!(LogLevel::from_str("error"), LogLevel::Error);
+        assert_eq!(LogLevel::from_str("info"), LogLevel::Info);
+        assert_eq!(LogLevel::from_str("debug"), LogLevel::Debug);
+        assert_eq!(LogLevel::from_str("INFO"), LogLevel::Info);
+        assert_eq!(LogLevel::from_str("unknown"), LogLevel::Info);
+    }
+
+    #[test]
+    fn test_log_level_ordering() {
+        assert!(LogLevel::Error < LogLevel::Info);
+        assert!(LogLevel::Info < LogLevel::Debug);
     }
 }

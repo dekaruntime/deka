@@ -7,4 +7,5 @@ pub mod platform_env;
 pub mod process;
 pub mod security;
 pub mod security_policy;
+pub mod storefront_envelope;
 pub mod validation;

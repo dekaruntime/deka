@@ -33,6 +33,7 @@ export function TanaProvider(
     version: '2.0',
     clientId,
     clientSecret,
+    idToken: false,
     authorization: {
       url: `${idpBase}/auth/sso/authorize`,
       params: {

@@ -31,12 +31,9 @@ async fn get_graph() -> Result<&'static Graph, String> {
         .get_or_try_init(|| async {
             let uri = std::env::var("DEKA_NEO4J_URI")
                 .unwrap_or_else(|_| "bolt://localhost:7687".to_string());
-            let user = std::env::var("DEKA_NEO4J_USER")
-                .unwrap_or_else(|_| "neo4j".to_string());
-            let password = std::env::var("DEKA_NEO4J_PASSWORD")
-                .unwrap_or_default();
-            let db = std::env::var("DEKA_NEO4J_DB")
-                .unwrap_or_else(|_| "neo4j".to_string());
+            let user = std::env::var("DEKA_NEO4J_USER").unwrap_or_else(|_| "neo4j".to_string());
+            let password = std::env::var("DEKA_NEO4J_PASSWORD").unwrap_or_default();
+            let db = std::env::var("DEKA_NEO4J_DB").unwrap_or_else(|_| "neo4j".to_string());
 
             let config = neo4rs::ConfigBuilder::default()
                 .uri(&uri)
@@ -46,13 +43,10 @@ async fn get_graph() -> Result<&'static Graph, String> {
                 .build()
                 .map_err(|e| format!("neo4j config error: {}", e))?;
 
-            tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                Graph::connect(config),
-            )
-            .await
-            .map_err(|_| "neo4j connect timeout".to_string())?
-            .map_err(|e| format!("neo4j connect error: {}", e))
+            tokio::time::timeout(std::time::Duration::from_secs(5), Graph::connect(config))
+                .await
+                .map_err(|_| "neo4j connect timeout".to_string())?
+                .map_err(|e| format!("neo4j connect error: {}", e))
         })
         .await
 }
@@ -104,7 +98,14 @@ async fn api_products(shop_id: &str, allowed_origin: Option<&str>) -> Response<a
                          p.description AS description, p.category AS category, \
                          p.imageUrl AS imageUrl";
 
-    match run_query(graph, cypher, &[("shopId", json!(shop_id))], &PRODUCT_COLUMNS).await {
+    match run_query(
+        graph,
+        cypher,
+        &[("shopId", json!(shop_id))],
+        &PRODUCT_COLUMNS,
+    )
+    .await
+    {
         Ok(rows) => json_response(200, &Value::Array(rows), allowed_origin),
         Err(e) => json_response(500, &json!({ "error": e }), allowed_origin),
     }
@@ -134,13 +135,11 @@ async fn api_product_by_sku(
     )
     .await
     {
-        Ok(rows) if rows.is_empty() => {
-            json_response(
-                404,
-                &json!({ "error": "product not found" }),
-                allowed_origin,
-            )
-        }
+        Ok(rows) if rows.is_empty() => json_response(
+            404,
+            &json!({ "error": "product not found" }),
+            allowed_origin,
+        ),
         Ok(mut rows) => json_response(200, &rows.remove(0), allowed_origin),
         Err(e) => json_response(500, &json!({ "error": e }), allowed_origin),
     }
@@ -199,7 +198,14 @@ async fn api_shop(shop_id: &str, allowed_origin: Option<&str>) -> Response<axum:
 }
 
 /// Column names for product queries.
-const PRODUCT_COLUMNS: [&str; 6] = ["sku", "name", "price", "description", "category", "imageUrl"];
+const PRODUCT_COLUMNS: [&str; 6] = [
+    "sku",
+    "name",
+    "price",
+    "description",
+    "category",
+    "imageUrl",
+];
 
 /// Execute a Cypher query and return rows as JSON objects.
 async fn run_query(
@@ -280,7 +286,10 @@ fn json_response(
         response = response
             .header("access-control-allow-origin", origin)
             .header("access-control-allow-methods", "GET, OPTIONS")
-            .header("access-control-allow-headers", "content-type, authorization");
+            .header(
+                "access-control-allow-headers",
+                "content-type, authorization",
+            );
     }
 
     response.body(axum::body::Body::from(json_bytes)).unwrap()
@@ -314,10 +323,8 @@ fn is_allowed_origin(origin: &str) -> bool {
         .to_ascii_lowercase();
 
     let tana_origin = scheme == "https" && (host == "tana.gg" || host.ends_with(".tana.gg"));
-    let dev_origin = host == "localhost"
-        || host.ends_with(".localhost")
-        || host == "127.0.0.1"
-        || host == "::1";
+    let dev_origin =
+        host == "localhost" || host.ends_with(".localhost") || host == "127.0.0.1" || host == "::1";
 
     tana_origin || dev_origin
 }
@@ -355,10 +362,7 @@ mod tests {
     #[test]
     fn cors_allowed_origin_echoes_only_allowlisted_origin() {
         let headers = vec![("origin".to_string(), "https://admin.tana.gg".to_string())];
-        assert_eq!(
-            cors_allowed_origin(&headers),
-            Some("https://admin.tana.gg")
-        );
+        assert_eq!(cors_allowed_origin(&headers), Some("https://admin.tana.gg"));
 
         let headers = vec![("origin".to_string(), "https://evil.example".to_string())];
         assert_eq!(cors_allowed_origin(&headers), None);
@@ -367,7 +371,12 @@ mod tests {
     #[test]
     fn json_response_omits_cors_header_without_allowed_origin() {
         let response = json_response(200, &json!({ "ok": true }), None);
-        assert!(response.headers().get(ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
+        assert!(
+            response
+                .headers()
+                .get(ACCESS_CONTROL_ALLOW_ORIGIN)
+                .is_none()
+        );
     }
 
     #[test]

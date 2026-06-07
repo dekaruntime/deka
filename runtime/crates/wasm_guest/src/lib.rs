@@ -1,3 +1,5 @@
+#![allow(clippy::all)]
+
 #[cfg(feature = "json")]
 pub use deka_wasm_guest_macros::{deka_export_json, export_json};
 

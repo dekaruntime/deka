@@ -356,7 +356,7 @@
       "title": "deka start",
       "description": "Start Deka services"
     },
-    "content": "\n# deka start\n\nStart the full Deka hosting stack.\n\n```bash\ndeka start\n```\n\n## Options\n\n- `--genesis` - Initialize genesis block on first start\n- `-d, --detach` - Run in background (default: true)\n- `--infra` - Start only infrastructure services (postgres, redis) and expose ports for local dev\n\nInfrastructure mode exposes:\n\n- postgres: `postgres://tana:tana_dev_password@localhost:5432/tana`\n- redis: `redis://localhost:6380`\n- pgbouncer: `postgres://tana:tana_contract_password@localhost:6432/<db>`\n\n## Example output\n\n```text\n$ deka start\n✓ docker running\n✓ postgres ready\n✓ redis ready\n✓ migrations complete\n✓ edge ready\n✓ t4 ready\n✓ deka-git ready\n✓ deploy ready\n```\n",
+    "content": "\n# deka start\n\nStart the full Deka hosting stack.\n\n```bash\ndeka start\n```\n\n## Options\n\n- `--genesis` - Initialize genesis block on first start\n- `-d, --detach` - Run in background (default: true)\n- `--infra` - Start only infrastructure services (postgres, redis) and expose ports for local dev\n\nInfrastructure mode exposes:\n\n- postgres: `postgres://tana:tana_dev_password@localhost:5432/tana`\n- redis: `redis://localhost:6380`\n- pgbouncer: `postgres://tana:tana_contract_password@localhost:6432/<db>`\n\n## Example output\n\n```text\n$ deka start\n✓ docker running\n✓ postgres ready\n✓ redis ready\n✓ migrations complete\n✓ edge ready\n✓ t4 ready\n✓ gild-vcs ready\n✓ deploy ready\n```\n",
     "html": "<h1>deka start</h1>\n<p>Start the full Deka hosting stack.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Options</h2>\n<ul>\n<li><code>--genesis</code> - Initialize genesis block on first start</li>\n<li><code>-d, --detach</code> - Run in background (default: true)</li>\n<li><code>--infra</code> - Start only infrastructure services (postgres, redis) and expose ports for local dev</li>\n</ul>\n<p>Infrastructure mode exposes:</p>\n<ul>\n<li>postgres: <code>postgres://tana:tana_dev_password@localhost:5432/tana</code></li>\n<li>redis: <code>redis://localhost:6380</code></li>\n<li>pgbouncer: <code>postgres://tana:tana_contract_password@localhost:6432/&#x3C;db></code></li>\n</ul>\n<h2>Example output</h2>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n",
     "codeBlocks": [
       {
@@ -365,7 +365,7 @@
       },
       {
         "lang": "text",
-        "code": "$ deka start\n✓ docker running\n✓ postgres ready\n✓ redis ready\n✓ migrations complete\n✓ edge ready\n✓ t4 ready\n✓ deka-git ready\n✓ deploy ready"
+        "code": "$ deka start\n✓ docker running\n✓ postgres ready\n✓ redis ready\n✓ migrations complete\n✓ edge ready\n✓ t4 ready\n✓ gild-vcs ready\n✓ deploy ready"
       }
     ]
   },
@@ -377,7 +377,7 @@
       "title": "deka status",
       "description": "Show service status and health"
     },
-    "content": "\n# deka status\n\nShow the health and runtime status of each service.\n\n```bash\ndeka status\n```\n\nExample output:\n\n```text\n● [postgres] healthy :5432\n● [redis] healthy :6379\n● [edge] running :8506\n● [t4] running :8507\n● [deka-git] running :8508\n● [deploy] running :8509\n```\n\n## Example output\n\n```text\n$ deka status\n● [postgres] healthy :5432\n● [redis] healthy :6379\n● [edge] running :8506\n● [t4] running :8507\n● [deka-git] running :8508\n● [deploy] running :8509\n```\n",
+    "content": "\n# deka status\n\nShow the health and runtime status of each service.\n\n```bash\ndeka status\n```\n\nExample output:\n\n```text\n● [postgres] healthy :5432\n● [redis] healthy :6379\n● [edge] running :8506\n● [t4] running :8507\n● [gild-vcs] running :8508\n● [deploy] running :8509\n```\n\n## Example output\n\n```text\n$ deka status\n● [postgres] healthy :5432\n● [redis] healthy :6379\n● [edge] running :8506\n● [t4] running :8507\n● [gild-vcs] running :8508\n● [deploy] running :8509\n```\n",
     "html": "<h1>deka status</h1>\n<p>Show the health and runtime status of each service.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<p>Example output:</p>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n<h2>Example output</h2>\n<div class=\"code-block-placeholder\" data-index=\"2\"></div>\n",
     "codeBlocks": [
       {
@@ -386,11 +386,11 @@
       },
       {
         "lang": "text",
-        "code": "● [postgres] healthy :5432\n● [redis] healthy :6379\n● [edge] running :8506\n● [t4] running :8507\n● [deka-git] running :8508\n● [deploy] running :8509"
+        "code": "● [postgres] healthy :5432\n● [redis] healthy :6379\n● [edge] running :8506\n● [t4] running :8507\n● [gild-vcs] running :8508\n● [deploy] running :8509"
       },
       {
         "lang": "text",
-        "code": "$ deka status\n● [postgres] healthy :5432\n● [redis] healthy :6379\n● [edge] running :8506\n● [t4] running :8507\n● [deka-git] running :8508\n● [deploy] running :8509"
+        "code": "$ deka status\n● [postgres] healthy :5432\n● [redis] healthy :6379\n● [edge] running :8506\n● [t4] running :8507\n● [gild-vcs] running :8508\n● [deploy] running :8509"
       }
     ]
   },

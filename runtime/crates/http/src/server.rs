@@ -5,7 +5,8 @@ use engine::RuntimeState;
 
 use crate::fast::serve_http_fast;
 use crate::listener::bind_reuseport;
-use crate::router::app_router;
+use crate::rate_limit::RateLimiter;
+use crate::router::app_router_with_rate_limiter;
 
 pub async fn serve_http(
     state: Arc<RuntimeState>,
@@ -18,19 +19,24 @@ pub async fn serve_http(
     tracing::info!("📦 Loaded modules: deka, postgres, docker, router, t4, sqlite");
 
     let listener_count = listeners.max(1);
+    let rate_limiter = RateLimiter::from_env();
+    rate_limiter.spawn_janitor();
     if listener_count == 1 {
         let listener = tokio::net::TcpListener::bind(addr)
             .await
             .map_err(|err| format_bind_error(addr, &err.to_string()))?;
         if perf_mode {
-            serve_http_fast(listener, state).await;
+            serve_http_fast(listener, state, Arc::clone(&rate_limiter)).await;
             return Ok(());
         }
 
-        let app = app_router(Arc::clone(&state));
-        axum::serve(listener, app)
-            .await
-            .map_err(|err| format!("HTTP server exited with error: {}", err))?;
+        let app = app_router_with_rate_limiter(Arc::clone(&state), Arc::clone(&rate_limiter));
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .map_err(|err| format!("HTTP server exited with error: {}", err))?;
         return Ok(());
     }
 
@@ -44,16 +50,20 @@ pub async fn serve_http(
     for listener in bound_listeners {
         let state = Arc::clone(&state);
         if perf_mode {
+            let rate_limiter = Arc::clone(&rate_limiter);
             handles.push(tokio::spawn(async move {
-                serve_http_fast(listener, state).await;
+                serve_http_fast(listener, state, rate_limiter).await;
                 Ok::<(), String>(())
             }));
         } else {
-            let app = app_router(Arc::clone(&state));
+            let app = app_router_with_rate_limiter(Arc::clone(&state), Arc::clone(&rate_limiter));
             handles.push(tokio::spawn(async move {
-                axum::serve(listener, app)
-                    .await
-                    .map_err(|err| format!("HTTP listener exited: {}", err))
+                axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<SocketAddr>(),
+                )
+                .await
+                .map_err(|err| format!("HTTP listener exited: {}", err))
             }));
         }
     }

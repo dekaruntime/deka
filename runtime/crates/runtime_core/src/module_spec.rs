@@ -59,7 +59,10 @@ mod tests {
 
     #[test]
     fn deka_scope_includes_bare_alias() {
-        assert_eq!(module_spec_aliases("@deka/json"), vec!["@deka/json", "json"]);
+        assert_eq!(
+            module_spec_aliases("@deka/json"),
+            vec!["@deka/json", "json"]
+        );
     }
 
     #[test]

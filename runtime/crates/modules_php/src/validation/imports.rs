@@ -672,10 +672,7 @@ mod tests {
         let src = r#"import { client_ip } from "../helpers";
 $x = client_ip();"#;
         let (errors, _warnings) = validate_imports(src, "api/checkout.phpx");
-        let parent_errors: Vec<_> = errors
-            .iter()
-            .filter(|e| e.message.contains(".."))
-            .collect();
+        let parent_errors: Vec<_> = errors.iter().filter(|e| e.message.contains("..")).collect();
         assert!(
             parent_errors.is_empty(),
             "expected no errors for ../helpers import, got: {:?}",

@@ -1,9 +1,9 @@
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
-use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
 
 /// Cached module data
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,11 +137,17 @@ impl ModuleCache {
                 if graph_path.exists() {
                     match Self::load_graph(&graph_path) {
                         Ok(g) => {
-                            stdio::debug("cache", &format!("loaded dependency graph ({} modules)", g.module_count()));
+                            stdio::debug(
+                                "cache",
+                                &format!("loaded dependency graph ({} modules)", g.module_count()),
+                            );
                             g
                         }
                         Err(e) => {
-                            stdio::debug("cache", &format!("failed to load graph: {}, starting fresh", e));
+                            stdio::debug(
+                                "cache",
+                                &format!("failed to load graph: {}, starting fresh", e),
+                            );
                             DependencyGraph::new()
                         }
                     }
@@ -197,7 +203,10 @@ impl ModuleCache {
                     }
                 }
                 Err(e) => {
-                    stdio::debug("cache", &format!("failed to load {}: {}", cache_file.display(), e));
+                    stdio::debug(
+                        "cache",
+                        &format!("failed to load {}: {}", cache_file.display(), e),
+                    );
                     let _ = fs::remove_file(&cache_file);
                 }
             }
@@ -226,7 +235,10 @@ impl ModuleCache {
                 // Success - no logging to keep it quiet
             }
             Err(e) => {
-                stdio::debug("cache", &format!("failed to save {}: {}", cache_file.display(), e));
+                stdio::debug(
+                    "cache",
+                    &format!("failed to save {}: {}", cache_file.display(), e),
+                );
             }
         }
     }
@@ -271,8 +283,7 @@ impl ModuleCache {
         let json = fs::read_to_string(cache_file)
             .map_err(|e| format!("Failed to read cache file: {}", e))?;
 
-        serde_json::from_str(&json)
-            .map_err(|e| format!("Failed to parse cache file: {}", e))
+        serde_json::from_str(&json).map_err(|e| format!("Failed to parse cache file: {}", e))
     }
 
     /// Save a cached module to disk
@@ -280,8 +291,7 @@ impl ModuleCache {
         let json = serde_json::to_string(cached)
             .map_err(|e| format!("Failed to serialize cache: {}", e))?;
 
-        fs::write(cache_file, json)
-            .map_err(|e| format!("Failed to write cache file: {}", e))
+        fs::write(cache_file, json).map_err(|e| format!("Failed to write cache file: {}", e))
     }
 
     /// Clear the entire cache
@@ -335,8 +345,7 @@ impl ModuleCache {
         let json = serde_json::to_string(&self.graph)
             .map_err(|e| format!("Failed to serialize graph: {}", e))?;
 
-        fs::write(&graph_path, json)
-            .map_err(|e| format!("Failed to write graph: {}", e))
+        fs::write(&graph_path, json).map_err(|e| format!("Failed to write graph: {}", e))
     }
 
     /// Load the dependency graph from disk
@@ -344,8 +353,7 @@ impl ModuleCache {
         let json = fs::read_to_string(graph_path)
             .map_err(|e| format!("Failed to read graph file: {}", e))?;
 
-        serde_json::from_str(&json)
-            .map_err(|e| format!("Failed to parse graph file: {}", e))
+        serde_json::from_str(&json).map_err(|e| format!("Failed to parse graph file: {}", e))
     }
 }
 
@@ -442,7 +450,10 @@ mod tests {
 
         // Cache should be invalid now
         let retrieved = cache.get(&test_file);
-        assert!(retrieved.is_none(), "Cache should be invalidated after file modification");
+        assert!(
+            retrieved.is_none(),
+            "Cache should be invalidated after file modification"
+        );
 
         // Clean up
         let _ = fs::remove_dir_all(&temp_dir);

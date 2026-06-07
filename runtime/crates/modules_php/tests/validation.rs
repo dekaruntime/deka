@@ -46,10 +46,7 @@ fn assert_has_warning(result: &ValidationResult<'_>, kind: ErrorKind) {
 
 fn assert_has_error_any(result: &ValidationResult<'_>, kinds: &[ErrorKind]) {
     assert!(
-        result
-            .errors
-            .iter()
-            .any(|err| kinds.iter().any(|kind| err.kind == *kind)),
+        result.errors.iter().any(|err| kinds.contains(&err.kind)),
         "expected one of {:?}, got: {:?}",
         kinds,
         result.errors
@@ -148,7 +145,10 @@ fn import_relative_path_missing_file_reports_module_error() {
     assert_has_error(&result, ErrorKind::ModuleError);
     // Confirm the old ImportError is gone.
     assert!(
-        !result.errors.iter().any(|e| e.kind == ErrorKind::ImportError),
+        !result
+            .errors
+            .iter()
+            .any(|e| e.kind == ErrorKind::ImportError),
         "ImportError for ../relative path should be gone after issue #36 fix"
     );
 }

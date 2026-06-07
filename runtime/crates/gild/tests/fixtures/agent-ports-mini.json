@@ -1,0 +1,16 @@
+{
+  "ports": {
+    "agent-test1": 65534,
+    "agent-test2": 65533
+  },
+  "personas": {
+    "agent-test1": {
+      "name": "Test One",
+      "sandbox": "codex"
+    },
+    "agent-test2": {
+      "name": "Test Two",
+      "sandbox": "codex"
+    }
+  }
+}

@@ -1,28 +1,28 @@
 // Minimal PHP runtime module - no heavy dependencies
 
 use bumpalo::Bump;
+use bytes::BytesMut;
+use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use deno_core::op2;
 use mysql::prelude::Queryable;
 use mysql::{OptsBuilder, Params as MyParams, Pool as MyPool, Value as MyValue};
 use native_tls::{TlsConnector, TlsStream};
-use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use php_rs::parser::ast::{ClassKind, ClassMember, Program, Stmt, Type as AstType};
 use php_rs::parser::lexer::Lexer;
 use php_rs::parser::lexer::token::Token;
 use php_rs::parser::parser::{Parser, ParserMode, detect_parser_mode};
-use bytes::BytesMut;
 use postgres::{
-    types::{to_sql_checked, IsNull, ToSql, Type as PgType},
     Client, NoTls,
+    types::{IsNull, ToSql, Type as PgType, to_sql_checked},
 };
-use std::error::Error as StdError;
-use serde_json::{Map, Value};
 use prost::Message as ProstMessage;
 use runtime_core::security_policy::{RuleList, SecurityPolicy, parse_deka_security_policy};
 use rusqlite::types::ValueRef as SqliteValueRef;
 use rusqlite::{Connection as SqliteConnection, params_from_iter as sqlite_params_from_iter};
+use serde_json::{Map, Value};
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
+use std::error::Error as StdError;
 use std::fs::{File as StdFile, OpenOptions};
 use std::io::{IsTerminal, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -487,7 +487,11 @@ impl PgNumericParam {
 }
 
 impl ToSql for PgNumericParam {
-    fn to_sql(&self, ty: &PgType, out: &mut BytesMut) -> Result<IsNull, Box<dyn StdError + Sync + Send>> {
+    fn to_sql(
+        &self,
+        ty: &PgType,
+        out: &mut BytesMut,
+    ) -> Result<IsNull, Box<dyn StdError + Sync + Send>> {
         match *ty {
             PgType::INT2 => {
                 let v = self.as_i64()? as i16;
@@ -548,7 +552,11 @@ struct PgStringParam(String);
 struct PgNullParam;
 
 impl ToSql for PgNullParam {
-    fn to_sql(&self, _ty: &PgType, _out: &mut BytesMut) -> Result<IsNull, Box<dyn StdError + Sync + Send>> {
+    fn to_sql(
+        &self,
+        _ty: &PgType,
+        _out: &mut BytesMut,
+    ) -> Result<IsNull, Box<dyn StdError + Sync + Send>> {
         Ok(IsNull::Yes)
     }
 
@@ -560,7 +568,11 @@ impl ToSql for PgNullParam {
 }
 
 impl ToSql for PgStringParam {
-    fn to_sql(&self, ty: &PgType, out: &mut BytesMut) -> Result<IsNull, Box<dyn StdError + Sync + Send>> {
+    fn to_sql(
+        &self,
+        ty: &PgType,
+        out: &mut BytesMut,
+    ) -> Result<IsNull, Box<dyn StdError + Sync + Send>> {
         match *ty {
             PgType::INT2 => {
                 let v: i16 = self.0.parse()?;
@@ -1286,7 +1298,11 @@ fn op_php_mkdirs(#[string] path: String) -> Result<(), deno_core::error::CoreErr
 
 #[op2(fast)]
 fn op_php_set_privileged(#[number] enabled: i64, #[string] label: String) {
-    let label = if label.trim().is_empty() { None } else { Some(label) };
+    let label = if label.trim().is_empty() {
+        None
+    } else {
+        Some(label)
+    };
     set_security_privileged(enabled != 0, label);
 }
 
@@ -1421,6 +1437,28 @@ fn op_php_aes_256_gcm_decrypt(
             "error": "aes_decrypt_failed",
         }),
     }
+}
+
+fn bcrypt_verify_impl(password: String, hash: String) -> serde_json::Value {
+    match bcrypt::verify(password, &hash) {
+        Ok(valid) => serde_json::json!({
+            "ok": true,
+            "valid": valid,
+        }),
+        Err(_) => serde_json::json!({
+            "ok": false,
+            "error": "bcrypt_verify_failed",
+        }),
+    }
+}
+
+#[op2]
+#[serde]
+fn op_php_bcrypt_verify(
+    #[string] password: String,
+    #[string] hash: String,
+) -> serde_json::Value {
+    bcrypt_verify_impl(password, hash)
 }
 
 #[op2]
@@ -2024,7 +2062,9 @@ fn rule_allows(capability: &str, rule: &RuleList, target: Option<&str>) -> bool 
         RuleList::None => false,
         RuleList::All => true,
         RuleList::List(items) => match target {
-            Some(target) => items.iter().any(|item| match_rule_item(capability, item, target)),
+            Some(target) => items
+                .iter()
+                .any(|item| match_rule_item(capability, item, target)),
             None => false,
         },
     }
@@ -2035,7 +2075,9 @@ fn rule_denies(capability: &str, rule: &RuleList, target: Option<&str>) -> bool 
         RuleList::None => false,
         RuleList::All => true,
         RuleList::List(items) => match target {
-            Some(target) => items.iter().any(|item| match_rule_item(capability, item, target)),
+            Some(target) => items
+                .iter()
+                .any(|item| match_rule_item(capability, item, target)),
             None => false,
         },
     }
@@ -2108,9 +2150,15 @@ fn set_security_privileged(enabled: bool, label: Option<String>) {
     let context = SECURITY_PRIVILEGED_LABEL.with(|slot| slot.borrow().clone());
     let context = context.as_deref().unwrap_or("unknown");
     if enabled {
-        stdio::debug("security", &format!("privileged context enabled ({})", context));
+        stdio::debug(
+            "security",
+            &format!("privileged context enabled ({})", context),
+        );
     } else {
-        stdio::debug("security", &format!("privileged context disabled ({})", context));
+        stdio::debug(
+            "security",
+            &format!("privileged context disabled ({})", context),
+        );
     }
 }
 
@@ -2198,8 +2246,12 @@ mod security_rule_tests {
     fn internal_security_targets_match_expected_paths() {
         assert!(is_internal_security_target("deka.lock"));
         assert!(is_internal_security_target("/tmp/project/deka.lock"));
-        assert!(is_internal_security_target("php_modules/.cache/phpx/foo.php"));
-        assert!(is_internal_security_target("/tmp/project/php_modules/.cache"));
+        assert!(is_internal_security_target(
+            "php_modules/.cache/phpx/foo.php"
+        ));
+        assert!(is_internal_security_target(
+            "/tmp/project/php_modules/.cache"
+        ));
         assert!(is_internal_security_target(".cache/phpx/foo.php"));
         assert!(is_internal_security_target("/tmp/project/.cache"));
         assert!(!is_internal_security_target("/tmp/project/app/index.phpx"));
@@ -2239,7 +2291,10 @@ mod security_rule_tests {
 
     #[test]
     fn normalize_rel_like_strips_dot_prefixes() {
-        assert_eq!(normalize_rel_like("./deps/../deps/file.txt"), "deps/../deps/file.txt");
+        assert_eq!(
+            normalize_rel_like("./deps/../deps/file.txt"),
+            "deps/../deps/file.txt"
+        );
         assert_eq!(normalize_rel_like("././app/main.phpx"), "app/main.phpx");
     }
 
@@ -2336,10 +2391,7 @@ fn prompt_grant(
     }
     let prompt = format!(
         "[security] allow {} on {} (origin={}, scope={}) for this process? [y/N]: ",
-        capability,
-        target_label,
-        origin,
-        key
+        capability, target_label, origin, key
     );
     eprint!("{}", prompt);
     let _ = std::io::stderr().flush();
@@ -2399,14 +2451,7 @@ fn is_runtime_safe_env_key(key: &str) -> bool {
     let normalized = key.trim().to_ascii_uppercase();
     matches!(
         normalized.as_str(),
-        "PORT"
-            | "PWD"
-            | "TMPDIR"
-            | "TEMP"
-            | "TMP"
-            | "HOME"
-            | "PATH"
-            | "PHPX_MODULE_ROOT"
+        "PORT" | "PWD" | "TMPDIR" | "TEMP" | "TMP" | "HOME" | "PATH" | "PHPX_MODULE_ROOT"
     ) || normalized.starts_with("DEKA_")
 }
 
@@ -2631,8 +2676,12 @@ fn default_example(capability: &str, project_kind: ProjectKind) -> Option<String
 fn is_common_target(target: &str, project_kind: ProjectKind, capability: &str) -> bool {
     let target = target.replace('\\', "/");
     match (project_kind, capability) {
-        (ProjectKind::Php, "read") => target.contains("/php_modules/") || target.ends_with("/deka.lock"),
-        (ProjectKind::Php, "write") => target.contains("/php_modules/.cache/") || target.ends_with("/deka.lock"),
+        (ProjectKind::Php, "read") => {
+            target.contains("/php_modules/") || target.ends_with("/deka.lock")
+        }
+        (ProjectKind::Php, "write") => {
+            target.contains("/php_modules/.cache/") || target.ends_with("/deka.lock")
+        }
         (ProjectKind::Js, "read") => {
             target.contains("/src/")
                 || target.contains("/deps/")
@@ -2754,7 +2803,11 @@ fn default_allow_target_for_capability(capability: &str) -> Option<&'static str>
     }
 }
 
-fn rule_items_for_request(capability: &str, target: &str, project_kind: ProjectKind) -> Vec<String> {
+fn rule_items_for_request(
+    capability: &str,
+    target: &str,
+    project_kind: ProjectKind,
+) -> Vec<String> {
     match capability {
         "read" => rule_items_for_path(target, project_kind, true),
         "write" => rule_items_for_path(target, project_kind, false),
@@ -4369,13 +4422,21 @@ fn fs_json_response_to_proto(
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("")
                                 .to_string(),
-                            is_dir: entry.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false),
-                            is_file: entry.get("is_file").and_then(|v| v.as_bool()).unwrap_or(false),
+                            is_dir: entry
+                                .get("is_dir")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false),
+                            is_file: entry
+                                .get("is_file")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false),
                         })
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
-            Some(Action::ReadDir(proto::bridge_v1::FsReadDirResponse { entries }))
+            Some(Action::ReadDir(proto::bridge_v1::FsReadDirResponse {
+                entries,
+            }))
         }
         FsProtoActionKind::Mkdirs => Some(Action::Mkdirs(proto::bridge_v1::FsUnitResponse { ok })),
     };
@@ -4756,7 +4817,8 @@ fn op_shard_for(
     let info = if account_id.is_empty() {
         resolver.self_shard().or_else(|| resolver.shards().first())
     } else {
-        resolver.resolve(&account_id)
+        resolver
+            .resolve(&account_id)
             .or_else(|| resolver.shards().first())
     };
 
@@ -4789,6 +4851,7 @@ deno_core::extension!(
         op_php_random_bytes,
         op_php_aes_256_gcm_encrypt,
         op_php_aes_256_gcm_decrypt,
+        op_php_bcrypt_verify,
         op_php_read_env,
         op_php_db_call_proto,
         op_php_db_proto_encode,
@@ -5234,6 +5297,19 @@ mod tests {
         assert!(db_call_proto_impl(&[0xff, 0x00, 0x01]).is_err());
         assert!(fs_call_proto_impl(&[0xff, 0x00, 0x01]).is_err());
         assert!(net_call_proto_impl(&[0xff, 0x00, 0x01]).is_err());
+    }
+
+    #[test]
+    fn bcrypt_verify_known_hash() {
+        // Hash of "password123" generated with bcrypt cost 10
+        let hash = "$2b$10$DqpfeHg1RhyMilY/GTQvgeahRja6yf5aL8dYoH6EwABQY.CZ.pnNu";
+        let result = bcrypt_verify_impl("password123".to_string(), hash.to_string());
+        assert_ok(&result);
+        assert_eq!(result.get("valid").and_then(|v| v.as_bool()), Some(true));
+
+        let bad = bcrypt_verify_impl("wrongpassword".to_string(), hash.to_string());
+        assert_ok(&bad);
+        assert_eq!(bad.get("valid").and_then(|v| v.as_bool()), Some(false));
     }
 }
 

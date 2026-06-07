@@ -4,6 +4,7 @@ use bumpalo::Bump;
 use php_rs::parser::lexer::Lexer;
 use php_rs::parser::parser::{Parser, ParserMode};
 
+use crate::validation::cypher::validate_cypher;
 use crate::validation::exports::validate_exports;
 use crate::validation::generics::validate_generics;
 use crate::validation::imports::validate_imports;
@@ -18,7 +19,6 @@ use crate::validation::modules::{
     resolve_modules_root, validate_module_resolution, validate_target_capabilities,
     validate_wasm_imports,
 };
-use crate::validation::cypher::validate_cypher;
 use crate::validation::patterns::validate_match_exhaustiveness;
 use crate::validation::phpx_rules::{
     validate_no_exceptions, validate_no_namespace, validate_no_null, validate_no_oop,

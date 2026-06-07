@@ -311,7 +311,7 @@
       "title": "deka inicio",
       "description": "Iniciar servicios Deka"
     },
-    "content": "# deka start\n\nInicia toda la pila de hosting de Deka.\n\n```bash\ndeka start\n```\n\n## Opciones\n\n- `--genesis` - Inicializa el bloque génesis en el primer inicio\n- `-d, --detach` - Ejecutar en segundo plano (predeterminado: verdadero)\n- `--infra` - Iniciar solo servicios de infraestructura (postgres, redis) y exponer puertos para desarrollo local\n\nEl modo de infraestructura expone:\n\n- postgres: `postgres://tana:tana_dev_password@localhost:5432/tana`\n- redis: `redis://localhost:6380`\n- pgbouncer: `postgres://tana:tana_contract_password@localhost:6432/<db>`\n\n## Ejemplo de salida\n\n```text\n$ deka start\n✓ docker running\n✓ postgres ready\n✓ redis ready\n✓ migrations complete\n✓ edge ready\n✓ t4 ready\n✓ deka-git ready\n✓ deploy ready\n```\n",
+    "content": "# deka start\n\nInicia toda la pila de hosting de Deka.\n\n```bash\ndeka start\n```\n\n## Opciones\n\n- `--genesis` - Inicializa el bloque génesis en el primer inicio\n- `-d, --detach` - Ejecutar en segundo plano (predeterminado: verdadero)\n- `--infra` - Iniciar solo servicios de infraestructura (postgres, redis) y exponer puertos para desarrollo local\n\nEl modo de infraestructura expone:\n\n- postgres: `postgres://tana:tana_dev_password@localhost:5432/tana`\n- redis: `redis://localhost:6380`\n- pgbouncer: `postgres://tana:tana_contract_password@localhost:6432/<db>`\n\n## Ejemplo de salida\n\n```text\n$ deka start\n✓ docker running\n✓ postgres ready\n✓ redis ready\n✓ migrations complete\n✓ edge ready\n✓ t4 ready\n✓ gild-vcs ready\n✓ deploy ready\n```\n",
     "html": "<h1>deka start</h1>\n<p>Inicia toda la pila de hosting de Deka.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<h2>Opciones</h2>\n<ul>\n<li><code>--genesis</code> - Inicializa el bloque génesis en el primer inicio</li>\n<li><code>-d, --detach</code> - Ejecutar en segundo plano (predeterminado: verdadero)</li>\n<li><code>--infra</code> - Iniciar solo servicios de infraestructura (postgres, redis) y exponer puertos para desarrollo local</li>\n</ul>\n<p>El modo de infraestructura expone:</p>\n<ul>\n<li>postgres: <code>postgres://tana:tana_dev_password@localhost:5432/tana</code></li>\n<li>redis: <code>redis://localhost:6380</code></li>\n<li>pgbouncer: <code>postgres://tana:tana_contract_password@localhost:6432/&#x3C;db></code></li>\n</ul>\n<h2>Ejemplo de salida</h2>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n",
     "codeBlocks": [
       {
@@ -320,7 +320,7 @@
       },
       {
         "lang": "text",
-        "code": "$ deka start\n✓ docker running\n✓ postgres ready\n✓ redis ready\n✓ migrations complete\n✓ edge ready\n✓ t4 ready\n✓ deka-git ready\n✓ deploy ready"
+        "code": "$ deka start\n✓ docker running\n✓ postgres ready\n✓ redis ready\n✓ migrations complete\n✓ edge ready\n✓ t4 ready\n✓ gild-vcs ready\n✓ deploy ready"
       }
     ]
   },
@@ -497,7 +497,7 @@
       "title": "estado de deka",
       "description": "Mostrar el estado y la salud del servicio"
     },
-    "content": "# estado de deka\n\nMuestra la salud y el estado de ejecución de cada servicio.\n\n```bash\ndeka status\n```\n\nEjemplo de salida:\n\n```text\n● [postgres] healthy :5432\n● [redis] healthy :6379\n● [edge] running :8506\n● [t4] running :8507\n● [deka-git] running :8508\n● [deploy] running :8509\n```\n\n## Ejemplo de salida\n\n```text\n$ deka status\n● [postgres] healthy :5432\n● [redis] healthy :6379\n● [edge] running :8506\n● [t4] running :8507\n● [deka-git] running :8508\n● [deploy] running :8509\n```\n",
+    "content": "# estado de deka\n\nMuestra la salud y el estado de ejecución de cada servicio.\n\n```bash\ndeka status\n```\n\nEjemplo de salida:\n\n```text\n● [postgres] healthy :5432\n● [redis] healthy :6379\n● [edge] running :8506\n● [t4] running :8507\n● [gild-vcs] running :8508\n● [deploy] running :8509\n```\n\n## Ejemplo de salida\n\n```text\n$ deka status\n● [postgres] healthy :5432\n● [redis] healthy :6379\n● [edge] running :8506\n● [t4] running :8507\n● [gild-vcs] running :8508\n● [deploy] running :8509\n```\n",
     "html": "<h1>estado de deka</h1>\n<p>Muestra la salud y el estado de ejecución de cada servicio.</p>\n<div class=\"code-block-placeholder\" data-index=\"0\"></div>\n<p>Ejemplo de salida:</p>\n<div class=\"code-block-placeholder\" data-index=\"1\"></div>\n<h2>Ejemplo de salida</h2>\n<div class=\"code-block-placeholder\" data-index=\"2\"></div>\n",
     "codeBlocks": [
       {
@@ -506,11 +506,11 @@
       },
       {
         "lang": "text",
-        "code": "● [postgres] healthy :5432\n● [redis] healthy :6379\n● [edge] running :8506\n● [t4] running :8507\n● [deka-git] running :8508\n● [deploy] running :8509"
+        "code": "● [postgres] healthy :5432\n● [redis] healthy :6379\n● [edge] running :8506\n● [t4] running :8507\n● [gild-vcs] running :8508\n● [deploy] running :8509"
       },
       {
         "lang": "text",
-        "code": "$ deka status\n● [postgres] healthy :5432\n● [redis] healthy :6379\n● [edge] running :8506\n● [t4] running :8507\n● [deka-git] running :8508\n● [deploy] running :8509"
+        "code": "$ deka status\n● [postgres] healthy :5432\n● [redis] healthy :6379\n● [edge] running :8506\n● [t4] running :8507\n● [gild-vcs] running :8508\n● [deploy] running :8509"
       }
     ]
   },

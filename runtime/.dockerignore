@@ -1,0 +1,9 @@
+target/
+.git/
+.github/
+**/.DS_Store
+**/*.log
+deka-validation/
+website/
+docs/
+tasks/
