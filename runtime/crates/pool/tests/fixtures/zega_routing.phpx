@@ -11,6 +11,8 @@ function zega_routing_response() {
     $kv_set = redis_set(0, 'cart', 'sku-1')
     $kv_get = redis_get(0, 'cart')
     $kv_expire = redis_expire(0, 'cart', 60)
+    $run_cql_without_type = run_cql(0, { query: 'RETURN 1', params: {} })
+    $run_cql_wrong_type = run_cql(0, { __type: 'not-cql', query: 'RETURN 1', params: {} })
 
     return {
         created: $created,
@@ -18,6 +20,8 @@ function zega_routing_response() {
         kv_set: $kv_set,
         kv_get: $kv_get,
         kv_expire: $kv_expire,
+        run_cql_without_type: $run_cql_without_type,
+        run_cql_wrong_type: $run_cql_wrong_type,
         cql_probe: bridge('neo4j', 'routing_probe', {}),
         kv_probe: bridge('redis', 'routing_probe', {})
     }

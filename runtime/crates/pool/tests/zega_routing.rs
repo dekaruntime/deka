@@ -172,6 +172,17 @@ async fn cql_envelope_routes_through_runtime_bridge_by_shop_backend() {
         zega["kv_expire"],
         json!({ "ok": false, "error": "Redis action 'expire' is not supported by Zega" })
     );
+    for field in ["run_cql_without_type", "run_cql_wrong_type"] {
+        assert_eq!(
+            zega[field],
+            json!({
+                "ok": false,
+                "error": "run_cql expects a cql value (produced by the cql keyword)",
+                "rows": []
+            }),
+            "{field} should reject a non-CQL value"
+        );
+    }
     assert_eq!(
         zega["cql_probe"],
         json!({ "ok": false, "error": "unknown Zega CQL action 'routing_probe'" })
