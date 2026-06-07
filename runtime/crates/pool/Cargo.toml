@@ -30,3 +30,7 @@ deka-shard = { path = "../shard" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 mach2 = "0.6.0"
+
+[dev-dependencies]
+platform_server = { path = "../platform_server" }
+tempfile = "3"

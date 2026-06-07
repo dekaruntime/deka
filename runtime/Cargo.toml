@@ -29,6 +29,11 @@ members = [
     "crates/linkhash-client",
     "crates/shard",
     "crates/zega_backend",
+    "crates/zega/zega-core",
+    "crates/zega/zega-graph",
+    "crates/zega/zega-kv",
+    "crates/zega/zega-parser",
+    "crates/zega/zega-wal",
 ]
 
 [workspace.dependencies]

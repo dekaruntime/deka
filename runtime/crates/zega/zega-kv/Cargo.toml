@@ -1,0 +1,16 @@
+[package]
+name = "zega-kv"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dashmap = "6.1"
+tokio = { version = "1", features = ["sync"] }
+serde = { version = "1.0", features = ["derive"] }
+zega-parser = { path = "../zega-parser" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = ["sync", "time", "rt-multi-thread"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["sync", "time", "rt-multi-thread"] }

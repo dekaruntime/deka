@@ -3692,6 +3692,7 @@ dependencies = [
  "nanoid",
  "num_cpus",
  "phpx_js",
+ "platform_server",
  "redis",
  "runtime_core",
  "serde",
@@ -3701,6 +3702,7 @@ dependencies = [
  "swc_ecma_ast",
  "swc_ecma_parser 31.0.0",
  "swc_ecma_visit",
+ "tempfile",
  "tokio",
  "tracing",
 ]
@@ -7044,7 +7046,6 @@ dependencies = [
 [[package]]
 name = "zega-core"
 version = "0.1.0"
-source = "git+https://git.tana.gg/tana/zega.git?rev=703e5066dd2b22a00c1bd2a21ede3e040c0d0feb#703e5066dd2b22a00c1bd2a21ede3e040c0d0feb"
 dependencies = [
  "base64 0.22.1",
  "bincode",
@@ -7055,6 +7056,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "smallvec",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "zega-graph",
@@ -7066,7 +7068,6 @@ dependencies = [
 [[package]]
 name = "zega-graph"
 version = "0.1.0"
-source = "git+https://git.tana.gg/tana/zega.git?rev=703e5066dd2b22a00c1bd2a21ede3e040c0d0feb#703e5066dd2b22a00c1bd2a21ede3e040c0d0feb"
 dependencies = [
  "serde",
  "zega-parser",
@@ -7075,7 +7076,6 @@ dependencies = [
 [[package]]
 name = "zega-kv"
 version = "0.1.0"
-source = "git+https://git.tana.gg/tana/zega.git?rev=703e5066dd2b22a00c1bd2a21ede3e040c0d0feb#703e5066dd2b22a00c1bd2a21ede3e040c0d0feb"
 dependencies = [
  "dashmap 6.1.0",
  "serde",
@@ -7086,7 +7086,6 @@ dependencies = [
 [[package]]
 name = "zega-parser"
 version = "0.1.0"
-source = "git+https://git.tana.gg/tana/zega.git?rev=703e5066dd2b22a00c1bd2a21ede3e040c0d0feb#703e5066dd2b22a00c1bd2a21ede3e040c0d0feb"
 dependencies = [
  "serde",
  "thiserror 1.0.69",
@@ -7095,11 +7094,11 @@ dependencies = [
 [[package]]
 name = "zega-wal"
 version = "0.1.0"
-source = "git+https://git.tana.gg/tana/zega.git?rev=703e5066dd2b22a00c1bd2a21ede3e040c0d0feb#703e5066dd2b22a00c1bd2a21ede3e040c0d0feb"
 dependencies = [
  "bincode",
  "crc32fast",
  "serde",
+ "tempfile",
  "thiserror 1.0.69",
  "zega-graph",
  "zega-kv",
