@@ -23,6 +23,8 @@ native = [
 [dependencies]
 runtime = { path = "../runtime", optional = true }
 runtime_core = { path = "../runtime_core" }
+seam_diff = { path = "../seam_diff" }
+seam_ir = { path = "../seam_ir" }
 compile = { path = "../compile", optional = true }
 core = { path ="../core" }
 stdio = { path = "../stdio" }

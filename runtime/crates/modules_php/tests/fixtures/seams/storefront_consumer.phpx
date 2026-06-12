@@ -1,0 +1,21 @@
+// Pilot consumer for the storefront seam (tana #454, deka contract-check).
+// Declares the storefront request/response shape the PHPX handler reads, so
+// it can be checked against the Rust producer (rust:storefront). Scalar
+// subset — `headers` (a Map) is read field-by-field, not as a typed map, and
+// a consumer may legitimately declare a subset of what the producer provides.
+struct StorefrontRequest {
+    $url: string;
+    $path: string;
+    $pathname: string;
+    $method: string;
+    $body: Option<string>;
+}
+
+struct StorefrontResponse {
+    $status: int;
+    $body: string;
+}
+
+export function fetch($req: StorefrontRequest): StorefrontResponse {
+    return StorefrontResponse { $status: 200, $body: "ok" };
+}
