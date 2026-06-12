@@ -1,0 +1,11 @@
+{
+  "_doc": "Seam manifest (tana #454). The declared cross-boundary contracts; `deka contract-check --manifest contracts/seams.json` checks every one. Producer = source of truth (rust:NAME or phpx:PATH), consumer = the reading side. Paths are relative to runtime/.",
+  "seams": [
+    { "name": "storefront",            "producer": "rust:storefront",   "consumer": "phpx:crates/modules_php/tests/fixtures/seams/storefront_consumer.phpx" },
+    { "name": "data_backend.cql_query","producer": "rust:data_backend", "consumer": "phpx:crates/modules_php/tests/fixtures/seams/data/cql_query.phpx" },
+    { "name": "data_backend.cql_exec", "producer": "rust:data_backend", "consumer": "phpx:crates/modules_php/tests/fixtures/seams/data/cql_execute.phpx" },
+    { "name": "data_backend.kv_get",   "producer": "rust:data_backend", "consumer": "phpx:crates/modules_php/tests/fixtures/seams/data/kv_get.phpx" },
+    { "name": "data_backend.kv_set",   "producer": "rust:data_backend", "consumer": "phpx:crates/modules_php/tests/fixtures/seams/data/kv_set.phpx" },
+    { "name": "data_backend.kv_del",   "producer": "rust:data_backend", "consumer": "phpx:crates/modules_php/tests/fixtures/seams/data/kv_del.phpx" }
+  ]
+}
