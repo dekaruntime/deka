@@ -1,0 +1,13 @@
+// Consumer view: the `redis` stdlib module's `get` envelope ({ ok, value }).
+struct KvKeyRequest {
+    $key: string;
+}
+
+struct KvGetResponse {
+    $ok: bool;
+    $value: Option<string>;
+}
+
+export function kv_get($req: KvKeyRequest): KvGetResponse {
+    return KvGetResponse { $ok: true, $value: None };
+}

@@ -1,0 +1,12 @@
+// Consumer view: the `neo4j` stdlib module's `execute` envelope (bare ack).
+struct CqlQueryRequest {
+    $cypher: string;
+}
+
+struct CqlExecuteResponse {
+    $ok: bool;
+}
+
+export function cql_execute($req: CqlQueryRequest): CqlExecuteResponse {
+    return CqlExecuteResponse { $ok: true };
+}

@@ -55,3 +55,4 @@ tempfile = "3.23.0"
 hmac = "0.12"
 hex = "0.4"
 base64 = "0.22"
+seam_diff = { path = "../seam_diff" }

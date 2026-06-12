@@ -3881,6 +3881,7 @@ dependencies = [
  "reqwest",
  "runtime_core",
  "rusqlite",
+ "seam_diff",
  "seam_ir",
  "serde",
  "serde_json",

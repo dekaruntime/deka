@@ -1,0 +1,14 @@
+// Consumer view: the `redis` stdlib module's `set` envelope.
+struct KvSetRequest {
+    $key: string;
+    $value: string;
+    $ttl: Option<int>;
+}
+
+struct KvSetResponse {
+    $ok: bool;
+}
+
+export function kv_set($req: KvSetRequest): KvSetResponse {
+    return KvSetResponse { $ok: true };
+}

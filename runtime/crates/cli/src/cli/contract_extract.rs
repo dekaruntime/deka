@@ -26,9 +26,12 @@ fn run(context: &Context) -> Result<String, String> {
             "storefront" | "storefront-envelope" => {
                 runtime_core::storefront_envelope::storefront_contract()
             }
+            "data_backend" | "data-backend" => {
+                runtime_core::data_envelope::data_backend_contract()
+            }
             _ => {
                 return Err(format!(
-                    "unknown Rust contract target '{}'; expected 'storefront'",
+                    "unknown Rust contract target '{}'; expected 'storefront' or 'data_backend'",
                     target
                 ));
             }

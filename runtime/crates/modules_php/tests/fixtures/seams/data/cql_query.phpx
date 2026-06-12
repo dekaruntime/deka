@@ -1,0 +1,17 @@
+// Consumer view: the `neo4j` stdlib module's `query` envelope.
+// `rows` (a dynamic list of per-query maps) and `params` are intentionally
+// untyped here — they are dynamic payloads, not part of the typed envelope
+// contract. The gate pins the envelope wrapper (ok/count); rows presence is
+// covered by zega_backend's live integration test.
+struct CqlQueryRequest {
+    $cypher: string;
+}
+
+struct CqlQueryResponse {
+    $ok: bool;
+    $count: int;
+}
+
+export function cql_query($req: CqlQueryRequest): CqlQueryResponse {
+    return CqlQueryResponse { $ok: true, $count: 0 };
+}
