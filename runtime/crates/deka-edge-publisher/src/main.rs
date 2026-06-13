@@ -71,6 +71,11 @@ async fn apply_snapshot(writer: &RedisWriter, snapshot: EdgeSnapshot) -> Result<
     for domain in snapshot.domains {
         max_seen = max_seen.max(domain.updated_at);
         writer.apply_domain(&domain).await?;
+        if zega_writer::zega_writes_enabled()
+            && let Err(e) = zega_writer::write_domain_records(&domain)
+        {
+            eprintln!("[deka-edge-publisher] zega domain write failed: {e:#}");
+        }
     }
 
     Ok(max_seen)

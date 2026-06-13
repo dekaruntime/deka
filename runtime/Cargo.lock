@@ -1587,10 +1587,12 @@ dependencies = [
  "serde",
  "serde_json",
  "simple-dns",
+ "tempfile",
  "tokio",
  "tower 0.5.3",
  "tracing",
  "tracing-subscriber",
+ "zega-core",
 ]
 
 [[package]]

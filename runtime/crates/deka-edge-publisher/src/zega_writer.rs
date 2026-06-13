@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::sync::{Mutex, OnceLock};
 use zega_core::Zega;
 
-use crate::redis_writer::ShopEdgeRow;
+use crate::redis_writer::{DomainEdgeRow, ShopEdgeRow, domain_writes};
 
 /// Global embedded Zega instance for edge publisher subdomain writes.
 fn global_edge_zega() -> Option<std::sync::MutexGuard<'static, Zega>> {
@@ -41,6 +41,22 @@ pub fn write_shop_subdomain(row: &ShopEdgeRow) -> Result<()> {
     Ok(())
 }
 
+/// Write DNS domain records from a domain edge row to Zega KV.
+///
+/// Writes the same keys as `redis_writer::domain_writes`:
+/// `domain:{name}`, `domain:{name}:records`, and optionally `verify:{name}`.
+pub fn write_domain_records(row: &DomainEdgeRow) -> Result<()> {
+    let zega = global_edge_zega().ok_or_else(|| {
+        anyhow::anyhow!("edge publisher zega not available")
+    })?;
+    let writes = domain_writes(row).map_err(|e| anyhow::anyhow!("domain_writes failed: {e}"))?;
+    for write in writes {
+        zega.kv_set(write.key, write.value.into(), None)
+            .map_err(|e| anyhow::anyhow!("zega kv_set failed: {e}"))?;
+    }
+    Ok(())
+}
+
 /// True when the edge publisher should also write subdomain records to Zega.
 pub fn zega_writes_enabled() -> bool {
     std::env::var("DEKA_EDGE_PUBLISHER_ZEGA_PATH").is_ok()
@@ -67,8 +83,8 @@ mod tests {
 
         write_shop_subdomain(&row).expect("write should succeed");
 
-        // Read back directly from Zega
-        let zega = Zega::open(path).build().unwrap();
+        // Read back directly from the static Zega (same instance the write used)
+        let zega = global_edge_zega().expect("zega should be available");
         let value = zega.kv_get("subdomain:zega-test").expect("key should exist");
         let raw = value.as_string().expect("value should be a string");
         let parsed: serde_json::Value = serde_json::from_str(raw).unwrap();
@@ -103,5 +119,46 @@ mod tests {
             std::env::set_var("DEKA_EDGE_PUBLISHER_ZEGA_PATH", "/tmp/test-zega");
         }
         assert!(zega_writes_enabled());
+    }
+
+    #[test]
+    fn write_domain_records_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_str().unwrap();
+        unsafe {
+            std::env::set_var("DEKA_EDGE_PUBLISHER_ZEGA_PATH", path);
+        }
+
+        let row = DomainEdgeRow {
+            name: "example.com".to_string(),
+            shop_id: "shop_example".to_string(),
+            verified: true,
+            verification_token: Some("tok_123".to_string()),
+            records: vec![crate::redis_writer::DnsRecordCache {
+                record_type: "A".to_string(),
+                name: "@".to_string(),
+                value: "203.0.113.10".to_string(),
+                ttl: 300,
+                priority: None,
+            }],
+            updated_at: 202,
+        };
+
+        write_domain_records(&row).expect("write should succeed");
+
+        let zega = Zega::open(path).build().unwrap();
+        let value = zega.kv_get("domain:example.com:records").expect("key should exist");
+        let raw = value.as_string().expect("value should be a string");
+        let parsed: serde_json::Value = serde_json::from_str(raw).unwrap();
+        assert_eq!(parsed[0]["value"], "203.0.113.10");
+
+        let meta = zega.kv_get("domain:example.com").expect("key should exist");
+        let meta_raw = meta.as_string().expect("value should be a string");
+        let meta_parsed: serde_json::Value = serde_json::from_str(meta_raw).unwrap();
+        assert_eq!(meta_parsed["shop_id"], "shop_example");
+        assert_eq!(meta_parsed["verified"], true);
+
+        let verify = zega.kv_get("verify:example.com").expect("key should exist");
+        assert_eq!(verify.as_string(), Some("tok_123"));
     }
 }
