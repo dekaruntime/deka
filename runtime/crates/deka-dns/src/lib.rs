@@ -7,6 +7,7 @@ use std::{
 };
 
 use serde::Deserialize;
+use zega_core::Zega;
 use simple_dns::{
     CLASS, Name, Packet, PacketFlag, QTYPE, RCODE, ResourceRecord, TYPE,
     rdata::{A, AAAA, MX, NS, RData, SOA, TXT},
@@ -26,6 +27,7 @@ pub struct Config {
     pub udp_addr: SocketAddr,
     pub doh_addr: SocketAddr,
     pub redis_url: String,
+    pub zega_path: Option<String>,
     pub zone: String,
     pub ns1_host: String,
     pub ns2_host: String,
@@ -52,6 +54,7 @@ impl Config {
             doh_addr,
             redis_url: std::env::var("REDIS_URL")
                 .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string()),
+            zega_path: std::env::var("DEKA_DNS_ZEGA_PATH").ok(),
             zone,
             ns1_host,
             ns2_host,
@@ -205,6 +208,76 @@ impl Store for MemoryStore {
             .lock()
             .ok()
             .and_then(|values| values.get(&key).cloned()))
+    }
+}
+
+#[derive(Clone)]
+pub struct ZegaStore {
+    zega: Arc<Mutex<Zega>>,
+    cache: Arc<Mutex<HashMap<String, CacheEntry>>>,
+}
+
+impl ZegaStore {
+    pub fn new(path: &str) -> Result<Self, String> {
+        let zega = Zega::open(path)
+            .build()
+            .map_err(|e| format!("failed to open zega: {e}"))?;
+        Ok(Self {
+            zega: Arc::new(Mutex::new(zega)),
+            cache: Arc::new(Mutex::new(HashMap::new())),
+        })
+    }
+}
+
+impl Store for ZegaStore {
+    async fn get_string(&self, key: String) -> Result<Option<StoreValue>, StoreError> {
+        let now = Instant::now();
+        if let Some(entry) = self.cache.lock().ok().and_then(|cache| cache.get(&key).cloned())
+            && entry.expires_at > now
+        {
+            return Ok(entry.value.map(|value| StoreValue { value, ttl: None }));
+        }
+
+        let zega = self
+            .zega
+            .lock()
+            .map_err(|e| StoreError(format!("zega lock failed: {e}")))?;
+        let raw = zega.kv_get(&key);
+        let value = raw.and_then(|v| v.as_string().map(|s| s.to_string()));
+        drop(zega);
+
+        let cache_ttl = if value.is_some() {
+            Duration::from_secs(60)
+        } else {
+            NEGATIVE_CACHE_TTL
+        };
+
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.insert(
+                key,
+                CacheEntry {
+                    value: value.clone(),
+                    expires_at: Instant::now() + cache_ttl,
+                },
+            );
+        }
+
+        Ok(value.map(|value| StoreValue { value, ttl: None }))
+    }
+}
+
+#[derive(Clone)]
+pub enum DnsStore {
+    Zega(ZegaStore),
+    Redis(RedisStore),
+}
+
+impl Store for DnsStore {
+    async fn get_string(&self, key: String) -> Result<Option<StoreValue>, StoreError> {
+        match self {
+            DnsStore::Zega(s) => s.get_string(key).await,
+            DnsStore::Redis(s) => s.get_string(key).await,
+        }
     }
 }
 
@@ -601,6 +674,7 @@ mod tests {
             udp_addr: SocketAddr::from(([127, 0, 0, 1], 8053)),
             doh_addr: SocketAddr::from(([127, 0, 0, 1], 8080)),
             redis_url: "redis://127.0.0.1:6379".to_string(),
+            zega_path: None,
             zone: "tana.gg".to_string(),
             ns1_host: "ns1.tana.gg".to_string(),
             ns2_host: "ns2.tana.gg".to_string(),
@@ -744,6 +818,71 @@ mod tests {
         let response = resolve(store, "_tana-verify.example.com", TYPE::TXT).await;
 
         assert_eq!(RCODE::NoError, response.rcode());
+        match response.answers[0].rdata.clone() {
+            RData::TXT(txt) => {
+                let value = String::try_from(txt).unwrap();
+                assert_eq!("tana-verify=abc123", value);
+            }
+            other => panic!("expected TXT record, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn zega_dns_a_lookup_without_redis() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_str().unwrap();
+        let zega = Zega::open(path).build().unwrap();
+        zega.kv_set(
+            "domain:test.tana.gg:records".to_string(),
+            r#"[{"type":"A","name":"@","value":"1.2.3.4","ttl":300}]"#.into(),
+            None,
+        )
+        .unwrap();
+        zega.kv_set(
+            "subdomain:test".to_string(),
+            "shop_test".into(),
+            None,
+        )
+        .unwrap();
+
+        let store = DnsStore::Zega(ZegaStore::new(path).unwrap());
+        let config = test_config();
+        let resolver = Resolver::new(config, store);
+        let response = resolver
+            .resolve_packet(query("test.tana.gg", TYPE::A))
+            .await
+            .unwrap();
+
+        assert_eq!(RCODE::NoError, response.rcode());
+        assert_eq!(1, response.answers.len());
+        match &response.answers[0].rdata {
+            RData::A(a) => assert_eq!(u32::from(Ipv4Addr::new(1, 2, 3, 4)), a.address),
+            other => panic!("expected A record, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn zega_dns_txt_verification_without_redis() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_str().unwrap();
+        let zega = Zega::open(path).build().unwrap();
+        zega.kv_set(
+            "verify:example.com".to_string(),
+            "tana-verify=abc123".into(),
+            None,
+        )
+        .unwrap();
+
+        let store = DnsStore::Zega(ZegaStore::new(path).unwrap());
+        let config = test_config();
+        let resolver = Resolver::new(config, store);
+        let response = resolver
+            .resolve_packet(query("_tana-verify.example.com", TYPE::TXT))
+            .await
+            .unwrap();
+
+        assert_eq!(RCODE::NoError, response.rcode());
+        assert_eq!(1, response.answers.len());
         match response.answers[0].rdata.clone() {
             RData::TXT(txt) => {
                 let value = String::try_from(txt).unwrap();

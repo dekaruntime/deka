@@ -1588,10 +1588,12 @@ dependencies = [
  "serde",
  "serde_json",
  "simple-dns",
+ "tempfile",
  "tokio",
  "tower 0.5.3",
  "tracing",
  "tracing-subscriber",
+ "zega-core",
 ]
 
 [[package]]
@@ -1607,6 +1609,7 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "tokio",
+ "zega-core",
 ]
 
 [[package]]
@@ -1620,6 +1623,7 @@ dependencies = [
  "reqwest",
  "serde_json",
  "tokio",
+ "zega-core",
 ]
 
 [[package]]
@@ -4882,6 +4886,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "zega-core",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use deka_dns::{Config, RedisStore, Resolver, doh, udp};
+use deka_dns::{Config, DnsStore, Resolver, doh, udp};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -9,7 +9,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let config = Config::from_env();
-    let store = RedisStore::new(&config.redis_url)?;
+    let store = if let Some(ref path) = config.zega_path {
+        DnsStore::Zega(
+            deka_dns::ZegaStore::new(path)
+                .map_err(std::io::Error::other)?,
+        )
+    } else {
+        DnsStore::Redis(deka_dns::RedisStore::new(&config.redis_url)?)
+    };
     let resolver = Arc::new(Resolver::new(config.clone(), store));
 
     let udp_resolver = Arc::clone(&resolver);
