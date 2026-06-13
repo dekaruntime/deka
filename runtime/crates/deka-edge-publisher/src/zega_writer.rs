@@ -25,12 +25,21 @@ fn global_edge_zega() -> Option<std::sync::MutexGuard<'static, Zega>> {
 /// available from the Neo4j row — the publisher currently only has
 /// shop_id in the row).
 pub fn write_shop_subdomain(row: &ShopEdgeRow) -> Result<()> {
-    let Some(subdomain) = row.subdomain.as_deref().filter(|s| !s.is_empty()) else {
-        return Ok(());
-    };
     let zega = global_edge_zega().ok_or_else(|| {
         anyhow::anyhow!("edge publisher zega not available")
     })?;
+    write_shop_subdomain_with_zega(row, &zega)
+}
+
+/// Write a subdomain record using an explicit `Zega` instance.
+///
+/// Production callers should use `write_shop_subdomain`; tests should
+/// construct their own `Zega` and call this variant to avoid racing on
+/// the process-wide global.
+pub fn write_shop_subdomain_with_zega(row: &ShopEdgeRow, zega: &Zega) -> Result<()> {
+    let Some(subdomain) = row.subdomain.as_deref().filter(|s| !s.is_empty()) else {
+        return Ok(());
+    };
     let key = format!("subdomain:{subdomain}");
     let value = serde_json::json!({
         "shop_id": row.shop_id,
@@ -49,6 +58,15 @@ pub fn write_domain_records(row: &DomainEdgeRow) -> Result<()> {
     let zega = global_edge_zega().ok_or_else(|| {
         anyhow::anyhow!("edge publisher zega not available")
     })?;
+    write_domain_records_with_zega(row, &zega)
+}
+
+/// Write DNS domain records using an explicit `Zega` instance.
+///
+/// Production callers should use `write_domain_records`; tests should
+/// construct their own `Zega` and call this variant to avoid racing on
+/// the process-wide global.
+pub fn write_domain_records_with_zega(row: &DomainEdgeRow, zega: &Zega) -> Result<()> {
     let writes = domain_writes(row).map_err(|e| anyhow::anyhow!("domain_writes failed: {e}"))?;
     for write in writes {
         zega.kv_set(write.key, write.value.into(), None)
@@ -69,10 +87,7 @@ mod tests {
     #[test]
     fn write_shop_subdomain_round_trips() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().to_str().unwrap();
-        unsafe {
-            std::env::set_var("DEKA_EDGE_PUBLISHER_ZEGA_PATH", path);
-        }
+        let zega = Zega::open(dir.path().to_str().unwrap()).build().unwrap();
 
         let row = ShopEdgeRow {
             shop_id: "shop_zega_test".to_string(),
@@ -81,10 +96,8 @@ mod tests {
             updated_at: 101,
         };
 
-        write_shop_subdomain(&row).expect("write should succeed");
+        write_shop_subdomain_with_zega(&row, &zega).expect("write should succeed");
 
-        // Read back directly from the static Zega (same instance the write used)
-        let zega = global_edge_zega().expect("zega should be available");
         let value = zega.kv_get("subdomain:zega-test").expect("key should exist");
         let raw = value.as_string().expect("value should be a string");
         let parsed: serde_json::Value = serde_json::from_str(raw).unwrap();
@@ -94,10 +107,7 @@ mod tests {
     #[test]
     fn write_skips_empty_subdomain() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().to_str().unwrap();
-        unsafe {
-            std::env::set_var("DEKA_EDGE_PUBLISHER_ZEGA_PATH", path);
-        }
+        let zega = Zega::open(dir.path().to_str().unwrap()).build().unwrap();
 
         let row = ShopEdgeRow {
             shop_id: "shop_no_sub".to_string(),
@@ -106,7 +116,7 @@ mod tests {
             updated_at: 0,
         };
 
-        write_shop_subdomain(&row).expect("write should succeed without subdomain");
+        write_shop_subdomain_with_zega(&row, &zega).expect("write should succeed without subdomain");
     }
 
     #[test]
@@ -124,10 +134,7 @@ mod tests {
     #[test]
     fn write_domain_records_round_trips() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().to_str().unwrap();
-        unsafe {
-            std::env::set_var("DEKA_EDGE_PUBLISHER_ZEGA_PATH", path);
-        }
+        let zega = Zega::open(dir.path().to_str().unwrap()).build().unwrap();
 
         let row = DomainEdgeRow {
             name: "example.com".to_string(),
@@ -144,9 +151,8 @@ mod tests {
             updated_at: 202,
         };
 
-        write_domain_records(&row).expect("write should succeed");
+        write_domain_records_with_zega(&row, &zega).expect("write should succeed");
 
-        let zega = Zega::open(path).build().unwrap();
         let value = zega.kv_get("domain:example.com:records").expect("key should exist");
         let raw = value.as_string().expect("value should be a string");
         let parsed: serde_json::Value = serde_json::from_str(raw).unwrap();
