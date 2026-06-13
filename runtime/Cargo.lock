@@ -1606,6 +1606,7 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "tokio",
+ "zega-core",
 ]
 
 [[package]]
@@ -1619,6 +1620,7 @@ dependencies = [
  "reqwest",
  "serde_json",
  "tokio",
+ "zega-core",
 ]
 
 [[package]]
@@ -4881,6 +4883,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "zega-core",
 ]
 
 [[package]]

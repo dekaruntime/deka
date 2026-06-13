@@ -1,6 +1,7 @@
 mod neo4j_reader;
 mod redis_writer;
 mod state;
+mod zega_writer;
 
 use anyhow::{Context, Result};
 use neo4j_reader::{EdgeSnapshot, Neo4jReader};
@@ -60,6 +61,11 @@ async fn apply_snapshot(writer: &RedisWriter, snapshot: EdgeSnapshot) -> Result<
     for shop in snapshot.shops {
         max_seen = max_seen.max(shop.updated_at);
         writer.apply_shop(&shop).await?;
+        if zega_writer::zega_writes_enabled()
+            && let Err(e) = zega_writer::write_shop_subdomain(&shop)
+        {
+            eprintln!("[deka-edge-publisher] zega write failed: {e:#}");
+        }
     }
 
     for domain in snapshot.domains {

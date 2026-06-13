@@ -15,11 +15,30 @@ use axum::http::header::CONTENT_LENGTH;
 use axum::response::{IntoResponse, Response};
 use deka_shard::{ShardConfig, ShardInfo, ShardResolver};
 use redis::Commands;
+use std::sync::{Mutex, OnceLock};
+use zega_core::Zega;
 
 const PROXY_LOOP_HEADER: &str = "X-Deka-Proxied";
 const DEFAULT_SHARDS_REDIS_KEY: &str = "deka:shards";
 const DEFAULT_LISTEN_PORT: u16 = 8531;
 const DEFAULT_TARGET_PORT: u16 = 8530;
+
+/// Global embedded Zega instance for subdomain → tenant resolution.
+///
+/// Path is controlled by `DEKA_SUBDOMAIN_ZEGA_PATH` (default:
+/// `store/zega/subdomains`).  The directory is created on first access.
+fn global_subdomain_zega() -> Option<std::sync::MutexGuard<'static, Zega>> {
+    static ZEGA: OnceLock<Mutex<Zega>> = OnceLock::new();
+    let zega = ZEGA.get_or_init(|| {
+        let path = std::env::var("DEKA_SUBDOMAIN_ZEGA_PATH")
+            .unwrap_or_else(|_| "store/zega/subdomains".to_string());
+        let zega = Zega::open(&path)
+            .build()
+            .expect("failed to open subdomain zega");
+        Mutex::new(zega)
+    });
+    zega.lock().ok()
+}
 
 #[derive(Clone)]
 struct RouterState {
@@ -239,6 +258,17 @@ fn resolve_account_id(headers: &[(String, String)], trust_account_header: bool) 
 }
 
 fn resolve_tenant_record(subdomain: &str) -> Option<TenantRecord> {
+    // 1. Try Zega first.
+    if let Some(zega) = global_subdomain_zega() {
+        let key = format!("subdomain:{subdomain}");
+        if let Some(value) = zega.kv_get(&key)
+            && let Some(raw) = value.as_string()
+        {
+            return Some(parse_subdomain_value(raw));
+        }
+    }
+
+    // 2. Fall back to Redis.
     let redis_url = std::env::var("REDIS_URL")
         .or_else(|_| std::env::var("DEKA_REDIS_URL"))
         .ok()?;
