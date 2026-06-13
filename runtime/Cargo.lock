@@ -1036,6 +1036,7 @@ dependencies = [
  "rusqlite",
  "seam_diff",
  "seam_ir",
+ "seam_ts",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -5931,6 +5932,17 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "seam_ts"
+version = "0.1.0"
+dependencies = [
+ "seam_ir",
+ "serde_json",
+ "swc_common",
+ "swc_ecma_ast",
+ "swc_ecma_parser 31.0.0",
 ]
 
 [[package]]
