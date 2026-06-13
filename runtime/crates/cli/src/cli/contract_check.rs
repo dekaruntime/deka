@@ -8,6 +8,7 @@
 //! Each side is a `kind:ref` spec:
 //!   - `rust:storefront` / `rust:data_backend` — a Rust producer contract
 //!   - `phpx:<path>` — extracted from a PHPX source file (struct/enum/boundary)
+//!   - `ts:<path>` — extracted from exported TypeScript interfaces/type aliases
 //!
 //! Example (the storefront pilot):
 //!   deka contract-check --producer rust:storefront \
@@ -16,7 +17,7 @@
 use core::{CommandSpec, Context, ParamSpec, Registry};
 use seam_ir::SeamContract;
 
-const USAGE: &str = "usage: deka contract-check --producer <rust:NAME|phpx:PATH> --consumer <rust:NAME|phpx:PATH>\n       deka contract-check --manifest <seams.json>   (check every declared seam)";
+const USAGE: &str = "usage: deka contract-check --producer <rust:NAME|phpx:PATH|ts:PATH> --consumer <rust:NAME|phpx:PATH|ts:PATH>\n       deka contract-check --manifest <seams.json>   (check every declared seam)";
 
 const COMMAND: CommandSpec = CommandSpec {
     name: "contract-check",
@@ -31,11 +32,11 @@ pub fn register(registry: &mut Registry) {
     registry.add_command(COMMAND);
     registry.add_param(ParamSpec {
         name: "--producer",
-        description: "producer contract source: rust:NAME or phpx:PATH",
+        description: "producer contract source: rust:NAME, phpx:PATH, or ts:PATH",
     });
     registry.add_param(ParamSpec {
         name: "--consumer",
-        description: "consumer contract source: rust:NAME or phpx:PATH",
+        description: "consumer contract source: rust:NAME, phpx:PATH, or ts:PATH",
     });
     registry.add_param(ParamSpec {
         name: "--manifest",
@@ -131,9 +132,18 @@ fn run_manifest(path: &str) -> Outcome {
     let mut report = String::new();
     let mut drift = false;
     for seam in seams {
-        let name = seam.get("name").and_then(serde_json::Value::as_str).unwrap_or("<unnamed>");
-        let producer_spec = seam.get("producer").and_then(serde_json::Value::as_str).unwrap_or("");
-        let consumer_spec = seam.get("consumer").and_then(serde_json::Value::as_str).unwrap_or("");
+        let name = seam
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("<unnamed>");
+        let producer_spec = seam
+            .get("producer")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let consumer_spec = seam
+            .get("consumer")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
 
         let producer = match resolve(producer_spec) {
             Ok(contract) => contract,
@@ -167,10 +177,18 @@ fn run_manifest(path: &str) -> Outcome {
     let summary = format!(
         "\nseam check: {} seam(s) — {}",
         seams.len(),
-        if drift { "DRIFT (build should fail)" } else { "all ok" }
+        if drift {
+            "DRIFT (build should fail)"
+        } else {
+            "all ok"
+        }
     );
     let full = format!("{report}{summary}");
-    if drift { Outcome::Drift(full) } else { Outcome::Ok(full) }
+    if drift {
+        Outcome::Drift(full)
+    } else {
+        Outcome::Ok(full)
+    }
 }
 
 /// Resolve a `kind:ref` spec into a contract. A bare path is treated as `phpx:`.
@@ -189,8 +207,62 @@ fn resolve(spec: &str) -> Result<SeamContract, String> {
             )),
         },
         "phpx" => modules_php::seam_contract::extract_contract_from_file(rest),
+        "ts" => seam_ts::extract_contract_from_file(rest),
         other => Err(format!(
-            "unknown contract source kind '{other}'; use 'rust:' or 'phpx:'"
+            "unknown contract source kind '{other}'; use 'rust:', 'phpx:', or 'ts:'"
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use seam_diff::SeamErrorKind;
+
+    use super::*;
+
+    #[test]
+    fn ts_consumer_catches_zega_result_value_drift() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("zega.ts");
+        let producer = resolve("rust:data_backend").unwrap();
+
+        fs::write(
+            &path,
+            r#"
+                export interface CqlQueryResponse {
+                    ok: boolean;
+                    rows: Record<string, unknown>[];
+                    count: number;
+                    error?: string;
+                }
+                export interface KvGetResponse {
+                    ok: boolean;
+                    value: string | null;
+                    error?: string;
+                }
+            "#,
+        )
+        .unwrap();
+        let consumer = resolve(&format!("ts:{}", path.display())).unwrap();
+        assert!(seam_diff::check_consumer(&producer, &consumer).is_empty());
+
+        fs::write(
+            &path,
+            r#"
+                export interface KvGetResponse {
+                    ok: boolean;
+                    result: string | null;
+                    error?: string;
+                }
+            "#,
+        )
+        .unwrap();
+        let consumer = resolve(&format!("ts:{}", path.display())).unwrap();
+        let errors = seam_diff::check_consumer(&producer, &consumer);
+        assert!(errors.iter().any(|error| {
+            error.kind == SeamErrorKind::UnknownField && error.offending == "KvGetResponse.result"
+        }));
     }
 }

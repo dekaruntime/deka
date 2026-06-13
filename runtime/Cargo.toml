@@ -23,6 +23,7 @@ members = [
     "crates/modules_php",
     "crates/seam_diff",
     "crates/seam_ir",
+    "crates/seam_ts",
     "crates/php-rs",
     "crates/phpx_js",
     "crates/wasm_guest",

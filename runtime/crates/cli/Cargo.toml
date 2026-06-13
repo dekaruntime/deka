@@ -17,6 +17,7 @@ native = [
   "dep:modules_php",
   "dep:phpx_js",
   "dep:bundler",
+  "dep:seam_ts",
   "dep:rusqlite",
 ]
 
@@ -25,6 +26,7 @@ runtime = { path = "../runtime", optional = true }
 runtime_core = { path = "../runtime_core" }
 seam_diff = { path = "../seam_diff" }
 seam_ir = { path = "../seam_ir" }
+seam_ts = { path = "../seam_ts", optional = true }
 compile = { path = "../compile", optional = true }
 core = { path ="../core" }
 stdio = { path = "../stdio" }
