@@ -21,6 +21,7 @@ pub struct RuntimeState {
     pub handler_code: String,
     pub handler_entry: Option<String>,
     pub handler_key: HandlerKey,
+    pub dev_mode: bool,
     pub perf_mode: bool,
     pub perf_request_value: serde_json::Value,
 }
