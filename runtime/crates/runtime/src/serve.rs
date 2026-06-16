@@ -175,6 +175,7 @@ async fn serve_async(context: &Context) -> Result<(), String> {
         handler_code,
         handler_entry,
         handler_key,
+        dev_mode,
         perf_mode,
         perf_request_value,
     });

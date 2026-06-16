@@ -54,6 +54,14 @@ fn env_flag_enabled(key: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn handler_failure_body(detail: &str, dev_mode: bool) -> String {
+    if dev_mode {
+        detail.to_string()
+    } else {
+        "Internal Server Error".to_string()
+    }
+}
+
 const PLATFORM_ENV_ALIASES: &[(&str, &str)] = &[
     ("NEO4J_URI", "DEKA_NEO4J_URI"),
     ("NEO4J_USER", "DEKA_NEO4J_USER"),
@@ -766,9 +774,14 @@ async fn handle_platform_request(
                 let err = pool_response
                     .error
                     .unwrap_or_else(|| "Unknown error".to_string());
+                stdio::error("platform", &format!("handler error: {}", err));
+                let dev_mode = platform_dev_mode_enabled();
                 return Response::builder()
                     .status(500)
-                    .body(axum::body::Body::from(format!("Handler error: {}", err)))
+                    .body(axum::body::Body::from(handler_failure_body(
+                        &format!("Handler error: {}", err),
+                        dev_mode,
+                    )))
                     .unwrap();
             }
             match pool_response.result {
@@ -798,24 +811,42 @@ async fn handle_platform_request(
                         };
                         response.body(axum::body::Body::from(body_bytes)).unwrap()
                     }
-                    Err(err) => Response::builder()
-                        .status(500)
-                        .body(axum::body::Body::from(format!("Response error: {}", err)))
-                        .unwrap(),
+                    Err(err) => {
+                        stdio::error("platform", &format!("response error: {}", err));
+                        let dev_mode = platform_dev_mode_enabled();
+                        Response::builder()
+                            .status(500)
+                            .body(axum::body::Body::from(handler_failure_body(
+                                &format!("Response error: {}", err),
+                                dev_mode,
+                            )))
+                            .unwrap()
+                    }
                 },
-                None => Response::builder()
-                    .status(500)
-                    .body(axum::body::Body::from("No response from handler"))
-                    .unwrap(),
+                None => {
+                    stdio::error("platform", "no response from handler");
+                    let dev_mode = platform_dev_mode_enabled();
+                    Response::builder()
+                        .status(500)
+                        .body(axum::body::Body::from(handler_failure_body(
+                            "No response from handler",
+                            dev_mode,
+                        )))
+                        .unwrap()
+                }
             }
         }
-        Err(err) => Response::builder()
-            .status(500)
-            .body(axum::body::Body::from(format!(
-                "Handler execution failed: {}",
-                err
-            )))
-            .unwrap(),
+        Err(err) => {
+            stdio::error("platform", &format!("handler execution failed: {}", err));
+            let dev_mode = platform_dev_mode_enabled();
+            Response::builder()
+                .status(500)
+                .body(axum::body::Body::from(handler_failure_body(
+                    &format!("Handler execution failed: {}", err),
+                    dev_mode,
+                )))
+                .unwrap()
+        }
     }
 }
 
@@ -834,7 +865,7 @@ fn claims_cloudflare_ip_without_ray(headers: &[(String, String)]) -> bool {
 
 #[cfg(test)]
 mod cloudflare_header_tests {
-    use super::claims_cloudflare_ip_without_ray;
+    use super::{claims_cloudflare_ip_without_ray, handler_failure_body};
 
     fn headers(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
         pairs
@@ -881,6 +912,31 @@ mod cloudflare_header_tests {
             ("CF-Connecting-IP", "203.0.113.10"),
             ("CF-Ray", "abc123-SJC"),
         ])));
+    }
+
+    #[test]
+    fn platform_non_dev_handler_failures_are_redacted() {
+        let detail = "Handler execution failed: Missing phpx module 'missing/mod' \
+(imported from /tmp/platform/main.phpx). Attempted roots: /tmp/platform/php_modules. \
+Available modules: crypto, bytes";
+        let body = handler_failure_body(detail, false);
+
+        assert_eq!(body, "Internal Server Error");
+        assert!(!body.contains("/tmp/platform"));
+        assert!(!body.contains("Available modules"));
+        assert!(!body.contains("Attempted roots"));
+    }
+
+    #[test]
+    fn platform_dev_handler_failures_keep_detail() {
+        let detail = "Handler execution failed: Missing phpx module 'missing/mod' \
+(imported from /tmp/platform-dev/main.phpx). Attempted roots: /tmp/platform-dev/php_modules. \
+Available modules: crypto";
+        let body = handler_failure_body(detail, true);
+
+        assert!(body.contains("/tmp/platform-dev/main.phpx"));
+        assert!(body.contains("Available modules"));
+        assert!(body.contains("Attempted roots"));
     }
 }
 
