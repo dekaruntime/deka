@@ -1,4 +1,4 @@
-use crate::{emitter::JsSubsetEmitter, SourceModuleMeta};
+use crate::{SourceModuleMeta, emitter::JsSubsetEmitter};
 use bumpalo::Bump;
 use modules_php::compiler_api::{compile_phpx, compile_phpx_internal};
 use modules_php::validation::format_multiple_errors;
