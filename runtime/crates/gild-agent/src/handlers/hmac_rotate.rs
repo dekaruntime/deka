@@ -1,7 +1,8 @@
-use crate::{
-    PeerCredentials, RotateHmacRequest, ServiceReply, chown_path, open_audit_log, timestamp_millis,
-    validate_slug,
-};
+use crate::audit::{chown_path, open_audit_log, timestamp_millis};
+use crate::auth::PeerCredentials;
+use crate::commands::validate_slug;
+use crate::protocol::ServiceReply;
+use crate::requests::RotateHmacRequest;
 use anyhow::{Context, Result, bail};
 use rand::{RngCore, rngs::OsRng};
 use sha2::{Digest, Sha256};
