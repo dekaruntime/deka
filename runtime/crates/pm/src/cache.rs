@@ -44,7 +44,6 @@ impl CachePaths {
             &self.archive,
             &self.meta,
             &self.tmp,
-            &self.node_modules,
         ] {
             fs::create_dir_all(dir)
                 .with_context(|| format!("failed to create cache directory {}", dir.display()))?;
