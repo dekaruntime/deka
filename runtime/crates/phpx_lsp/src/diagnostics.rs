@@ -1,23 +1,10 @@
 use super::*;
 
 pub(crate) fn diagnostic_from_error(
-    file_path: &str,
-    source: &str,
+    _file_path: &str,
+    _source: &str,
     error: &ValidationError,
 ) -> Diagnostic {
-    let rendered = deka_validation::format_validation_error_with_suggestion(
-        source,
-        file_path,
-        error.kind.as_str(),
-        error.line,
-        error.column,
-        &error.message,
-        &error.help_text,
-        error.underline_length,
-        severity_label(error.severity),
-        None,
-        error.suggestion.clone(),
-    );
     Diagnostic {
         range: diagnostic_range(error.line, error.column, error.underline_length),
         severity: Some(severity_to_lsp(error.severity)),
@@ -25,29 +12,20 @@ pub(crate) fn diagnostic_from_error(
             error.kind.as_str().to_string(),
         )),
         source: Some("phpx".to_string()),
-        message: strip_ansi_codes(&rendered),
+        message: plain_message(
+            &error.message,
+            &error.help_text,
+            error.suggestion.as_deref(),
+        ),
         ..Diagnostic::default()
     }
 }
 
 pub(crate) fn diagnostic_from_warning(
-    file_path: &str,
-    source: &str,
+    _file_path: &str,
+    _source: &str,
     warning: &ValidationWarning,
 ) -> Diagnostic {
-    let rendered = deka_validation::format_validation_error_with_suggestion(
-        source,
-        file_path,
-        warning.kind.as_str(),
-        warning.line,
-        warning.column,
-        &warning.message,
-        &warning.help_text,
-        warning.underline_length,
-        severity_label(warning.severity),
-        None,
-        warning.suggestion.clone(),
-    );
     Diagnostic {
         range: diagnostic_range(warning.line, warning.column, warning.underline_length),
         severity: Some(severity_to_lsp(warning.severity)),
@@ -55,60 +33,25 @@ pub(crate) fn diagnostic_from_warning(
             warning.kind.as_str().to_string(),
         )),
         source: Some("phpx".to_string()),
-        message: strip_ansi_codes(&rendered),
+        message: plain_message(
+            &warning.message,
+            &warning.help_text,
+            warning.suggestion.as_deref(),
+        ),
         ..Diagnostic::default()
     }
 }
 
-pub(crate) fn severity_label(severity: Severity) -> &'static str {
-    match severity {
-        Severity::Error => "error",
-        Severity::Warning => "warning",
-        Severity::Info => "info",
+pub(crate) fn plain_message(message: &str, help_text: &str, suggestion: Option<&str>) -> String {
+    let mut parts = vec![message.trim()];
+    let help_text = help_text.trim();
+    if !help_text.is_empty() {
+        parts.push(help_text);
     }
-}
-
-pub(crate) fn strip_ansi_codes(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut out = String::with_capacity(input.len());
-    let mut i = 0usize;
-    while i < bytes.len() {
-        if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
-            i += 2;
-            while i < bytes.len() {
-                let b = bytes[i];
-                if (b as char).is_ascii_alphabetic() {
-                    i += 1;
-                    break;
-                }
-                i += 1;
-            }
-            continue;
-        }
-        out.push(bytes[i] as char);
-        i += 1;
+    if let Some(suggestion) = suggestion.map(str::trim).filter(|value| !value.is_empty()) {
+        parts.push(suggestion);
     }
-
-    let bytes = out.as_bytes();
-    let mut cleaned = String::with_capacity(out.len());
-    let mut j = 0usize;
-    while j < bytes.len() {
-        if bytes[j] == b'[' {
-            let mut k = j + 1;
-            let mut saw_digit = false;
-            while k < bytes.len() && (bytes[k].is_ascii_digit() || bytes[k] == b';') {
-                saw_digit = true;
-                k += 1;
-            }
-            if saw_digit && k < bytes.len() && bytes[k] == b'm' {
-                j = k + 1;
-                continue;
-            }
-        }
-        cleaned.push(bytes[j] as char);
-        j += 1;
-    }
-    cleaned
+    parts.join("\n")
 }
 
 pub(crate) fn severity_to_lsp(severity: Severity) -> DiagnosticSeverity {
