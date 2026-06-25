@@ -1,22 +1,27 @@
-//! Tenant resolution — maps incoming request Host header to a shop ID.
-//!
-//! Uses Redis for subdomain → shop_id lookup.
-//! Keys: `subdomain:{name}` → JSON `{"shop_id":..., "account_id":...}`
-//! (Legacy: a bare string value containing just `shop_id` is still accepted.)
-//!
-//! Preview deploys: `preview-{hash}-{shop}.tana.gg` resolves to the same
-//! shop_id as `{shop}.tana.gg`, but the caller receives the hash so it
-//! can look up the branch-specific bundle keyed as `{shop_id}:{hash}`.
-//!
-//! The flat subdomain format (`preview-{hash}-{shop}` instead of
-//! `preview-{hash}.{shop}`) keeps everything under `*.tana.gg` so
-//! Cloudflare's free SSL wildcard certificate covers it.
-
 use redis::{Client, Commands, Connection};
 use std::cell::RefCell;
+use std::sync::{Mutex, OnceLock};
+use zega_core::Zega;
 
-/// Raw pair returned by a Redis subdomain lookup. `account_id` is
-/// `None` when the Redis value is still the legacy plain-string format.
+/// Global embedded Zega instance for subdomain → tenant resolution.
+///
+/// Path is controlled by `DEKA_SUBDOMAIN_ZEGA_PATH` (default:
+/// `store/zega/subdomains`).  The directory is created on first access.
+fn global_subdomain_zega() -> Option<std::sync::MutexGuard<'static, Zega>> {
+    static ZEGA: OnceLock<Mutex<Zega>> = OnceLock::new();
+    let zega = ZEGA.get_or_init(|| {
+        let path = std::env::var("DEKA_SUBDOMAIN_ZEGA_PATH")
+            .unwrap_or_else(|_| "store/zega/subdomains".to_string());
+        let zega = Zega::open(&path)
+            .build()
+            .expect("failed to open subdomain zega");
+        Mutex::new(zega)
+    });
+    zega.lock().ok()
+}
+
+/// Raw pair returned by a subdomain lookup. `account_id` is
+/// `None` when the value is still the legacy plain-string format.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SubdomainRecord {
     pub shop_id: String,
@@ -27,7 +32,7 @@ pub struct SubdomainRecord {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TenantInfo {
     pub shop_id: String,
-    /// Stable opaque UUID for sharding. `None` when Redis still has the
+    /// Stable opaque UUID for sharding. `None` when the value still has the
     /// legacy plain-string (pre-sharding) entry.
     pub account_id: Option<String>,
     /// If the request came via `preview-{hash}-{shop}.tana.gg`, this holds
@@ -81,7 +86,7 @@ pub fn extract_subdomain(host: &str) -> Option<String> {
 /// `preview-` (literal) + 7 hex chars + `-` + rest-is-shop.
 ///
 /// Using a single subdomain level keeps everything under `*.tana.gg`
-/// so Cloudflare's free wildcard certificate covers preview URLs.
+/// so Cloudflare's free SSL wildcard certificate covers preview URLs.
 pub fn parse_preview_host(host: &str) -> Option<(String, String)> {
     let host = host.split(':').next().unwrap_or(host);
     if host == "localhost" || host.parse::<std::net::Ipv4Addr>().is_ok() {
@@ -109,11 +114,9 @@ pub fn parse_preview_host(host: &str) -> Option<(String, String)> {
     None
 }
 
-/// Resolve a subdomain to a shop ID via Redis lookup.
+/// Resolve a subdomain to a shop ID via Zega lookup, falling back to Redis.
 ///
-/// Returns `None` if not found or Redis unavailable. For callers that
-/// also need the stable `account_id` (e.g. shard routing) use
-/// [`resolve_tenant_record`].
+/// Returns `None` if not found or both backends unavailable.
 pub fn resolve_tenant(subdomain: &str) -> Option<String> {
     resolve_tenant_record(subdomain).map(|r| r.shop_id)
 }
@@ -121,7 +124,7 @@ pub fn resolve_tenant(subdomain: &str) -> Option<String> {
 /// Return true when a subdomain is already a canonical shop_id.
 ///
 /// Shop IDs are accepted directly so shard-local storefront requests like
-/// `shop_alpha.tana.gg` do not need a Redis `subdomain:*` routing lookup.
+/// `shop_alpha.tana.gg` do not need a `subdomain:*` routing lookup.
 pub fn is_shop_id_subdomain(subdomain: &str) -> bool {
     subdomain.strip_prefix("shop_").is_some_and(|rest| {
         !rest.is_empty()
@@ -131,29 +134,34 @@ pub fn is_shop_id_subdomain(subdomain: &str) -> bool {
     })
 }
 
-/// Resolve a subdomain to a `SubdomainRecord` via Redis lookup.
+/// Resolve a subdomain to a `SubdomainRecord` via Zega lookup,
+/// falling back to Redis during the transition period.
 ///
 /// Accepts both the new JSON format (`{"shop_id":..., "account_id":...}`)
 /// and the legacy plain-string format (just the shop_id, with
 /// `account_id = None`). During the transition both may coexist.
 ///
-/// Redis URL resolution order:
+/// Zega is consulted first (`DEKA_SUBDOMAIN_ZEGA_PATH` controls the
+/// database path).  If Zega is unavailable or the key is missing, the
+/// resolver falls back to Redis so the rollout can be gradual.
+///
+/// Redis URL resolution order (fallback only):
 /// 1. `DEKA_REDIS_URL` env var (explicit operator override).
 /// 2. The local shard's Redis URL from the shard resolver (shard 0 / phobos).
-///    The subdomain mapping is always written to phobos Redis by the signup
-///    flow, so the tenant resolver must read from the same instance.
 /// 3. Hard-coded `redis://localhost:6380` (last-resort dev fallback).
-///
-/// Using the shard resolver's URL ensures that dev environments whose Docker
-/// Redis binds on a non-standard port (e.g. 6380) are routed correctly
-/// without needing a manual `DEKA_REDIS_URL` override.
 pub fn resolve_tenant_record(subdomain: &str) -> Option<SubdomainRecord> {
+    // 1. Try Zega first.
+    if let Some(zega) = global_subdomain_zega() {
+        let key = format!("subdomain:{}", subdomain);
+        if let Some(value) = zega.kv_get(&key)
+            && let Some(raw) = value.as_string()
+        {
+            return Some(parse_subdomain_value(raw));
+        }
+    }
+
+    // 2. Fall back to Redis.
     let redis_url = std::env::var("DEKA_REDIS_URL").unwrap_or_else(|_| {
-        // Fall back to the local shard's Redis URL so dev machines with
-        // non-standard ports (e.g. Docker Redis on :6380) work without
-        // explicit config. The global resolver is cheap — it's a static
-        // OnceLock that's already initialised by the time any request
-        // arrives.
         deka_shard::global()
             .self_shard()
             .map(|s| s.redis.clone())
@@ -190,7 +198,28 @@ pub fn resolve_tenant_record(subdomain: &str) -> Option<SubdomainRecord> {
     raw.map(|s| parse_subdomain_value(&s))
 }
 
-/// Parse a Redis `subdomain:*` value into a `SubdomainRecord`.
+/// Write a subdomain record to the embedded Zega store.
+///
+/// This is the canonical write path for the subdomain → tenant map.
+/// The edge publisher calls this after reading from Neo4j.
+pub fn write_subdomain_record(subdomain: &str, record: &SubdomainRecord) -> Result<(), String> {
+    let zega = global_subdomain_zega()
+        .ok_or("subdomain zega not initialised")?;
+    let key = format!("subdomain:{}", subdomain);
+    let value = if let Some(account_id) = &record.account_id {
+        serde_json::json!({
+            "shop_id": record.shop_id,
+            "account_id": account_id,
+        })
+        .to_string()
+    } else {
+        record.shop_id.clone()
+    };
+    zega.kv_set(key, value.into(), None)
+        .map_err(|e| format!("zega kv_set failed: {e}"))
+}
+
+/// Parse a `subdomain:*` value into a `SubdomainRecord`.
 ///
 /// Accepts either:
 ///   - JSON: `{"shop_id": "...", "account_id": "..."}`
@@ -224,7 +253,7 @@ pub fn parse_subdomain_value(raw: &str) -> SubdomainRecord {
 }
 
 /// Resolve tenant from request headers.
-/// Extracts Host header → subdomain → Redis lookup → shop_id.
+/// Extracts Host header → subdomain → Zega lookup → shop_id.
 /// Falls back to `DEKA_SHOP_ID` env var for dev/testing.
 pub fn resolve_tenant_from_headers(headers: &[(String, String)]) -> Option<String> {
     resolve_tenant_from_host(headers)
@@ -586,5 +615,66 @@ mod tests {
 
         // Clean up
         let _: () = conn.del("subdomain:test-shop").unwrap();
+    }
+
+    #[test]
+    fn zega_lookup_integration() {
+        // This test uses a temporary Zega directory and does NOT rely on Redis.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_str().unwrap();
+        unsafe {
+            std::env::set_var("DEKA_SUBDOMAIN_ZEGA_PATH", path);
+        }
+
+        // Write a record into Zega
+        write_subdomain_record(
+            "zega-test",
+            &SubdomainRecord {
+                shop_id: "shop_zega_001".to_string(),
+                account_id: Some("acct-1234".to_string()),
+            },
+        )
+        .expect("write_subdomain_record should succeed");
+
+        // Resolve without touching Redis
+        let result = resolve_tenant_record("zega-test");
+        assert_eq!(
+            result,
+            Some(SubdomainRecord {
+                shop_id: "shop_zega_001".to_string(),
+                account_id: Some("acct-1234".to_string()),
+            })
+        );
+
+        // Verify Redis is NOT consulted for a missing key (Zega returns None,
+        // then Redis fallback is tried).  We can't easily assert Redis was skipped,
+        // but we can at least verify the Zega path works end-to-end.
+    }
+
+    #[test]
+    fn zega_legacy_plain_string_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_str().unwrap();
+        unsafe {
+            std::env::set_var("DEKA_SUBDOMAIN_ZEGA_PATH", path);
+        }
+
+        write_subdomain_record(
+            "legacy-shop",
+            &SubdomainRecord {
+                shop_id: "shop_legacy".to_string(),
+                account_id: None,
+            },
+        )
+        .expect("write_subdomain_record should succeed");
+
+        let result = resolve_tenant_record("legacy-shop");
+        assert_eq!(
+            result,
+            Some(SubdomainRecord {
+                shop_id: "shop_legacy".to_string(),
+                account_id: None,
+            })
+        );
     }
 }

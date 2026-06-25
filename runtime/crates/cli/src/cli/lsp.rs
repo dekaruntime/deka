@@ -1,4 +1,4 @@
-use core::{CommandSpec, Context, Registry};
+use core::{CommandSpec, Context, FlagSpec, Registry};
 
 const COMMAND: CommandSpec = CommandSpec {
     name: "lsp",
@@ -11,6 +11,11 @@ const COMMAND: CommandSpec = CommandSpec {
 
 pub fn register(registry: &mut Registry) {
     registry.add_command(COMMAND);
+    registry.add_flag(FlagSpec {
+        name: "--stdio",
+        aliases: &[],
+        description: "run the language server over stdio",
+    });
 }
 
 pub fn cmd(_context: &Context) {

@@ -36,6 +36,7 @@ pub fn register(registry: &mut Registry) {
 pub fn cmd(context: &Context) {
     if let Err(err) = run(context) {
         stdio::error("build", &err);
+        std::process::exit(1);
     }
 }
 

@@ -17,6 +17,7 @@ native = [
   "dep:modules_php",
   "dep:phpx_js",
   "dep:bundler",
+  "dep:seam_ts",
   "dep:rusqlite",
 ]
 
@@ -25,6 +26,7 @@ runtime = { path = "../runtime", optional = true }
 runtime_core = { path = "../runtime_core" }
 seam_diff = { path = "../seam_diff" }
 seam_ir = { path = "../seam_ir" }
+seam_ts = { path = "../seam_ts", optional = true }
 compile = { path = "../compile", optional = true }
 core = { path ="../core" }
 stdio = { path = "../stdio" }
@@ -44,6 +46,7 @@ modules_php = { path = "../modules_php", optional = true }
 phpx_js = { path = "../phpx_js", optional = true }
 bumpalo = "3.12"
 rusqlite = { version = "0.32", optional = true }
+sha2 = "0.10"
 deno_task_shell = "0.29.0"
 glob = "0.3.1"
 serde_yaml = "0.9"

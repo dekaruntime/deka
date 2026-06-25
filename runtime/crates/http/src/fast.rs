@@ -77,7 +77,7 @@ async fn handle_request_fast(
         Err(err) => {
             tracing::error!("Handler execution failed: {}", err);
             let response = hyper::Response::builder().status(500);
-            let body = Full::new(Bytes::from(format!("Handler execution failed: {}", err)));
+            let body = Full::new(Bytes::from(handler_failure_body(&err, state.dev_mode)));
             return Ok(response.body(body).unwrap());
         }
     };
@@ -106,6 +106,14 @@ async fn handle_request_fast(
     };
 
     Ok(builder.body(body).unwrap())
+}
+
+fn handler_failure_body(detail: &str, dev_mode: bool) -> String {
+    if dev_mode {
+        format!("Handler execution failed: {}", detail)
+    } else {
+        "Internal Server Error".to_string()
+    }
 }
 
 fn rate_limited_response_fast(retry_after_secs: u64) -> hyper::Response<Full<Bytes>> {

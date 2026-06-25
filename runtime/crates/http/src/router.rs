@@ -61,7 +61,7 @@ async fn handle_request(
     }
 
     let hmr_path = path == "/_deka/hmr";
-    if hmr_path && dev_mode_enabled() {
+    if hmr_path && state.dev_mode {
         if let Some(ws) = ws {
             let state_for_hmr = Arc::clone(&state);
             return ws
@@ -152,7 +152,7 @@ async fn handle_request(
 
             let mut response = Response::builder().status(response_envelope.status);
             let is_html = is_html_response(&response_envelope.headers);
-            let inject_dev_hmr = dev_mode_enabled()
+            let inject_dev_hmr = state.dev_mode
                 && is_html
                 && response_envelope.body_base64.is_none()
                 && !response_envelope.body.is_empty();
@@ -199,19 +199,13 @@ async fn handle_request(
             tracing::error!("Handler execution failed: {}", err);
             Response::builder()
                 .status(500)
-                .body(axum::body::Body::from(format!(
-                    "Handler execution failed: {}",
-                    err
+                .body(axum::body::Body::from(handler_failure_body(
+                    &err,
+                    state.dev_mode,
                 )))
                 .unwrap()
         }
     }
-}
-
-fn dev_mode_enabled() -> bool {
-    std::env::var("DEKA_DEV")
-        .map(|value| is_truthy(&value))
-        .unwrap_or(false)
 }
 
 /// Returns true when the built-in /api/* platform handler should be active.
@@ -225,6 +219,14 @@ fn platform_api_enabled() -> bool {
 
 fn is_truthy(value: &str) -> bool {
     matches!(value, "1" | "true" | "yes" | "on")
+}
+
+fn handler_failure_body(detail: &str, dev_mode: bool) -> String {
+    if dev_mode {
+        format!("Handler execution failed: {}", detail)
+    } else {
+        "Internal Server Error".to_string()
+    }
 }
 
 fn is_html_response(headers: &std::collections::HashMap<String, String>) -> bool {
@@ -260,7 +262,7 @@ fn inject_hmr_client(html: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{inject_hmr_client, is_truthy};
+    use super::{handler_failure_body, inject_hmr_client, is_truthy};
 
     #[test]
     fn injects_before_body_close() {
@@ -297,5 +299,25 @@ mod tests {
         assert!(is_truthy("on"));
         assert!(!is_truthy("false"));
         assert!(!is_truthy("0"));
+    }
+
+    #[test]
+    fn handler_failure_body_redacts_outside_dev() {
+        let detail = "Missing phpx module 'missing/mod' (imported from /tmp/deka-leak/main.phpx). \
+Attempted roots: /tmp/deka-leak/php_modules, /opt/deka/php_modules. \
+Available modules: crypto, bytes. Lockfile: /tmp/deka-leak/deka.lock";
+        let prod_body = handler_failure_body(detail, false);
+
+        assert_eq!(prod_body, "Internal Server Error");
+        assert!(!prod_body.contains("/tmp/deka-leak"));
+        assert!(!prod_body.contains("Available modules"));
+        assert!(!prod_body.contains("Attempted roots"));
+        assert!(!prod_body.contains("deka.lock"));
+
+        let dev_body = handler_failure_body(detail, true);
+
+        assert!(dev_body.contains("/tmp/deka-leak/main.phpx"));
+        assert!(dev_body.contains("Available modules"));
+        assert!(dev_body.contains("Attempted roots"));
     }
 }

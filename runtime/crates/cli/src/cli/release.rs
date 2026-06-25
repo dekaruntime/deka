@@ -63,7 +63,10 @@ pub fn register(registry: &mut Registry) {
 pub fn cmd(context: &Context) {
     match run_release(context) {
         Ok(()) => {}
-        Err(err) => stdio::error("release", &err.to_string()),
+        Err(err) => {
+            stdio::error("release", &err.to_string());
+            std::process::exit(1);
+        }
     }
 }
 

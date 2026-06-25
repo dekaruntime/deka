@@ -1,19 +1,35 @@
-import neo4j, { type Driver } from 'neo4j-driver'
+const ZEGA_URL = process.env.ZEGA_SERVER_URL || 'http://demon:7700'
+const ZEGA_TOKEN = process.env.ZEGA_SERVER_TOKEN || ''
 
-type StaffRow = {
-  is_staff?: boolean | null
+type ZegaCqlResponse = {
+  ok: boolean
+  error?: string
+  rows?: Record<string, unknown>[]
 }
 
-let driver: Driver | null = null
+async function zegaCql(
+  query: string,
+  params: Record<string, unknown> = {}
+): Promise<Record<string, unknown>[]> {
+  const res = await fetch(`${ZEGA_URL}/cql`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${ZEGA_TOKEN}`,
+    },
+    body: JSON.stringify({ query, params }),
+  })
+  const json = (await res.json()) as ZegaCqlResponse
+  if (!json.ok) throw new Error(`zega /cql: ${json.error ?? `HTTP ${res.status}`}`)
+  return json.rows ?? []
+}
 
-function getNeo4jDriver(): Driver {
-  if (!driver) {
-    const uri = process.env.NEO4J_URI || process.env.NEO4J_URL || 'bolt://localhost:7688'
-    const user = process.env.NEO4J_USER || 'neo4j'
-    const password = process.env.NEO4J_PASSWORD || 'password'
-    driver = neo4j.driver(uri, neo4j.auth.basic(user, password))
-  }
-  return driver
+export async function isStaffEmailInZega(email: string): Promise<boolean> {
+  const rows = await zegaCql(
+    'MATCH (u:User {email: $email}) RETURN u.is_staff AS is_staff',
+    { email }
+  )
+  return rows[0]?.is_staff === true
 }
 
 function staffAllowlistEmails(): Set<string> {
@@ -34,32 +50,18 @@ function allowViaEnvFallback(email: string, reason: string): boolean {
   return true
 }
 
-export async function isStaffEmailInNeo4j(email: string): Promise<boolean> {
-  const session = getNeo4jDriver().session()
-  try {
-    const result = await session.run(
-      'MATCH (u:User {email: $email}) RETURN u.is_staff AS is_staff',
-      { email },
-    )
-    const row = result.records[0]?.toObject() as StaffRow | undefined
-    return row?.is_staff === true
-  } finally {
-    await session.close()
-  }
-}
-
 export async function authorizeStaffEmail(emailValue: unknown): Promise<boolean> {
   const email = typeof emailValue === 'string' ? emailValue.trim().toLowerCase() : ''
   if (!email) return false
 
   try {
-    if (await isStaffEmailInNeo4j(email)) {
+    if (await isStaffEmailInZega(email)) {
       return true
     }
   } catch (err) {
-    console.error(`[deka-sso] Neo4j staff lookup failed for ${email}:`, err)
-    return allowViaEnvFallback(email, 'neo4j_lookup_failed')
+    console.error(`[deka-sso] Zega staff lookup failed for ${email}:`, err)
+    return allowViaEnvFallback(email, 'zega_lookup_failed')
   }
 
-  return allowViaEnvFallback(email, 'neo4j_is_staff_false')
+  return allowViaEnvFallback(email, 'zega_is_staff_false')
 }
