@@ -142,7 +142,7 @@ pub(crate) fn http_response(status: u16, body: &str) -> String {
         405 => "Method Not Allowed",
         409 => "Conflict",
         500 => "Internal Server Error",
-        501 => "Not Implemented",
+        501 => "Unavailable",
         _ => "OK",
     };
     format!(

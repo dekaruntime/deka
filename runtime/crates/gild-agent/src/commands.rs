@@ -193,7 +193,7 @@ pub(crate) fn not_implemented(operation: &str, target: &str) -> ServiceReply {
             "ok": false,
             "operation": operation,
             "target": target,
-            "error": "not yet implemented"
+            "error": "operation unavailable"
         }),
     )
 }

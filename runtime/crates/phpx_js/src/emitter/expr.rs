@@ -66,6 +66,17 @@ impl<'a> JsSubsetEmitter<'a> {
                         }
                     }
                 }
+                if matches!(op, BinaryOp::Pipe) {
+                    let rhs = self.emit_expr(*right)?;
+                    let callable = match *right {
+                        Expr::Variable { .. } => rhs,
+                        _ => format!("({})", rhs),
+                    };
+                    return Ok(format!(
+                        "((__phpx_pipe_lhs) => {}(__phpx_pipe_lhs))({})",
+                        callable, lhs
+                    ));
+                }
                 let rhs = self.emit_expr(*right)?;
                 let js_op = match op {
                     BinaryOp::Plus => "+",

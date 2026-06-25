@@ -9,7 +9,7 @@ use axum::{
 };
 
 use crate::{RuntimeState, WsOptions};
-use http::websocket::handle_websocket;
+use deka_http::websocket::handle_websocket;
 
 pub async fn serve_ws(state: Arc<RuntimeState>, options: WsOptions) -> Result<(), String> {
     let addr = SocketAddr::from(([0, 0, 0, 0], options.port));
