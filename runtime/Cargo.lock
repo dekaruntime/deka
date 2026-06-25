@@ -1655,6 +1655,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "deka_http"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "bytes",
+ "chrono",
+ "dashmap 5.5.3",
+ "engine",
+ "futures-util",
+ "http-body-util",
+ "hyper 1.9.0",
+ "hyper-util",
+ "libc",
+ "neo4rs",
+ "pool",
+ "redis",
+ "serde_json",
+ "socket2 0.6.3",
+ "tokio",
+ "tower 0.5.3",
+ "tracing",
+]
+
+[[package]]
 name = "deka_wasm_hello"
 version = "0.1.0"
 dependencies = [
@@ -2827,31 +2852,6 @@ dependencies = [
  "rustc-hash 2.1.2",
  "serde",
  "triomphe",
-]
-
-[[package]]
-name = "http"
-version = "0.1.0"
-dependencies = [
- "axum",
- "base64 0.22.1",
- "bytes",
- "chrono",
- "dashmap 5.5.3",
- "engine",
- "futures-util",
- "http-body-util",
- "hyper 1.9.0",
- "hyper-util",
- "libc",
- "neo4rs",
- "pool",
- "redis",
- "serde_json",
- "socket2 0.6.3",
- "tokio",
- "tower 0.5.3",
- "tracing",
 ]
 
 [[package]]
@@ -5552,10 +5552,10 @@ dependencies = [
  "compile",
  "core",
  "deka-shard",
+ "deka_http",
  "deno_core",
  "engine",
  "flate2",
- "http 0.1.0",
  "modules_php",
  "notify",
  "num_cpus",
@@ -7604,9 +7604,9 @@ name = "transport"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "deka_http",
  "engine",
  "futures-util",
- "http 0.1.0",
  "hyper-util",
  "pool",
  "serde",

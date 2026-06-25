@@ -14,4 +14,4 @@ hyper-util = { workspace = true }
 socket2 = { workspace = true, features = ["all"] }
 engine = { path = "../engine" }
 pool = { path = "../pool" }
-http = { path = "../http" }
+deka_http = { path = "../http" }
