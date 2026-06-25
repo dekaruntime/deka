@@ -169,7 +169,7 @@ pub(super) fn set_request_globals(
     let has_routed_shop = resolved_tenant_info
         .as_ref()
         .is_some_and(|info| !info.shop_id.is_empty());
-    let env_snapshot = if has_routed_shop {
+    let env_snapshot = if request_parts.is_some() {
         runtime_core::platform_env::snapshot_env_from_process()
     } else {
         Vec::new()

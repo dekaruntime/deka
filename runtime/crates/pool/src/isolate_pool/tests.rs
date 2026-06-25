@@ -107,3 +107,112 @@ fn pick_shard_empty_resolver_returns_none() {
     assert!(super::pick_shard_for_request("any-id", &r).is_none());
     assert!(super::pick_shard_for_request("", &r).is_none());
 }
+
+use std::sync::Mutex;
+
+/// Regression test for #618: env_snapshot must be injected for any served
+/// request, even when there is no subdomain-routed shop (single-tenant serve).
+/// Non-allowlisted vars must stay excluded (security boundary).
+#[test]
+fn env_snapshot_injected_for_unrouted_shop_request() {
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    let _guard = ENV_LOCK.lock().unwrap();
+
+    // Set up an allowlisted env var and a non-allowlisted env var.
+    unsafe {
+        std::env::set_var("STRIPE_PUBLISHABLE_KEY", "pk_test_618");
+        std::env::set_var("SECRET_NON_ALLOWLISTED", "should_not_appear");
+    }
+
+    let mut runtime = deno_core::JsRuntime::new(deno_core::RuntimeOptions::default());
+
+    let request_parts = super::RequestParts {
+        url: "http://localhost:8530/".to_string(),
+        method: "GET".to_string(),
+        headers: vec![],
+        body: None,
+    };
+
+    let result = super::set_request_globals(
+        &mut runtime,
+        &serde_json::Value::Null,
+        Some(&request_parts),
+        &serde_json::Value::Null,
+        None,
+        &std::collections::HashMap::new(),
+    );
+    assert!(result.is_ok(), "set_request_globals failed: {:?}", result);
+
+    let (env, server, process_env) = {
+        deno_core::scope!(scope, runtime);
+        let context = scope.get_current_context();
+        let global = context.global(scope);
+
+        let env_key = deno_core::v8::String::new(scope, "_ENV").expect("_ENV key");
+        let env_val = global
+            .get(scope, env_key.into())
+            .expect("_ENV must be set by set_request_globals");
+        let env: serde_json::Value = deno_core::serde_v8::from_v8(scope, env_val)
+            .expect("_ENV must deserialize");
+
+        let server_key = deno_core::v8::String::new(scope, "_SERVER").expect("_SERVER key");
+        let server_val = global
+            .get(scope, server_key.into())
+            .expect("_SERVER must be set by set_request_globals");
+        let server: serde_json::Value = deno_core::serde_v8::from_v8(scope, server_val)
+            .expect("_SERVER must deserialize");
+
+        let process_key = deno_core::v8::String::new(scope, "process").expect("process key");
+        let process_val = global
+            .get(scope, process_key.into())
+            .expect("process must be set by set_request_globals");
+        let process_obj = process_val
+            .to_object(scope)
+            .expect("process must be an object");
+        let env_key = deno_core::v8::String::new(scope, "env").expect("env key");
+        let process_env_val = process_obj
+            .get(scope, env_key.into())
+            .expect("process.env must be set by set_request_globals");
+        let process_env: serde_json::Value = deno_core::serde_v8::from_v8(scope, process_env_val)
+            .expect("process.env must deserialize");
+
+        (env, server, process_env)
+    };
+
+    // Assert allowlisted var is present in all three injection targets.
+    assert_eq!(
+        env.get("STRIPE_PUBLISHABLE_KEY").and_then(|v| v.as_str()),
+        Some("pk_test_618"),
+        "_ENV must contain allowlisted var"
+    );
+    assert_eq!(
+        server.get("STRIPE_PUBLISHABLE_KEY").and_then(|v| v.as_str()),
+        Some("pk_test_618"),
+        "_SERVER must contain allowlisted var"
+    );
+    assert_eq!(
+        process_env.get("STRIPE_PUBLISHABLE_KEY").and_then(|v| v.as_str()),
+        Some("pk_test_618"),
+        "process.env must contain allowlisted var"
+    );
+
+    // Assert non-allowlisted var is excluded from all three targets.
+    assert!(
+        env.get("SECRET_NON_ALLOWLISTED").is_none(),
+        "_ENV must NOT contain non-allowlisted var"
+    );
+    assert!(
+        server.get("SECRET_NON_ALLOWLISTED").is_none(),
+        "_SERVER must NOT contain non-allowlisted var"
+    );
+    assert!(
+        process_env.get("SECRET_NON_ALLOWLISTED").is_none(),
+        "process.env must NOT contain non-allowlisted var"
+    );
+
+    // Clean up.
+    unsafe {
+        std::env::remove_var("STRIPE_PUBLISHABLE_KEY");
+        std::env::remove_var("SECRET_NON_ALLOWLISTED");
+    }
+}
