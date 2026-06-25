@@ -4,12 +4,15 @@
 //! interval, and applies updates using the shared `run_update` core.
 
 use core::Context;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use stdio;
 
-use crate::cli::self_cmd::update::{run_update, UpdateConfig, UpdateResult};
+use crate::cli::self_cmd::update::{
+    UpdateConfig, UpdateResult, run_update, validate_managed_unit_name,
+};
 
 #[derive(Debug, Clone)]
 pub struct MonitorConfig {
@@ -118,13 +121,16 @@ pub fn cmd(context: &Context) {
 // ---------------------------------------------------------------------------
 
 fn load_monitor_config(context: &Context) -> Result<MonitorConfig, String> {
-    let registry_url =
-        get_param_or_env(
-            context,
-            "--registry-url",
-            &["LINKHASH_REGISTRY_URL", "LINKHASH_REGISTRY", "TANA_GIT_SERVER"],
-        )
-        .unwrap_or_else(|| "http://localhost:9418".to_string());
+    let registry_url = get_param_or_env(
+        context,
+        "--registry-url",
+        &[
+            "LINKHASH_REGISTRY_URL",
+            "LINKHASH_REGISTRY",
+            "TANA_GIT_SERVER",
+        ],
+    )
+    .unwrap_or_else(|| "http://localhost:9418".to_string());
 
     let token = get_param_or_env(context, "--token", &["LINKHASH_TOKEN", "TANA_GIT_TOKEN"]);
 
@@ -134,10 +140,10 @@ fn load_monitor_config(context: &Context) -> Result<MonitorConfig, String> {
     let poll_interval = get_poll_interval(context);
 
     let current_version = env!("CARGO_PKG_VERSION").to_string();
-    let current_binary =
-        std::env::current_exe().map_err(|e| format!("failed to resolve current executable: {}", e))?;
+    let current_binary = std::env::current_exe()
+        .map_err(|e| format!("failed to resolve current executable: {}", e))?;
 
-    let managed_units = load_managed_units(context);
+    let managed_units = load_managed_units(context)?;
     let auto_confirm = true; // daemon never prompts interactively
 
     let update_config = UpdateConfig {
@@ -196,40 +202,106 @@ fn get_poll_interval(context: &Context) -> Duration {
     Duration::from_secs(300)
 }
 
-fn load_managed_units(context: &Context) -> Vec<String> {
+fn load_managed_units(context: &Context) -> Result<Vec<String>, String> {
+    let Some(config_path) = context.args.params.get("--config") else {
+        return Ok(Vec::new());
+    };
+
+    load_managed_units_from_config_path(Path::new(config_path))
+}
+
+fn load_managed_units_from_config_path(path: &Path) -> Result<Vec<String>, String> {
+    validate_monitor_config_path(path, is_running_privileged())?;
+
+    let raw = std::fs::read_to_string(path).map_err(|e| {
+        format!(
+            "failed to read self monitor config {}: {}",
+            path.display(),
+            e
+        )
+    })?;
+    let json = serde_json::from_str::<serde_json::Value>(&raw).map_err(|e| {
+        format!(
+            "failed to parse self monitor config {}: {}",
+            path.display(),
+            e
+        )
+    })?;
     let mut units = Vec::new();
-
-    let deka_json = context.env.cwd.join("deka.json");
-    if let Ok(raw) = std::fs::read_to_string(&deka_json) {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
-            // Prefer self.update.managed_units (shared with one-shot updater)
-            if let Some(arr) = json
-                .get("self")
-                .and_then(|s| s.get("update"))
-                .and_then(|u| u.get("managed_units"))
-                .and_then(|m| m.as_array())
-            {
-                for val in arr {
-                    if let Some(s) = val.as_str() {
-                        units.push(s.to_string());
-                    }
-                }
+    if let Some(arr) = json
+        .get("self")
+        .and_then(|s| s.get("update"))
+        .and_then(|u| u.get("managed_units"))
+        .and_then(|m| m.as_array())
+    {
+        for val in arr {
+            if let Some(s) = val.as_str() {
+                validate_managed_unit_name(s)?;
+                units.push(s.to_string());
             }
         }
     }
+    Ok(units)
+}
 
-    if units.is_empty() {
-        if let Ok(env_units) = std::env::var("DEKA_SELF_MANAGED_UNITS") {
-            for s in env_units.split(',') {
-                let trimmed = s.trim();
-                if !trimmed.is_empty() {
-                    units.push(trimmed.to_string());
-                }
-            }
-        }
+fn validate_monitor_config_path(path: &Path, running_privileged: bool) -> Result<(), String> {
+    if !running_privileged {
+        return Ok(());
     }
+    if !path.is_absolute() {
+        return Err(format!(
+            "privileged self monitor requires an absolute --config path, got {}",
+            path.display()
+        ));
+    }
+    ensure_root_owned(path)
+}
 
-    units
+#[cfg(unix)]
+fn ensure_root_owned(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = std::fs::metadata(path).map_err(|e| {
+        format!(
+            "failed to inspect self monitor config {}: {}",
+            path.display(),
+            e
+        )
+    })?;
+    if metadata.uid() != 0 {
+        return Err(format!(
+            "privileged self monitor config must be root-owned: {}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn ensure_root_owned(path: &Path) -> Result<(), String> {
+    let _ = path;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn is_running_privileged() -> bool {
+    std::process::Command::new("id")
+        .arg("-u")
+        .output()
+        .ok()
+        .and_then(|output| {
+            if output.status.success() {
+                Some(String::from_utf8_lossy(&output.stdout).trim() == "0")
+            } else {
+                None
+            }
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_running_privileged() -> bool {
+    false
 }
 
 #[cfg(test)]
@@ -297,7 +369,9 @@ mod tests {
         .unwrap();
 
         let mut ctx = dummy_context(dir.clone());
-        ctx.args.params.insert("--interval".to_string(), "17".to_string());
+        ctx.args
+            .params
+            .insert("--interval".to_string(), "17".to_string());
 
         let config = load_monitor_config(&ctx).unwrap();
         assert_eq!(config.poll_interval, Duration::from_secs(17));
@@ -314,6 +388,59 @@ mod tests {
         let config = load_monitor_config(&ctx).unwrap();
         assert_eq!(config.poll_interval, Duration::from_secs(300));
         let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn monitor_does_not_trust_cwd_deka_json_for_managed_units() {
+        let dir = std::env::temp_dir().join(format!("deka-mon-cwd-units-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let deka_json = dir.join("deka.json");
+        std::fs::write(
+            &deka_json,
+            r#"{"self":{"update":{"managed_units":["ssh.service"]}}}"#,
+        )
+        .unwrap();
+
+        let ctx = dummy_context(dir.clone());
+        let config = load_monitor_config(&ctx).unwrap();
+        assert!(config.update_config.managed_units.is_empty());
+
+        let _ = std::fs::remove_file(&deka_json);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn monitor_config_rejects_non_tana_managed_unit() {
+        if is_running_privileged() {
+            return;
+        }
+
+        let dir = std::env::temp_dir().join(format!("deka-mon-bad-unit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config_path = dir.join("monitor.json");
+        std::fs::write(
+            &config_path,
+            r#"{"self":{"update":{"managed_units":["ssh.service"]}}}"#,
+        )
+        .unwrap();
+
+        let mut ctx = dummy_context(dir.clone());
+        ctx.args.params.insert(
+            "--config".to_string(),
+            config_path.to_string_lossy().to_string(),
+        );
+        let err = load_monitor_config(&ctx).expect_err("non-Tana unit should fail");
+        assert!(err.contains("gg.tana."));
+
+        let _ = std::fs::remove_file(&config_path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn privileged_monitor_rejects_relative_config_path() {
+        let err = validate_monitor_config_path(Path::new("monitor.json"), true)
+            .expect_err("privileged relative config should fail");
+        assert!(err.contains("absolute --config path"));
     }
 
     #[test]

@@ -52,7 +52,10 @@ pub struct UpdateResult {
 ///
 /// The query path is isolated in this small function so it is easy to repoint
 /// at the live endpoint once Samira deploys it.
-pub fn resolve_latest_version(registry_url: &str, token: Option<&str>) -> Result<LatestVersionInfo, String> {
+pub fn resolve_latest_version(
+    registry_url: &str,
+    token: Option<&str>,
+) -> Result<LatestVersionInfo, String> {
     let client = reqwest::blocking::Client::new();
     let url = format!(
         "{}/api/v1/packages/cargo/deka/latest",
@@ -87,8 +90,15 @@ pub fn resolve_latest_version(registry_url: &str, token: Option<&str>) -> Result
 /// 7. If health-check fails, restore the snapshot.
 /// 8. Restart configured managed units.
 pub fn run_update(config: &UpdateConfig) -> Result<UpdateResult, String> {
+    for unit in &config.managed_units {
+        validate_managed_unit_name(unit)?;
+    }
+
     let latest = resolve_latest_version(&config.registry_url, config.token.as_deref())?;
-    stdio::log("self update", &format!("resolved latest version: {}", latest.version));
+    stdio::log(
+        "self update",
+        &format!("resolved latest version: {}", latest.version),
+    );
 
     if !is_newer(&latest.version, &config.current_version) {
         stdio::log(
@@ -134,7 +144,11 @@ pub fn run_update(config: &UpdateConfig) -> Result<UpdateResult, String> {
         "self update",
         &format!("building into {}", temp_root.display()),
     );
-    let new_binary = build_new_binary(&temp_root, &latest.version, config.registry_index_url.as_deref())?;
+    let new_binary = build_new_binary(
+        &temp_root,
+        &latest.version,
+        config.registry_index_url.as_deref(),
+    )?;
 
     // --- safety rail 2b: digest verification ---
     if let Err(e) = verify_binary_digest(&new_binary, &latest.digest) {
@@ -203,10 +217,7 @@ pub fn run_update(config: &UpdateConfig) -> Result<UpdateResult, String> {
                     stdio::log("self update", &format!("restarted {}", unit));
                 }
                 Err(e) => {
-                    stdio::warn(
-                        "self update",
-                        &format!("failed to restart {}: {}", unit, e),
-                    );
+                    stdio::warn("self update", &format!("failed to restart {}: {}", unit, e));
                 }
             }
         }
@@ -237,7 +248,13 @@ pub fn cmd(context: &Context) {
             std::process::exit(1);
         }
     };
-    let managed_units = load_managed_units(context);
+    let managed_units = match load_managed_units(context) {
+        Ok(units) => units,
+        Err(e) => {
+            stdio::error("self update", &e);
+            std::process::exit(1);
+        }
+    };
     let auto_confirm =
         context.args.flags.contains_key("--yes") || context.args.flags.contains_key("-y");
 
@@ -333,7 +350,10 @@ fn is_newer(latest: &str, current: &str) -> bool {
 
 fn snapshot_binary(binary: &Path) -> Result<PathBuf, String> {
     let parent = binary.parent().unwrap_or_else(|| Path::new("."));
-    let stem = binary.file_stem().and_then(|s| s.to_str()).unwrap_or("deka");
+    let stem = binary
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("deka");
     let ext = binary.extension().and_then(|s| s.to_str()).unwrap_or("");
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -345,14 +365,12 @@ fn snapshot_binary(binary: &Path) -> Result<PathBuf, String> {
         format!("{}.bak.{}.{}", stem, timestamp, ext)
     };
     let snapshot = parent.join(snapshot_name);
-    std::fs::copy(binary, &snapshot)
-        .map_err(|e| format!("failed to snapshot binary: {}", e))?;
+    std::fs::copy(binary, &snapshot).map_err(|e| format!("failed to snapshot binary: {}", e))?;
     Ok(snapshot)
 }
 
 fn restore_snapshot(snapshot: &Path, target: &Path) -> Result<(), String> {
-    std::fs::copy(snapshot, target)
-        .map_err(|e| format!("failed to restore snapshot: {}", e))?;
+    std::fs::copy(snapshot, target).map_err(|e| format!("failed to restore snapshot: {}", e))?;
     Ok(())
 }
 
@@ -362,8 +380,7 @@ fn temp_install_root() -> Result<PathBuf, String> {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let root = std::env::temp_dir().join(format!("deka-update-{}", ts));
-    std::fs::create_dir_all(&root)
-        .map_err(|e| format!("failed to create temp root: {}", e))?;
+    std::fs::create_dir_all(&root).map_err(|e| format!("failed to create temp root: {}", e))?;
     Ok(root)
 }
 
@@ -372,8 +389,7 @@ fn verify_binary_digest(binary: &Path, expected_digest: &str) -> Result<(), Stri
     let mut file = std::fs::File::open(binary)
         .map_err(|e| format!("failed to open binary for digest: {}", e))?;
     let mut hasher = Sha256::new();
-    std::io::copy(&mut file, &mut hasher)
-        .map_err(|e| format!("failed to hash binary: {}", e))?;
+    std::io::copy(&mut file, &mut hasher).map_err(|e| format!("failed to hash binary: {}", e))?;
     let computed = format!("{:x}", hasher.finalize());
     if computed != expected_digest {
         return Err(format!(
@@ -384,19 +400,26 @@ fn verify_binary_digest(binary: &Path, expected_digest: &str) -> Result<(), Stri
     Ok(())
 }
 
-fn validate_managed_unit_name(unit: &str) -> Result<(), String> {
+pub(super) fn validate_managed_unit_name(unit: &str) -> Result<(), String> {
     if unit.is_empty() {
         return Err("managed unit name is empty".to_string());
     }
+    if !unit.starts_with("gg.tana.") {
+        return Err(format!(
+            "managed unit name must start with gg.tana.: '{}'",
+            unit
+        ));
+    }
     for (i, c) in unit.chars().enumerate() {
         if i == 0 {
-            if !c.is_ascii_alphanumeric() {
+            if !c.is_ascii_lowercase() && !c.is_ascii_digit() {
                 return Err(format!(
-                    "managed unit name must start with alphanumeric: '{}'",
+                    "managed unit name must start with lowercase alphanumeric: '{}'",
                     unit
                 ));
             }
-        } else if !c.is_ascii_alphanumeric() && c != '.' && c != '-' && c != '_' {
+        } else if !c.is_ascii_lowercase() && !c.is_ascii_digit() && c != '.' && c != '-' && c != '@'
+        {
             return Err(format!(
                 "managed unit name contains invalid character in '{}': '{}'",
                 unit, c
@@ -408,6 +431,9 @@ fn validate_managed_unit_name(unit: &str) -> Result<(), String> {
             "managed unit name has invalid dot pattern: '{}'",
             unit
         ));
+    }
+    if unit == "gg.tana." {
+        return Err("managed unit name is missing unit segment".to_string());
     }
     Ok(())
 }
@@ -500,8 +526,7 @@ fn swap_binary(source: &Path, target: &Path) -> Result<(), String> {
     // Copy source -> target. On Unix this works even when target is the
     // currently running executable because the kernel keeps the old inode
     // mapped in memory.
-    std::fs::copy(source, target)
-        .map_err(|e| format!("failed to copy new binary: {}", e))?;
+    std::fs::copy(source, target).map_err(|e| format!("failed to copy new binary: {}", e))?;
 
     #[cfg(unix)]
     {
@@ -523,7 +548,11 @@ fn build_restart_command(unit: &str) -> Result<(String, Vec<String>), String> {
     {
         Ok((
             "launchctl".to_string(),
-            vec!["kickstart".to_string(), "-k".to_string(), format!("system/{}", unit)],
+            vec![
+                "kickstart".to_string(),
+                "-k".to_string(),
+                format!("system/{}", unit),
+            ],
         ))
     }
     #[cfg(target_os = "linux")]
@@ -565,47 +594,125 @@ fn get_uid() -> Result<String, String> {
     if !output.status.success() {
         return Err("id -u failed".to_string());
     }
-    let uid = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .to_string();
+    let uid = String::from_utf8_lossy(&output.stdout).trim().to_string();
     Ok(uid)
 }
 
-fn load_managed_units(context: &Context) -> Vec<String> {
+fn load_managed_units(context: &Context) -> Result<Vec<String>, String> {
+    if let Some(config_path) = context.args.params.get("--config") {
+        let units = load_managed_units_from_config_path(Path::new(config_path))?;
+        if !units.is_empty() {
+            return Ok(units);
+        }
+    }
+
     let mut units = Vec::new();
-
-    // 1. deka.json in cwd
-    let deka_json = context.env.cwd.join("deka.json");
-    if let Ok(raw) = std::fs::read_to_string(&deka_json) {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) {
-            if let Some(arr) = json
-                .get("self")
-                .and_then(|s| s.get("update"))
-                .and_then(|u| u.get("managed_units"))
-                .and_then(|m| m.as_array())
-            {
-                for val in arr {
-                    if let Some(s) = val.as_str() {
-                        units.push(s.to_string());
-                    }
-                }
+    if let Ok(env_units) = std::env::var("DEKA_SELF_MANAGED_UNITS") {
+        for s in env_units.split(',') {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() {
+                validate_managed_unit_name(trimmed)?;
+                units.push(trimmed.to_string());
             }
         }
     }
 
-    // 2. Environment fallback
-    if units.is_empty() {
-        if let Ok(env_units) = std::env::var("DEKA_SELF_MANAGED_UNITS") {
-            for s in env_units.split(',') {
-                let trimmed = s.trim();
-                if !trimmed.is_empty() {
-                    units.push(trimmed.to_string());
-                }
+    Ok(units)
+}
+
+fn load_managed_units_from_config_path(path: &Path) -> Result<Vec<String>, String> {
+    validate_update_config_path(path, is_running_privileged())?;
+
+    let raw = std::fs::read_to_string(path).map_err(|e| {
+        format!(
+            "failed to read self update config {}: {}",
+            path.display(),
+            e
+        )
+    })?;
+    let json = serde_json::from_str::<serde_json::Value>(&raw).map_err(|e| {
+        format!(
+            "failed to parse self update config {}: {}",
+            path.display(),
+            e
+        )
+    })?;
+
+    let mut units = Vec::new();
+    if let Some(arr) = json
+        .get("self")
+        .and_then(|s| s.get("update"))
+        .and_then(|u| u.get("managed_units"))
+        .and_then(|m| m.as_array())
+    {
+        for val in arr {
+            if let Some(s) = val.as_str() {
+                validate_managed_unit_name(s)?;
+                units.push(s.to_string());
             }
         }
     }
+    Ok(units)
+}
 
-    units
+fn validate_update_config_path(path: &Path, running_privileged: bool) -> Result<(), String> {
+    if !running_privileged {
+        return Ok(());
+    }
+    if !path.is_absolute() {
+        return Err(format!(
+            "privileged self update requires an absolute --config path, got {}",
+            path.display()
+        ));
+    }
+    ensure_root_owned(path)
+}
+
+#[cfg(unix)]
+fn ensure_root_owned(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = std::fs::metadata(path).map_err(|e| {
+        format!(
+            "failed to inspect self update config {}: {}",
+            path.display(),
+            e
+        )
+    })?;
+    if metadata.uid() != 0 {
+        return Err(format!(
+            "privileged self update config must be root-owned: {}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn ensure_root_owned(path: &Path) -> Result<(), String> {
+    let _ = path;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn is_running_privileged() -> bool {
+    Command::new("id")
+        .arg("-u")
+        .output()
+        .ok()
+        .and_then(|output| {
+            if output.status.success() {
+                Some(String::from_utf8_lossy(&output.stdout).trim() == "0")
+            } else {
+                None
+            }
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_running_privileged() -> bool {
+    false
 }
 
 fn prompt_yes_no(prompt: &str, default_yes: bool) -> Option<bool> {
@@ -712,7 +819,7 @@ mod tests {
         let ctx = dummy_context(dir.clone());
 
         // no deka.json, no env -> empty
-        assert!(load_managed_units(&ctx).is_empty());
+        assert!(load_managed_units(&ctx).unwrap().is_empty());
 
         unsafe {
             std::env::set_var(
@@ -720,11 +827,8 @@ mod tests {
                 "gg.tana.deka-platform,gg.tana.deka-edge",
             );
         }
-        let units = load_managed_units(&ctx);
-        assert_eq!(
-            units,
-            vec!["gg.tana.deka-platform", "gg.tana.deka-edge"]
-        );
+        let units = load_managed_units(&ctx).unwrap();
+        assert_eq!(units, vec!["gg.tana.deka-platform", "gg.tana.deka-edge"]);
         unsafe {
             std::env::remove_var("DEKA_SELF_MANAGED_UNITS");
         }
@@ -733,23 +837,23 @@ mod tests {
     }
 
     #[test]
-    fn load_managed_units_from_deka_json() {
+    fn load_managed_units_does_not_trust_cwd_deka_json() {
         let dir = std::env::temp_dir().join(format!("deka-json-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let deka_json = dir.join("deka.json");
-        let content = r#"{"self":{"update":{"managed_units":["gg.tana.deka-platform"]}}}"#;
+        let content = r#"{"self":{"update":{"managed_units":["ssh.service"]}}}"#;
         std::fs::write(&deka_json, content).unwrap();
 
         let ctx = dummy_context(dir.clone());
-        let units = load_managed_units(&ctx);
-        assert_eq!(units, vec!["gg.tana.deka-platform"]);
+        let units = load_managed_units(&ctx).unwrap();
+        assert!(units.is_empty());
 
-        // deka.json takes precedence over env
+        // CWD deka.json does not override the explicit env fallback.
         unsafe {
             std::env::set_var("DEKA_SELF_MANAGED_UNITS", "gg.tana.other");
         }
-        let units2 = load_managed_units(&ctx);
-        assert_eq!(units2, vec!["gg.tana.deka-platform"]);
+        let units2 = load_managed_units(&ctx).unwrap();
+        assert_eq!(units2, vec!["gg.tana.other"]);
         unsafe {
             std::env::remove_var("DEKA_SELF_MANAGED_UNITS");
         }
@@ -757,6 +861,81 @@ mod tests {
         // cleanup
         let _ = std::fs::remove_file(&deka_json);
         let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn load_managed_units_from_explicit_config() {
+        if is_running_privileged() {
+            return;
+        }
+
+        let dir = std::env::temp_dir().join(format!("deka-config-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config_path = dir.join("monitor.json");
+        let content = r#"{"self":{"update":{"managed_units":["gg.tana.deka-platform"]}}}"#;
+        std::fs::write(&config_path, content).unwrap();
+
+        let mut ctx = dummy_context(dir.clone());
+        ctx.args.params.insert(
+            "--config".to_string(),
+            config_path.to_string_lossy().to_string(),
+        );
+
+        let units = load_managed_units(&ctx).unwrap();
+        assert_eq!(units, vec!["gg.tana.deka-platform"]);
+
+        let _ = std::fs::remove_file(&config_path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn explicit_config_rejects_non_tana_managed_unit() {
+        if is_running_privileged() {
+            return;
+        }
+
+        let dir = std::env::temp_dir().join(format!("deka-config-bad-unit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config_path = dir.join("monitor.json");
+        let content = r#"{"self":{"update":{"managed_units":["ssh.service"]}}}"#;
+        std::fs::write(&config_path, content).unwrap();
+
+        let mut ctx = dummy_context(dir.clone());
+        ctx.args.params.insert(
+            "--config".to_string(),
+            config_path.to_string_lossy().to_string(),
+        );
+
+        let err = load_managed_units(&ctx).expect_err("non-Tana unit should fail");
+        assert!(err.contains("gg.tana."));
+
+        let _ = std::fs::remove_file(&config_path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn env_rejects_non_tana_managed_unit() {
+        let dir = std::env::temp_dir().join(format!("deka-env-bad-unit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ctx = dummy_context(dir.clone());
+
+        unsafe {
+            std::env::set_var("DEKA_SELF_MANAGED_UNITS", "ssh.service");
+        }
+        let err = load_managed_units(&ctx).expect_err("non-Tana env unit should fail");
+        assert!(err.contains("gg.tana."));
+        unsafe {
+            std::env::remove_var("DEKA_SELF_MANAGED_UNITS");
+        }
+
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn privileged_update_rejects_relative_config_path() {
+        let err = validate_update_config_path(Path::new("monitor.json"), true)
+            .expect_err("privileged relative config should fail");
+        assert!(err.contains("absolute --config path"));
     }
 
     #[test]
@@ -819,7 +998,13 @@ mod tests {
         let correct = format!("{:x}", hasher.finalize());
 
         assert!(verify_binary_digest(&file, &correct).is_ok());
-        assert!(verify_binary_digest(&file, "0000000000000000000000000000000000000000000000000000000000000000").is_err());
+        assert!(
+            verify_binary_digest(
+                &file,
+                "0000000000000000000000000000000000000000000000000000000000000000"
+            )
+            .is_err()
+        );
 
         let _ = std::fs::remove_file(&file);
         let _ = std::fs::remove_dir(&dir);
@@ -828,10 +1013,16 @@ mod tests {
     #[test]
     fn validate_managed_unit_name_allowlist() {
         assert!(validate_managed_unit_name("gg.tana.deka-platform").is_ok());
-        assert!(validate_managed_unit_name("my-service_1").is_ok());
-        assert!(validate_managed_unit_name("a.b.c").is_ok());
+        assert!(validate_managed_unit_name("gg.tana.deka-platform.service").is_ok());
+        assert!(validate_managed_unit_name("gg.tana.deka@phobos.service").is_ok());
 
         assert!(validate_managed_unit_name("").is_err());
+        assert!(validate_managed_unit_name("my-service_1").is_err());
+        assert!(validate_managed_unit_name("a.b.c").is_err());
+        assert!(validate_managed_unit_name("ssh.service").is_err());
+        assert!(validate_managed_unit_name("com.apple.sshd").is_err());
+        assert!(validate_managed_unit_name("gg.tana.").is_err());
+        assert!(validate_managed_unit_name("gg.tana.Deka").is_err());
         assert!(validate_managed_unit_name(".gg.tana").is_err());
         assert!(validate_managed_unit_name("gg..tana").is_err());
         assert!(validate_managed_unit_name("gg/tana").is_err());
@@ -841,12 +1032,31 @@ mod tests {
         assert!(validate_managed_unit_name("-gg.tana").is_err());
     }
 
+    #[test]
+    fn run_update_rejects_non_tana_managed_unit_before_registry_lookup() {
+        let config = UpdateConfig {
+            registry_url: "http://127.0.0.1:1".to_string(),
+            registry_index_url: None,
+            token: None,
+            current_version: "0.1.0".to_string(),
+            current_binary: PathBuf::from("/no/such/deka"),
+            managed_units: vec!["ssh.service".to_string()],
+            auto_confirm: true,
+        };
+
+        let err = run_update(&config).expect_err("non-Tana unit should fail");
+        assert!(err.contains("gg.tana."));
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn build_restart_command_macos_targets_system_domain() {
         let (exe, args) = build_restart_command("gg.tana.deka-platform").unwrap();
         assert_eq!(exe, "launchctl");
-        assert_eq!(args, vec!["kickstart", "-k", "system/gg.tana.deka-platform"]);
+        assert_eq!(
+            args,
+            vec!["kickstart", "-k", "system/gg.tana.deka-platform"]
+        );
     }
 
     #[cfg(target_os = "linux")]
@@ -864,6 +1074,7 @@ mod tests {
         assert!(build_restart_command("/etc/passwd").is_err());
         assert!(build_restart_command("../../etc/passwd").is_err());
         assert!(build_restart_command("evil; rm -rf /").is_err());
+        assert!(build_restart_command("ssh.service").is_err());
     }
 
     #[test]

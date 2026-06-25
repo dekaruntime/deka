@@ -1,3 +1,4 @@
+#[allow(clippy::module_inception)]
 mod tests {
     use crate::audit::sha256_hex;
     use crate::auth::{
