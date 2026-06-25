@@ -32,6 +32,7 @@ pub struct LatestVersionInfo {
 #[derive(Debug, Clone)]
 pub struct UpdateConfig {
     pub registry_url: String,
+    pub registry_index_url: Option<String>,
     pub token: Option<String>,
     pub current_version: String,
     pub current_binary: PathBuf,
@@ -133,7 +134,17 @@ pub fn run_update(config: &UpdateConfig) -> Result<UpdateResult, String> {
         "self update",
         &format!("building into {}", temp_root.display()),
     );
-    let new_binary = build_new_binary(&temp_root, &latest.version)?;
+    let new_binary = build_new_binary(&temp_root, &latest.version, config.registry_index_url.as_deref())?;
+
+    // --- safety rail 2b: digest verification ---
+    if let Err(e) = verify_binary_digest(&new_binary, &latest.digest) {
+        stdio::warn(
+            "self update",
+            &format!("built binary digest verification failed: {}", e),
+        );
+        return Err(format!("built binary digest verification failed: {}", e));
+    }
+    stdio::log("self update", "digest verification passed");
 
     // --- safety rail 2: health-check the build artifact ---
     stdio::log("self update", "health-checking built binary");
@@ -214,7 +225,7 @@ pub fn run_update(config: &UpdateConfig) -> Result<UpdateResult, String> {
 // ---------------------------------------------------------------------------
 
 pub fn cmd(context: &Context) {
-    let (registry_url, token) = get_registry_config(context);
+    let (registry_url, token, registry_index_url) = get_registry_config(context);
     let current_version = env!("CARGO_PKG_VERSION").to_string();
     let current_binary = match std::env::current_exe() {
         Ok(p) => p,
@@ -232,6 +243,7 @@ pub fn cmd(context: &Context) {
 
     let config = UpdateConfig {
         registry_url,
+        registry_index_url,
         token,
         current_version,
         current_binary,
@@ -272,7 +284,7 @@ pub fn cmd(context: &Context) {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-fn get_registry_config(context: &Context) -> (String, Option<String>) {
+fn get_registry_config(context: &Context) -> (String, Option<String>, Option<String>) {
     let registry = context
         .args
         .params
@@ -291,7 +303,14 @@ fn get_registry_config(context: &Context) -> (String, Option<String>) {
         .or_else(|| std::env::var("LINKHASH_TOKEN").ok())
         .or_else(|| std::env::var("TANA_GIT_TOKEN").ok());
 
-    (registry, token)
+    let registry_index_url = context
+        .args
+        .params
+        .get("--registry-index")
+        .cloned()
+        .or_else(|| std::env::var("LINKHASH_CARGO_INDEX").ok());
+
+    (registry, token, registry_index_url)
 }
 
 fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
@@ -348,24 +367,88 @@ fn temp_install_root() -> Result<PathBuf, String> {
     Ok(root)
 }
 
-fn build_new_binary(temp_root: &Path, _expected_version: &str) -> Result<PathBuf, String> {
+fn verify_binary_digest(binary: &Path, expected_digest: &str) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    let mut file = std::fs::File::open(binary)
+        .map_err(|e| format!("failed to open binary for digest: {}", e))?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher)
+        .map_err(|e| format!("failed to hash binary: {}", e))?;
+    let computed = format!("{:x}", hasher.finalize());
+    if computed != expected_digest {
+        return Err(format!(
+            "digest mismatch: expected {}, got {}",
+            expected_digest, computed
+        ));
+    }
+    Ok(())
+}
+
+fn validate_managed_unit_name(unit: &str) -> Result<(), String> {
+    if unit.is_empty() {
+        return Err("managed unit name is empty".to_string());
+    }
+    for (i, c) in unit.chars().enumerate() {
+        if i == 0 {
+            if !c.is_ascii_alphanumeric() {
+                return Err(format!(
+                    "managed unit name must start with alphanumeric: '{}'",
+                    unit
+                ));
+            }
+        } else if !c.is_ascii_alphanumeric() && c != '.' && c != '-' && c != '_' {
+            return Err(format!(
+                "managed unit name contains invalid character in '{}': '{}'",
+                unit, c
+            ));
+        }
+    }
+    if unit.starts_with('.') || unit.ends_with('.') || unit.contains("..") {
+        return Err(format!(
+            "managed unit name has invalid dot pattern: '{}'",
+            unit
+        ));
+    }
+    Ok(())
+}
+
+fn build_cargo_install_args(
+    temp_root: &Path,
+    version: &str,
+    registry_index_url: Option<&str>,
+) -> Vec<String> {
+    let mut args = vec![
+        "install".to_string(),
+        "--force".to_string(),
+        "deka".to_string(),
+        "--version".to_string(),
+        version.to_string(),
+        "--root".to_string(),
+        temp_root.to_string_lossy().to_string(),
+    ];
+    if let Some(index) = registry_index_url {
+        args.push("--index".to_string());
+        args.push(index.to_string());
+    } else {
+        // Fallback to registry name only when index is not explicitly provided.
+        args.push("--registry".to_string());
+        args.push("linkhash".to_string());
+    }
+    args
+}
+
+fn build_new_binary(
+    temp_root: &Path,
+    version: &str,
+    registry_index_url: Option<&str>,
+) -> Result<PathBuf, String> {
+    let args = build_cargo_install_args(temp_root, version, registry_index_url);
     stdio::log(
         "self update",
-        &format!(
-            "running cargo install --force deka --registry linkhash --root {} ...",
-            temp_root.display()
-        ),
+        &format!("running cargo {} ...", args.join(" ")),
     );
     let status = Command::new("cargo")
-        .args([
-            "install",
-            "--force",
-            "deka",
-            "--registry",
-            "linkhash",
-            "--root",
-            &temp_root.to_string_lossy(),
-        ])
+        .args(&args)
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -434,29 +517,21 @@ fn swap_binary(source: &Path, target: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn restart_managed_unit(unit: &str) -> Result<(), String> {
+fn build_restart_command(unit: &str) -> Result<(String, Vec<String>), String> {
+    validate_managed_unit_name(unit)?;
     #[cfg(target_os = "macos")]
     {
-        let uid = get_uid()?;
-        let status = Command::new("launchctl")
-            .args(["kickstart", "-k", &format!("gui/{}/{}", uid, unit)])
-            .status()
-            .map_err(|e| format!("failed to run launchctl: {}", e))?;
-        if !status.success() {
-            return Err(format!("launchctl kickstart failed for {}", unit));
-        }
-        Ok(())
+        Ok((
+            "launchctl".to_string(),
+            vec!["kickstart".to_string(), "-k".to_string(), format!("system/{}", unit)],
+        ))
     }
     #[cfg(target_os = "linux")]
     {
-        let status = Command::new("systemctl")
-            .args(["--user", "restart", unit])
-            .status()
-            .map_err(|e| format!("failed to run systemctl: {}", e))?;
-        if !status.success() {
-            return Err(format!("systemctl restart failed for {}", unit));
-        }
-        Ok(())
+        Ok((
+            "systemctl".to_string(),
+            vec!["restart".to_string(), unit.to_string()],
+        ))
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
@@ -465,6 +540,18 @@ fn restart_managed_unit(unit: &str) -> Result<(), String> {
             unit
         ))
     }
+}
+
+fn restart_managed_unit(unit: &str) -> Result<(), String> {
+    let (exe, args) = build_restart_command(unit)?;
+    let status = Command::new(&exe)
+        .args(&args)
+        .status()
+        .map_err(|e| format!("failed to run {}: {}", exe, e))?;
+    if !status.success() {
+        return Err(format!("{} failed for {}", exe, unit));
+    }
+    Ok(())
 }
 
 fn get_uid() -> Result<String, String> {
@@ -694,5 +781,106 @@ mod tests {
             constructed2,
             "http://localhost:9418/api/v1/packages/cargo/deka/latest"
         );
+    }
+
+    #[test]
+    fn build_cargo_install_args_pins_version_and_index() {
+        let temp = std::env::temp_dir().join("deka-test-args");
+        let args = build_cargo_install_args(&temp, "1.2.3", Some("https://example.com/index"));
+        assert!(args.contains(&"--version".to_string()));
+        assert!(args.contains(&"1.2.3".to_string()));
+        assert!(args.contains(&"--index".to_string()));
+        assert!(args.contains(&"https://example.com/index".to_string()));
+        // Must not contain --registry when --index is present
+        assert!(!args.contains(&"--registry".to_string()));
+    }
+
+    #[test]
+    fn build_cargo_install_args_fallback_registry() {
+        let temp = std::env::temp_dir().join("deka-test-args-fallback");
+        let args = build_cargo_install_args(&temp, "1.2.3", None);
+        assert!(args.contains(&"--version".to_string()));
+        assert!(args.contains(&"1.2.3".to_string()));
+        assert!(args.contains(&"--registry".to_string()));
+        assert!(args.contains(&"linkhash".to_string()));
+        assert!(!args.contains(&"--index".to_string()));
+    }
+
+    #[test]
+    fn verify_binary_digest_pass_and_fail() {
+        use sha2::{Digest, Sha256};
+        let dir = std::env::temp_dir().join(format!("deka-digest-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("test.bin");
+        std::fs::write(&file, b"hello deka").unwrap();
+
+        let mut hasher = Sha256::new();
+        hasher.update(b"hello deka");
+        let correct = format!("{:x}", hasher.finalize());
+
+        assert!(verify_binary_digest(&file, &correct).is_ok());
+        assert!(verify_binary_digest(&file, "0000000000000000000000000000000000000000000000000000000000000000").is_err());
+
+        let _ = std::fs::remove_file(&file);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn validate_managed_unit_name_allowlist() {
+        assert!(validate_managed_unit_name("gg.tana.deka-platform").is_ok());
+        assert!(validate_managed_unit_name("my-service_1").is_ok());
+        assert!(validate_managed_unit_name("a.b.c").is_ok());
+
+        assert!(validate_managed_unit_name("").is_err());
+        assert!(validate_managed_unit_name(".gg.tana").is_err());
+        assert!(validate_managed_unit_name("gg..tana").is_err());
+        assert!(validate_managed_unit_name("gg/tana").is_err());
+        assert!(validate_managed_unit_name("gg tana").is_err());
+        assert!(validate_managed_unit_name("gg;tana").is_err());
+        assert!(validate_managed_unit_name("gg$tana").is_err());
+        assert!(validate_managed_unit_name("-gg.tana").is_err());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn build_restart_command_macos_targets_system_domain() {
+        let (exe, args) = build_restart_command("gg.tana.deka-platform").unwrap();
+        assert_eq!(exe, "launchctl");
+        assert_eq!(args, vec!["kickstart", "-k", "system/gg.tana.deka-platform"]);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn build_restart_command_linux_targets_system_unit() {
+        let (exe, args) = build_restart_command("gg.tana.deka-platform").unwrap();
+        assert_eq!(exe, "systemctl");
+        assert_eq!(args, vec!["restart", "gg.tana.deka-platform"]);
+        // Must not contain --user
+        assert!(!args.contains(&"--user".to_string()));
+    }
+
+    #[test]
+    fn build_restart_command_rejects_invalid_unit() {
+        assert!(build_restart_command("/etc/passwd").is_err());
+        assert!(build_restart_command("../../etc/passwd").is_err());
+        assert!(build_restart_command("evil; rm -rf /").is_err());
+    }
+
+    #[test]
+    fn get_registry_config_reads_cargo_index_env() {
+        let dir = std::env::temp_dir().join(format!("deka-reg-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ctx = dummy_context(dir.clone());
+
+        unsafe {
+            std::env::set_var("LINKHASH_CARGO_INDEX", "https://index.example.com");
+        }
+        let (_, _, index) = get_registry_config(&ctx);
+        assert_eq!(index, Some("https://index.example.com".to_string()));
+        unsafe {
+            std::env::remove_var("LINKHASH_CARGO_INDEX");
+        }
+
+        let _ = std::fs::remove_dir(&dir);
     }
 }
