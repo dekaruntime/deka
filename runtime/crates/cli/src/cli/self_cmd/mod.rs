@@ -1,5 +1,6 @@
 use core::{CommandSpec, Context, Registry, SubcommandSpec};
 
+mod monitor;
 mod test;
 mod update;
 
@@ -10,6 +11,13 @@ const TEST: SubcommandSpec = SubcommandSpec {
     handler: test::cmd,
 };
 
+const MONITOR: SubcommandSpec = SubcommandSpec {
+    name: "monitor",
+    summary: "run the long-running self-update daemon",
+    aliases: &[],
+    handler: monitor::cmd,
+};
+
 const UPDATE: SubcommandSpec = SubcommandSpec {
     name: "update",
     summary: "update deka components",
@@ -17,7 +25,7 @@ const UPDATE: SubcommandSpec = SubcommandSpec {
     handler: update::cmd,
 };
 
-const SUBCOMMANDS: &[SubcommandSpec] = &[TEST, UPDATE];
+const SUBCOMMANDS: &[SubcommandSpec] = &[TEST, MONITOR, UPDATE];
 
 const COMMAND: CommandSpec = CommandSpec {
     name: "self",
