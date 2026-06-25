@@ -97,13 +97,19 @@ fn cmd_init(context: &Context) {
     maybe_suggest_git(&context.env.cwd);
     let dir = loop_dir(&context.env.cwd);
     if let Err(err) = fs::create_dir_all(&dir) {
-        stdio::error("loop", &format!("failed to prepare .deka directory: {}", err));
+        stdio::error(
+            "loop",
+            &format!("failed to prepare .deka directory: {}", err),
+        );
         return;
     }
 
     let path = dir.join("loop.json");
     if path.exists() {
-        stdio::log("loop", ".deka/loop.json already exists, leaving it untouched");
+        stdio::log(
+            "loop",
+            ".deka/loop.json already exists, leaving it untouched",
+        );
     } else if let Err(err) = run_init_prompt(&path) {
         stdio::error("loop", &format!("failed to write loop.json: {}", err));
         return;
@@ -116,7 +122,10 @@ fn cmd_init(context: &Context) {
         stdio::log("loop", ".deka/progress.md already exists");
     } else if let Err(err) = fs::write(
         &progress_path,
-        format!("## {} loop initialized\n- waiting for tasks\n", current_date()),
+        format!(
+            "## {} loop initialized\n- waiting for tasks\n",
+            current_date()
+        ),
     ) {
         stdio::error("loop", &format!("failed to write progress.md: {}", err));
     } else {
@@ -144,7 +153,10 @@ fn cmd_list(context: &Context) {
 
     stdio::header("loop tasks");
     if state.tasks.is_empty() {
-        stdio::log("loop", "no tasks defined yet; run `deka loop add` or `deka loop run`");
+        stdio::log(
+            "loop",
+            "no tasks defined yet; run `deka loop add` or `deka loop run`",
+        );
         return;
     }
 
@@ -181,7 +193,7 @@ fn cmd_add(context: &Context) {
     let description = params
         .get("--description")
         .map(|value| value.trim().to_string())
-        .or_else(|| context.args.positionals.get(0).cloned())
+        .or_else(|| context.args.positionals.first().cloned())
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| {
             stdio::error("loop", "--description is required when adding tasks");
@@ -283,10 +295,16 @@ fn launch_tui(context: &Context, mode: &str) {
     let iterations = collect_iterations(context);
     let ui_path = get_ui_path("loop-ui.tsx");
     if std::env::var("DEKA_DEBUG").is_ok() {
-        stdio::log("loop", &format!("loop-ui handler path: {}", ui_path.display()));
+        stdio::log(
+            "loop",
+            &format!("loop-ui handler path: {}", ui_path.display()),
+        );
     }
     if !ui_path.exists() {
-        stdio::error("loop", &format!("TUI handler missing: {}", ui_path.display()));
+        stdio::error(
+            "loop",
+            &format!("TUI handler missing: {}", ui_path.display()),
+        );
         std::process::exit(1);
     }
 
@@ -343,8 +361,7 @@ fn progress_path(cwd: &Path) -> PathBuf {
 
 fn ensure_loop_file(cwd: &Path) -> Result<PathBuf, String> {
     let dir = loop_dir(cwd);
-    fs::create_dir_all(&dir)
-        .map_err(|err| format!("unable to create .deka directory: {}", err))?;
+    fs::create_dir_all(&dir).map_err(|err| format!("unable to create .deka directory: {}", err))?;
     let path = dir.join("loop.json");
     if !path.exists() {
         save_loop_state(&path, &LoopState::default())
@@ -407,9 +424,7 @@ fn choose_agent_tool() -> Result<String, String> {
             "Preferred CLI agent tool ({}) [{}]: ",
             options, DEFAULT_AGENT_TOOL
         );
-        io::stdout()
-            .flush()
-            .map_err(|err| err.to_string())?;
+        io::stdout().flush().map_err(|err| err.to_string())?;
         let mut input = String::new();
         io::stdin()
             .read_line(&mut input)
@@ -463,23 +478,17 @@ fn print_progress_for_date(content: &str, date: &str) {
 
 fn get_ui_path(filename: &str) -> PathBuf {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    PathBuf::from(manifest_dir).join("src").join("ui").join(filename)
+    PathBuf::from(manifest_dir)
+        .join("src")
+        .join("ui")
+        .join(filename)
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 struct LoopState {
     meta: Option<LoopMeta>,
     #[serde(default)]
     tasks: Vec<LoopTask>,
-}
-
-impl Default for LoopState {
-    fn default() -> Self {
-        Self {
-            meta: None,
-            tasks: Vec::new(),
-        }
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -499,19 +508,14 @@ struct LoopTask {
     status: TaskStatus,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 enum TaskStatus {
+    #[default]
     Waiting,
     Running,
     Done,
     Failed,
-}
-
-impl Default for TaskStatus {
-    fn default() -> Self {
-        TaskStatus::Waiting
-    }
 }
 
 impl TaskStatus {
