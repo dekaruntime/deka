@@ -1440,6 +1440,13 @@ fn op_php_aes_256_gcm_decrypt(
 }
 
 fn bcrypt_verify_impl(password: String, hash: String) -> serde_json::Value {
+    if password.len() > 72 {
+        return serde_json::json!({
+            "ok": true,
+            "valid": false,
+        });
+    }
+
     match bcrypt::verify(password, &hash) {
         Ok(valid) => serde_json::json!({
             "ok": true,
@@ -1454,10 +1461,7 @@ fn bcrypt_verify_impl(password: String, hash: String) -> serde_json::Value {
 
 #[op2]
 #[serde]
-fn op_php_bcrypt_verify(
-    #[string] password: String,
-    #[string] hash: String,
-) -> serde_json::Value {
+fn op_php_bcrypt_verify(#[string] password: String, #[string] hash: String) -> serde_json::Value {
     bcrypt_verify_impl(password, hash)
 }
 
@@ -5310,6 +5314,21 @@ mod tests {
         let bad = bcrypt_verify_impl("wrongpassword".to_string(), hash.to_string());
         assert_ok(&bad);
         assert_eq!(bad.get("valid").and_then(|v| v.as_bool()), Some(false));
+    }
+
+    #[test]
+    fn bcrypt_verify_rejects_passwords_over_72_bytes() {
+        let password = "a".repeat(72);
+        let overlong = format!("{}extra", password);
+        let hash = bcrypt::hash(&password, 4).expect("hash 72-byte bcrypt password");
+
+        let valid = bcrypt_verify_impl(password, hash.clone());
+        assert_ok(&valid);
+        assert_eq!(valid.get("valid").and_then(|v| v.as_bool()), Some(true));
+
+        let rejected = bcrypt_verify_impl(overlong, hash);
+        assert_ok(&rejected);
+        assert_eq!(rejected.get("valid").and_then(|v| v.as_bool()), Some(false));
     }
 }
 
