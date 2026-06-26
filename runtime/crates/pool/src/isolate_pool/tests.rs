@@ -55,34 +55,35 @@ fn is_dev_mode_ignores_node_env_development() {
 
 // --- pick_shard_for_request ---
 
-/// Empty account_id always falls back to shard 0 in production.
+/// Empty shop_id always falls back to shard 0 in production.
 #[test]
-fn pick_shard_empty_account_id_returns_shard_zero() {
+fn pick_shard_empty_shop_id_returns_shard_zero() {
     let r = two_shard_resolver();
     let shard = super::pick_shard_for_request("", &r);
     assert!(shard.is_some());
     assert_eq!(shard.unwrap().index, 0);
 }
 
-/// A populated account_id that hashes to shard 1 should land on shard 1
-/// in production (non-dev) mode. We pick an account_id we know hashes to
+/// A populated shop_id that hashes to shard 1 should land on shard 1
+/// in production (non-dev) mode. We pick a shop_id we know hashes to
 /// shard 1 on a 2-shard cluster by brute-force search here.
 ///
 /// Note: if DEKA_DEV_MODE=1 is set in the test environment this test
 /// will see shard 0 instead. That's expected: dev mode overrides.
 #[test]
-fn pick_shard_production_hashes_account_id() {
+fn pick_shard_production_hashes_shop_id() {
     let r = two_shard_resolver();
-    // Pick any non-empty account_id; confirm the result is consistent
+    // Pick any non-empty shop_id; confirm the result is consistent
     // (the same ID always lands on the same shard).
-    let id = "c0dc1618-20fc-4bdd-ac6f-e94909f8fad2";
-    let first = super::pick_shard_for_request(id, &r).unwrap().index;
-    let second = super::pick_shard_for_request(id, &r).unwrap().index;
+    let shop_id = "shop_alpha";
+    let first = super::pick_shard_for_request(shop_id, &r).unwrap().index;
+    let second = super::pick_shard_for_request(shop_id, &r).unwrap().index;
     assert_eq!(first, second, "shard resolution must be deterministic");
+    assert_eq!(first, deka_shard::shard_index(shop_id, r.shard_count()));
 }
 
 /// Verify the dev-mode fast-path directly using the helper function.
-/// We build a two-shard resolver and confirm that an account_id that
+/// We build a two-shard resolver and confirm that a shop_id that
 /// would otherwise hash to shard 1 still returns shard 0 when the
 /// resolver is stubbed with a single-shard config (mimicking what
 /// `pick_shard_for_request` does when `is_dev_mode()` is true, i.e.
@@ -93,9 +94,9 @@ fn pick_shard_production_hashes_account_id() {
 #[test]
 fn pick_shard_single_shard_resolver_always_returns_zero() {
     let r = ShardResolver::from_config(ShardConfig::single_shard_localhost(), None);
-    // Any account_id resolves to the one shard.
-    let id = "c0dc1618-20fc-4bdd-ac6f-e94909f8fad2";
-    let shard = super::pick_shard_for_request(id, &r).unwrap();
+    // Any shop_id resolves to the one shard.
+    let shop_id = "shop_alpha";
+    let shard = super::pick_shard_for_request(shop_id, &r).unwrap();
     assert_eq!(shard.index, 0);
     assert_eq!(shard.name, "local");
 }
@@ -152,15 +153,15 @@ fn env_snapshot_injected_for_unrouted_shop_request() {
         let env_val = global
             .get(scope, env_key.into())
             .expect("_ENV must be set by set_request_globals");
-        let env: serde_json::Value = deno_core::serde_v8::from_v8(scope, env_val)
-            .expect("_ENV must deserialize");
+        let env: serde_json::Value =
+            deno_core::serde_v8::from_v8(scope, env_val).expect("_ENV must deserialize");
 
         let server_key = deno_core::v8::String::new(scope, "_SERVER").expect("_SERVER key");
         let server_val = global
             .get(scope, server_key.into())
             .expect("_SERVER must be set by set_request_globals");
-        let server: serde_json::Value = deno_core::serde_v8::from_v8(scope, server_val)
-            .expect("_SERVER must deserialize");
+        let server: serde_json::Value =
+            deno_core::serde_v8::from_v8(scope, server_val).expect("_SERVER must deserialize");
 
         let process_key = deno_core::v8::String::new(scope, "process").expect("process key");
         let process_val = global
@@ -186,12 +187,16 @@ fn env_snapshot_injected_for_unrouted_shop_request() {
         "_ENV must contain allowlisted var"
     );
     assert_eq!(
-        server.get("STRIPE_PUBLISHABLE_KEY").and_then(|v| v.as_str()),
+        server
+            .get("STRIPE_PUBLISHABLE_KEY")
+            .and_then(|v| v.as_str()),
         Some("pk_test_618"),
         "_SERVER must contain allowlisted var"
     );
     assert_eq!(
-        process_env.get("STRIPE_PUBLISHABLE_KEY").and_then(|v| v.as_str()),
+        process_env
+            .get("STRIPE_PUBLISHABLE_KEY")
+            .and_then(|v| v.as_str()),
         Some("pk_test_618"),
         "process.env must contain allowlisted var"
     );

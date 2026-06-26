@@ -9,7 +9,7 @@ static DEV_MODE: OnceLock<bool> = OnceLock::new();
 /// Activated by `DEKA_DEV_MODE=1`.
 ///
 /// In dev mode `pick_shard_for_request` always returns shard 0 so every
-/// shop hits the local Docker Neo4j/Redis, regardless of `account_id`.
+/// shop hits the local Docker Neo4j/Redis, regardless of shop_id.
 /// This prevents the shard-hash from routing dev-created shops to a remote
 /// production shard that doesn't hold their data.
 pub(crate) fn is_dev_mode() -> bool {
@@ -22,28 +22,28 @@ pub(super) fn is_dev_mode_from_env(mut env_get: impl FnMut(&str) -> Option<Strin
 
 /// Select the owning shard for a request.
 ///
-/// Normal (production) path: hash `account_id` % shard_count to pick a shard,
-/// or fall through to shard 0 when `account_id` is empty.
+/// Normal (production) path: hash `shop_id` % shard_count to pick a shard,
+/// or fall through to shard 0 when `shop_id` is empty.
 ///
 /// Dev-mode override (DEKA_DEV_MODE=1): always return shard 0.
 /// Dev shops are created against whatever Neo4j is local, so the
 /// hash-based resolver would incorrectly route their requests to a remote shard
 /// that holds no data for them.  Pinning to shard 0 makes dev and CI
-/// deterministic: every shop, regardless of account_id, hits local services.
+/// deterministic: every shop, regardless of shop_id, hits local services.
 pub(super) fn pick_shard_for_request<'a>(
-    account_id: &str,
+    shop_id: &str,
     resolver: &'a deka_shard::ShardResolver,
 ) -> Option<&'a deka_shard::ShardInfo> {
     if is_dev_mode() {
         // Always shard 0 in dev — data lives wherever the local DB is.
         return resolver.shards().first();
     }
-    if account_id.is_empty() {
-        // No account_id — fall back to shard 0 (phobos).
+    if shop_id.is_empty() {
+        // No shop_id — fall back to shard 0 (phobos).
         resolver.shards().first()
     } else {
         resolver
-            .resolve(account_id)
+            .resolve(shop_id)
             .or_else(|| resolver.shards().first())
     }
 }
@@ -185,7 +185,7 @@ pub(super) fn set_request_globals(
     // plus the optional `DEKA_PLATFORM_ENV_ALLOWLIST` env var (comma
     // separated names) for runtime extensibility without a code change.
     //
-    // Done BEFORE the SHOP_ID/ACCOUNT_ID injection below so per-request
+    // Done BEFORE the SHOP_ID injection below so per-request
     // tenant context can never be overridden by a host env var with
     // the same name (defence in depth — those names aren't on the
     // allowlist anyway).
@@ -285,20 +285,16 @@ pub(super) fn set_request_globals(
         }
     }
 
-    // Tenant context: resolve shop_id + account_id from the server-side
+    // Tenant context: resolve shop_id from the server-side
     // Host/subdomain routing path and inject as globals. Client-controlled
     // headers such as X-Shop-ID must never influence this context.
     if let Some(parts) = request_parts {
         let _ = parts;
-        let (shop_id, account_id) = resolved_tenant_info
+        let shop_id = resolved_tenant_info
             .as_ref()
-            .map(|info| {
-                (
-                    info.shop_id.clone(),
-                    info.account_id.clone().unwrap_or_default(),
-                )
-            })
+            .map(|info| info.shop_id.clone())
             .unwrap_or_default();
+        let shard_key = shop_id.clone();
 
         if !shop_id.is_empty() {
             // globalThis.__shopId — used by bridge layer for Redis prefixing
@@ -322,31 +318,12 @@ pub(super) fn set_request_globals(
             }
         }
 
-        // globalThis.__accountId + $_SERVER['ACCOUNT_ID'] — only when we
-        // actually have an account_id; empty-account_id requests skip this
-        // block but still receive shard env below (falls back to shard 0).
-        if !account_id.is_empty() {
-            // globalThis.__accountId — used by op_neo4j_call/op_redis_call
-            // to auto-route `connect` to the owning shard, and by
-            // `shard_for()` introspection.
-            let account_id_key = v8::String::new(scope, "__accountId")
-                .ok_or_else(|| "account id key".to_string())?;
-            let account_id_val =
-                v8::String::new(scope, &account_id).ok_or_else(|| "account id val".to_string())?;
-            global.set(scope, account_id_key.into(), account_id_val.into());
-
-            // $_SERVER['ACCOUNT_ID'] mirrors SHOP_ID for PHPX callers.
-            if let Some(server_key) = v8::String::new(scope, "_SERVER") {
-                if let Some(server_val) = global.get(scope, server_key.into()) {
-                    if let Some(server_obj) = server_val.to_object(scope) {
-                        if let Some(k) = v8::String::new(scope, "ACCOUNT_ID") {
-                            if let Some(v) = v8::String::new(scope, &account_id) {
-                                server_obj.set(scope, k.into(), v.into());
-                            }
-                        }
-                    }
-                }
-            }
+        if !shard_key.is_empty() {
+            let shard_key_key =
+                v8::String::new(scope, "__shardKey").ok_or_else(|| "shard key key".to_string())?;
+            let shard_key_val =
+                v8::String::new(scope, &shard_key).ok_or_else(|| "shard key val".to_string())?;
+            global.set(scope, shard_key_key.into(), shard_key_val.into());
         }
 
         // Shard-aware connection env — inject SHOP_NEO4J_URL,
@@ -359,12 +336,11 @@ pub(super) fn set_request_globals(
         // added to the platform_env allowlist — it is computed from
         // the shard resolver at request time.
         //
-        // When account_id is empty (legacy subdomain format or dev
-        // requests without resolver data), fall through to shard 0
-        // (phobos) explicitly — matching the documented fallback behaviour.
+        // When shop_id is empty, fall through to shard 0 (phobos) explicitly
+        // for unrouted/admin requests.
         {
             let resolver = deka_shard::global();
-            let shard = pick_shard_for_request(&account_id, resolver);
+            let shard = pick_shard_for_request(&shard_key, resolver);
             let shard_name = shard.map(|s| s.name.as_str()).unwrap_or("local");
             let (neo4j_url, redis_url) = match shard {
                 Some(s) => (s.neo4j.clone(), s.redis.clone()),
@@ -384,7 +360,8 @@ pub(super) fn set_request_globals(
             // SECURITY: never log URLs that may contain embedded credentials.
             // Use shard name only. Forbid user:pw@ form in shards.json.
             tracing::info!(
-                account_id = %account_id,
+                shop_id = %shop_id,
+                shard_key = %shard_key,
                 shard = %shard_name,
                 "shard env injection"
             );

@@ -20,14 +20,10 @@ fn global_edge_zega() -> Option<std::sync::MutexGuard<'static, Zega>> {
 
 /// Write a subdomain record from a shop edge row to Zega KV.
 ///
-/// The key is `subdomain:{subdomain}` and the value is JSON
-/// `{shop_id, account_id}` (or just the shop_id if no account_id is
-/// available from the Neo4j row — the publisher currently only has
-/// shop_id in the row).
+/// The key is `subdomain:{subdomain}` and the value is JSON `{shop_id}`.
 pub fn write_shop_subdomain(row: &ShopEdgeRow) -> Result<()> {
-    let zega = global_edge_zega().ok_or_else(|| {
-        anyhow::anyhow!("edge publisher zega not available")
-    })?;
+    let zega =
+        global_edge_zega().ok_or_else(|| anyhow::anyhow!("edge publisher zega not available"))?;
     write_shop_subdomain_with_zega(row, &zega)
 }
 
@@ -55,9 +51,8 @@ pub fn write_shop_subdomain_with_zega(row: &ShopEdgeRow, zega: &Zega) -> Result<
 /// Writes the same keys as `redis_writer::domain_writes`:
 /// `domain:{name}`, `domain:{name}:records`, and optionally `verify:{name}`.
 pub fn write_domain_records(row: &DomainEdgeRow) -> Result<()> {
-    let zega = global_edge_zega().ok_or_else(|| {
-        anyhow::anyhow!("edge publisher zega not available")
-    })?;
+    let zega =
+        global_edge_zega().ok_or_else(|| anyhow::anyhow!("edge publisher zega not available"))?;
     write_domain_records_with_zega(row, &zega)
 }
 
@@ -98,7 +93,9 @@ mod tests {
 
         write_shop_subdomain_with_zega(&row, &zega).expect("write should succeed");
 
-        let value = zega.kv_get("subdomain:zega-test").expect("key should exist");
+        let value = zega
+            .kv_get("subdomain:zega-test")
+            .expect("key should exist");
         let raw = value.as_string().expect("value should be a string");
         let parsed: serde_json::Value = serde_json::from_str(raw).unwrap();
         assert_eq!(parsed["shop_id"], "shop_zega_test");
@@ -116,7 +113,8 @@ mod tests {
             updated_at: 0,
         };
 
-        write_shop_subdomain_with_zega(&row, &zega).expect("write should succeed without subdomain");
+        write_shop_subdomain_with_zega(&row, &zega)
+            .expect("write should succeed without subdomain");
     }
 
     #[test]
@@ -153,7 +151,9 @@ mod tests {
 
         write_domain_records_with_zega(&row, &zega).expect("write should succeed");
 
-        let value = zega.kv_get("domain:example.com:records").expect("key should exist");
+        let value = zega
+            .kv_get("domain:example.com:records")
+            .expect("key should exist");
         let raw = value.as_string().expect("value should be a string");
         let parsed: serde_json::Value = serde_json::from_str(raw).unwrap();
         assert_eq!(parsed[0]["value"], "203.0.113.10");

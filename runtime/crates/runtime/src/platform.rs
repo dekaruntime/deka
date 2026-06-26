@@ -99,8 +99,22 @@ fn install_platform_env_aliases() {
     }
 }
 
-fn proxy_target_for_tenant<'a>(
-    tenant_info: Option<&pool::tenant::TenantInfo>,
+fn shard_key_from_host(headers: &[(String, String)]) -> Option<String> {
+    let host = headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("host"))
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("");
+
+    if let Some((_, shop_subdomain)) = pool::tenant::parse_preview_host(host) {
+        return Some(shop_subdomain);
+    }
+
+    pool::tenant::extract_subdomain(host)
+}
+
+fn proxy_target_for_shop_id<'a>(
+    shop_id: Option<&str>,
     resolver: &'a deka_shard::ShardResolver,
     dev_mode: bool,
 ) -> Option<&'a deka_shard::ShardInfo> {
@@ -108,14 +122,12 @@ fn proxy_target_for_tenant<'a>(
         return None;
     }
 
-    let account_id = tenant_info
-        .and_then(|info| info.account_id.as_deref())
-        .filter(|account_id| !account_id.is_empty())?;
+    let shop_id = shop_id.filter(|shop_id| !shop_id.is_empty())?;
 
-    if resolver.owns(account_id) {
+    if resolver.owns(shop_id) {
         None
     } else {
-        resolver.resolve(account_id)
+        resolver.resolve(shop_id)
     }
 }
 
@@ -666,27 +678,27 @@ async fn handle_platform_request(
         .map(|t| t.cache_key())
         .unwrap_or_else(|| shop_id.clone());
 
-    // Cross-shard routing: if we know the shop's account_id and a
-    // different shard owns it, transparently proxy the request over
-    // the Tailscale mesh. Requests without an account_id (legacy
-    // Redis entries, admin paths, health checks) serve locally —
-    // shard 0 is the de-facto owner of "uncharted" traffic.
+    // Cross-shard routing: the Host subdomain is the immutable shop_id slug.
+    // Hash that slug directly so storefront pages and Zega data routing use
+    // the same fnv1a_64(shop_id) % shard_count scheme. Custom domains are
+    // rewritten to the canonical <shop_id>.tana.gg host before this router.
     let resolver = deka_shard::global();
-    if let Some(target) =
-        proxy_target_for_tenant(tenant_info.as_ref(), resolver, platform_dev_mode_enabled())
-    {
-        let account_id = tenant_info
-            .as_ref()
-            .and_then(|info| info.account_id.as_deref())
-            .unwrap_or("");
+    let host_shop_id = shard_key_from_host(&headers);
+    if let Some(target) = proxy_target_for_shop_id(
+        host_shop_id.as_deref(),
+        resolver,
+        platform_dev_mode_enabled(),
+    ) {
         if already_proxied {
             // A previous server thought we owned this shard but we don't.
             // Refuse to bounce it again so we don't loop forever.
             stdio::error(
                 "proxy",
                 &format!(
-                    "refusing to re-proxy for account={} shop={} (target {}): loop guard triggered",
-                    account_id, shop_id, target.name
+                    "refusing to re-proxy for host_shop={} resolved_shop={} (target {}): loop guard triggered",
+                    host_shop_id.as_deref().unwrap_or(""),
+                    shop_id,
+                    target.name
                 ),
             );
             return Response::builder()
@@ -1115,9 +1127,11 @@ mod stdio {
 
 #[cfg(test)]
 mod tests {
-    use super::{env_flag_enabled, platform_env_aliases_to_set, proxy_target_for_tenant};
-    use deka_shard::{ShardConfig, ShardInfo, ShardResolver};
-    use pool::tenant::TenantInfo;
+    use super::{
+        env_flag_enabled, platform_env_aliases_to_set, proxy_target_for_shop_id,
+        shard_key_from_host,
+    };
+    use deka_shard::{ShardConfig, ShardInfo, ShardResolver, fnv1a_64, shard_index};
     use std::collections::HashMap;
 
     fn two_shard_resolver(self_name: Option<&str>) -> ShardResolver {
@@ -1142,59 +1156,72 @@ mod tests {
         )
     }
 
-    fn account_for_shard(resolver: &ShardResolver, index: usize) -> String {
+    fn shop_id_for_shard(resolver: &ShardResolver, index: usize) -> String {
         (0..10_000)
-            .map(|n| format!("dev-account-{n}"))
-            .find(|account_id| {
-                resolver
-                    .resolve(account_id)
-                    .is_some_and(|s| s.index == index)
-            })
-            .expect("test resolver should produce an account for requested shard")
-    }
-
-    fn tenant(account_id: String) -> TenantInfo {
-        TenantInfo {
-            shop_id: "shop_dev_created".into(),
-            account_id: Some(account_id),
-            preview_ref: None,
-        }
+            .map(|n| format!("shop_dev_created_{n}"))
+            .find(|shop_id| resolver.resolve(shop_id).is_some_and(|s| s.index == index))
+            .expect("test resolver should produce a shop_id for requested shard")
     }
 
     #[test]
     fn proxy_target_routes_remote_owner_in_production() {
         let resolver = two_shard_resolver(Some("local"));
-        let account_id = account_for_shard(&resolver, 1);
-        let tenant = tenant(account_id);
+        let shop_id = shop_id_for_shard(&resolver, 1);
 
-        let target = proxy_target_for_tenant(Some(&tenant), &resolver, false).unwrap();
+        let target = proxy_target_for_shop_id(Some(&shop_id), &resolver, false).unwrap();
 
         assert_eq!(target.name, "bugsy");
     }
 
     #[test]
-    fn proxy_target_serves_locally_in_dev_even_for_remote_owner() {
+    fn host_subdomain_maps_to_expected_shard() {
         let resolver = two_shard_resolver(Some("local"));
-        let account_id = account_for_shard(&resolver, 1);
-        let tenant = tenant(account_id);
+        let shop_id = shop_id_for_shard(&resolver, 1);
+        let headers = vec![("Host".to_string(), format!("{shop_id}.tana.gg"))];
 
-        assert!(proxy_target_for_tenant(Some(&tenant), &resolver, true).is_none());
+        let host_shop_id = shard_key_from_host(&headers).unwrap();
+        let target = proxy_target_for_shop_id(Some(&host_shop_id), &resolver, false).unwrap();
+
+        assert_eq!(host_shop_id, shop_id);
+        assert_eq!(target.index, 1);
+        assert_eq!(target.index, shard_index(&shop_id, resolver.shard_count()));
+        assert_eq!(
+            target.index,
+            (fnv1a_64(shop_id.as_bytes()) % resolver.shard_count() as u64) as usize
+        );
     }
 
     #[test]
-    fn proxy_target_serves_locally_for_owned_or_legacy_tenants() {
+    fn preview_host_subdomain_maps_by_shop_slug_not_preview_slug() {
         let resolver = two_shard_resolver(Some("local"));
-        let local_account = account_for_shard(&resolver, 0);
-        let local_tenant = tenant(local_account);
-        let legacy_tenant = TenantInfo {
-            shop_id: "shop_legacy".into(),
-            account_id: None,
-            preview_ref: None,
-        };
+        let shop_id = shop_id_for_shard(&resolver, 1);
+        let headers = vec![(
+            "Host".to_string(),
+            format!("preview-a1b2c3d-{shop_id}.tana.gg"),
+        )];
 
-        assert!(proxy_target_for_tenant(Some(&local_tenant), &resolver, false).is_none());
-        assert!(proxy_target_for_tenant(Some(&legacy_tenant), &resolver, false).is_none());
-        assert!(proxy_target_for_tenant(None, &resolver, false).is_none());
+        let host_shop_id = shard_key_from_host(&headers).unwrap();
+        let target = proxy_target_for_shop_id(Some(&host_shop_id), &resolver, false).unwrap();
+
+        assert_eq!(host_shop_id, shop_id);
+        assert_eq!(target.index, shard_index(&shop_id, resolver.shard_count()));
+    }
+
+    #[test]
+    fn proxy_target_serves_locally_in_dev_even_for_remote_owner() {
+        let resolver = two_shard_resolver(Some("local"));
+        let shop_id = shop_id_for_shard(&resolver, 1);
+
+        assert!(proxy_target_for_shop_id(Some(&shop_id), &resolver, true).is_none());
+    }
+
+    #[test]
+    fn proxy_target_serves_locally_for_owned_or_unrouted_hosts() {
+        let resolver = two_shard_resolver(Some("local"));
+        let local_shop_id = shop_id_for_shard(&resolver, 0);
+
+        assert!(proxy_target_for_shop_id(Some(&local_shop_id), &resolver, false).is_none());
+        assert!(proxy_target_for_shop_id(None, &resolver, false).is_none());
     }
 
     #[test]
