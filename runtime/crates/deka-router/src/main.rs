@@ -15,43 +15,18 @@ use axum::http::header::CONTENT_LENGTH;
 use axum::response::{IntoResponse, Response};
 use deka_shard::{ShardConfig, ShardInfo, ShardResolver};
 use redis::Commands;
-use std::sync::{Mutex, OnceLock};
-use zega_core::Zega;
 
 const PROXY_LOOP_HEADER: &str = "X-Deka-Proxied";
 const DEFAULT_SHARDS_REDIS_KEY: &str = "deka:shards";
 const DEFAULT_LISTEN_PORT: u16 = 8531;
 const DEFAULT_TARGET_PORT: u16 = 8530;
 
-/// Global embedded Zega instance for subdomain → tenant resolution.
-///
-/// Path is controlled by `DEKA_SUBDOMAIN_ZEGA_PATH` (default:
-/// `store/zega/subdomains`).  The directory is created on first access.
-fn global_subdomain_zega() -> Option<std::sync::MutexGuard<'static, Zega>> {
-    static ZEGA: OnceLock<Mutex<Zega>> = OnceLock::new();
-    let zega = ZEGA.get_or_init(|| {
-        let path = std::env::var("DEKA_SUBDOMAIN_ZEGA_PATH")
-            .unwrap_or_else(|_| "store/zega/subdomains".to_string());
-        let zega = Zega::open(&path)
-            .build()
-            .expect("failed to open subdomain zega");
-        Mutex::new(zega)
-    });
-    zega.lock().ok()
-}
-
 #[derive(Clone)]
 struct RouterState {
     resolver: Arc<ShardResolver>,
     client: reqwest::Client,
     target_port: u16,
-    trust_account_header: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct TenantRecord {
-    shop_id: String,
-    account_id: Option<String>,
+    trust_shop_header: bool,
 }
 
 #[tokio::main]
@@ -81,7 +56,7 @@ async fn main() {
         resolver: Arc::new(resolver),
         client,
         target_port: env_u16("DEKA_ROUTER_TARGET_PORT").unwrap_or(DEFAULT_TARGET_PORT),
-        trust_account_header: env_flag_enabled("DEKA_ROUTER_TRUST_ACCOUNT_HEADER"),
+        trust_shop_header: env_flag_enabled("DEKA_ROUTER_TRUST_SHOP_HEADER"),
     });
 
     let port = parse_port();
@@ -141,14 +116,14 @@ async fn route_request(
         return response(400, "Bad Request: cf-connecting-ip requires cf-ray");
     }
 
-    let account_id = match resolve_account_id(&headers, state.trust_account_header) {
-        Some(account_id) => account_id,
-        None => return response(400, "Bad Request: unable to resolve account_id"),
+    let shop_id = match resolve_shop_id(&headers, state.trust_shop_header) {
+        Some(shop_id) => shop_id,
+        None => return response(400, "Bad Request: unable to resolve shop_id"),
     };
 
-    let target = match state.resolver.resolve(&account_id) {
+    let target = match state.resolver.resolve(&shop_id) {
         Some(target) => target,
-        None => return response(502, "Bad Gateway: no shard for account_id"),
+        None => return response(502, "Bad Gateway: no shard for shop_id"),
     };
 
     let content_len = request
@@ -243,70 +218,17 @@ fn load_shard_config_from_file() -> Result<ShardConfig, String> {
     })
 }
 
-fn resolve_account_id(headers: &[(String, String)], trust_account_header: bool) -> Option<String> {
-    if trust_account_header
-        && let Some(account_id) = header_value(headers, "x-deka-account-id")
+fn resolve_shop_id(headers: &[(String, String)], trust_shop_header: bool) -> Option<String> {
+    if trust_shop_header
+        && let Some(shop_id) = header_value(headers, "x-deka-shop-id")
             .map(str::trim)
             .filter(|value| !value.is_empty())
     {
-        return Some(account_id.to_string());
+        return Some(shop_id.to_string());
     }
 
     let host = header_value(headers, "host").unwrap_or("");
-    let subdomain = preview_shop_subdomain(host).or_else(|| extract_subdomain(host))?;
-    resolve_tenant_record(&subdomain).and_then(|record| record.account_id)
-}
-
-fn resolve_tenant_record(subdomain: &str) -> Option<TenantRecord> {
-    // 1. Try Zega first.
-    if let Some(zega) = global_subdomain_zega() {
-        let key = format!("subdomain:{subdomain}");
-        if let Some(value) = zega.kv_get(&key)
-            && let Some(raw) = value.as_string()
-        {
-            return Some(parse_subdomain_value(raw));
-        }
-    }
-
-    // 2. Fall back to Redis.
-    let redis_url = std::env::var("REDIS_URL")
-        .or_else(|_| std::env::var("DEKA_REDIS_URL"))
-        .ok()?;
-    let client = redis::Client::open(redis_url.as_str()).ok()?;
-    let mut conn = client
-        .get_connection_with_timeout(Duration::from_millis(500))
-        .ok()?;
-    let key = format!("subdomain:{subdomain}");
-    let raw: Option<String> = conn.get(&key).ok().flatten();
-    raw.map(|value| parse_subdomain_value(&value))
-}
-
-fn parse_subdomain_value(raw: &str) -> TenantRecord {
-    let trimmed = raw.trim();
-    if trimmed.starts_with('{')
-        && let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed)
-    {
-        let shop_id = value
-            .get("shop_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let account_id = value
-            .get("account_id")
-            .and_then(|v| v.as_str())
-            .filter(|v| !v.is_empty())
-            .map(str::to_string);
-        if !shop_id.is_empty() {
-            return TenantRecord {
-                shop_id,
-                account_id,
-            };
-        }
-    }
-    TenantRecord {
-        shop_id: trimmed.to_string(),
-        account_id: None,
-    }
+    preview_shop_subdomain(host).or_else(|| extract_subdomain(host))
 }
 
 async fn proxy_to_shard(
@@ -514,29 +436,35 @@ fn log_error(category: &str, message: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use deka_shard::{fnv1a_64, shard_index};
 
-    #[test]
-    fn parses_json_subdomain_record() {
-        let record = parse_subdomain_value(r#"{"shop_id":"shop_alpha","account_id":"acct_1"}"#);
-        assert_eq!(
-            record,
-            TenantRecord {
-                shop_id: "shop_alpha".to_string(),
-                account_id: Some("acct_1".to_string()),
-            }
-        );
+    fn two_shard_resolver() -> ShardResolver {
+        ShardResolver::from_config(
+            ShardConfig {
+                shards: vec![
+                    ShardInfo {
+                        index: 0,
+                        name: "local".to_string(),
+                        neo4j: "bolt://localhost:7687".to_string(),
+                        redis: "redis://localhost:6379".to_string(),
+                    },
+                    ShardInfo {
+                        index: 1,
+                        name: "bugsy".to_string(),
+                        neo4j: "bolt://bugsy:7687".to_string(),
+                        redis: "redis://bugsy:6379".to_string(),
+                    },
+                ],
+            },
+            None,
+        )
     }
 
-    #[test]
-    fn parses_legacy_subdomain_record() {
-        let record = parse_subdomain_value("shop_alpha");
-        assert_eq!(
-            record,
-            TenantRecord {
-                shop_id: "shop_alpha".to_string(),
-                account_id: None,
-            }
-        );
+    fn shop_id_for_shard(resolver: &ShardResolver, index: usize) -> String {
+        (0..10_000)
+            .map(|n| format!("shop_router_{n}"))
+            .find(|shop_id| resolver.resolve(shop_id).is_some_and(|s| s.index == index))
+            .expect("test resolver should produce a shop_id for requested shard")
     }
 
     #[test]
@@ -544,6 +472,34 @@ mod tests {
         assert_eq!(
             preview_shop_subdomain("preview-a1b2c3d-alpha.tana.gg"),
             Some("alpha".to_string())
+        );
+    }
+
+    #[test]
+    fn resolves_shop_id_from_host_subdomain_without_directory_lookup() {
+        let headers = vec![("Host".to_string(), "shop_alpha.tana.gg".to_string())];
+
+        assert_eq!(
+            resolve_shop_id(&headers, false),
+            Some("shop_alpha".to_string())
+        );
+    }
+
+    #[test]
+    fn host_subdomain_maps_to_fnv1a_shard() {
+        let resolver = two_shard_resolver();
+        let shop_id = shop_id_for_shard(&resolver, 1);
+        let headers = vec![("Host".to_string(), format!("{shop_id}.tana.gg"))];
+
+        let resolved_shop_id = resolve_shop_id(&headers, false).unwrap();
+        let target = resolver.resolve(&resolved_shop_id).unwrap();
+
+        assert_eq!(resolved_shop_id, shop_id);
+        assert_eq!(target.index, 1);
+        assert_eq!(target.index, shard_index(&shop_id, resolver.shard_count()));
+        assert_eq!(
+            target.index,
+            (fnv1a_64(shop_id.as_bytes()) % resolver.shard_count() as u64) as usize
         );
     }
 

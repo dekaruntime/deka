@@ -20,21 +20,16 @@ fn global_subdomain_zega() -> Option<std::sync::MutexGuard<'static, Zega>> {
     zega.lock().ok()
 }
 
-/// Raw pair returned by a subdomain lookup. `account_id` is
-/// `None` when the value is still the legacy plain-string format.
+/// Raw shop mapping returned by a subdomain lookup.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SubdomainRecord {
     pub shop_id: String,
-    pub account_id: Option<String>,
 }
 
 /// Result of tenant resolution, optionally carrying a preview commit hash.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TenantInfo {
     pub shop_id: String,
-    /// Stable opaque UUID for sharding. `None` when the value still has the
-    /// legacy plain-string (pre-sharding) entry.
-    pub account_id: Option<String>,
     /// If the request came via `preview-{hash}-{shop}.tana.gg`, this holds
     /// the short commit hash. `None` means serve from the main branch.
     pub preview_ref: Option<String>,
@@ -137,9 +132,8 @@ pub fn is_shop_id_subdomain(subdomain: &str) -> bool {
 /// Resolve a subdomain to a `SubdomainRecord` via Zega lookup,
 /// falling back to Redis during the transition period.
 ///
-/// Accepts both the new JSON format (`{"shop_id":..., "account_id":...}`)
-/// and the legacy plain-string format (just the shop_id, with
-/// `account_id = None`). During the transition both may coexist.
+/// Accepts both the JSON format (`{"shop_id":...}`) and the legacy
+/// plain-string format (just the shop_id). Extra JSON fields are ignored.
 ///
 /// Zega is consulted first (`DEKA_SUBDOMAIN_ZEGA_PATH` controls the
 /// database path).  If Zega is unavailable or the key is missing, the
@@ -203,18 +197,12 @@ pub fn resolve_tenant_record(subdomain: &str) -> Option<SubdomainRecord> {
 /// This is the canonical write path for the subdomain → tenant map.
 /// The edge publisher calls this after reading from Neo4j.
 pub fn write_subdomain_record(subdomain: &str, record: &SubdomainRecord) -> Result<(), String> {
-    let zega = global_subdomain_zega()
-        .ok_or("subdomain zega not initialised")?;
+    let zega = global_subdomain_zega().ok_or("subdomain zega not initialised")?;
     let key = format!("subdomain:{}", subdomain);
-    let value = if let Some(account_id) = &record.account_id {
-        serde_json::json!({
-            "shop_id": record.shop_id,
-            "account_id": account_id,
-        })
-        .to_string()
-    } else {
-        record.shop_id.clone()
-    };
+    let value = serde_json::json!({
+        "shop_id": record.shop_id,
+    })
+    .to_string();
     zega.kv_set(key, value.into(), None)
         .map_err(|e| format!("zega kv_set failed: {e}"))
 }
@@ -222,7 +210,7 @@ pub fn write_subdomain_record(subdomain: &str, record: &SubdomainRecord) -> Resu
 /// Parse a `subdomain:*` value into a `SubdomainRecord`.
 ///
 /// Accepts either:
-///   - JSON: `{"shop_id": "...", "account_id": "..."}`
+///   - JSON: `{"shop_id": "..."}`
 ///   - Plain string: `"shop_foo"` (legacy format)
 pub fn parse_subdomain_value(raw: &str) -> SubdomainRecord {
     let trimmed = raw.trim();
@@ -233,22 +221,13 @@ pub fn parse_subdomain_value(raw: &str) -> SubdomainRecord {
                 .and_then(|x| x.as_str())
                 .unwrap_or("")
                 .to_string();
-            let account_id = v
-                .get("account_id")
-                .and_then(|x| x.as_str())
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string());
             if !shop_id.is_empty() {
-                return SubdomainRecord {
-                    shop_id,
-                    account_id,
-                };
+                return SubdomainRecord { shop_id };
             }
         }
     }
     SubdomainRecord {
         shop_id: trimmed.to_string(),
-        account_id: None,
     }
 }
 
@@ -275,9 +254,6 @@ pub fn resolve_tenant_info_from_host(headers: &[(String, String)]) -> Option<Ten
             .ok()
             .map(|shop_id| TenantInfo {
                 shop_id,
-                account_id: std::env::var("DEKA_ACCOUNT_ID")
-                    .ok()
-                    .filter(|s| !s.is_empty()),
                 preview_ref: None,
             })
     })
@@ -300,7 +276,6 @@ pub fn resolve_tenant_info_from_host_strict(headers: &[(String, String)]) -> Opt
         if is_shop_id_subdomain(&shop_subdomain) {
             return Some(TenantInfo {
                 shop_id: shop_subdomain,
-                account_id: None,
                 preview_ref: Some(hash),
             });
         }
@@ -308,7 +283,6 @@ pub fn resolve_tenant_info_from_host_strict(headers: &[(String, String)]) -> Opt
         if let Some(rec) = resolve_tenant_record(&shop_subdomain) {
             return Some(TenantInfo {
                 shop_id: rec.shop_id,
-                account_id: rec.account_id,
                 preview_ref: Some(hash),
             });
         }
@@ -319,7 +293,6 @@ pub fn resolve_tenant_info_from_host_strict(headers: &[(String, String)]) -> Opt
         if is_shop_id_subdomain(&subdomain) {
             return Some(TenantInfo {
                 shop_id: subdomain,
-                account_id: None,
                 preview_ref: None,
             });
         }
@@ -327,7 +300,6 @@ pub fn resolve_tenant_info_from_host_strict(headers: &[(String, String)]) -> Opt
         if let Some(rec) = resolve_tenant_record(&subdomain) {
             return Some(TenantInfo {
                 shop_id: rec.shop_id,
-                account_id: rec.account_id,
                 preview_ref: None,
             });
         }
@@ -508,7 +480,6 @@ mod tests {
         let info = resolve_tenant_info_from_host(&headers).unwrap();
 
         assert_eq!(info.shop_id, "shop_alpha-1");
-        assert_eq!(info.account_id, None);
         assert_eq!(info.preview_ref, None);
     }
 
@@ -522,7 +493,6 @@ mod tests {
         let info = resolve_tenant_info_from_host(&headers).unwrap();
 
         assert_eq!(info.shop_id, "shop_alpha-1");
-        assert_eq!(info.account_id, None);
         assert_eq!(info.preview_ref.as_deref(), Some("a1b2c3d"));
     }
 
@@ -530,43 +500,35 @@ mod tests {
     fn tenant_info_cache_key_main() {
         let info = TenantInfo {
             shop_id: "shop_beta".to_string(),
-            account_id: None,
             preview_ref: None,
         };
         assert_eq!(info.cache_key(), "shop_beta");
     }
 
     #[test]
-    fn parse_subdomain_value_json_format() {
+    fn parse_subdomain_value_json_ignores_legacy_account_id() {
         let rec = parse_subdomain_value(
             r#"{"shop_id":"shop_beta","account_id":"2789d397-a96a-44ba-9073-24c711d007ff"}"#,
         );
         assert_eq!(rec.shop_id, "shop_beta");
-        assert_eq!(
-            rec.account_id.as_deref(),
-            Some("2789d397-a96a-44ba-9073-24c711d007ff")
-        );
     }
 
     #[test]
     fn parse_subdomain_value_legacy_plain_string() {
         let rec = parse_subdomain_value("shop_beta");
         assert_eq!(rec.shop_id, "shop_beta");
-        assert_eq!(rec.account_id, None);
     }
 
     #[test]
-    fn parse_subdomain_value_json_without_account_id() {
+    fn parse_subdomain_value_json_format() {
         let rec = parse_subdomain_value(r#"{"shop_id":"shop_beta"}"#);
         assert_eq!(rec.shop_id, "shop_beta");
-        assert_eq!(rec.account_id, None);
     }
 
     #[test]
-    fn parse_subdomain_value_empty_account_id_becomes_none() {
+    fn parse_subdomain_value_json_ignores_empty_legacy_account_id() {
         let rec = parse_subdomain_value(r#"{"shop_id":"shop_beta","account_id":""}"#);
         assert_eq!(rec.shop_id, "shop_beta");
-        assert_eq!(rec.account_id, None);
     }
 
     #[test]
@@ -574,14 +536,12 @@ mod tests {
         // Non-JSON-looking string is treated as the legacy plain-string shop_id.
         let rec = parse_subdomain_value("weird_value");
         assert_eq!(rec.shop_id, "weird_value");
-        assert_eq!(rec.account_id, None);
     }
 
     #[test]
     fn tenant_info_cache_key_preview() {
         let info = TenantInfo {
             shop_id: "shop_beta".to_string(),
-            account_id: None,
             preview_ref: Some("a1b2c3d".to_string()),
         };
         assert_eq!(info.cache_key(), "shop_beta:a1b2c3d");
@@ -631,7 +591,6 @@ mod tests {
             "zega-test",
             &SubdomainRecord {
                 shop_id: "shop_zega_001".to_string(),
-                account_id: Some("acct-1234".to_string()),
             },
         )
         .expect("write_subdomain_record should succeed");
@@ -642,7 +601,6 @@ mod tests {
             result,
             Some(SubdomainRecord {
                 shop_id: "shop_zega_001".to_string(),
-                account_id: Some("acct-1234".to_string()),
             })
         );
 
@@ -663,7 +621,6 @@ mod tests {
             "legacy-shop",
             &SubdomainRecord {
                 shop_id: "shop_legacy".to_string(),
-                account_id: None,
             },
         )
         .expect("write_subdomain_record should succeed");
@@ -673,7 +630,6 @@ mod tests {
             result,
             Some(SubdomainRecord {
                 shop_id: "shop_legacy".to_string(),
-                account_id: None,
             })
         );
     }
