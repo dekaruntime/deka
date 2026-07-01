@@ -47,7 +47,8 @@ pub(super) fn op_shard_for(
     let info = if account_id.is_empty() {
         resolver.self_shard().or_else(|| resolver.shards().first())
     } else {
-        resolver.resolve(&account_id)
+        resolver
+            .resolve(&account_id)
             .or_else(|| resolver.shards().first())
     };
 

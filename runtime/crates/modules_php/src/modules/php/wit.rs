@@ -1,5 +1,5 @@
-use super::*;
 use super::security::{enforce_read, enforce_wasm};
+use super::*;
 
 #[derive(serde::Serialize)]
 pub(super) struct WitSchema {

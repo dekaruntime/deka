@@ -1,6 +1,6 @@
-use bundler::{bundle_virtual_entry, BundleOptions, VirtualSource};
+use bundler::{BundleOptions, VirtualSource, bundle_virtual_entry};
 use core::{CommandSpec, Context, ParamSpec, Registry};
-use phpx_js::{compile_phpx_source_to_js, parse_source_module_meta, SourceModuleMeta};
+use phpx_js::{SourceModuleMeta, compile_phpx_source_to_js, parse_source_module_meta};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};

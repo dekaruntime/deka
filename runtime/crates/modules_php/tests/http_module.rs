@@ -424,12 +424,10 @@ fn spawn_ws_echo() -> u16 {
                     let (mut sink, mut src) = ws_stream.split();
                     while let Some(msg) = src.next().await {
                         match msg {
-                            Ok(m) if m.is_text() || m.is_binary() => {
-                                match sink.send(m).await {
-                                    Ok(()) => {}
-                                    Err(_) => return,
-                                }
-                            }
+                            Ok(m) if m.is_text() || m.is_binary() => match sink.send(m).await {
+                                Ok(()) => {}
+                                Err(_) => return,
+                            },
                             Ok(tokio_tungstenite::tungstenite::Message::Ping(p)) => {
                                 // Manual server-side auto-pong — the
                                 // client sees the pong as a `pong`

@@ -22,7 +22,9 @@ fn rule_allows(capability: &str, rule: &RuleList, target: Option<&str>) -> bool 
         RuleList::None => false,
         RuleList::All => true,
         RuleList::List(items) => match target {
-            Some(target) => items.iter().any(|item| match_rule_item(capability, item, target)),
+            Some(target) => items
+                .iter()
+                .any(|item| match_rule_item(capability, item, target)),
             None => false,
         },
     }
@@ -33,7 +35,9 @@ fn rule_denies(capability: &str, rule: &RuleList, target: Option<&str>) -> bool 
         RuleList::None => false,
         RuleList::All => true,
         RuleList::List(items) => match target {
-            Some(target) => items.iter().any(|item| match_rule_item(capability, item, target)),
+            Some(target) => items
+                .iter()
+                .any(|item| match_rule_item(capability, item, target)),
             None => false,
         },
     }
@@ -106,9 +110,15 @@ pub(super) fn set_security_privileged(enabled: bool, label: Option<String>) {
     let context = SECURITY_PRIVILEGED_LABEL.with(|slot| slot.borrow().clone());
     let context = context.as_deref().unwrap_or("unknown");
     if enabled {
-        stdio::debug("security", &format!("privileged context enabled ({})", context));
+        stdio::debug(
+            "security",
+            &format!("privileged context enabled ({})", context),
+        );
     } else {
-        stdio::debug("security", &format!("privileged context disabled ({})", context));
+        stdio::debug(
+            "security",
+            &format!("privileged context disabled ({})", context),
+        );
     }
 }
 
@@ -196,8 +206,12 @@ mod security_rule_tests {
     fn internal_security_targets_match_expected_paths() {
         assert!(is_internal_security_target("deka.lock"));
         assert!(is_internal_security_target("/tmp/project/deka.lock"));
-        assert!(is_internal_security_target("php_modules/.cache/phpx/foo.php"));
-        assert!(is_internal_security_target("/tmp/project/php_modules/.cache"));
+        assert!(is_internal_security_target(
+            "php_modules/.cache/phpx/foo.php"
+        ));
+        assert!(is_internal_security_target(
+            "/tmp/project/php_modules/.cache"
+        ));
         assert!(is_internal_security_target(".cache/phpx/foo.php"));
         assert!(is_internal_security_target("/tmp/project/.cache"));
         assert!(!is_internal_security_target("/tmp/project/app/index.phpx"));
@@ -237,7 +251,10 @@ mod security_rule_tests {
 
     #[test]
     fn normalize_rel_like_strips_dot_prefixes() {
-        assert_eq!(normalize_rel_like("./deps/../deps/file.txt"), "deps/../deps/file.txt");
+        assert_eq!(
+            normalize_rel_like("./deps/../deps/file.txt"),
+            "deps/../deps/file.txt"
+        );
         assert_eq!(normalize_rel_like("././app/main.phpx"), "app/main.phpx");
     }
 
@@ -334,10 +351,7 @@ fn prompt_grant(
     }
     let prompt = format!(
         "[security] allow {} on {} (origin={}, scope={}) for this process? [y/N]: ",
-        capability,
-        target_label,
-        origin,
-        key
+        capability, target_label, origin, key
     );
     eprint!("{}", prompt);
     let _ = std::io::stderr().flush();
@@ -397,14 +411,7 @@ fn is_runtime_safe_env_key(key: &str) -> bool {
     let normalized = key.trim().to_ascii_uppercase();
     matches!(
         normalized.as_str(),
-        "PORT"
-            | "PWD"
-            | "TMPDIR"
-            | "TEMP"
-            | "TMP"
-            | "HOME"
-            | "PATH"
-            | "PHPX_MODULE_ROOT"
+        "PORT" | "PWD" | "TMPDIR" | "TEMP" | "TMP" | "HOME" | "PATH" | "PHPX_MODULE_ROOT"
     ) || normalized.starts_with("DEKA_")
 }
 
@@ -629,8 +636,12 @@ fn default_example(capability: &str, project_kind: ProjectKind) -> Option<String
 fn is_common_target(target: &str, project_kind: ProjectKind, capability: &str) -> bool {
     let target = target.replace('\\', "/");
     match (project_kind, capability) {
-        (ProjectKind::Php, "read") => target.contains("/php_modules/") || target.ends_with("/deka.lock"),
-        (ProjectKind::Php, "write") => target.contains("/php_modules/.cache/") || target.ends_with("/deka.lock"),
+        (ProjectKind::Php, "read") => {
+            target.contains("/php_modules/") || target.ends_with("/deka.lock")
+        }
+        (ProjectKind::Php, "write") => {
+            target.contains("/php_modules/.cache/") || target.ends_with("/deka.lock")
+        }
         (ProjectKind::Js, "read") => {
             target.contains("/src/")
                 || target.contains("/deps/")
@@ -752,7 +763,11 @@ pub(super) fn default_allow_target_for_capability(capability: &str) -> Option<&'
     }
 }
 
-fn rule_items_for_request(capability: &str, target: &str, project_kind: ProjectKind) -> Vec<String> {
+fn rule_items_for_request(
+    capability: &str,
+    target: &str,
+    project_kind: ProjectKind,
+) -> Vec<String> {
     match capability {
         "read" => rule_items_for_path(target, project_kind, true),
         "write" => rule_items_for_path(target, project_kind, false),

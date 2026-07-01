@@ -1,9 +1,9 @@
-use super::db::{sanitize_conn_value, PgConnConfig};
+use super::db::{PgConnConfig, sanitize_conn_value};
 use bytes::BytesMut;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use postgres::{
-    types::{to_sql_checked, IsNull, ToSql, Type as PgType},
     Client, NoTls,
+    types::{IsNull, ToSql, Type as PgType, to_sql_checked},
 };
 use std::error::Error as StdError;
 
@@ -86,7 +86,11 @@ impl PgNumericParam {
 }
 
 impl ToSql for PgNumericParam {
-    fn to_sql(&self, ty: &PgType, out: &mut BytesMut) -> Result<IsNull, Box<dyn StdError + Sync + Send>> {
+    fn to_sql(
+        &self,
+        ty: &PgType,
+        out: &mut BytesMut,
+    ) -> Result<IsNull, Box<dyn StdError + Sync + Send>> {
         match *ty {
             PgType::INT2 => {
                 let v = self.as_i64()? as i16;
@@ -147,7 +151,11 @@ pub(super) struct PgStringParam(String);
 pub(super) struct PgNullParam;
 
 impl ToSql for PgNullParam {
-    fn to_sql(&self, _ty: &PgType, _out: &mut BytesMut) -> Result<IsNull, Box<dyn StdError + Sync + Send>> {
+    fn to_sql(
+        &self,
+        _ty: &PgType,
+        _out: &mut BytesMut,
+    ) -> Result<IsNull, Box<dyn StdError + Sync + Send>> {
         Ok(IsNull::Yes)
     }
 
@@ -159,7 +167,11 @@ impl ToSql for PgNullParam {
 }
 
 impl ToSql for PgStringParam {
-    fn to_sql(&self, ty: &PgType, out: &mut BytesMut) -> Result<IsNull, Box<dyn StdError + Sync + Send>> {
+    fn to_sql(
+        &self,
+        ty: &PgType,
+        out: &mut BytesMut,
+    ) -> Result<IsNull, Box<dyn StdError + Sync + Send>> {
         match *ty {
             PgType::INT2 => {
                 let v: i16 = self.0.parse()?;

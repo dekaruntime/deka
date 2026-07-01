@@ -1,23 +1,3 @@
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Ecosystem {
-    Php,
-}
-
-impl Ecosystem {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Ecosystem::Php => "php",
-        }
-    }
-
-    pub fn from_str(value: &str) -> Option<Self> {
-        match value.to_lowercase().as_str() {
-            "php" => Some(Ecosystem::Php),
-            _ => None,
-        }
-    }
-}
-
 pub fn parse_package_spec(spec: &str) -> (String, Option<String>) {
     if spec.starts_with('@') {
         if let Some(pos) = spec[1..].find('@') {

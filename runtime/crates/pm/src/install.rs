@@ -1,8 +1,4 @@
-use crate::{
-    lock,
-    payload::InstallPayload,
-    spec::{Ecosystem, parse_package_spec},
-};
+use crate::{lock, payload::InstallPayload, spec::parse_package_spec};
 use anyhow::{Context, Result, anyhow, bail};
 use linkhash_client::LinkhashClient;
 use modules_php::integrity::compute_package_integrity;
@@ -18,18 +14,6 @@ pub async fn run_install(payload: InstallPayload) -> Result<()> {
     if payload.rehash {
         rehash_php_packages(&payload).await?;
         return Ok(());
-    }
-    let ecosystem = payload
-        .ecosystem
-        .as_deref()
-        .and_then(Ecosystem::from_str)
-        .unwrap_or(Ecosystem::Php);
-
-    if ecosystem != Ecosystem::Php {
-        bail!(
-            "unsupported install ecosystem '{}'; deka install only supports php",
-            ecosystem.as_str()
-        );
     }
 
     run_php_install(payload.specs.clone(), payload.quiet).await
@@ -74,7 +58,6 @@ async fn run_php_install(specs: Vec<String>, quiet: bool) -> Result<()> {
             },
         });
         lock::update_lock_entry(
-            "php",
             &resolved.name,
             format!("{}@{}", resolved.name, resolved.version),
             format!("linkhash:{}", resolved.name),
@@ -99,7 +82,7 @@ async fn rehash_php_packages_in(payload: &InstallPayload, project_dir: &Path) ->
     let lock = lock::read_lockfile_at(&lock_path);
     let mut specs = payload.specs.clone();
     if specs.is_empty() {
-        specs = lock.php.packages.keys().cloned().collect();
+        specs = lock.packages.keys().cloned().collect();
     }
     if specs.is_empty() {
         bail!("no PHP packages found to rehash");
@@ -116,7 +99,7 @@ async fn rehash_php_packages_in(payload: &InstallPayload, project_dir: &Path) ->
         }
         let integrity = compute_package_integrity(&package_root)
             .map_err(|err| anyhow!("failed to compute package integrity for {}: {}", name, err))?;
-        let entry = lock.php.packages.get(&name).cloned();
+        let entry = lock.packages.get(&name).cloned();
         let Some((descriptor, resolved, mut metadata, integrity_field)) = entry else {
             bail!("package '{}' is missing from deka.lock", name);
         };
@@ -132,7 +115,6 @@ async fn rehash_php_packages_in(payload: &InstallPayload, project_dir: &Path) ->
         }
         lock::update_lock_entry_at(
             &lock_path,
-            "php",
             &name,
             descriptor,
             resolved,
@@ -273,19 +255,16 @@ mod tests {
             tmp.path().join("deka.lock"),
             json!({
                 "lockfileVersion": 1,
-                "node": { "packages": {} },
-                "php": {
-                    "packages": {
-                        "@deka/component": [
-                            "@deka/component@0.1.0",
-                            "linkhash:@deka/component",
-                            {
-                                "moduleGraph": { "algo": "sha256", "hash": "stale" },
-                                "fsGraph": { "algo": "sha256", "hash": "stale" }
-                            },
-                            "sha512-stale"
-                        ]
-                    }
+                "packages": {
+                    "@deka/component": [
+                        "@deka/component@0.1.0",
+                        "linkhash:@deka/component",
+                        {
+                            "moduleGraph": { "algo": "sha256", "hash": "stale" },
+                            "fsGraph": { "algo": "sha256", "hash": "stale" }
+                        },
+                        "sha512-stale"
+                    ]
                 }
             })
             .to_string(),
@@ -294,7 +273,6 @@ mod tests {
 
         let payload = InstallPayload {
             specs: Vec::new(),
-            ecosystem: Some("php".to_string()),
             yes: true,
             prompt: false,
             quiet: true,
@@ -306,11 +284,7 @@ mod tests {
 
         let expected = compute_package_integrity(&package_root).expect("integrity");
         let lock = lock::read_lockfile_at(&tmp.path().join("deka.lock"));
-        let (_, _, metadata, _) = lock
-            .php
-            .packages
-            .get("@deka/component")
-            .expect("lock entry");
+        let (_, _, metadata, _) = lock.packages.get("@deka/component").expect("lock entry");
         assert_eq!(
             metadata
                 .get("moduleGraph")
