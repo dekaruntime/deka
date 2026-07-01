@@ -1,4 +1,4 @@
-use bundler::{BundleOptions, VirtualSource, bundle_virtual_entry};
+use bundler::{BuildOptions, VirtualSource, bundle_virtual_entry};
 use core::{CommandSpec, Context, ParamSpec, Registry};
 use phpx_js::{SourceModuleMeta, compile_phpx_source_to_js, parse_source_module_meta};
 use std::collections::{BTreeMap, BTreeSet};
@@ -767,10 +767,10 @@ fn build_single_file_bundle_to_path(
     let entry_js = format!("{prelude}\n{}", output.js);
     let entry_path = fs::canonicalize(input_path)
         .map_err(|err| format!("failed to resolve {}: {}", input_path.display(), err))?;
-    let provider = Arc::new(PhpxBundleProvider::new(entry_path.clone(), entry_js));
+    let provider = Arc::new(PhpxProvider::new(entry_path.clone(), entry_js));
     let bundle = bundle_virtual_entry(
         &entry_path,
-        BundleOptions {
+        BuildOptions {
             project_root: output.project_root,
             minify,
             iife: false,
@@ -811,12 +811,12 @@ fn build_single_file_to_string(input_path: &Path) -> Result<JsBuildOutput, Strin
     })
 }
 
-struct PhpxBundleProvider {
+struct PhpxProvider {
     entry_path: PathBuf,
     entry_source: String,
 }
 
-impl PhpxBundleProvider {
+impl PhpxProvider {
     fn new(entry_path: PathBuf, entry_source: String) -> Self {
         Self {
             entry_path,
@@ -825,7 +825,7 @@ impl PhpxBundleProvider {
     }
 }
 
-impl VirtualSource for PhpxBundleProvider {
+impl VirtualSource for PhpxProvider {
     fn load_virtual(&self, path: &Path) -> Result<Option<String>, String> {
         if path == self.entry_path {
             return Ok(Some(self.entry_source.clone()));
