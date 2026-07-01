@@ -1,7 +1,7 @@
-use super::*;
 use super::bridge_metrics::record_bridge_proto_metric;
 use super::db_pg::{json_to_pg_param, pg_cell_to_json, with_pg_client};
 use super::security::enforce_db;
+use super::*;
 use postgres::types::ToSql;
 
 pub(super) struct DbConn {
@@ -116,7 +116,6 @@ static DB_STATE: OnceLock<Mutex<DbState>> = OnceLock::new();
 pub(super) fn db_state() -> &'static Mutex<DbState> {
     DB_STATE.get_or_init(|| Mutex::new(DbState::new()))
 }
-
 
 pub(super) fn sanitize_conn_value(value: &str) -> String {
     value
@@ -770,7 +769,6 @@ pub(super) enum DbProtoActionKind {
     Stats,
 }
 
-
 pub(super) fn db_json_to_proto_value(value: &serde_json::Value) -> proto::bridge_v1::Value {
     use proto::bridge_v1::value::Kind;
     let kind = match value {
@@ -1295,7 +1293,9 @@ pub(super) fn db_target_from_payload(action: &str, payload: &serde_json::Value) 
 
 #[op2]
 #[buffer]
-pub(super) fn op_php_db_call_proto(#[buffer] request: &[u8]) -> Result<Vec<u8>, deno_core::error::CoreError> {
+pub(super) fn op_php_db_call_proto(
+    #[buffer] request: &[u8],
+) -> Result<Vec<u8>, deno_core::error::CoreError> {
     db_call_proto_impl(request)
 }
 

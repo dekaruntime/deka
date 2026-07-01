@@ -9,11 +9,11 @@ use php_rs::parser::ast::{ClassKind, ClassMember, Program, Stmt, Type as AstType
 use php_rs::parser::lexer::Lexer;
 use php_rs::parser::lexer::token::Token;
 use php_rs::parser::parser::{Parser, ParserMode, detect_parser_mode};
-use serde_json::{Map, Value};
 use prost::Message as ProstMessage;
 use runtime_core::security_policy::{RuleList, SecurityPolicy, parse_deka_security_policy};
 use rusqlite::types::ValueRef as SqliteValueRef;
 use rusqlite::{Connection as SqliteConnection, params_from_iter as sqlite_params_from_iter};
+use serde_json::{Map, Value};
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::fs::{File as StdFile, OpenOptions};
@@ -93,12 +93,21 @@ pub fn init() -> deno_core::Extension {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::crypto_env::bcrypt_verify_impl;
-    use super::db::{db_action_payload_to_proto_request, db_call_impl, db_call_proto_impl, db_proto_response_to_json};
-    use super::fs_bridge::{fs_action_payload_to_proto_request, fs_call_impl, fs_call_proto_impl, fs_proto_response_to_json};
-    use super::net::{net_action_payload_to_proto_request, net_call_impl, net_call_proto_impl, net_proto_response_to_json};
+    use super::db::{
+        db_action_payload_to_proto_request, db_call_impl, db_call_proto_impl,
+        db_proto_response_to_json,
+    };
+    use super::fs_bridge::{
+        fs_action_payload_to_proto_request, fs_call_impl, fs_call_proto_impl,
+        fs_proto_response_to_json,
+    };
+    use super::net::{
+        net_action_payload_to_proto_request, net_call_impl, net_call_proto_impl,
+        net_proto_response_to_json,
+    };
     use super::security::default_allow_target_for_capability;
+    use super::*;
     use prost::Message;
     use std::net::TcpListener;
     use std::time::{SystemTime, UNIX_EPOCH};

@@ -41,6 +41,8 @@ pub struct BundleOptions {
     pub stdlib_path: Option<PathBuf>,
 }
 
+pub type BuildOptions = BundleOptions;
+
 pub trait VirtualSource: Send + Sync {
     fn load_virtual(&self, path: &Path) -> Result<Option<String>, String>;
 }

@@ -144,7 +144,6 @@ fn run_default_install(target: &Path) -> Result<(), String> {
         .map_err(|err| format!("failed to enter {}: {}", target.display(), err))?;
     let payload = InstallPayload {
         specs: DEFAULT_PHP_PACKAGES.iter().map(|s| s.to_string()).collect(),
-        ecosystem: Some("php".to_string()),
         yes: true,
         prompt: false,
         quiet: false,
@@ -196,7 +195,7 @@ fn default_deka_json(name: &str) -> String {
 }
 
 fn default_deka_lock_json() -> String {
-    "{\n  \"lockfileVersion\": 1,\n  \"node\": {\n    \"packages\": {}\n  },\n  \"php\": {\n    \"packages\": {},\n    \"cache\": {\n      \"version\": 1,\n      \"compiler\": \"phpx-cache-v3\",\n      \"modules\": {}\n    }\n  }\n}\n".to_string()
+    "{\n  \"lockfileVersion\": 1,\n  \"packages\": {}\n}\n".to_string()
 }
 
 fn default_app_page_phpx() -> &'static str {

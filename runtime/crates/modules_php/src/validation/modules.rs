@@ -1148,8 +1148,13 @@ where
     };
 
     let packages_json = lock_json
-        .pointer("/php/packages")
-        .and_then(|value| value.as_object());
+        .get("packages")
+        .and_then(|value| value.as_object())
+        .or_else(|| {
+            lock_json
+                .pointer("/php/packages")
+                .and_then(|value| value.as_object())
+        });
     let Some(packages_json) = packages_json else {
         return packages
             .into_iter()
@@ -1159,7 +1164,7 @@ where
                     1,
                     name.len().max(1),
                     format!(
-                        "deka.lock has no php package entries; cannot verify '{}'.",
+                        "deka.lock has no package entries; cannot verify '{}'.",
                         name
                     ),
                     "Run `deka install` to recreate package entries.",
@@ -1326,7 +1331,8 @@ fn wasm_error(
 #[cfg(test)]
 mod tests {
     use super::{
-        resolve_modules_root_with_env, validate_module_resolution, validate_target_capabilities,
+        resolve_modules_root_with_env, validate_module_resolution, validate_package_integrity,
+        validate_target_capabilities,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -1512,6 +1518,45 @@ mod tests {
             "expected remediation hint, got: {:?}",
             errors
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn package_integrity_accepts_flat_lock_packages() {
+        let root = make_temp_project("flat_lock_integrity");
+        let package_root = root.join("php_modules").join("@deka").join("core");
+        fs::create_dir_all(&package_root).expect("mkdir package");
+        fs::write(
+            package_root.join("index.phpx"),
+            "export function ok(): int { return 1 }\n",
+        )
+        .expect("write package");
+        let integrity =
+            crate::integrity::compute_package_integrity(&package_root).expect("integrity");
+        fs::write(
+            root.join("deka.lock"),
+            serde_json::json!({
+                "lockfileVersion": 1,
+                "packages": {
+                    "@deka/core": [
+                        "0.1.0",
+                        "linkhash:@deka/core",
+                        {
+                            "moduleGraph": { "hash": integrity.module_graph },
+                            "fsGraph": { "hash": integrity.fs_graph }
+                        },
+                        ""
+                    ]
+                }
+            })
+            .to_string(),
+        )
+        .expect("write lock");
+
+        let module_ids = vec!["@deka/core".to_string()];
+        let errors = validate_package_integrity(&root.join("php_modules"), module_ids.iter());
+        assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
 
         let _ = fs::remove_dir_all(root);
     }

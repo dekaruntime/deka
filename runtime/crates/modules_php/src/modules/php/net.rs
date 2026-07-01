@@ -1,6 +1,6 @@
-use super::*;
 use super::bridge_metrics::record_bridge_proto_metric;
 use super::security::enforce_net;
+use super::*;
 
 pub(super) enum NetConn {
     Tcp(TcpStream),
@@ -416,7 +416,9 @@ pub(super) fn net_json_response_to_proto(
     }
 }
 
-pub(super) fn net_proto_response_to_json(resp: &proto::bridge_v1::NetResponse) -> serde_json::Value {
+pub(super) fn net_proto_response_to_json(
+    resp: &proto::bridge_v1::NetResponse,
+) -> serde_json::Value {
     use proto::bridge_v1::net_response::Action;
     let mut out = serde_json::Map::new();
     out.insert("ok".to_string(), serde_json::Value::Bool(resp.ok));
@@ -479,7 +481,9 @@ pub(super) fn net_call_proto_impl(request: &[u8]) -> Result<Vec<u8>, deno_core::
 
 #[op2]
 #[buffer]
-pub(super) fn op_php_net_call_proto(#[buffer] request: &[u8]) -> Result<Vec<u8>, deno_core::error::CoreError> {
+pub(super) fn op_php_net_call_proto(
+    #[buffer] request: &[u8],
+) -> Result<Vec<u8>, deno_core::error::CoreError> {
     net_call_proto_impl(request)
 }
 

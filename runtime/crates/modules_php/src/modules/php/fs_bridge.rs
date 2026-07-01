@@ -1,6 +1,6 @@
-use super::*;
 use super::bridge_metrics::record_bridge_proto_metric;
 use super::security::{enforce_read, enforce_write};
+use super::*;
 
 pub(super) struct FsState {
     next_handle: u64,
@@ -517,13 +517,21 @@ pub(super) fn fs_json_response_to_proto(
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("")
                                 .to_string(),
-                            is_dir: entry.get("is_dir").and_then(|v| v.as_bool()).unwrap_or(false),
-                            is_file: entry.get("is_file").and_then(|v| v.as_bool()).unwrap_or(false),
+                            is_dir: entry
+                                .get("is_dir")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false),
+                            is_file: entry
+                                .get("is_file")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false),
                         })
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
-            Some(Action::ReadDir(proto::bridge_v1::FsReadDirResponse { entries }))
+            Some(Action::ReadDir(proto::bridge_v1::FsReadDirResponse {
+                entries,
+            }))
         }
         FsProtoActionKind::Mkdirs => Some(Action::Mkdirs(proto::bridge_v1::FsUnitResponse { ok })),
     };
@@ -639,7 +647,9 @@ pub(super) fn fs_call_proto_impl(request: &[u8]) -> Result<Vec<u8>, deno_core::e
 
 #[op2]
 #[buffer]
-pub(super) fn op_php_fs_call_proto(#[buffer] request: &[u8]) -> Result<Vec<u8>, deno_core::error::CoreError> {
+pub(super) fn op_php_fs_call_proto(
+    #[buffer] request: &[u8],
+) -> Result<Vec<u8>, deno_core::error::CoreError> {
     fs_call_proto_impl(request)
 }
 

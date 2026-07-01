@@ -1,5 +1,5 @@
-use super::*;
 use super::security::{enforce_read, enforce_write};
+use super::*;
 
 #[derive(serde::Serialize)]
 pub(super) struct PhpDirEntry {
@@ -10,7 +10,9 @@ pub(super) struct PhpDirEntry {
 
 #[op2]
 #[buffer]
-pub(super) fn op_php_read_file_sync(#[string] path: String) -> Result<Vec<u8>, deno_core::error::CoreError> {
+pub(super) fn op_php_read_file_sync(
+    #[string] path: String,
+) -> Result<Vec<u8>, deno_core::error::CoreError> {
     enforce_read(Some(&path))?;
     std::fs::read(&path).map_err(|e| {
         deno_core::error::CoreError::from(std::io::Error::new(

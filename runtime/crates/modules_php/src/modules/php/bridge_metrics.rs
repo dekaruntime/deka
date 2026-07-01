@@ -15,7 +15,12 @@ fn bridge_proto_metrics() -> &'static Mutex<HashMap<String, BridgeProtoMetric>> 
     BRIDGE_PROTO_METRICS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-pub(super) fn record_bridge_proto_metric(kind: &str, req_len: usize, resp_len: usize, elapsed_us: u64) {
+pub(super) fn record_bridge_proto_metric(
+    kind: &str,
+    req_len: usize,
+    resp_len: usize,
+    elapsed_us: u64,
+) {
     if let Ok(mut metrics) = bridge_proto_metrics().lock() {
         let metric = metrics
             .entry(kind.to_string())
@@ -40,7 +45,8 @@ pub(super) fn record_bridge_proto_metric(kind: &str, req_len: usize, resp_len: u
 
 #[op2]
 #[serde]
-pub(super) fn op_php_bridge_proto_stats() -> Result<serde_json::Value, deno_core::error::CoreError> {
+pub(super) fn op_php_bridge_proto_stats() -> Result<serde_json::Value, deno_core::error::CoreError>
+{
     let metrics = bridge_proto_metrics()
         .lock()
         .map_err(|_| core_err("bridge proto metrics lock poisoned"))?;

@@ -23,7 +23,10 @@ fn not_found_returns_correct_json_error_shape() {
     let envelope = ResponseEnvelope::from_value(value).expect("valid envelope");
     assert_eq!(envelope.status, 404);
     let parsed: serde_json::Value = serde_json::from_str(&envelope.body).unwrap();
-    assert_eq!(parsed.get("error").and_then(|v| v.as_str()), Some("not found"));
+    assert_eq!(
+        parsed.get("error").and_then(|v| v.as_str()),
+        Some("not found")
+    );
 }
 
 #[test]

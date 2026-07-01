@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use engine::{RuntimeState, RuntimeEngine, execute_request_parts};
 use engine::config::RuntimeConfig;
-use pool::{PoolConfig, HandlerKey};
+use engine::{RuntimeEngine, RuntimeState, execute_request_parts};
+use pool::{HandlerKey, PoolConfig};
+use std::sync::Arc;
 
 fn test_state(handler_code: &str) -> Arc<RuntimeState> {
     let server_pool_config = PoolConfig {
@@ -20,7 +20,7 @@ fn test_state(handler_code: &str) -> Arc<RuntimeState> {
         server_pool_config,
         user_pool_config,
         &runtime_config,
-        Arc::new(|| vec![]),
+        Arc::new(Vec::new),
     ));
     Arc::new(RuntimeState {
         engine,
@@ -47,7 +47,8 @@ globalThis.app = function(req) {
         "GET".to_string(),
         vec![],
         None,
-    ).await;
+    )
+    .await;
     let envelope = res.expect("should return envelope");
     assert_eq!(envelope.status, 200);
     assert_eq!(envelope.body, "handled by correct handler");
@@ -67,7 +68,9 @@ globalThis.app = function(req) {
         "GET".to_string(),
         vec![],
         None,
-    ).await.expect("should succeed");
+    )
+    .await
+    .expect("should succeed");
     assert_eq!(envelope.status, 418);
     assert_eq!(envelope.headers.get("x-custom"), Some(&"yes".to_string()));
     assert_eq!(envelope.body, "teapot");
@@ -87,10 +90,15 @@ globalThis.app = function(req) {
         "GET".to_string(),
         vec![],
         None,
-    ).await.expect("should succeed");
+    )
+    .await
+    .expect("should succeed");
     assert_eq!(envelope.status, 404);
     let parsed: serde_json::Value = serde_json::from_str(&envelope.body).unwrap();
-    assert_eq!(parsed.get("error").and_then(|v| v.as_str()), Some("not found"));
+    assert_eq!(
+        parsed.get("error").and_then(|v| v.as_str()),
+        Some("not found")
+    );
 }
 
 #[tokio::test]
@@ -107,7 +115,9 @@ globalThis.app = function(req) {
         "GET".to_string(),
         vec![],
         None,
-    ).await.expect_err("should fail on panic");
+    )
+    .await
+    .expect_err("should fail on panic");
     assert!(
         err.contains("handler execution failed"),
         "error should indicate handler execution failed: {}",

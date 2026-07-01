@@ -164,7 +164,7 @@ pub fn copy_package(source: &Path, destination: &Path) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
 
-    // Use hardlinks for instant "copying" - like Bun does
+    // Use hardlinks for instant package materialization.
     hardlink_dir(source, destination).context("failed to link package")
 }
 

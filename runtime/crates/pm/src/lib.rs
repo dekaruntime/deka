@@ -1,10 +1,8 @@
 #![allow(clippy::all)]
 
-pub mod bun_lock;
 pub mod cache;
 pub mod install;
 pub mod lock;
-pub mod npm;
 pub mod payload;
 pub mod spec;
 

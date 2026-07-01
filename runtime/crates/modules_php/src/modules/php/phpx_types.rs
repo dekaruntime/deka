@@ -71,7 +71,6 @@ pub(super) struct BridgeModuleTypes {
     structs: HashMap<String, BridgeStruct>,
 }
 
-
 #[derive(Clone)]
 pub(super) struct TypeAliasInfo<'a> {
     params: Vec<String>,
