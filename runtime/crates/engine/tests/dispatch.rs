@@ -20,7 +20,7 @@ fn test_state(handler_code: &str) -> Arc<RuntimeState> {
         server_pool_config,
         user_pool_config,
         &runtime_config,
-        Arc::new(|| vec![]),
+        Arc::new(Vec::new),
     ));
     Arc::new(RuntimeState {
         engine,

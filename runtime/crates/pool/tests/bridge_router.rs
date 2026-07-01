@@ -12,7 +12,7 @@ fn test_pool() -> IsolatePool {
         queue_timeout_ms: 10_000,
         ..PoolConfig::default()
     };
-    IsolatePool::new(config, Arc::new(|| vec![]))
+    IsolatePool::new(config, Arc::new(Vec::new))
 }
 
 fn test_request(handler_code: &str) -> RequestData {

@@ -111,14 +111,22 @@ pub fn cmd(context: &Context) {
         return;
     }
 
-    // Check if any positional args are scoped PHPX packages
-    let specs: Vec<String> = context.args.positionals.clone();
-    let phpx_specs: Vec<&String> = specs.iter().filter(|s| is_phpx_package(s)).collect();
+    let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let explicit_specs = install_explicit_specs(context);
+    let specs = if explicit_specs.is_empty() {
+        collect_deka_json_deps()
+    } else {
+        explicit_specs.clone()
+    };
+    let phpx_specs: Vec<String> = specs
+        .iter()
+        .filter(|s| is_phpx_package(s))
+        .cloned()
+        .collect();
 
     if !phpx_specs.is_empty() {
         let (registry_url, token) = get_registry_config(context);
         let client = LinkhashClient::new(&registry_url, token.as_deref());
-        let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
         for spec in &phpx_specs {
             let (name, version_range) = parse_spec_with_version(spec);
@@ -131,19 +139,26 @@ pub fn cmd(context: &Context) {
                 }
             }
         }
-
-        // If there are also non-phpx specs, fall through to pm
-        let non_phpx: Vec<String> = specs
-            .iter()
-            .filter(|s| !is_phpx_package(s))
-            .cloned()
-            .collect();
-        if non_phpx.is_empty() {
-            return;
-        }
     }
 
-    match build_payload(context) {
+    let non_phpx: Vec<String> = specs
+        .iter()
+        .filter(|s| !is_phpx_package(s))
+        .cloned()
+        .collect();
+    let has_package_json = package_json_exists_in(&project_dir);
+
+    if !should_run_package_manager(&non_phpx, has_package_json) {
+        return;
+    }
+
+    let payload = if !non_phpx.is_empty() && (!explicit_specs.is_empty() || !has_package_json) {
+        build_payload_for_specs(context, non_phpx)
+    } else {
+        build_payload(context)
+    };
+
+    match payload {
         Ok(payload) => {
             let runtime = tokio::runtime::Runtime::new().unwrap();
             if let Err(err) = runtime.block_on(run_install(payload)) {
@@ -156,6 +171,24 @@ pub fn cmd(context: &Context) {
             stdio::error("install", &message);
         }
     }
+}
+
+fn install_explicit_specs(context: &Context) -> Vec<String> {
+    context
+        .args
+        .params
+        .get("--spec")
+        .map(|value| parse_spec_list(value))
+        .filter(|specs| !specs.is_empty())
+        .unwrap_or_else(|| context.args.positionals.clone())
+}
+
+fn package_json_exists_in(project_dir: &Path) -> bool {
+    project_dir.join("package.json").is_file()
+}
+
+fn should_run_package_manager(non_phpx_specs: &[String], has_package_json: bool) -> bool {
+    has_package_json || !non_phpx_specs.is_empty()
 }
 
 pub fn cmd_update(context: &Context) {
@@ -587,6 +620,28 @@ fn build_payload(context: &Context) -> Result<InstallPayload> {
             quiet: false,
             rehash: false,
         }
+    };
+
+    if payload.ecosystem.as_deref() == Some("php") {
+        let mut resolved_specs = Vec::new();
+        for spec in &payload.specs {
+            resolved_specs.push(resolve_php_spec(spec)?);
+        }
+        payload.specs = resolved_specs;
+    }
+
+    apply_flags(&mut payload, context);
+    Ok(payload)
+}
+
+fn build_payload_for_specs(context: &Context, specs: Vec<String>) -> Result<InstallPayload> {
+    let mut payload = InstallPayload {
+        specs,
+        ecosystem: context.args.params.get("--ecosystem").cloned(),
+        yes: false,
+        prompt: false,
+        quiet: false,
+        rehash: false,
     };
 
     if payload.ecosystem.as_deref() == Some("php") {
@@ -1111,6 +1166,19 @@ mod shop_update_tests {
                 "@tana/store@0.2.0".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn package_manager_is_skipped_without_package_json_or_non_phpx_specs() {
+        let specs: Vec<String> = Vec::new();
+        assert!(!should_run_package_manager(&specs, false));
+    }
+
+    #[test]
+    fn package_manager_runs_for_package_json_or_non_phpx_specs() {
+        let specs = vec!["left-pad@1.3.0".to_string()];
+        assert!(should_run_package_manager(&[], true));
+        assert!(should_run_package_manager(&specs, false));
     }
 
     #[test]
