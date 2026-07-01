@@ -141,22 +141,11 @@ pub fn cmd(context: &Context) {
         }
     }
 
-    let non_phpx: Vec<String> = specs
-        .iter()
-        .filter(|s| !is_phpx_package(s))
-        .cloned()
-        .collect();
-    let has_package_json = package_json_exists_in(&project_dir);
-
-    if !should_run_package_manager(&non_phpx, has_package_json) {
+    if phpx_specs.len() == specs.len() {
         return;
     }
 
-    let payload = if !non_phpx.is_empty() && (!explicit_specs.is_empty() || !has_package_json) {
-        build_payload_for_specs(context, non_phpx)
-    } else {
-        build_payload(context)
-    };
+    let payload = build_payload_for_specs(context, specs);
 
     match payload {
         Ok(payload) => {
@@ -181,14 +170,6 @@ fn install_explicit_specs(context: &Context) -> Vec<String> {
         .map(|value| parse_spec_list(value))
         .filter(|specs| !specs.is_empty())
         .unwrap_or_else(|| context.args.positionals.clone())
-}
-
-fn package_json_exists_in(project_dir: &Path) -> bool {
-    project_dir.join("package.json").is_file()
-}
-
-fn should_run_package_manager(non_phpx_specs: &[String], has_package_json: bool) -> bool {
-    has_package_json || !non_phpx_specs.is_empty()
 }
 
 pub fn cmd_update(context: &Context) {
@@ -235,10 +216,12 @@ pub fn cmd_update(context: &Context) {
         }
     }
 
-    // Still run pm for non-phpx packages
+    if phpx_specs.len() == specs.len() {
+        return;
+    }
+
     match build_update_payload(context) {
         Ok(payload) => {
-            // Filter out phpx specs from the payload
             let runtime = tokio::runtime::Runtime::new().unwrap();
             if let Err(err) = runtime.block_on(run_install(payload)) {
                 let message = err.to_string();
@@ -581,63 +564,16 @@ fn apply_registry_env(context: &Context) {
     }
 }
 
-fn build_payload(context: &Context) -> Result<InstallPayload> {
-    let command_name = context
-        .args
-        .commands
-        .first()
-        .map(String::as_str)
-        .unwrap_or("install");
-
-    let mut payload = if let Some(payload_path) = context.args.params.get("--payload") {
-        let mut payload = InstallPayload::from_file(&PathBuf::from(payload_path))?;
-        if let Some(path) = context.args.params.get("--ecosystem") {
-            payload.ecosystem = Some(path.clone());
-        }
-        payload
-    } else {
-        let mut specs = context
-            .args
-            .params
-            .get("--spec")
-            .map(|value| parse_spec_list(value))
-            .unwrap_or_default();
-        if specs.is_empty() && !context.args.positionals.is_empty() {
-            specs = context.args.positionals.clone();
-        }
-        let ecosystem = context.args.params.get("--ecosystem").cloned().or_else(|| {
-            if command_name == "install" {
-                None
-            } else {
-                Some("php".to_string())
-            }
-        });
-        InstallPayload {
-            specs,
-            ecosystem,
-            yes: false,
-            prompt: false,
-            quiet: false,
-            rehash: false,
-        }
-    };
-
-    if payload.ecosystem.as_deref() == Some("php") {
-        let mut resolved_specs = Vec::new();
-        for spec in &payload.specs {
-            resolved_specs.push(resolve_php_spec(spec)?);
-        }
-        payload.specs = resolved_specs;
-    }
-
-    apply_flags(&mut payload, context);
-    Ok(payload)
-}
-
 fn build_payload_for_specs(context: &Context, specs: Vec<String>) -> Result<InstallPayload> {
+    let ecosystem = context
+        .args
+        .params
+        .get("--ecosystem")
+        .cloned()
+        .unwrap_or_else(|| "php".to_string());
     let mut payload = InstallPayload {
         specs,
-        ecosystem: context.args.params.get("--ecosystem").cloned(),
+        ecosystem: Some(ecosystem),
         yes: false,
         prompt: false,
         quiet: false,
@@ -1166,19 +1102,6 @@ mod shop_update_tests {
                 "@tana/store@0.2.0".to_string(),
             ]
         );
-    }
-
-    #[test]
-    fn package_manager_is_skipped_without_package_json_or_non_phpx_specs() {
-        let specs: Vec<String> = Vec::new();
-        assert!(!should_run_package_manager(&specs, false));
-    }
-
-    #[test]
-    fn package_manager_runs_for_package_json_or_non_phpx_specs() {
-        let specs = vec!["left-pad@1.3.0".to_string()];
-        assert!(should_run_package_manager(&[], true));
-        assert!(should_run_package_manager(&specs, false));
     }
 
     #[test]

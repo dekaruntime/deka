@@ -1,5 +1,5 @@
-use std::fs;
 use engine::config::resolve_handler_path;
+use std::fs;
 
 fn temp_dir(prefix: &str) -> std::path::PathBuf {
     let nonce = std::time::SystemTime::now()
@@ -51,12 +51,12 @@ fn index_phpx_routes_to_correct_handler() {
 }
 
 #[test]
-fn package_json_main_routes_to_correct_handler() {
+fn package_json_main_is_ignored_for_handler_resolution() {
     let dir = temp_dir("engine_test_pkg");
     fs::write(dir.join("package.json"), r#"{"main":"lib.js"}"#).unwrap();
     fs::write(dir.join("lib.js"), "").unwrap();
     let resolved = resolve_handler_path(dir.to_str().unwrap()).unwrap();
-    assert_eq!(resolved.path, dir.join("lib.js"));
+    assert_eq!(resolved.path, dir);
 }
 
 #[test]
