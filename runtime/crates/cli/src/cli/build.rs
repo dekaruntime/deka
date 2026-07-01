@@ -1,6 +1,6 @@
-use bundler::{BundleOptions, VirtualSource, bundle_virtual_entry};
+use bundler::{bundle_virtual_entry, BundleOptions, VirtualSource};
 use core::{CommandSpec, Context, ParamSpec, Registry};
-use phpx_js::{SourceModuleMeta, compile_phpx_source_to_js, parse_source_module_meta};
+use phpx_js::{compile_phpx_source_to_js, parse_source_module_meta, SourceModuleMeta};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -297,10 +297,21 @@ fn resolve_project_root(input_path: &Path) -> Result<PathBuf, String> {
         input_path.parent().unwrap_or(Path::new(".")).to_path_buf()
     };
 
+    let mut nearest_manifest_root = None;
     for dir in start.ancestors() {
         if dir.join("deka.json").is_file() {
-            return Ok(dir.to_path_buf());
+            let dir = dir.to_path_buf();
+            if dir.join("deka.lock").is_file() {
+                return Ok(dir);
+            }
+            if nearest_manifest_root.is_none() {
+                nearest_manifest_root = Some(dir);
+            }
         }
+    }
+
+    if let Some(root) = nearest_manifest_root {
+        return Ok(root);
     }
 
     Err(format!(
@@ -1496,6 +1507,45 @@ class User {}
         let meta = SourceModuleMeta::empty();
         let err = ensure_project_layout(tmp.path(), &meta).expect_err("missing lock");
         assert!(err.contains("deka.lock"));
+    }
+
+    #[test]
+    fn project_root_prefers_outer_lock_bearing_root_over_nested_package_manifest() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        std::fs::write(tmp.path().join("deka.json"), "{}").expect("root deka.json");
+        std::fs::write(tmp.path().join("deka.lock"), "{}").expect("root deka.lock");
+
+        let package_dir = tmp
+            .path()
+            .join("php_modules")
+            .join("@deka")
+            .join("payments");
+        std::fs::create_dir_all(&package_dir).expect("package dir");
+        std::fs::write(package_dir.join("deka.json"), "{}").expect("package deka.json");
+        let input = package_dir.join("index.phpx");
+        std::fs::write(&input, "<div />").expect("input");
+
+        let root = resolve_project_root(&input).expect("project root");
+        assert_eq!(root, tmp.path());
+    }
+
+    #[test]
+    fn project_root_falls_back_to_nearest_manifest_when_no_lock_exists() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        std::fs::write(tmp.path().join("deka.json"), "{}").expect("root deka.json");
+
+        let package_dir = tmp
+            .path()
+            .join("php_modules")
+            .join("@deka")
+            .join("payments");
+        std::fs::create_dir_all(&package_dir).expect("package dir");
+        std::fs::write(package_dir.join("deka.json"), "{}").expect("package deka.json");
+        let input = package_dir.join("index.phpx");
+        std::fs::write(&input, "<div />").expect("input");
+
+        let root = resolve_project_root(&input).expect("project root");
+        assert_eq!(root, package_dir);
     }
 
     #[test]
