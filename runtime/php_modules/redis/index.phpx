@@ -104,10 +104,6 @@ export function keys($handle, $pattern = '*') {
     return bridge('redis', 'keys', { handle: $handle, pattern: $pattern })
 }
 
-export function flush($handle) {
-    return bridge('redis', 'flush', { handle: $handle })
-}
-
 export function close($handle) {
     return bridge('redis', 'close', { handle: $handle })
 }

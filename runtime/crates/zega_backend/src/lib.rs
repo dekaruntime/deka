@@ -108,6 +108,12 @@ impl ZegaManager {
     }
 
     pub fn kv_call(&self, shop_id: &str, action: &str, args: &JsonValue) -> JsonValue {
+        if matches!(
+            action.to_ascii_lowercase().as_str(),
+            "flush" | "flushdb" | "flushall"
+        ) {
+            return json!({ "ok": false, "error": "redis admin action blocked in user pool" });
+        }
         match action {
             "connect" => return json!({ "ok": true, "handle": 1 }),
             "close" => return json!({ "ok": true }),
@@ -347,5 +353,18 @@ mod tests {
             manager.kv_call("shop_a", "close", &json!({ "handle": 1 })),
             json!({ "ok": true })
         );
+    }
+
+    #[test]
+    fn zega_kv_route_rejects_redis_admin_wipe_verbs() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = ZegaManager::new(dir.path());
+        for action in ["flush", "FLUSHDB", "flushall"] {
+            assert_eq!(
+                manager.kv_call("shop_a", action, &json!({ "handle": 1 })),
+                json!({ "ok": false, "error": "redis admin action blocked in user pool" }),
+                "{action} must not expose an unprefixed wipe through Zega"
+            );
+        }
     }
 }
