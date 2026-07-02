@@ -46,7 +46,7 @@ fn shard_route_redis(args: &Value) -> String {
 
 /// Main dispatch function — called from the JS bridge router via op_redis_call.
 pub fn redis_call(action: &str, args: &Value) -> Value {
-    match action {
+    match action.to_ascii_lowercase().as_str() {
         "connect" => redis_connect(args),
         "get" => redis_get(args),
         "set" => redis_set(args),
@@ -71,7 +71,7 @@ pub fn redis_call(action: &str, args: &Value) -> Value {
         "srem" => redis_srem(args),
         "sismember" => redis_sismember(args),
         "keys" => redis_keys(args),
-        "flush" => redis_flush(args),
+        "flush" | "flushdb" | "flushall" => redis_admin_blocked(),
         "close" => redis_close(args),
         _ => json!({ "ok": false, "error": format!("unknown redis action '{}'", action) }),
     }
@@ -517,21 +517,18 @@ fn redis_sismember(args: &Value) -> Value {
 
 fn redis_keys(args: &Value) -> Value {
     let handle = get_handle(args);
-    let pattern = args.get("pattern").and_then(|v| v.as_str()).unwrap_or("*");
+    let pattern = match args.get("pattern").and_then(|v| v.as_str()) {
+        Some(pattern) => pattern,
+        None => return json!({ "ok": false, "error": "missing 'pattern'" }),
+    };
     with_conn(handle, |conn| match conn.keys::<_, Vec<String>>(pattern) {
         Ok(keys) => json!({ "ok": true, "keys": keys }),
         Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
     })
 }
 
-fn redis_flush(args: &Value) -> Value {
-    let handle = get_handle(args);
-    with_conn(handle, |conn| {
-        match redis::cmd("FLUSHDB").query::<String>(conn) {
-            Ok(_) => json!({ "ok": true }),
-            Err(e) => json!({ "ok": false, "error": format!("{}", e) }),
-        }
-    })
+fn redis_admin_blocked() -> Value {
+    json!({ "ok": false, "error": "redis admin action blocked in user pool" })
 }
 
 fn redis_close(args: &Value) -> Value {
@@ -548,6 +545,26 @@ fn redis_close(args: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn admin_flush_verbs_are_blocked() {
+        for action in ["flush", "FLUSHDB", "flushall"] {
+            assert_eq!(
+                redis_call(action, &json!({ "handle": 1 })),
+                json!({ "ok": false, "error": "redis admin action blocked in user pool" }),
+                "{action} must never issue FLUSHDB/FLUSHALL"
+            );
+        }
+    }
+
+    #[test]
+    fn keys_requires_explicit_pattern() {
+        assert_eq!(
+            redis_call("keys", &json!({ "handle": 1 })),
+            json!({ "ok": false, "error": "missing 'pattern'" }),
+            "native Redis dispatch must not turn a raw bridge keys call into KEYS *"
+        );
+    }
 
     #[test]
     fn connect_and_set_get() {

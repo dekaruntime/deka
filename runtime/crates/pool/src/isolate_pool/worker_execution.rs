@@ -292,22 +292,30 @@ impl WorkerThread {
                             return { ok: false, error: 'neo4j bridge op unavailable' };
                         }
                         if (kind === 'redis') {
+                            const redisAction = String(action || '').toLowerCase();
+                            if (redisAction === 'flush' || redisAction === 'flushdb' || redisAction === 'flushall') {
+                                return { ok: false, error: 'redis admin action blocked in user pool' };
+                            }
+                            if (redisAction === 'scan' || redisAction === 'config' || redisAction === 'randomkey') {
+                                return { ok: false, error: 'redis unscoped action blocked in user pool' };
+                            }
                             const shopId = globalThis.__shopId;
                             if (shopId && typeof ops.op_zega_backend === 'function' && ops.op_zega_backend(shopId) === 'zega') {
                                 if (typeof ops.op_zega_kv_call === 'function') {
-                                    return ops.op_zega_kv_call(shopId, String(action || ''), payload || {});
+                                    return ops.op_zega_kv_call(shopId, redisAction, payload || {});
                                 }
                                 return { ok: false, error: 'zega KV bridge op unavailable' };
                             }
                             if (typeof ops.op_redis_call === 'function') {
                                 const p = payload || {};
                                 // Auto-prefix Redis keys with tenant ID (transparent to PHPX code)
-                                if (shopId && p.key && action !== 'connect' && action !== 'close' && action !== 'flush' && action !== 'keys') {
+                                if (shopId && p.key && redisAction !== 'connect' && redisAction !== 'close' && redisAction !== 'keys') {
                                     p.key = shopId + ':' + p.key;
                                 }
-                                // For 'keys' action, prefix the pattern
-                                if (shopId && action === 'keys' && p.pattern) {
-                                    p.pattern = shopId + ':' + p.pattern;
+                                // KEYS is an enumeration primitive; tenant calls must never fall back
+                                // to native Redis's implicit `*` pattern against the shared DB.
+                                if (shopId && redisAction === 'keys') {
+                                    p.pattern = shopId + ':' + (p.pattern || '*');
                                 }
                                 // Shard routing: always stamp the Host-derived
                                 // shop slug on connect() so the Rust op can (a) pick the
@@ -315,13 +323,13 @@ impl WorkerThread {
                                 // override a dev-default localhost URL with
                                 // the shop's shard URL. See the neo4j
                                 // branch above for the full reasoning.
-                                if (action === 'connect') {
+                                if (redisAction === 'connect') {
                                     const shardKey = globalThis.__shardKey || globalThis.__shopId;
                                     if (shardKey) {
                                         p.__account_id = shardKey;
                                     }
                                 }
-                                return ops.op_redis_call(String(action || ''), p);
+                                return ops.op_redis_call(redisAction, p);
                             }
                             return { ok: false, error: 'redis bridge op unavailable' };
                         }
