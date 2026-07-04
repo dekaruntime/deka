@@ -8,7 +8,7 @@ mod resolve;
 
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::{path::Path, time::Duration};
 
 pub use resolve::ResolvedPackage;
 
@@ -54,7 +54,10 @@ impl LinkhashClient {
         Self {
             registry_url: registry_url.trim_end_matches('/').to_string(),
             token: token.map(|t| t.to_string()),
-            http: reqwest::blocking::Client::new(),
+            http: reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .unwrap_or_else(|_| reqwest::blocking::Client::new()),
         }
     }
 

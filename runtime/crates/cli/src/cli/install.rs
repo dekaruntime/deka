@@ -102,44 +102,14 @@ pub fn cmd(context: &Context) {
             }
             Err(err) => {
                 stdio::error("install", &format!("rehash failed: {}", err));
+                std::process::exit(1);
             }
         }
         return;
     }
 
-    let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let explicit_specs = install_explicit_specs(context);
-    let specs = if explicit_specs.is_empty() {
-        collect_deka_json_deps()
-    } else {
-        explicit_specs.clone()
-    };
-    let phpx_specs: Vec<String> = specs
-        .iter()
-        .filter(|s| is_phpx_package(s))
-        .cloned()
-        .collect();
-
-    if !phpx_specs.is_empty() {
-        let (registry_url, token) = get_registry_config(context);
-        let client = LinkhashClient::new(&registry_url, token.as_deref());
-
-        for spec in &phpx_specs {
-            let (name, version_range) = parse_spec_with_version(spec);
-            match install_phpx_package(&client, &name, &version_range, &project_dir) {
-                Ok(version) => {
-                    stdio::log("install", &format!("installed {}@{}", name, version));
-                }
-                Err(err) => {
-                    stdio::error("install", &format!("failed to install {}: {}", name, err));
-                }
-            }
-        }
-    }
-
-    if phpx_specs.len() == specs.len() {
-        return;
-    }
+    let specs = explicit_specs.clone();
 
     let payload = build_payload_for_specs(context, specs);
 
@@ -149,11 +119,13 @@ pub fn cmd(context: &Context) {
             if let Err(err) = runtime.block_on(run_install(payload)) {
                 let message = err.to_string();
                 stdio::error("install", &message);
+                std::process::exit(1);
             }
         }
         Err(err) => {
             let message = err.to_string();
             stdio::error("install", &message);
+            std::process::exit(1);
         }
     }
 }
@@ -538,7 +510,7 @@ fn apply_registry_env(context: &Context) {
             }
         } else {
             unsafe {
-                std::env::set_var("LINKHASH_REGISTRY_URL", "http://localhost:9418");
+                std::env::set_var("LINKHASH_REGISTRY_URL", "https://git.tana.gg");
             }
         }
     }
@@ -697,7 +669,7 @@ fn get_registry_config(context: &Context) -> (String, Option<String>) {
         .or_else(|| std::env::var("LINKHASH_REGISTRY_URL").ok())
         .or_else(|| std::env::var("LINKHASH_REGISTRY").ok())
         .or_else(|| std::env::var("TANA_GIT_SERVER").ok())
-        .unwrap_or_else(|| "http://localhost:9418".to_string());
+        .unwrap_or_else(|| "https://git.tana.gg".to_string());
 
     let token = context
         .args
