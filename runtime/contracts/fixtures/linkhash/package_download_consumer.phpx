@@ -1,0 +1,32 @@
+// Consumer view from crates/linkhash-client/src/download.rs.
+// The downloader reads tree entries from `entries`, each entry's `path` and
+// `kind`, and JSON blob bodies from `content`.
+struct LinkhashPackageDownloadRequest {
+    $package_name: string;
+    $version: string;
+}
+
+struct LinkhashPackageTreeEntry {
+    $kind: string;
+    $path: string;
+}
+
+struct LinkhashPackageTreeResponse {
+    $entries: array<LinkhashPackageTreeEntry>;
+}
+
+struct LinkhashPackageBlobResponse {
+    $content: string;
+}
+
+struct LinkhashPackageDownloadResponse {
+    $tree: LinkhashPackageTreeResponse;
+    $blob: LinkhashPackageBlobResponse;
+}
+
+export function linkhash_package_download($req: LinkhashPackageDownloadRequest): LinkhashPackageDownloadResponse {
+    return LinkhashPackageDownloadResponse {
+        $tree: LinkhashPackageTreeResponse { $entries: [] },
+        $blob: LinkhashPackageBlobResponse { $content: "" },
+    };
+}
