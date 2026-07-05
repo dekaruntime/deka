@@ -23,10 +23,14 @@ pub async fn run_install(payload: InstallPayload) -> Result<()> {
         return Ok(());
     }
 
-    run_php_install(payload.specs.clone(), payload.quiet).await
+    let specs = payload.specs.clone();
+    let quiet = payload.quiet;
+    tokio::task::spawn_blocking(move || run_php_install(specs, quiet))
+        .await
+        .context("install task failed")?
 }
 
-async fn run_php_install(specs: Vec<String>, quiet: bool) -> Result<()> {
+fn run_php_install(specs: Vec<String>, quiet: bool) -> Result<()> {
     let cwd = std::env::current_dir().context("failed to resolve current directory")?;
     let specs = if specs.is_empty() {
         collect_project_install_specs(&cwd)?
@@ -841,6 +845,9 @@ mod tests {
         );
         assert_eq!(install_destination_name("@deka/vault"), "deka/vault");
         assert_eq!(install_destination_name("@deka/core"), "core");
+        assert_eq!(install_destination_name("@deka/http"), "http");
+        assert_eq!(install_destination_name("@deka/crypto"), "crypto");
+        assert_eq!(install_destination_name("@deka/time"), "time");
         assert_eq!(install_destination_name("@tana/store"), "@tana/store");
     }
 
@@ -856,6 +863,17 @@ mod tests {
         let integrity = compute_package_integrity(&destination).expect("integrity");
         assert!(!integrity.module_graph.is_empty());
         assert!(!integrity.fs_graph.is_empty());
+    }
+
+    #[test]
+    fn bundled_non_core_stdlib_installs_unscoped_resolver_shape() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let destination = tmp.path().join("php_modules").join("http");
+        install_from_bundled_stdlib("@deka/http", None, &destination).expect("install bundled");
+
+        assert!(destination.join("index.phpx").is_file());
+        let manifest = fs::read_to_string(destination.join("deka.json")).expect("manifest");
+        assert!(manifest.contains("\"name\": \"@deka/http\""));
     }
 
     #[test]

@@ -685,6 +685,13 @@ fn resolve_import_target(
     if !is_relative && !is_project_alias && !raw.starts_with('@') && !raw.is_empty() {
         spec_variants.push(format!("@deka/{}", spec_path));
     }
+    if !is_relative && !is_project_alias {
+        if let Some(rest) = raw.strip_prefix("@deka/") {
+            if !rest.is_empty() {
+                spec_variants.push(rest.to_string());
+            }
+        }
+    }
 
     let mut candidates = Vec::new();
     for base_dir in &base_dirs {
@@ -1479,6 +1486,27 @@ mod tests {
             "expected actionable help text, got: {:?}",
             errors
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_scoped_deka_stdlib_import_from_unscoped_install_dir() {
+        let root = make_temp_project("scoped_stdlib_unscoped_dir");
+        let entry = root.join("main.phpx");
+        fs::write(&entry, "import { http_get } from '@deka/http'\n").expect("write entry");
+        fs::create_dir_all(root.join("php_modules/http")).expect("mkdir http");
+        fs::write(
+            root.join("php_modules/http/index.phpx"),
+            "export function http_get($url: string): object { return {} }\n",
+        )
+        .expect("write http");
+
+        let errors = validate_module_resolution(
+            &fs::read_to_string(&entry).expect("read entry"),
+            entry.to_string_lossy().as_ref(),
+        );
+        assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
 
         let _ = fs::remove_dir_all(root);
     }
