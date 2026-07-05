@@ -1,6 +1,7 @@
 use bundler::{BuildOptions, VirtualSource, bundle_virtual_entry};
 use core::{CommandSpec, Context, ParamSpec, Registry};
 use phpx_js::{SourceModuleMeta, compile_phpx_source_to_js, parse_source_module_meta};
+use runtime_core::module_spec::module_spec_aliases;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -384,6 +385,10 @@ fn is_stdlib_module_spec(spec: &str) -> bool {
         return false;
     }
 
+    if let Some(rest) = spec.strip_prefix("@deka/") {
+        return is_stdlib_module_spec(rest);
+    }
+
     spec.starts_with("component/")
         || spec.starts_with("deka/")
         || spec.starts_with("encoding/")
@@ -408,12 +413,13 @@ fn is_stdlib_module_spec(spec: &str) -> bool {
 }
 
 fn resolve_module_file(modules_dir: &Path, spec: &str) -> Option<PathBuf> {
-    let mut candidates = vec![
-        modules_dir.join(format!("{}.phpx", spec)),
-        modules_dir.join(format!("{}.php", spec)),
-        modules_dir.join(spec).join("index.phpx"),
-        modules_dir.join(spec).join("index.php"),
-    ];
+    let mut candidates = Vec::new();
+    for alias in module_spec_aliases(spec) {
+        candidates.push(modules_dir.join(format!("{}.phpx", alias)));
+        candidates.push(modules_dir.join(format!("{}.php", alias)));
+        candidates.push(modules_dir.join(&alias).join("index.phpx"));
+        candidates.push(modules_dir.join(&alias).join("index.php"));
+    }
 
     // For prefixed stdlib specifiers (e.g. encoding/json) also check the scoped
     // @deka layout — stdlib packages installed via `deka install` live there.
@@ -1588,6 +1594,26 @@ class User {}
         )
         .expect("json.phpx");
         let source = "---\nimport { parse } from 'encoding/json'\n---\n<div />\n";
+        let meta = parse_source_module_meta(source);
+        ensure_project_layout(tmp.path(), &meta).expect("layout should pass");
+    }
+
+    #[test]
+    fn ensure_project_layout_accepts_scoped_stdlib_import_installed_unscoped() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        std::fs::write(tmp.path().join("deka.json"), "{}").expect("deka.json");
+        std::fs::write(tmp.path().join("deka.lock"), "{}").expect("deka.lock");
+        std::fs::create_dir_all(tmp.path().join("php_modules").join("http")).expect("http dir");
+        std::fs::write(
+            tmp.path()
+                .join("php_modules")
+                .join("http")
+                .join("index.phpx"),
+            "export function http_get($url: string): object { return {} }",
+        )
+        .expect("http module");
+
+        let source = "---\nimport { http_get } from '@deka/http'\n---\n<div />\n";
         let meta = parse_source_module_meta(source);
         ensure_project_layout(tmp.path(), &meta).expect("layout should pass");
     }
