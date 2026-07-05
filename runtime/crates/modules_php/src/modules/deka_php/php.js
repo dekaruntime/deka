@@ -2327,8 +2327,8 @@ function resolveImportTarget(specifier, currentFilePath, modulesRoot) {
     if (!isRelative && !isProjectAlias) {
         const moduleId = normalizeModuleId(raw);
         const attemptedRoots = state.tiers.map((tier)=>`${tier.tier}:${tier.modulesRoot}`).join(', ');
-        for (const candidateModuleId of moduleIdVariants(moduleId)){
-            for (const tier of state.tiers){
+        for (const tier of state.tiers){
+            for (const candidateModuleId of moduleIdVariants(moduleId)){
                 const resolved = validateLockedModuleEntry(tier, candidateModuleId, raw, currentFilePath);
                 if (resolved) {
                     return resolved;

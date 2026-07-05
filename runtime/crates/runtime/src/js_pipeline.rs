@@ -3,9 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use bundler::{bundle_virtual_entry, BundleOptions, VirtualSource};
+use bundler::{BundleOptions, VirtualSource, bundle_virtual_entry};
 use phpx_js::{
-    build_stdlib_prelude, compile_phpx_source_to_js, parse_source_module_meta, SourceModuleMeta,
+    SourceModuleMeta, build_stdlib_prelude, compile_phpx_source_to_js, parse_source_module_meta,
 };
 use runtime_core::module_spec::{is_bare_module_specifier, module_spec_aliases};
 
@@ -192,11 +192,14 @@ fn is_stdlib_module_spec(spec: &str) -> bool {
         return false;
     }
 
+    if let Some(rest) = spec.strip_prefix("@deka/") {
+        return is_stdlib_module_spec(rest);
+    }
+
     spec.starts_with("component/")
         || spec.starts_with("deka/")
         || spec.starts_with("encoding/")
         || spec.starts_with("db/")
-        || spec.starts_with("@deka/")
         || matches!(
             spec,
             "json"
@@ -205,6 +208,7 @@ fn is_stdlib_module_spec(spec: &str) -> bool {
                 | "sqlite"
                 | "bytes"
                 | "buffer"
+                | "http"
                 | "tcp"
                 | "tls"
                 | "fs"
@@ -213,6 +217,7 @@ fn is_stdlib_module_spec(spec: &str) -> bool {
                 | "cookies"
                 | "auth"
                 | "db"
+                | "time"
         )
 }
 
@@ -247,7 +252,8 @@ fn is_bare_specifier(spec: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_project_root;
+    use super::{ensure_project_layout, resolve_project_root};
+    use phpx_js::parse_source_module_meta;
 
     #[test]
     fn project_root_prefers_outer_lock_bearing_root_over_nested_package_manifest() {
@@ -286,5 +292,34 @@ mod tests {
 
         let root = resolve_project_root(&input).expect("project root");
         assert_eq!(root, package_dir);
+    }
+
+    #[test]
+    fn ensure_project_layout_accepts_scoped_stdlib_imports_installed_unscoped() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        std::fs::write(tmp.path().join("deka.json"), "{}").expect("deka.json");
+        std::fs::write(tmp.path().join("deka.lock"), "{}").expect("deka.lock");
+        for module in ["http", "crypto", "time"] {
+            let dir = tmp.path().join("php_modules").join(module);
+            std::fs::create_dir_all(&dir).expect("module dir");
+            std::fs::write(
+                dir.join("index.phpx"),
+                "export function marker() { return true }\n",
+            )
+            .expect("module index");
+        }
+
+        let source = "\
+import { http_get } from '@deka/http'
+import { random_hex } from '@deka/crypto'
+import { now_ms } from '@deka/time'
+";
+        let meta = parse_source_module_meta(source);
+        assert_eq!(
+            super::collect_stdlib_imports(&meta),
+            vec!["@deka/crypto", "@deka/http", "@deka/time"]
+        );
+
+        ensure_project_layout(tmp.path(), &meta).expect("layout should pass");
     }
 }
