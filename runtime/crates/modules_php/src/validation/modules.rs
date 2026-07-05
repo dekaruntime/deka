@@ -678,18 +678,18 @@ fn resolve_import_target(
         ));
     }
 
-    // Build the set of spec variants to try. For bare stdlib-style specifiers
-    // we also try the @deka-scoped layout because stdlib packages installed
-    // via `deka install` live under php_modules/@deka/<pkg>/<subpath>.
+    // Build the set of spec variants to try. Deka stdlib modules have existed
+    // in both bare (`http`) and scoped (`@deka/http`) layouts, so validation
+    // must mirror the runtime/build resolver and accept either spelling
+    // against either on-disk layout.
     let mut spec_variants: Vec<String> = vec![spec_path.to_string()];
-    if !is_relative && !is_project_alias && !raw.starts_with('@') && !raw.is_empty() {
-        spec_variants.push(format!("@deka/{}", spec_path));
-    }
-    if !is_relative && !is_project_alias {
-        if let Some(rest) = raw.strip_prefix("@deka/") {
-            if !rest.is_empty() {
-                spec_variants.push(rest.to_string());
+    if !is_relative && !is_project_alias && !raw.is_empty() {
+        if let Some(unscoped) = spec_path.strip_prefix("@deka/") {
+            if !unscoped.is_empty() {
+                spec_variants.push(unscoped.to_string());
             }
+        } else if !raw.starts_with('@') {
+            spec_variants.push(format!("@deka/{}", spec_path));
         }
     }
 
@@ -1492,21 +1492,29 @@ mod tests {
 
     #[test]
     fn resolves_scoped_deka_stdlib_import_from_unscoped_install_dir() {
-        let root = make_temp_project("scoped_stdlib_unscoped_dir");
+        let root = make_temp_project("scoped_deka_unscoped_install");
         let entry = root.join("main.phpx");
-        fs::write(&entry, "import { http_get } from '@deka/http'\n").expect("write entry");
+        fs::write(
+            &entry,
+            "import { request } from '@deka/http'\nexport function run() { return request }\n",
+        )
+        .expect("write entry");
         fs::create_dir_all(root.join("php_modules/http")).expect("mkdir http");
         fs::write(
             root.join("php_modules/http/index.phpx"),
-            "export function http_get($url: string): object { return {} }\n",
+            "export function request() { return null }\n",
         )
-        .expect("write http");
+        .expect("write http index");
 
         let errors = validate_module_resolution(
             &fs::read_to_string(&entry).expect("read entry"),
             entry.to_string_lossy().as_ref(),
         );
-        assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+        assert!(
+            errors.is_empty(),
+            "expected @deka/http to resolve to php_modules/http, got: {:?}",
+            errors
+        );
 
         let _ = fs::remove_dir_all(root);
     }

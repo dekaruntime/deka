@@ -365,6 +365,19 @@ function normalizeModuleId(raw) {
     if (spec.endsWith('/index')) return spec.slice(0, -'/index'.length);
     return spec;
 }
+function moduleIdVariants(moduleId) {
+    const normalized = normalizeModuleId(moduleId);
+    const variants = [
+        normalized
+    ];
+    if (normalized.startsWith('@deka/')) {
+        const unscoped = normalized.slice('@deka/'.length);
+        if (unscoped) variants.push(unscoped);
+    } else if (normalized && !normalized.startsWith('@')) {
+        variants.push(`@deka/${normalized}`);
+    }
+    return uniqueValues(variants);
+}
 function lockCacheModules(lock) {
     return lock && lock.php && lock.php.cache && lock.php.cache.modules
         ? lock.php.cache.modules
@@ -2314,10 +2327,12 @@ function resolveImportTarget(specifier, currentFilePath, modulesRoot) {
     if (!isRelative && !isProjectAlias) {
         const moduleId = normalizeModuleId(raw);
         const attemptedRoots = state.tiers.map((tier)=>`${tier.tier}:${tier.modulesRoot}`).join(', ');
-        for (const tier of state.tiers){
-            const resolved = validateLockedModuleEntry(tier, moduleId, raw, currentFilePath);
-            if (resolved) {
-                return resolved;
+        for (const candidateModuleId of moduleIdVariants(moduleId)){
+            for (const tier of state.tiers){
+                const resolved = validateLockedModuleEntry(tier, candidateModuleId, raw, currentFilePath);
+                if (resolved) {
+                    return resolved;
+                }
             }
         }
         throw new Error(`Missing phpx module '${raw}' (imported from ${currentFilePath}). Attempted roots: ${attemptedRoots || 'none'}. ${lockStatusSummary(state, moduleId)}`);
