@@ -175,20 +175,12 @@ pub(super) fn set_request_globals(
         Vec::new()
     };
 
-    // Platform → tenant env-var injection. The platform process holds
-    // a small set of allowlisted secrets (Stripe publishable key,
-    // TANA_INTERNAL_API_SECRET, etc.) that storefront PHPX needs to
-    // read via `$_SERVER['NAME']`. Vars NOT on the allowlist (database
-    // creds, JWT secrets, etc.) are never exposed to tenant code.
-    //
-    // Allowlist source: `runtime_core::platform_env::DEFAULT_ALLOWLIST`
-    // plus the optional `DEKA_PLATFORM_ENV_ALLOWLIST` env var (comma
-    // separated names) for runtime extensibility without a code change.
+    // Platform → tenant env-var injection. Only names allowed by the
+    // resolved deka.json security policy are exposed to tenant code.
     //
     // Done BEFORE the SHOP_ID injection below so per-request
     // tenant context can never be overridden by a host env var with
-    // the same name (defence in depth — those names aren't on the
-    // allowlist anyway).
+    // the same name.
     if request_parts.is_some() {
         if let Some(server_key) = v8::String::new(scope, "_SERVER") {
             if let Some(server_val) = global.get(scope, server_key.into()) {

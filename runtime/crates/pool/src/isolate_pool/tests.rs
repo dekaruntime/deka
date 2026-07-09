@@ -85,7 +85,7 @@ fn pick_shard_production_hashes_shop_id() {
 /// Verify the dev-mode fast-path directly using the helper function.
 /// We build a two-shard resolver and confirm that a shop_id that
 /// would otherwise hash to shard 1 still returns shard 0 when the
-/// resolver is stubbed with a single-shard config (mimicking what
+/// resolver uses a single-shard config (mimicking what
 /// `pick_shard_for_request` does when `is_dev_mode()` is true, i.e.
 /// always `resolver.shards().first()`).
 ///
@@ -119,8 +119,12 @@ fn env_snapshot_injected_for_unrouted_shop_request() {
     static ENV_LOCK: Mutex<()> = Mutex::new(());
     let _guard = ENV_LOCK.lock().unwrap();
 
-    // Set up an allowlisted env var and a non-allowlisted env var.
+    // Set up a manifest-allowed env var and a non-allowed env var.
     unsafe {
+        std::env::set_var(
+            "DEKA_SECURITY_POLICY",
+            r#"{"security":{"allow":{"env":["STRIPE_PUBLISHABLE_KEY"]},"deny":{}}}"#,
+        );
         std::env::set_var("STRIPE_PUBLISHABLE_KEY", "pk_test_618");
         std::env::set_var("SECRET_NON_ALLOWLISTED", "should_not_appear");
     }
@@ -217,6 +221,7 @@ fn env_snapshot_injected_for_unrouted_shop_request() {
 
     // Clean up.
     unsafe {
+        std::env::remove_var("DEKA_SECURITY_POLICY");
         std::env::remove_var("STRIPE_PUBLISHABLE_KEY");
         std::env::remove_var("SECRET_NON_ALLOWLISTED");
     }

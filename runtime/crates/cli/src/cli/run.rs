@@ -1,6 +1,7 @@
 use core::{CommandSpec, Context, FlagSpec, Registry};
 use runtime_core::security_policy::{
-    RuleList, SecurityCliOverrides, merge_policy_with_cli, parse_deka_security_policy,
+    RuleList, SecurityCliOverrides, merge_policy_with_cli_manifest_net_env,
+    parse_deka_security_policy,
 };
 use serde_json::Value;
 use std::process::Command;
@@ -227,7 +228,7 @@ fn enforce_subprocess_policy(
     }
 
     let overrides = SecurityCliOverrides::from_flags(&context.args.flags);
-    let merged = merge_policy_with_cli(parsed.policy, &overrides);
+    let merged = merge_policy_with_cli_manifest_net_env(parsed.policy, &overrides);
     let program = extract_program_name(script);
 
     if rule_denies(&merged.deny.run, program.as_deref()) {
