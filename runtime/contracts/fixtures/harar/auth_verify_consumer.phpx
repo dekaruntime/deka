@@ -2,6 +2,8 @@
 struct HararVerifyTokenRequest {
     $token: string;
     $audience: string;
+    $subject: Option<string>;
+    $run_id: Option<string>;
 }
 
 struct HararVerifyTokenResponse {

@@ -15,6 +15,7 @@ members = [
     "crates/pool",
     "crates/engine",
     "crates/gild",
+    "crates/tana-cli-core",
     "crates/gild-vault-client",
     "crates/gild-agent",
     "crates/gild-storm",
