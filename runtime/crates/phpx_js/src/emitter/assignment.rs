@@ -1,6 +1,32 @@
 use super::*;
 
 impl<'a> JsSubsetEmitter<'a> {
+    pub(super) fn infer_expr_kind(&self, expr: ExprId<'_>) -> Option<JsValueKind> {
+        match expr {
+            Expr::String { .. } | Expr::InterpolatedString { .. } => Some(JsValueKind::String),
+            Expr::ObjectLiteral { .. } | Expr::StructLiteral { .. } => Some(JsValueKind::Object),
+            Expr::Array { items, .. } => {
+                let has_keys = items.iter().any(|item| item.key.is_some());
+                let has_no_keys = items.iter().any(|item| item.key.is_none());
+                match (has_keys, has_no_keys) {
+                    (false, _) => Some(JsValueKind::Array),
+                    (true, false) => Some(JsValueKind::Object),
+                    _ => None,
+                }
+            }
+            Expr::Variable { name, .. } => self.value_kinds.get(&self.span_name(*name)).copied(),
+            _ => None,
+        }
+    }
+
+    pub(super) fn record_value_kind(&mut self, name: &str, kind: Option<JsValueKind>) {
+        if let Some(kind) = kind {
+            self.value_kinds.insert(name.to_string(), kind);
+        } else {
+            self.value_kinds.remove(name);
+        }
+    }
+
     pub(super) fn emit_call_args(
         &mut self,
         args: &[php_rs::parser::ast::Arg<'_>],
