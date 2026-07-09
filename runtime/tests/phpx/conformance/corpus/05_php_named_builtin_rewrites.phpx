@@ -1,0 +1,15 @@
+/*
+TEST: PHP-named builtin rewrites
+Covers: count, substr, strlen, and array_keys rewrite behavior.
+*/
+
+$items = ['red', 'green', 'blue'];
+$object = { zebra: 1, alpha: 2 };
+$keys = array_keys($object);
+
+echo count($items) . "\n";
+echo count($object) . "\n";
+echo strlen('market') . "\n";
+echo substr('marketplace', 6) . "\n";
+echo substr('marketplace', 0, 6) . "\n";
+echo $keys[0] . ',' . $keys[1] . "\n";
