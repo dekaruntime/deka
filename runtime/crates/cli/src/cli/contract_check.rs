@@ -202,8 +202,9 @@ fn resolve(spec: &str) -> Result<SeamContract, String> {
             "data_backend" | "data-backend" => {
                 Ok(runtime_core::data_envelope::data_backend_contract())
             }
+            "harar_auth" | "harar-auth" => Ok(gild_vault_client::harar_auth_contract()),
             other => Err(format!(
-                "unknown rust contract target '{other}'; expected 'storefront' or 'data_backend'"
+                "unknown rust contract target '{other}'; expected 'storefront', 'data_backend', or 'harar_auth'"
             )),
         },
         "phpx" => modules_php::seam_contract::extract_contract_from_file(rest),

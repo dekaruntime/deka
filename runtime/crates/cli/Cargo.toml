@@ -34,6 +34,7 @@ introspect = { path = "../introspect", optional = true }
 wasm_cli = { path = "../wasm_cli" }
 pm = { workspace = true, optional = true }
 linkhash-client = { path = "../linkhash-client" }
+gild-vault-client = { path = "../gild-vault-client" }
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
