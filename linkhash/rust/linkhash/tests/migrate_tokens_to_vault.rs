@@ -1,5 +1,5 @@
 use gild_vault_client::{Secrets, VaultClient};
-use gild_vcs::auth::{migrate_tokens_to_vault_with_clients, sha256_hex, AuthUser};
+use linkhash::auth::{migrate_tokens_to_vault_with_clients, sha256_hex, AuthUser};
 use sqlx::sqlite::SqlitePoolOptions;
 use std::{collections::HashMap, sync::Arc};
 use tempfile::TempDir;
