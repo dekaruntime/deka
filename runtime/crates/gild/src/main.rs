@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 
 pub mod agent_client;
+pub mod chain_core;
 mod cmd;
 mod config;
 mod hmac;
@@ -20,6 +21,8 @@ enum Commands {
     Dispatch(cmd::dispatch::DispatchArgs),
     /// Run chain orchestration policies.
     Chain(cmd::chain::ChainArgs),
+    #[command(hide = true)]
+    ChainDaemon(cmd::chain::DaemonArgs),
     /// Inspect and manage registered agents.
     Agent(cmd::agent::AgentArgs),
     /// Read values from the gild vault.
@@ -42,6 +45,7 @@ async fn run() -> Result<()> {
     match Cli::parse().command {
         Commands::Dispatch(args) => cmd::dispatch::run(args).await,
         Commands::Chain(args) => cmd::chain::run(args).await,
+        Commands::ChainDaemon(args) => cmd::chain::daemon(args).await,
         Commands::Agent(args) => cmd::agent::run(args).await,
         Commands::Vault(args) => cmd::vault::run(args).await,
         Commands::Pool(args) => cmd::pool::run(args).await,

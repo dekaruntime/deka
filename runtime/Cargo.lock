@@ -2574,14 +2574,16 @@ name = "gild"
 version = "0.1.0"
 dependencies = [
  "age",
+ "anyhow",
  "clap",
- "gild-chain",
+ "futures-util",
  "gild-vault-client",
  "hmac 0.12.1",
  "libc",
  "rcgen",
  "regex",
  "reqwest 0.11.27",
+ "rusqlite",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2603,19 +2605,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "tokio",
-]
-
-[[package]]
-name = "gild-chain"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures-util",
- "reqwest 0.11.27",
- "rusqlite",
- "serde",
- "serde_json",
  "tokio",
 ]
 

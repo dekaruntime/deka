@@ -1,6 +1,6 @@
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{anyhow, bail, Context, Result};
 use futures_util::StreamExt;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -674,13 +674,13 @@ impl StateStore {
     }
 
     pub fn find_chain_for_event(&self, event: &PulseEvent) -> Result<Option<Chain>> {
-        if let Some(chain_id) = event_chain_id(event)
-            && let Some(chain) = self.get_chain(chain_id)?
-        {
-            return Ok(Some(chain));
+        if let Some(chain_id) = event_chain_id(event) {
+            if let Some(chain) = self.get_chain(chain_id)? {
+                return Ok(Some(chain));
+            }
         }
-        if let Some(run_id) = event_run_id(event)
-            && let Some(chain) = self
+        if let Some(run_id) = event_run_id(event) {
+            if let Some(chain) = self
                 .conn
                 .query_row(
                     "SELECT id, policy, status, dispatch_agent, task, issue_id, run_id,
@@ -692,8 +692,9 @@ impl StateStore {
                 )
                 .optional()
                 .context("load chain by run_id")?
-        {
-            return Ok(Some(chain));
+            {
+                return Ok(Some(chain));
+            }
         }
         if let Some(pr_number) = event_pr_number(event) {
             return self
