@@ -1028,8 +1028,8 @@ dependencies = [
  "core",
  "ctrlc",
  "deno_task_shell",
- "gild-vault-client",
  "glob",
+ "harar-client",
  "introspect",
  "linkhash-client",
  "modules_php",
@@ -1043,7 +1043,7 @@ dependencies = [
  "runtime_core",
  "rusqlite",
  "seam_diff",
- "seam_ir",
+ "seam_ir 0.1.0",
  "seam_ts",
  "serde",
  "serde_json",
@@ -2666,7 +2666,7 @@ dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
  "rand_core 0.6.4",
- "seam_ir",
+ "seam_ir 0.1.0",
  "serde",
  "serde_json",
  "tempfile",
@@ -2771,6 +2771,21 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "harar-client"
+version = "0.2.0"
+source = "sparse+https://git.tana.gg/index/"
+checksum = "3f159e15067859b215968c2cea96b0743a7cdca4dbe12bad8ffe01c425c5db11"
+dependencies = [
+ "base64 0.22.1",
+ "ed25519-dalek",
+ "rand_core 0.6.4",
+ "seam_ir 0.1.0 (sparse+https://git.tana.gg/index/)",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -3966,7 +3981,7 @@ dependencies = [
  "runtime_core",
  "rusqlite",
  "seam_diff",
- "seam_ir",
+ "seam_ir 0.1.0",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -4950,7 +4965,7 @@ dependencies = [
  "deka-validation",
  "deno_core",
  "deno_error",
- "gild-vault-client",
+ "harar-client",
  "libc",
  "mach2",
  "nanoid",
@@ -5771,7 +5786,7 @@ dependencies = [
 name = "runtime_core"
 version = "0.1.0"
 dependencies = [
- "seam_ir",
+ "seam_ir 0.1.0",
  "serde",
  "serde_json",
 ]
@@ -6117,7 +6132,7 @@ checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
 name = "seam_diff"
 version = "0.1.0"
 dependencies = [
- "seam_ir",
+ "seam_ir 0.1.0",
 ]
 
 [[package]]
@@ -6129,10 +6144,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "seam_ir"
+version = "0.1.0"
+source = "sparse+https://git.tana.gg/index/"
+checksum = "4c56e7e0013ac492af2c4acf4a04715cc596c70c77ed607fe3922fd5cb6c0a20"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "seam_ts"
 version = "0.1.0"
 dependencies = [
- "seam_ir",
+ "seam_ir 0.1.0",
  "serde_json",
  "swc_common",
  "swc_ecma_ast",

@@ -5,7 +5,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use gild_vault_client::{Secrets, SecretsError};
+use harar_client::{Secrets, SecretsError};
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

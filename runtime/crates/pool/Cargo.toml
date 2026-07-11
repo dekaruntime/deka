@@ -17,7 +17,7 @@ tracing = "0.1"
 deka-stdio = { path = "../stdio", package = "stdio" }
 phpx_js = { path = "../phpx_js" }
 runtime_core = { path = "../runtime_core" }
-gild-vault-client = { path = "../gild-vault-client" }
+harar-client = { version = "0.2", registry-index = "sparse+https://git.tana.gg/index/" }
 
 # Validation
 swc_common = { workspace = true }
