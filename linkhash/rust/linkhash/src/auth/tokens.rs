@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{sha256_hex, AuthUser};
 use crate::authz::{RepoAccess, RepoGrant};
-use gild_vault_client::{Secrets, SecretsError, VaultClient};
+use harar_client::{Secrets, SecretsError, VaultClient};
 
 #[derive(Debug, Deserialize)]
 pub struct CreateTokenRequest {

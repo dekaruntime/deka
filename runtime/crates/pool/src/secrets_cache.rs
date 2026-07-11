@@ -4,7 +4,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gild_vault_client::VaultClient;
+use harar_client::VaultClient;
 use tokio::sync::Mutex;
 
 pub type SecretsMap = HashMap<String, String>;

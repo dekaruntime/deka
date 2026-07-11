@@ -18,7 +18,7 @@ hex = "0.4"
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 regex = "1.10"
-gild-vault-client = { path = "../../../runtime/crates/gild-vault-client" }
+harar-client = { version = "0.2", registry-index = "sparse+https://git.tana.gg/index/" }
 
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 chrono = { version = "0.4", features = ["serde"] }

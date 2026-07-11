@@ -565,8 +565,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "gild-vault-client"
-version = "0.1.0"
+name = "harar-client"
+version = "0.2.0"
+source = "sparse+https://git.tana.gg/index/"
+checksum = "3f159e15067859b215968c2cea96b0743a7cdca4dbe12bad8ffe01c425c5db11"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -971,7 +973,7 @@ dependencies = [
  "base64",
  "bytes",
  "chrono",
- "gild-vault-client",
+ "harar-client",
  "hex",
  "hmac",
  "rand 0.8.6",
@@ -1596,6 +1598,8 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 [[package]]
 name = "seam_ir"
 version = "0.1.0"
+source = "sparse+https://git.tana.gg/index/"
+checksum = "4c56e7e0013ac492af2c4acf4a04715cc596c70c77ed607fe3922fd5cb6c0a20"
 dependencies = [
  "serde",
  "serde_json",

@@ -202,7 +202,11 @@ fn resolve(spec: &str) -> Result<SeamContract, String> {
             "data_backend" | "data-backend" => {
                 Ok(runtime_core::data_envelope::data_backend_contract())
             }
-            "harar_auth" | "harar-auth" => Ok(gild_vault_client::harar_auth_contract()),
+            "harar_auth" | "harar-auth" => {
+                serde_json::to_value(harar_client::harar_auth_contract())
+                    .and_then(serde_json::from_value)
+                    .map_err(|err| format!("cannot load harar_auth contract: {err}"))
+            }
             other => Err(format!(
                 "unknown rust contract target '{other}'; expected 'storefront', 'data_backend', or 'harar_auth'"
             )),
