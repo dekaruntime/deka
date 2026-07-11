@@ -1,0 +1,11 @@
+/*
+TEST: count() empty and unicode edge cases
+Covers: empty arrays, associative arrays, unicode string as scalar, recursive nested arrays.
+*/
+
+import { count } from 'array/count';
+
+echo 'empty=' . count([]) . "\n";
+echo 'assoc=' . count(['é' => 1, '猫' => 2]) . "\n";
+echo 'unicode=' . count('é猫') . "\n";
+echo 'recursive=' . count(['é', ['猫', []]], 1) . "\n";

@@ -1,0 +1,22 @@
+/*
+TEST: Match exhaustiveness over enum cases
+Covers: unit and payload enum cases all handled without a default arm.
+*/
+
+enum MissionState {
+    case Draft;
+    case Published($id: int);
+    case Archived($reason: string);
+}
+
+function label($state: MissionState): string {
+    return match ($state) {
+        MissionState::Draft => 'draft',
+        MissionState::Published => 'published:' . $state.id,
+        MissionState::Archived => 'archived:' . $state.reason,
+    };
+}
+
+echo label(MissionState::Draft) . "\n";
+echo label(MissionState::Published(99)) . "\n";
+echo label(MissionState::Archived('policy')) . "\n";

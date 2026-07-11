@@ -1,0 +1,3 @@
+value=42
+fallback=missing
+lazy=fallback-called

@@ -1,0 +1,13 @@
+/*
+TEST: substr() empty and unicode byte-slice edge cases
+Covers: empty input, out-of-range offset, UTF-8 byte-aligned slices, negative length.
+*/
+
+import { substr } from 'string/substr';
+import { json_encode } from 'encoding/json';
+
+echo 'empty=[' . substr('', 0) . "]\n";
+echo 'beyond=' . json_encode(substr('', 1)) . "\n";
+echo 'accent=' . substr('é猫', 0, 2) . "\n";
+echo 'cat=' . substr('é猫', 2, 3) . "\n";
+echo 'trim=' . substr('é猫', 0, -3) . "\n";

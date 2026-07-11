@@ -1,0 +1,20 @@
+/*
+TEST: Result propagation edge cases
+Covers: Ok value flow, Err fallback flow, lazy Err fallback receives the error payload.
+*/
+
+import { result_ok, result_err } from 'core/result';
+
+function double_or_error($value) {
+    if ($value < 0) {
+        return result_err('bad-input');
+    }
+    return result_ok($value * 2);
+}
+
+$ok = double_or_error(6);
+$err = double_or_error(-1);
+
+echo 'ok=' . $ok->unwrap_or(0) . "\n";
+echo 'err=' . $err->unwrap_or('fallback:' . $err->error) . "\n";
+echo 'lazy=' . $err->unwrap_or_else(fn($error) => 'recovered:' . $error) . "\n";
