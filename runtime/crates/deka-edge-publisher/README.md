@@ -10,7 +10,7 @@ subscribe to the `edge-updates` pub/sub channel for live deltas.
 |---|---|---|
 | `NEO4J_URI` | `bolt://localhost:7687` | Local Neo4j primary |
 | `NEO4J_USER` | `neo4j` | Neo4j username |
-| `NEO4J_PASSWORD` | empty | Neo4j password; production should inject from gild-vault |
+| `NEO4J_PASSWORD` | empty | Neo4j password; production should inject from harar |
 | `REDIS_URL` | `redis://localhost:6379` | Local Redis |
 | `STATE_DIR` | `/var/lib/deka-edge-publisher` | Persists `state.json` with `last_seen_timestamp` |
 | `POLL_INTERVAL_SECS` | `5` | Poll interval for `updated_at` changes |

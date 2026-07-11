@@ -421,12 +421,12 @@ mod tests {
     #[test]
     fn service_names_are_normalized_and_restricted() {
         assert_eq!(
-            normalize_service("gg.tana.gild-vault").unwrap(),
-            "gg.tana.gild-vault.service"
+            normalize_service("gg.tana.harar").unwrap(),
+            "gg.tana.harar.service"
         );
         assert_eq!(
-            normalize_service("gg.tana.gild-vault.service").unwrap(),
-            "gg.tana.gild-vault.service"
+            normalize_service("gg.tana.harar.service").unwrap(),
+            "gg.tana.harar.service"
         );
         assert!(normalize_service("../vault").is_err());
         assert!(normalize_service("foo/bar").is_err());
@@ -441,14 +441,14 @@ mod tests {
             PathBuf::from("true"),
         );
         let guard =
-            acquire_mask_with_config(&config, "gg.tana.gild-vault", "run-a".to_string()).unwrap();
+            acquire_mask_with_config(&config, "gg.tana.harar", "run-a".to_string()).unwrap();
         write_dropin_with_config(&config, &guard).unwrap();
         assert!(config.run_lock_path(&guard.run_id).exists());
         assert_eq!(
             fs::read_to_string(config.dropin_path(&guard.service)).unwrap(),
             "[Service]\nRestart=no\n"
         );
-        let err = acquire_mask_with_config(&config, "gg.tana.gild-vault", "run-b".to_string())
+        let err = acquire_mask_with_config(&config, "gg.tana.harar", "run-b".to_string())
             .unwrap_err();
         assert!(err.to_string().contains("already has"));
         remove_dropin_with_config(&config, &guard.service, &guard.run_id).unwrap();
@@ -468,15 +468,15 @@ mod tests {
             systemctl,
         );
         let guard =
-            acquire_mask_with_config(&config, "gg.tana.gild-vault", "run-a".to_string()).unwrap();
+            acquire_mask_with_config(&config, "gg.tana.harar", "run-a".to_string()).unwrap();
         write_dropin_with_config(&config, &guard).unwrap();
         restore_masked_kill_with_config(&config, &guard.service, &guard.run_id).unwrap();
 
         assert!(!config.dropin_path(&guard.service).exists());
         let commands = fs::read_to_string(log).unwrap();
         assert!(commands.contains("daemon-reload"));
-        assert!(commands.contains("reset-failed gg.tana.gild-vault.service"));
-        assert!(commands.contains("start gg.tana.gild-vault.service"));
+        assert!(commands.contains("reset-failed gg.tana.harar.service"));
+        assert!(commands.contains("start gg.tana.harar.service"));
     }
 
     #[test]
@@ -490,7 +490,7 @@ mod tests {
             systemctl,
         );
         let guard =
-            acquire_mask_with_config(&config, "gg.tana.gild-vault", "run-a".to_string()).unwrap();
+            acquire_mask_with_config(&config, "gg.tana.harar", "run-a".to_string()).unwrap();
         write_dropin_with_config(&config, &guard).unwrap();
 
         recover_orphaned_masks_with_config(&config).unwrap();
@@ -499,6 +499,6 @@ mod tests {
         assert!(!config.owner_path(&guard.service).exists());
         let commands = fs::read_to_string(log).unwrap();
         assert!(commands.contains("daemon-reload"));
-        assert!(commands.contains("start gg.tana.gild-vault.service"));
+        assert!(commands.contains("start gg.tana.harar.service"));
     }
 }

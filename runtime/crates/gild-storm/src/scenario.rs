@@ -137,12 +137,12 @@ duration: 30s
 faults:
   - at: 5s
     host: demon
-    cmd: process pause --service gild-vault --secs 5 --undo-by 10s
+    cmd: process pause --service harar --secs 5 --undo-by 10s
 assertions:
   - at: 20s
     kind: systemd
     host: demon
-    check: gild-vault is-active
+    check: harar is-active
 "#;
         let scenario: Scenario = serde_yaml::from_str(raw).unwrap();
         scenario.validate().unwrap();
@@ -159,7 +159,7 @@ duration: 1s
 faults:
   - at: 2s
     host: demon
-    cmd: process start --service gild-vault
+    cmd: process start --service harar
 "#;
         let scenario: Scenario = serde_yaml::from_str(raw).unwrap();
         let err = scenario.validate().unwrap_err();
@@ -182,7 +182,7 @@ duration: 3601s
         let mut raw = "name: bad\nduration: 30s\nfaults:\n".to_string();
         for _ in 0..=MAX_FAULTS {
             raw.push_str(
-                "  - at: 1s\n    host: demon\n    cmd: process start --service gild-vault\n",
+                "  - at: 1s\n    host: demon\n    cmd: process start --service harar\n",
             );
         }
         let scenario: Scenario = serde_yaml::from_str(&raw).unwrap();

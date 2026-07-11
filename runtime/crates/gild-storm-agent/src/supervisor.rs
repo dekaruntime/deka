@@ -230,7 +230,7 @@ mod tests {
         let spec = SupervisorSpec::new(
             Duration::from_secs(2),
             UndoAction::RestoreMaskedKill {
-                service: "gild-vault".to_string(),
+                service: "harar".to_string(),
                 run_id: "run-a".to_string(),
             },
         );

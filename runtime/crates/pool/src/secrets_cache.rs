@@ -17,15 +17,12 @@ pub trait ShopSecretsSource: Send + Sync {
 }
 
 #[derive(Clone)]
-pub struct GildVaultShopSecrets {
+pub struct HararShopSecrets {
     client: VaultClient,
 }
 
-impl GildVaultShopSecrets {
+impl HararShopSecrets {
     pub fn from_env() -> Self {
-        // TODO(tana#403 follow-up): canonical deploy should run the Deka platform
-        // as `gild-runtime` so gild-vault's runtime peer allowlist is explicit.
-        // Dev still works through the existing sami/root admin path.
         Self {
             client: VaultClient::from_socket(),
         }
@@ -36,7 +33,7 @@ impl GildVaultShopSecrets {
     }
 }
 
-impl ShopSecretsSource for GildVaultShopSecrets {
+impl ShopSecretsSource for HararShopSecrets {
     fn fetch_shop_secrets<'a>(
         &'a self,
         shop_id: &'a str,
@@ -88,7 +85,7 @@ impl SecretsCache {
     pub fn from_env() -> Self {
         Self::new(
             Duration::from_secs(300),
-            Arc::new(GildVaultShopSecrets::from_env()),
+            Arc::new(HararShopSecrets::from_env()),
         )
     }
 
@@ -220,7 +217,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gild_vault_source_filters_to_requested_shop_and_key_names() {
+    async fn harar_source_filters_to_requested_shop_and_key_names() {
         let server = MockVault::start(&[
             ("shops/shop_a/STRIPE_SECRET_KEY", "sk-a"),
             ("shops/shop_a/WEBHOOK_SECRET", "wh-a"),
@@ -229,7 +226,7 @@ mod tests {
         ])
         .await;
         let source =
-            GildVaultShopSecrets::from_client(VaultClient::from_socket_path(&server.socket_path));
+            HararShopSecrets::from_client(VaultClient::from_socket_path(&server.socket_path));
 
         let secrets = source.fetch_shop_secrets("shop_a").await.unwrap();
 
