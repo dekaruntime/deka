@@ -2,12 +2,14 @@
 resolver = "2"
 members = [
     "crates/core",
+    "crates/bundler",
     "crates/cli",
     "crates/runtime",
     "crates/runtime_core",
     "crates/compile",
     "crates/loop",
     "crates/http",
+    "crates/introspect",
     "crates/platform",
     "crates/platform_server",
     "crates/platform_browser",
@@ -27,6 +29,7 @@ members = [
     "crates/seam_ts",
     "crates/php-rs",
     "crates/phpx_js",
+    "crates/stdio",
     "crates/wasm_guest",
     "crates/wasm_guest_macros",
     "crates/wit_phpx",
@@ -49,6 +52,7 @@ members = [
     "crates/gild-virt",
     "crates/deka-dns",
     "crates/deka-edge-publisher",
+    "crates/deka-validation",
 ]
 
 [workspace.dependencies]

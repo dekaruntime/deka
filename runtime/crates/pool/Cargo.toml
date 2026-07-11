@@ -26,7 +26,7 @@ swc_ecma_parser = { workspace = true, features = ["typescript"] }
 swc_ecma_visit = { workspace = true }
 
 redis = { workspace = true }
-deka-validation = { path = "../../../deka-validation" }
+deka-validation = { path = "../deka-validation" }
 deka-shard = { path = "../shard" }
 zega-core = { path = "../zega/zega-core" }
 
