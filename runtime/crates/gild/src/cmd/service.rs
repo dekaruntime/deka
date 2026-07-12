@@ -1,5 +1,5 @@
 use clap::{ArgGroup, Args, Subcommand, ValueEnum};
-use gild_vault_client::VaultClient;
+use harar_client::VaultClient;
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;

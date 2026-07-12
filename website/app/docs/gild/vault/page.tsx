@@ -6,7 +6,7 @@ export const metadata = {
     'Reference for the gild vault hardware-rooted secrets daemon, namespaces, recovery model, and shop-secrets roadmap.',
 }
 
-export default function GildVaultPage() {
+export default function HararPage() {
   return (
     <GildPage
       slug="vault"
@@ -50,7 +50,7 @@ export default function GildVaultPage() {
   launchd/systemd
        |
        v
-  gild-vault daemon
+  harar daemon
        |  unseal DB key at start
        v
   SEP / PTT hardware seal
@@ -62,11 +62,11 @@ export default function GildVaultPage() {
        |
        |  Unix socket + SO_PEERCRED + bearer token
        v
-  /run/gild-vault/sock
+  /run/harar/sock
        |
        |  load/read/list/write, ACL check, audit write
        v
-  gild-vault daemon
+  harar daemon
        |
        +--> process env for approved service command
        +--> audit row for allowed and denied reads`}</Diagram>

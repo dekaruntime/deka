@@ -50,7 +50,7 @@ use scoped_package_routes::*;
 use token_routes::*;
 use visibility_routes::*;
 
-const DEFAULT_GILD_VAULT_SOCKET_PATH: &str = "/run/gild-vault/sock";
+const DEFAULT_HARAR_SOCKET_PATH: &str = "/run/tana-vault.sock";
 
 #[tokio::main]
 async fn main() {
@@ -315,9 +315,9 @@ async fn run_migrate_tokens_to_vault() -> anyhow::Result<()> {
 }
 
 fn migrate_tokens_socket_path(mut args: impl Iterator<Item = String>) -> anyhow::Result<PathBuf> {
-    let mut socket_path = std::env::var("GILD_VAULT_SOCKET")
+    let mut socket_path = std::env::var("HARAR_SOCKET")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(DEFAULT_GILD_VAULT_SOCKET_PATH));
+        .unwrap_or_else(|_| PathBuf::from(DEFAULT_HARAR_SOCKET_PATH));
 
     while let Some(arg) = args.next() {
         match arg.as_str() {

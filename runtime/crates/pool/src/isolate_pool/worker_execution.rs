@@ -1000,7 +1000,7 @@ impl WorkerThread {
                         tracing::warn!(
                             shop_id = %info.shop_id,
                             error = %err,
-                            "failed to fetch shop secrets from gild-vault"
+                            "failed to fetch shop secrets from harar"
                         );
                         HashMap::new()
                     }

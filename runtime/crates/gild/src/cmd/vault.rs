@@ -16,8 +16,8 @@ use crate::Result;
 
 const DEFAULT_MASTER_KEY_PATH: &str = "/etc/gild/vault-master.key";
 const DEFAULT_REPLICATION_TOKEN_PATH: &str = "/etc/gild/vault-replication-token";
-const DEFAULT_PLAINTEXT_STATE_PATH: &str = "/run/gild-vault/keys.json";
-const DEFAULT_ENCRYPTED_STATE_PATH: &str = "/var/lib/gild-vault/keys.age";
+const DEFAULT_PLAINTEXT_STATE_PATH: &str = "/run/harar/keys.json";
+const DEFAULT_ENCRYPTED_STATE_PATH: &str = "/var/lib/harar/keys.age";
 const DEFAULT_VAULT_PROXY_CA_CERT_PATH: &str = "/etc/gild/vault-proxy-ca.pem";
 const DEFAULT_VAULT_PROXY_CA_KEY_PATH: &str = "/etc/gild/vault-proxy-ca.key";
 const PROMOTION_EPOCH_BUMP: u64 = 1000;
@@ -47,7 +47,7 @@ enum VaultCommand {
         #[arg(long)]
         force: bool,
         /// Owner for the token file.
-        #[arg(long, default_value = "gild-vault")]
+        #[arg(long, default_value = "harar")]
         owner: String,
         #[arg(long, hide = true)]
         path: Option<PathBuf>,
@@ -66,7 +66,7 @@ enum VaultCommand {
         #[arg(long, hide = true)]
         state_path: Option<PathBuf>,
     },
-    /// Manage the local gild-vault-proxy mTLS certificate authority.
+    /// Manage the local harar-proxy mTLS certificate authority.
     Ca {
         #[command(subcommand)]
         command: VaultCaCommand,
@@ -142,7 +142,7 @@ pub async fn run(args: VaultArgs) -> Result<()> {
                 state_path.display()
             );
             println!(
-                "now restart gg.tana.gild-vault.service. Verify keys present. Then delete /run/gild-vault/keys.json manually."
+                "now restart gg.tana.harar.service. Verify keys present. Then delete /run/harar/keys.json manually."
             );
             Ok(())
         }
@@ -156,7 +156,7 @@ pub async fn run(args: VaultArgs) -> Result<()> {
                 meta.epoch,
                 meta.version
             );
-            println!("restart gg.tana.gild-vault.service on this node; demote all other nodes.");
+            println!("restart gg.tana.harar.service on this node; demote all other nodes.");
             Ok(())
         }
         VaultCommand::Ca { command } => match command {
@@ -256,11 +256,11 @@ fn init_vault_proxy_ca(ca_cert_path: &Path, ca_key_path: &Path, force: bool) -> 
     ensure_gild_config_dir(ca_cert_path)?;
     ensure_gild_config_dir(ca_key_path)?;
 
-    let mut params = vault_proxy_cert_params(vec!["tana-gild-vault-proxy-ca".to_string()]);
+    let mut params = vault_proxy_cert_params(vec!["tana-harar-proxy-ca".to_string()]);
     params.distinguished_name = DistinguishedName::new();
     params
         .distinguished_name
-        .push(DnType::CommonName, "tana-gild-vault-proxy-ca");
+        .push(DnType::CommonName, "tana-harar-proxy-ca");
     params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     params.key_usages = vec![
         KeyUsagePurpose::KeyCertSign,
@@ -407,11 +407,11 @@ fn init_master_key(path: &Path, force: bool) -> Result<String> {
     }
 
     let mut file = options.open(path)?;
-    try_chown(path, Some("gild-vault"), None);
+    try_chown(path, Some("harar"), None);
     writeln!(file, "{}", identity.to_string().expose_secret())?;
     file.sync_all()?;
     fs::set_permissions(path, fs::Permissions::from_mode(0o400))?;
-    try_chown(path, Some("gild-vault"), None);
+    try_chown(path, Some("harar"), None);
     if let Some(parent) = path.parent() {
         sync_dir(parent)?;
     }
@@ -449,7 +449,7 @@ fn load_master_key(path: &Path) -> Result<age::x25519::Identity> {
         Ok(contents) => contents,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             return Err(error(format!(
-                "missing gild-vault master key at {}; run `gild vault init` first",
+                "missing harar master key at {}; run `gild vault init` first",
                 path.display()
             )));
         }
@@ -483,7 +483,7 @@ fn persist_encrypted_state(
         .ok_or_else(|| error("state path must have a parent"))?;
     fs::create_dir_all(parent)?;
     fs::set_permissions(parent, fs::Permissions::from_mode(0o750))?;
-    try_chown(parent, Some("gild-vault"), Some("gild"));
+    try_chown(parent, Some("harar"), Some("gild"));
 
     let plaintext = serde_json::to_vec(keys)?;
     let ciphertext = age::encrypt(recipient, &plaintext)?;
@@ -494,12 +494,12 @@ fn persist_encrypted_state(
         .write(true)
         .mode(0o600)
         .open(&tmp_path)?;
-    try_chown(&tmp_path, Some("gild-vault"), None);
+    try_chown(&tmp_path, Some("harar"), None);
     file.write_all(&ciphertext)?;
     file.sync_all()?;
     fs::rename(&tmp_path, path)?;
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    try_chown(path, Some("gild-vault"), None);
+    try_chown(path, Some("harar"), None);
     sync_dir(parent)?;
     Ok(())
 }
@@ -547,7 +547,7 @@ fn persist_replication_meta(path: &Path, meta: &ReplicationMeta) -> Result<()> {
         .ok_or_else(|| error("replication metadata path must have a parent"))?;
     fs::create_dir_all(parent)?;
     fs::set_permissions(parent, fs::Permissions::from_mode(0o750))?;
-    try_chown(parent, Some("gild-vault"), Some("gild"));
+    try_chown(parent, Some("harar"), Some("gild"));
 
     let tmp_path = path.with_extension(format!("replication.json.tmp.{}", std::process::id()));
     let mut file = OpenOptions::new()
@@ -556,13 +556,13 @@ fn persist_replication_meta(path: &Path, meta: &ReplicationMeta) -> Result<()> {
         .write(true)
         .mode(0o600)
         .open(&tmp_path)?;
-    try_chown(&tmp_path, Some("gild-vault"), None);
+    try_chown(&tmp_path, Some("harar"), None);
     serde_json::to_writer(&mut file, meta)?;
     file.write_all(b"\n")?;
     file.sync_all()?;
     fs::rename(&tmp_path, path)?;
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    try_chown(path, Some("gild-vault"), None);
+    try_chown(path, Some("harar"), None);
     sync_dir(parent)?;
     Ok(())
 }

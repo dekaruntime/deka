@@ -12,11 +12,11 @@ independent of the invoking CLI or scenario runner.
 ## Primitives
 
 ```bash
-gild-storm-agent process kill --service gild-vault --signal SIGTERM --undo-by 60s
-gild-storm-agent process kill --service gg.tana.gild-vault --signal SIGKILL --mask-restart --undo-by 35s
-gild-storm-agent process start --service gild-vault
-gild-storm-agent process pause --service gild-vault --secs 5 --undo-by 10s
-gild-storm-agent process pause --service gild-vault --secs 5 --undo-by 10s --mask-restart
+gild-storm-agent process kill --service harar --signal SIGTERM --undo-by 60s
+gild-storm-agent process kill --service gg.tana.harar --signal SIGKILL --mask-restart --undo-by 35s
+gild-storm-agent process start --service harar
+gild-storm-agent process pause --service harar --secs 5 --undo-by 10s
+gild-storm-agent process pause --service harar --secs 5 --undo-by 10s --mask-restart
 gild-storm-agent recover
 
 gild-storm-agent net partition --to demon --secs 10 --undo-by 15s
