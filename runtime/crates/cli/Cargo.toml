@@ -33,7 +33,7 @@ stdio = { path = "../stdio" }
 introspect = { path = "../introspect", optional = true }
 wasm_cli = { path = "../wasm_cli" }
 pm = { workspace = true, optional = true }
-linkhash-client = { version = "0.2", registry = "linkhash" }
+linkhash-client = { version = "=0.2.1", registry = "linkhash" }
 harar-client = { version = "0.2", registry-index = "sparse+https://git.tana.gg/index/" }
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }

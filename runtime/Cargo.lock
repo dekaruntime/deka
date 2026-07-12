@@ -3065,9 +3065,9 @@ dependencies = [
 
 [[package]]
 name = "linkhash-client"
-version = "0.2.0"
+version = "0.2.1"
 source = "sparse+https://git.tana.gg/index/"
-checksum = "e91ab3275e8de0802247d46d90b5411ac12dafec3c22036bc4d45aabf9b64aee"
+checksum = "5ca9e0138fe4b14b699fb3196a9a4eac1f5f766709edbbc79d2162704b372f99"
 dependencies = [
  "anyhow",
  "reqwest 0.12.28",
