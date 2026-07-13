@@ -208,6 +208,27 @@ pub fn merge_policy_with_cli(
     base
 }
 
+pub fn merge_policy_with_cli_manifest_net_env(
+    base: SecurityPolicy,
+    cli: &SecurityCliOverrides,
+) -> SecurityPolicy {
+    let mut scoped = cli.clone();
+    scoped.allow_net = false;
+    scoped.allow_env = false;
+    scoped.deny_net = false;
+    scoped.deny_env = false;
+    if scoped.allow_all {
+        scoped.allow_all = false;
+        scoped.allow_read = true;
+        scoped.allow_write = true;
+        scoped.allow_run = true;
+        scoped.allow_db = true;
+        scoped.allow_dynamic = true;
+        scoped.allow_wasm = true;
+    }
+    merge_policy_with_cli(base, &scoped)
+}
+
 pub fn policy_to_json(policy: &SecurityPolicy) -> Value {
     json!({
         "security": {
@@ -235,6 +256,7 @@ pub fn parse_deka_security_policy(root: &Value) -> PolicyParseOutcome {
     };
 
     let Some(security) = obj.get("security") else {
+        apply_legacy_permissions(obj, &mut policy, &mut diagnostics);
         return PolicyParseOutcome {
             policy,
             diagnostics,
@@ -284,9 +306,64 @@ pub fn parse_deka_security_policy(root: &Value) -> PolicyParseOutcome {
         }
     }
 
+    apply_legacy_permissions(obj, &mut policy, &mut diagnostics);
+
     PolicyParseOutcome {
         policy,
         diagnostics,
+    }
+}
+
+fn apply_legacy_permissions(
+    obj: &Map<String, Value>,
+    policy: &mut SecurityPolicy,
+    diagnostics: &mut Vec<PolicyDiagnostic>,
+) {
+    let Some(permissions) = obj.get("permissions").and_then(|v| v.as_object()) else {
+        return;
+    };
+
+    if matches!(policy.allow.read, RuleList::None) {
+        policy.allow.read = parse_rule_list(
+            "$.permissions.fs.read",
+            permissions.get("fs").and_then(|fs| fs.get("read")),
+            diagnostics,
+        );
+    }
+    if matches!(policy.allow.write, RuleList::None) {
+        policy.allow.write = parse_rule_list(
+            "$.permissions.fs.write",
+            permissions.get("fs").and_then(|fs| fs.get("write")),
+            diagnostics,
+        );
+    }
+    if matches!(policy.allow.net, RuleList::None) {
+        policy.allow.net = parse_rule_list(
+            "$.permissions.net.allow",
+            permissions.get("net").and_then(|net| net.get("allow")),
+            diagnostics,
+        );
+    }
+    if matches!(policy.deny.net, RuleList::None) {
+        policy.deny.net = parse_rule_list(
+            "$.permissions.net.deny",
+            permissions.get("net").and_then(|net| net.get("deny")),
+            diagnostics,
+        );
+    }
+    if matches!(policy.allow.env, RuleList::None) {
+        policy.allow.env = parse_rule_list(
+            "$.permissions.env.allow",
+            permissions.get("env").and_then(|env| env.get("allow")),
+            diagnostics,
+        );
+    }
+    if matches!(policy.deny.env, RuleList::None) {
+        policy.deny.env = parse_rule_list(
+            "$.permissions.env.deny",
+            permissions.get("env").and_then(|env| env.get("deny")),
+            diagnostics,
+        );
     }
 }
 
@@ -578,7 +655,7 @@ fn rule_list_to_json(rule: &RuleList) -> Value {
 mod tests {
     use super::{
         PolicyDiagnosticLevel, RuleList, SecurityCliOverrides, merge_policy_with_cli,
-        parse_deka_security_policy, policy_to_json,
+        merge_policy_with_cli_manifest_net_env, parse_deka_security_policy, policy_to_json,
     };
 
     #[test]
@@ -681,6 +758,89 @@ mod tests {
         assert_eq!(merged.allow.net, RuleList::All);
         assert_eq!(merged.deny.run, RuleList::All);
         assert!(!merged.prompt);
+    }
+
+    #[test]
+    fn runtime_merge_keeps_manifest_authoritative_for_net_env() {
+        let doc = serde_json::json!({
+            "security": {
+                "allow": { "net": ["api.example.com"], "env": ["PUBLIC_KEY"] }
+            }
+        });
+        let parsed = parse_deka_security_policy(&doc);
+        let merged = merge_policy_with_cli_manifest_net_env(
+            parsed.policy,
+            &SecurityCliOverrides {
+                allow_all: true,
+                allow_net: true,
+                allow_env: true,
+                deny_net: true,
+                deny_env: true,
+                ..SecurityCliOverrides::default()
+            },
+        );
+        assert_eq!(
+            merged.allow.net,
+            RuleList::List(vec!["api.example.com".to_string()])
+        );
+        assert_eq!(
+            merged.allow.env,
+            RuleList::List(vec!["PUBLIC_KEY".to_string()])
+        );
+        assert!(matches!(merged.deny.net, RuleList::None));
+        assert!(matches!(merged.deny.env, RuleList::None));
+        assert!(matches!(merged.allow.read, RuleList::All));
+    }
+
+    #[test]
+    fn runtime_merge_keeps_net_env_fail_closed_without_manifest_entries() {
+        let parsed = parse_deka_security_policy(&serde_json::json!({
+            "security": { "allow": {}, "deny": {} }
+        }));
+        let merged = merge_policy_with_cli_manifest_net_env(
+            parsed.policy,
+            &SecurityCliOverrides {
+                allow_all: true,
+                allow_net: true,
+                allow_env: true,
+                ..SecurityCliOverrides::default()
+            },
+        );
+        assert!(matches!(merged.allow.net, RuleList::None));
+        assert!(matches!(merged.allow.env, RuleList::None));
+        assert!(matches!(merged.allow.read, RuleList::All));
+    }
+
+    #[test]
+    fn parses_legacy_permissions_as_manifest_policy() {
+        let parsed = parse_deka_security_policy(&serde_json::json!({
+            "permissions": {
+                "fs": { "read": ["./assets"], "write": [] },
+                "net": { "allow": ["localhost:7700"], "deny": ["169.254.169.254"] },
+                "env": { "allow": ["SHOP_ID"], "deny": ["AWS_SECRET_ACCESS_KEY"] }
+            }
+        }));
+        assert!(!parsed.has_errors());
+        assert_eq!(
+            parsed.policy.allow.read,
+            RuleList::List(vec!["./assets".to_string()])
+        );
+        assert_eq!(
+            parsed.policy.allow.net,
+            RuleList::List(vec!["localhost:7700".to_string()])
+        );
+        assert_eq!(
+            parsed.policy.deny.net,
+            RuleList::List(vec!["169.254.169.254".to_string()])
+        );
+        assert_eq!(
+            parsed.policy.allow.env,
+            RuleList::List(vec!["SHOP_ID".to_string()])
+        );
+        assert_eq!(
+            parsed.policy.deny.env,
+            RuleList::List(vec!["AWS_SECRET_ACCESS_KEY".to_string()])
+        );
     }
 
     #[test]

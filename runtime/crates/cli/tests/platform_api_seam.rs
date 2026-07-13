@@ -1,3 +1,5 @@
+extern crate std as core;
+
 use reqwest::Client;
 use serde_json::{Value, json};
 use std::fs;
