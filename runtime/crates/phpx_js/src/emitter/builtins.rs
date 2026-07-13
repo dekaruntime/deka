@@ -20,31 +20,33 @@ impl<'a> JsSubsetEmitter<'a> {
         };
 
         match name {
-            // count($x) -> (Array.isArray($x) || typeof $x === 'string') ? $x.length : ($x && typeof $x === 'object' ? Object.keys($x).length : 0)
+            // count($x) -> direct .length/Object.keys when known, single-eval inline fallback otherwise.
             "count" if args.len() == 1 => {
+                let kind = self.infer_expr_kind(args[0].value);
                 let a = emit_args(self, args)?;
-                Ok(Some(format!(
-                    "((Array.isArray({0}) || typeof {0} === \"string\") ? {0}.length : ({0} && typeof {0} === \"object\" ? Object.keys({0}).length : 0))",
-                    a[0]
-                )))
+                Ok(Some(match kind {
+                    Some(JsValueKind::Array | JsValueKind::String) => format!("{}.length", a[0]),
+                    Some(JsValueKind::Object) => format!("Object.keys({}).length", a[0]),
+                    None => format!(
+                        "(() => {{ const __v = {}; return (Array.isArray(__v) || typeof __v === \"string\") ? __v.length : (__v && typeof __v === \"object\" ? Object.keys(__v).length : 0); }})()",
+                        a[0]
+                    ),
+                }))
             }
-            // strlen($s) -> String($s).length
+            // strlen($s) -> $s.length
             "strlen" if args.len() == 1 => {
                 let a = emit_args(self, args)?;
-                Ok(Some(format!("String({}).length", a[0])))
+                Ok(Some(format!("{}.length", a[0])))
             }
-            // substr($s, $start) -> String($s).slice($start)
-            // substr($s, $start, $len) -> IIFE handling negative start and length
+            // substr($s, $start) -> $s.slice($start)
+            // substr($s, $start, $len) -> $s.slice($start, $start + $len)
             "substr" if args.len() >= 2 && args.len() <= 3 => {
                 let a = emit_args(self, args)?;
                 if args.len() == 2 {
-                    Ok(Some(format!(
-                        "(() => {{ const __s = String({}); let __st = {}; if (__st < 0) __st = Math.max(__s.length + __st, 0); return __s.slice(__st); }})()",
-                        a[0], a[1]
-                    )))
+                    Ok(Some(format!("{}.slice({})", a[0], a[1])))
                 } else {
                     Ok(Some(format!(
-                        "(() => {{ const __s = String({}); let __st = {}; const __ln = {}; if (__st < 0) __st = Math.max(__s.length + __st, 0); if (__ln < 0) return __s.slice(__st, Math.max(__s.length + __ln, __st)); return __s.slice(__st, __st + __ln); }})()",
+                        "(() => {{ const __s = {}; const __start = {}; const __len = {}; return __s.slice(__start, __start + __len); }})()",
                         a[0], a[1], a[2]
                     )))
                 }
@@ -145,25 +147,10 @@ impl<'a> JsSubsetEmitter<'a> {
                     a[0], a[1]
                 )))
             }
-            // in_array($needle, $haystack) -> Array.isArray($h) && $h.includes($n)
-            // in_array($needle, $haystack, $strict) -> strict uses === via IIFE
+            // in_array($needle, $haystack) -> $haystack.includes($needle)
             "in_array" if args.len() >= 2 && args.len() <= 3 => {
                 let a = emit_args(self, args)?;
-                if args.len() == 2 {
-                    // Default non-strict: use == via includes (JS includes uses ===, but
-                    // PHP in_array default is loose. For PHPX JS-first, includes is fine
-                    // since PHPX code should use strict semantics anyway.)
-                    Ok(Some(format!(
-                        "(Array.isArray({1}) && {1}.includes({0}))",
-                        a[0], a[1]
-                    )))
-                } else {
-                    // With strict flag: always use includes (=== semantics in JS)
-                    Ok(Some(format!(
-                        "(Array.isArray({1}) && {1}.includes({0}))",
-                        a[0], a[1]
-                    )))
-                }
+                Ok(Some(format!("{}.includes({})", a[1], a[0])))
             }
             // explode($sep, $s) -> String($s).split(String($sep))
             // explode($sep, $s, $limit) -> keep polyfill behavior for limit
@@ -210,23 +197,15 @@ impl<'a> JsSubsetEmitter<'a> {
             }
             // time() -> Math.floor(Date.now() / 1000)
             "time" if args.is_empty() => Ok(Some("Math.floor(Date.now() / 1000)".to_string())),
-            // array_keys($a) -> Object.keys($a) for objects; for arrays JS gives
-            // stringified indices, so we emit an IIFE that returns numeric indices
-            // for arrays and string keys for objects. Structs are treated as objects.
+            // array_keys($a) -> Object.keys($a)
             "array_keys" if args.len() == 1 => {
                 let a = emit_args(self, args)?;
-                Ok(Some(format!(
-                    "(() => {{ const __v = {}; if (Array.isArray(__v)) return __v.map((_, __i) => __i); return (__v && typeof __v === \"object\") ? Object.keys(__v) : []; }})()",
-                    a[0]
-                )))
+                Ok(Some(format!("Object.keys({})", a[0])))
             }
-            // array_values($a) -> Object.values for objects; arrays return a shallow copy.
+            // array_values($a) -> Object.values($a)
             "array_values" if args.len() == 1 => {
                 let a = emit_args(self, args)?;
-                Ok(Some(format!(
-                    "(() => {{ const __v = {}; if (Array.isArray(__v)) return __v.slice(); return (__v && typeof __v === \"object\") ? Object.values(__v) : []; }})()",
-                    a[0]
-                )))
+                Ok(Some(format!("Object.values({})", a[0])))
             }
             // array_map($fn, $a) -> $a.map($fn)
             "array_map" if args.len() == 2 => {
@@ -244,13 +223,11 @@ impl<'a> JsSubsetEmitter<'a> {
                 };
                 Ok(Some(format!("{}.filter({})", a[0], callback)))
             }
-            // is_array($x) -> inline with struct exclusion
+            // is_array($x) -> Array.isArray($x). Structs are emitted as plain objects,
+            // so they are excluded by the native JS array check.
             "is_array" if args.len() == 1 => {
                 let a = emit_args(self, args)?;
-                Ok(Some(format!(
-                    "(() => {{ const __v = {}; if (Array.isArray(__v)) return true; if (!(__v !== null && typeof __v === \"object\" && Object.getPrototypeOf(__v) === Object.prototype)) return false; if (Object.prototype.hasOwnProperty.call(__v, \"__struct\")) return false; return true; }})()",
-                    a[0]
-                )))
+                Ok(Some(format!("Array.isArray({})", a[0])))
             }
             // is_int($x) -> IIFE to bind arg once: typeof __v === "number" && Number.isInteger(__v)
             "is_int" if args.len() == 1 => {

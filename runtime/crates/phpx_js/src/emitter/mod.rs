@@ -11,6 +11,13 @@ struct EnumCaseDef {
     params: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum JsValueKind {
+    Array,
+    Object,
+    String,
+}
+
 enum AssignmentTarget {
     Direct(String),
     Append(String),
@@ -41,6 +48,7 @@ pub(crate) struct JsSubsetEmitter<'a> {
     struct_names: HashSet<String>,
     struct_methods: HashMap<String, Vec<(String, String)>>,
     enum_cases: HashMap<String, Vec<EnumCaseDef>>,
+    value_kinds: HashMap<String, JsValueKind>,
     /// Tier B helpers needed by this module. Populated during AST traversal
     /// (try_rewrite_builtin inserts keys here). finish() emits each needed helper
     /// as a module-scoped `function __phpx_X(...)` declaration — NOT globalThis.
@@ -76,6 +84,7 @@ impl<'a> JsSubsetEmitter<'a> {
             struct_names: HashSet::new(),
             struct_methods: HashMap::new(),
             enum_cases: HashMap::new(),
+            value_kinds: HashMap::new(),
             needed_helpers: BTreeSet::new(),
         }
     }
@@ -95,8 +104,8 @@ impl<'a> JsSubsetEmitter<'a> {
     // CLASS (a) — compile-time rewrite candidates (REMOVED from prelude):
     //   chr          -> String.fromCharCode(($n) & 0xff)
     //   ord          -> (String($s).length ? String($s).charCodeAt(0) : 0)
-    //   strlen       -> String($s).length
-    //   substr       -> String($s).slice(...) (handles negative start + length arg)
+    //   strlen       -> $s.length
+    //   substr       -> $s.slice(...)
     //   ltrim        -> String($s).trimStart() (no $chars arg) / keep polyfill for $chars
     //   rtrim        -> String($s).trimEnd()  (no $chars arg) / keep polyfill for $chars
     //   trim         -> String($s).trim()     (no $chars arg) / keep polyfill for $chars
@@ -113,9 +122,9 @@ impl<'a> JsSubsetEmitter<'a> {
     //   array_filter -> $a.filter($fn)
     //   explode      -> String($s).split(String($sep))
     //   implode      -> $a.join(String($g))
-    //   count        -> (Array.isArray($x) ? $x : Object.keys($x)).length
+    //   count        -> $x.length for known arrays/strings, Object.keys($x).length for known objects
     //   time         -> Math.floor(Date.now() / 1000)
-    //   is_array     -> (Array.isArray($x) && !($x && typeof $x === 'object' && $x.__struct))
+    //   is_array     -> Array.isArray($x)
     //
     // CLASS (b) — runtime helpers (KEEP, already mangled):
     //   __phpx_is_struct       — struct type guard

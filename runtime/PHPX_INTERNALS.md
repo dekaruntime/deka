@@ -3,6 +3,26 @@
 Goal: minimize __deka_* usage. Keep only truly low-level hooks and migrate
 everything else into phpx.
 
+## JS emitter builtin rewrites
+PHPX keeps PHP-shaped surface calls, but the JS backend lowers common builtins
+to native JS at compile time instead of installing PHP-named globals. Examples:
+
+- `count($a)` emits `$a.length` for known arrays/strings, `Object.keys($a).length`
+  for known objects, or a single-evaluation inline fallback when the value kind
+  is unknown.
+- `strlen($s)` emits `$s.length`.
+- `substr($s, $i, $n)` emits `$s.slice($i, $i + $n)`.
+- `array_keys($a)` / `array_values($a)` emit `Object.keys($a)` /
+  `Object.values($a)`.
+- `in_array($needle, $haystack)` emits `$haystack.includes($needle)`.
+- `array_map($fn, $a)` and `array_filter($a, $fn)` emit `.map` / `.filter`.
+- `is_array($x)` emits `Array.isArray($x)`; structs are objects, so the native
+  array check excludes them.
+
+If a builtin genuinely needs reusable runtime logic, the emitter records a
+tree-shakable module-scoped helper named `__phpx_X`. Do not add
+`globalThis.<php_name>` polyfills for PHP-named surface builtins.
+
 ## PHPX Syntax Additions (recent)
 ### Type aliases (phpx only)
 Syntax:

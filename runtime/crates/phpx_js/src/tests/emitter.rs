@@ -1506,4 +1506,3 @@ fn negative_number_literal() {
         js
     );
 }
-
