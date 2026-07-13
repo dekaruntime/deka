@@ -1,4 +1,4 @@
-// Consumer view from crates/linkhash-client/src/download.rs.
+// Consumer view from the registry linkhash-client downloader.
 // The downloader reads tree entries from `entries`, each entry's `path` and
 // `kind`, and JSON blob bodies from `content`.
 struct LinkhashPackageDownloadRequest {
