@@ -892,9 +892,13 @@ mod tests {
     use super::build_static_handler_code;
     use super::ensure_http_port_available;
     use super::flag_or_env_truthy_with;
+    use super::serve_async;
+    use core::{Args, EnvContext, HandlerContext};
     use runtime_core::env::is_truthy;
     use std::collections::HashMap;
+    use std::fs;
     use std::net::TcpListener;
+    use std::time::{Duration, Instant};
 
     /// Verify the static handler template contains the __dekaFs confinement
     /// wrapper.  We check for the key guard identifiers that must be present
@@ -969,6 +973,103 @@ mod tests {
         let port = listener.local_addr().expect("local addr").port();
         let err = ensure_http_port_available(port).expect_err("port should be rejected");
         assert!(err.contains("already in use"), "unexpected error: {}", err);
+    }
+
+    #[test]
+    fn real_topology_serve_phpx_deka_json_env_policy_handoff_fails_closed() {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+
+        rt.block_on(async {
+            let temp = tempfile::tempdir().expect("temp project");
+            let root = temp.path();
+            let handler = root.join("main.phpx");
+            fs::write(
+                root.join("deka.json"),
+                r#"{
+  "type": "serve",
+  "serve": { "entry": "main.phpx", "mode": "php" },
+  "security": {
+    "allow": { "env": ["DEKA_ALLOWED_ENV", "DEKA_DENIED_ENV", "DEKA_MISSING_ENV"] },
+    "deny": { "env": ["DEKA_DENIED_ENV"] },
+    "prompt": false
+  }
+}"#,
+            )
+            .expect("deka.json");
+            fs::write(root.join("deka.lock"), "{}").expect("deka.lock");
+            fs::write(
+                &handler,
+                r#"export function handler($request, $context) {
+    $serverAllowed = isset($_SERVER['DEKA_ALLOWED_ENV']) ? $_SERVER['DEKA_ALLOWED_ENV'] : '';
+    $serverDenied = isset($_SERVER['DEKA_DENIED_ENV']) ? $_SERVER['DEKA_DENIED_ENV'] : '';
+    $serverMissing = isset($_SERVER['DEKA_MISSING_ENV']) ? $_SERVER['DEKA_MISSING_ENV'] : '';
+    $envAllowed = isset($_ENV['DEKA_ALLOWED_ENV']) ? $_ENV['DEKA_ALLOWED_ENV'] : '';
+    $envDenied = isset($_ENV['DEKA_DENIED_ENV']) ? $_ENV['DEKA_DENIED_ENV'] : '';
+    $processAllowed = process.env.DEKA_ALLOWED_ENV ?? '';
+    $processDenied = process.env.DEKA_DENIED_ENV ?? '';
+    return '{"serverAllowed":"' . $serverAllowed . '","serverDenied":"' . $serverDenied . '","serverMissing":"' . $serverMissing . '","envAllowed":"' . $envAllowed . '","envDenied":"' . $envDenied . '","processAllowed":"' . $processAllowed . '","processDenied":"' . $processDenied . '"}';
+}
+"#,
+            )
+            .expect("handler");
+
+            let port = rt_env_free_port();
+            let mut params = HashMap::new();
+            params.insert("--port".to_string(), port.to_string());
+            let resolved = core::resolve_handler_path(handler.to_str().expect("handler path"))
+                .expect("resolve handler");
+            let context = core::Context {
+                args: Args {
+                    flags: HashMap::new(),
+                    params,
+                    commands: vec!["serve".to_string()],
+                    positionals: vec![handler.to_string_lossy().to_string()],
+                },
+                env: EnvContext::load(),
+                handler: HandlerContext {
+                    input: handler.to_string_lossy().to_string(),
+                    static_config: core::StaticServeConfig::load(&resolved.directory),
+                    serve_config_path: None,
+                    resolved,
+                },
+            };
+
+            unsafe {
+                std::env::set_var("DEKA_ALLOWED_ENV", "allowed-value");
+                std::env::set_var("DEKA_DENIED_ENV", "denied-value");
+                std::env::remove_var("DEKA_MISSING_ENV");
+                std::env::set_var("ISOLATE_WORKERS", "1");
+                std::env::set_var("ISOLATES_PER_WORKER", "1");
+                std::env::set_var("ISOLATE_CODE_CACHE", "0");
+            }
+
+            let server = tokio::spawn(async move { serve_async(&context).await });
+            let body = rt_env_wait_for_body(port).await;
+            server.abort();
+
+            unsafe {
+                std::env::remove_var("DEKA_ALLOWED_ENV");
+                std::env::remove_var("DEKA_DENIED_ENV");
+                std::env::remove_var("DEKA_MISSING_ENV");
+                std::env::remove_var("ISOLATE_WORKERS");
+                std::env::remove_var("ISOLATES_PER_WORKER");
+                std::env::remove_var("ISOLATE_CODE_CACHE");
+            }
+
+            let body = body.expect("serve response");
+            let payload: serde_json::Value = serde_json::from_str(&body).expect(&body);
+            assert_eq!(payload["serverAllowed"], "allowed-value");
+            assert_eq!(payload["envAllowed"], "allowed-value");
+            assert_eq!(payload["processAllowed"], "allowed-value");
+            assert_eq!(payload["serverDenied"], "");
+            assert_eq!(payload["envDenied"], "");
+            assert_eq!(payload["processDenied"], "");
+            assert_eq!(payload["serverMissing"], "");
+        });
     }
 
     /// Blocker 1 regression: __dekaStat/__dekaReadFile/__dekaReadDir must NOT
@@ -1066,5 +1167,31 @@ mod tests {
         // Cleanup.
         let _ = fs::remove_dir_all(&root_a);
         let _ = fs::remove_dir_all(&root_b);
+    }
+
+    fn rt_env_free_port() -> u16 {
+        TcpListener::bind(("127.0.0.1", 0))
+            .expect("bind port")
+            .local_addr()
+            .expect("local addr")
+            .port()
+    }
+
+    async fn rt_env_wait_for_body(port: u16) -> Result<String, String> {
+        let client = reqwest::Client::new();
+        let url = format!("http://127.0.0.1:{port}/");
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut last = String::new();
+        while Instant::now() < deadline {
+            match client.get(&url).send().await {
+                Ok(response) => match response.text().await {
+                    Ok(body) => return Ok(body),
+                    Err(err) => last = err.to_string(),
+                },
+                Err(err) => last = err.to_string(),
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        Err(last)
     }
 }
