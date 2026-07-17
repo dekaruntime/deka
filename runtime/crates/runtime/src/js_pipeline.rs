@@ -1,11 +1,14 @@
+#[cfg(test)]
+use std::cell::Cell;
 use std::collections::BTreeSet;
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use bundler::{bundle_virtual_entry, BundleOptions, VirtualSource};
+use bundler::{BundleOptions, VirtualSource, bundle_virtual_entry};
 use phpx_js::{
-    build_stdlib_prelude, compile_phpx_source_to_js, parse_source_module_meta, SourceModuleMeta,
+    SourceModuleMeta, build_stdlib_prelude, compile_phpx_source_to_js, parse_source_module_meta,
 };
 use runtime_core::module_spec::{is_bare_module_specifier, module_spec_aliases};
 
@@ -94,18 +97,40 @@ fn with_project_module_root<T>(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-    let previous = std::env::var_os("PHPX_MODULE_ROOT");
-    unsafe {
-        std::env::set_var("PHPX_MODULE_ROOT", project_root);
+    let _module_root = ModuleRootRestoreGuard::replace(project_root);
+    action()
+}
+
+/// Restores PHPX's process-global module root when the tenant bundling scope
+/// exits, including when compilation or the bundler unwinds through a panic.
+struct ModuleRootRestoreGuard {
+    previous: Option<OsString>,
+}
+
+impl ModuleRootRestoreGuard {
+    fn replace(module_root: &Path) -> Self {
+        let previous = std::env::var_os("PHPX_MODULE_ROOT");
+        unsafe {
+            std::env::set_var("PHPX_MODULE_ROOT", module_root);
+        }
+        Self { previous }
     }
-    let result = action();
-    unsafe {
-        match previous {
-            Some(value) => std::env::set_var("PHPX_MODULE_ROOT", value),
-            None => std::env::remove_var("PHPX_MODULE_ROOT"),
+}
+
+impl Drop for ModuleRootRestoreGuard {
+    fn drop(&mut self) {
+        unsafe {
+            match self.previous.take() {
+                Some(value) => std::env::set_var("PHPX_MODULE_ROOT", value),
+                None => std::env::remove_var("PHPX_MODULE_ROOT"),
+            }
         }
     }
-    result
+}
+
+#[cfg(test)]
+thread_local! {
+    static PANIC_DURING_VIRTUAL_LOAD: Cell<bool> = const { Cell::new(false) };
 }
 
 struct PhpxBundleProvider {
@@ -130,6 +155,11 @@ impl VirtualSource for PhpxBundleProvider {
 
         if path.extension().and_then(|ext| ext.to_str()) != Some("phpx") {
             return Ok(None);
+        }
+
+        #[cfg(test)]
+        if PANIC_DURING_VIRTUAL_LOAD.replace(false) {
+            panic!("test-only panic during virtual module bundling");
         }
 
         let input = path
@@ -297,7 +327,10 @@ fn is_bare_specifier(spec: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_phpx_handler_bundle, ensure_project_layout, resolve_project_root};
+    use super::{
+        PANIC_DURING_VIRTUAL_LOAD, build_phpx_handler_bundle, ensure_project_layout,
+        resolve_project_root,
+    };
     use modules_php::integrity::compute_package_integrity;
     use phpx_js::parse_source_module_meta;
     use std::path::Path;
@@ -445,6 +478,73 @@ import { now_ms } from '@deka/time'
             Some(platform_root.as_os_str()),
             "tenant bundle must restore the platform module root"
         );
+        unsafe {
+            match previous_root {
+                Some(value) => std::env::set_var("PHPX_MODULE_ROOT", value),
+                None => std::env::remove_var("PHPX_MODULE_ROOT"),
+            }
+        }
+    }
+
+    #[test]
+    fn bundle_panic_restores_module_root_before_next_tenant_bundle() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let platform_root = tmp.path().join("platform");
+        let tenant_a_root = tmp.path().join("tenant-a");
+        let tenant_b_root = tmp.path().join("tenant-b");
+        std::fs::create_dir_all(&platform_root).expect("platform root");
+        std::fs::create_dir_all(&tenant_a_root).expect("tenant A root");
+        std::fs::create_dir_all(&tenant_b_root).expect("tenant B root");
+
+        for root in [&tenant_a_root, &tenant_b_root] {
+            std::fs::write(root.join("deka.json"), "{}").expect("tenant manifest");
+        }
+
+        let tenant_a_handler = tenant_a_root.join("main.phpx");
+        std::fs::write(
+            &tenant_a_handler,
+            "import { marker } from './dependency.phpx'\nexport function App(): string { return marker(); }\n",
+        )
+        .expect("tenant A handler");
+        std::fs::write(
+            tenant_a_root.join("dependency.phpx"),
+            "export function marker(): string { return 'a'; }\n",
+        )
+        .expect("tenant A dependency");
+
+        let tenant_b_handler = tenant_b_root.join("main.phpx");
+        std::fs::write(
+            &tenant_b_handler,
+            "export function App(): string { return 'b'; }\n",
+        )
+        .expect("tenant B handler");
+
+        let previous_root = std::env::var_os("PHPX_MODULE_ROOT");
+        unsafe { std::env::set_var("PHPX_MODULE_ROOT", &platform_root) };
+
+        PANIC_DURING_VIRTUAL_LOAD.with(|panic_once| panic_once.set(true));
+        let panic = std::panic::catch_unwind(|| {
+            build_phpx_handler_bundle(tenant_a_handler.to_str().expect("utf-8 handler"))
+        });
+        assert!(panic.is_err(), "tenant A bundle should panic mid-bundle");
+        assert_eq!(
+            std::env::var_os("PHPX_MODULE_ROOT").as_deref(),
+            Some(platform_root.as_os_str()),
+            "a panicking tenant bundle must restore the platform module root"
+        );
+
+        let tenant_b_bundle =
+            build_phpx_handler_bundle(tenant_b_handler.to_str().expect("utf-8 handler"));
+        assert!(
+            tenant_b_bundle.is_ok(),
+            "tenant B must still bundle after tenant A unwinds: {tenant_b_bundle:?}"
+        );
+        assert_eq!(
+            std::env::var_os("PHPX_MODULE_ROOT").as_deref(),
+            Some(platform_root.as_os_str()),
+            "tenant B bundle must not inherit tenant A's module root"
+        );
+
         unsafe {
             match previous_root {
                 Some(value) => std::env::set_var("PHPX_MODULE_ROOT", value),
