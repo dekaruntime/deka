@@ -5,7 +5,11 @@ use std::cell::RefCell;
 #[derive(Deserialize)]
 struct CanonicalKvGet {
     ok: bool,
-    value: Option<String>,
+    /// `/kv` is the zega-server wire API, whose successful payload is
+    /// `{ok, result}`.  `zega_backend` translates that to the runtime's
+    /// `{ok, value}` seam before PHPX sees it; this router talks to the
+    /// server directly and must therefore use the server field name.
+    result: Option<String>,
 }
 
 fn canonical_zega_enabled() -> bool {
@@ -43,7 +47,7 @@ fn canonical_zega_subdomain_value(subdomain: &str) -> Option<String> {
         return None;
     }
     let body: CanonicalKvGet = response.json().ok()?;
-    body.ok.then_some(body.value).flatten()
+    body.ok.then_some(body.result).flatten()
 }
 
 /// Raw shop mapping returned by a subdomain lookup.
@@ -317,6 +321,21 @@ pub fn resolve_tenant_info_from_host_strict(headers: &[(String, String)]) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
+
+    fn restore_env(key: &str, previous: Option<std::ffi::OsString>) {
+        match previous {
+            Some(value) => unsafe { std::env::set_var(key, value) },
+            None => unsafe { std::env::remove_var(key) },
+        }
+    }
 
     #[test]
     fn extract_subdomain_from_host() {
@@ -584,15 +603,62 @@ mod tests {
     }
 
     #[test]
-    fn canonical_kv_get_envelope_accepts_present_and_missing_values() {
+    fn canonical_kv_get_accepts_server_result_values() {
         let present: CanonicalKvGet =
-            serde_json::from_str(r#"{"ok":true,"value":"{\"shop_id\":\"shop_fresh\"}"}"#).unwrap();
+            serde_json::from_str(r#"{"ok":true,"result":"{\"shop_id\":\"shop_fresh\"}"}"#).unwrap();
         assert_eq!(
-            present.ok.then_some(present.value).flatten().as_deref(),
+            present.ok.then_some(present.result).flatten().as_deref(),
             Some(r#"{"shop_id":"shop_fresh"}"#)
         );
 
-        let missing: CanonicalKvGet = serde_json::from_str(r#"{"ok":true,"value":null}"#).unwrap();
-        assert_eq!(missing.ok.then_some(missing.value).flatten(), None);
+        let missing: CanonicalKvGet = serde_json::from_str(r#"{"ok":true,"result":null}"#).unwrap();
+        assert_eq!(missing.ok.then_some(missing.result).flatten(), None);
+    }
+
+    #[test]
+    fn canonical_http_kv_mapping_resolves_host_to_shop_id() {
+        let _env_lock = env_test_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let size = stream.read(&mut request).unwrap();
+            let request = String::from_utf8_lossy(&request[..size]);
+            assert!(request.contains("POST /kv HTTP/1.1"));
+            assert!(
+                request.contains("authorization: Bearer test-token")
+                    || request.contains("Authorization: Bearer test-token")
+            );
+            assert!(request.contains(r#""key":"subdomain:fresh-shop""#));
+
+            let body = r#"{"ok":true,"result":"{\"shop_id\":\"shop_local_repro\"}"}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+
+        let previous_backend = std::env::var_os("DEKA_DATA_BACKEND");
+        let previous_url = std::env::var_os("ZEGA_SERVER_URL");
+        let previous_token = std::env::var_os("ZEGA_SERVER_TOKEN");
+        unsafe {
+            std::env::set_var("DEKA_DATA_BACKEND", "zega");
+            std::env::set_var("ZEGA_SERVER_URL", format!("http://{address}"));
+            std::env::set_var("ZEGA_SERVER_TOKEN", "test-token");
+        }
+
+        let result =
+            resolve_tenant_from_host(&[("Host".to_string(), "fresh-shop.tana.gg".to_string())]);
+
+        restore_env("DEKA_DATA_BACKEND", previous_backend);
+        restore_env("ZEGA_SERVER_URL", previous_url);
+        restore_env("ZEGA_SERVER_TOKEN", previous_token);
+        server.join().unwrap();
+
+        assert_eq!(result, Some("shop_local_repro".to_string()));
     }
 }
