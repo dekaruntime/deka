@@ -5,7 +5,7 @@ use modules_php::integrity::compute_package_integrity;
 use runtime_core::module_spec::canonical_php_package_spec;
 use serde_json::{Value, json};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     fs,
     path::{Path, PathBuf},
     time::{Instant, SystemTime, UNIX_EPOCH},
@@ -48,18 +48,24 @@ fn run_php_install(specs: Vec<String>, quiet: bool) -> Result<()> {
     let lock_path = cwd.join(lock::LOCKFILE_NAME);
     let existing_lock = lock::read_lockfile_at(&lock_path);
     let start = Instant::now();
-    let mut installed_count = 0usize;
-
+    let mut pending = VecDeque::new();
+    let mut requested = BTreeMap::new();
     for spec in specs {
-        let normalized = normalize_php_spec(&spec)?;
-        let (name, version_hint) = parse_package_spec(&normalized);
+        enqueue_package_spec(&mut pending, &mut requested, &spec)?;
+    }
+    let mut installed = BTreeMap::new();
+
+    // A release is source plus its declared dependencies, never a recursive
+    // vendor tree. Resolve each declared dependency here so every package is a
+    // sibling under the consumer's php_modules directory.
+    while let Some((name, requested_range)) = pending.pop_front() {
         let locked = locked_package(&existing_lock, &name)?;
         let version_range = locked
             .as_ref()
             .map(|locked| locked.version.as_str())
-            .or(version_hint.as_deref())
+            .or(requested_range.as_deref())
             .unwrap_or("latest");
-        let destination = php_modules_path_for(&install_destination_name(&name))?;
+        let destination = php_modules_path_for(&name)?;
         let staging = install_staging_path(&destination)?;
         cleanup_install_staging(&staging);
         let install_source = match install_from_linkhash(&client, &name, version_range, &staging) {
@@ -80,6 +86,11 @@ fn run_php_install(specs: Vec<String>, quiet: bool) -> Result<()> {
             }
         };
 
+        if let Err(err) = reject_vendored_php_modules(&staging, &name) {
+            cleanup_install_staging(&staging);
+            return Err(err);
+        }
+
         let package_integrity = compute_package_integrity(&staging)
             .map_err(|err| anyhow!("failed to compute package integrity for {}: {}", name, err))?;
 
@@ -90,15 +101,23 @@ fn run_php_install(specs: Vec<String>, quiet: bool) -> Result<()> {
                 cleanup_install_staging(&staging);
                 return Err(err);
             }
-            replace_installed_package(&staging, &destination)?;
-            installed_count += 1;
-            continue;
+            // The package still needs to contribute its declared dependencies
+            // to the flat graph, even when its bytes are already lock-verified.
         }
 
+        let dependencies = package_dependencies(&staging, &name)?;
+        let dependency_names = dependencies
+            .iter()
+            .map(|dependency| {
+                let (raw_name, _) = parse_package_spec(dependency);
+                normalize_php_spec(&raw_name)
+            })
+            .collect::<Result<Vec<_>>>()?;
         let metadata = json!({
             "repo": install_source.repo,
             "gitRef": install_source.git_ref,
             "source": install_source.source,
+            "dependencies": dependency_names,
             "moduleGraph": {
                 "algo": "sha256",
                 "hash": package_integrity.module_graph,
@@ -109,18 +128,98 @@ fn run_php_install(specs: Vec<String>, quiet: bool) -> Result<()> {
             },
         });
         replace_installed_package(&staging, &destination)?;
-        lock::update_lock_entry(
-            &name,
-            format!("{}@{}", name, install_source.version),
-            format!("linkhash:{}", name),
-            metadata,
-            String::new(),
-        )?;
-        installed_count += 1;
+        installed.insert(
+            name.clone(),
+            (
+                format!("{}@{}", name, install_source.version),
+                format!("linkhash:{}", name),
+                metadata,
+                String::new(),
+            ),
+        );
+        for dependency in dependencies {
+            enqueue_package_spec(&mut pending, &mut requested, &dependency)?;
+        }
     }
 
+    // The lockfile represents exactly the resolved transitive graph. This
+    // also removes stale dependencies that are no longer declared by a release.
+    lock::write_lockfile_at(
+        &lock_path,
+        &lock::DekaLock {
+            lockfile_version: existing_lock.lockfile_version,
+            packages: installed.clone(),
+        },
+    )?;
+
     let duration = Instant::now().duration_since(start);
-    emit_summary(installed_count, duration.as_millis() as u64, quiet)?;
+    emit_summary(installed.len(), duration.as_millis() as u64, quiet)?;
+    Ok(())
+}
+
+fn enqueue_package_spec(
+    pending: &mut VecDeque<(String, Option<String>)>,
+    requested: &mut BTreeMap<String, Option<String>>,
+    spec: &str,
+) -> Result<()> {
+    let (raw_name, version) = parse_package_spec(spec.trim());
+    let name = normalize_php_spec(&raw_name)?;
+    if !requested.contains_key(&name) {
+        requested.insert(name.clone(), version.clone());
+        pending.push_back((name, version));
+    }
+    Ok(())
+}
+
+fn package_dependencies(package_root: &Path, package_name: &str) -> Result<Vec<String>> {
+    let manifest_path = package_root.join("deka.json");
+    if !manifest_path.exists() {
+        return Ok(Vec::new());
+    }
+    let raw = fs::read_to_string(&manifest_path)
+        .with_context(|| format!("failed to read {}", manifest_path.display()))?;
+    let manifest: Value = serde_json::from_str(&raw).with_context(|| {
+        format!(
+            "failed to parse {} for {}",
+            manifest_path.display(),
+            package_name
+        )
+    })?;
+    let Some(dependencies) = manifest.get("dependencies").and_then(Value::as_object) else {
+        return Ok(Vec::new());
+    };
+    let mut specs = Vec::new();
+    for (name, version) in dependencies {
+        let spec = match version.as_str().map(str::trim) {
+            Some("") | Some("*") | Some("latest") | None => name.clone(),
+            Some(version) => format!("{}@{}", name, version),
+        };
+        specs.push(spec);
+    }
+    specs.sort();
+    Ok(specs)
+}
+
+fn reject_vendored_php_modules(package_root: &Path, package_name: &str) -> Result<()> {
+    let mut directories = vec![package_root.to_path_buf()];
+    while let Some(directory) = directories.pop() {
+        for entry in fs::read_dir(&directory)
+            .with_context(|| format!("failed to read {}", directory.display()))?
+        {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            if entry.file_name() == "php_modules" {
+                bail!(
+                    "package {} contains vendored php_modules at {}; packages must declare dependencies in deka.json",
+                    package_name,
+                    entry.path().display()
+                );
+            }
+            directories.push(entry.path());
+        }
+    }
     Ok(())
 }
 
@@ -311,19 +410,6 @@ fn bundled_stdlib_prefix(name: &str) -> Option<String> {
     Some(rest.to_string())
 }
 
-fn install_destination_name(name: &str) -> String {
-    match name {
-        "@deka/encoding-json" => "encoding/json".to_string(),
-        "@deka/encoding-binary" => "encoding/binary".to_string(),
-        "@deka/vault" => "deka/vault".to_string(),
-        name if name.starts_with("@deka/") => name
-            .strip_prefix("@deka/")
-            .expect("checked @deka prefix")
-            .to_string(),
-        _ => name.to_string(),
-    }
-}
-
 fn collect_project_install_specs(project_dir: &Path) -> Result<Vec<String>> {
     let mut specs = BTreeMap::new();
     for spec in collect_locked_deka_specs(project_dir) {
@@ -507,7 +593,7 @@ async fn rehash_php_packages_in(payload: &InstallPayload, project_dir: &Path) ->
     }
 
     for name in specs {
-        let package_root = php_modules_path_for_in(project_dir, &install_destination_name(&name))?;
+        let package_root = php_modules_path_for_in(project_dir, &name)?;
         if !package_root.is_dir() {
             bail!(
                 "package '{}' is missing from php_modules (expected {})",
@@ -627,9 +713,9 @@ fn php_modules_path_for_in(project_dir: &Path, package_name: &str) -> Result<Pat
 mod tests {
     use super::{
         InstalledSource, LockedPackage, bundled_stdlib_prefix, collect_project_install_specs,
-        install_destination_name, install_from_bundled_stdlib, locked_package,
-        php_modules_path_for, rehash_php_packages_in, replace_installed_package,
-        verify_locked_integrity,
+        enqueue_package_spec, install_from_bundled_stdlib, locked_package, package_dependencies,
+        php_modules_path_for, rehash_php_packages_in, reject_vendored_php_modules,
+        replace_installed_package, verify_locked_integrity,
     };
     use crate::{lock, payload::InstallPayload};
     use modules_php::integrity::{PackageIntegrity, compute_package_integrity};
@@ -663,7 +749,11 @@ mod tests {
     #[tokio::test]
     async fn rehash_resolves_locked_deka_package_to_stdlib_root() {
         let tmp = tempfile::tempdir().expect("tmp");
-        let package_root = tmp.path().join("php_modules").join("component");
+        let package_root = tmp
+            .path()
+            .join("php_modules")
+            .join("@deka")
+            .join("component");
         fs::create_dir_all(&package_root).expect("mkdir package");
         fs::write(
             package_root.join("index.phpx"),
@@ -834,27 +924,26 @@ mod tests {
     }
 
     #[test]
-    fn nested_stdlib_aliases_install_to_resolver_compatible_paths() {
+    fn deka_packages_always_install_to_canonical_scoped_paths() {
+        let cwd = std::env::current_dir().expect("cwd");
         assert_eq!(
-            install_destination_name("@deka/encoding-json"),
-            "encoding/json"
+            php_modules_path_for("@deka/array").expect("path"),
+            cwd.join("php_modules").join("@deka").join("array")
         );
         assert_eq!(
-            install_destination_name("@deka/encoding-binary"),
-            "encoding/binary"
+            php_modules_path_for("@deka/crypto").expect("path"),
+            cwd.join("php_modules").join("@deka").join("crypto")
         );
-        assert_eq!(install_destination_name("@deka/vault"), "deka/vault");
-        assert_eq!(install_destination_name("@deka/core"), "core");
-        assert_eq!(install_destination_name("@deka/http"), "http");
-        assert_eq!(install_destination_name("@deka/crypto"), "crypto");
-        assert_eq!(install_destination_name("@deka/time"), "time");
-        assert_eq!(install_destination_name("@tana/store"), "@tana/store");
     }
 
     #[test]
     fn bundled_stdlib_install_writes_resolver_compatible_shape() {
         let tmp = tempfile::tempdir().expect("tmp");
-        let destination = tmp.path().join("php_modules").join("encoding");
+        let destination = tmp
+            .path()
+            .join("php_modules")
+            .join("@deka")
+            .join("encoding");
         install_from_bundled_stdlib("@deka/encoding", None, &destination).expect("install bundled");
 
         assert!(destination.join("json").join("index.phpx").is_file());
@@ -866,9 +955,9 @@ mod tests {
     }
 
     #[test]
-    fn bundled_non_core_stdlib_installs_unscoped_resolver_shape() {
+    fn bundled_stdlib_installs_canonical_scoped_shape() {
         let tmp = tempfile::tempdir().expect("tmp");
-        let destination = tmp.path().join("php_modules").join("http");
+        let destination = tmp.path().join("php_modules").join("@deka").join("http");
         install_from_bundled_stdlib("@deka/http", None, &destination).expect("install bundled");
 
         assert!(destination.join("index.phpx").is_file());
@@ -934,7 +1023,11 @@ mod tests {
     #[test]
     fn bundled_stdlib_can_satisfy_locked_entry_without_bundled_rewrite() {
         let tmp = tempfile::tempdir().expect("tmp");
-        let destination = tmp.path().join("php_modules").join("encoding");
+        let destination = tmp
+            .path()
+            .join("php_modules")
+            .join("@deka")
+            .join("encoding");
         install_from_bundled_stdlib("@deka/encoding", None, &destination)
             .expect("install first bundle copy");
         let integrity = compute_package_integrity(&destination).expect("integrity");
@@ -987,7 +1080,10 @@ mod tests {
         let err = install_from_bundled_stdlib(
             "@deka/encoding",
             Some(&locked),
-            &tmp.path().join("php_modules").join("encoding"),
+            &tmp.path()
+                .join("php_modules")
+                .join("@deka")
+                .join("encoding"),
         )
         .unwrap_err();
 
@@ -1036,6 +1132,61 @@ mod tests {
                 .join(".deka-install-test")
                 .exists()
         );
+    }
+
+    #[test]
+    fn transitive_dependencies_are_queued_as_a_flat_scoped_graph() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let package = tmp.path().join("package-a");
+        fs::create_dir_all(&package).expect("mkdir");
+        fs::write(
+            package.join("deka.json"),
+            json!({ "dependencies": { "@tana/b": "^1.0.0", "crypto": "0.1.0" } }).to_string(),
+        )
+        .expect("manifest");
+
+        let deps = package_dependencies(&package, "@tana/a").expect("deps");
+        assert_eq!(deps, vec!["@tana/b@^1.0.0", "crypto@0.1.0"]);
+
+        let mut pending = std::collections::VecDeque::new();
+        let mut requested = BTreeMap::new();
+        enqueue_package_spec(&mut pending, &mut requested, "@tana/a@1.0.0").expect("root");
+        for dep in deps {
+            enqueue_package_spec(&mut pending, &mut requested, &dep).expect("dependency");
+        }
+        assert_eq!(
+            pending
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect::<Vec<_>>(),
+            vec!["@tana/a", "@tana/b", "@deka/crypto"]
+        );
+        assert_eq!(
+            php_modules_path_for("@tana/b").expect("path"),
+            std::env::current_dir()
+                .expect("cwd")
+                .join("php_modules/@tana/b")
+        );
+        assert_eq!(
+            php_modules_path_for("@deka/crypto").expect("path"),
+            std::env::current_dir()
+                .expect("cwd")
+                .join("php_modules/@deka/crypto")
+        );
+    }
+
+    #[test]
+    fn install_rejects_vendored_php_modules_in_package_tree() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let nested = tmp
+            .path()
+            .join("src")
+            .join("php_modules")
+            .join("@tana")
+            .join("b");
+        fs::create_dir_all(&nested).expect("mkdir nested vendor tree");
+        let err = reject_vendored_php_modules(tmp.path(), "@tana/a").expect_err("must reject");
+        assert!(err.to_string().contains("contains vendored php_modules"));
     }
 }
 

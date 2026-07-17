@@ -241,6 +241,16 @@ fn build_request(context: &Context) -> Result<PublishRequest> {
 
     validate_scoped_package_name(&name)?;
 
+    // Linkhash publishes a git tree. A vendored php_modules directory in that
+    // tree would be copied by consumers and recreate nested dependency trees.
+    // Releases contain source and the dependencies declared by deka.json only.
+    let tree_ref = if local_git_ref_exists(&format!("{}^{{tree}}", git_ref)) {
+        git_ref.as_str()
+    } else {
+        "HEAD"
+    };
+    reject_publish_tree_php_modules(tree_ref)?;
+
     let endpoint = format!("{}/api/packages/publish", registry.trim_end_matches('/'));
     let mut payload = json!({
         "name": name,
@@ -259,6 +269,30 @@ fn build_request(context: &Context) -> Result<PublishRequest> {
         payload,
         dry_run,
     })
+}
+
+fn reject_publish_tree_php_modules(git_ref: &str) -> Result<()> {
+    let output = Command::new("git")
+        .args(["ls-tree", "-r", "-d", "--name-only", git_ref])
+        .output()
+        .with_context(|| format!("failed to inspect publish tree {}", git_ref))?;
+    if !output.status.success() {
+        bail!("failed to inspect publish tree {}", git_ref);
+    }
+    let paths = String::from_utf8_lossy(&output.stdout);
+    if let Some(path) = vendored_php_modules_path(&paths) {
+        bail!(
+            "publish rejected: git tree contains `{}`. Remove php_modules/ and declare dependencies in deka.json; releases never ship vendored dependencies",
+            path
+        );
+    }
+    Ok(())
+}
+
+fn vendored_php_modules_path(paths: &str) -> Option<&str> {
+    paths
+        .lines()
+        .find(|path| path.split('/').any(|segment| segment == "php_modules"))
 }
 
 async fn run_publish(request: PublishRequest) -> Result<()> {
@@ -577,4 +611,22 @@ fn prompt_yes_no(prompt: &str, default_yes: bool) -> Option<bool> {
         return Some(false);
     }
     Some(default_yes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::vendored_php_modules_path;
+
+    #[test]
+    fn publish_rejects_a_tree_with_vendored_php_modules() {
+        assert_eq!(
+            vendored_php_modules_path("src\nphp_modules/@tana/b\n"),
+            Some("php_modules/@tana/b")
+        );
+        assert_eq!(
+            vendored_php_modules_path("src\npackages/a/php_modules/@tana/b\n"),
+            Some("packages/a/php_modules/@tana/b")
+        );
+        assert_eq!(vendored_php_modules_path("src\nassets\n"), None);
+    }
 }
