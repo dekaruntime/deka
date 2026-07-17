@@ -308,7 +308,10 @@ fn package_dependencies(package_root: &Path, package_name: &str) -> Result<Vec<S
 }
 
 fn reject_vendored_php_modules(package_root: &Path, package_name: &str) -> Result<()> {
-    let mut directories = vec![package_root.to_path_buf()];
+    let canonical_root = package_root
+        .canonicalize()
+        .with_context(|| format!("failed to canonicalize {}", package_root.display()))?;
+    let mut directories = vec![canonical_root.clone()];
     while let Some(directory) = directories.pop() {
         for entry in fs::read_dir(&directory)
             .with_context(|| format!("failed to read {}", directory.display()))?
@@ -336,7 +339,17 @@ fn reject_vendored_php_modules(package_root: &Path, package_name: &str) -> Resul
                 );
             }
             if file_type.is_dir() {
-                directories.push(entry.path());
+                let canonical_entry = entry.path().canonicalize().with_context(|| {
+                    format!("failed to canonicalize {}", entry.path().display())
+                })?;
+                if !canonical_entry.starts_with(&canonical_root) {
+                    bail!(
+                        "package {} contains directory outside package root at {}",
+                        package_name,
+                        entry.path().display()
+                    );
+                }
+                directories.push(canonical_entry);
             }
         }
     }
