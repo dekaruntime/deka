@@ -4202,6 +4202,7 @@ name = "pm"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "base64 0.21.7",
  "dirs",
  "json5",
@@ -4210,6 +4211,7 @@ dependencies = [
  "modules_php",
  "reqwest 0.11.27",
  "runtime_core",
+ "semver",
  "serde",
  "serde_json",
  "sha2 0.10.9",

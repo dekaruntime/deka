@@ -32,8 +32,24 @@ pub async fn run_install(payload: InstallPayload) -> Result<()> {
 
 fn run_php_install(specs: Vec<String>, quiet: bool) -> Result<()> {
     let cwd = std::env::current_dir().context("failed to resolve current directory")?;
+    run_php_install_in(
+        specs,
+        quiet,
+        &cwd,
+        &linkhash_registry_url(),
+        linkhash_token().as_deref(),
+    )
+}
+
+fn run_php_install_in(
+    specs: Vec<String>,
+    quiet: bool,
+    cwd: &Path,
+    registry: &str,
+    token: Option<&str>,
+) -> Result<()> {
     let specs = if specs.is_empty() {
-        collect_project_install_specs(&cwd)?
+        collect_project_install_specs(cwd)?
     } else {
         specs
     };
@@ -42,33 +58,28 @@ fn run_php_install(specs: Vec<String>, quiet: bool) -> Result<()> {
         bail!("no PHP packages declared in deka.json or deka.lock");
     }
 
-    let registry = linkhash_registry_url();
-    let token = linkhash_token();
-    let client = LinkhashClient::new(&registry, token.as_deref());
+    let client = LinkhashClient::new(registry, token);
     let lock_path = cwd.join(lock::LOCKFILE_NAME);
     let existing_lock = lock::read_lockfile_at(&lock_path);
     let start = Instant::now();
     let mut pending = VecDeque::new();
     let mut requested = BTreeMap::new();
     for spec in specs {
-        enqueue_package_spec(&mut pending, &mut requested, &spec)?;
+        enqueue_package_spec(&mut pending, &mut requested, &spec, "root")?;
     }
     let mut installed = BTreeMap::new();
 
     // A release is source plus its declared dependencies, never a recursive
     // vendor tree. Resolve each declared dependency here so every package is a
     // sibling under the consumer's php_modules directory.
-    while let Some((name, requested_range)) = pending.pop_front() {
+    while let Some(name) = pending.pop_front() {
+        let requirements = requested.get(&name).expect("queued package requirement");
         let locked = locked_package(&existing_lock, &name)?;
-        let version_range = locked
-            .as_ref()
-            .map(|locked| locked.version.as_str())
-            .or(requested_range.as_deref())
-            .unwrap_or("latest");
-        let destination = php_modules_path_for(&name)?;
+        let version = select_version(&client, &name, requirements, locked.as_ref())?;
+        let destination = php_modules_path_for_in(cwd, &name)?;
         let staging = install_staging_path(&destination)?;
         cleanup_install_staging(&staging);
-        let install_source = match install_from_linkhash(&client, &name, version_range, &staging) {
+        let install_source = match install_from_linkhash(&client, &name, &version, &staging) {
             Ok(source) => source,
             Err(err) if is_deka_package(&name) => {
                 cleanup_install_staging(&staging);
@@ -138,7 +149,7 @@ fn run_php_install(specs: Vec<String>, quiet: bool) -> Result<()> {
             ),
         );
         for dependency in dependencies {
-            enqueue_package_spec(&mut pending, &mut requested, &dependency)?;
+            enqueue_package_spec(&mut pending, &mut requested, &dependency, &name)?;
         }
     }
 
@@ -158,17 +169,113 @@ fn run_php_install(specs: Vec<String>, quiet: bool) -> Result<()> {
 }
 
 fn enqueue_package_spec(
-    pending: &mut VecDeque<(String, Option<String>)>,
-    requested: &mut BTreeMap<String, Option<String>>,
+    pending: &mut VecDeque<String>,
+    requested: &mut BTreeMap<String, Vec<VersionRequirement>>,
     spec: &str,
+    requested_by: &str,
 ) -> Result<()> {
     let (raw_name, version) = parse_package_spec(spec.trim());
     let name = normalize_php_spec(&raw_name)?;
-    if !requested.contains_key(&name) {
-        requested.insert(name.clone(), version.clone());
-        pending.push_back((name, version));
+    let requirement = VersionRequirement {
+        range: version.unwrap_or_else(|| "latest".to_string()),
+        requested_by: requested_by.to_string(),
+    };
+    let requirements = requested.entry(name.clone()).or_default();
+    if !requirements.iter().any(|existing| existing == &requirement) {
+        requirements.push(requirement);
+        // Revisit a package when a newly discovered constraint may select a
+        // higher common version or expose a conflict.
+        pending.push_back(name);
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VersionRequirement {
+    range: String,
+    requested_by: String,
+}
+
+fn select_version(
+    client: &LinkhashClient,
+    name: &str,
+    requirements: &[VersionRequirement],
+    locked: Option<&LockedPackage>,
+) -> Result<String> {
+    if let Some(locked) = locked {
+        if requirements
+            .iter()
+            .all(|requirement| version_satisfies(&locked.version, &requirement.range))
+        {
+            return Ok(locked.version.clone());
+        }
+    }
+    let mut versions = match client.list_versions(name) {
+        Ok(versions) => versions,
+        // Built-in packages remain installable offline.  They have one
+        // bundled version, so this does not weaken multi-version resolution.
+        Err(_) if is_deka_package(name) => return Ok(BUNDLED_STDLIB_VERSION.to_string()),
+        Err(err) => return Err(err),
+    };
+    versions.sort_by(|left, right| {
+        semver::Version::parse(left)
+            .ok()
+            .cmp(&semver::Version::parse(right).ok())
+    });
+    let selected = versions.into_iter().rev().find(|version| {
+        semver::Version::parse(version).is_ok()
+            && requirements
+                .iter()
+                .all(|requirement| version_satisfies(version, &requirement.range))
+    });
+    selected.ok_or_else(|| version_conflict(name, requirements))
+}
+
+fn version_satisfies(version: &str, range: &str) -> bool {
+    if range.trim().is_empty() || matches!(range.trim(), "latest" | "*") {
+        return true;
+    }
+    let Ok(version) = semver::Version::parse(version) else {
+        return false;
+    };
+    let range = normalize_version_range(range);
+    semver::VersionReq::parse(&range).is_ok_and(|requirement| requirement.matches(&version))
+}
+
+fn normalize_version_range(range: &str) -> String {
+    let range = range.trim();
+    let (prefix, bare) = range
+        .strip_prefix('^')
+        .map_or(("", range), |value| ("^", value));
+    let components = bare.split('.').count();
+    if bare
+        .chars()
+        .all(|character| character.is_ascii_digit() || character == '.')
+        && components < 3
+    {
+        format!("{prefix}{bare}{}", ".0".repeat(3 - components))
+    } else {
+        range.to_string()
+    }
+}
+
+fn version_conflict(name: &str, requirements: &[VersionRequirement]) -> anyhow::Error {
+    let left = requirements
+        .first()
+        .expect("version conflict has requirement");
+    let right = requirements
+        .iter()
+        .skip(1)
+        .find(|requirement| requirement.range != left.range)
+        .unwrap_or(left);
+    anyhow!(
+        "version conflict: {} required as {} by {} and {} by {}",
+        name,
+        left.range,
+        left.requested_by,
+        right.range,
+        right.requested_by
+    )
 }
 
 fn package_dependencies(package_root: &Path, package_name: &str) -> Result<Vec<String>> {
@@ -207,17 +314,30 @@ fn reject_vendored_php_modules(package_root: &Path, package_name: &str) -> Resul
             .with_context(|| format!("failed to read {}", directory.display()))?
         {
             let entry = entry?;
-            if !entry.file_type()?.is_dir() {
-                continue;
-            }
-            if entry.file_name() == "php_modules" {
+            let file_type = entry.file_type()?;
+            let entry_name = entry.file_name();
+            if entry_name
+                .to_string_lossy()
+                .eq_ignore_ascii_case("php_modules")
+            {
                 bail!(
                     "package {} contains vendored php_modules at {}; packages must declare dependencies in deka.json",
                     package_name,
                     entry.path().display()
                 );
             }
-            directories.push(entry.path());
+            // Never follow artifact symlinks.  A package must be a real tree;
+            // otherwise a link can escape the staging root or alias vendored modules.
+            if file_type.is_symlink() {
+                bail!(
+                    "package {} contains symlink {}; package artifacts may not contain symlinks",
+                    package_name,
+                    entry.path().display()
+                );
+            }
+            if file_type.is_dir() {
+                directories.push(entry.path());
+            }
         }
     }
     Ok(())
@@ -689,6 +809,7 @@ fn linkhash_token() -> Option<String> {
         .ok()
 }
 
+#[cfg(test)]
 fn php_modules_path_for(package_name: &str) -> Result<PathBuf> {
     let cwd = std::env::current_dir().context("failed to resolve current directory")?;
     php_modules_path_for_in(&cwd, package_name)
@@ -715,7 +836,7 @@ mod tests {
         InstalledSource, LockedPackage, bundled_stdlib_prefix, collect_project_install_specs,
         enqueue_package_spec, install_from_bundled_stdlib, locked_package, package_dependencies,
         php_modules_path_for, rehash_php_packages_in, reject_vendored_php_modules,
-        replace_installed_package, verify_locked_integrity,
+        replace_installed_package, run_php_install_in, verify_locked_integrity,
     };
     use crate::{lock, payload::InstallPayload};
     use modules_php::integrity::{PackageIntegrity, compute_package_integrity};
@@ -1150,15 +1271,13 @@ mod tests {
 
         let mut pending = std::collections::VecDeque::new();
         let mut requested = BTreeMap::new();
-        enqueue_package_spec(&mut pending, &mut requested, "@tana/a@1.0.0").expect("root");
+        enqueue_package_spec(&mut pending, &mut requested, "@tana/a@1.0.0", "root").expect("root");
         for dep in deps {
-            enqueue_package_spec(&mut pending, &mut requested, &dep).expect("dependency");
+            enqueue_package_spec(&mut pending, &mut requested, &dep, "@tana/a")
+                .expect("dependency");
         }
         assert_eq!(
-            pending
-                .into_iter()
-                .map(|(name, _)| name)
-                .collect::<Vec<_>>(),
+            pending.into_iter().collect::<Vec<_>>(),
             vec!["@tana/a", "@tana/b", "@deka/crypto"]
         );
         assert_eq!(
@@ -1187,6 +1306,227 @@ mod tests {
         fs::create_dir_all(&nested).expect("mkdir nested vendor tree");
         let err = reject_vendored_php_modules(tmp.path(), "@tana/a").expect_err("must reject");
         assert!(err.to_string().contains("contains vendored php_modules"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_rejects_case_variant_and_symlinked_vendor_trees() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        fs::create_dir_all(tmp.path().join("Php_Modules")).expect("case vendor");
+        assert!(reject_vendored_php_modules(tmp.path(), "@tana/a").is_err());
+        fs::remove_dir_all(tmp.path().join("Php_Modules")).expect("remove case vendor");
+        std::os::unix::fs::symlink("outside", tmp.path().join("php_modules"))
+            .expect("vendor symlink");
+        assert!(reject_vendored_php_modules(tmp.path(), "@tana/a").is_err());
+    }
+
+    #[tokio::test]
+    async fn install_flattens_transitive_graph_and_writes_lock_integrity() {
+        let packages = BTreeMap::from([
+            ("@scope/a".to_string(), json!({ "@scope/b": "^1.0.0" })),
+            ("@scope/b".to_string(), json!({ "@scope/c": "^1.0.0" })),
+            ("@scope/c".to_string(), json!({})),
+        ]);
+        let (registry, shutdown) = fixture_registry(packages).await;
+        let tmp = tempfile::tempdir().expect("project");
+        tokio::task::spawn_blocking({
+            let root = tmp.path().to_path_buf();
+            let registry = registry.clone();
+            move || {
+                run_php_install_in(
+                    vec!["@scope/a@^1.0.0".to_string()],
+                    true,
+                    &root,
+                    &registry,
+                    None,
+                )
+            }
+        })
+        .await
+        .expect("installer task")
+        .expect("install graph");
+        let modules = tmp.path().join("php_modules").join("@scope");
+        for package in ["a", "b", "c"] {
+            assert!(modules.join(package).is_dir(), "missing flat {package}");
+            assert!(!modules.join(package).join("php_modules").exists());
+        }
+        let lock = lock::read_lockfile_at(&tmp.path().join("deka.lock"));
+        assert_eq!(lock.packages.len(), 3);
+        for package in ["@scope/a", "@scope/b", "@scope/c"] {
+            let (_, _, metadata, _) = lock.packages.get(package).expect("lock entry");
+            assert!(metadata["moduleGraph"]["hash"].as_str().is_some());
+            assert!(metadata["fsGraph"]["hash"].as_str().is_some());
+        }
+        shutdown.send(()).expect("shutdown registry");
+    }
+
+    #[test]
+    fn install_places_deka_packages_at_scoped_path() {
+        let tmp = tempfile::tempdir().expect("project");
+        run_php_install_in(
+            vec!["@deka/http".to_string()],
+            true,
+            tmp.path(),
+            "http://127.0.0.1:1",
+            None,
+        )
+        .expect("bundled deka install");
+        assert!(
+            tmp.path()
+                .join("php_modules/@deka/http/index.phpx")
+                .is_file()
+        );
+        assert!(!tmp.path().join("php_modules/http").exists());
+    }
+
+    #[tokio::test]
+    async fn install_rejects_disjoint_transitive_version_constraints() {
+        let packages = BTreeMap::from([
+            ("@scope/a".to_string(), json!({ "@scope/c": "^1.0.0" })),
+            ("@scope/b".to_string(), json!({ "@scope/c": "^2.0.0" })),
+            ("@scope/c".to_string(), json!({})),
+        ]);
+        let (registry, shutdown) = fixture_registry(packages).await;
+        let tmp = tempfile::tempdir().expect("project");
+        let error = tokio::task::spawn_blocking({
+            let root = tmp.path().to_path_buf();
+            let registry = registry.clone();
+            move || {
+                run_php_install_in(
+                    vec!["@scope/a".to_string(), "@scope/b".to_string()],
+                    true,
+                    &root,
+                    &registry,
+                    None,
+                )
+            }
+        })
+        .await
+        .expect("installer task")
+        .expect_err("disjoint ranges must fail");
+        assert!(
+            error.to_string().contains(
+                "version conflict: @scope/c required as ^1.0.0 by @scope/a and ^2.0.0 by @scope/b"
+            ),
+            "{error}"
+        );
+        shutdown.send(()).expect("shutdown registry");
+    }
+
+    #[tokio::test]
+    async fn install_uses_one_highest_version_for_overlapping_constraints() {
+        let packages = BTreeMap::from([
+            ("@scope/a".to_string(), json!({ "@scope/c": "^1.1.0" })),
+            ("@scope/b".to_string(), json!({ "@scope/c": "^1.3.0" })),
+            ("@scope/c".to_string(), json!({})),
+        ]);
+        let (registry, shutdown) = fixture_registry(packages).await;
+        let tmp = tempfile::tempdir().expect("project");
+        tokio::task::spawn_blocking({
+            let root = tmp.path().to_path_buf();
+            let registry = registry.clone();
+            move || {
+                run_php_install_in(
+                    vec!["@scope/a".to_string(), "@scope/b".to_string()],
+                    true,
+                    &root,
+                    &registry,
+                    None,
+                )
+            }
+        })
+        .await
+        .expect("installer task")
+        .expect("overlap installs");
+        let lock = lock::read_lockfile_at(&tmp.path().join("deka.lock"));
+        assert_eq!(lock.packages.len(), 3);
+        assert_eq!(lock.packages["@scope/c"].0, "@scope/c@1.4.0");
+        shutdown.send(()).expect("shutdown registry");
+    }
+
+    async fn fixture_registry(
+        packages: BTreeMap<String, serde_json::Value>,
+    ) -> (String, tokio::sync::oneshot::Sender<()>) {
+        use axum::{
+            Json, Router,
+            extract::{Path as AxumPath, Query, State},
+            routing::get,
+        };
+        use std::{collections::HashMap, sync::Arc};
+        #[derive(Clone)]
+        struct Fixture(Arc<BTreeMap<String, serde_json::Value>>);
+        async fn versions(
+            AxumPath((_scope, package)): AxumPath<(String, String)>,
+        ) -> Json<serde_json::Value> {
+            let versions = if package == "c" {
+                vec!["1.1.0", "1.3.0", "1.4.0", "2.0.0"]
+            } else {
+                vec!["1.0.0"]
+            };
+            Json(json!({ "versions": versions }))
+        }
+        async fn resolve(
+            AxumPath((_scope, _package, version)): AxumPath<(String, String, String)>,
+        ) -> Json<serde_json::Value> {
+            Json(json!({ "version": version, "repo": "fixture", "git_ref": "fixture" }))
+        }
+        async fn tree(
+            AxumPath((scope, package, _version)): AxumPath<(String, String, String)>,
+            State(Fixture(packages)): State<Fixture>,
+        ) -> Json<serde_json::Value> {
+            let name = format!("@{scope}/{package}");
+            assert!(
+                packages.contains_key(&name),
+                "unknown fixture package {name}"
+            );
+            Json(json!({ "files": [{ "path": "deka.json" }, { "path": "index.phpx" }] }))
+        }
+        async fn blob(
+            AxumPath((scope, package, version)): AxumPath<(String, String, String)>,
+            Query(query): Query<HashMap<String, String>>,
+            State(Fixture(packages)): State<Fixture>,
+        ) -> Json<serde_json::Value> {
+            let name = format!("@{scope}/{package}");
+            let content = if query.get("path").is_some_and(|path| path == "deka.json") {
+                json!({ "name": name, "version": version, "dependencies": packages[&name] })
+                    .to_string()
+            } else {
+                "export const fixture = true;\n".to_string()
+            };
+            Json(json!({ "content": content }))
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("registry listener");
+        let address = listener.local_addr().expect("registry address");
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let app = Router::new()
+            .route(
+                "/api/scoped-packages/:scope/:package/versions",
+                get(versions),
+            )
+            .route(
+                "/api/scoped-packages/:scope/:package/:version",
+                get(resolve),
+            )
+            .route(
+                "/api/scoped-packages/:scope/:package/:version/tree",
+                get(tree),
+            )
+            .route(
+                "/api/scoped-packages/:scope/:package/:version/blob",
+                get(blob),
+            )
+            .with_state(Fixture(Arc::new(packages)));
+        tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .expect("fixture registry");
+        });
+        (format!("http://{address}"), shutdown_tx)
     }
 }
 

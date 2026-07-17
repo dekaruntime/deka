@@ -272,15 +272,24 @@ fn build_request(context: &Context) -> Result<PublishRequest> {
 }
 
 fn reject_publish_tree_php_modules(git_ref: &str) -> Result<()> {
-    let output = Command::new("git")
-        .args(["ls-tree", "-r", "-d", "--name-only", git_ref])
+    reject_publish_tree_php_modules_at(None, git_ref)
+}
+
+/// Validate the actual Git artifact, not a working-tree approximation.  Git
+/// records symlinks as blobs, so `ls-tree -d` is insufficient here.
+fn reject_publish_tree_php_modules_at(repo: Option<&std::path::Path>, git_ref: &str) -> Result<()> {
+    let mut command = Command::new("git");
+    if let Some(repo) = repo {
+        command.current_dir(repo);
+    }
+    let output = command
+        .args(["ls-tree", "-r", "-z", git_ref])
         .output()
         .with_context(|| format!("failed to inspect publish tree {}", git_ref))?;
     if !output.status.success() {
         bail!("failed to inspect publish tree {}", git_ref);
     }
-    let paths = String::from_utf8_lossy(&output.stdout);
-    if let Some(path) = vendored_php_modules_path(&paths) {
+    if let Some(path) = vendored_php_modules_path(&output.stdout) {
         bail!(
             "publish rejected: git tree contains `{}`. Remove php_modules/ and declare dependencies in deka.json; releases never ship vendored dependencies",
             path
@@ -289,10 +298,26 @@ fn reject_publish_tree_php_modules(git_ref: &str) -> Result<()> {
     Ok(())
 }
 
-fn vendored_php_modules_path(paths: &str) -> Option<&str> {
-    paths
-        .lines()
-        .find(|path| path.split('/').any(|segment| segment == "php_modules"))
+fn vendored_php_modules_path(entries: &[u8]) -> Option<String> {
+    entries.split(|byte| *byte == 0).find_map(|entry| {
+        let tab = entry.iter().position(|byte| *byte == b'\t')?;
+        let path = &entry[tab + 1..];
+        let path = std::str::from_utf8(path).ok()?;
+        // Artifact names must be portable to case-insensitive filesystems.
+        // Also reject every symlink artifact: a link can turn an otherwise
+        // harmless path into a php_modules directory after extraction.
+        let mode = entry.split(|byte| *byte == b' ').next()?;
+        let is_symlink = mode == b"120000";
+        if is_symlink
+            || path
+                .split('/')
+                .any(|segment| segment.eq_ignore_ascii_case("php_modules"))
+        {
+            Some(path.to_string())
+        } else {
+            None
+        }
+    })
 }
 
 async fn run_publish(request: PublishRequest) -> Result<()> {
@@ -615,18 +640,80 @@ fn prompt_yes_no(prompt: &str, default_yes: bool) -> Option<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::vendored_php_modules_path;
+    use super::reject_publish_tree_php_modules_at;
+    use std::{fs, process::Command};
 
     #[test]
-    fn publish_rejects_a_tree_with_vendored_php_modules() {
-        assert_eq!(
-            vendored_php_modules_path("src\nphp_modules/@tana/b\n"),
-            Some("php_modules/@tana/b")
+    fn publish_artifact_rejects_case_variant_and_symlinked_php_modules() {
+        let temp = tempfile::tempdir().expect("temp repo");
+        let repo = temp.path();
+        assert!(
+            Command::new("git")
+                .current_dir(repo)
+                .arg("init")
+                .status()
+                .expect("git")
+                .success()
         );
-        assert_eq!(
-            vendored_php_modules_path("src\npackages/a/php_modules/@tana/b\n"),
-            Some("packages/a/php_modules/@tana/b")
+        assert!(
+            Command::new("git")
+                .current_dir(repo)
+                .args(["config", "user.email", "test@tana.gg"])
+                .status()
+                .expect("git")
+                .success()
         );
-        assert_eq!(vendored_php_modules_path("src\nassets\n"), None);
+        assert!(
+            Command::new("git")
+                .current_dir(repo)
+                .args(["config", "user.name", "test"])
+                .status()
+                .expect("git")
+                .success()
+        );
+        fs::create_dir_all(repo.join("Php_Modules")).expect("case directory");
+        fs::write(repo.join("Php_Modules/module.phpx"), "export const x = 1;").expect("module");
+        assert!(
+            Command::new("git")
+                .current_dir(repo)
+                .args(["add", "."])
+                .status()
+                .expect("add")
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .current_dir(repo)
+                .args(["commit", "-m", "case variant"])
+                .status()
+                .expect("commit")
+                .success()
+        );
+        let err = reject_publish_tree_php_modules_at(Some(repo), "HEAD").unwrap_err();
+        assert!(err.to_string().contains("Php_Modules"), "{err}");
+
+        fs::remove_dir_all(repo.join("Php_Modules")).expect("remove case directory");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("outside", repo.join("php_modules")).expect("symlink");
+        #[cfg(not(unix))]
+        panic!("publish artifact symlink test requires unix");
+        assert!(
+            Command::new("git")
+                .current_dir(repo)
+                .args(["add", "-A"])
+                .status()
+                .expect("add")
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .current_dir(repo)
+                .args(["commit", "-m", "symlink"])
+                .status()
+                .expect("commit")
+                .success()
+        );
+        let err = reject_publish_tree_php_modules_at(Some(repo), "HEAD").unwrap_err();
+        assert!(err.to_string().contains("php_modules"), "{err}");
     }
 }
