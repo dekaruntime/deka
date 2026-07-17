@@ -1,23 +1,49 @@
 use redis::{Client, Commands, Connection};
+use serde::Deserialize;
 use std::cell::RefCell;
-use std::sync::{Mutex, OnceLock};
-use zega_core::Zega;
 
-/// Global embedded Zega instance for subdomain → tenant resolution.
-///
-/// Path is controlled by `DEKA_SUBDOMAIN_ZEGA_PATH` (default:
-/// `store/zega/subdomains`).  The directory is created on first access.
-fn global_subdomain_zega() -> Option<std::sync::MutexGuard<'static, Zega>> {
-    static ZEGA: OnceLock<Mutex<Zega>> = OnceLock::new();
-    let zega = ZEGA.get_or_init(|| {
-        let path = std::env::var("DEKA_SUBDOMAIN_ZEGA_PATH")
-            .unwrap_or_else(|_| "store/zega/subdomains".to_string());
-        let zega = Zega::open(&path)
-            .build()
-            .expect("failed to open subdomain zega");
-        Mutex::new(zega)
-    });
-    zega.lock().ok()
+#[derive(Deserialize)]
+struct CanonicalKvGet {
+    ok: bool,
+    value: Option<String>,
+}
+
+fn canonical_zega_enabled() -> bool {
+    matches!(
+        std::env::var("DEKA_DATA_BACKEND").as_deref(),
+        Ok("zega") | Ok("ZEGA")
+    )
+}
+
+/// Read a mapping from canonical zega-server without ever opening local state.
+/// A lookup failure is intentionally non-fatal: Redis is kept warm as the
+/// fallback and a request must not be able to panic a platform worker.
+fn canonical_zega_subdomain_value(subdomain: &str) -> Option<String> {
+    if !canonical_zega_enabled() {
+        return None;
+    }
+    let server_url =
+        std::env::var("ZEGA_SERVER_URL").unwrap_or_else(|_| "http://demon:7700".to_string());
+    let token = std::env::var("ZEGA_SERVER_TOKEN").ok()?;
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(std::time::Duration::from_millis(250))
+        .timeout(std::time::Duration::from_millis(500))
+        .build()
+        .ok()?;
+    let response = client
+        .post(format!("{}/kv", server_url.trim_end_matches('/')))
+        .bearer_auth(token)
+        .json(&serde_json::json!({
+            "op": "get",
+            "key": format!("subdomain:{subdomain}"),
+        }))
+        .send()
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let body: CanonicalKvGet = response.json().ok()?;
+    body.ok.then_some(body.value).flatten()
 }
 
 /// Raw shop mapping returned by a subdomain lookup.
@@ -135,23 +161,18 @@ pub fn is_shop_id_subdomain(subdomain: &str) -> bool {
 /// Accepts both the JSON format (`{"shop_id":...}`) and the legacy
 /// plain-string format (just the shop_id). Extra JSON fields are ignored.
 ///
-/// Zega is consulted first (`DEKA_SUBDOMAIN_ZEGA_PATH` controls the
-/// database path).  If Zega is unavailable or the key is missing, the
-/// resolver falls back to Redis so the rollout can be gradual.
+/// Canonical zega-server is consulted first when `DEKA_DATA_BACKEND=zega`.
+/// If it is unavailable or the key is missing, the resolver falls back to
+/// Redis so the rollout can be gradual without crashing request workers.
 ///
 /// Redis URL resolution order (fallback only):
 /// 1. `DEKA_REDIS_URL` env var (explicit operator override).
 /// 2. The local shard's Redis URL from the shard resolver (shard 0 / phobos).
 /// 3. Hard-coded `redis://localhost:6380` (last-resort dev fallback).
 pub fn resolve_tenant_record(subdomain: &str) -> Option<SubdomainRecord> {
-    // 1. Try Zega first.
-    if let Some(zega) = global_subdomain_zega() {
-        let key = format!("subdomain:{}", subdomain);
-        if let Some(value) = zega.kv_get(&key)
-            && let Some(raw) = value.as_string()
-        {
-            return Some(parse_subdomain_value(raw));
-        }
+    // 1. Try canonical Zega first.
+    if let Some(raw) = canonical_zega_subdomain_value(subdomain) {
+        return Some(parse_subdomain_value(&raw));
     }
 
     // 2. Fall back to Redis.
@@ -190,21 +211,6 @@ pub fn resolve_tenant_record(subdomain: &str) -> Option<SubdomainRecord> {
     });
 
     raw.map(|s| parse_subdomain_value(&s))
-}
-
-/// Write a subdomain record to the embedded Zega store.
-///
-/// This is the canonical write path for the subdomain → tenant map.
-/// The edge publisher calls this after reading from Neo4j.
-pub fn write_subdomain_record(subdomain: &str, record: &SubdomainRecord) -> Result<(), String> {
-    let zega = global_subdomain_zega().ok_or("subdomain zega not initialised")?;
-    let key = format!("subdomain:{}", subdomain);
-    let value = serde_json::json!({
-        "shop_id": record.shop_id,
-    })
-    .to_string();
-    zega.kv_set(key, value.into(), None)
-        .map_err(|e| format!("zega kv_set failed: {e}"))
 }
 
 /// Parse a `subdomain:*` value into a `SubdomainRecord`.
@@ -578,59 +584,15 @@ mod tests {
     }
 
     #[test]
-    fn zega_lookup_integration() {
-        // This test uses a temporary Zega directory and does NOT rely on Redis.
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().to_str().unwrap();
-        unsafe {
-            std::env::set_var("DEKA_SUBDOMAIN_ZEGA_PATH", path);
-        }
-
-        // Write a record into Zega
-        write_subdomain_record(
-            "zega-test",
-            &SubdomainRecord {
-                shop_id: "shop_zega_001".to_string(),
-            },
-        )
-        .expect("write_subdomain_record should succeed");
-
-        // Resolve without touching Redis
-        let result = resolve_tenant_record("zega-test");
+    fn canonical_kv_get_envelope_accepts_present_and_missing_values() {
+        let present: CanonicalKvGet =
+            serde_json::from_str(r#"{"ok":true,"value":"{\"shop_id\":\"shop_fresh\"}"}"#).unwrap();
         assert_eq!(
-            result,
-            Some(SubdomainRecord {
-                shop_id: "shop_zega_001".to_string(),
-            })
+            present.ok.then_some(present.value).flatten().as_deref(),
+            Some(r#"{"shop_id":"shop_fresh"}"#)
         );
 
-        // Verify Redis is NOT consulted for a missing key (Zega returns None,
-        // then Redis fallback is tried).  We can't easily assert Redis was skipped,
-        // but we can at least verify the Zega path works end-to-end.
-    }
-
-    #[test]
-    fn zega_legacy_plain_string_record() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().to_str().unwrap();
-        unsafe {
-            std::env::set_var("DEKA_SUBDOMAIN_ZEGA_PATH", path);
-        }
-
-        write_subdomain_record(
-            "legacy-shop",
-            &SubdomainRecord {
-                shop_id: "shop_legacy".to_string(),
-            },
-        )
-        .expect("write_subdomain_record should succeed");
-
-        let result = resolve_tenant_record("legacy-shop");
-        assert_eq!(
-            result,
-            Some(SubdomainRecord {
-                shop_id: "shop_legacy".to_string(),
-            })
-        );
+        let missing: CanonicalKvGet = serde_json::from_str(r#"{"ok":true,"value":null}"#).unwrap();
+        assert_eq!(missing.ok.then_some(missing.value).flatten(), None);
     }
 }

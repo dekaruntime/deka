@@ -53,6 +53,8 @@ use wasm_bindgen::prelude::*;
 /// // │
 /// // └─
 /// ```
+// Pre-existing WASM API; refactoring is out of scope for #231.
+#[allow(clippy::too_many_arguments)]
 #[wasm_bindgen]
 pub fn format_validation_error(
     code: &str,
@@ -77,6 +79,8 @@ pub fn format_validation_error(
     )
 }
 
+// Pre-existing WASM API; refactoring is out of scope for #231.
+#[allow(clippy::too_many_arguments)]
 #[wasm_bindgen]
 pub fn format_validation_error_extended(
     code: &str,
@@ -107,6 +111,8 @@ pub fn format_validation_error_extended(
     )
 }
 
+// Pre-existing WASM API; refactoring is out of scope for #231.
+#[allow(clippy::too_many_arguments)]
 #[wasm_bindgen]
 pub fn format_validation_error_with_suggestion(
     code: &str,
@@ -145,6 +151,8 @@ struct ExtraFormatInfo {
     suggestion: Option<String>,
 }
 
+// Pre-existing formatter signature; refactoring is out of scope for #231.
+#[allow(clippy::too_many_arguments)]
 fn format_error_impl(
     code: &str,
     file_path: &str,
