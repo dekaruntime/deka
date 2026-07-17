@@ -4855,6 +4855,7 @@ dependencies = [
  "phpx_js",
  "platform_server",
  "redis",
+ "reqwest 0.11.27",
  "runtime_core",
  "serde",
  "serde_json",
@@ -4866,7 +4867,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
- "zega-core",
 ]
 
 [[package]]
