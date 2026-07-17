@@ -334,6 +334,11 @@ mod tests {
     use modules_php::integrity::compute_package_integrity;
     use phpx_js::parse_source_module_meta;
     use std::path::Path;
+    use std::sync::Mutex;
+
+    // PHPX_MODULE_ROOT is process-global. Keep tests that replace it isolated
+    // from each other while preserving the runtime's concurrent bundle tests.
+    static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn write_locked_package(root: &Path, name: &str, package_path: &str) {
         let integrity = compute_package_integrity(&root.join("php_modules").join(package_path))
@@ -428,6 +433,9 @@ import { now_ms } from '@deka/time'
 
     #[test]
     fn bundle_uses_tenant_lock_when_platform_lock_is_empty() {
+        let _env_lock = TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let tmp = tempfile::tempdir().expect("tmp");
         let platform_root = tmp.path();
         let tenant_root = platform_root.join("default");
@@ -488,6 +496,9 @@ import { now_ms } from '@deka/time'
 
     #[test]
     fn bundle_panic_restores_module_root_before_next_tenant_bundle() {
+        let _env_lock = TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let tmp = tempfile::tempdir().expect("tmp");
         let platform_root = tmp.path().join("platform");
         let tenant_a_root = tmp.path().join("tenant-a");
