@@ -30,6 +30,7 @@ members = [
     "crates/wit_phpx",
     "crates/wasm_cli",
     "crates/pm",
+    "crates/linkhash-client",
     "examples/wasm_hello_rust",
     "crates/phpx_lsp",
     "crates/cypher",
@@ -91,3 +92,6 @@ serde_json = "1.0"
 chrono = "0.4"
 toml = "0.8"
 pm = { path = "crates/pm" }
+
+[patch."sparse+https://git.tana.gg/index/"]
+linkhash-client = { path = "crates/linkhash-client" }

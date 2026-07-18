@@ -3038,14 +3038,15 @@ dependencies = [
 [[package]]
 name = "linkhash-client"
 version = "0.2.1"
-source = "sparse+https://git.tana.gg/index/"
-checksum = "5ca9e0138fe4b14b699fb3196a9a4eac1f5f766709edbbc79d2162704b372f99"
 dependencies = [
  "anyhow",
+ "axum",
  "reqwest 0.12.28",
  "semver",
  "serde",
  "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -4202,6 +4203,7 @@ name = "pm"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "base64 0.21.7",
  "dirs",
  "json5",
@@ -4210,6 +4212,7 @@ dependencies = [
  "modules_php",
  "reqwest 0.11.27",
  "runtime_core",
+ "semver",
  "serde",
  "serde_json",
  "sha2 0.10.9",
