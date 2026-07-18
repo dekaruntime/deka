@@ -1,0 +1,17 @@
+{
+  "name": "deka-gg",
+  "version": "0.1.0",
+  "type": "serve",
+  "serve": {
+    "entry": "main.phpx",
+    "mode": "php"
+  },
+  "tasks": {
+    "dev": "deka serve main.phpx"
+  },
+  "security": {
+    "allow": {},
+    "deny": {},
+    "prompt": false
+  }
+}
