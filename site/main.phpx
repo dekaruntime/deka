@@ -1,0 +1,84 @@
+function request_path($req: mixed): string {
+    $path = '/';
+    if (isset($_SERVER['REQUEST_URI'])) {
+        $path = '' . $_SERVER['REQUEST_URI'];
+    } else if (is_array($req) && isset($req['url'])) {
+        $path = '' . $req['url'];
+    } else if (is_object($req) && isset($req.url)) {
+        $path = '' . $req.url;
+    }
+
+    $parts = explode('?', $path, 2);
+    return $parts[0] === '' ? '/' : $parts[0];
+}
+
+function landing_html(): string {
+    $command = 'curl -sSL https://deka.gg/install/deka | sh';
+
+    return '<!doctype html>' .
+        '<html lang="en">' .
+        '<head>' .
+        '<meta charset="utf-8">' .
+        '<meta name="viewport" content="width=device-width, initial-scale=1">' .
+        '<meta name="theme-color" content="#0b0d0c">' .
+        '<title>deka</title>' .
+        '<style>' .
+        ':root{color-scheme:dark;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;background:#0b0d0c;color:#f4f5f0}' .
+        '*{box-sizing:border-box}' .
+        'body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at 50% 45%,#172019 0,#0b0d0c 46%)}' .
+        'main{width:min(46rem,calc(100% - 2rem));display:grid;gap:1.25rem}' .
+        'header{display:flex;align-items:baseline;gap:.9rem}' .
+        'h1{margin:0;font:700 clamp(2.2rem,8vw,4rem)/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:-.08em}' .
+        'p{margin:0;color:#8d978e;font-size:.82rem}' .
+        '.install{display:flex;align-items:center;gap:.75rem;padding:.85rem .9rem .85rem 1.1rem;border:1px solid #303a32;border-radius:.65rem;background:#101411;box-shadow:0 1.5rem 4rem #0008}' .
+        'code{min-width:0;flex:1;overflow-x:auto;white-space:nowrap;color:#d8f7dc;font-size:clamp(.72rem,2.4vw,.98rem);scrollbar-width:none}' .
+        'code::-webkit-scrollbar{display:none}' .
+        'button{appearance:none;border:1px solid #3c493e;border-radius:.4rem;background:#18201a;color:#b8c3ba;padding:.52rem .72rem;font:600 .72rem/1 ui-monospace,SFMono-Regular,Menlo,monospace;cursor:pointer}' .
+        'button:hover{border-color:#758478;color:#fff}' .
+        'button:focus-visible{outline:2px solid #a8e6ae;outline-offset:3px}' .
+        '@media(max-width:34rem){header{display:block}p{margin-top:.65rem}.install{align-items:stretch;flex-direction:column}button{align-self:flex-end}}' .
+        '</style>' .
+        '</head>' .
+        '<body>' .
+        '<main>' .
+        '<header><h1>deka</h1><p>PHPX, serving itself.</p></header>' .
+        '<div class="install">' .
+        '<code id="install-command">' . $command . '</code>' .
+        '<button id="copy" type="button" data-command="' . $command . '" aria-label="Copy install command">copy</button>' .
+        '</div>' .
+        '</main>' .
+        '<script>' .
+        'const button=document.getElementById("copy");' .
+        'button.addEventListener("click",()=>{' .
+        'const done=()=>{button.textContent="copied";window.setTimeout(()=>{button.textContent="copy"},1400)};' .
+        'const fallback=()=>{const range=document.createRange();range.selectNodeContents(document.getElementById("install-command"));const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);document.execCommand("copy");selection.removeAllRanges();done()};' .
+        'if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(button.dataset.command).then(done,fallback)}else{fallback()}' .
+        '});' .
+        '</script>' .
+        '</body>' .
+        '</html>';
+}
+
+function App($req: mixed) {
+    $path = request_path($req);
+    if ($path !== '/') {
+        // /install/* is intentionally registry-served at ingress, not by this site.
+        return {
+            status: 404,
+            headers: { 'content-type': 'text/plain; charset=utf-8' },
+            body: 'Not Found',
+        };
+    }
+
+    return {
+        status: 200,
+        headers: {
+            'content-type': 'text/html; charset=utf-8',
+            'cache-control': 'public, max-age=300',
+            'x-content-type-options': 'nosniff',
+        },
+        body: landing_html(),
+    };
+}
+
+$app = App;
