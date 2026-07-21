@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, VecDeque},
     fs,
+    io::ErrorKind,
     path::{Path, PathBuf},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
@@ -139,6 +140,7 @@ fn run_php_install_in(
             },
         });
         replace_installed_package(&staging, &destination)?;
+        remove_stale_unscoped_deka_shadow(cwd, &name)?;
         installed.insert(
             name.clone(),
             (
@@ -478,6 +480,30 @@ fn replace_installed_package(staging: &Path, destination: &Path) -> Result<()> {
         let _ = fs::remove_dir(root);
     }
     Ok(())
+}
+
+fn remove_stale_unscoped_deka_shadow(project_dir: &Path, package_name: &str) -> Result<()> {
+    let Some(bare_name) = package_name.strip_prefix("@deka/") else {
+        return Ok(());
+    };
+    if canonical_php_package_spec(bare_name).as_deref() != Some(package_name) {
+        return Ok(());
+    }
+
+    let shadow = project_dir.join("php_modules").join(bare_name);
+    let metadata = match fs::symlink_metadata(&shadow) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            return Err(err).with_context(|| format!("failed to inspect {}", shadow.display()));
+        }
+    };
+    if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        fs::remove_dir_all(&shadow)
+    } else {
+        fs::remove_file(&shadow)
+    }
+    .with_context(|| format!("failed to remove stale package shadow {}", shadow.display()))
 }
 
 fn cleanup_install_staging(staging: &Path) {
@@ -1374,8 +1400,12 @@ mod tests {
     }
 
     #[test]
-    fn install_places_deka_packages_at_scoped_path() {
+    fn install_prunes_stale_unscoped_deka_shadow() {
         let tmp = tempfile::tempdir().expect("project");
+        let stale = tmp.path().join("php_modules/http");
+        fs::create_dir_all(&stale).expect("stale unscoped package");
+        fs::write(stale.join("index.phpx"), "export const stale = true;\n").expect("stale module");
+
         run_php_install_in(
             vec!["@deka/http".to_string()],
             true,
@@ -1389,7 +1419,14 @@ mod tests {
                 .join("php_modules/@deka/http/index.phpx")
                 .is_file()
         );
-        assert!(!tmp.path().join("php_modules/http").exists());
+        let lock_path = tmp.path().join("deka.lock");
+        assert!(lock_path.is_file());
+        assert!(
+            lock::read_lockfile_at(&lock_path)
+                .packages
+                .contains_key("@deka/http")
+        );
+        assert!(!stale.exists(), "stale unscoped shadow must be removed");
     }
 
     #[tokio::test]
