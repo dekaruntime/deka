@@ -1,0 +1,23 @@
+struct PlatformEnvVar {
+    $name: string;
+    $value: string;
+}
+
+struct PlatformEnvPolicyRequest {
+    $security_policy_json: string;
+    $process_env: array<PlatformEnvVar>;
+}
+
+struct PlatformEnvPolicySnapshot {
+    $server: array<PlatformEnvVar>;
+    $env: array<PlatformEnvVar>;
+    $process_env: array<PlatformEnvVar>;
+}
+
+export function inject_env_policy($req: PlatformEnvPolicyRequest): PlatformEnvPolicySnapshot {
+    return PlatformEnvPolicySnapshot {
+        $server: [],
+        $env: [],
+        $process_env: [],
+    };
+}

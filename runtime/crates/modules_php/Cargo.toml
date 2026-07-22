@@ -20,7 +20,7 @@ postgres = { version = "0.19", features = ["with-chrono-0_4"] }
 mysql = "26"
 rusqlite = { version = "0.32", features = ["bundled"] }
 wit-parser = "0.219.2"
-deka-validation = { path = "../../../deka-validation" }
+deka-validation = { path = "../deka-validation" }
 runtime_core = { path = "../runtime_core" }
 stdio = { path = "../stdio" }
 native-tls = "0.2"

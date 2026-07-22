@@ -1,0 +1,20 @@
+/*
+TEST: No-throw errors-as-values
+Covers: Result success/error values and explicit fallback handling.
+*/
+
+import { result_ok, result_err } from 'core/result';
+
+function parse_quantity($raw: string) {
+    if ($raw === '') {
+        return result_err('empty');
+    }
+    return result_ok(intval($raw));
+}
+
+$ok = parse_quantity('42');
+$err = parse_quantity('');
+
+echo $ok->unwrap_or(0) . "\n";
+echo $err->unwrap_or(7) . "\n";
+echo ($err->is_err() ? 'err-value' : 'thrown') . "\n";

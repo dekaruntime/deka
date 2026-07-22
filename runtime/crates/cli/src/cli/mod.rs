@@ -88,12 +88,12 @@ pub fn register_global_flags(registry: &mut Registry) {
     registry.add_flag(FlagSpec {
         name: "--allow-net",
         aliases: &[],
-        description: "allow network access",
+        description: "compatibility flag; serve/run/platform read net policy from deka.json",
     });
     registry.add_flag(FlagSpec {
         name: "--allow-env",
         aliases: &[],
-        description: "allow environment variable access",
+        description: "compatibility flag; serve/run/platform read env policy from deka.json",
     });
     registry.add_flag(FlagSpec {
         name: "--allow-run",
@@ -133,12 +133,12 @@ pub fn register_global_flags(registry: &mut Registry) {
     registry.add_flag(FlagSpec {
         name: "--deny-net",
         aliases: &[],
-        description: "deny network access",
+        description: "compatibility flag; serve/run/platform read net policy from deka.json",
     });
     registry.add_flag(FlagSpec {
         name: "--deny-env",
         aliases: &[],
-        description: "deny environment variable access",
+        description: "compatibility flag; serve/run/platform read env policy from deka.json",
     });
     registry.add_flag(FlagSpec {
         name: "--deny-run",

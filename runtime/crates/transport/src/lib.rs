@@ -49,15 +49,15 @@ pub enum ListenConfig {
 }
 
 pub fn notify_hmr_changed(paths: &[String]) {
-    http::websocket::broadcast_hmr_changed(paths);
+    deka_http::websocket::broadcast_hmr_changed(paths);
 }
 
 pub async fn serve(state: Arc<RuntimeState>, target: ListenConfig) -> Result<(), String> {
     match target {
         ListenConfig::Http(options) => {
-            http::serve_http(state, options.port, options.listeners, options.perf_mode).await
+            deka_http::serve_http(state, options.port, options.listeners, options.perf_mode).await
         }
-        ListenConfig::Unix(options) => http::unix::serve_unix(state, &options.path).await,
+        ListenConfig::Unix(options) => deka_http::unix::serve_unix(state, &options.path).await,
         ListenConfig::Ws(options) => ws::serve_ws(state, options).await,
         ListenConfig::Tcp(options) => tcp::serve_tcp(state, options).await,
         ListenConfig::Udp(options) => udp::serve_udp(state, options).await,

@@ -4,8 +4,8 @@ use super::*;
 fn rewrite_count_inline() {
     let js = phpx_to_js("$arr = [1, 2, 3];\n$n = count($arr);").expect("should compile");
     assert!(
-        js.contains(".length"),
-        "expected .length for count, got:\n{}",
+        js.contains("n = arr.length"),
+        "expected direct .length for count on known array, got:\n{}",
         js
     );
     assert!(
@@ -16,11 +16,28 @@ fn rewrite_count_inline() {
 }
 
 #[test]
+fn rewrite_count_unknown_binds_arg_once() {
+    let js = phpx_to_js("function make(): array { return [1, 2]; }\n$n = count(make());")
+        .expect("should compile");
+    assert!(
+        js.contains("const __v = make()"),
+        "expected single-eval inline fallback for unknown count arg, got:\n{}",
+        js
+    );
+    assert_eq!(
+        js.matches("const __v = make()").count(),
+        1,
+        "count fallback must evaluate call-expression arg once, got:\n{}",
+        js
+    );
+}
+
+#[test]
 fn rewrite_strlen_inline() {
     let js = phpx_to_js("$s = 'hello';\n$n = strlen($s);").expect("should compile");
     assert!(
-        js.contains("String(") && js.contains(".length"),
-        "expected String().length for strlen, got:\n{}",
+        js.contains("n = s.length"),
+        "expected direct .length for strlen, got:\n{}",
         js
     );
     assert!(
@@ -34,8 +51,8 @@ fn rewrite_strlen_inline() {
 fn rewrite_substr_two_args() {
     let js = phpx_to_js("$s = 'hello';\n$r = substr($s, 2);").expect("should compile");
     assert!(
-        js.contains(".slice("),
-        "expected .slice for substr, got:\n{}",
+        js.contains("r = s.slice(2)"),
+        "expected direct .slice for substr, got:\n{}",
         js
     );
     assert!(
@@ -49,13 +66,47 @@ fn rewrite_substr_two_args() {
 fn rewrite_substr_three_args() {
     let js = phpx_to_js("$s = 'hello';\n$r = substr($s, 1, 3);").expect("should compile");
     assert!(
-        js.contains(".slice("),
-        "expected .slice for substr(3), got:\n{}",
+        js.contains("const __s = s")
+            && js.contains("const __start = 1")
+            && js.contains("const __len = 3")
+            && js.contains("__s.slice(__start, __start + __len)"),
+        "expected single-eval .slice(start, start + len) for substr(3), got:\n{}",
         js
     );
     assert!(
         !js.contains("globalThis.substr"),
         "should NOT contain globalThis.substr, got:\n{}",
+        js
+    );
+}
+
+#[test]
+fn rewrite_substr_three_args_binds_each_arg_once() {
+    let js = phpx_to_js(
+        "function value(): string { return 'hello'; }\nfunction start(): int { return 1; }\nfunction len(): int { return 3; }\n$r = substr(value(), start(), len());",
+    )
+    .expect("should compile");
+    assert_eq!(
+        js.matches("const __s = value()").count(),
+        1,
+        "substr value expression must be evaluated once, got:\n{}",
+        js
+    );
+    assert_eq!(
+        js.matches("const __start = start()").count(),
+        1,
+        "substr start expression must be evaluated once, got:\n{}",
+        js
+    );
+    assert_eq!(
+        js.matches("const __len = len()").count(),
+        1,
+        "substr length expression must be evaluated once, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("__s.slice(__start, __start + __len)"),
+        "expected native .slice rewrite, got:\n{}",
         js
     );
 }
@@ -334,11 +385,9 @@ fn rewrite_array_keys_inline() {
 #[test]
 fn rewrite_array_keys_on_array_emits_numeric_indices() {
     let js = phpx_to_js("$a = [10, 20, 30];\n$k = array_keys($a);").expect("should compile");
-    // For arrays we emit `__v.map((_, __i) => __i)` so the shape matches PHP
-    // (integer indices) rather than JS `Object.keys` stringified indices.
     assert!(
-        js.contains(".map("),
-        "expected map for array-path array_keys, got:\n{}",
+        js.contains("Object.keys(a)"),
+        "expected Object.keys for array-path array_keys, got:\n{}",
         js
     );
     assert!(
@@ -366,10 +415,9 @@ fn rewrite_array_values_inline() {
 #[test]
 fn rewrite_array_values_on_array_copies() {
     let js = phpx_to_js("$a = [1, 2, 3];\n$v = array_values($a);").expect("should compile");
-    // For arrays we emit .slice() to return a shallow copy.
     assert!(
-        js.contains(".slice()"),
-        "expected .slice() for array-path array_values, got:\n{}",
+        js.contains("Object.values(a)"),
+        "expected Object.values for array-path array_values, got:\n{}",
         js
     );
     assert!(
@@ -433,14 +481,13 @@ fn rewrite_array_filter_without_callback_uses_boolean() {
 fn rewrite_is_array_inline() {
     let js = phpx_to_js("$arr = [1];\n$b = is_array($arr);").expect("should compile");
     assert!(
-        js.contains("Array.isArray"),
+        js.contains("Array.isArray(arr)"),
         "expected Array.isArray for is_array, got:\n{}",
         js
     );
-    // Check struct exclusion is present
     assert!(
-        js.contains("__struct"),
-        "expected __struct check in is_array, got:\n{}",
+        !js.contains("hasOwnProperty.call(__v, \"__struct\")"),
+        "is_array should rely on native Array.isArray struct exclusion, got:\n{}",
         js
     );
     assert!(
@@ -1232,6 +1279,7 @@ fn rewrite_hash_hmac_to_helper() {
 fn run_node(script: &str) -> Result<String, String> {
     use std::process::Command;
     let out = Command::new("node")
+        .arg("--input-type=module")
         .arg("-e")
         .arg(script)
         .output()
@@ -1357,6 +1405,72 @@ fn hmac_sha256_rfc4231_tc2_jefe() {
         Ok(got) => assert_eq!(
             got, "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843",
             "hmac-sha256 RFC 4231 TC2 mismatch"
+        ),
+    }
+}
+
+#[test]
+fn sha256_utf8_non_ascii_matches_standard_digest() {
+    let helpers = sha256_helpers_js();
+    let script = format!("{helpers}\nconsole.log(__phpx_sha256_hex('café'));");
+    match run_node(&script) {
+        Err(e) if e.contains("node not available") => return,
+        Err(e) => panic!("node error: {e}"),
+        Ok(got) => assert_eq!(
+            got, "850f7dc43910ff890f8879c0ed26fe697c93a067ad93a7d50f466a7028a9bf4e",
+            "sha256('café') must hash UTF-8 bytes"
+        ),
+    }
+}
+
+#[test]
+fn hmac_sha256_utf8_data_and_key_match_standard_digest() {
+    let helpers = sha256_helpers_js();
+    let script = format!(
+        "{helpers}\n\
+         console.log(__phpx_hmac_sha256_hex('café—✅', 'efa16527bdefbad839bfc5108ac606583720f443aef6bac2b20073f778baa6a6'));"
+    );
+    match run_node(&script) {
+        Err(e) if e.contains("node not available") => return,
+        Err(e) => panic!("node error: {e}"),
+        Ok(got) => assert_eq!(
+            got, "d6fa5cf22ca0628aedf705745c0c328fd918ce1f768cc3b29bb2d871d5f52dd5",
+            "hmac_sha256_hex('café—✅', key) must hash UTF-8 bytes"
+        ),
+    }
+}
+
+#[test]
+fn hmac_sha256_ascii_output_unchanged() {
+    let helpers = sha256_helpers_js();
+    let script = format!("{helpers}\nconsole.log(__phpx_hmac_sha256_hex('data', 'key'));");
+    match run_node(&script) {
+        Err(e) if e.contains("node not available") => return,
+        Err(e) => panic!("node error: {e}"),
+        Ok(got) => assert_eq!(
+            got, "5031fe3d989c6d1537a013fa6e739da23463fdaec3b70137d828e36ace221bd0",
+            "ASCII HMAC-SHA256 output changed"
+        ),
+    }
+}
+
+#[test]
+fn phpx_hash_and_hash_hmac_surface_hash_utf8_strings() {
+    let js = phpx_to_js(
+        "$h = hash('sha256', 'café');\n\
+         $m = hash_hmac('sha256', 'café—✅', 'efa16527bdefbad839bfc5108ac606583720f443aef6bac2b20073f778baa6a6');",
+    )
+    .expect("should compile");
+    let js = js.replace("export const ", "const ");
+    let script = format!("{js}\nconsole.log([globalThis.h, globalThis.m].join('\\n'));");
+    match run_node(&script) {
+        Err(e) if e.contains("node not available") => return,
+        Err(e) => panic!("node error: {e}"),
+        Ok(got) => assert_eq!(
+            got,
+            "850f7dc43910ff890f8879c0ed26fe697c93a067ad93a7d50f466a7028a9bf4e\n\
+             d6fa5cf22ca0628aedf705745c0c328fd918ce1f768cc3b29bb2d871d5f52dd5",
+            "PHPX hash()/hash_hmac() surface must hash UTF-8 bytes"
         ),
     }
 }
@@ -1574,7 +1688,7 @@ fn rewrite_count_on_object() {
         .expect("should compile");
     assert!(
         js.contains("Object.keys"),
-        "expected Object.keys fallback for count on object, got:\n{}",
+        "expected Object.keys for count on known object, got:\n{}",
         js
     );
 }

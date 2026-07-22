@@ -16,7 +16,10 @@ pub fn register(registry: &mut Registry) {
 pub fn cmd(context: &Context) {
     match run(context) {
         Ok(json) => stdio::raw(&json),
-        Err(err) => stdio::error("contract-extract", &err),
+        Err(err) => {
+            stdio::error("contract-extract", &err);
+            std::process::exit(1);
+        }
     }
 }
 

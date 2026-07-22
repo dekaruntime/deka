@@ -6,7 +6,6 @@ use std::{fs, path::PathBuf};
 pub struct InstallPayload {
     #[serde(default)]
     pub specs: Vec<String>,
-    pub ecosystem: Option<String>,
     #[serde(default)]
     pub yes: bool,
     #[serde(default)]
@@ -26,10 +25,9 @@ impl InstallPayload {
         Ok(payload)
     }
 
-    pub fn from_parts(specs: Vec<String>, ecosystem: Option<String>) -> Self {
+    pub fn from_parts(specs: Vec<String>) -> Self {
         Self {
             specs,
-            ecosystem,
             yes: false,
             prompt: false,
             quiet: false,

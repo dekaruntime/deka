@@ -340,4 +340,3 @@ fn prelude_contains_panic() {
 }
 
 // ---- Top-level vs function scope: globalThis mirroring ----
-

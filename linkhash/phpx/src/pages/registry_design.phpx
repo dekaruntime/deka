@@ -1,0 +1,85 @@
+import { jsx, jsxs } from 'component/core'
+import { Link } from 'component/dom'
+
+export function RegistryShell($props) {
+  $children = isset($props->children) ? $props->children : false
+  return <div class="min-h-screen bg-[#f7f5ef] text-[#171715] selection:bg-[#f5d547] selection:text-[#171715]">
+    <nav class="sticky top-0 z-30 border-b border-black/10 bg-[#f7f5ef]/90 backdrop-blur-xl">
+      <div class="mx-auto flex min-h-16 max-w-6xl flex-wrap items-center justify-between gap-x-5 gap-y-2 px-5 py-3 sm:px-6">
+        <Link to="/" layout="registry" class="flex items-center gap-3">
+          <span class="flex h-9 w-9 items-center justify-center rounded-xl bg-[#171715] font-mono text-sm font-bold text-[#f5d547] shadow-[0_8px_24px_rgba(23,23,21,0.16)]">lh</span>
+          <span>
+            <span class="block text-base font-bold tracking-[-0.03em]">linkha.sh</span>
+            <span class="block font-mono text-[10px] uppercase tracking-[0.18em] text-black/50">code registry</span>
+          </span>
+        </Link>
+        <div class="flex items-center gap-1 overflow-x-auto text-sm font-medium text-black/65">
+          <Link to="/" layout="registry" class="min-h-11 rounded-full px-3 py-2 hover:bg-black/5 hover:text-black">Explore</Link>
+          <a href="#packages" class="min-h-11 rounded-full px-3 py-2 hover:bg-black/5 hover:text-black">Packages</a>
+          <a href="#install" class="min-h-11 rounded-full px-3 py-2 hover:bg-black/5 hover:text-black">Install</a>
+          <Link to="/account" layout="registry" class="min-h-11 rounded-full px-3 py-2 hover:bg-black/5 hover:text-black">Account</Link>
+          <Link to="/playground" layout="registry" class="hidden min-h-11 rounded-full px-3 py-2 hover:bg-black/5 hover:text-black sm:inline-flex">Playground</Link>
+        </div>
+      </div>
+    </nav>
+    <main class="mx-auto max-w-6xl px-5 py-8 sm:px-6 sm:py-12">{$children}</main>
+    <footer class="border-t border-black/10">
+      <div class="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-5 py-7 font-mono text-[11px] uppercase tracking-[0.14em] text-black/45 sm:px-6">
+        <span>Linkhash / PHPX registry</span><span>packages · repositories · artifacts</span>
+      </div>
+    </footer>
+  </div>
+}
+
+export function RegistryHero() {
+  return <section class="grid gap-6 border-b border-black/10 pb-12 md:grid-cols-[1.15fr_0.85fr] md:items-end md:gap-14 md:pb-20">
+    <div>
+      <div class="font-mono text-[11px] font-semibold uppercase tracking-[0.22em] text-black/55">The PHPX package and repository registry</div>
+      <h1 class="mt-5 max-w-3xl text-5xl font-bold leading-[0.96] tracking-[-0.065em] text-[#171715] sm:text-6xl lg:text-7xl">Code should be easy to find, trust, and ship.</h1>
+      <p class="mt-6 max-w-xl text-base leading-7 text-black/62 sm:text-lg">Browse public PHPX packages, inspect their source, and install a version with a registry built for the work behind the artifact.</p>
+      <div class="mt-8 flex flex-wrap gap-3">
+        <a href="#packages" class="inline-flex min-h-11 items-center rounded-full bg-[#171715] px-5 text-sm font-semibold text-[#f5d547] shadow-[0_12px_28px_rgba(23,23,21,0.16)] hover:-translate-y-0.5">Browse packages</a>
+        <a href="#install" class="inline-flex min-h-11 items-center rounded-full border border-black/15 bg-white/55 px-5 text-sm font-semibold text-[#171715] hover:bg-white">Install from CLI</a>
+      </div>
+    </div>
+    <div class="rounded-[26px] border border-[#34342f] bg-[#171715] p-5 text-[#f7f5ef] shadow-[0_24px_60px_rgba(23,23,21,0.20)] sm:p-7">
+      <div class="flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.18em] text-white/45"><span>terminal</span><span class="rounded-full bg-[#f5d547] px-2 py-1 text-[#171715]">CLI</span></div>
+      <div class="mt-8 font-mono text-sm leading-7"><span class="text-[#f5d547]">$</span> deka install @deka/json</div>
+      <div class="mt-2 border-t border-white/10 pt-4 font-mono text-xs leading-6 text-white/55">resolved public package<br/><span class="text-white/80">@deka/json@1.0.0</span></div>
+      <div class="mt-6 rounded-xl border border-white/10 bg-white/5 p-3 font-mono text-xs text-white/65">source · README · releases<br/>one public registry surface</div>
+    </div>
+  </section>
+}
+
+export function RegistryFeatureCard($props) {
+  return <article class="group min-h-48 rounded-[24px] border border-black/10 bg-white/70 p-6 shadow-[0_4px_12px_rgba(23,23,21,0.035)] transition-transform hover:-translate-y-0.5">
+    <div class="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-black/45">{$props->label}</div>
+    <h3 class="mt-8 text-xl font-bold tracking-[-0.035em] text-[#171715]">{$props->title}</h3>
+    <p class="mt-3 text-sm leading-6 text-black/60">{$props->copy}</p>
+  </article>
+}
+
+export function RegistryQuickStart() {
+  return <section id="install" class="mt-12 rounded-[28px] border border-[#34342f] bg-[#171715] p-6 text-[#f7f5ef] shadow-[0_24px_60px_rgba(23,23,21,0.16)] sm:p-8">
+    <div class="grid gap-8 md:grid-cols-[0.85fr_1.15fr] md:items-end">
+      <div>
+        <div class="font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-[#f5d547]">Install</div>
+        <h2 class="mt-3 text-3xl font-bold tracking-[-0.045em]">From registry to project in one command.</h2>
+        <p class="mt-3 text-sm leading-6 text-white/60">Use the package coordinate shown on every public package page. Linkhash keeps the artifact, version, and source context close together.</p>
+      </div>
+      <div class="grid gap-3 font-mono text-sm">
+        <div class="rounded-xl border border-white/10 bg-white/5 px-4 py-3"><span class="text-[#f5d547]">$</span> deka install @org/package</div>
+        <div class="rounded-xl border border-white/10 bg-white/5 px-4 py-3"><span class="text-[#f5d547]">$</span> deka publish</div>
+      </div>
+    </div>
+  </section>
+}
+
+export function RegistryEmptyState($props) {
+  return <section class="rounded-[24px] border border-dashed border-black/20 bg-white/45 p-8 text-center">
+    <div class="mx-auto flex h-10 w-10 items-center justify-center rounded-xl bg-[#f5d547] font-mono text-sm font-bold text-[#171715]">?</div>
+    <h2 class="mt-4 text-xl font-bold tracking-[-0.035em] text-[#171715]">{$props->title}</h2>
+    <p class="mx-auto mt-2 max-w-md text-sm leading-6 text-black/60">{$props->copy}</p>
+    {isset($props->href) && isset($props->action) ? <a href={$props->href} class="mt-5 inline-flex min-h-11 items-center rounded-full bg-[#171715] px-4 text-sm font-semibold text-[#f5d547]">{$props->action}</a> : false}
+  </section>
+}

@@ -22,6 +22,13 @@ use engine::{RuntimeEngine, set_engine};
 use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData, RequestParts};
 
 use crate::js_pipeline::build_phpx_handler_bundle;
+use crate::security::install_platform_security_for_root;
+
+mod env;
+mod proxy;
+
+use env::{install_platform_env_aliases, platform_dev_mode_enabled};
+use proxy::{proxy_target_for_shop_id, proxy_to_shard, shard_key_from_host};
 
 /// Header that tags requests we've already proxied once. If we see it
 /// and we STILL don't own the shard, we refuse to re-proxy (prevents
@@ -36,86 +43,11 @@ pub fn platform(context: &Context) {
     rt.block_on(platform_async(context));
 }
 
-fn platform_dev_mode_enabled() -> bool {
-    env_flag_enabled("DEKA_DEV_MODE")
-        || env_flag_enabled("DEKA_DEV")
-        || std::env::var("NODE_ENV").as_deref() == Ok("development")
-}
-
-fn env_flag_enabled(key: &str) -> bool {
-    std::env::var(key)
-        .ok()
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
-}
-
 fn handler_failure_body(detail: &str, dev_mode: bool) -> String {
     if dev_mode {
         detail.to_string()
     } else {
         "Internal Server Error".to_string()
-    }
-}
-
-const PLATFORM_ENV_ALIASES: &[(&str, &str)] = &[
-    ("NEO4J_URI", "DEKA_NEO4J_URI"),
-    ("NEO4J_USER", "DEKA_NEO4J_USER"),
-    ("NEO4J_PASSWORD", "DEKA_NEO4J_PASSWORD"),
-    ("NEO4J_DB", "DEKA_NEO4J_DB"),
-    ("REDIS_URL", "DEKA_REDIS_URL"),
-];
-
-fn platform_env_aliases_to_set<F>(env_get: F) -> Vec<(&'static str, String)>
-where
-    F: Fn(&str) -> Option<String>,
-{
-    PLATFORM_ENV_ALIASES
-        .iter()
-        .filter_map(|(source, target)| {
-            if env_get(target).is_some() {
-                return None;
-            }
-            env_get(source).map(|value| (*target, value))
-        })
-        .collect()
-}
-
-fn install_platform_env_aliases() {
-    let aliases = platform_env_aliases_to_set(|key| std::env::var(key).ok());
-    if aliases.is_empty() {
-        return;
-    }
-
-    // SAFETY: called during platform startup before request worker tasks are spawned.
-    unsafe {
-        for (target, value) in aliases {
-            std::env::set_var(target, value);
-        }
-    }
-}
-
-fn proxy_target_for_tenant<'a>(
-    tenant_info: Option<&pool::tenant::TenantInfo>,
-    resolver: &'a deka_shard::ShardResolver,
-    dev_mode: bool,
-) -> Option<&'a deka_shard::ShardInfo> {
-    if dev_mode {
-        return None;
-    }
-
-    let account_id = tenant_info
-        .and_then(|info| info.account_id.as_deref())
-        .filter(|account_id| !account_id.is_empty())?;
-
-    if resolver.owns(account_id) {
-        None
-    } else {
-        resolver.resolve(account_id)
     }
 }
 
@@ -315,7 +247,8 @@ async fn platform_async(context: &Context) {
         }
     }
 
-    // Set security env vars (permissive defaults for platform mode)
+    // Enable security enforcement before request workers start. The
+    // prompt behavior and policy body come from default/deka.json below.
     unsafe {
         std::env::set_var("DEKA_SECURITY_ENFORCE", "1");
         std::env::set_var("DEKA_SECURITY_NO_PROMPT", "1");
@@ -330,6 +263,11 @@ async fn platform_async(context: &Context) {
     let default_dir = root.join("default");
     let tenants_dir = root.join("tenants");
     let default_handler = default_dir.join("main.phpx");
+
+    if let Err(err) = install_platform_security_for_root(&default_dir, &context.args.flags) {
+        stdio::error("platform", &err);
+        std::process::exit(1);
+    }
 
     if !default_handler.exists() {
         stdio::error(
@@ -666,27 +604,27 @@ async fn handle_platform_request(
         .map(|t| t.cache_key())
         .unwrap_or_else(|| shop_id.clone());
 
-    // Cross-shard routing: if we know the shop's account_id and a
-    // different shard owns it, transparently proxy the request over
-    // the Tailscale mesh. Requests without an account_id (legacy
-    // Redis entries, admin paths, health checks) serve locally —
-    // shard 0 is the de-facto owner of "uncharted" traffic.
+    // Cross-shard routing: the Host subdomain is the immutable shop_id slug.
+    // Hash that slug directly so storefront pages and Zega data routing use
+    // the same fnv1a_64(shop_id) % shard_count scheme. Custom domains are
+    // rewritten to the canonical <shop_id>.tana.gg host before this router.
     let resolver = deka_shard::global();
-    if let Some(target) =
-        proxy_target_for_tenant(tenant_info.as_ref(), resolver, platform_dev_mode_enabled())
-    {
-        let account_id = tenant_info
-            .as_ref()
-            .and_then(|info| info.account_id.as_deref())
-            .unwrap_or("");
+    let host_shop_id = shard_key_from_host(&headers);
+    if let Some(target) = proxy_target_for_shop_id(
+        host_shop_id.as_deref(),
+        resolver,
+        platform_dev_mode_enabled(),
+    ) {
         if already_proxied {
             // A previous server thought we owned this shard but we don't.
             // Refuse to bounce it again so we don't loop forever.
             stdio::error(
                 "proxy",
                 &format!(
-                    "refusing to re-proxy for account={} shop={} (target {}): loop guard triggered",
-                    account_id, shop_id, target.name
+                    "refusing to re-proxy for host_shop={} resolved_shop={} (target {}): loop guard triggered",
+                    host_shop_id.as_deref().unwrap_or(""),
+                    shop_id,
+                    target.name
                 ),
             );
             return Response::builder()
@@ -940,308 +878,11 @@ Available modules: crypto";
     }
 }
 
-/// Reverse-proxy a request to the shard that owns it.
-///
-/// Uses reqwest for simplicity — the body is already buffered (the
-/// platform reads it eagerly into memory upstream), so streaming is
-/// not an immediate win. Targets the shard server on its internal
-/// Tailscale DNS name at the platform port 8530.
-///
-/// Preserves: method, headers (minus Host), and body. Injects
-/// `X-Deka-Proxied: {self_index}` so the target can detect loops.
-async fn proxy_to_shard(
-    target_host: &str,
-    method: &str,
-    uri: &str,
-    headers: &[(String, String)],
-    body: Option<bytes::Bytes>,
-    self_index: Option<usize>,
-) -> Response {
-    // Extract just the path+query — uri from axum may be an absolute URL.
-    let path_and_query = match uri.find("://") {
-        Some(scheme_end) => {
-            let rest = &uri[scheme_end + 3..];
-            rest.find('/').map(|slash| &rest[slash..]).unwrap_or("/")
-        }
-        None => uri,
-    };
-    let target_url = format!("http://{}:8530{}", target_host, path_and_query);
-
-    let original_host = headers
-        .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case("host"))
-        .map(|(_, v)| v.clone())
-        .unwrap_or_default();
-
-    stdio::log(
-        "proxy",
-        &format!(
-            "{} {} → {} (host={})",
-            method, path_and_query, target_url, original_host
-        ),
-    );
-
-    let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        // Don't follow redirects — tenant handlers may legitimately
-        // return 3xx, and we want to forward those verbatim.
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-    {
-        Ok(c) => c,
-        Err(err) => {
-            stdio::error("proxy", &format!("client build failed: {}", err));
-            return Response::builder()
-                .status(502)
-                .body(axum::body::Body::from(
-                    "Bad Gateway: proxy client build failed",
-                ))
-                .unwrap();
-        }
-    };
-
-    let method_parsed = match reqwest::Method::from_bytes(method.as_bytes()) {
-        Ok(m) => m,
-        Err(_) => {
-            return Response::builder()
-                .status(400)
-                .body(axum::body::Body::from("Bad Request: unknown HTTP method"))
-                .unwrap();
-        }
-    };
-
-    let mut req = client.request(method_parsed, &target_url);
-
-    // Forward headers except hop-by-hop + Host (reqwest sets Host from URL).
-    // We leave the original Host as X-Forwarded-Host so the target shard's
-    // platform can resolve the correct tenant from it.
-    for (k, v) in headers {
-        let kl = k.to_ascii_lowercase();
-        if matches!(
-            kl.as_str(),
-            "host"
-                | "content-length"
-                | "connection"
-                | "transfer-encoding"
-                | "keep-alive"
-                | "proxy-authenticate"
-                | "proxy-authorization"
-                | "te"
-                | "trailers"
-                | "upgrade"
-        ) {
-            continue;
-        }
-        req = req.header(k, v);
-    }
-    if !original_host.is_empty() {
-        req = req.header("Host", original_host.clone());
-        req = req.header("X-Forwarded-Host", original_host);
-    }
-    req = req.header(
-        PROXY_LOOP_HEADER,
-        self_index.unwrap_or(usize::MAX).to_string(),
-    );
-
-    if let Some(b) = body {
-        req = req.body(b);
-    }
-
-    let upstream = match req.send().await {
-        Ok(r) => r,
-        Err(err) => {
-            stdio::error("proxy", &format!("upstream {} failed: {}", target_url, err));
-            return Response::builder()
-                .status(502)
-                .body(axum::body::Body::from(format!(
-                    "Bad Gateway: upstream {} unreachable",
-                    target_host
-                )))
-                .unwrap();
-        }
-    };
-
-    let status = upstream.status();
-    let mut builder = Response::builder().status(status.as_u16());
-    for (k, v) in upstream.headers().iter() {
-        let kl = k.as_str().to_ascii_lowercase();
-        if matches!(
-            kl.as_str(),
-            "connection"
-                | "transfer-encoding"
-                | "keep-alive"
-                | "proxy-authenticate"
-                | "proxy-authorization"
-                | "te"
-                | "trailers"
-                | "upgrade"
-        ) {
-            continue;
-        }
-        builder = builder.header(k.as_str(), v.as_bytes());
-    }
-
-    let bytes = match upstream.bytes().await {
-        Ok(b) => b,
-        Err(err) => {
-            stdio::error("proxy", &format!("body read failed: {}", err));
-            return Response::builder()
-                .status(502)
-                .body(axum::body::Body::from(
-                    "Bad Gateway: upstream body read failed",
-                ))
-                .unwrap();
-        }
-    };
-
-    builder
-        .body(axum::body::Body::from(bytes))
-        .unwrap_or_else(|_| {
-            Response::builder()
-                .status(502)
-                .body(axum::body::Body::from("Bad Gateway: response build failed"))
-                .unwrap()
-        })
-}
-
-mod stdio {
-    pub fn log(category: &str, message: &str) {
+pub(crate) mod stdio {
+    pub(crate) fn log(category: &str, message: &str) {
         eprintln!("[{}] {}", category, message);
     }
-    pub fn error(category: &str, message: &str) {
+    pub(crate) fn error(category: &str, message: &str) {
         eprintln!("[{}] ERROR: {}", category, message);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{env_flag_enabled, platform_env_aliases_to_set, proxy_target_for_tenant};
-    use deka_shard::{ShardConfig, ShardInfo, ShardResolver};
-    use pool::tenant::TenantInfo;
-    use std::collections::HashMap;
-
-    fn two_shard_resolver(self_name: Option<&str>) -> ShardResolver {
-        ShardResolver::from_config(
-            ShardConfig {
-                shards: vec![
-                    ShardInfo {
-                        index: 0,
-                        name: "local".into(),
-                        neo4j: "bolt://127.0.0.1:7688".into(),
-                        redis: "redis://127.0.0.1:6380".into(),
-                    },
-                    ShardInfo {
-                        index: 1,
-                        name: "bugsy".into(),
-                        neo4j: "bolt://bugsy:7687".into(),
-                        redis: "redis://bugsy:6379".into(),
-                    },
-                ],
-            },
-            self_name,
-        )
-    }
-
-    fn account_for_shard(resolver: &ShardResolver, index: usize) -> String {
-        (0..10_000)
-            .map(|n| format!("dev-account-{n}"))
-            .find(|account_id| {
-                resolver
-                    .resolve(account_id)
-                    .is_some_and(|s| s.index == index)
-            })
-            .expect("test resolver should produce an account for requested shard")
-    }
-
-    fn tenant(account_id: String) -> TenantInfo {
-        TenantInfo {
-            shop_id: "shop_dev_created".into(),
-            account_id: Some(account_id),
-            preview_ref: None,
-        }
-    }
-
-    #[test]
-    fn proxy_target_routes_remote_owner_in_production() {
-        let resolver = two_shard_resolver(Some("local"));
-        let account_id = account_for_shard(&resolver, 1);
-        let tenant = tenant(account_id);
-
-        let target = proxy_target_for_tenant(Some(&tenant), &resolver, false).unwrap();
-
-        assert_eq!(target.name, "bugsy");
-    }
-
-    #[test]
-    fn proxy_target_serves_locally_in_dev_even_for_remote_owner() {
-        let resolver = two_shard_resolver(Some("local"));
-        let account_id = account_for_shard(&resolver, 1);
-        let tenant = tenant(account_id);
-
-        assert!(proxy_target_for_tenant(Some(&tenant), &resolver, true).is_none());
-    }
-
-    #[test]
-    fn proxy_target_serves_locally_for_owned_or_legacy_tenants() {
-        let resolver = two_shard_resolver(Some("local"));
-        let local_account = account_for_shard(&resolver, 0);
-        let local_tenant = tenant(local_account);
-        let legacy_tenant = TenantInfo {
-            shop_id: "shop_legacy".into(),
-            account_id: None,
-            preview_ref: None,
-        };
-
-        assert!(proxy_target_for_tenant(Some(&local_tenant), &resolver, false).is_none());
-        assert!(proxy_target_for_tenant(Some(&legacy_tenant), &resolver, false).is_none());
-        assert!(proxy_target_for_tenant(None, &resolver, false).is_none());
-    }
-
-    #[test]
-    fn env_flag_enabled_accepts_truthy_values() {
-        unsafe { std::env::set_var("DEKA_RUNTIME_TEST_FLAG", "true") };
-        assert!(env_flag_enabled("DEKA_RUNTIME_TEST_FLAG"));
-
-        unsafe { std::env::set_var("DEKA_RUNTIME_TEST_FLAG", "0") };
-        assert!(!env_flag_enabled("DEKA_RUNTIME_TEST_FLAG"));
-
-        unsafe { std::env::remove_var("DEKA_RUNTIME_TEST_FLAG") };
-        assert!(!env_flag_enabled("DEKA_RUNTIME_TEST_FLAG"));
-    }
-
-    #[test]
-    fn platform_env_aliases_accept_container_contract_names() {
-        let env = HashMap::from([
-            ("NEO4J_URI", "bolt://neo4j:7687"),
-            ("NEO4J_USER", "neo4j"),
-            ("NEO4J_PASSWORD", "secret"),
-            ("REDIS_URL", "redis://redis:6379"),
-        ]);
-
-        let aliases = platform_env_aliases_to_set(|key| env.get(key).map(|v| v.to_string()));
-
-        assert_eq!(
-            aliases,
-            vec![
-                ("DEKA_NEO4J_URI", "bolt://neo4j:7687".to_string()),
-                ("DEKA_NEO4J_USER", "neo4j".to_string()),
-                ("DEKA_NEO4J_PASSWORD", "secret".to_string()),
-                ("DEKA_REDIS_URL", "redis://redis:6379".to_string()),
-            ]
-        );
-    }
-
-    #[test]
-    fn platform_env_aliases_do_not_override_deka_specific_values() {
-        let env = HashMap::from([
-            ("NEO4J_URI", "bolt://wrong:7687"),
-            ("DEKA_NEO4J_URI", "bolt://right:7687"),
-            ("REDIS_URL", "redis://redis:6379"),
-            ("DEKA_REDIS_URL", "redis://deka-redis:6379"),
-        ]);
-
-        let aliases = platform_env_aliases_to_set(|key| env.get(key).map(|v| v.to_string()));
-
-        assert!(aliases.is_empty());
     }
 }

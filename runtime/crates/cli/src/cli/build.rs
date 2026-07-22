@@ -1,6 +1,7 @@
-use bundler::{BundleOptions, VirtualSource, bundle_virtual_entry};
+use bundler::{bundle_virtual_entry, BuildOptions, VirtualSource};
 use core::{CommandSpec, Context, ParamSpec, Registry};
-use phpx_js::{SourceModuleMeta, compile_phpx_source_to_js, parse_source_module_meta};
+use phpx_js::{compile_phpx_source_to_js, parse_source_module_meta, SourceModuleMeta};
+use runtime_core::module_spec::module_spec_aliases;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -36,6 +37,7 @@ pub fn register(registry: &mut Registry) {
 pub fn cmd(context: &Context) {
     if let Err(err) = run(context) {
         stdio::error("build", &err);
+        std::process::exit(1);
     }
 }
 
@@ -290,22 +292,41 @@ fn default_import_target_for(spec: &str, output_path: &Path) -> String {
 }
 
 fn resolve_project_root(input_path: &Path) -> Result<PathBuf, String> {
-    let start = if input_path.is_dir() {
-        input_path.to_path_buf()
-    } else {
-        input_path.parent().unwrap_or(Path::new(".")).to_path_buf()
-    };
+    let start = project_root_search_start(input_path);
 
+    let mut nearest_manifest_root = None;
     for dir in start.ancestors() {
         if dir.join("deka.json").is_file() {
-            return Ok(dir.to_path_buf());
+            let dir = dir.to_path_buf();
+            if dir.join("deka.lock").is_file() {
+                return Ok(dir);
+            }
+            if nearest_manifest_root.is_none() {
+                nearest_manifest_root = Some(dir);
+            }
         }
+    }
+
+    if let Some(root) = nearest_manifest_root {
+        return Ok(root);
     }
 
     Err(format!(
         "deka build requires a deka.json project root (searched from {})",
         input_path.display()
     ))
+}
+
+fn project_root_search_start(input_path: &Path) -> PathBuf {
+    if input_path.is_dir() {
+        return input_path.to_path_buf();
+    }
+
+    input_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+        .to_path_buf()
 }
 
 fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Result<(), String> {
@@ -372,6 +393,10 @@ fn is_stdlib_module_spec(spec: &str) -> bool {
         return false;
     }
 
+    if let Some(rest) = spec.strip_prefix("@deka/") {
+        return is_stdlib_module_spec(rest);
+    }
+
     spec.starts_with("component/")
         || spec.starts_with("deka/")
         || spec.starts_with("encoding/")
@@ -396,12 +421,13 @@ fn is_stdlib_module_spec(spec: &str) -> bool {
 }
 
 fn resolve_module_file(modules_dir: &Path, spec: &str) -> Option<PathBuf> {
-    let mut candidates = vec![
-        modules_dir.join(format!("{}.phpx", spec)),
-        modules_dir.join(format!("{}.php", spec)),
-        modules_dir.join(spec).join("index.phpx"),
-        modules_dir.join(spec).join("index.php"),
-    ];
+    let mut candidates = Vec::new();
+    for alias in module_spec_aliases(spec) {
+        candidates.push(modules_dir.join(format!("{}.phpx", alias)));
+        candidates.push(modules_dir.join(format!("{}.php", alias)));
+        candidates.push(modules_dir.join(&alias).join("index.phpx"));
+        candidates.push(modules_dir.join(&alias).join("index.php"));
+    }
 
     // For prefixed stdlib specifiers (e.g. encoding/json) also check the scoped
     // @deka layout — stdlib packages installed via `deka install` live there.
@@ -755,10 +781,10 @@ fn build_single_file_bundle_to_path(
     let entry_js = format!("{prelude}\n{}", output.js);
     let entry_path = fs::canonicalize(input_path)
         .map_err(|err| format!("failed to resolve {}: {}", input_path.display(), err))?;
-    let provider = Arc::new(PhpxBundleProvider::new(entry_path.clone(), entry_js));
+    let provider = Arc::new(PhpxProvider::new(entry_path.clone(), entry_js));
     let bundle = bundle_virtual_entry(
         &entry_path,
-        BundleOptions {
+        BuildOptions {
             project_root: output.project_root,
             minify,
             iife: false,
@@ -799,12 +825,12 @@ fn build_single_file_to_string(input_path: &Path) -> Result<JsBuildOutput, Strin
     })
 }
 
-struct PhpxBundleProvider {
+struct PhpxProvider {
     entry_path: PathBuf,
     entry_source: String,
 }
 
-impl PhpxBundleProvider {
+impl PhpxProvider {
     fn new(entry_path: PathBuf, entry_source: String) -> Self {
         Self {
             entry_path,
@@ -813,7 +839,7 @@ impl PhpxBundleProvider {
     }
 }
 
-impl VirtualSource for PhpxBundleProvider {
+impl VirtualSource for PhpxProvider {
     fn load_virtual(&self, path: &Path) -> Result<Option<String>, String> {
         if path == self.entry_path {
             return Ok(Some(self.entry_source.clone()));
@@ -1489,12 +1515,59 @@ class User {}
     }
 
     #[test]
+    fn bare_entry_uses_current_directory_as_project_root() {
+        assert_eq!(
+            project_root_search_start(Path::new("main.phpx")),
+            PathBuf::from(".")
+        );
+    }
+
+    #[test]
     fn ensure_project_layout_requires_lock_file() {
         let tmp = tempfile::tempdir().expect("tmp");
         std::fs::write(tmp.path().join("deka.json"), "{}").expect("deka.json");
         let meta = SourceModuleMeta::empty();
         let err = ensure_project_layout(tmp.path(), &meta).expect_err("missing lock");
         assert!(err.contains("deka.lock"));
+    }
+
+    #[test]
+    fn project_root_prefers_outer_lock_bearing_root_over_nested_package_manifest() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        std::fs::write(tmp.path().join("deka.json"), "{}").expect("root deka.json");
+        std::fs::write(tmp.path().join("deka.lock"), "{}").expect("root deka.lock");
+
+        let package_dir = tmp
+            .path()
+            .join("php_modules")
+            .join("@deka")
+            .join("payments");
+        std::fs::create_dir_all(&package_dir).expect("package dir");
+        std::fs::write(package_dir.join("deka.json"), "{}").expect("package deka.json");
+        let input = package_dir.join("index.phpx");
+        std::fs::write(&input, "<div />").expect("input");
+
+        let root = resolve_project_root(&input).expect("project root");
+        assert_eq!(root, tmp.path());
+    }
+
+    #[test]
+    fn project_root_falls_back_to_nearest_manifest_when_no_lock_exists() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        std::fs::write(tmp.path().join("deka.json"), "{}").expect("root deka.json");
+
+        let package_dir = tmp
+            .path()
+            .join("php_modules")
+            .join("@deka")
+            .join("payments");
+        std::fs::create_dir_all(&package_dir).expect("package dir");
+        std::fs::write(package_dir.join("deka.json"), "{}").expect("package deka.json");
+        let input = package_dir.join("index.phpx");
+        std::fs::write(&input, "<div />").expect("input");
+
+        let root = resolve_project_root(&input).expect("project root");
+        assert_eq!(root, package_dir);
     }
 
     #[test]
@@ -1537,6 +1610,26 @@ class User {}
         )
         .expect("json.phpx");
         let source = "---\nimport { parse } from 'encoding/json'\n---\n<div />\n";
+        let meta = parse_source_module_meta(source);
+        ensure_project_layout(tmp.path(), &meta).expect("layout should pass");
+    }
+
+    #[test]
+    fn ensure_project_layout_accepts_scoped_stdlib_import_installed_unscoped() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        std::fs::write(tmp.path().join("deka.json"), "{}").expect("deka.json");
+        std::fs::write(tmp.path().join("deka.lock"), "{}").expect("deka.lock");
+        std::fs::create_dir_all(tmp.path().join("php_modules").join("http")).expect("http dir");
+        std::fs::write(
+            tmp.path()
+                .join("php_modules")
+                .join("http")
+                .join("index.phpx"),
+            "export function http_get($url: string): object { return {} }",
+        )
+        .expect("http module");
+
+        let source = "---\nimport { http_get } from '@deka/http'\n---\n<div />\n";
         let meta = parse_source_module_meta(source);
         ensure_project_layout(tmp.path(), &meta).expect("layout should pass");
     }

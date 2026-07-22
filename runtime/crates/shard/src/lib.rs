@@ -1,14 +1,14 @@
 //! deka-shard — client-side shard resolver.
 //!
 //! Tana distributes tenant data across N application servers.
-//! Each shop has an immutable `account_id` (UUID v4). The shard
+//! Each shop has an immutable shop_id slug. The shard
 //! that owns a shop is determined purely by
-//! `hash(account_id) % shard_count` — no server-side lookup,
+//! `fnv1a_64(shop_id) % shard_count` — no server-side lookup,
 //! Redis-Cluster-style.
 //!
 //! This crate is pure, deterministic, and does no network I/O.
 //! It loads the cluster topology once from a JSON file (or an
-//! env-driven single-shard fallback) and resolves account_ids
+//! env-driven single-shard fallback) and resolves shop_id slugs
 //! against it.
 //!
 //! Phase 2 of the sharded-deployment plan ships the library
@@ -72,26 +72,26 @@ impl ShardResolver {
         }
     }
 
-    /// Resolve an `account_id` to its owning shard.
+    /// Resolve a shop_id slug to its owning shard.
     ///
-    /// Returns `None` for empty `account_id` or for an empty shard list.
-    pub fn resolve(&self, account_id: &str) -> Option<&ShardInfo> {
-        if account_id.is_empty() || self.shards.is_empty() {
+    /// Returns `None` for an empty shop_id or for an empty shard list.
+    pub fn resolve(&self, shop_id: &str) -> Option<&ShardInfo> {
+        if shop_id.is_empty() || self.shards.is_empty() {
             return None;
         }
-        let idx = shard_index(account_id, self.shards.len());
+        let idx = shard_index(shop_id, self.shards.len());
         self.shards.get(idx)
     }
 
-    /// True iff THIS server's shard owns the given account_id.
+    /// True iff THIS server's shard owns the given shop_id slug.
     ///
     /// Returns `false` if `self_index` isn't set (e.g. running
     /// outside any shard — dev tools, CLI one-shots).
-    pub fn owns(&self, account_id: &str) -> bool {
+    pub fn owns(&self, shop_id: &str) -> bool {
         let Some(self_idx) = self.self_index else {
             return false;
         };
-        match self.resolve(account_id) {
+        match self.resolve(shop_id) {
             Some(info) => info.index == self_idx,
             None => false,
         }
@@ -234,19 +234,31 @@ mod tests {
         bytes[8] = (bytes[8] & 0x3f) | 0x80;
         format!(
             "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-            bytes[0], bytes[1], bytes[2], bytes[3],
-            bytes[4], bytes[5], bytes[6], bytes[7],
-            bytes[8], bytes[9], bytes[10], bytes[11],
-            bytes[12], bytes[13], bytes[14], bytes[15],
+            bytes[0],
+            bytes[1],
+            bytes[2],
+            bytes[3],
+            bytes[4],
+            bytes[5],
+            bytes[6],
+            bytes[7],
+            bytes[8],
+            bytes[9],
+            bytes[10],
+            bytes[11],
+            bytes[12],
+            bytes[13],
+            bytes[14],
+            bytes[15],
         )
     }
 
     #[test]
     fn resolve_is_deterministic() {
         let r = ShardResolver::from_config(cfg3(), None);
-        let id = "c0dc1618-20fc-4bdd-ac6f-e94909f8fad2";
-        let a = r.resolve(id).unwrap().name.clone();
-        let b = r.resolve(id).unwrap().name.clone();
+        let shop_id = "shop_alpha";
+        let a = r.resolve(shop_id).unwrap().name.clone();
+        let b = r.resolve(shop_id).unwrap().name.clone();
         assert_eq!(a, b);
     }
 
@@ -270,10 +282,10 @@ mod tests {
         let mut saw_owned = false;
         let mut saw_unowned = false;
         for _ in 0..200 {
-            let id = random_uuid_v4(&mut seed);
-            let resolved = r.resolve(&id).unwrap();
+            let shop_id = format!("shop_{}", random_uuid_v4(&mut seed).replace('-', "_"));
+            let resolved = r.resolve(&shop_id).unwrap();
             let expected = resolved.name == "bugsy";
-            assert_eq!(r.owns(&id), expected);
+            assert_eq!(r.owns(&shop_id), expected);
             saw_owned |= expected;
             saw_unowned |= !expected;
         }
@@ -285,13 +297,13 @@ mod tests {
     fn owns_false_when_self_not_in_cluster() {
         let r = ShardResolver::from_config(cfg3(), Some("not-a-real-host"));
         assert!(r.self_shard().is_none());
-        assert!(!r.owns("c0dc1618-20fc-4bdd-ac6f-e94909f8fad2"));
+        assert!(!r.owns("shop_alpha"));
     }
 
     #[test]
     fn owns_false_when_no_self_name() {
         let r = ShardResolver::from_config(cfg3(), None);
-        assert!(!r.owns("c0dc1618-20fc-4bdd-ac6f-e94909f8fad2"));
+        assert!(!r.owns("shop_alpha"));
     }
 
     #[test]
@@ -309,8 +321,8 @@ mod tests {
         let mut seed: u64 = 0xDEADBEEFCAFEBABE;
         let n = 10_000;
         for _ in 0..n {
-            let id = random_uuid_v4(&mut seed);
-            let s = r.resolve(&id).unwrap();
+            let shop_id = format!("shop_{}", random_uuid_v4(&mut seed).replace('-', "_"));
+            let s = r.resolve(&shop_id).unwrap();
             counts[s.index] += 1;
         }
         // Each shard should get 30-37% (spec) — use 0.30..=0.37 inclusive.
@@ -333,8 +345,8 @@ mod tests {
         let mut seed: u64 = 0x123456789ABCDEF0;
         let n = 10_000;
         for _ in 0..n {
-            let id = random_uuid_v4(&mut seed);
-            let s = r.resolve(&id).unwrap();
+            let shop_id = format!("shop_{}", random_uuid_v4(&mut seed).replace('-', "_"));
+            let s = r.resolve(&shop_id).unwrap();
             counts[s.index] += 1;
         }
         for (i, c) in counts.iter().enumerate() {
@@ -369,10 +381,10 @@ mod tests {
     }
 
     /// Mirrors the shard-selection logic in pool's `set_request_globals`:
-    /// when account_id is empty, resolve() returns None and the caller
+    /// when the shop_id is empty, resolve() returns None and the caller
     /// falls back to shards().first() — always shard 0 (phobos).
     #[test]
-    fn empty_account_id_falls_back_to_shard_zero() {
+    fn empty_shop_id_falls_back_to_shard_zero() {
         let cfg = ShardConfig {
             shards: vec![
                 ShardInfo {
@@ -391,7 +403,7 @@ mod tests {
         };
         let r = ShardResolver::from_config(cfg, None);
 
-        // Empty account_id: resolve() returns None per its contract.
+        // Empty shop_id: resolve() returns None per its contract.
         assert!(r.resolve("").is_none());
 
         // The pool's fallback: .or_else(|| shards().first()) picks index 0.
@@ -402,14 +414,21 @@ mod tests {
     }
 
     #[test]
-    fn real_account_ids_resolve_stably() {
-        // These are real shop account_ids from the database (per Phase 2 spec).
+    fn real_shop_ids_resolve_by_fnv1a_mod_shard_count() {
         let r = ShardResolver::from_config(cfg3(), None);
-        let shop_alpha = "c0dc1618-20fc-4bdd-ac6f-e94909f8fad2";
-        let shop_beta = "2789d397-a96a-44ba-9073-24c711d007ff";
+        let shop_alpha = "shop_alpha";
+        let shop_beta = "shop_beta";
         assert!(r.resolve(shop_alpha).is_some());
         assert!(r.resolve(shop_beta).is_some());
-        // Repeated resolution agrees.
+
+        assert_eq!(
+            r.resolve(shop_alpha).unwrap().index,
+            shard_index(shop_alpha, r.shard_count())
+        );
+        assert_eq!(
+            r.resolve(shop_beta).unwrap().index,
+            shard_index(shop_beta, r.shard_count())
+        );
         assert_eq!(
             r.resolve(shop_alpha).unwrap().index,
             r.resolve(shop_alpha).unwrap().index,

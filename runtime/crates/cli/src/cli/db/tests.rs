@@ -3,7 +3,7 @@ use super::generate::{
     render_client_phpx, render_generated_schema_json, resolve_generate_input, resolve_model_entry,
     to_table_name,
 };
-use migrate::{persist_migration_state, render_init_migration};
+use super::migrate::{persist_migration_state, render_init_migration};
 use php_rs::parser::lexer::Lexer;
 use php_rs::parser::parser::{Parser, ParserMode};
 use std::fs;

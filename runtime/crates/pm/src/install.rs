@@ -1,360 +1,722 @@
-use crate::{
-    bun_lock::BunLock,
-    cache::{
-        CachePaths, cache_key, compute_sha512, copy_package, download_tarball, extract_tarball,
-    },
-    lock,
-    npm::{fetch_npm_metadata, resolve_package_version},
-    payload::InstallPayload,
-    spec::{Ecosystem, parse_hinted_spec, parse_package_spec},
-};
+use crate::{lock, payload::InstallPayload, spec::parse_package_spec};
 use anyhow::{Context, Result, anyhow, bail};
+use linkhash_client::LinkhashClient;
 use modules_php::integrity::compute_package_integrity;
 use runtime_core::module_spec::canonical_php_package_spec;
-use runtime_core::security_policy::{RuleList, SecurityPolicy, parse_deka_security_policy};
-use serde::Deserialize;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use std::{
-    collections::{BTreeMap, HashSet, VecDeque},
+    collections::{BTreeMap, VecDeque},
     fs,
-    io::Write,
     path::{Path, PathBuf},
-    sync::Arc,
-    time::Instant,
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
-use tokio::{sync::Semaphore, task::JoinSet};
+
+mod bundled_stdlib {
+    include!(concat!(env!("OUT_DIR"), "/stdlib_snapshot.rs"));
+}
+
+const BUNDLED_STDLIB_VERSION: &str = "0.1.0";
 
 pub async fn run_install(payload: InstallPayload) -> Result<()> {
     if payload.rehash {
         rehash_php_packages(&payload).await?;
         return Ok(());
     }
-    let mut specs = payload.specs.clone();
-    let auto_resolved = specs.is_empty();
-    if auto_resolved {
-        specs = collect_project_specs()?;
-    }
 
-    let override_ecosystem = payload
-        .ecosystem
-        .as_deref()
-        .and_then(Ecosystem::from_str)
-        .unwrap_or(Ecosystem::Node);
+    let specs = payload.specs.clone();
     let quiet = payload.quiet;
+    tokio::task::spawn_blocking(move || run_php_install(specs, quiet))
+        .await
+        .context("install task failed")?
+}
 
-    if override_ecosystem == Ecosystem::Php {
-        return run_php_install(specs, quiet).await;
+fn run_php_install(specs: Vec<String>, quiet: bool) -> Result<()> {
+    let cwd = std::env::current_dir().context("failed to resolve current directory")?;
+    run_php_install_in(
+        specs,
+        quiet,
+        &cwd,
+        &linkhash_registry_url(),
+        linkhash_token().as_deref(),
+    )
+}
+
+fn run_php_install_in(
+    specs: Vec<String>,
+    quiet: bool,
+    cwd: &Path,
+    registry: &str,
+    token: Option<&str>,
+) -> Result<()> {
+    let specs = if specs.is_empty() {
+        collect_project_install_specs(cwd)?
+    } else {
+        specs
+    };
+
+    if specs.is_empty() {
+        bail!("no PHP packages declared in deka.json or deka.lock");
     }
 
-    if payload.prompt && !payload.yes {
-        let message = if auto_resolved {
-            "Install dependencies listed in package.json? [y/N]:"
-        } else {
-            "Install requested dependencies? [y/N]:"
-        };
-        if !prompt_yes_no(message)? {
-            bail!("installation aborted by user");
-        }
-    }
-
-    let cache = Arc::new(CachePaths::new()?);
-    cache.ensure()?;
-
-    let bun_lock = BunLock::load()?.map(Arc::new);
-    let mut ctx = InstallContext::new(cache.clone(), bun_lock.clone());
-    for spec in specs {
-        ctx.enqueue(spec, None, false, None);
-    }
-
+    let client = LinkhashClient::new(registry, token);
+    let lock_path = cwd.join(lock::LOCKFILE_NAME);
+    let existing_lock = lock::read_lockfile_at(&lock_path);
     let start = Instant::now();
-    let semaphore = Arc::new(Semaphore::new(100)); // Allow many concurrent downloads like Bun
-    let mut join_set = JoinSet::new();
-    let mut copy_tasks = JoinSet::new();
-    let mut installed_count = 0;
-
-    // Spawn initial tasks
-    while let Some(task) = ctx.next_task() {
-        let (ecosystem, spec_str) = parse_hinted_spec(&task.spec, Some(override_ecosystem))?;
-        if ecosystem != Ecosystem::Node {
-            if !quiet {
-                eprintln!(
-                    "⚠️  Skipping unsupported ecosystem {} for {}",
-                    ecosystem.as_str(),
-                    spec_str
-                );
-            }
-            continue;
-        }
-
-        let cache_clone = cache.clone();
-        let bun_lock_clone = bun_lock.clone();
-        let spec_clone = spec_str.clone();
-        let lock_key_clone = task.lock_key.clone();
-        let sem_clone = semaphore.clone();
-        let optional = task.optional;
-
-        join_set.spawn(async move {
-            let _permit = sem_clone.acquire().await.unwrap();
-            let result = install_node_package(
-                &cache_clone,
-                bun_lock_clone.as_deref(),
-                &spec_clone,
-                lock_key_clone.as_deref(),
-            )
-            .await;
-            (spec_clone, optional, result)
-        });
+    let mut pending = VecDeque::new();
+    let mut requested = BTreeMap::new();
+    for spec in specs {
+        enqueue_package_spec(&mut pending, &mut requested, &spec, "root")?;
     }
+    let mut installed = BTreeMap::new();
 
-    // Process all tasks as they complete
-    while let Some(res) = join_set.join_next().await {
-        match res {
-            Ok((_spec, _optional, Ok(result))) => {
-                // Copy package to final location (spawn in parallel)
-                let destination = ctx.determine_install_path(
-                    &result.name,
-                    &result.version,
-                    result.lock_key.as_deref(),
-                );
-                if let Some(dest) = destination {
-                    let cache_dir = result.cache_dir.clone();
-                    let name = result.name.clone();
-                    let version = result.version.clone();
-                    let resolved = result.resolved.clone();
-                    let metadata = result.metadata.clone();
-                    let integrity = result.integrity.clone();
-                    let dest_clone = dest.clone();
-
-                    // Spawn copy operation without awaiting (runs in parallel)
-                    copy_tasks.spawn_blocking(move || -> Result<()> {
-                        copy_package(&cache_dir, &dest_clone)?;
-                        let descriptor = format!("{}@{}", name, version);
-                        lock::update_lock_entry(
-                            "node", &name, descriptor, resolved, metadata, integrity,
-                        )?;
-                        Ok(())
-                    });
-
-                    installed_count += 1;
-                }
-
-                // Enqueue dependencies
-                for dep in result.dependencies {
-                    ctx.enqueue(
-                        dep.spec.clone(),
-                        Some(dep.descriptor.clone()),
-                        false,
-                        Some(dep.lock_key.clone()),
-                    );
-                }
-                for opt in result.optional_dependencies {
-                    if ctx.should_install_optional(&opt.lock_key, &opt.spec) {
-                        ctx.enqueue(
-                            opt.spec.clone(),
-                            Some(opt.descriptor.clone()),
-                            true,
-                            Some(opt.lock_key),
-                        );
-                    }
-                }
-                for peer in result.optional_peers {
-                    if let Some(lock) = bun_lock.as_deref() {
-                        if lock.get(&peer.lock_key).is_some() {
-                            ctx.enqueue(
-                                peer.spec.clone(),
-                                Some(peer.descriptor.clone()),
-                                true,
-                                Some(peer.lock_key),
-                            );
-                        }
-                    }
-                }
-            }
-            Ok((spec, optional, Err(err))) => {
-                if optional {
-                    if !quiet {
-                        eprintln!("⚠️  Skipping optional {}: {}", spec, err);
-                    }
-                } else {
-                    return Err(err);
-                }
-            }
-            Err(e) => return Err(anyhow::anyhow!("task join error: {}", e)),
-        }
-
-        // Spawn ALL queued tasks after processing each completed task
-        while let Some(task) = ctx.next_task() {
-            let (ecosystem, spec_str) = parse_hinted_spec(&task.spec, Some(override_ecosystem))?;
-            if ecosystem != Ecosystem::Node {
+    // A release is source plus its declared dependencies, never a recursive
+    // vendor tree. Resolve each declared dependency here so every package is a
+    // sibling under the consumer's php_modules directory.
+    while let Some(name) = pending.pop_front() {
+        let requirements = requested.get(&name).expect("queued package requirement");
+        let locked = locked_package(&existing_lock, &name)?;
+        let version = select_version(&client, &name, requirements, locked.as_ref())?;
+        let destination = php_modules_path_for_in(cwd, &name)?;
+        let staging = install_staging_path(&destination)?;
+        cleanup_install_staging(&staging);
+        let install_source = match install_from_linkhash(&client, &name, &version, &staging) {
+            Ok(source) => source,
+            Err(err) if is_deka_package(&name) => {
+                cleanup_install_staging(&staging);
                 if !quiet {
                     eprintln!(
-                        "⚠️  Skipping unsupported ecosystem {} for {}",
-                        ecosystem.as_str(),
-                        spec_str
+                        "[install] LinkHash unavailable for {} ({}); using bundled stdlib snapshot",
+                        name, err
                     );
                 }
-                continue;
+                install_from_bundled_stdlib(&name, locked.as_ref(), &staging)?
             }
+            Err(err) => {
+                cleanup_install_staging(&staging);
+                return Err(err);
+            }
+        };
 
-            let cache_c = cache.clone();
-            let lock_c = bun_lock.clone();
-            let spec_c = spec_str.clone();
-            let key_c = task.lock_key.clone();
-            let sem_c = semaphore.clone();
-            let opt = task.optional;
+        if let Err(err) = reject_vendored_php_modules(&staging, &name) {
+            cleanup_install_staging(&staging);
+            return Err(err);
+        }
 
-            join_set.spawn(async move {
-                let _permit = sem_c.acquire().await.unwrap();
-                let result =
-                    install_node_package(&cache_c, lock_c.as_deref(), &spec_c, key_c.as_deref())
-                        .await;
-                (spec_c, opt, result)
-            });
+        let package_integrity = compute_package_integrity(&staging)
+            .map_err(|err| anyhow!("failed to compute package integrity for {}: {}", name, err))?;
+
+        if let Some(locked) = &locked {
+            if let Err(err) =
+                verify_locked_integrity(&name, locked, &install_source, &package_integrity)
+            {
+                cleanup_install_staging(&staging);
+                return Err(err);
+            }
+            // The package still needs to contribute its declared dependencies
+            // to the flat graph, even when its bytes are already lock-verified.
+        }
+
+        let dependencies = package_dependencies(&staging, &name)?;
+        let dependency_names = dependencies
+            .iter()
+            .map(|dependency| {
+                let (raw_name, _) = parse_package_spec(dependency);
+                normalize_php_spec(&raw_name)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        // A locked package has already been verified against its immutable
+        // release bytes. Preserve its metadata byte-for-byte so a normal
+        // fresh-checkout install does not rewrite the tracked lockfile.
+        let metadata = if locked.is_some() {
+            existing_lock
+                .packages
+                .get(&name)
+                .map(|(_, _, metadata, _)| metadata.clone())
+                .expect("locked package must have a lock entry")
+        } else {
+            json!({
+                "repo": install_source.repo,
+                "gitRef": install_source.git_ref,
+                "source": install_source.source,
+                "dependencies": dependency_names,
+                "moduleGraph": {
+                    "algo": "sha256",
+                    "hash": package_integrity.module_graph,
+                },
+                "fsGraph": {
+                    "algo": "sha256",
+                    "hash": package_integrity.fs_graph,
+                },
+            })
+        };
+        replace_installed_package(&staging, &destination)?;
+        installed.insert(
+            name.clone(),
+            (
+                format!("{}@{}", name, install_source.version),
+                format!("linkhash:{}", name),
+                metadata,
+                String::new(),
+            ),
+        );
+        for dependency in dependencies {
+            enqueue_package_spec(&mut pending, &mut requested, &dependency, &name)?;
         }
     }
 
-    // Process remaining tasks
-    while let Some(res) = join_set.join_next().await {
-        match res {
-            Ok((_spec, _optional, Ok(result))) => {
-                let destination = ctx.determine_install_path(
-                    &result.name,
-                    &result.version,
-                    result.lock_key.as_deref(),
-                );
-                if let Some(dest) = destination {
-                    let cache_dir = result.cache_dir.clone();
-                    let name = result.name.clone();
-                    let version = result.version.clone();
-                    let resolved = result.resolved.clone();
-                    let metadata = result.metadata.clone();
-                    let integrity = result.integrity.clone();
-
-                    copy_tasks.spawn_blocking(move || -> Result<()> {
-                        copy_package(&cache_dir, &dest)?;
-                        let descriptor = format!("{}@{}", name, version);
-                        lock::update_lock_entry(
-                            "node", &name, descriptor, resolved, metadata, integrity,
-                        )?;
-                        Ok(())
-                    });
-
-                    installed_count += 1;
-                }
-            }
-            Ok((spec, optional, Err(err))) => {
-                if optional {
-                    if !quiet {
-                        eprintln!("⚠️  Skipping optional {}: {}", spec, err);
-                    }
-                } else {
-                    return Err(err);
-                }
-            }
-            Err(e) => return Err(anyhow::anyhow!("task join error: {}", e)),
-        }
-    }
-
-    // Wait for all copy operations to complete
-    while let Some(res) = copy_tasks.join_next().await {
-        match res {
-            Ok(Ok(_)) => {}
-            Ok(Err(e)) => return Err(e),
-            Err(e) => return Err(anyhow::anyhow!("copy task join error: {}", e)),
-        }
-    }
+    // The lockfile represents exactly the resolved transitive graph. This
+    // also removes stale dependencies that are no longer declared by a release.
+    lock::write_lockfile_at(
+        &lock_path,
+        &lock::DekaLock {
+            lockfile_version: existing_lock.lockfile_version,
+            packages: installed.clone(),
+        },
+    )?;
 
     let duration = Instant::now().duration_since(start);
-    emit_summary(installed_count, duration.as_millis() as u64, quiet)?;
+    emit_summary(installed.len(), duration.as_millis() as u64, quiet)?;
     Ok(())
 }
 
-#[derive(Debug, Deserialize)]
-struct PhpPackageSummary {
-    latest: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct PhpPackageRelease {
-    package_name: String,
-    version: String,
-    owner: String,
-    repo: String,
-    git_ref: String,
-    description: Option<String>,
-    manifest: Option<Value>,
-    capability_metadata: Option<Value>,
-}
-
-async fn run_php_install(specs: Vec<String>, quiet: bool) -> Result<()> {
-    if specs.is_empty() {
-        bail!("no PHP package specs provided (use --spec)");
+fn enqueue_package_spec(
+    pending: &mut VecDeque<String>,
+    requested: &mut BTreeMap<String, Vec<VersionRequirement>>,
+    spec: &str,
+    requested_by: &str,
+) -> Result<()> {
+    let (raw_name, version) = parse_package_spec(spec.trim());
+    let name = normalize_php_spec(&raw_name)?;
+    let requirement = VersionRequirement {
+        range: version.unwrap_or_else(|| "latest".to_string()),
+        requested_by: requested_by.to_string(),
+    };
+    let requirements = requested.entry(name.clone()).or_default();
+    if !requirements.iter().any(|existing| existing == &requirement) {
+        requirements.push(requirement);
+        // Revisit a package when a newly discovered constraint may select a
+        // higher common version or expose a conflict.
+        pending.push_back(name);
     }
+    Ok(())
+}
 
-    let cache = CachePaths::new()?;
-    cache.ensure()?;
-    let registry = linkhash_registry_url();
-    let project_policy = load_project_security_policy()?;
-    let start = Instant::now();
-    let mut installed_count = 0usize;
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VersionRequirement {
+    range: String,
+    requested_by: String,
+}
 
-    for spec in specs {
-        let normalized = normalize_php_spec(&spec)?;
-        let (name, version_hint) = parse_package_spec(&normalized);
-        let version = if let Some(v) = version_hint {
-            v
-        } else {
-            fetch_php_latest(&registry, &name).await?
+fn select_version(
+    client: &LinkhashClient,
+    name: &str,
+    requirements: &[VersionRequirement],
+    locked: Option<&LockedPackage>,
+) -> Result<String> {
+    if let Some(locked) = locked {
+        if requirements
+            .iter()
+            .all(|requirement| version_satisfies(&locked.version, &requirement.range))
+        {
+            return Ok(locked.version.clone());
+        }
+    }
+    let mut versions = match client.list_versions(name) {
+        Ok(versions) => versions,
+        // Built-in packages remain installable offline.  They have one
+        // bundled version, so this does not weaken multi-version resolution.
+        Err(_) if is_deka_package(name) => return Ok(BUNDLED_STDLIB_VERSION.to_string()),
+        Err(err) => return Err(err),
+    };
+    versions.sort_by(|left, right| {
+        semver::Version::parse(left)
+            .ok()
+            .cmp(&semver::Version::parse(right).ok())
+    });
+    let selected = versions.into_iter().rev().find(|version| {
+        semver::Version::parse(version).is_ok()
+            && requirements
+                .iter()
+                .all(|requirement| version_satisfies(version, &requirement.range))
+    });
+    selected.ok_or_else(|| version_conflict(name, requirements))
+}
+
+fn version_satisfies(version: &str, range: &str) -> bool {
+    if range.trim().is_empty() || matches!(range.trim(), "latest" | "*") {
+        return true;
+    }
+    let Ok(version) = semver::Version::parse(version) else {
+        return false;
+    };
+    let range = normalize_version_range(range);
+    semver::VersionReq::parse(&range).is_ok_and(|requirement| requirement.matches(&version))
+}
+
+fn normalize_version_range(range: &str) -> String {
+    let range = range.trim();
+    let (prefix, bare) = range
+        .strip_prefix('^')
+        .map_or(("", range), |value| ("^", value));
+    let components = bare.split('.').count();
+    if bare
+        .chars()
+        .all(|character| character.is_ascii_digit() || character == '.')
+        && components < 3
+    {
+        format!("{prefix}{bare}{}", ".0".repeat(3 - components))
+    } else {
+        range.to_string()
+    }
+}
+
+fn version_conflict(name: &str, requirements: &[VersionRequirement]) -> anyhow::Error {
+    let left = requirements
+        .first()
+        .expect("version conflict has requirement");
+    let right = requirements
+        .iter()
+        .skip(1)
+        .find(|requirement| requirement.range != left.range)
+        .unwrap_or(left);
+    anyhow!(
+        "version conflict: {} required as {} by {} and {} by {}",
+        name,
+        left.range,
+        left.requested_by,
+        right.range,
+        right.requested_by
+    )
+}
+
+fn package_dependencies(package_root: &Path, package_name: &str) -> Result<Vec<String>> {
+    let manifest_path = package_root.join("deka.json");
+    if !manifest_path.exists() {
+        return Ok(Vec::new());
+    }
+    let raw = fs::read_to_string(&manifest_path)
+        .with_context(|| format!("failed to read {}", manifest_path.display()))?;
+    let manifest: Value = serde_json::from_str(&raw).with_context(|| {
+        format!(
+            "failed to parse {} for {}",
+            manifest_path.display(),
+            package_name
+        )
+    })?;
+    let Some(dependencies) = manifest.get("dependencies").and_then(Value::as_object) else {
+        return Ok(Vec::new());
+    };
+    let mut specs = Vec::new();
+    for (name, version) in dependencies {
+        let spec = match version.as_str().map(str::trim) {
+            Some("") | Some("*") | Some("latest") | None => name.clone(),
+            Some(version) => format!("{}@{}", name, version),
         };
+        specs.push(spec);
+    }
+    specs.sort();
+    Ok(specs)
+}
 
-        let release = fetch_php_release(&registry, &name, &version).await?;
-        enforce_release_policy(&release, &project_policy)?;
-        let tarball_url = package_download_url(&registry, &name, &version)?;
-        let bytes = download_tarball(&tarball_url).await?;
-        let integrity = compute_sha512(&bytes);
+fn reject_vendored_php_modules(package_root: &Path, package_name: &str) -> Result<()> {
+    let canonical_root = package_root
+        .canonicalize()
+        .with_context(|| format!("failed to canonicalize {}", package_root.display()))?;
+    let mut directories = vec![canonical_root.clone()];
+    while let Some(directory) = directories.pop() {
+        for entry in fs::read_dir(&directory)
+            .with_context(|| format!("failed to read {}", directory.display()))?
+        {
+            let entry = entry?;
+            let file_type = entry.file_type()?;
+            let entry_name = entry.file_name();
+            if entry_name
+                .to_string_lossy()
+                .eq_ignore_ascii_case("php_modules")
+            {
+                bail!(
+                    "package {} contains vendored php_modules at {}; packages must declare dependencies in deka.json",
+                    package_name,
+                    entry.path().display()
+                );
+            }
+            // Never follow artifact symlinks.  A package must be a real tree;
+            // otherwise a link can escape the staging root or alias vendored modules.
+            if file_type.is_symlink() {
+                bail!(
+                    "package {} contains symlink {}; package artifacts may not contain symlinks",
+                    package_name,
+                    entry.path().display()
+                );
+            }
+            if file_type.is_dir() {
+                let canonical_entry = entry.path().canonicalize().with_context(|| {
+                    format!("failed to canonicalize {}", entry.path().display())
+                })?;
+                if !canonical_entry.starts_with(&canonical_root) {
+                    bail!(
+                        "package {} contains directory outside package root at {}",
+                        package_name,
+                        entry.path().display()
+                    );
+                }
+                directories.push(canonical_entry);
+            }
+        }
+    }
+    Ok(())
+}
 
-        let key = cache_key(&format!("php+{}", name), &version);
-        let archive_path = cache.archive_path(&key);
-        fs::write(&archive_path, &bytes)
-            .with_context(|| format!("failed to write archive {}", archive_path.display()))?;
+#[derive(Debug, Clone)]
+struct InstalledSource {
+    version: String,
+    repo: Option<String>,
+    git_ref: Option<String>,
+    source: &'static str,
+}
 
-        let cache_dir = cache.cache_dir(&key);
-        extract_tarball(&archive_path, &cache_dir, &cache.tmp)?;
+#[derive(Debug, Clone)]
+struct LockedPackage {
+    version: String,
+    resolved: String,
+    module_graph: String,
+    fs_graph: String,
+}
 
-        let destination = php_modules_path_for(&name)?;
-        copy_package(&cache_dir, &destination)?;
+fn install_from_linkhash(
+    client: &LinkhashClient,
+    name: &str,
+    version_range: &str,
+    destination: &Path,
+) -> Result<InstalledSource> {
+    let resolved = client.resolve(name, version_range)?;
+    client.download(name, &resolved.version, destination)?;
+    Ok(InstalledSource {
+        version: resolved.version,
+        repo: resolved.repo,
+        git_ref: resolved.git_ref,
+        source: "linkhash",
+    })
+}
 
-        let package_integrity = compute_package_integrity(&destination)
-            .map_err(|err| anyhow!("failed to compute package integrity for {}: {}", name, err))?;
-
-        let metadata = json!({
-            "owner": release.owner,
-            "repo": release.repo,
-            "gitRef": release.git_ref,
-            "description": release.description,
-            "manifest": release.manifest,
-            "moduleGraph": {
-                "algo": "sha256",
-                "hash": package_integrity.module_graph,
-            },
-            "fsGraph": {
-                "algo": "sha256",
-                "hash": package_integrity.fs_graph,
-            },
-        });
-        lock::update_lock_entry(
-            "php",
-            &release.package_name,
-            format!("{}@{}", release.package_name, release.version),
-            tarball_url,
-            metadata,
-            integrity,
-        )?;
-        installed_count += 1;
+fn install_from_bundled_stdlib(
+    name: &str,
+    locked: Option<&LockedPackage>,
+    destination: &Path,
+) -> Result<InstalledSource> {
+    if let Some(locked) = locked {
+        if locked.version != BUNDLED_STDLIB_VERSION {
+            bail!(
+                "bundled stdlib cannot satisfy locked {}@{} (bundle has {})",
+                name,
+                locked.version,
+                BUNDLED_STDLIB_VERSION
+            );
+        }
+    }
+    let source_prefix = bundled_stdlib_prefix(name)
+        .ok_or_else(|| anyhow!("no bundled stdlib package for {}", name))?;
+    let mut copied = 0usize;
+    for (relative, bytes) in bundled_stdlib::STDLIB_FILES {
+        let Some(package_relative) = relative.strip_prefix(&source_prefix) else {
+            continue;
+        };
+        let Some(package_relative) = package_relative.strip_prefix('/') else {
+            continue;
+        };
+        if package_relative.is_empty() {
+            continue;
+        }
+        let target = destination.join(package_relative);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+        fs::write(&target, bytes)
+            .with_context(|| format!("failed to write {}", target.display()))?;
+        copied += 1;
     }
 
-    let duration = Instant::now().duration_since(start);
-    emit_summary(installed_count, duration.as_millis() as u64, quiet)?;
+    if copied == 0 {
+        bail!("bundled stdlib package {} is empty or missing", name);
+    }
+
+    write_bundled_package_manifest(name, destination)?;
+
+    Ok(InstalledSource {
+        version: locked
+            .map(|locked| locked.version.clone())
+            .unwrap_or_else(|| BUNDLED_STDLIB_VERSION.to_string()),
+        repo: None,
+        git_ref: None,
+        source: "linkhash",
+    })
+}
+
+fn install_staging_path(destination: &Path) -> Result<PathBuf> {
+    let parent = destination
+        .parent()
+        .ok_or_else(|| anyhow!("install destination has no parent"))?;
+    let package_dir = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| anyhow!("install destination has invalid package directory"))?;
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    Ok(parent
+        .join(format!(".deka-install-{}-{}", std::process::id(), nanos))
+        .join(package_dir))
+}
+
+fn replace_installed_package(staging: &Path, destination: &Path) -> Result<()> {
+    if destination.exists() {
+        fs::remove_dir_all(destination)
+            .with_context(|| format!("failed to remove {}", destination.display()))?;
+    }
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let staging_root = staging.parent().map(Path::to_path_buf);
+    fs::rename(staging, destination).or_else(|_| {
+        copy_dir_all(staging, destination)?;
+        fs::remove_dir_all(staging)
+            .with_context(|| format!("failed to remove {}", staging.display()))
+    })?;
+    if let Some(root) = staging_root {
+        let _ = fs::remove_dir(root);
+    }
+    Ok(())
+}
+
+fn cleanup_install_staging(staging: &Path) {
+    if let Some(root) = staging.parent() {
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
+fn copy_dir_all(source: &Path, target: &Path) -> Result<()> {
+    fs::create_dir_all(target).with_context(|| format!("failed to create {}", target.display()))?;
+    for entry in
+        fs::read_dir(source).with_context(|| format!("failed to read {}", source.display()))?
+    {
+        let entry = entry?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_all(&source_path, &target_path)?;
+        } else {
+            fs::copy(&source_path, &target_path).with_context(|| {
+                format!(
+                    "failed to copy {} to {}",
+                    source_path.display(),
+                    target_path.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn write_bundled_package_manifest(name: &str, destination: &Path) -> Result<()> {
+    let Some(package_name) = name.strip_prefix("@deka/") else {
+        return Ok(());
+    };
+    let main = if package_name == "encoding" {
+        "json/index.phpx"
+    } else {
+        "index.phpx"
+    };
+    let manifest = format!(
+        "{{\n  \"name\": \"{}\",\n  \"version\": \"{}\",\n  \"description\": \"PHPX stdlib: {}\",\n  \"main\": \"{}\",\n  \"deka.security\": {{ \"allow\": {{ \"run\": true }} }}\n}}\n",
+        name, BUNDLED_STDLIB_VERSION, package_name, main
+    );
+    let target = destination.join("deka.json");
+    fs::write(&target, manifest).with_context(|| format!("failed to write {}", target.display()))
+}
+
+fn bundled_stdlib_prefix(name: &str) -> Option<String> {
+    let rest = name.strip_prefix("@deka/")?;
+    if rest == "encoding-json" {
+        return Some("encoding/json".to_string());
+    }
+    if rest == "encoding-binary" {
+        return Some("encoding/binary".to_string());
+    }
+    if rest == "vault" {
+        return Some("deka/vault".to_string());
+    }
+    if rest.contains('/') || rest.contains("..") || rest.is_empty() {
+        return None;
+    }
+    Some(rest.to_string())
+}
+
+fn collect_project_install_specs(project_dir: &Path) -> Result<Vec<String>> {
+    let mut specs = BTreeMap::new();
+    for spec in collect_locked_deka_specs(project_dir) {
+        let (name, _) = parse_package_spec(&spec);
+        specs.insert(name, spec);
+    }
+    for spec in collect_deka_json_deps_in(project_dir)? {
+        let (name, _) = parse_package_spec(&spec);
+        specs.insert(name, spec);
+    }
+
+    Ok(specs.into_values().collect())
+}
+
+fn collect_deka_json_deps_in(project_dir: &Path) -> Result<Vec<String>> {
+    let path = project_dir.join("deka.json");
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let raw =
+        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
+    let json: Value = serde_json::from_str(&raw)
+        .with_context(|| format!("failed to parse {}", path.display()))?;
+    let Some(deps) = json.get("dependencies").and_then(Value::as_object) else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for (name, version) in deps {
+        let spec = if let Some(version) = version.as_str() {
+            let version = version.trim();
+            if version.is_empty() || version == "*" || version == "latest" {
+                name.to_string()
+            } else {
+                format!("{}@{}", name, version)
+            }
+        } else {
+            name.to_string()
+        };
+        out.push(spec);
+    }
+    Ok(out)
+}
+
+fn collect_locked_deka_specs(project_dir: &Path) -> Vec<String> {
+    let lock_path = project_dir.join(lock::LOCKFILE_NAME);
+    let lock = lock::read_lockfile_at(&lock_path);
+    lock.packages
+        .into_iter()
+        .filter_map(|(name, entry)| {
+            if !is_deka_package(&name) {
+                return None;
+            }
+            let (descriptor, _, _, _) = entry;
+            if descriptor.starts_with(&format!("{}@", name)) {
+                Some(descriptor)
+            } else if is_version_descriptor(&descriptor) {
+                Some(format!("{}@{}", name, descriptor))
+            } else {
+                Some(name)
+            }
+        })
+        .collect()
+}
+
+fn is_deka_package(name: &str) -> bool {
+    name.starts_with("@deka/")
+}
+
+fn locked_package(lock: &lock::DekaLock, name: &str) -> Result<Option<LockedPackage>> {
+    let Some((descriptor, resolved, metadata, _)) = lock.packages.get(name) else {
+        return Ok(None);
+    };
+    let version = locked_version(name, descriptor)
+        .ok_or_else(|| anyhow!("locked package {} is missing an exact version", name))?;
+    let module_graph = metadata_hash(metadata, "moduleGraph")
+        .ok_or_else(|| anyhow!("locked package {} is missing moduleGraph hash", name))?;
+    let fs_graph = metadata_hash(metadata, "fsGraph")
+        .ok_or_else(|| anyhow!("locked package {} is missing fsGraph hash", name))?;
+    Ok(Some(LockedPackage {
+        version,
+        resolved: resolved.clone(),
+        module_graph,
+        fs_graph,
+    }))
+}
+
+fn locked_version(name: &str, descriptor: &str) -> Option<String> {
+    descriptor
+        .strip_prefix(&format!("{}@", name))
+        .filter(|version| !version.trim().is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            if is_version_descriptor(descriptor) {
+                Some(descriptor.to_string())
+            } else {
+                None
+            }
+        })
+}
+
+fn is_version_descriptor(descriptor: &str) -> bool {
+    let mut parts = descriptor.split('.');
+    let Some(major) = parts.next() else {
+        return false;
+    };
+    let Some(minor) = parts.next() else {
+        return false;
+    };
+    let Some(patch) = parts.next() else {
+        return false;
+    };
+    parts.next().is_none()
+        && [major, minor, patch]
+            .into_iter()
+            .all(|part| !part.is_empty() && part.chars().all(|ch| ch.is_ascii_digit()))
+}
+
+fn metadata_hash(metadata: &Value, key: &str) -> Option<String> {
+    metadata
+        .get(key)
+        .and_then(|value| value.get("hash"))
+        .and_then(Value::as_str)
+        .filter(|hash| !hash.is_empty())
+        .map(ToString::to_string)
+}
+
+fn verify_locked_integrity(
+    name: &str,
+    locked: &LockedPackage,
+    installed: &InstalledSource,
+    integrity: &modules_php::integrity::PackageIntegrity,
+) -> Result<()> {
+    if installed.version != locked.version {
+        bail!(
+            "integrity verification failed for {}: locked version {} but installed {}",
+            name,
+            locked.version,
+            installed.version
+        );
+    }
+    if locked.resolved != format!("linkhash:{}", name) {
+        bail!(
+            "integrity verification failed for {}: unsupported lock source {}",
+            name,
+            locked.resolved
+        );
+    }
+    if integrity.module_graph != locked.module_graph {
+        bail!(
+            "integrity verification failed for {}: moduleGraph hash mismatch (locked {}, got {})",
+            name,
+            locked.module_graph,
+            integrity.module_graph
+        );
+    }
+    if integrity.fs_graph != locked.fs_graph {
+        bail!(
+            "integrity verification failed for {}: fsGraph hash mismatch (locked {}, got {})",
+            name,
+            locked.fs_graph,
+            integrity.fs_graph
+        );
+    }
     Ok(())
 }
 
@@ -368,7 +730,7 @@ async fn rehash_php_packages_in(payload: &InstallPayload, project_dir: &Path) ->
     let lock = lock::read_lockfile_at(&lock_path);
     let mut specs = payload.specs.clone();
     if specs.is_empty() {
-        specs = lock.php.packages.keys().cloned().collect();
+        specs = lock.packages.keys().cloned().collect();
     }
     if specs.is_empty() {
         bail!("no PHP packages found to rehash");
@@ -385,7 +747,7 @@ async fn rehash_php_packages_in(payload: &InstallPayload, project_dir: &Path) ->
         }
         let integrity = compute_package_integrity(&package_root)
             .map_err(|err| anyhow!("failed to compute package integrity for {}: {}", name, err))?;
-        let entry = lock.php.packages.get(&name).cloned();
+        let entry = lock.packages.get(&name).cloned();
         let Some((descriptor, resolved, mut metadata, integrity_field)) = entry else {
             bail!("package '{}' is missing from deka.lock", name);
         };
@@ -401,7 +763,6 @@ async fn rehash_php_packages_in(payload: &InstallPayload, project_dir: &Path) ->
         }
         lock::update_lock_entry_at(
             &lock_path,
-            "php",
             &name,
             descriptor,
             resolved,
@@ -411,97 +772,6 @@ async fn rehash_php_packages_in(payload: &InstallPayload, project_dir: &Path) ->
     }
 
     Ok(())
-}
-
-fn load_project_security_policy() -> Result<SecurityPolicy> {
-    let cwd = std::env::current_dir().context("failed to resolve current directory")?;
-    let path = cwd.join("deka.json");
-    if !path.is_file() {
-        return Ok(SecurityPolicy::default());
-    }
-    let raw =
-        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
-    let json: Value = serde_json::from_str(&raw)
-        .with_context(|| format!("invalid JSON in {}", path.display()))?;
-    let parsed = parse_deka_security_policy(&json);
-    if parsed.has_errors() {
-        let details = parsed
-            .diagnostics
-            .into_iter()
-            .filter(|d| {
-                matches!(
-                    d.level,
-                    runtime_core::security_policy::PolicyDiagnosticLevel::Error
-                )
-            })
-            .map(|d| format!("{} at {}: {}", d.code, d.path, d.message))
-            .collect::<Vec<_>>()
-            .join("\n");
-        bail!("invalid security policy:\n{}", details);
-    }
-    Ok(parsed.policy)
-}
-
-fn enforce_release_policy(release: &PhpPackageRelease, policy: &SecurityPolicy) -> Result<()> {
-    let capabilities = extract_release_capabilities(release);
-    if capabilities.iter().any(|cap| cap == "run") && !matches!(policy.deny.run, RuleList::None) {
-        bail!(
-            "install blocked by security policy: package {}@{} requires `run` capability",
-            release.package_name,
-            release.version
-        );
-    }
-    if capabilities.iter().any(|cap| cap == "dynamic") && policy.deny.dynamic {
-        bail!(
-            "install blocked by security policy: package {}@{} requires `dynamic` capability",
-            release.package_name,
-            release.version
-        );
-    }
-    Ok(())
-}
-
-fn extract_release_capabilities(release: &PhpPackageRelease) -> Vec<String> {
-    let mut out = Vec::new();
-    if let Some(meta) = &release.capability_metadata {
-        if let Some(detected) = meta.get("detected").and_then(|v| v.as_array()) {
-            for cap in detected.iter().filter_map(|v| v.as_str()) {
-                if !out.iter().any(|existing| existing == cap) {
-                    out.push(cap.to_string());
-                }
-            }
-        }
-    }
-    if let Some(manifest) = &release.manifest {
-        let allow = manifest
-            .get("security")
-            .and_then(|v| v.get("allow"))
-            .cloned()
-            .unwrap_or(Value::Null);
-        if allow
-            .get("dynamic")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-            && !out.iter().any(|existing| existing == "dynamic")
-        {
-            out.push("dynamic".to_string());
-        }
-        let run_enabled = allow
-            .get("run")
-            .map(|run| match run {
-                Value::Bool(v) => *v,
-                Value::String(s) => !s.trim().is_empty(),
-                Value::Array(arr) => arr
-                    .iter()
-                    .any(|item| item.as_str().map(|s| !s.trim().is_empty()).unwrap_or(false)),
-                _ => false,
-            })
-            .unwrap_or(false);
-        if run_enabled && !out.iter().any(|existing| existing == "run") {
-            out.push("run".to_string());
-        }
-    }
-    out
 }
 
 fn normalize_php_spec(spec: &str) -> Result<String> {
@@ -551,95 +821,19 @@ fn is_valid_scoped_name(spec: &str) -> bool {
 }
 
 fn linkhash_registry_url() -> String {
-    std::env::var("LINKHASH_REGISTRY_URL").unwrap_or_else(|_| "http://localhost:8508".to_string())
+    std::env::var("LINKHASH_REGISTRY_URL")
+        .or_else(|_| std::env::var("LINKHASH_REGISTRY"))
+        .or_else(|_| std::env::var("TANA_GIT_SERVER"))
+        .unwrap_or_else(|_| "https://git.tana.gg".to_string())
 }
 
-async fn fetch_php_latest(registry: &str, name: &str) -> Result<String> {
-    let url = package_summary_url(registry, name)?;
-
-    let response = reqwest::get(&url)
-        .await
-        .with_context(|| format!("failed to fetch package summary for {}", name))?;
-    if !response.status().is_success() {
-        bail!(
-            "package summary request failed ({}): {}",
-            response.status(),
-            name
-        );
-    }
-    let payload = response
-        .json::<PhpPackageSummary>()
-        .await
-        .context("failed to parse package summary")?;
-    payload
-        .latest
-        .context("no latest version found for package")
+fn linkhash_token() -> Option<String> {
+    std::env::var("LINKHASH_TOKEN")
+        .or_else(|_| std::env::var("TANA_GIT_TOKEN"))
+        .ok()
 }
 
-async fn fetch_php_release(registry: &str, name: &str, version: &str) -> Result<PhpPackageRelease> {
-    let url = package_release_url(registry, name, version)?;
-    let response = reqwest::get(&url)
-        .await
-        .with_context(|| format!("failed to fetch package release {}@{}", name, version))?;
-    if !response.status().is_success() {
-        bail!(
-            "package release request failed ({}): {}@{}",
-            response.status(),
-            name,
-            version
-        );
-    }
-    response
-        .json::<PhpPackageRelease>()
-        .await
-        .context("failed to parse package release")
-}
-
-fn package_summary_url(registry: &str, name: &str) -> Result<String> {
-    let (scope, pkg) = parse_scoped_package(name)?;
-    Ok(format!(
-        "{}/api/scoped-packages/{}/{}",
-        registry.trim_end_matches('/'),
-        urlencoding::encode(scope),
-        urlencoding::encode(pkg)
-    ))
-}
-
-fn package_release_url(registry: &str, name: &str, version: &str) -> Result<String> {
-    let (scope, pkg) = parse_scoped_package(name)?;
-    Ok(format!(
-        "{}/api/scoped-packages/{}/{}/{}",
-        registry.trim_end_matches('/'),
-        urlencoding::encode(scope),
-        urlencoding::encode(pkg),
-        urlencoding::encode(version)
-    ))
-}
-
-fn package_download_url(registry: &str, name: &str, version: &str) -> Result<String> {
-    let (scope, pkg) = parse_scoped_package(name)?;
-    Ok(format!(
-        "{}/api/scoped-packages/{}/{}/{}/download",
-        registry.trim_end_matches('/'),
-        urlencoding::encode(scope),
-        urlencoding::encode(pkg),
-        urlencoding::encode(version)
-    ))
-}
-
-fn parse_scoped_package(name: &str) -> Result<(&str, &str)> {
-    if !name.starts_with('@') {
-        bail!("invalid package name `{}`: expected @scope/name", name);
-    }
-    let mut parts = name.splitn(3, '/');
-    let scope = parts.next().unwrap_or("");
-    let pkg = parts.next().unwrap_or("");
-    if scope.is_empty() || pkg.is_empty() || parts.next().is_some() {
-        bail!("invalid package name `{}`: expected @scope/name", name);
-    }
-    Ok((scope, pkg))
-}
-
+#[cfg(test)]
 fn php_modules_path_for(package_name: &str) -> Result<PathBuf> {
     let cwd = std::env::current_dir().context("failed to resolve current directory")?;
     php_modules_path_for_in(&cwd, package_name)
@@ -663,92 +857,15 @@ fn php_modules_path_for_in(project_dir: &Path, package_name: &str) -> Result<Pat
 #[cfg(test)]
 mod tests {
     use super::{
-        PhpPackageRelease, enforce_release_policy, extract_release_capabilities,
-        php_modules_path_for, rehash_php_packages_in,
+        InstalledSource, LockedPackage, bundled_stdlib_prefix, collect_project_install_specs,
+        enqueue_package_spec, install_from_bundled_stdlib, locked_package, package_dependencies,
+        php_modules_path_for, rehash_php_packages_in, reject_vendored_php_modules,
+        replace_installed_package, run_php_install_in, verify_locked_integrity,
     };
     use crate::{lock, payload::InstallPayload};
-    use modules_php::integrity::compute_package_integrity;
-    use runtime_core::security_policy::{RuleList, SecurityPolicy, SecurityScope};
+    use modules_php::integrity::{PackageIntegrity, compute_package_integrity};
     use serde_json::json;
-    use std::fs;
-
-    fn sample_release(
-        manifest: Option<serde_json::Value>,
-        capability_metadata: Option<serde_json::Value>,
-    ) -> PhpPackageRelease {
-        PhpPackageRelease {
-            package_name: "@scope/pkg".to_string(),
-            version: "1.0.0".to_string(),
-            owner: "scope".to_string(),
-            repo: "pkg".to_string(),
-            git_ref: "HEAD".to_string(),
-            description: None,
-            manifest,
-            capability_metadata,
-        }
-    }
-
-    #[test]
-    fn extracts_capabilities_from_metadata_and_manifest() {
-        let release = sample_release(
-            Some(json!({
-                "security": {
-                    "allow": {
-                        "dynamic": true,
-                        "run": ["git"]
-                    }
-                }
-            })),
-            Some(json!({
-                "detected": ["run"]
-            })),
-        );
-        let caps = extract_release_capabilities(&release);
-        assert!(caps.iter().any(|c| c == "run"));
-        assert!(caps.iter().any(|c| c == "dynamic"));
-    }
-
-    #[test]
-    fn blocks_install_when_policy_denies_detected_capability() {
-        let release = sample_release(
-            None,
-            Some(json!({
-                "detected": ["dynamic"]
-            })),
-        );
-        let policy = SecurityPolicy {
-            allow: SecurityScope::default(),
-            deny: SecurityScope {
-                dynamic: true,
-                ..SecurityScope::default()
-            },
-            prompt: true,
-        };
-        let result = enforce_release_policy(&release, &policy);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn allows_install_when_policy_has_no_denies() {
-        let release = sample_release(
-            Some(json!({
-                "security": {
-                    "allow": { "run": ["git"] }
-                }
-            })),
-            None,
-        );
-        let policy = SecurityPolicy {
-            allow: SecurityScope::default(),
-            deny: SecurityScope {
-                run: RuleList::None,
-                ..SecurityScope::default()
-            },
-            prompt: true,
-        };
-        let result = enforce_release_policy(&release, &policy);
-        assert!(result.is_ok());
-    }
+    use std::{collections::BTreeMap, fs};
 
     #[test]
     fn scoped_package_installs_to_scoped_php_modules_path() {
@@ -775,7 +892,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rehash_preserves_deka_scope_when_resolving_package_root() {
+    async fn rehash_resolves_locked_deka_package_to_stdlib_root() {
         let tmp = tempfile::tempdir().expect("tmp");
         let package_root = tmp
             .path()
@@ -792,19 +909,16 @@ mod tests {
             tmp.path().join("deka.lock"),
             json!({
                 "lockfileVersion": 1,
-                "node": { "packages": {} },
-                "php": {
-                    "packages": {
-                        "@deka/component": [
-                            "@deka/component@0.1.0",
-                            "linkhash:@deka/component",
-                            {
-                                "moduleGraph": { "algo": "sha256", "hash": "stale" },
-                                "fsGraph": { "algo": "sha256", "hash": "stale" }
-                            },
-                            "sha512-stale"
-                        ]
-                    }
+                "packages": {
+                    "@deka/component": [
+                        "@deka/component@0.1.0",
+                        "linkhash:@deka/component",
+                        {
+                            "moduleGraph": { "algo": "sha256", "hash": "stale" },
+                            "fsGraph": { "algo": "sha256", "hash": "stale" }
+                        },
+                        "sha512-stale"
+                    ]
                 }
             })
             .to_string(),
@@ -813,7 +927,6 @@ mod tests {
 
         let payload = InstallPayload {
             specs: Vec::new(),
-            ecosystem: Some("php".to_string()),
             yes: true,
             prompt: false,
             quiet: true,
@@ -825,11 +938,7 @@ mod tests {
 
         let expected = compute_package_integrity(&package_root).expect("integrity");
         let lock = lock::read_lockfile_at(&tmp.path().join("deka.lock"));
-        let (_, _, metadata, _) = lock
-            .php
-            .packages
-            .get("@deka/component")
-            .expect("lock entry");
+        let (_, _, metadata, _) = lock.packages.get("@deka/component").expect("lock entry");
         assert_eq!(
             metadata
                 .get("moduleGraph")
@@ -845,214 +954,649 @@ mod tests {
             Some(expected.fs_graph.as_str())
         );
     }
+
+    #[test]
+    fn empty_install_collects_deka_json_dependencies() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        fs::write(
+            tmp.path().join("deka.json"),
+            json!({
+                "dependencies": {
+                    "@deka/core": "^0.1.0",
+                    "@deka/encoding": "latest"
+                }
+            })
+            .to_string(),
+        )
+        .expect("write deka.json");
+
+        let specs = collect_project_install_specs(tmp.path()).expect("specs");
+        assert_eq!(
+            specs,
+            vec![
+                "@deka/core@^0.1.0".to_string(),
+                "@deka/encoding".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_install_falls_back_to_locked_deka_packages() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        fs::write(
+            tmp.path().join("deka.lock"),
+            json!({
+                "lockfileVersion": 1,
+                "packages": {
+                    "@deka/encoding": [
+                        "@deka/encoding@0.1.0",
+                        "linkhash:@deka/encoding",
+                        {},
+                        ""
+                    ],
+                    "@tana/app": [
+                        "@tana/app@1.0.0",
+                        "linkhash:@tana/app",
+                        {},
+                        ""
+                    ]
+                }
+            })
+            .to_string(),
+        )
+        .expect("write lock");
+
+        let specs = collect_project_install_specs(tmp.path()).expect("specs");
+        assert_eq!(specs, vec!["@deka/encoding@0.1.0".to_string()]);
+    }
+
+    #[test]
+    fn empty_install_merges_locked_deka_packages_with_manifest_deps() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        fs::write(
+            tmp.path().join("deka.json"),
+            json!({
+                "dependencies": {
+                    "@deka/encoding": "^0.2.0"
+                }
+            })
+            .to_string(),
+        )
+        .expect("write deka.json");
+        fs::write(
+            tmp.path().join("deka.lock"),
+            json!({
+                "lockfileVersion": 1,
+                "packages": {
+                    "@deka/core": [
+                        "@deka/core@0.1.0",
+                        "linkhash:@deka/core",
+                        {},
+                        ""
+                    ],
+                    "@deka/encoding": [
+                        "@deka/encoding@0.1.0",
+                        "linkhash:@deka/encoding",
+                        {},
+                        ""
+                    ]
+                }
+            })
+            .to_string(),
+        )
+        .expect("write lock");
+
+        let specs = collect_project_install_specs(tmp.path()).expect("specs");
+        assert_eq!(
+            specs,
+            vec![
+                "@deka/core@0.1.0".to_string(),
+                "@deka/encoding@^0.2.0".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn bundled_stdlib_prefix_maps_nested_encoding_packages() {
+        assert_eq!(
+            bundled_stdlib_prefix("@deka/encoding-json").as_deref(),
+            Some("encoding/json")
+        );
+        assert_eq!(
+            bundled_stdlib_prefix("@deka/encoding").as_deref(),
+            Some("encoding")
+        );
+    }
+
+    #[test]
+    fn deka_packages_always_install_to_canonical_scoped_paths() {
+        let cwd = std::env::current_dir().expect("cwd");
+        assert_eq!(
+            php_modules_path_for("@deka/array").expect("path"),
+            cwd.join("php_modules").join("@deka").join("array")
+        );
+        assert_eq!(
+            php_modules_path_for("@deka/crypto").expect("path"),
+            cwd.join("php_modules").join("@deka").join("crypto")
+        );
+    }
+
+    #[test]
+    fn bundled_stdlib_install_writes_resolver_compatible_shape() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let destination = tmp
+            .path()
+            .join("php_modules")
+            .join("@deka")
+            .join("encoding");
+        install_from_bundled_stdlib("@deka/encoding", None, &destination).expect("install bundled");
+
+        assert!(destination.join("json").join("index.phpx").is_file());
+        assert!(destination.join("binary").join("index.phpx").is_file());
+
+        let integrity = compute_package_integrity(&destination).expect("integrity");
+        assert!(!integrity.module_graph.is_empty());
+        assert!(!integrity.fs_graph.is_empty());
+    }
+
+    #[test]
+    fn bundled_stdlib_installs_canonical_scoped_shape() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let destination = tmp.path().join("php_modules").join("@deka").join("http");
+        install_from_bundled_stdlib("@deka/http", None, &destination).expect("install bundled");
+
+        assert!(destination.join("index.phpx").is_file());
+        let manifest = fs::read_to_string(destination.join("deka.json")).expect("manifest");
+        assert!(manifest.contains("\"name\": \"@deka/http\""));
+    }
+
+    #[test]
+    fn locked_package_accepts_legacy_version_descriptor() {
+        let lock = lock::DekaLock {
+            lockfile_version: 1,
+            packages: BTreeMap::from([(
+                "@deka/core".to_string(),
+                (
+                    "0.1.0".to_string(),
+                    "linkhash:@deka/core".to_string(),
+                    json!({
+                        "moduleGraph": { "hash": "module-hash" },
+                        "fsGraph": { "hash": "fs-hash" }
+                    }),
+                    String::new(),
+                ),
+            )]),
+        };
+
+        let locked = locked_package(&lock, "@deka/core")
+            .expect("lock parse")
+            .expect("locked package");
+
+        assert_eq!(locked.version, "0.1.0");
+        assert_eq!(locked.module_graph, "module-hash");
+        assert_eq!(locked.fs_graph, "fs-hash");
+    }
+
+    #[test]
+    fn locked_integrity_rejects_tampered_package_hashes() {
+        let locked = LockedPackage {
+            version: "0.1.0".to_string(),
+            resolved: "linkhash:@deka/core".to_string(),
+            module_graph: "locked-module".to_string(),
+            fs_graph: "locked-fs".to_string(),
+        };
+        let installed = InstalledSource {
+            version: "0.1.0".to_string(),
+            repo: None,
+            git_ref: None,
+            source: "linkhash",
+        };
+        let integrity = PackageIntegrity {
+            module_graph: "attacker-module".to_string(),
+            fs_graph: "attacker-fs".to_string(),
+        };
+
+        let err =
+            verify_locked_integrity("@deka/core", &locked, &installed, &integrity).unwrap_err();
+
+        assert!(
+            err.to_string().contains("moduleGraph hash mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn bundled_stdlib_can_satisfy_locked_entry_without_bundled_rewrite() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let destination = tmp
+            .path()
+            .join("php_modules")
+            .join("@deka")
+            .join("encoding");
+        install_from_bundled_stdlib("@deka/encoding", None, &destination)
+            .expect("install first bundle copy");
+        let integrity = compute_package_integrity(&destination).expect("integrity");
+        fs::remove_dir_all(&destination).expect("remove first copy");
+
+        let lock_path = tmp.path().join("deka.lock");
+        let lock_json = json!({
+            "lockfileVersion": 1,
+            "packages": {
+                "@deka/encoding": [
+                    "@deka/encoding@0.1.0",
+                    "linkhash:@deka/encoding",
+                    {
+                        "moduleGraph": { "algo": "sha256", "hash": integrity.module_graph },
+                        "fsGraph": { "algo": "sha256", "hash": integrity.fs_graph }
+                    },
+                    ""
+                ]
+            }
+        });
+        let lock_bytes = format!(
+            "{}\n",
+            serde_json::to_string_pretty(&lock_json).expect("lock json")
+        );
+        fs::write(&lock_path, &lock_bytes).expect("write lock");
+        let lock = lock::read_lockfile_at(&lock_path);
+        let locked = locked_package(&lock, "@deka/encoding")
+            .expect("lock parse")
+            .expect("locked package");
+
+        let installed = install_from_bundled_stdlib("@deka/encoding", Some(&locked), &destination)
+            .expect("install locked bundle copy");
+        let installed_integrity = compute_package_integrity(&destination).expect("integrity");
+        verify_locked_integrity("@deka/encoding", &locked, &installed, &installed_integrity)
+            .expect("locked verification");
+
+        assert_eq!(installed.version, "0.1.0");
+        assert_eq!(installed.source, "linkhash");
+        let after = fs::read_to_string(&lock_path).expect("read lock");
+        assert_eq!(after, lock_bytes);
+    }
+
+    #[test]
+    fn bundled_stdlib_rejects_locked_version_not_in_bundle_manifest() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let locked = LockedPackage {
+            version: "9.9.9".to_string(),
+            resolved: "linkhash:@deka/encoding".to_string(),
+            module_graph: "unused".to_string(),
+            fs_graph: "unused".to_string(),
+        };
+
+        let err = install_from_bundled_stdlib(
+            "@deka/encoding",
+            Some(&locked),
+            &tmp.path()
+                .join("php_modules")
+                .join("@deka")
+                .join("encoding"),
+        )
+        .unwrap_err();
+
+        assert!(
+            err.to_string().contains("bundled stdlib cannot satisfy"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn staged_install_preserves_existing_package_until_verified_replace() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let destination = tmp.path().join("php_modules").join("core");
+        fs::create_dir_all(&destination).expect("mkdir destination");
+        fs::write(
+            destination.join("index.phpx"),
+            "export function ok() { return true; }\n",
+        )
+        .expect("write original");
+        let staging = tmp
+            .path()
+            .join("php_modules")
+            .join(".deka-install-test")
+            .join("core");
+        fs::create_dir_all(&staging).expect("mkdir staging");
+        fs::write(
+            staging.join("index.phpx"),
+            "export function ok() { return 'verified'; }\n",
+        )
+        .expect("write staged");
+
+        assert_eq!(
+            fs::read_to_string(destination.join("index.phpx")).expect("read original"),
+            "export function ok() { return true; }\n"
+        );
+
+        replace_installed_package(&staging, &destination).expect("replace");
+
+        assert_eq!(
+            fs::read_to_string(destination.join("index.phpx")).expect("read replaced"),
+            "export function ok() { return 'verified'; }\n"
+        );
+        assert!(
+            !tmp.path()
+                .join("php_modules")
+                .join(".deka-install-test")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn transitive_dependencies_are_queued_as_a_flat_scoped_graph() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let package = tmp.path().join("package-a");
+        fs::create_dir_all(&package).expect("mkdir");
+        fs::write(
+            package.join("deka.json"),
+            json!({ "dependencies": { "@tana/b": "^1.0.0", "crypto": "0.1.0" } }).to_string(),
+        )
+        .expect("manifest");
+
+        let deps = package_dependencies(&package, "@tana/a").expect("deps");
+        assert_eq!(deps, vec!["@tana/b@^1.0.0", "crypto@0.1.0"]);
+
+        let mut pending = std::collections::VecDeque::new();
+        let mut requested = BTreeMap::new();
+        enqueue_package_spec(&mut pending, &mut requested, "@tana/a@1.0.0", "root").expect("root");
+        for dep in deps {
+            enqueue_package_spec(&mut pending, &mut requested, &dep, "@tana/a")
+                .expect("dependency");
+        }
+        assert_eq!(
+            pending.into_iter().collect::<Vec<_>>(),
+            vec!["@tana/a", "@tana/b", "@deka/crypto"]
+        );
+        assert_eq!(
+            php_modules_path_for("@tana/b").expect("path"),
+            std::env::current_dir()
+                .expect("cwd")
+                .join("php_modules/@tana/b")
+        );
+        assert_eq!(
+            php_modules_path_for("@deka/crypto").expect("path"),
+            std::env::current_dir()
+                .expect("cwd")
+                .join("php_modules/@deka/crypto")
+        );
+    }
+
+    #[test]
+    fn install_rejects_vendored_php_modules_in_package_tree() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let nested = tmp
+            .path()
+            .join("src")
+            .join("php_modules")
+            .join("@tana")
+            .join("b");
+        fs::create_dir_all(&nested).expect("mkdir nested vendor tree");
+        let err = reject_vendored_php_modules(tmp.path(), "@tana/a").expect_err("must reject");
+        assert!(err.to_string().contains("contains vendored php_modules"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_rejects_case_variant_and_symlinked_vendor_trees() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        fs::create_dir_all(tmp.path().join("Php_Modules")).expect("case vendor");
+        assert!(reject_vendored_php_modules(tmp.path(), "@tana/a").is_err());
+        fs::remove_dir_all(tmp.path().join("Php_Modules")).expect("remove case vendor");
+        std::os::unix::fs::symlink("outside", tmp.path().join("php_modules"))
+            .expect("vendor symlink");
+        assert!(reject_vendored_php_modules(tmp.path(), "@tana/a").is_err());
+    }
+
+    #[tokio::test]
+    async fn install_flattens_transitive_graph_and_writes_lock_integrity() {
+        let packages = BTreeMap::from([
+            ("@scope/a".to_string(), json!({ "@scope/b": "^1.0.0" })),
+            ("@scope/b".to_string(), json!({ "@scope/c": "^1.0.0" })),
+            ("@scope/c".to_string(), json!({})),
+        ]);
+        let (registry, shutdown) = fixture_registry(packages).await;
+        let tmp = tempfile::tempdir().expect("project");
+        tokio::task::spawn_blocking({
+            let root = tmp.path().to_path_buf();
+            let registry = registry.clone();
+            move || {
+                run_php_install_in(
+                    vec!["@scope/a@^1.0.0".to_string()],
+                    true,
+                    &root,
+                    &registry,
+                    None,
+                )
+            }
+        })
+        .await
+        .expect("installer task")
+        .expect("install graph");
+        let modules = tmp.path().join("php_modules").join("@scope");
+        for package in ["a", "b", "c"] {
+            assert!(modules.join(package).is_dir(), "missing flat {package}");
+            assert!(!modules.join(package).join("php_modules").exists());
+        }
+        let lock = lock::read_lockfile_at(&tmp.path().join("deka.lock"));
+        assert_eq!(lock.packages.len(), 3);
+        for package in ["@scope/a", "@scope/b", "@scope/c"] {
+            let (_, _, metadata, _) = lock.packages.get(package).expect("lock entry");
+            assert!(metadata["moduleGraph"]["hash"].as_str().is_some());
+            assert!(metadata["fsGraph"]["hash"].as_str().is_some());
+        }
+        shutdown.send(()).expect("shutdown registry");
+    }
+
+    #[test]
+    fn install_preserves_tracked_unscoped_deka_alias_and_canonical_lock_integrity() {
+        let tmp = tempfile::tempdir().expect("project");
+        let alias = tmp.path().join("php_modules/string");
+        fs::create_dir_all(&alias).expect("tracked unscoped alias");
+        fs::write(alias.join("index.phpx"), "export const compatibility = true;\n")
+            .expect("write tracked alias");
+
+        run_php_install_in(
+            vec!["@deka/string".to_string()],
+            true,
+            tmp.path(),
+            "http://127.0.0.1:1",
+            None,
+        )
+        .expect("bundled deka install");
+        assert!(
+            tmp.path()
+                .join("php_modules/@deka/string/index.phpx")
+                .is_file()
+        );
+        let lock_path = tmp.path().join("deka.lock");
+        assert!(lock_path.is_file());
+        assert!(
+            lock::read_lockfile_at(&lock_path)
+                .packages
+                .contains_key("@deka/string")
+        );
+        assert_eq!(
+            fs::read_to_string(alias.join("index.phpx")).expect("tracked alias survives"),
+            "export const compatibility = true;\n"
+        );
+        let lock_before_repeat = fs::read_to_string(&lock_path).expect("read locked install");
+
+        // A second locked install must verify the canonical scoped package
+        // without modifying the compatibility alias or relying on cache state.
+        run_php_install_in(
+            vec!["@deka/string".to_string()],
+            true,
+            tmp.path(),
+            "http://127.0.0.1:1",
+            None,
+        )
+        .expect("repeat bundled deka install");
+        assert_eq!(
+            fs::read_to_string(alias.join("index.phpx")).expect("tracked alias still survives"),
+            "export const compatibility = true;\n"
+        );
+        assert_eq!(
+            fs::read_to_string(&lock_path).expect("read repeated locked install"),
+            lock_before_repeat,
+            "locked install must not rewrite tracked metadata"
+        );
+    }
+
+    #[tokio::test]
+    async fn install_rejects_disjoint_transitive_version_constraints() {
+        let packages = BTreeMap::from([
+            ("@scope/a".to_string(), json!({ "@scope/c": "^1.0.0" })),
+            ("@scope/b".to_string(), json!({ "@scope/c": "^2.0.0" })),
+            ("@scope/c".to_string(), json!({})),
+        ]);
+        let (registry, shutdown) = fixture_registry(packages).await;
+        let tmp = tempfile::tempdir().expect("project");
+        let error = tokio::task::spawn_blocking({
+            let root = tmp.path().to_path_buf();
+            let registry = registry.clone();
+            move || {
+                run_php_install_in(
+                    vec!["@scope/a".to_string(), "@scope/b".to_string()],
+                    true,
+                    &root,
+                    &registry,
+                    None,
+                )
+            }
+        })
+        .await
+        .expect("installer task")
+        .expect_err("disjoint ranges must fail");
+        assert!(
+            error.to_string().contains(
+                "version conflict: @scope/c required as ^1.0.0 by @scope/a and ^2.0.0 by @scope/b"
+            ),
+            "{error}"
+        );
+        shutdown.send(()).expect("shutdown registry");
+    }
+
+    #[tokio::test]
+    async fn install_uses_one_highest_version_for_overlapping_constraints() {
+        let packages = BTreeMap::from([
+            ("@scope/a".to_string(), json!({ "@scope/c": "^1.1.0" })),
+            ("@scope/b".to_string(), json!({ "@scope/c": "^1.3.0" })),
+            ("@scope/c".to_string(), json!({})),
+        ]);
+        let (registry, shutdown) = fixture_registry(packages).await;
+        let tmp = tempfile::tempdir().expect("project");
+        tokio::task::spawn_blocking({
+            let root = tmp.path().to_path_buf();
+            let registry = registry.clone();
+            move || {
+                run_php_install_in(
+                    vec!["@scope/a".to_string(), "@scope/b".to_string()],
+                    true,
+                    &root,
+                    &registry,
+                    None,
+                )
+            }
+        })
+        .await
+        .expect("installer task")
+        .expect("overlap installs");
+        let lock = lock::read_lockfile_at(&tmp.path().join("deka.lock"));
+        assert_eq!(lock.packages.len(), 3);
+        assert_eq!(lock.packages["@scope/c"].0, "@scope/c@1.4.0");
+        shutdown.send(()).expect("shutdown registry");
+    }
+
+    async fn fixture_registry(
+        packages: BTreeMap<String, serde_json::Value>,
+    ) -> (String, tokio::sync::oneshot::Sender<()>) {
+        use axum::{
+            Json, Router,
+            extract::{Path as AxumPath, Query, State},
+            routing::get,
+        };
+        use std::{collections::HashMap, sync::Arc};
+        #[derive(Clone)]
+        struct Fixture(Arc<BTreeMap<String, serde_json::Value>>);
+        async fn versions(
+            AxumPath((_scope, package)): AxumPath<(String, String)>,
+        ) -> Json<serde_json::Value> {
+            let versions = if package == "c" {
+                vec!["1.1.0", "1.3.0", "1.4.0", "2.0.0"]
+            } else {
+                vec!["1.0.0"]
+            };
+            Json(json!({ "versions": versions }))
+        }
+        async fn resolve(
+            AxumPath((_scope, _package, version)): AxumPath<(String, String, String)>,
+        ) -> Json<serde_json::Value> {
+            Json(json!({ "version": version, "repo": "fixture", "git_ref": "fixture" }))
+        }
+        async fn tree(
+            AxumPath((scope, package, _version)): AxumPath<(String, String, String)>,
+            State(Fixture(packages)): State<Fixture>,
+        ) -> Json<serde_json::Value> {
+            let name = format!("@{scope}/{package}");
+            assert!(
+                packages.contains_key(&name),
+                "unknown fixture package {name}"
+            );
+            Json(json!({ "files": [{ "path": "deka.json" }, { "path": "index.phpx" }] }))
+        }
+        async fn blob(
+            AxumPath((scope, package, version)): AxumPath<(String, String, String)>,
+            Query(query): Query<HashMap<String, String>>,
+            State(Fixture(packages)): State<Fixture>,
+        ) -> Json<serde_json::Value> {
+            let name = format!("@{scope}/{package}");
+            let content = if query.get("path").is_some_and(|path| path == "deka.json") {
+                json!({ "name": name, "version": version, "dependencies": packages[&name] })
+                    .to_string()
+            } else {
+                "export const fixture = true;\n".to_string()
+            };
+            Json(json!({ "content": content }))
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("registry listener");
+        let address = listener.local_addr().expect("registry address");
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let app = Router::new()
+            .route(
+                "/api/scoped-packages/:scope/:package/versions",
+                get(versions),
+            )
+            .route(
+                "/api/scoped-packages/:scope/:package/:version",
+                get(resolve),
+            )
+            .route(
+                "/api/scoped-packages/:scope/:package/:version/tree",
+                get(tree),
+            )
+            .route(
+                "/api/scoped-packages/:scope/:package/:version/blob",
+                get(blob),
+            )
+            .with_state(Fixture(Arc::new(packages)));
+        tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .expect("fixture registry");
+        });
+        (format!("http://{address}"), shutdown_tx)
+    }
 }
 
 pub fn run_probe(path: &PathBuf) -> Result<()> {
     let canonical = fs::canonicalize(path).context("failed to resolve probe path")?;
     emit_probe(&canonical)?;
     Ok(())
-}
-
-async fn install_node_package(
-    cache: &CachePaths,
-    bun_lock: Option<&BunLock>,
-    spec: &str,
-    lock_key: Option<&str>,
-) -> Result<InstallResult> {
-    let (name, version_spec) = parse_package_spec(spec);
-    let metadata = fetch_npm_metadata(&name).await?;
-    let lock_entry = bun_lock.and_then(|lock| lock.lookup(lock_key, &name));
-    let version = lock_entry
-        .map(|entry| entry.version.clone())
-        .or_else(|| resolve_package_version(&metadata, version_spec.as_deref()))
-        .context("unable to resolve package version")?;
-
-    let version_info = metadata
-        .get("versions")
-        .and_then(|versions| versions.get(&version))
-        .context("missing version info")?;
-    let key = cache_key(&name, &version);
-    let cache_dir = cache.cache_dir(&key);
-
-    let (integrity, resolved) = if cache_dir.exists() {
-        let meta_path = cache.metadata_path(&key);
-        let meta = crate::cache::read_metadata(&meta_path);
-        let integrity = meta
-            .as_ref()
-            .and_then(|value| value.get("integrity"))
-            .and_then(|value| value.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| {
-                version_info
-                    .get("dist")
-                    .and_then(|dist| dist.get("integrity"))
-                    .and_then(|value| value.as_str())
-                    .map(|s| s.to_string())
-            })
-            .context("integrity unavailable")?;
-        let resolved = meta
-            .as_ref()
-            .and_then(|value| value.get("resolved"))
-            .and_then(|value| value.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| {
-                version_info
-                    .get("dist")
-                    .and_then(|dist| dist.get("tarball"))
-                    .and_then(|value| value.as_str())
-                    .map(|s| s.to_string())
-            })
-            .context("resolved URL missing")?;
-        (integrity, resolved)
-    } else {
-        let tarball_url = version_info
-            .get("dist")
-            .and_then(|dist| dist.get("tarball"))
-            .and_then(|value| value.as_str())
-            .context("tarball URL missing")?;
-        let bytes = download_tarball(tarball_url).await?;
-        let integrity = version_info
-            .get("dist")
-            .and_then(|dist| dist.get("integrity"))
-            .and_then(|value| value.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| compute_sha512(&bytes));
-        let archive_path = cache.archive_path(&key);
-        fs::write(&archive_path, &bytes)?;
-        extract_tarball(&archive_path, &cache_dir, &cache.tmp)?;
-        let meta = json!({
-            "integrity": integrity,
-            "resolved": tarball_url,
-            "version": version,
-        });
-        crate::cache::write_metadata(&cache.metadata_path(&key), &meta)?;
-        (integrity, tarball_url.to_string())
-    };
-
-    let dependencies = build_dependency_specs(
-        lock_key,
-        collect_spec_list(version_info.get("dependencies")),
-        bun_lock,
-    );
-    let optional_dependencies = build_dependency_specs(
-        lock_key,
-        collect_spec_list(version_info.get("optionalDependencies")),
-        bun_lock,
-    );
-
-    let optional_peers = if let Some(entry) = lock_entry {
-        let peer_names = collect_optional_peers(Some(&entry.metadata));
-        let peer_deps = version_info.get("peerDependencies");
-        let peer_specs: Vec<String> = peer_names
-            .into_iter()
-            .filter_map(|peer_name| {
-                if let Some(Value::Object(peers)) = peer_deps {
-                    peers.get(&peer_name).and_then(|v| v.as_str()).map(|range| {
-                        if std::env::var("DEKA_DEBUG").is_ok() {
-                            eprintln!("[DEBUG] optionalPeer found: {}@{}", peer_name, range);
-                        }
-                        format!("{peer_name}@{range}")
-                    })
-                } else {
-                    None
-                }
-            })
-            .collect();
-        build_dependency_specs(lock_key, peer_specs, bun_lock)
-    } else {
-        Vec::new()
-    };
-
-    Ok(InstallResult {
-        name: name.to_string(),
-        version,
-        cache_dir,
-        lock_key: lock_key.map(|s| s.to_string()),
-        integrity,
-        resolved,
-        metadata: build_lock_metadata(version_info),
-        dependencies,
-        optional_dependencies,
-        optional_peers,
-    })
-}
-
-fn collect_spec_list(value: Option<&Value>) -> Vec<String> {
-    if let Some(Value::Object(map)) = value {
-        map.iter()
-            .filter_map(|(name, version)| version.as_str().map(|range| format!("{name}@{range}")))
-            .collect()
-    } else {
-        Vec::new()
-    }
-}
-
-fn collect_optional_peers(lock_entry: Option<&Value>) -> Vec<String> {
-    if let Some(entry) = lock_entry {
-        if let Some(Value::Array(peers)) = entry.get("optionalPeers") {
-            return peers
-                .iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect();
-        }
-    }
-    Vec::new()
-}
-
-fn build_lock_metadata(value: &Value) -> Value {
-    let mut map = Map::new();
-    for key in [
-        "dependencies",
-        "peerDependencies",
-        "optionalDependencies",
-        "bin",
-    ] {
-        if let Some(val) = value.get(key) {
-            if !val.is_null() {
-                map.insert(key.to_string(), val.clone());
-            }
-        }
-    }
-    Value::Object(map)
-}
-
-fn collect_project_specs() -> Result<Vec<String>> {
-    let manifest = fs::read_to_string("package.json")
-        .context("package.json not found in current directory")?;
-    let pkg_json: Value =
-        serde_json::from_str(&manifest).context("failed to parse package.json")?;
-    let mut deps = BTreeMap::new();
-    for section in ["dependencies", "devDependencies"] {
-        if let Some(Value::Object(map)) = pkg_json.get(section) {
-            for (name, value) in map {
-                if let Some(version) = value.as_str() {
-                    deps.insert(name.clone(), version.to_string());
-                }
-            }
-        }
-    }
-
-    let lock = lock::read_lockfile();
-    let mut specs = Vec::new();
-    for (name, version) in deps {
-        if let Some(entry) = lock.node.packages.get(&name) {
-            specs.push(entry.0.clone());
-        } else if !version.trim().is_empty() {
-            specs.push(format!("{name}@{version}"));
-        } else {
-            specs.push(name.clone());
-        }
-    }
-    Ok(specs)
-}
-
-fn prompt_yes_no(message: &str) -> Result<bool> {
-    print!("  {} ", message);
-    std::io::stdout().flush()?;
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    let normalized = input.trim().to_lowercase();
-    Ok(normalized == "y" || normalized == "yes")
 }
 
 fn emit_summary(installed: usize, duration_ms: u64, quiet: bool) -> Result<()> {
@@ -1073,246 +1617,4 @@ fn emit_summary(installed: usize, duration_ms: u64, quiet: bool) -> Result<()> {
 fn emit_probe(path: &PathBuf) -> Result<()> {
     eprintln!("📁 {}", path.display());
     Ok(())
-}
-
-struct InstallContext {
-    cache: Arc<CachePaths>,
-    queue: VecDeque<InstallTask>,
-    scheduled: HashSet<String>,
-    installed: HashSet<String>,
-    bun_lock: Option<Arc<BunLock>>,
-    current_os: String,
-    current_cpu: String,
-}
-
-struct InstallTask {
-    spec: String,
-    optional: bool,
-    lock_key: Option<String>,
-}
-
-impl InstallContext {
-    fn new(cache: Arc<CachePaths>, bun_lock: Option<Arc<BunLock>>) -> Self {
-        Self {
-            cache,
-            queue: VecDeque::new(),
-            scheduled: HashSet::new(),
-            installed: HashSet::new(),
-            bun_lock,
-            current_os: normalize_os(),
-            current_cpu: normalize_cpu(),
-        }
-    }
-
-    fn enqueue(
-        &mut self,
-        spec: String,
-        descriptor: Option<String>,
-        optional: bool,
-        lock_key: Option<String>,
-    ) {
-        let key = descriptor
-            .as_deref()
-            .map(|desc| desc.to_string())
-            .unwrap_or_else(|| build_task_key(&spec, lock_key.as_deref()));
-        if self.scheduled.insert(key) {
-            self.queue.push_back(InstallTask {
-                spec,
-                optional,
-                lock_key,
-            });
-        }
-    }
-
-    fn next_task(&mut self) -> Option<InstallTask> {
-        self.queue.pop_front()
-    }
-
-    fn should_install_optional(&self, lock_key: &str, spec: &str) -> bool {
-        if let Some(lock) = self.bun_lock.as_deref() {
-            let (name, _) = parse_package_spec(spec);
-            if let Some(entry) = lock.lookup(Some(lock_key), &name) {
-                if !matches_requirement(entry.metadata.get("os"), &self.current_os) {
-                    return false;
-                }
-                if !matches_requirement(entry.metadata.get("cpu"), &self.current_cpu) {
-                    return false;
-                }
-            }
-        }
-        true
-    }
-
-    fn determine_install_path(
-        &self,
-        name: &str,
-        version: &str,
-        lock_key: Option<&str>,
-    ) -> Option<PathBuf> {
-        let target_path = if let Some(key) = lock_key {
-            let is_scoped = key.starts_with('@');
-            let segments: Vec<&str> = key.split('/').collect();
-            let is_nested = if is_scoped {
-                segments.len() > 2
-            } else {
-                segments.len() > 1
-            };
-
-            if is_nested {
-                let mut path = self.cache.node_modules.clone();
-                let parent_segments = if is_scoped {
-                    &segments[..segments.len() - 1]
-                } else {
-                    &segments[..segments.len() - 1]
-                };
-
-                for segment in parent_segments {
-                    path = path.join(segment);
-                }
-                path = path.join("node_modules");
-
-                let name_segments: Vec<&str> = name.split('/').collect();
-                for segment in name_segments {
-                    path = path.join(segment);
-                }
-                path
-            } else {
-                self.cache.project_path_for(name)
-            }
-        } else {
-            self.cache.project_path_for(name)
-        };
-
-        let path_str = target_path.to_string_lossy();
-        let install_key = format!("{}:{}@{}", path_str, name, version);
-
-        if self.installed.contains(&install_key) {
-            if std::env::var("DEKA_DEBUG").is_ok() {
-                eprintln!(
-                    "[DEBUG] {} already installed at {:?}, skipping",
-                    install_key, target_path
-                );
-            }
-            return None;
-        }
-
-        if std::env::var("DEKA_DEBUG").is_ok() {
-            eprintln!(
-                "[DEBUG] {} (lock_key={:?}) -> {:?}",
-                name, lock_key, target_path
-            );
-        }
-        Some(target_path)
-    }
-}
-
-struct DependencySpec {
-    spec: String,
-    lock_key: String,
-    descriptor: String,
-}
-
-struct InstallResult {
-    name: String,
-    version: String,
-    cache_dir: PathBuf,
-    lock_key: Option<String>,
-    integrity: String,
-    resolved: String,
-    metadata: Value,
-    dependencies: Vec<DependencySpec>,
-    optional_dependencies: Vec<DependencySpec>,
-    optional_peers: Vec<DependencySpec>,
-}
-
-fn normalize_os() -> String {
-    match std::env::consts::OS {
-        "macos" => "darwin".to_string(),
-        "windows" => "win32".to_string(),
-        other => other.to_string(),
-    }
-}
-
-fn normalize_cpu() -> String {
-    match std::env::consts::ARCH {
-        "aarch64" => "arm64".to_string(),
-        "x86_64" => "x64".to_string(),
-        "x86" | "i586" => "ia32".to_string(),
-        other => other.to_string(),
-    }
-}
-
-fn matches_requirement(value: Option<&Value>, current: &str) -> bool {
-    match value {
-        Some(Value::String(expected)) => expected == "none" || expected == current,
-        Some(Value::Array(list)) => list
-            .iter()
-            .any(|item| matches_requirement(Some(item), current)),
-        _ => true,
-    }
-}
-
-fn build_task_key(spec: &str, lock_key: Option<&str>) -> String {
-    lock_key
-        .map(|key| key.to_string())
-        .unwrap_or_else(|| spec.to_string())
-}
-
-fn build_child_lock_key(parent: Option<&str>, name: &str) -> String {
-    if let Some(parent_key) = parent {
-        format!("{parent_key}/{name}")
-    } else {
-        name.to_string()
-    }
-}
-
-fn build_dependency_specs(
-    parent_lock_key: Option<&str>,
-    specs: Vec<String>,
-    bun_lock: Option<&BunLock>,
-) -> Vec<DependencySpec> {
-    specs
-        .into_iter()
-        .map(|spec| {
-            let (name, _) = parse_package_spec(&spec);
-            let (lock_key, descriptor) = if let Some(lock) = bun_lock {
-                if let Some(parent) = parent_lock_key {
-                    let nested_key = build_child_lock_key(Some(parent), &name);
-                    if let Some(entry) = lock.get(&nested_key) {
-                        if std::env::var("DEKA_DEBUG").is_ok() {
-                            eprintln!("[DEBUG] {}: nested key '{}' found", name, nested_key);
-                        }
-                        (nested_key, entry.descriptor.clone())
-                    } else if let Some(entry) = lock.get(&name) {
-                        if std::env::var("DEKA_DEBUG").is_ok() {
-                            eprintln!(
-                                "[DEBUG] {}: using top-level key '{}' (parent={})",
-                                name, name, parent
-                            );
-                        }
-                        (name.clone(), entry.descriptor.clone())
-                    } else {
-                        if std::env::var("DEKA_DEBUG").is_ok() {
-                            eprintln!("[DEBUG] {}: not in lockfile", name);
-                        }
-                        (name.clone(), spec.clone())
-                    }
-                } else {
-                    if let Some(entry) = lock.get(&name) {
-                        (name.clone(), entry.descriptor.clone())
-                    } else {
-                        (name.clone(), spec.clone())
-                    }
-                }
-            } else {
-                (name.clone(), spec.clone())
-            };
-
-            DependencySpec {
-                spec,
-                lock_key,
-                descriptor,
-            }
-        })
-        .collect()
 }

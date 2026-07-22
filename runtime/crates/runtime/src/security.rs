@@ -1,9 +1,10 @@
 use core::Context;
 use core::ServeMode;
 use runtime_core::security_policy::{
-    RuleList, SecurityCliOverrides, merge_policy_with_cli, parse_deka_security_policy,
-    policy_to_json,
+    RuleList, SecurityCliOverrides, merge_policy_with_cli_manifest_net_env,
+    parse_deka_security_policy, policy_to_json,
 };
+use std::path::Path;
 
 pub struct ResolvedSecurityPolicy {
     pub policy_json: String,
@@ -13,8 +14,22 @@ pub struct ResolvedSecurityPolicy {
 }
 
 pub fn resolve_security_policy(context: &Context) -> Result<ResolvedSecurityPolicy, String> {
-    let deka_json_path = context.env.cwd.join("deka.json");
-    let root = if deka_json_path.is_file() {
+    resolve_security_policy_for_root(
+        &context.handler.resolved.directory,
+        &context.args.flags,
+        ProjectKind::from_mode(&context.handler.resolved.mode),
+        context.args.flags.contains_key("--dev"),
+    )
+}
+
+pub fn resolve_security_policy_for_root(
+    root: &Path,
+    flags: &std::collections::HashMap<String, bool>,
+    project_kind: ProjectKind,
+    dev: bool,
+) -> Result<ResolvedSecurityPolicy, String> {
+    let deka_json_path = root.join("deka.json");
+    let document = if deka_json_path.is_file() {
         let raw = std::fs::read_to_string(&deka_json_path)
             .map_err(|err| format!("failed to read {}: {}", deka_json_path.display(), err))?;
         serde_json::from_str::<serde_json::Value>(&raw)
@@ -23,7 +38,7 @@ pub fn resolve_security_policy(context: &Context) -> Result<ResolvedSecurityPoli
         serde_json::json!({})
     };
 
-    let parsed = parse_deka_security_policy(&root);
+    let parsed = parse_deka_security_policy(&document);
     if parsed.has_errors() {
         let mut lines = Vec::new();
         for diag in parsed.diagnostics {
@@ -37,7 +52,6 @@ pub fn resolve_security_policy(context: &Context) -> Result<ResolvedSecurityPoli
         return Err(format!("invalid security policy:\n{}", lines.join("\n")));
     }
 
-    let project_kind = ProjectKind::from_mode(&context.handler.resolved.mode);
     let warnings = parsed
         .diagnostics
         .iter()
@@ -50,12 +64,12 @@ pub fn resolve_security_policy(context: &Context) -> Result<ResolvedSecurityPoli
         .map(|diag| format_warning(diag, project_kind))
         .collect::<Vec<_>>();
 
-    let overrides = SecurityCliOverrides::from_flags(&context.args.flags);
+    let overrides = SecurityCliOverrides::from_flags(flags);
     let mut policy = parsed.policy;
-    if context.args.flags.contains_key("--dev") {
-        apply_dev_defaults(&mut policy, &context.handler.resolved.directory);
+    if dev {
+        apply_dev_defaults(&mut policy, root);
     }
-    let merged = merge_policy_with_cli(policy, &overrides);
+    let merged = merge_policy_with_cli_manifest_net_env(policy, &overrides);
     let policy_json = serde_json::to_string(&policy_to_json(&merged))
         .map_err(|err| format!("failed to serialize security policy: {}", err))?;
     let summary = format!(
@@ -77,6 +91,29 @@ pub fn resolve_security_policy(context: &Context) -> Result<ResolvedSecurityPoli
     })
 }
 
+pub fn install_platform_security_for_root(
+    root: &Path,
+    flags: &std::collections::HashMap<String, bool>,
+) -> Result<(), String> {
+    let resolved_security = resolve_security_policy_for_root(root, flags, ProjectKind::Php, false)?;
+    for warning in resolved_security.warnings {
+        stdio::log("security", &format!("warning: {}", warning));
+    }
+    stdio::log("security", &resolved_security.summary);
+    unsafe {
+        std::env::set_var("DEKA_SECURITY_POLICY", &resolved_security.policy_json);
+        std::env::set_var(
+            "DEKA_SECURITY_NO_PROMPT",
+            if resolved_security.prompt_enabled {
+                "0"
+            } else {
+                "1"
+            },
+        );
+    }
+    Ok(())
+}
+
 fn apply_dev_defaults(
     policy: &mut runtime_core::security_policy::SecurityPolicy,
     root: &std::path::Path,
@@ -95,9 +132,6 @@ fn apply_dev_defaults(
     if matches!(policy.allow.wasm, RuleList::None) {
         policy.allow.wasm = RuleList::All;
     }
-    if matches!(policy.allow.env, RuleList::None) {
-        policy.allow.env = RuleList::All;
-    }
 }
 
 fn summarize_rule(rule: &RuleList) -> String {
@@ -115,7 +149,7 @@ fn summarize_rule(rule: &RuleList) -> String {
 }
 
 #[derive(Copy, Clone)]
-enum ProjectKind {
+pub enum ProjectKind {
     Php,
     Js,
     Other,

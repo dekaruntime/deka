@@ -6,6 +6,12 @@
     { "name": "data_backend.cql_exec", "producer": "rust:data_backend", "consumer": "phpx:crates/modules_php/tests/fixtures/seams/data/cql_execute.phpx" },
     { "name": "data_backend.kv_get",   "producer": "rust:data_backend", "consumer": "phpx:crates/modules_php/tests/fixtures/seams/data/kv_get.phpx" },
     { "name": "data_backend.kv_set",   "producer": "rust:data_backend", "consumer": "phpx:crates/modules_php/tests/fixtures/seams/data/kv_set.phpx" },
-    { "name": "data_backend.kv_del",   "producer": "rust:data_backend", "consumer": "phpx:crates/modules_php/tests/fixtures/seams/data/kv_del.phpx" }
+    { "name": "data_backend.kv_del",   "producer": "rust:data_backend", "consumer": "phpx:crates/modules_php/tests/fixtures/seams/data/kv_del.phpx" },
+    { "name": "harar_auth.mint", "producer": "phpx:contracts/fixtures/harar/auth_mint_producer.phpx", "consumer": "phpx:contracts/fixtures/harar/auth_mint_consumer.phpx" },
+    { "name": "harar_auth.verify", "producer": "phpx:contracts/fixtures/harar/auth_verify_producer.phpx", "consumer": "phpx:contracts/fixtures/harar/auth_verify_consumer.phpx" },
+    { "name": "harar_auth.revoke", "producer": "phpx:contracts/fixtures/harar/auth_revoke_producer.phpx", "consumer": "phpx:contracts/fixtures/harar/auth_revoke_consumer.phpx" },
+    { "name": "harar_auth.jwks", "producer": "phpx:contracts/fixtures/harar/jwks_producer.phpx", "consumer": "phpx:contracts/fixtures/harar/jwks_consumer.phpx" },
+    { "name": "platform.env_policy", "producer": "phpx:contracts/fixtures/platform/env_policy_producer.phpx", "consumer": "phpx:contracts/fixtures/platform/env_policy_consumer.phpx" },
+    { "name": "linkhash.package_download", "producer": "phpx:contracts/fixtures/linkhash/package_download_producer.phpx", "consumer": "phpx:contracts/fixtures/linkhash/package_download_consumer.phpx" }
   ]
 }

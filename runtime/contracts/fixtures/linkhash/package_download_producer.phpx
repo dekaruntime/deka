@@ -1,0 +1,29 @@
+struct LinkhashPackageDownloadRequest {
+    $package_name: string;
+    $version: string;
+}
+
+struct LinkhashPackageTreeEntry {
+    $kind: string;
+    $path: string;
+}
+
+struct LinkhashPackageTreeResponse {
+    $entries: array<LinkhashPackageTreeEntry>;
+}
+
+struct LinkhashPackageBlobResponse {
+    $content: string;
+}
+
+struct LinkhashPackageDownloadResponse {
+    $tree: LinkhashPackageTreeResponse;
+    $blob: LinkhashPackageBlobResponse;
+}
+
+export function linkhash_package_download($req: LinkhashPackageDownloadRequest): LinkhashPackageDownloadResponse {
+    return LinkhashPackageDownloadResponse {
+        $tree: LinkhashPackageTreeResponse { $entries: [] },
+        $blob: LinkhashPackageBlobResponse { $content: "" },
+    };
+}

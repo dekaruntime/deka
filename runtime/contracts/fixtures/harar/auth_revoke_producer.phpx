@@ -1,0 +1,12 @@
+// Producer view for the Harar JSON socket revoke boundary.
+struct HararRevokeTokenRequest {
+    $jti: string;
+}
+
+struct HararOkResponse {
+    $ok: bool;
+}
+
+export function revoke($req: HararRevokeTokenRequest): HararOkResponse {
+    return HararOkResponse { $ok: true };
+}

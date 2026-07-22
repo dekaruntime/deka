@@ -463,6 +463,12 @@ impl<'a> JsSubsetEmitter<'a> {
                 Ok(())
             }
             Stmt::Expression { expr, .. } => {
+                let assigned_kind = match *expr {
+                    Expr::Assign { expr: rhs, .. } | Expr::AssignRef { expr: rhs, .. } => {
+                        self.infer_expr_kind(rhs)
+                    }
+                    _ => None,
+                };
                 if let Some((name, rhs)) = self.assignment_to_named_var(*expr)? {
                     let top_level = self.scopes.len() == 1;
                     // Use function-local scope check when inside a function body:
@@ -476,12 +482,14 @@ impl<'a> JsSubsetEmitter<'a> {
                     };
                     if !already_declared {
                         self.declare_in_scope(&name);
+                        self.record_value_kind(&name, assigned_kind);
                         self.body.push_str(&format!("let {} = {};\n", name, rhs));
                         if top_level {
                             self.body
                                 .push_str(&format!("globalThis.{} = {};\n", name, name));
                         }
                     } else {
+                        self.record_value_kind(&name, assigned_kind);
                         self.body.push_str(&format!("{} = {};\n", name, rhs));
                         if top_level {
                             self.body

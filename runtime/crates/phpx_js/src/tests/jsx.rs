@@ -70,4 +70,3 @@ return <div><span>inner</span></div>;
 }
 
 // ---- Scope validation edge cases ----
-

@@ -30,5 +30,6 @@ fn phpx_to_js_with_warnings(source: &str) -> Result<(String, Vec<String>), Strin
 mod builtin_rewrites;
 mod emitter;
 mod jsx;
+mod pipe;
 mod prelude;
 mod scope;

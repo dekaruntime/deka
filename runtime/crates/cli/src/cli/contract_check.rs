@@ -6,7 +6,7 @@
 //! check. Errors name both the producer and consumer `file:line`.
 //!
 //! Each side is a `kind:ref` spec:
-//!   - `rust:storefront` / `rust:data_backend` — a Rust producer contract
+//!   - `rust:storefront` / `rust:data_backend` / `rust:platform_env_policy` — a Rust producer contract
 //!   - `phpx:<path>` — extracted from a PHPX source file (struct/enum/boundary)
 //!   - `ts:<path>` — extracted from exported TypeScript interfaces/type aliases
 //!
@@ -202,8 +202,16 @@ fn resolve(spec: &str) -> Result<SeamContract, String> {
             "data_backend" | "data-backend" => {
                 Ok(runtime_core::data_envelope::data_backend_contract())
             }
+            "harar_auth" | "harar-auth" => {
+                serde_json::to_value(harar_client::harar_auth_contract())
+                    .and_then(serde_json::from_value)
+                    .map_err(|err| format!("cannot load harar_auth contract: {err}"))
+            }
+            "platform_env_policy" | "platform-env-policy" => {
+                Ok(runtime_core::platform_env::platform_env_policy_contract())
+            }
             other => Err(format!(
-                "unknown rust contract target '{other}'; expected 'storefront' or 'data_backend'"
+                "unknown rust contract target '{other}'; expected 'storefront', 'data_backend', 'platform_env_policy', or 'harar_auth'"
             )),
         },
         "phpx" => modules_php::seam_contract::extract_contract_from_file(rest),

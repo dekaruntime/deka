@@ -444,3 +444,7 @@ deka install @tana/store@1.2.0
 Install resolves the release, downloads the package tree into
 `php_modules/@tana/store/`, and records the installed version plus integrity
 hashes in `deka.lock`.
+
+Install clients must treat tree/blob paths as untrusted registry input. Absolute
+paths, drive prefixes, empty components, `.`, and `..` are rejected before any
+directory is created or blob is written.

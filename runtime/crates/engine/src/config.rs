@@ -183,29 +183,6 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
         });
     }
 
-    // Check for package.json and use "main" field
-    let package_json_path = abs_path.join("package.json");
-    if package_json_path.exists() {
-        if let Ok(contents) = std::fs::read_to_string(&package_json_path) {
-            if let Ok(package_json) = serde_json::from_str::<serde_json::Value>(&contents) {
-                if let Some(main) = package_json.get("main").and_then(|v| v.as_str()) {
-                    let main_path = abs_path.join(main);
-                    if main_path.exists() {
-                        let mode = serve_config
-                            .mode
-                            .clone()
-                            .unwrap_or_else(|| detect_mode(&main_path));
-                        return Ok(ResolvedHandler {
-                            path: main_path,
-                            mode,
-                            config: serve_config,
-                        });
-                    }
-                }
-            }
-        }
-    }
-
     // Directory: search for index files in priority order
     let index_files = ["index.php", "index.phpx", "index.html"];
 

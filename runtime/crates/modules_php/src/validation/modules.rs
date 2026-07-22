@@ -61,7 +61,7 @@ pub fn validate_module_resolution(source: &str, file_path: &str) -> Vec<Validati
     graph.collect_missing_exports(&mut errors);
     graph.detect_cycles(&mut errors);
     if let Some(root) = modules_root.as_deref() {
-        let package_errors = validate_package_integrity(root, graph.nodes.keys());
+        let package_errors = validate_package_integrity(root, &graph.package_integrity_targets);
         errors.extend(package_errors);
     }
     errors
@@ -148,6 +148,7 @@ struct ModuleGraph {
     /// Fallback stdlib root for system modules not found locally.
     stdlib_root: Option<PathBuf>,
     available_modules: HashSet<String>,
+    package_integrity_targets: HashMap<String, PathBuf>,
     nodes: HashMap<String, ModuleNode>,
 }
 
@@ -161,6 +162,7 @@ impl ModuleGraph {
             modules_root,
             stdlib_root,
             available_modules,
+            package_integrity_targets: HashMap::new(),
             nodes: HashMap::new(),
         }
     }
@@ -229,6 +231,10 @@ impl ModuleGraph {
                 self.stdlib_root.as_deref(),
             ) {
                 Ok(resolved) => {
+                    if let Some(target) = resolved.integrity_target {
+                        self.package_integrity_targets
+                            .insert(target.name, target.package_root);
+                    }
                     imports.push(ImportEdge {
                         module_id: resolved.module_id.clone(),
                         imported: spec.imported.clone(),
@@ -623,6 +629,12 @@ fn find_project_root(start: &Path) -> Option<PathBuf> {
 struct ResolvedImportTarget {
     module_id: String,
     file_path: PathBuf,
+    integrity_target: Option<PackageIntegrityTarget>,
+}
+
+struct PackageIntegrityTarget {
+    name: String,
+    package_root: PathBuf,
 }
 
 fn resolve_import_target(
@@ -685,6 +697,13 @@ fn resolve_import_target(
     if !is_relative && !is_project_alias && !raw.starts_with('@') && !raw.is_empty() {
         spec_variants.push(format!("@deka/{}", spec_path));
     }
+    if !is_relative && !is_project_alias {
+        if let Some(rest) = raw.strip_prefix("@deka/") {
+            if !rest.is_empty() {
+                spec_variants.push(rest.to_string());
+            }
+        }
+    }
 
     let mut candidates = Vec::new();
     for base_dir in &base_dirs {
@@ -739,6 +758,7 @@ fn resolve_import_target(
                         return Ok(ResolvedImportTarget {
                             module_id,
                             file_path: candidate,
+                            integrity_target: None,
                         });
                     }
                 }
@@ -746,15 +766,18 @@ fn resolve_import_target(
                 if let Ok(rel) = candidate.strip_prefix(root) {
                     let rel = rel.to_string_lossy().replace('\\', "/");
                     let module_id = module_id_from_rel(&rel);
+                    let integrity_target = package_integrity_target(raw, root, &candidate, &rel);
                     return Ok(ResolvedImportTarget {
                         module_id,
                         file_path: candidate,
+                        integrity_target,
                     });
                 }
             }
             return Ok(ResolvedImportTarget {
                 module_id: raw.to_string(),
                 file_path: candidate,
+                integrity_target: None,
             });
         }
     }
@@ -785,6 +808,105 @@ fn resolve_import_target(
             .as_deref()
             .unwrap_or("Ensure the module exists in php_modules and is listed in deka.lock."),
     ))
+}
+
+fn package_integrity_target(
+    raw: &str,
+    modules_root: &Path,
+    candidate: &Path,
+    rel: &str,
+) -> Option<PackageIntegrityTarget> {
+    let rel_module_id = module_id_from_rel(rel);
+    let name =
+        package_name_from_import(raw).or_else(|| deka_stdlib_package_from_rel(&rel_module_id))?;
+    let package_root = package_root_for_module(&name, modules_root, candidate, &rel_module_id)?;
+    Some(PackageIntegrityTarget { name, package_root })
+}
+
+fn package_name_from_import(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.starts_with("@deka/") {
+        let mut parts = trimmed.split('/').filter(|part| !part.is_empty());
+        let scope = parts.next()?;
+        let name = parts.next()?;
+        return Some(format!("{}/{}", scope, name));
+    }
+    if trimmed.starts_with('@') && !trimmed.starts_with("@/") {
+        return package_name_from_module_id(trimmed);
+    }
+    None
+}
+
+fn deka_stdlib_package_from_rel(module_id: &str) -> Option<String> {
+    let mut parts = module_id.split('/').filter(|part| !part.is_empty());
+    let first = parts.next()?;
+    if first == "deka" {
+        let second = parts.next()?;
+        if second == "vault" {
+            return Some("@deka/vault".to_string());
+        }
+        return None;
+    }
+    if is_deka_stdlib_root(first) {
+        return Some(format!("@deka/{}", first));
+    }
+    None
+}
+
+fn is_deka_stdlib_root(root: &str) -> bool {
+    matches!(
+        root,
+        "array"
+            | "auth"
+            | "buffer"
+            | "bytes"
+            | "component"
+            | "core"
+            | "cookies"
+            | "crypto"
+            | "db"
+            | "encoding"
+            | "fs"
+            | "http"
+            | "json"
+            | "jwt"
+            | "neo4j"
+            | "payments"
+            | "redis"
+            | "string"
+            | "tcp"
+            | "time"
+            | "tls"
+    )
+}
+
+fn package_root_for_module(
+    package_name: &str,
+    modules_root: &Path,
+    candidate: &Path,
+    module_id: &str,
+) -> Option<PathBuf> {
+    if package_name.starts_with("@deka/") {
+        let mut parts = module_id.split('/').filter(|part| !part.is_empty());
+        let first = parts.next()?;
+        if first == "@deka" {
+            let name = parts.next()?;
+            return Some(modules_root.join("@deka").join(name));
+        }
+        if first == "deka" && parts.next() == Some("vault") {
+            return Some(modules_root.join("deka").join("vault"));
+        }
+        return Some(modules_root.join(first));
+    }
+
+    let mut parts = package_name.split('/').filter(|part| !part.is_empty());
+    let scope = parts.next()?;
+    let name = parts.next()?;
+    let scoped_root = modules_root.join(scope).join(name);
+    if candidate.starts_with(&scoped_root) {
+        return Some(scoped_root);
+    }
+    None
 }
 
 struct ResolvedWasmTarget {
@@ -1070,25 +1192,18 @@ fn describe_lock_status(current_file_path: &str) -> String {
     format!("{local}; {global}")
 }
 
-fn validate_package_integrity<'a, I>(modules_root: &Path, module_ids: I) -> Vec<ValidationError>
-where
-    I: Iterator<Item = &'a String>,
-{
-    let mut packages: HashSet<String> = HashSet::new();
-    for module_id in module_ids {
-        if let Some(name) = package_name_from_module_id(module_id) {
-            packages.insert(name);
-        }
-    }
-
-    if packages.is_empty() {
+fn validate_package_integrity(
+    modules_root: &Path,
+    package_roots: &HashMap<String, PathBuf>,
+) -> Vec<ValidationError> {
+    if package_roots.is_empty() {
         return Vec::new();
     }
 
     let lock_path = modules_root.parent().map(|root| root.join("deka.lock"));
     let Some(lock_path) = lock_path else {
-        return packages
-            .into_iter()
+        return package_roots
+            .keys()
             .map(|name| {
                 module_error(
                     1,
@@ -1107,8 +1222,8 @@ where
     let lock_raw = match std::fs::read_to_string(&lock_path) {
         Ok(raw) => raw,
         Err(err) => {
-            return packages
-                .into_iter()
+            return package_roots
+                .keys()
                 .map(|name| {
                     module_error(
                         1,
@@ -1129,8 +1244,8 @@ where
     let lock_json: Value = match serde_json::from_str(&lock_raw) {
         Ok(json) => json,
         Err(err) => {
-            return packages
-                .into_iter()
+            return package_roots
+                .keys()
                 .map(|name| {
                     module_error(
                         1,
@@ -1148,18 +1263,23 @@ where
     };
 
     let packages_json = lock_json
-        .pointer("/php/packages")
-        .and_then(|value| value.as_object());
+        .get("packages")
+        .and_then(|value| value.as_object())
+        .or_else(|| {
+            lock_json
+                .pointer("/php/packages")
+                .and_then(|value| value.as_object())
+        });
     let Some(packages_json) = packages_json else {
-        return packages
-            .into_iter()
+        return package_roots
+            .keys()
             .map(|name| {
                 module_error(
                     1,
                     1,
                     name.len().max(1),
                     format!(
-                        "deka.lock has no php package entries; cannot verify '{}'.",
+                        "deka.lock has no package entries; cannot verify '{}'.",
                         name
                     ),
                     "Run `deka install` to recreate package entries.",
@@ -1170,8 +1290,8 @@ where
 
     let mut cache: HashMap<String, (String, String)> = HashMap::new();
     let mut errors = Vec::new();
-    for name in packages {
-        let entry = match packages_json.get(&name) {
+    for (name, package_root) in package_roots {
+        let entry = match packages_json.get(name) {
             Some(value) => value,
             None => {
                 if name.starts_with("@user/") {
@@ -1223,28 +1343,25 @@ where
             continue;
         }
 
-        let (module_hash, fs_hash) = match cache.get(&name) {
+        let (module_hash, fs_hash) = match cache.get(name) {
             Some(values) => values.clone(),
-            None => {
-                let package_root = modules_root.join(&name);
-                match compute_package_integrity(&package_root) {
-                    Ok(integrity) => {
-                        let values = (integrity.module_graph, integrity.fs_graph);
-                        cache.insert(name.clone(), values.clone());
-                        values
-                    }
-                    Err(err) => {
-                        errors.push(module_error(
-                            1,
-                            1,
-                            name.len().max(1),
-                            format!("Failed to compute integrity for '{}': {}", name, err),
-                            "Ensure the package directory exists and is readable.",
-                        ));
-                        continue;
-                    }
+            None => match compute_package_integrity(&package_root) {
+                Ok(integrity) => {
+                    let values = (integrity.module_graph, integrity.fs_graph);
+                    cache.insert(name.clone(), values.clone());
+                    values
                 }
-            }
+                Err(err) => {
+                    errors.push(module_error(
+                        1,
+                        1,
+                        name.len().max(1),
+                        format!("Failed to compute integrity for '{}': {}", name, err),
+                        "Ensure the package directory exists and is readable.",
+                    ));
+                    continue;
+                }
+            },
         };
 
         if expected_module_graph != Some(module_hash.as_str())
@@ -1326,8 +1443,10 @@ fn wasm_error(
 #[cfg(test)]
 mod tests {
     use super::{
-        resolve_modules_root_with_env, validate_module_resolution, validate_target_capabilities,
+        resolve_modules_root_with_env, validate_module_resolution, validate_package_integrity,
+        validate_target_capabilities,
     };
+    use std::collections::HashMap;
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1354,6 +1473,36 @@ mod tests {
             fs::write(root.join("deka.lock"), "{}").expect("write lockfile");
         }
         root
+    }
+
+    fn write_lock_for_packages(root: &std::path::Path, packages: &[(&str, &str)]) {
+        let mut entries = serde_json::Map::new();
+        for (name, rel_root) in packages {
+            let package_root = root.join("php_modules").join(rel_root);
+            let integrity =
+                crate::integrity::compute_package_integrity(&package_root).expect("integrity");
+            entries.insert(
+                (*name).to_string(),
+                serde_json::json!([
+                    format!("{}@0.1.0", name),
+                    format!("linkhash:{}", name),
+                    {
+                        "moduleGraph": { "hash": integrity.module_graph },
+                        "fsGraph": { "hash": integrity.fs_graph }
+                    },
+                    ""
+                ]),
+            );
+        }
+        fs::write(
+            root.join("deka.lock"),
+            serde_json::json!({
+                "lockfileVersion": 1,
+                "packages": entries
+            })
+            .to_string(),
+        )
+        .expect("write lock");
     }
 
     #[test]
@@ -1478,6 +1627,94 @@ mod tests {
     }
 
     #[test]
+    fn resolves_scoped_deka_stdlib_imports_from_unscoped_install_dirs() {
+        let root = make_temp_project("scoped_stdlib_unscoped_dir");
+        let entry = root.join("main.phpx");
+        fs::write(
+            &entry,
+            "\
+import { http_get } from '@deka/http'
+import { random_hex } from '@deka/crypto'
+import { now_ms } from '@deka/time'
+",
+        )
+        .expect("write entry");
+        for (module, source) in [
+            (
+                "http",
+                "export function http_get($url: string): object { return {} }\n",
+            ),
+            (
+                "crypto",
+                "export function random_hex($len: int = 16): string { return '00' }\n",
+            ),
+            ("time", "export function now_ms(): int { return 1 }\n"),
+        ] {
+            fs::create_dir_all(root.join("php_modules").join(module))
+                .unwrap_or_else(|err| panic!("mkdir {module}: {err}"));
+            fs::write(
+                root.join("php_modules").join(module).join("index.phpx"),
+                source,
+            )
+            .unwrap_or_else(|err| panic!("write {module}: {err}"));
+        }
+        write_lock_for_packages(
+            &root,
+            &[
+                ("@deka/http", "http"),
+                ("@deka/crypto", "crypto"),
+                ("@deka/time", "time"),
+            ],
+        );
+
+        let errors = validate_module_resolution(
+            &fs::read_to_string(&entry).expect("read entry"),
+            entry.to_string_lossy().as_ref(),
+        );
+        assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn scoped_deka_import_resolved_unscoped_still_checks_lock_integrity() {
+        let root = make_temp_project("scoped_stdlib_unscoped_integrity");
+        let entry = root.join("main.phpx");
+        fs::write(
+            &entry,
+            "import { http_get } from '@deka/http'\nexport function run() { return http_get }\n",
+        )
+        .expect("write entry");
+        let package_root = root.join("php_modules/http");
+        fs::create_dir_all(&package_root).expect("mkdir http");
+        fs::write(
+            package_root.join("index.phpx"),
+            "export function http_get($url: string): object { return {} }\n",
+        )
+        .expect("write http");
+        write_lock_for_packages(&root, &[("@deka/http", "http")]);
+        fs::write(
+            package_root.join("index.phpx"),
+            "export function http_get($url: string): object { return { tampered: true } }\n",
+        )
+        .expect("tamper http");
+
+        let errors = validate_module_resolution(
+            &fs::read_to_string(&entry).expect("read entry"),
+            entry.to_string_lossy().as_ref(),
+        );
+        assert!(
+            errors.iter().any(|err| err
+                .message
+                .contains("Package '@deka/http' failed integrity check")),
+            "expected @deka/http integrity error, got: {:?}",
+            errors
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn reports_ambiguous_shorthand_vs_index_module() {
         let root = make_temp_project("ambiguous_module");
         let entry = root.join("main.phpx");
@@ -1512,6 +1749,45 @@ mod tests {
             "expected remediation hint, got: {:?}",
             errors
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn package_integrity_accepts_flat_lock_packages() {
+        let root = make_temp_project("flat_lock_integrity");
+        let package_root = root.join("php_modules").join("@deka").join("core");
+        fs::create_dir_all(&package_root).expect("mkdir package");
+        fs::write(
+            package_root.join("index.phpx"),
+            "export function ok(): int { return 1 }\n",
+        )
+        .expect("write package");
+        let integrity =
+            crate::integrity::compute_package_integrity(&package_root).expect("integrity");
+        fs::write(
+            root.join("deka.lock"),
+            serde_json::json!({
+                "lockfileVersion": 1,
+                "packages": {
+                    "@deka/core": [
+                        "0.1.0",
+                        "linkhash:@deka/core",
+                        {
+                            "moduleGraph": { "hash": integrity.module_graph },
+                            "fsGraph": { "hash": integrity.fs_graph }
+                        },
+                        ""
+                    ]
+                }
+            })
+            .to_string(),
+        )
+        .expect("write lock");
+
+        let package_roots = HashMap::from([("@deka/core".to_string(), package_root)]);
+        let errors = validate_package_integrity(&root.join("php_modules"), &package_roots);
+        assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
 
         let _ = fs::remove_dir_all(root);
     }

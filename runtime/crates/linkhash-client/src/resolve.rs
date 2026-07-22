@@ -24,33 +24,7 @@ pub(crate) fn resolve(
     version_range: &str,
 ) -> Result<ResolvedPackage> {
     let (scope, pkg_name) = crate::parse_scoped_name(name)?;
-
-    let range = version_range.trim();
-    let url = if range.is_empty() || range == "latest" || range == "*" {
-        format!(
-            "{}/api/scoped-packages/{}/{}/latest",
-            registry_url, scope, pkg_name
-        )
-    } else {
-        // Strip semver range prefixes to get the clean version string
-        let clean = range
-            .trim_start_matches('^')
-            .trim_start_matches('~')
-            .trim_start_matches(">=");
-        // If clean looks like an exact semver (digits.digits.digits), fetch directly.
-        // Otherwise use the /resolve?range= endpoint for range queries.
-        if is_exact_version(clean) {
-            format!(
-                "{}/api/scoped-packages/{}/{}/{}",
-                registry_url, scope, pkg_name, clean
-            )
-        } else {
-            format!(
-                "{}/api/scoped-packages/{}/{}/resolve?range={}",
-                registry_url, scope, pkg_name, clean
-            )
-        }
-    };
+    let url = resolve_url(registry_url, &scope, &pkg_name, version_range);
 
     let mut req = http.get(&url);
     if let Some(t) = token {
@@ -95,6 +69,32 @@ pub(crate) fn resolve(
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
     })
+}
+
+fn resolve_url(registry_url: &str, scope: &str, pkg_name: &str, version_range: &str) -> String {
+    let range = version_range.trim();
+    if range.is_empty() || range == "latest" || range == "*" {
+        return format!(
+            "{}/api/scoped-packages/{}/{}/latest",
+            registry_url, scope, pkg_name
+        );
+    }
+
+    if semver::Version::parse(range).is_ok() {
+        return format!(
+            "{}/api/scoped-packages/{}/{}/{}",
+            registry_url, scope, pkg_name, range
+        );
+    }
+
+    let clean = range
+        .trim_start_matches('^')
+        .trim_start_matches('~')
+        .trim_start_matches(">=");
+    format!(
+        "{}/api/scoped-packages/{}/{}/resolve?range={}",
+        registry_url, scope, pkg_name, clean
+    )
 }
 
 /// List all available versions for a package.
@@ -145,12 +145,47 @@ pub(crate) fn list_versions(
     Ok(versions)
 }
 
-/// Returns true if `v` looks like an exact semver (e.g. "1.2.3", "0.1.0").
-/// Does not accept range prefixes (^, ~, >=).
-fn is_exact_version(v: &str) -> bool {
-    let parts: Vec<&str> = v.split('.').collect();
-    parts.len() == 3
-        && parts
-            .iter()
-            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+#[cfg(test)]
+mod tests {
+    use super::resolve_url;
+
+    #[test]
+    fn exact_semver_uses_version_endpoint() {
+        let url = resolve_url("http://registry.test", "tana", "store", "1.2.3");
+
+        assert_eq!(
+            url,
+            "http://registry.test/api/scoped-packages/tana/store/1.2.3"
+        );
+    }
+
+    #[test]
+    fn latest_uses_latest_endpoint() {
+        for requested in ["", "latest", "*"] {
+            let url = resolve_url("http://registry.test", "tana", "store", requested);
+
+            assert_eq!(
+                url,
+                "http://registry.test/api/scoped-packages/tana/store/latest"
+            );
+        }
+    }
+
+    #[test]
+    fn semver_ranges_use_resolve_endpoint() {
+        for (requested, expected_range) in [
+            ("^1.2.3", "1.2.3"),
+            ("~1.2.3", "1.2.3"),
+            (">=1.2.3", "1.2.3"),
+        ] {
+            let url = resolve_url("http://registry.test", "tana", "store", requested);
+
+            assert_eq!(
+                url,
+                format!(
+                    "http://registry.test/api/scoped-packages/tana/store/resolve?range={expected_range}"
+                )
+            );
+        }
+    }
 }

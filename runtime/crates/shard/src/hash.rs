@@ -3,7 +3,7 @@
 //! Uses FNV-1a 64-bit — a fast, deterministic, std-only hash.
 //! The hash is stable across processes and hosts, which is a hard
 //! requirement for client-side shard routing: every server must
-//! agree on which shard owns a given account_id.
+//! agree on which shard owns a given shop_id slug.
 
 /// FNV-1a 64-bit hash.
 ///
@@ -21,14 +21,14 @@ pub fn fnv1a_64(bytes: &[u8]) -> u64 {
     hash
 }
 
-/// Given an account_id and shard count, return the shard index.
+/// Given a shop_id slug and shard count, return the shard index.
 ///
 /// Returns 0 when `shard_count` is 0 (degenerate / single-shard fallback).
-pub fn shard_index(account_id: &str, shard_count: usize) -> usize {
+pub fn shard_index(shop_id: &str, shard_count: usize) -> usize {
     if shard_count == 0 {
         return 0;
     }
-    (fnv1a_64(account_id.as_bytes()) % shard_count as u64) as usize
+    (fnv1a_64(shop_id.as_bytes()) % shard_count as u64) as usize
 }
 
 #[cfg(test)]
@@ -52,10 +52,20 @@ mod tests {
 
     #[test]
     fn shard_index_is_deterministic() {
-        let id = "2789d397-a96a-44ba-9073-24c711d007ff";
-        let a = shard_index(id, 3);
-        let b = shard_index(id, 3);
+        let shop_id = "shop_beta";
+        let a = shard_index(shop_id, 3);
+        let b = shard_index(shop_id, 3);
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn shard_index_matches_fnv1a_mod_shard_count() {
+        let shop_id = "shop_alpha";
+        let shard_count = 3;
+        assert_eq!(
+            shard_index(shop_id, shard_count),
+            (fnv1a_64(shop_id.as_bytes()) % shard_count as u64) as usize
+        );
     }
 
     #[test]
@@ -66,9 +76,9 @@ mod tests {
     #[test]
     fn shard_index_is_bounded() {
         for i in 0..1000 {
-            let id = format!("account-{i}");
-            assert!(shard_index(&id, 3) < 3);
-            assert!(shard_index(&id, 7) < 7);
+            let shop_id = format!("shop_{i}");
+            assert!(shard_index(&shop_id, 3) < 3);
+            assert!(shard_index(&shop_id, 7) < 7);
         }
     }
 }

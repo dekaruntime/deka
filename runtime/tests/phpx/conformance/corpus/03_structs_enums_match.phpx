@@ -1,0 +1,27 @@
+/*
+TEST: Structs, enums, and match
+Covers: struct field access, enum payloads/unit cases, and match dispatch.
+*/
+
+struct LineItem {
+    $sku: string;
+    $qty: int;
+}
+
+enum StockState {
+    case Available($count: int);
+    case Backorder;
+}
+
+function render_stock($state: StockState): string {
+    return match ($state) {
+        StockState::Available => 'available:' . $state.count,
+        StockState::Backorder => 'backorder',
+    };
+}
+
+$item = LineItem { $sku: 'sku-alpha', $qty: 3 };
+
+echo $item.sku . ':' . $item.qty . "\n";
+echo render_stock(StockState::Available(5)) . "\n";
+echo render_stock(StockState::Backorder) . "\n";

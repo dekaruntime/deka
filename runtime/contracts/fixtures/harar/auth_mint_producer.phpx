@@ -1,0 +1,29 @@
+// Producer view for the Harar JSON socket mint boundary.
+struct HararMintTokenRequest {
+    $template: string;
+    $subject: string;
+    $run_id: Option<string>;
+    $ttl_seconds: int;
+}
+
+struct HararMintTokenResponse {
+    $ok: bool;
+    $token: Option<string>;
+    $jti: Option<string>;
+    $exp: Option<int>;
+    $aud: Option<string>;
+    $scopes: Option<array<string> >;
+    $error: Option<string>;
+}
+
+export function mint($req: HararMintTokenRequest): HararMintTokenResponse {
+    return HararMintTokenResponse {
+        $ok: true,
+        $token: Option::Some(""),
+        $jti: Option::Some(""),
+        $exp: Option::Some(0),
+        $aud: Option::Some("linkhash"),
+        $scopes: Option::None,
+        $error: Option::None,
+    };
+}

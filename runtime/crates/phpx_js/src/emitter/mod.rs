@@ -11,6 +11,13 @@ struct EnumCaseDef {
     params: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum JsValueKind {
+    Array,
+    Object,
+    String,
+}
+
 enum AssignmentTarget {
     Direct(String),
     Append(String),
@@ -41,6 +48,7 @@ pub(crate) struct JsSubsetEmitter<'a> {
     struct_names: HashSet<String>,
     struct_methods: HashMap<String, Vec<(String, String)>>,
     enum_cases: HashMap<String, Vec<EnumCaseDef>>,
+    value_kinds: HashMap<String, JsValueKind>,
     /// Tier B helpers needed by this module. Populated during AST traversal
     /// (try_rewrite_builtin inserts keys here). finish() emits each needed helper
     /// as a module-scoped `function __phpx_X(...)` declaration — NOT globalThis.
@@ -76,6 +84,7 @@ impl<'a> JsSubsetEmitter<'a> {
             struct_names: HashSet::new(),
             struct_methods: HashMap::new(),
             enum_cases: HashMap::new(),
+            value_kinds: HashMap::new(),
             needed_helpers: BTreeSet::new(),
         }
     }
@@ -95,8 +104,8 @@ impl<'a> JsSubsetEmitter<'a> {
     // CLASS (a) — compile-time rewrite candidates (REMOVED from prelude):
     //   chr          -> String.fromCharCode(($n) & 0xff)
     //   ord          -> (String($s).length ? String($s).charCodeAt(0) : 0)
-    //   strlen       -> String($s).length
-    //   substr       -> String($s).slice(...) (handles negative start + length arg)
+    //   strlen       -> $s.length
+    //   substr       -> $s.slice(...)
     //   ltrim        -> String($s).trimStart() (no $chars arg) / keep polyfill for $chars
     //   rtrim        -> String($s).trimEnd()  (no $chars arg) / keep polyfill for $chars
     //   trim         -> String($s).trim()     (no $chars arg) / keep polyfill for $chars
@@ -113,9 +122,9 @@ impl<'a> JsSubsetEmitter<'a> {
     //   array_filter -> $a.filter($fn)
     //   explode      -> String($s).split(String($sep))
     //   implode      -> $a.join(String($g))
-    //   count        -> (Array.isArray($x) ? $x : Object.keys($x)).length
+    //   count        -> $x.length for known arrays/strings, Object.keys($x).length for known objects
     //   time         -> Math.floor(Date.now() / 1000)
-    //   is_array     -> (Array.isArray($x) && !($x && typeof $x === 'object' && $x.__struct))
+    //   is_array     -> Array.isArray($x)
     //
     // CLASS (b) — runtime helpers (KEEP, already mangled):
     //   __phpx_is_struct       — struct type guard
@@ -581,22 +590,23 @@ fn emit_needed_helpers(needed: &BTreeSet<&'static str>) -> String {
         out.push_str("function __phpx_base64_decode(input, strict = false) { const src = String(input ?? '').replace(/\\s+/g, ''); if (src.length % 4 !== 0) return strict ? false : ''; const tbl = __phpx_base64_table; let out = ''; for (let i = 0; i < src.length; i += 4) { const c0 = src[i], c1 = src[i + 1], c2 = src[i + 2], c3 = src[i + 3]; const n0 = tbl.indexOf(c0), n1 = tbl.indexOf(c1), n2raw = tbl.indexOf(c2), n3raw = tbl.indexOf(c3); if (n0 < 0 || n1 < 0) return strict ? false : ''; if (c2 === '=' && c3 !== '=') return strict ? false : ''; if (c2 !== '=' && n2raw < 0) return strict ? false : ''; if (c3 !== '=' && n3raw < 0) return strict ? false : ''; const n2 = c2 === '=' ? 0 : n2raw; const n3 = c3 === '=' ? 0 : n3raw; const n = (n0 << 18) | (n1 << 12) | (n2 << 6) | n3; out += String.fromCharCode((n >> 16) & 0xff); if (c2 !== '=') out += String.fromCharCode((n >> 8) & 0xff); if (c3 !== '=') out += String.fromCharCode(n & 0xff); } return out; }\n");
     }
     if emit_sha256_hex {
-        out.push_str("function __phpx_sha256_hex(input) { const K = [1116352408,1899447441,3049323471,3921009573,961987163,1508970993,2453635748,2870763221,3624381080,310598401,607225278,1426881987,1925078388,2162078206,2614888103,3248222580,3835390401,4022224774,264347078,604807628,770255983,1249150122,1555081692,1996064986,2554220882,2821834349,2952996808,3210313671,3336571891,3584528711,113926993,338241895,666307205,773529912,1294757372,1396182291,1695183700,1986661051,2177026350,2456956037,2730485921,2820302411,3259730800,3345764771,3516065817,3600352804,4094571909,275423344,430227734,506948616,659060556,883997877,958139571,1322822218,1537002063,1747873779,1955562222,2024104815,2227730452,2361852424,2428436474,2756734187,3204031479,3329325298]; const bytes = []; const src = String(input ?? ''); for (let i = 0; i < src.length; i += 1) bytes.push(src.charCodeAt(i) & 0xff); const bitLen = bytes.length * 8; bytes.push(0x80); while ((bytes.length % 64) !== 56) bytes.push(0); const hi = Math.floor(bitLen / 0x100000000); const lo = (bitLen >>> 0) & 0xffffffff; for (let i = 3; i >= 0; i -= 1) bytes.push((hi >>> (i * 8)) & 0xff); for (let i = 3; i >= 0; i -= 1) bytes.push((lo >>> (i * 8)) & 0xff); let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a, h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19; const rotr = (x, n) => ((x >>> n) | (x << (32 - n))) >>> 0; for (let i = 0; i < bytes.length; i += 64) { const w = new Array(64); for (let j = 0; j < 16; j += 1) { const k = i + (j * 4); w[j] = (((bytes[k] << 24) | (bytes[k + 1] << 16) | (bytes[k + 2] << 8) | bytes[k + 3]) >>> 0); } for (let j = 16; j < 64; j += 1) { const s0 = (rotr(w[j - 15], 7) ^ rotr(w[j - 15], 18) ^ (w[j - 15] >>> 3)) >>> 0; const s1 = (rotr(w[j - 2], 17) ^ rotr(w[j - 2], 19) ^ (w[j - 2] >>> 10)) >>> 0; w[j] = (((w[j - 16] + s0) >>> 0) + ((w[j - 7] + s1) >>> 0)) >>> 0; } let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7; for (let j = 0; j < 64; j += 1) { const S1 = (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) >>> 0; const ch = ((e & f) ^ ((~e) & g)) >>> 0; const t1 = (((((h + S1) >>> 0) + ch) >>> 0) + ((K[j] + w[j]) >>> 0)) >>> 0; const S0 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) >>> 0; const maj = ((a & b) ^ (a & c) ^ (b & c)) >>> 0; const t2 = (S0 + maj) >>> 0; h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0; } h0 = (h0 + a) >>> 0; h1 = (h1 + b) >>> 0; h2 = (h2 + c) >>> 0; h3 = (h3 + d) >>> 0; h4 = (h4 + e) >>> 0; h5 = (h5 + f) >>> 0; h6 = (h6 + g) >>> 0; h7 = (h7 + h) >>> 0; } const words = [h0, h1, h2, h3, h4, h5, h6, h7]; let out = ''; for (const w of words) { out += (w >>> 0).toString(16).padStart(8, '0'); } return out; }\n");
+        out.push_str("function __phpx_utf8_bytes(input) { const src = String(input ?? ''); if (typeof TextEncoder !== 'undefined') return Array.from(new TextEncoder().encode(src)); const out = []; for (let i = 0; i < src.length; i += 1) { let c = src.charCodeAt(i); if (c >= 0xd800 && c <= 0xdbff && i + 1 < src.length) { const d = src.charCodeAt(i + 1); if (d >= 0xdc00 && d <= 0xdfff) { const cp = 0x10000 + (((c - 0xd800) << 10) | (d - 0xdc00)); out.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3f), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f)); i += 1; continue; } } if (c >= 0xd800 && c <= 0xdfff) c = 0xfffd; if (c < 0x80) out.push(c); else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 0x3f)); else out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f)); } return out; }\n");
+        out.push_str("function __phpx_sha256_hex(input, rawBytes = false) { const K = [1116352408,1899447441,3049323471,3921009573,961987163,1508970993,2453635748,2870763221,3624381080,310598401,607225278,1426881987,1925078388,2162078206,2614888103,3248222580,3835390401,4022224774,264347078,604807628,770255983,1249150122,1555081692,1996064986,2554220882,2821834349,2952996808,3210313671,3336571891,3584528711,113926993,338241895,666307205,773529912,1294757372,1396182291,1695183700,1986661051,2177026350,2456956037,2730485921,2820302411,3259730800,3345764771,3516065817,3600352804,4094571909,275423344,430227734,506948616,659060556,883997877,958139571,1322822218,1537002063,1747873779,1955562222,2024104815,2227730452,2361852424,2428436474,2756734187,3204031479,3329325298]; const src = String(input ?? ''); const bytes = rawBytes ? [] : __phpx_utf8_bytes(src); if (rawBytes) { for (let i = 0; i < src.length; i += 1) bytes.push(src.charCodeAt(i) & 0xff); } const bitLen = bytes.length * 8; bytes.push(0x80); while ((bytes.length % 64) !== 56) bytes.push(0); const hi = Math.floor(bitLen / 0x100000000); const lo = (bitLen >>> 0) & 0xffffffff; for (let i = 3; i >= 0; i -= 1) bytes.push((hi >>> (i * 8)) & 0xff); for (let i = 3; i >= 0; i -= 1) bytes.push((lo >>> (i * 8)) & 0xff); let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a, h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19; const rotr = (x, n) => ((x >>> n) | (x << (32 - n))) >>> 0; for (let i = 0; i < bytes.length; i += 64) { const w = new Array(64); for (let j = 0; j < 16; j += 1) { const k = i + (j * 4); w[j] = (((bytes[k] << 24) | (bytes[k + 1] << 16) | (bytes[k + 2] << 8) | bytes[k + 3]) >>> 0); } for (let j = 16; j < 64; j += 1) { const s0 = (rotr(w[j - 15], 7) ^ rotr(w[j - 15], 18) ^ (w[j - 15] >>> 3)) >>> 0; const s1 = (rotr(w[j - 2], 17) ^ rotr(w[j - 2], 19) ^ (w[j - 2] >>> 10)) >>> 0; w[j] = (((w[j - 16] + s0) >>> 0) + ((w[j - 7] + s1) >>> 0)) >>> 0; } let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7; for (let j = 0; j < 64; j += 1) { const S1 = (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) >>> 0; const ch = ((e & f) ^ ((~e) & g)) >>> 0; const t1 = (((((h + S1) >>> 0) + ch) >>> 0) + ((K[j] + w[j]) >>> 0)) >>> 0; const S0 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) >>> 0; const maj = ((a & b) ^ (a & c) ^ (b & c)) >>> 0; const t2 = (S0 + maj) >>> 0; h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0; } h0 = (h0 + a) >>> 0; h1 = (h1 + b) >>> 0; h2 = (h2 + c) >>> 0; h3 = (h3 + d) >>> 0; h4 = (h4 + e) >>> 0; h5 = (h5 + f) >>> 0; h6 = (h6 + g) >>> 0; h7 = (h7 + h) >>> 0; } const words = [h0, h1, h2, h3, h4, h5, h6, h7]; let out = ''; for (const w of words) { out += (w >>> 0).toString(16).padStart(8, '0'); } return out; }\n");
     }
     if emit_hex_to_binary {
         out.push_str("function __phpx_hex_to_binary(hex) { const src = String(hex ?? ''); let out = ''; for (let i = 0; i < src.length; i += 2) out += String.fromCharCode(parseInt(src.slice(i, i + 2), 16) & 0xff); return out; }\n");
     }
     if emit_hmac_sha256_hex {
-        out.push_str("function __phpx_hmac_sha256_hex(data, key) { const toBytes = (s) => { const out = []; const src = String(s ?? ''); for (let i = 0; i < src.length; i += 1) out.push(src.charCodeAt(i) & 0xff); return out; }; const fromBytes = (arr) => arr.map((v) => String.fromCharCode(v & 0xff)).join(''); let k = toBytes(key); if (k.length > 64) { const kh = __phpx_sha256_hex(fromBytes(k)); k = toBytes(__phpx_hex_to_binary(kh)); } while (k.length < 64) k.push(0); const o = [], i = []; for (let n = 0; n < 64; n += 1) { o.push(k[n] ^ 0x5c); i.push(k[n] ^ 0x36); } const innerHex = __phpx_sha256_hex(fromBytes(i) + String(data ?? '')); const outerHex = __phpx_sha256_hex(fromBytes(o) + __phpx_hex_to_binary(innerHex)); return outerHex; }\n");
+        out.push_str("function __phpx_hmac_sha256_hex(data, key) { const rawBytes = (s) => { const out = []; const src = String(s ?? ''); for (let i = 0; i < src.length; i += 1) out.push(src.charCodeAt(i) & 0xff); return out; }; const fromBytes = (arr) => arr.map((v) => String.fromCharCode(v & 0xff)).join(''); const dataBytes = __phpx_utf8_bytes(data); let k = __phpx_utf8_bytes(key); if (k.length > 64) { const kh = __phpx_sha256_hex(fromBytes(k), true); k = rawBytes(__phpx_hex_to_binary(kh)); } while (k.length < 64) k.push(0); const o = [], i = []; for (let n = 0; n < 64; n += 1) { o.push(k[n] ^ 0x5c); i.push(k[n] ^ 0x36); } const innerHex = __phpx_sha256_hex(fromBytes(i) + fromBytes(dataBytes), true); const outerHex = __phpx_sha256_hex(fromBytes(o) + __phpx_hex_to_binary(innerHex), true); return outerHex; }\n");
     }
     if emit_node_crypto {
         out.push_str("const __phpx_node_crypto = (() => { try { if (typeof require === 'function') { return require('node:crypto'); } } catch (_err) {} try { if (typeof require === 'function') { return require('crypto'); } } catch (_err) {} return null; })();\n");
     }
     if emit_hash {
-        out.push_str("function __phpx_hash(algo, data, raw = false) { const name = String(algo || '').toLowerCase(); if (name === 'sha256') { const hex = __phpx_sha256_hex(String(data ?? '')); return raw ? __phpx_hex_to_binary(hex) : hex; } const mod = __phpx_node_crypto; if (!mod || typeof mod.createHash !== 'function') throw new Error('hash() requires crypto support'); const digest = mod.createHash(name).update(String(data ?? ''), 'binary').digest(raw ? 'latin1' : 'hex'); return digest; }\n");
+        out.push_str("function __phpx_hash(algo, data, raw = false) { const name = String(algo || '').toLowerCase(); if (name === 'sha256') { const hex = __phpx_sha256_hex(String(data ?? '')); return raw ? __phpx_hex_to_binary(hex) : hex; } const mod = __phpx_node_crypto; if (!mod || typeof mod.createHash !== 'function') throw new Error('hash() requires crypto support'); const digest = mod.createHash(name).update(String(data ?? ''), 'utf8').digest(raw ? 'latin1' : 'hex'); return digest; }\n");
     }
     if emit_hash_hmac {
-        out.push_str("function __phpx_hash_hmac(algo, data, key, raw = false) { const name = String(algo || '').toLowerCase(); if (name === 'sha256') { const hex = __phpx_hmac_sha256_hex(String(data ?? ''), String(key ?? '')); return raw ? __phpx_hex_to_binary(hex) : hex; } const mod = __phpx_node_crypto; if (!mod || typeof mod.createHmac !== 'function') throw new Error('hash_hmac() requires crypto support'); const digest = mod.createHmac(name, String(key ?? '')).update(String(data ?? ''), 'binary').digest(raw ? 'latin1' : 'hex'); return digest; }\n");
+        out.push_str("function __phpx_hash_hmac(algo, data, key, raw = false) { const name = String(algo || '').toLowerCase(); if (name === 'sha256') { const hex = __phpx_hmac_sha256_hex(String(data ?? ''), String(key ?? '')); return raw ? __phpx_hex_to_binary(hex) : hex; } const mod = __phpx_node_crypto; if (!mod || typeof mod.createHmac !== 'function') throw new Error('hash_hmac() requires crypto support'); const digest = mod.createHmac(name, String(key ?? '')).update(String(data ?? ''), 'utf8').digest(raw ? 'latin1' : 'hex'); return digest; }\n");
     }
     if emit_date_format {
         out.push_str("function __phpx_date_format(fmt, ts) { const d = ts !== undefined && ts !== null ? new Date(Number(ts) * 1000) : new Date(); const p = (n, w) => String(n).padStart(w || 2, '0'); const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']; const months = ['January','February','March','April','May','June','July','August','September','October','November','December']; let out = ''; for (let i = 0; i < fmt.length; i++) { const c = fmt[i]; switch(c) { case 'Y': out += d.getFullYear(); break; case 'y': out += String(d.getFullYear()).slice(-2); break; case 'm': out += p(d.getMonth()+1); break; case 'd': out += p(d.getDate()); break; case 'H': out += p(d.getHours()); break; case 'i': out += p(d.getMinutes()); break; case 's': out += p(d.getSeconds()); break; case 'n': out += d.getMonth()+1; break; case 'j': out += d.getDate(); break; case 'G': out += d.getHours(); break; case 'N': out += d.getDay()||7; break; case 'w': out += d.getDay(); break; case 'l': out += days[d.getDay()]; break; case 'D': out += days[d.getDay()].slice(0,3); break; case 'F': out += months[d.getMonth()]; break; case 'M': out += months[d.getMonth()].slice(0,3); break; case 't': out += new Date(d.getFullYear(),d.getMonth()+1,0).getDate(); break; case 'U': out += Math.floor(d.getTime()/1000); break; case 'e': case 'T': out += 'UTC'; break; case 'Z': out += -d.getTimezoneOffset()*60; break; case 'c': out += d.toISOString().replace(/\\.\\d{3}Z$/, '+00:00'); break; case 'r': out += d.toUTCString(); break; case 'L': { const y = d.getFullYear(); out += ((y%4===0&&y%100!==0)||(y%400===0)) ? '1' : '0'; break; } default: out += c; } } return out; }\n");

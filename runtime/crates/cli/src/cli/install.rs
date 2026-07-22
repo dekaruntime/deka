@@ -72,10 +72,6 @@ pub fn register(registry: &mut Registry) {
         description: "path to a JSON payload describing the install",
     });
     registry.add_param(ParamSpec {
-        name: "--ecosystem",
-        description: "ecosystem hint (php)",
-    });
-    registry.add_param(ParamSpec {
         name: "--spec",
         description: "package spec or comma-separated list of specs",
     });
@@ -106,56 +102,42 @@ pub fn cmd(context: &Context) {
             }
             Err(err) => {
                 stdio::error("install", &format!("rehash failed: {}", err));
+                std::process::exit(1);
             }
         }
         return;
     }
 
-    // Check if any positional args are scoped PHPX packages
-    let specs: Vec<String> = context.args.positionals.clone();
-    let phpx_specs: Vec<&String> = specs.iter().filter(|s| is_phpx_package(s)).collect();
+    let explicit_specs = install_explicit_specs(context);
+    let specs = explicit_specs.clone();
 
-    if !phpx_specs.is_empty() {
-        let (registry_url, token) = get_registry_config(context);
-        let client = LinkhashClient::new(&registry_url, token.as_deref());
-        let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let payload = build_payload_for_specs(context, specs);
 
-        for spec in &phpx_specs {
-            let (name, version_range) = parse_spec_with_version(spec);
-            match install_phpx_package(&client, &name, &version_range, &project_dir) {
-                Ok(version) => {
-                    stdio::log("install", &format!("installed {}@{}", name, version));
-                }
-                Err(err) => {
-                    stdio::error("install", &format!("failed to install {}: {}", name, err));
-                }
-            }
-        }
-
-        // If there are also non-phpx specs, fall through to pm
-        let non_phpx: Vec<String> = specs
-            .iter()
-            .filter(|s| !is_phpx_package(s))
-            .cloned()
-            .collect();
-        if non_phpx.is_empty() {
-            return;
-        }
-    }
-
-    match build_payload(context) {
+    match payload {
         Ok(payload) => {
             let runtime = tokio::runtime::Runtime::new().unwrap();
             if let Err(err) = runtime.block_on(run_install(payload)) {
                 let message = err.to_string();
                 stdio::error("install", &message);
+                std::process::exit(1);
             }
         }
         Err(err) => {
             let message = err.to_string();
             stdio::error("install", &message);
+            std::process::exit(1);
         }
     }
+}
+
+fn install_explicit_specs(context: &Context) -> Vec<String> {
+    context
+        .args
+        .params
+        .get("--spec")
+        .map(|value| parse_spec_list(value))
+        .filter(|specs| !specs.is_empty())
+        .unwrap_or_else(|| context.args.positionals.clone())
 }
 
 pub fn cmd_update(context: &Context) {
@@ -202,10 +184,12 @@ pub fn cmd_update(context: &Context) {
         }
     }
 
-    // Still run pm for non-phpx packages
+    if phpx_specs.len() == specs.len() {
+        return;
+    }
+
     match build_update_payload(context) {
         Ok(payload) => {
-            // Filter out phpx specs from the payload
             let runtime = tokio::runtime::Runtime::new().unwrap();
             if let Err(err) = runtime.block_on(run_install(payload)) {
                 let message = err.to_string();
@@ -339,7 +323,7 @@ fn run_shop_update(context: &Context, project_dir: &std::path::Path) -> Result<(
     Ok(())
 }
 
-/// Read the current `php.packages` version map from deka.lock in `dir`.
+/// Read the current package version map from deka.lock in `dir`.
 /// Returns `{ "@deka/redis": "0.1.0", ... }`.
 fn read_php_lock_versions(dir: &std::path::Path) -> std::collections::BTreeMap<String, String> {
     let mut out = std::collections::BTreeMap::new();
@@ -350,11 +334,7 @@ fn read_php_lock_versions(dir: &std::path::Path) -> std::collections::BTreeMap<S
     let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) else {
         return out;
     };
-    let Some(pkgs) = json
-        .get("php")
-        .and_then(|v| v.get("packages"))
-        .and_then(|v| v.as_object())
-    else {
+    let Some(pkgs) = lock_packages(&json) else {
         return out;
     };
     for (name, entry) in pkgs {
@@ -530,7 +510,7 @@ fn apply_registry_env(context: &Context) {
             }
         } else {
             unsafe {
-                std::env::set_var("LINKHASH_REGISTRY_URL", "http://localhost:9418");
+                std::env::set_var("LINKHASH_REGISTRY_URL", "https://git.tana.gg");
             }
         }
     }
@@ -548,54 +528,20 @@ fn apply_registry_env(context: &Context) {
     }
 }
 
-fn build_payload(context: &Context) -> Result<InstallPayload> {
-    let command_name = context
-        .args
-        .commands
-        .first()
-        .map(String::as_str)
-        .unwrap_or("install");
-
-    let mut payload = if let Some(payload_path) = context.args.params.get("--payload") {
-        let mut payload = InstallPayload::from_file(&PathBuf::from(payload_path))?;
-        if let Some(path) = context.args.params.get("--ecosystem") {
-            payload.ecosystem = Some(path.clone());
-        }
-        payload
-    } else {
-        let mut specs = context
-            .args
-            .params
-            .get("--spec")
-            .map(|value| parse_spec_list(value))
-            .unwrap_or_default();
-        if specs.is_empty() && !context.args.positionals.is_empty() {
-            specs = context.args.positionals.clone();
-        }
-        let ecosystem = context.args.params.get("--ecosystem").cloned().or_else(|| {
-            if command_name == "install" {
-                None
-            } else {
-                Some("php".to_string())
-            }
-        });
-        InstallPayload {
-            specs,
-            ecosystem,
-            yes: false,
-            prompt: false,
-            quiet: false,
-            rehash: false,
-        }
+fn build_payload_for_specs(context: &Context, specs: Vec<String>) -> Result<InstallPayload> {
+    let mut payload = InstallPayload {
+        specs,
+        yes: false,
+        prompt: false,
+        quiet: false,
+        rehash: false,
     };
 
-    if payload.ecosystem.as_deref() == Some("php") {
-        let mut resolved_specs = Vec::new();
-        for spec in &payload.specs {
-            resolved_specs.push(resolve_php_spec(spec)?);
-        }
-        payload.specs = resolved_specs;
+    let mut resolved_specs = Vec::new();
+    for spec in &payload.specs {
+        resolved_specs.push(resolve_php_spec(spec)?);
     }
+    payload.specs = resolved_specs;
 
     apply_flags(&mut payload, context);
     Ok(payload)
@@ -603,7 +549,6 @@ fn build_payload(context: &Context) -> Result<InstallPayload> {
 
 fn build_update_payload(context: &Context) -> Result<InstallPayload> {
     // For update: read specs from positionals or deka.json dependencies.
-    // The pm crate handles resolution; we pass specs with the ecosystem hint.
     let mut specs = context.args.positionals.clone();
     if specs.is_empty() {
         if let Some(s) = context.args.params.get("--spec") {
@@ -616,24 +561,14 @@ fn build_update_payload(context: &Context) -> Result<InstallPayload> {
         specs = collect_deka_json_deps();
     }
 
-    let ecosystem = context
-        .args
-        .params
-        .get("--ecosystem")
-        .cloned()
-        .unwrap_or_else(|| "php".to_string());
-
-    if ecosystem == "php" {
-        let mut resolved = Vec::new();
-        for spec in &specs {
-            resolved.push(resolve_php_spec(spec)?);
-        }
-        specs = resolved;
+    let mut resolved = Vec::new();
+    for spec in &specs {
+        resolved.push(resolve_php_spec(spec)?);
     }
+    specs = resolved;
 
     let mut payload = InstallPayload {
         specs,
-        ecosystem: Some(ecosystem),
         yes: false,
         prompt: false,
         quiet: false,
@@ -734,7 +669,7 @@ fn get_registry_config(context: &Context) -> (String, Option<String>) {
         .or_else(|| std::env::var("LINKHASH_REGISTRY_URL").ok())
         .or_else(|| std::env::var("LINKHASH_REGISTRY").ok())
         .or_else(|| std::env::var("TANA_GIT_SERVER").ok())
-        .unwrap_or_else(|| "http://localhost:9418".to_string());
+        .unwrap_or_else(|| "https://git.tana.gg".to_string());
 
     let token = context
         .args
@@ -862,7 +797,7 @@ fn install_phpx_package(
 /// Update deka.lock with the installed package version.
 ///
 /// The lock format expected by the module validator is:
-/// `{ "lockfileVersion": 1, "node": { "packages": {} }, "php": { "packages": {...} } }`.
+/// `{ "lockfileVersion": 1, "packages": {...} }`.
 /// Each entry value is a 4-tuple `[descriptor, resolved, metadata, integrity]`.
 fn update_deka_lock(
     project_dir: &std::path::Path,
@@ -879,59 +814,46 @@ fn update_deka_lock(
         default_lock()
     };
 
-    // Ensure the top-level shape exists, migrating older { "packages": {} } layouts.
-    if !lock.get("lockfileVersion").is_some() {
-        lock["lockfileVersion"] = serde_json::json!(1);
-    }
-    if !lock.get("node").and_then(|v| v.get("packages")).is_some() {
-        lock["node"] = serde_json::json!({ "packages": {} });
-    }
-    // Migrate a bare top-level "packages" (old format) into php.packages.
-    let legacy_packages = lock.get("packages").and_then(|v| v.as_object()).cloned();
-    if !lock.get("php").and_then(|v| v.get("packages")).is_some() {
-        lock["php"] = serde_json::json!({ "packages": {} });
-    }
-    if let Some(legacy) = legacy_packages {
-        if let Some(php_packages) = lock
-            .get_mut("php")
-            .and_then(|v| v.get_mut("packages"))
-            .and_then(|v| v.as_object_mut())
-        {
-            for (k, v) in legacy {
-                php_packages.entry(k).or_insert(v);
-            }
-        }
-        lock.as_object_mut().map(|o| o.remove("packages"));
-    }
+    let mut packages = lock_packages(&lock).cloned().unwrap_or_default();
+    packages.insert(
+        name.to_string(),
+        serde_json::json!([
+            version,
+            format!("linkhash:{}", name),
+            {
+                "moduleGraph": { "hash": module_graph_hash },
+                "fsGraph": { "hash": fs_graph_hash },
+            },
+            "",
+        ]),
+    );
 
-    if let Some(php_packages) = lock
-        .get_mut("php")
-        .and_then(|v| v.get_mut("packages"))
-        .and_then(|v| v.as_object_mut())
-    {
-        php_packages.insert(
-            name.to_string(),
-            serde_json::json!([
-                version,
-                format!("linkhash:{}", name),
-                {
-                    "moduleGraph": { "hash": module_graph_hash },
-                    "fsGraph": { "hash": fs_graph_hash },
-                },
-                "",
-            ]),
-        );
-    }
+    lock = serde_json::json!({
+        "lockfileVersion": lock
+            .get("lockfileVersion")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(1),
+        "packages": packages,
+    });
 
     std::fs::write(&lock_path, serde_json::to_string_pretty(&lock)?)?;
     Ok(())
 }
 
+fn lock_packages(lock: &serde_json::Value) -> Option<&serde_json::Map<String, serde_json::Value>> {
+    if let Some(packages) = lock.get("packages").and_then(|value| value.as_object()) {
+        return Some(packages);
+    }
+
+    lock.get("php")
+        .and_then(|value| value.get("packages"))
+        .and_then(|value| value.as_object())
+}
+
 fn default_lock() -> serde_json::Value {
     serde_json::json!({
         "lockfileVersion": 1,
-        "node": { "packages": {} },
-        "php": { "packages": {} },
+        "packages": {},
     })
 }
 
@@ -964,17 +886,16 @@ mod shop_update_tests {
     use std::collections::BTreeMap;
 
     fn lock_with(pkgs: &[(&str, &str)]) -> String {
-        let mut php = serde_json::Map::new();
+        let mut packages = serde_json::Map::new();
         for (name, version) in pkgs {
-            php.insert(
+            packages.insert(
                 (*name).to_string(),
                 serde_json::json!([version, format!("linkhash:{}", name), {}, ""]),
             );
         }
         serde_json::json!({
             "lockfileVersion": 1,
-            "node": { "packages": {} },
-            "php": { "packages": php },
+            "packages": packages,
         })
         .to_string()
     }
@@ -996,6 +917,36 @@ mod shop_update_tests {
         assert_eq!(
             versions.get("@tana/store").map(String::as_str),
             Some("0.2.3")
+        );
+    }
+
+    #[test]
+    fn read_php_lock_versions_parses_legacy_php_packages() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        std::fs::write(
+            tmp.path().join("deka.lock"),
+            serde_json::json!({
+                "lockfileVersion": 1,
+                "node": { "packages": {} },
+                "php": {
+                    "packages": {
+                        "@deka/redis": [
+                            "0.1.0",
+                            "linkhash:@deka/redis",
+                            {},
+                            ""
+                        ]
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .expect("write");
+
+        let versions = read_php_lock_versions(tmp.path());
+        assert_eq!(
+            versions.get("@deka/redis").map(String::as_str),
+            Some("0.1.0")
         );
     }
 
@@ -1063,19 +1014,16 @@ mod shop_update_tests {
             tmp.path().join("deka.lock"),
             serde_json::json!({
                 "lockfileVersion": 1,
-                "node": { "packages": {} },
-                "php": {
-                    "packages": {
-                        "@deka/core": [
-                            "0.1.0",
-                            "linkhash:@deka/core",
-                            {
-                                "moduleGraph": { "hash": "stale-module" },
-                                "fsGraph": { "hash": "stale-fs" }
-                            },
-                            ""
-                        ]
-                    }
+                "packages": {
+                    "@deka/core": [
+                        "0.1.0",
+                        "linkhash:@deka/core",
+                        {
+                            "moduleGraph": { "hash": "stale-module" },
+                            "fsGraph": { "hash": "stale-fs" }
+                        },
+                        ""
+                    ]
                 }
             })
             .to_string(),
@@ -1088,7 +1036,7 @@ mod shop_update_tests {
         assert_eq!(changed, vec!["@deka/core".to_string()]);
         let raw = std::fs::read_to_string(tmp.path().join("deka.lock")).expect("read lock");
         let lock: serde_json::Value = serde_json::from_str(&raw).expect("json");
-        let metadata = &lock["php"]["packages"]["@deka/core"][2];
+        let metadata = &lock["packages"]["@deka/core"][2];
         assert_ne!(metadata["moduleGraph"]["hash"], "stale-module");
         assert_ne!(metadata["fsGraph"]["hash"], "stale-fs");
     }
