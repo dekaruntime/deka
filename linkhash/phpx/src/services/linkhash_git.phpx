@@ -33,6 +33,16 @@ export function scopedReleaseBlobPath($scope, $name, $version, $path) {
     . rawurlencode(ltrim(trim('' . $path), '/'))
 }
 
+export function publicDekaRepoTreePath($repo) {
+  return '/deka/' . rawurlencode(trim('' . $repo)) . '/tree'
+}
+
+export function publicDekaRepoBlobPath($repo, $path) {
+  return '/deka/' . rawurlencode(trim('' . $repo))
+    . '/blob?path='
+    . rawurlencode(ltrim(trim('' . $path), '/'))
+}
+
 export function repoIssuesPath($scope, $name, $state = 'open') {
   return '/api/repos/' . rawurlencode(trim('' . $scope)) . '/' . rawurlencode(trim('' . $name)) . '/issues?state=' . rawurlencode(trim('' . $state))
 }

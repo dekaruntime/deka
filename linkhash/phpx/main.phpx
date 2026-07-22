@@ -3,7 +3,7 @@ import { json_encode as encodeJson, json_decode_result } from 'encoding/json'
 import { PreviewRouteSection, ForkResultSection } from './src/pages/repo_flows'
 import { PackageStatPills, PackageVersionRows } from './src/pages/package_detail'
 import { buildAdwaBaseUrl, buildAdwaPreviewUrl, buildAdwaPreviewUrlForRef, buildAdwaEditUrl } from './src/services/adwa'
-import { gitApiDefaultBase, scopedReleaseDocsPath, scopedReleaseTreePath, scopedReleaseBlobPath, repoIssuesPath, repoIssueDetailPath, repoIssueCommentPath, repoPullsPath, repoPullDetailPath, repoPullCommentPath, repoResolvePath, repoForkPath } from './src/services/linkhash_git'
+import { gitApiDefaultBase, scopedReleaseDocsPath, scopedReleaseTreePath, scopedReleaseBlobPath, publicDekaRepoTreePath, publicDekaRepoBlobPath, repoIssuesPath, repoIssueDetailPath, repoIssueCommentPath, repoPullsPath, repoPullDetailPath, repoPullCommentPath, repoResolvePath, repoForkPath } from './src/services/linkhash_git'
 import { repoIssueCreateRoute, repoIssueCommentRoute, repoPullCreateRoute, repoPullCommentRoute, repoForkRoute, buildRepoActionRedirectPath } from './src/api/repo_actions'
 import { meta } from './db/meta'
 import { selectMany, selectOne, insertOne, updateWhere, deleteWhere, loadRelation, transaction, eq, ilike, isNull, andWhere, asc, desc, limit } from './db'
@@ -1629,6 +1629,61 @@ function fetchRemoteReleaseBlob($org, $name, $version, $path) {
     return [ 'ok' => false, 'error' => 'invalid blob payload' ]
   }
   return [ 'ok' => true, 'value' => $decoded ]
+}
+
+function fetchPublicDekaRepoTree($name) {
+  $repo = normalizePackageName($name)
+  if ($repo === '') {
+    return [ 'ok' => false, 'error' => 'invalid repository target', 'status' => 404 ]
+  }
+  $res = httpRequestRaw('GET', linkhashGitApiBase() . publicDekaRepoTreePath($repo), [ 'Accept' => 'application/json' ], '')
+  if (!rowValue($res, 'ok', false)) {
+    return [ 'ok' => false, 'error' => 'tree request failed', 'status' => 502 ]
+  }
+  $status = (int) rowValue($res, 'status', 0)
+  if ($status < 200 || $status >= 300) {
+    return [ 'ok' => false, 'error' => $status === 404 ? 'package not found' : 'tree not available', 'status' => $status ]
+  }
+  $decoded = decodeJsonLike(rowValue($res, 'body', '{}'), null)
+  if (!is_array($decoded)) {
+    return [ 'ok' => false, 'error' => 'invalid tree payload', 'status' => 502 ]
+  }
+  return [ 'ok' => true, 'value' => $decoded ]
+}
+
+function fetchPublicDekaRepoBlob($name, $path) {
+  $repo = normalizePackageName($name)
+  $file = ltrim(trim('' . $path), '/')
+  if ($repo === '' || $file === '') {
+    return [ 'ok' => false, 'error' => 'invalid blob target', 'status' => 404 ]
+  }
+  $res = httpRequestRaw('GET', linkhashGitApiBase() . publicDekaRepoBlobPath($repo, $file), [ 'Accept' => 'application/json' ], '')
+  if (!rowValue($res, 'ok', false)) {
+    return [ 'ok' => false, 'error' => 'blob request failed', 'status' => 502 ]
+  }
+  $status = (int) rowValue($res, 'status', 0)
+  if ($status < 200 || $status >= 300) {
+    return [ 'ok' => false, 'error' => $status === 404 ? 'file not found' : 'blob not available', 'status' => $status ]
+  }
+  $decoded = decodeJsonLike(rowValue($res, 'body', '{}'), null)
+  if (!is_array($decoded)) {
+    return [ 'ok' => false, 'error' => 'invalid blob payload', 'status' => 502 ]
+  }
+  return [ 'ok' => true, 'value' => $decoded ]
+}
+
+function publicReadmePath($entries) {
+  if (!is_array($entries)) {
+    return ''
+  }
+  foreach ($entries as $entry) {
+    $path = '' . rowValue($entry, 'path', '')
+    $kind = '' . rowValue($entry, 'kind', rowValue($entry, 'type', 'blob'))
+    if (($kind === 'blob' || $kind === 'file') && (strtolower($path) === 'readme' || strtolower($path) === 'readme.md')) {
+      return $path
+    }
+  }
+  return ''
 }
 
 function linkhashGitAuthToken() {
@@ -4973,6 +5028,14 @@ function fetchPackageDetail($orgHandle, $name, $auth) {
     return [ 'ok' => false, 'error' => 'org and name are required' ]
   }
 
+  $publicTree = []
+  if ($org === 'deka') {
+    $publicTree = fetchPublicDekaRepoTree($pkgName)
+    if (!rowValue($publicTree, 'ok', false)) {
+      return [ 'ok' => false, 'error' => rowValue($publicTree, 'error', 'package not found'), 'status' => (int) rowValue($publicTree, 'status', 502) ]
+    }
+  }
+
   $conn = openDbHandle()
   if (!result_is_ok($conn)) {
     return [ 'ok' => false, 'error' => $conn->error ]
@@ -5015,6 +5078,7 @@ function fetchPackageDetail($orgHandle, $name, $auth) {
   $selectedFile = trim('' . queryValue('file', ''))
   $selectedFileContent = ''
   $selectedFileError = ''
+  $readmeText = ''
   $issues = []
   $issuesError = ''
   $activeIssueNumber = (int) queryValue('issue', 0)
@@ -5034,15 +5098,26 @@ function fetchPackageDetail($orgHandle, $name, $auth) {
     } else {
       $docsError = '' . rowValue($docs, 'error', '')
     }
+  }
 
-    $tree = fetchRemoteReleaseTree($org, $pkgName, $activeVersion)
+  if ($org === 'deka' || $activeVersion !== '') {
+    $tree = $org === 'deka' ? $publicTree : fetchRemoteReleaseTree($org, $pkgName, $activeVersion)
     if (rowValue($tree, 'ok', false)) {
       $treeEntries = rowValue(rowValue($tree, 'value', []), 'entries', [])
+      $readmePath = $org === 'deka' ? publicReadmePath($treeEntries) : ''
+      if ($readmePath !== '') {
+        $readmeBlob = fetchPublicDekaRepoBlob($pkgName, $readmePath)
+        if (rowValue($readmeBlob, 'ok', false)) {
+          $readmeText = '' . rowValue(rowValue($readmeBlob, 'value', []), 'content', '')
+        }
+      }
       if ($selectedFile === '' && is_array($treeEntries) && count($treeEntries) > 0) {
         $selectedFile = '' . rowValue($treeEntries[0], 'path', '')
       }
       if ($selectedFile !== '') {
-        $blob = fetchRemoteReleaseBlob($org, $pkgName, $activeVersion, $selectedFile)
+        $blob = $org === 'deka'
+          ? fetchPublicDekaRepoBlob($pkgName, $selectedFile)
+          : fetchRemoteReleaseBlob($org, $pkgName, $activeVersion, $selectedFile)
         if (rowValue($blob, 'ok', false)) {
           $selectedFileContent = '' . rowValue(rowValue($blob, 'value', []), 'content', '')
         } else {
@@ -5106,6 +5181,7 @@ function fetchPackageDetail($orgHandle, $name, $auth) {
     'selectedFile' => $selectedFile,
     'selectedFileContent' => $selectedFileContent,
     'selectedFileError' => $selectedFileError,
+    'readmeText' => $readmeText,
     'issues' => $issues,
     'issuesError' => $issuesError,
     'activeIssue' => $activeIssue,
@@ -5777,7 +5853,10 @@ function PackageDetailPage($props) {
   $packageCoord = '@' . rowValue($props, 'org', '') . '/' . rowValue($pkg, 'name', '')
   $previewRoute = '/@' . rowValue($props, 'org', '') . '/' . rowValue($pkg, 'name', '') . '/HEAD'
   $forkDefaultRepo = '' . rowValue($pkg, 'name', '') . '-fork'
-  $readmeText = versionReadmeText($activeVersion, $packageCoord, $activeVersionName)
+  $readmeText = '' . rowValue($props, 'readmeText', '')
+  if ($readmeText === '') {
+    $readmeText = versionReadmeText($activeVersion, $packageCoord, $activeVersionName)
+  }
   $items = []
   foreach ($versions as $v) {
     $ver = rowValue($v, 'version', '')
@@ -6731,7 +6810,15 @@ if (strpos($path, '/package/') === 0) {
   $repoPath = $repoPathRoute
   $auth = authWithScope(1)
   $detail = fetchPackageDetail($repoPath['org'], $repoPath['name'], $auth)
-  $node = <PackageDetailPage ok={rowValue($detail, 'ok', false)} org={rowValue($detail, 'org', '')} package={rowValue($detail, 'package', [])} versions={rowValue($detail, 'versions', [])} docsSymbols={rowValue($detail, 'docsSymbols', [])} docsError={rowValue($detail, 'docsError', '')} treeEntries={rowValue($detail, 'treeEntries', [])} treeError={rowValue($detail, 'treeError', '')} selectedFile={rowValue($detail, 'selectedFile', '')} selectedFileContent={rowValue($detail, 'selectedFileContent', '')} selectedFileError={rowValue($detail, 'selectedFileError', '')} error={rowValue($detail, 'error', '')} />
+  if (!rowValue($detail, 'ok', false)) {
+    $detailStatus = (int) rowValue($detail, 'status', 404)
+    if ($detailStatus === 404) {
+      header('HTTP/1.1 404 Not Found')
+    } else {
+      header('HTTP/1.1 502 Bad Gateway')
+    }
+  }
+  $node = <PackageDetailPage ok={rowValue($detail, 'ok', false)} org={rowValue($detail, 'org', '')} package={rowValue($detail, 'package', [])} versions={rowValue($detail, 'versions', [])} docsSymbols={rowValue($detail, 'docsSymbols', [])} docsError={rowValue($detail, 'docsError', '')} treeEntries={rowValue($detail, 'treeEntries', [])} treeError={rowValue($detail, 'treeError', '')} selectedFile={rowValue($detail, 'selectedFile', '')} selectedFileContent={rowValue($detail, 'selectedFileContent', '')} selectedFileError={rowValue($detail, 'selectedFileError', '')} readmeText={rowValue($detail, 'readmeText', '')} error={rowValue($detail, 'error', '')} />
 } else if (strStartsWith($path, '/lh_')) {
   $cid = substr($path, 1)
   $auth = authWithScope(1)
