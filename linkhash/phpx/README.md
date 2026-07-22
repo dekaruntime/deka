@@ -150,7 +150,8 @@ Logging:
 SSR routes:
 
 - `/playground` package inspector (resolve version + inspect install/artifact metadata)
-- `/package/{org}/{name}` package detail page
+- `/{org}/{repo}` repository/package landing page, for example `/deka/json`
+- `/package/{org}/{name}` legacy package detail URL
 - `/@{owner}/{repo}/{ref}` preview resolver page (maps ref to commit for Adwa preview)
 - `/fork/result` post-fork page with clone instructions + editor links
 - `/org/{handle}` organization profile page
@@ -160,6 +161,7 @@ Package detail docs:
 - Package pages now show version-aware API docs symbols when `linkhash-git` docs APIs are reachable.
 - Configure the backend URL with `LINKHASH_GIT_API_URL` (default `http://localhost:8508`).
 - Package pages use `tree`/`blob` APIs for file explorer + source preview when available.
+- Repository/package indexes only list packages with `visibility=public`; private packages stay hidden from index cards even for authenticated viewers.
 - Package pages now render issue/PR list/detail/create/comment panels against `linkhash-git` repo APIs.
 - Set `LINKHASH_GIT_TOKEN` (or `LINKHASH_GIT_API_TOKEN`) so Linkhash can call authenticated repo APIs.
 - Package pages include `Preview HEAD in Adwa` and fork controls.

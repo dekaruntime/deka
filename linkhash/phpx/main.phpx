@@ -748,7 +748,7 @@ function QuickStart() {
   </section>
 }
 
-function fetchTopPackages($limit = 6, $userId = 0): array {
+function fetchTopPackages($limit = 6): array {
   $conn = openDbHandle()
   if (!result_is_ok($conn)) {
     return []
@@ -756,7 +756,7 @@ function fetchTopPackages($limit = 6, $userId = 0): array {
 
   $handle = $conn->value
   ensureAuthSchema($handle)
-  $rowsRes = fetchVisiblePackageRows($handle, $limit, '', $userId)
+  $rowsRes = fetchPublicPackageRows($handle, $limit, '')
   dbClose($handle)
   if (!rowValue($rowsRes, 'ok', false)) {
     return []
@@ -803,7 +803,7 @@ function TopPackages($props) {
     $latestVersion = rowValue($pkg, 'latestVersion', 'n/a')
     $orgHandle = '' . rowValue($pkg, 'orgHandle', rowValue($pkg, 'org_handle', ''))
     $packageHref = ($orgHandle !== '' && ('' . $name) !== '')
-      ? ('/package/' . rawurlencode($orgHandle) . '/' . rawurlencode('' . $name))
+      ? repoPackagePath($orgHandle, '' . $name)
       : ''
 
     $cards[] = <article class="rounded-xl border border-gray-200 p-4">
@@ -850,7 +850,7 @@ function FeaturedPackages($props) {
     $desc = rowValue($pkg, 'description', '')
     $orgHandle = '' . rowValue($pkg, 'orgHandle', rowValue($pkg, 'org_handle', ''))
     $packageHref = ($orgHandle !== '' && ('' . $name) !== '')
-      ? ('/package/' . rawurlencode($orgHandle) . '/' . rawurlencode('' . $name))
+      ? repoPackagePath($orgHandle, '' . $name)
       : ''
     $cards[] = <article class="rounded-xl border border-blue-100 bg-blue-50 p-4">
       <div class="text-sm font-semibold text-blue-700">{'Featured #' . ($i + 1)}</div>
@@ -1053,8 +1053,6 @@ function HmrDemo() {
 function apiPackages() {
   header('Content-Type: application/json')
   header('X-Powered-By: linkha.sh')
-  $me = authCurrentUser()
-  $userId = $me['ok'] ? (int) rowValue($me['user'], 'id', 0) : 0
   $conn = openDbHandle()
   if (!result_is_ok($conn)) {
     $data = {
@@ -1071,7 +1069,7 @@ function apiPackages() {
 
   $handle = $conn->value
   ensureAuthSchema($handle)
-  $rowsRes = fetchVisiblePackageRows($handle, 25, '', $userId)
+  $rowsRes = fetchPublicPackageRows($handle, 25, '')
   dbClose($handle)
   if (!rowValue($rowsRes, 'ok', false)) {
     echo jsonReply({
@@ -1104,8 +1102,6 @@ function apiSearch() {
   header('Content-Type: application/json')
   header('X-Powered-By: linkha.sh')
   $query = isset($_GET['q']) ? $_GET['q'] : ''
-  $me = authCurrentUser()
-  $userId = $me['ok'] ? (int) rowValue($me['user'], 'id', 0) : 0
   $conn = openDbHandle()
   if (!result_is_ok($conn)) {
     $data = {
@@ -1120,7 +1116,7 @@ function apiSearch() {
 
   $handle = $conn->value
   ensureAuthSchema($handle)
-  $rowsRes = fetchVisiblePackageRows($handle, 50, $query, $userId)
+  $rowsRes = fetchPublicPackageRows($handle, 50, $query)
   dbClose($handle)
   if (!rowValue($rowsRes, 'ok', false)) {
     echo jsonReply({
@@ -2778,56 +2774,16 @@ function authUserId($auth) {
   return (int) rowValue($user, 'id', 0)
 }
 
-function fetchVisiblePackageRows($db, $limit = 25, $query = '', $userId = 0) {
+function fetchPublicPackageRows($db, $limit = 25, $query = '') {
   $max = max(1, (int) $limit)
   $q = strtolower(trim('' . $query))
-  $uid = (int) $userId
   $client = dbClient($db)
 
-  $packages = []
-  if ($uid > 0) {
-    $members = clientSelectMany($client, 
-      $client.models.LhOrgMember,
-      andWhere(
-        eq('user_id', $uid),
-        isNull('revoked_at')
-      )
-    )
-    if (!result_is_ok($members)) {
-      return { ok: false, error: $members->error }
-    }
-    $allowed = []
-    foreach ($members->value as $member) {
-      $role = canonicalOrgRole(rowValue($member, 'role', ''))
-      if ($role === 'publisher' || $role === 'maintainer') {
-        $allowed[(int) rowValue($member, 'org_id', 0)] = true
-      }
-    }
-
-    $publicRes = clientSelectMany($client, $client.models.Package, eq('visibility', 'public'))
-    if (!result_is_ok($publicRes)) {
-      return { ok: false, error: $publicRes->error }
-    }
-    $privateRes = clientSelectMany($client, $client.models.Package, eq('visibility', 'private'))
-    if (!result_is_ok($privateRes)) {
-      return { ok: false, error: $privateRes->error }
-    }
-    foreach ($publicRes->value as $row) {
-      $packages[] = $row
-    }
-    foreach ($privateRes->value as $row) {
-      $orgId = (int) rowValue($row, 'org_id', rowValue($row, 'orgId', 0))
-      if (array_key_exists($orgId, $allowed)) {
-        $packages[] = $row
-      }
-    }
-  } else {
-    $publicRes = clientSelectMany($client, $client.models.Package, eq('visibility', 'public'))
-    if (!result_is_ok($publicRes)) {
-      return { ok: false, error: $publicRes->error }
-    }
-    $packages = $publicRes->value
+  $publicRes = clientSelectMany($client, $client.models.Package, eq('visibility', 'public'))
+  if (!result_is_ok($publicRes)) {
+    return { ok: false, error: $publicRes->error }
   }
+  $packages = $publicRes->value
 
   if ($q !== '') {
     $filtered = []
@@ -5346,6 +5302,45 @@ function parseAliasPackagePath($path) {
   ]
 }
 
+function parseRepoPackagePath($path) {
+  $raw = '' . $path
+  if ($raw === '' || $raw === '/' || strStartsWith($raw, '/@')) {
+    return null
+  }
+  $trimmed = trim($raw, '/')
+  $parts = explode('/', $trimmed)
+  if (count($parts) !== 2) {
+    return null
+  }
+  $org = normalizeHandleName($parts[0])
+  $pkg = normalizePackageName($parts[1])
+  $reserved = [
+    'api' => true,
+    'account' => true,
+    'auth' => true,
+    'deploy-watchers' => true,
+    'fork' => true,
+    'hmr-demo' => true,
+    'org' => true,
+    'package' => true,
+    'packages' => true,
+    'playground' => true,
+    'publish' => true,
+    'runtime' => true
+  ]
+  if (array_key_exists($org, $reserved)) {
+    return null
+  }
+  if (!isValidHandleName($org) || isReservedHandle($org) || !isValidPackageName($pkg) || isReservedPackageName($pkg)) {
+    return null
+  }
+  return [
+    'org' => $org,
+    'name' => $pkg,
+    'version' => ''
+  ]
+}
+
 function parsePreviewRepoPath($path) {
   $raw = '' . $path
   if (!strStartsWith($raw, '/@')) {
@@ -5421,12 +5416,16 @@ function fetchCanonicalTarget($canonicalId, $auth) {
   return [ 'ok' => true, 'target' => $target ]
 }
 
+function repoPackagePath($org, $name) {
+  return '/' . rawurlencode(normalizeHandleName($org)) . '/' . rawurlencode(normalizePackageName($name))
+}
+
 function packageRoutePath($org, $name) {
   return '/package/' . rawurlencode(normalizeHandleName($org)) . '/' . rawurlencode(normalizePackageName($name))
 }
 
 function repoActionRedirect($org, $name, $action, $message = '', $numberKey = '', $number = 0) {
-  redirectTo(buildRepoActionRedirectPath(packageRoutePath($org, $name), $action, $message, $numberKey, $number))
+  redirectTo(buildRepoActionRedirectPath(repoPackagePath($org, $name), $action, $message, $numberKey, $number))
 }
 
 function apiRepoIssueCreate() {
@@ -5618,10 +5617,7 @@ function fetchOrgProfile($handle, $auth) {
     dbClose($db)
     return [ 'ok' => false, 'error' => 'forbidden: org is private' ]
   }
-  $where = eq('org_id', $orgId)
-  if (!$memberAccess) {
-    $where = andWhere($where, eq('visibility', 'public'))
-  }
+  $where = andWhere(eq('org_id', $orgId), eq('visibility', 'public'))
   $pkgRes = clientSelectMany($client, $client.models.Package, $where, desc('download_count'))
   dbClose($db)
 
@@ -5836,7 +5832,7 @@ function PackageDetailPage($props) {
   $fileSource = (is_array($treeEntries) && count($treeEntries) > 0) ? $treeEntries : $fileRows
   $fileItems = []
   $fileLimit = min(120, count($fileSource))
-  $packagePath = '/package/' . rowValue($props, 'org', '') . '/' . rowValue($pkg, 'name', '')
+  $packagePath = repoPackagePath(rowValue($props, 'org', ''), rowValue($pkg, 'name', ''))
   for ($i = 0; $i < $fileLimit; $i = $i + 1) {
     $f = $fileSource[$i]
     $path = '' . rowValue($f, 'path', '')
@@ -5928,8 +5924,8 @@ function PackageDetailPage($props) {
       <div class="border-b border-gray-200 px-6">
         <div class="flex flex-wrap gap-5 text-sm">
           <span class="border-b-2 border-blue-600 py-3 font-semibold text-gray-900">Code</span>
-          <span class="py-3 text-gray-600">Issues ({is_array($issues) ? (string) count($issues) : '0'})</span>
-          <span class="py-3 text-gray-600">Pull requests ({is_array($pulls) ? (string) count($pulls) : '0'})</span>
+          <a class="py-3 text-gray-600 hover:text-blue-700" href="#issues">Issues ({is_array($issues) ? (string) count($issues) : '0'})</a>
+          <a class="py-3 text-gray-600 hover:text-blue-700" href="#pull-requests">Pull requests ({is_array($pulls) ? (string) count($pulls) : '0'})</a>
           <span class="py-3 text-gray-600">Security</span>
           <span class="py-3 text-gray-600">Releases ({(string) count($items)})</span>
         </div>
@@ -5939,7 +5935,7 @@ function PackageDetailPage($props) {
         {$repoMessage === '' ? $repoAction : $repoMessage}
       </div> : false}
 
-      <div class="p-6" style="display:flex;gap:24px;align-items:flex-start;">
+      <div class="p-6" style="display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap;">
         <main class="space-y-4" style="flex:1 1 auto;min-width:0;">
           <section class="rounded-lg border border-gray-200">
             <div class="flex items-center justify-between border-b border-gray-200 bg-gray-50 px-4 py-2 text-xs text-gray-600">
@@ -5947,7 +5943,7 @@ function PackageDetailPage($props) {
               <span>{'entrypoint: ' . ($mainFile === '' ? 'index.phpx' : $mainFile)}</span>
             </div>
             {$treeError !== '' ? <div class="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">{'Tree source: ' . $treeError}</div> : false}
-            <div style="display:grid;grid-template-columns:minmax(240px,34%) minmax(0,1fr);">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));">
               <div class="max-h-[420px] overflow-auto border-r border-gray-200">
                 <ul class="grid gap-1 p-2">
                   {$fileItems}
@@ -5985,7 +5981,7 @@ function PackageDetailPage($props) {
           </section>
         </main>
 
-        <aside class="space-y-4" style="flex:0 0 320px;width:320px;">
+        <aside class="space-y-4" style="flex:1 0 280px;max-width:320px;">
           <section class="rounded-lg border border-gray-200 p-4">
             <h3 class="text-sm font-semibold text-gray-900">About</h3>
             <p class="mt-2 text-sm text-gray-600">{rowValue($pkg, 'description', 'No description provided.')}</p>
@@ -6021,7 +6017,7 @@ function PackageDetailPage($props) {
       </div>
 
       <div class="grid gap-6 border-t border-gray-200 p-6" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr);">
-        <section class="rounded-lg border border-gray-200 p-4">
+        <section id="issues" class="rounded-lg border border-gray-200 p-4">
           <div class="flex items-center justify-between gap-3">
             <h3 class="text-sm font-semibold text-gray-900">Issues</h3>
             <span class="text-xs text-gray-500">{is_array($issues) ? ((string) count($issues) . ' open') : '0 open'}</span>
@@ -6051,7 +6047,7 @@ function PackageDetailPage($props) {
           </div> : false}
         </section>
 
-        <section class="rounded-lg border border-gray-200 p-4">
+        <section id="pull-requests" class="rounded-lg border border-gray-200 p-4">
           <div class="flex items-center justify-between gap-3">
             <h3 class="text-sm font-semibold text-gray-900">Pull Requests</h3>
             <span class="text-xs text-gray-500">{is_array($pulls) ? ((string) count($pulls) . ' open') : '0 open'}</span>
@@ -6104,7 +6100,7 @@ function OrgProfilePage($props) {
   foreach ($packages as $pkg) {
     $cards[] = <article class="rounded-xl border border-gray-200 p-4">
       <div class="flex items-center justify-between gap-3">
-        <a class="text-base font-semibold text-blue-700 hover:text-blue-900" href={'/package/' . rowValue($org, 'handle', '') . '/' . rowValue($pkg, 'name', '')}>
+        <a class="text-base font-semibold text-blue-700 hover:text-blue-900" href={repoPackagePath(rowValue($org, 'handle', ''), rowValue($pkg, 'name', ''))}>
           {rowValue($pkg, 'name', '')}
         </a>
         <span class="text-xs rounded bg-gray-100 px-2 py-1">{rowValue($pkg, 'visibility', 'public')}</span>
@@ -6653,13 +6649,12 @@ if (strpos($path, '/api/') === 0) {
 }
 
 $title = 'linkha.sh - PHPX registry'
-$viewer = authCurrentUser()
-$viewerId = $viewer['ok'] ? (int) rowValue($viewer['user'], 'id', 0) : 0
 $topPackages = []
 $registryStats = []
 $runtimeStats = []
 $checks = []
 $node = null
+$repoPathRoute = parseRepoPackagePath($path)
 if (strpos($path, '/package/') === 0) {
   $parts = explode('/', trim($path, '/'))
   $org = count($parts) >= 2 ? $parts[1] : ''
@@ -6732,6 +6727,11 @@ if (strpos($path, '/package/') === 0) {
       $node = <PackageDetailPage ok={rowValue($detail, 'ok', false)} org={rowValue($detail, 'org', '')} package={rowValue($detail, 'package', [])} versions={rowValue($detail, 'versions', [])} docsSymbols={rowValue($detail, 'docsSymbols', [])} docsError={rowValue($detail, 'docsError', '')} treeEntries={rowValue($detail, 'treeEntries', [])} treeError={rowValue($detail, 'treeError', '')} selectedFile={rowValue($detail, 'selectedFile', '')} selectedFileContent={rowValue($detail, 'selectedFileContent', '')} selectedFileError={rowValue($detail, 'selectedFileError', '')} error={rowValue($detail, 'error', '')} />
     }
   }
+} else if (isset($repoPathRoute)) {
+  $repoPath = $repoPathRoute
+  $auth = authWithScope(1)
+  $detail = fetchPackageDetail($repoPath['org'], $repoPath['name'], $auth)
+  $node = <PackageDetailPage ok={rowValue($detail, 'ok', false)} org={rowValue($detail, 'org', '')} package={rowValue($detail, 'package', [])} versions={rowValue($detail, 'versions', [])} docsSymbols={rowValue($detail, 'docsSymbols', [])} docsError={rowValue($detail, 'docsError', '')} treeEntries={rowValue($detail, 'treeEntries', [])} treeError={rowValue($detail, 'treeError', '')} selectedFile={rowValue($detail, 'selectedFile', '')} selectedFileContent={rowValue($detail, 'selectedFileContent', '')} selectedFileError={rowValue($detail, 'selectedFileError', '')} error={rowValue($detail, 'error', '')} />
 } else if (strStartsWith($path, '/lh_')) {
   $cid = substr($path, 1)
   $auth = authWithScope(1)
@@ -6834,7 +6834,7 @@ if (strpos($path, '/package/') === 0) {
       upstreamCommand={'cd ' . $targetRepo . ' && git remote add upstream http://localhost:8508/' . $sourceOwner . '/' . $sourceRepo . '.git'}
       previewUrl={'/@' . $targetOwner . '/' . $targetRepo . '/HEAD'}
       editUrl={adwaEditUrl($targetOwner, $targetRepo, $commit)}
-      packageUrl={'/package/' . $targetOwner . '/' . $targetRepo}
+      packageUrl={repoPackagePath($targetOwner, $targetRepo)}
     />
   </Layout>
 } else if ($path === '/deploy-watchers') {
@@ -6882,7 +6882,7 @@ if (strpos($path, '/package/') === 0) {
 } else if ($path === '/hmr-demo') {
   $node = <HmrDemo />
 } else {
-  $topPackages = fetchTopPackages(6, $viewerId)
+  $topPackages = fetchTopPackages(6)
   $registryStats = fetchRegistryStats()
   $statsResult = stats()
   $runtimeStats = result_is_ok($statsResult) ? $statsResult->value : []
