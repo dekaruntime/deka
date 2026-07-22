@@ -1193,7 +1193,10 @@ mod tests {
                 ]
             }
         });
-        let lock_bytes = serde_json::to_string_pretty(&lock_json).expect("lock json");
+        let lock_bytes = format!(
+            "{}\n",
+            serde_json::to_string_pretty(&lock_json).expect("lock json")
+        );
         fs::write(&lock_path, &lock_bytes).expect("write lock");
         let lock = lock::read_lockfile_at(&lock_path);
         let locked = locked_package(&lock, "@deka/encoding")

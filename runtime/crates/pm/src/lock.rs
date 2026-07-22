@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 pub const LOCKFILE_NAME: &str = "deka.lock";
@@ -83,8 +83,9 @@ pub fn write_lockfile(lock: &DekaLock) -> Result<()> {
 }
 
 pub fn write_lockfile_at(path: &Path, lock: &DekaLock) -> Result<()> {
-    let file = File::create(&path)?;
-    serde_json::to_writer_pretty(file, lock)?;
+    let mut file = File::create(&path)?;
+    serde_json::to_writer_pretty(&mut file, lock)?;
+    file.write_all(b"\n")?;
     Ok(())
 }
 
