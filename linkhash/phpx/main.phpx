@@ -5407,7 +5407,7 @@ function parseRepoPackagePath($path) {
   if (array_key_exists($org, $reserved)) {
     return null
   }
-  if (!isValidHandleName($org) || isReservedHandle($org) || !isValidPackageName($pkg) || isReservedPackageName($pkg)) {
+  if (!isValidHandleName($org) || (isReservedHandle($org) && $org !== 'deka') || !isValidPackageName($pkg) || (isReservedPackageName($pkg) && $org !== 'deka')) {
     return null
   }
   return [
