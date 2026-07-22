@@ -1,6 +1,6 @@
-use bundler::{BuildOptions, VirtualSource, bundle_virtual_entry};
+use bundler::{bundle_virtual_entry, BuildOptions, VirtualSource};
 use core::{CommandSpec, Context, ParamSpec, Registry};
-use phpx_js::{SourceModuleMeta, compile_phpx_source_to_js, parse_source_module_meta};
+use phpx_js::{compile_phpx_source_to_js, parse_source_module_meta, SourceModuleMeta};
 use runtime_core::module_spec::module_spec_aliases;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -292,11 +292,7 @@ fn default_import_target_for(spec: &str, output_path: &Path) -> String {
 }
 
 fn resolve_project_root(input_path: &Path) -> Result<PathBuf, String> {
-    let start = if input_path.is_dir() {
-        input_path.to_path_buf()
-    } else {
-        input_path.parent().unwrap_or(Path::new(".")).to_path_buf()
-    };
+    let start = project_root_search_start(input_path);
 
     let mut nearest_manifest_root = None;
     for dir in start.ancestors() {
@@ -319,6 +315,18 @@ fn resolve_project_root(input_path: &Path) -> Result<PathBuf, String> {
         "deka build requires a deka.json project root (searched from {})",
         input_path.display()
     ))
+}
+
+fn project_root_search_start(input_path: &Path) -> PathBuf {
+    if input_path.is_dir() {
+        return input_path.to_path_buf();
+    }
+
+    input_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+        .to_path_buf()
 }
 
 fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Result<(), String> {
@@ -1504,6 +1512,14 @@ class User {}
 
         let err = resolve_project_root(&input).expect_err("should fail without deka.json");
         assert!(err.contains("deka.json"));
+    }
+
+    #[test]
+    fn bare_entry_uses_current_directory_as_project_root() {
+        assert_eq!(
+            project_root_search_start(Path::new("main.phpx")),
+            PathBuf::from(".")
+        );
     }
 
     #[test]
