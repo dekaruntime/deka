@@ -44,12 +44,12 @@ pub(super) fn net_call_impl(
                 .unwrap_or("127.0.0.1")
                 .trim_matches('\0')
                 .to_string();
-            let port = args_obj.get("port").and_then(|v| v.as_u64()).unwrap_or(0) as u16;
-            if port == 0 {
-                return Ok(
-                    serde_json::json!({ "ok": false, "error": "connect: missing or invalid port" }),
-                );
-            }
+            let port = match tcp_connect_port(&args) {
+                Ok(port) => port,
+                Err(error) => {
+                    return Ok(serde_json::json!({ "ok": false, "error": error.to_string() }));
+                }
+            };
             let timeout_ms = args_obj
                 .get("timeout_ms")
                 .and_then(|v| v.as_u64())
@@ -465,8 +465,8 @@ pub(super) fn net_call_proto_impl(request: &[u8]) -> Result<Vec<u8>, deno_core::
     let req = proto::bridge_v1::NetRequest::decode(request)
         .map_err(|e| core_err(format!("net proto decode failed: {}", e)))?;
     let (action, payload, kind) = net_proto_request_to_action_payload(&req)?;
-    let net_target = payload.get("host").and_then(|v| v.as_str()).or(Some("*"));
-    enforce_net(net_target)?;
+    validate_tcp_connect_port(&action, &payload)?;
+    enforce_net(net_policy_target(&payload).as_deref())?;
     let response_json = net_call_impl(action, payload)?;
     let response = net_json_response_to_proto(&response_json, kind);
     let out = response.encode_to_vec();
@@ -477,6 +477,39 @@ pub(super) fn net_call_proto_impl(request: &[u8]) -> Result<Vec<u8>, deno_core::
         started.elapsed().as_micros() as u64,
     );
     Ok(out)
+}
+
+fn validate_tcp_connect_port(
+    action: &str,
+    payload: &serde_json::Value,
+) -> Result<(), deno_core::error::CoreError> {
+    if action == "connect" {
+        tcp_connect_port(payload)?;
+    }
+    Ok(())
+}
+
+fn tcp_connect_port(payload: &serde_json::Value) -> Result<u16, deno_core::error::CoreError> {
+    let port = payload
+        .get("port")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+    u16::try_from(port)
+        .ok()
+        .filter(|port| *port != 0)
+        .ok_or_else(|| core_err("connect: port must be in range 1..=65535"))
+}
+
+/// Preserve the requested port when a TCP connection is checked against the
+/// manifest. A `net.allow` entry may deliberately grant just one endpoint
+/// (`registry.internal:443`), rather than every port on that host.
+fn net_policy_target(payload: &serde_json::Value) -> Option<String> {
+    let host = payload.get("host")?.as_str()?;
+    let port = payload.get("port").and_then(|value| value.as_u64());
+    Some(match port {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_string(),
+    })
 }
 
 #[op2]
@@ -505,4 +538,108 @@ pub(super) fn op_php_net_proto_decode(
     let decoded = proto::bridge_v1::NetResponse::decode(response)
         .map_err(|e| core_err(format!("net proto decode response failed: {}", e)))?;
     Ok(net_proto_response_to_json(&decoded))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::proto;
+    use super::{net_call_proto_impl, net_policy_target, tcp_connect_port};
+    use prost::Message;
+    use serde_json::json;
+    use std::io::ErrorKind;
+    use std::net::TcpListener;
+    use std::sync::{Mutex, OnceLock};
+
+    fn policy_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn tcp_policy_target_preserves_manifest_port_scope() {
+        assert_eq!(
+            net_policy_target(&json!({ "host": "127.0.0.1", "port": 9418 })),
+            Some("127.0.0.1:9418".to_string())
+        );
+    }
+
+    #[test]
+    fn tcp_policy_target_does_not_invent_a_port() {
+        assert_eq!(
+            net_policy_target(&json!({ "host": "registry.tana.gg" })),
+            Some("registry.tana.gg".to_string())
+        );
+    }
+
+    #[test]
+    fn tcp_connect_port_rejects_overflow_values() {
+        for port in [65_536, 65_537, u32::MAX as u64] {
+            assert!(
+                tcp_connect_port(&json!({ "port": port })).is_err(),
+                "port {port}"
+            );
+        }
+    }
+
+    #[test]
+    fn tcp_proto_rejects_overflow_before_policy_or_socket_connect() {
+        let _lock = policy_lock().lock().expect("policy lock");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+        listener
+            .set_nonblocking(true)
+            .expect("set listener nonblocking");
+        let wrapped_port = listener.local_addr().expect("listener address").port() as u32;
+        let overflow_port = wrapped_port + 65_536;
+        let previous = std::env::var_os("DEKA_SECURITY_POLICY");
+        unsafe {
+            std::env::set_var(
+                "DEKA_SECURITY_POLICY",
+                format!(r#"{{"security":{{"allow":{{"net":["127.0.0.1:{overflow_port}"]}}}}}}"#),
+            );
+        }
+
+        let request = proto::bridge_v1::NetRequest {
+            schema_version: 1,
+            action: Some(proto::bridge_v1::net_request::Action::Connect(
+                proto::bridge_v1::NetConnectRequest {
+                    host: "127.0.0.1".to_string(),
+                    port: overflow_port,
+                    timeout_ms: 100,
+                },
+            )),
+        };
+        let error = net_call_proto_impl(&request.encode_to_vec()).expect_err("overflow rejected");
+        assert!(error.to_string().contains("1..=65535"));
+        assert!(matches!(listener.accept(), Err(error) if error.kind() == ErrorKind::WouldBlock));
+
+        unsafe {
+            match previous {
+                Some(value) => std::env::set_var("DEKA_SECURITY_POLICY", value),
+                None => std::env::remove_var("DEKA_SECURITY_POLICY"),
+            }
+        }
+    }
+
+    #[test]
+    fn tcp_host_port_policy_allows_only_the_manifest_endpoint() {
+        let _lock = policy_lock().lock().expect("policy lock");
+        let previous = std::env::var_os("DEKA_SECURITY_POLICY");
+        unsafe {
+            std::env::set_var(
+                "DEKA_SECURITY_POLICY",
+                r#"{"security":{"allow":{"net":["127.0.0.1:9418"]}}}"#,
+            );
+        }
+
+        assert!(super::super::security::enforce_net(Some("127.0.0.1:9418")).is_ok());
+        assert!(super::super::security::enforce_net(Some("127.0.0.1:9419")).is_err());
+        assert!(super::super::security::enforce_net(Some("127.0.0.1")).is_err());
+
+        unsafe {
+            match previous {
+                Some(value) => std::env::set_var("DEKA_SECURITY_POLICY", value),
+                None => std::env::remove_var("DEKA_SECURITY_POLICY"),
+            }
+        }
+    }
 }
