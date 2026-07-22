@@ -2,6 +2,7 @@ import { renderToString, renderPartialJson, isPartialRequest, Link, Hydration } 
 import { json_encode as encodeJson, json_decode_result } from 'encoding/json'
 import { PreviewRouteSection, ForkResultSection } from './src/pages/repo_flows'
 import { PackageStatPills, PackageVersionRows } from './src/pages/package_detail'
+import { RegistryShell, RegistryHero, RegistryFeatureCard, RegistryQuickStart, RegistryEmptyState } from './src/pages/registry_design'
 import { buildAdwaBaseUrl, buildAdwaPreviewUrl, buildAdwaPreviewUrlForRef, buildAdwaEditUrl } from './src/services/adwa'
 import { gitApiDefaultBase, scopedReleaseDocsPath, scopedReleaseTreePath, scopedReleaseBlobPath, repoIssuesPath, repoIssueDetailPath, repoIssueCommentPath, repoPullsPath, repoPullDetailPath, repoPullCommentPath, repoResolvePath, repoForkPath } from './src/services/linkhash_git'
 import { repoIssueCreateRoute, repoIssueCommentRoute, repoPullCreateRoute, repoPullCommentRoute, repoForkRoute, buildRepoActionRedirectPath } from './src/api/repo_actions'
@@ -597,38 +598,7 @@ function runtimeWriteProbe($target) {
 
 function Layout($props) {
   $children = rowValue($props, 'children', false)
-  return <div class="min-h-screen bg-gray-50 text-gray-900">
-    <nav class="bg-white shadow-sm border-b">
-      <div class="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
-        <div class="flex items-center gap-3">
-          <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600 text-white font-semibold">L</div>
-          <div>
-            <div class="text-lg font-bold text-blue-600">linkha.sh</div>
-            <div class="text-xs text-gray-500">PHPX package registry</div>
-          </div>
-        </div>
-        <div class="flex items-center gap-4 text-sm">
-          <Link to="/" layout="registry" class="text-blue-600 hover:text-blue-800">Home</Link>
-          <Link to="/account" layout="registry" class="text-gray-600 hover:text-blue-600">Account</Link>
-          <Link to="/deploy-watchers" layout="registry" class="text-gray-600 hover:text-blue-600">Deploys</Link>
-          <Link to="/playground" layout="registry" class="text-gray-600 hover:text-blue-600">Playground</Link>
-          <Link to="/runtime" layout="registry" class="text-gray-600 hover:text-blue-600">Runtime Lab</Link>
-          <Link to="/hmr-demo" layout="registry" class="text-gray-600 hover:text-blue-600">HMR Demo</Link>
-          <a class="text-gray-600 hover:text-blue-600" href="#features">Features</a>
-          <a class="text-gray-600 hover:text-blue-600" href="#quickstart">Quick Start</a>
-        </div>
-      </div>
-    </nav>
-    <main class="mx-auto max-w-6xl px-6 py-10">
-      {$children}
-    </main>
-    <footer class="border-t border-gray-200 bg-white">
-      <div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-6 text-sm text-gray-500">
-        <span>Built with PHPX</span>
-        <span>Registry API v0.1</span>
-      </div>
-    </footer>
-  </div>
+  return <RegistryShell children={$children} />
 }
 
 function DeployWatchersPage($props) {
@@ -690,62 +660,27 @@ function DeployWatchersPage($props) {
 }
 
 function Hero() {
-  return <section class="rounded-2xl bg-white p-10 shadow-sm">
-    <div class="grid gap-10 md:grid-cols-[1.2fr_0.8fr]">
-      <div>
-        <h1 class="text-4xl font-bold text-gray-900">The PHPX Package Registry</h1>
-        <p class="mt-4 text-lg text-gray-600">
-          Discover, publish, and share PHPX packages. Built with PHPX, for PHPX.
-        </p>
-        <div class="mt-6 flex flex-wrap gap-3">
-          <a href="/packages" class="rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white hover:bg-blue-700">Browse packages</a>
-          <a href="/publish" class="rounded-lg border border-gray-300 px-5 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Publish your first</a>
-        </div>
-      </div>
-      <div class="rounded-xl bg-gray-900 p-6 text-sm text-gray-100">
-        <div class="text-xs uppercase tracking-wide text-gray-400">install</div>
-        <pre class="mt-3 whitespace-pre-wrap">deka install @linkhash/ui</pre>
-        <div class="mt-6 text-xs uppercase tracking-wide text-gray-400">publish</div>
-        <pre class="mt-3 whitespace-pre-wrap">deka publish</pre>
-      </div>
-    </div>
-  </section>
+  return <RegistryHero />
 }
 
 function FeatureCard($props) {
-  return <div class="rounded-xl border border-gray-200 bg-white p-6 shadow-sm hover:shadow-md transition-shadow">
-    <div class="text-lg font-semibold text-gray-900">{$props.title}</div>
-    <div class="mt-2 text-sm text-gray-600">{$props.copy}</div>
-  </div>
+  return <RegistryFeatureCard label="registry" title={$props.title} copy={$props.copy} />
 }
 
 function Features() {
-  return <section id="features" class="mt-10">
-    <div class="text-sm font-semibold uppercase tracking-wide text-blue-600">Features</div>
-    <h2 class="mt-2 text-2xl font-bold text-gray-900">Everything you need to ship PHPX</h2>
-    <div class="mt-6 grid gap-6 md:grid-cols-3">
-      <FeatureCard title="Discover" copy="Find PHPX packages with clear metadata and sharp docs." />
-      <FeatureCard title="Publish" copy="Ship new releases in seconds with a frictionless flow." />
-      <FeatureCard title="Playground" copy="Try packages in a browser-first PHPX sandbox." />
+  return <section id="features" class="mt-12">
+    <div class="font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-black/45">Registry surface</div>
+    <h2 class="mt-3 max-w-2xl text-3xl font-bold tracking-[-0.045em] text-[#171715] sm:text-4xl">A calmer way to inspect the package behind the install.</h2>
+    <div class="mt-7 grid gap-4 md:grid-cols-3">
+      <FeatureCard title="Discover" copy="Find public PHPX packages with readable metadata, versions, and source context." />
+      <FeatureCard title="Inspect" copy="Move from package coordinate to files, README, releases, and integrity information." />
+      <FeatureCard title="Ship" copy="Keep install and publish commands close to the package registry they use." />
     </div>
   </section>
 }
 
 function QuickStart() {
-  return <section id="quickstart" class="mt-12 rounded-2xl bg-white p-8 shadow-sm">
-    <div class="text-sm font-semibold uppercase tracking-wide text-blue-600">Quick Start</div>
-    <h2 class="mt-2 text-2xl font-bold text-gray-900">Get going in minutes</h2>
-    <div class="mt-6 grid gap-6 md:grid-cols-2">
-      <div>
-        <div class="text-sm font-semibold text-gray-800">Install a package</div>
-        <div class="mt-2 rounded-lg bg-gray-900 px-4 py-3 font-mono text-sm text-gray-100">deka install @org/package</div>
-      </div>
-      <div>
-        <div class="text-sm font-semibold text-gray-800">Publish your package</div>
-        <div class="mt-2 rounded-lg bg-gray-900 px-4 py-3 font-mono text-sm text-gray-100">deka publish</div>
-      </div>
-    </div>
-  </section>
+  return <RegistryQuickStart />
 }
 
 function fetchTopPackages($limit = 6, $userId = 0): array {
@@ -789,10 +724,7 @@ function normalizePackage($pkg) {
 
 function TopPackages($props) {
   if (!is_array($props->packages) || count($props->packages) === 0) {
-    return <section class="mt-12 rounded-2xl border border-amber-200 bg-amber-50 p-8">
-      <div class="text-sm font-semibold uppercase tracking-wide text-amber-700">Top Packages</div>
-      <div class="mt-2 text-sm text-amber-800">No package data available yet.</div>
-    </section>
+    return <div id="packages" class="mt-12"><RegistryEmptyState title="No public packages yet" copy="When a public package is published, it will appear here with its source and install coordinate." /></div>
   }
 
   $cards = []
@@ -806,27 +738,27 @@ function TopPackages($props) {
       ? ('/package/' . rawurlencode($orgHandle) . '/' . rawurlencode('' . $name))
       : ''
 
-    $cards[] = <article class="rounded-xl border border-gray-200 p-4">
+    $cards[] = <article class="rounded-[20px] border border-black/10 bg-white/70 p-5 shadow-[0_4px_12px_rgba(23,23,21,0.03)]">
       <div class="flex items-start justify-between gap-4">
         <div>
           {$packageHref !== ''
-            ? <a class="text-base font-semibold text-blue-700 hover:text-blue-900" href={$packageHref}>{$name}</a>
-            : <div class="text-base font-semibold text-gray-900">{$name}</div>}
-          <div class="mt-1 text-sm text-gray-600">{$description}</div>
+            ? <a class="text-base font-semibold tracking-[-0.02em] text-[#171715] hover:underline" href={$packageHref}>{$name}</a>
+            : <div class="text-base font-semibold tracking-[-0.02em] text-[#171715]">{$name}</div>}
+          <div class="mt-2 text-sm leading-6 text-black/60">{$description}</div>
         </div>
-        <div class="rounded-md bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">{(string) $downloads . ' downloads'}</div>
+        <div class="rounded-full bg-[#f5d547] px-3 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-[#171715]">{(string) $downloads . ' downloads'}</div>
       </div>
-      <div class="mt-3 text-xs text-gray-500">{'Latest version: ' . $latestVersion}</div>
+      <div class="mt-4 font-mono text-[11px] text-black/45">{'latest · ' . $latestVersion}</div>
     </article>
   }
 
-  return <section class="mt-12 rounded-2xl bg-white p-8 shadow-sm">
+  return <section id="packages" class="mt-12 rounded-[28px] border border-black/10 bg-white/55 p-6 shadow-[0_12px_36px_rgba(23,23,21,0.04)] sm:p-8">
     <div class="flex items-center justify-between">
       <div>
-        <div class="text-sm font-semibold uppercase tracking-wide text-blue-600">Top Packages</div>
-        <h2 class="mt-2 text-2xl font-bold text-gray-900">Live data from Postgres</h2>
+        <div class="font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-black/45">Packages</div>
+        <h2 class="mt-3 text-2xl font-bold tracking-[-0.04em] text-[#171715]">Recently active in the registry</h2>
       </div>
-      <a href="/api/packages" class="text-sm font-semibold text-blue-600 hover:text-blue-800">JSON API</a>
+      <a href="/api/packages" class="rounded-full border border-black/10 px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-black/60 hover:bg-white">JSON API</a>
     </div>
     <div class="mt-6 grid gap-4">
       {$cards}
@@ -5745,10 +5677,7 @@ function apiArtifactDownload($canonicalId) {
 function PackageDetailPage($props) {
   if (!$props->ok) {
     return <Layout>
-      <section class="rounded-2xl bg-white p-8 shadow-sm">
-        <h2 class="text-2xl font-bold text-gray-900">Package Not Available</h2>
-        <p class="mt-3 text-sm text-gray-600">{'' . rowValue($props, 'error', 'not found')}</p>
-      </section>
+      <RegistryEmptyState title="Package not available" copy="This public package does not exist or is not available from this address." href="/" action="Browse public packages" />
     </Layout>
   }
 
@@ -6091,10 +6020,7 @@ function PackageDetailPage($props) {
 function OrgProfilePage($props) {
   if (!$props->ok) {
     return <Layout>
-      <section class="rounded-2xl bg-white p-8 shadow-sm">
-        <h2 class="text-2xl font-bold text-gray-900">Organization Not Available</h2>
-        <p class="mt-3 text-sm text-gray-600">{'' . rowValue($props, 'error', 'not found')}</p>
-      </section>
+      <RegistryEmptyState title="Organization not available" copy="This organization is not public or is not available from this address." href="/" action="Browse public packages" />
     </Layout>
   }
 
