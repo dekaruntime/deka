@@ -7,7 +7,6 @@ use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, VecDeque},
     fs,
-    io::ErrorKind,
     path::{Path, PathBuf},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
@@ -140,7 +139,6 @@ fn run_php_install_in(
             },
         });
         replace_installed_package(&staging, &destination)?;
-        remove_stale_unscoped_deka_shadow(cwd, &name)?;
         installed.insert(
             name.clone(),
             (
@@ -480,30 +478,6 @@ fn replace_installed_package(staging: &Path, destination: &Path) -> Result<()> {
         let _ = fs::remove_dir(root);
     }
     Ok(())
-}
-
-fn remove_stale_unscoped_deka_shadow(project_dir: &Path, package_name: &str) -> Result<()> {
-    let Some(bare_name) = package_name.strip_prefix("@deka/") else {
-        return Ok(());
-    };
-    if canonical_php_package_spec(bare_name).as_deref() != Some(package_name) {
-        return Ok(());
-    }
-
-    let shadow = project_dir.join("php_modules").join(bare_name);
-    let metadata = match fs::symlink_metadata(&shadow) {
-        Ok(metadata) => metadata,
-        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
-        Err(err) => {
-            return Err(err).with_context(|| format!("failed to inspect {}", shadow.display()));
-        }
-    };
-    if metadata.is_dir() && !metadata.file_type().is_symlink() {
-        fs::remove_dir_all(&shadow)
-    } else {
-        fs::remove_file(&shadow)
-    }
-    .with_context(|| format!("failed to remove stale package shadow {}", shadow.display()))
 }
 
 fn cleanup_install_staging(staging: &Path) {
@@ -1400,14 +1374,15 @@ mod tests {
     }
 
     #[test]
-    fn install_prunes_stale_unscoped_deka_shadow() {
+    fn install_preserves_tracked_unscoped_deka_alias_and_canonical_lock_integrity() {
         let tmp = tempfile::tempdir().expect("project");
-        let stale = tmp.path().join("php_modules/http");
-        fs::create_dir_all(&stale).expect("stale unscoped package");
-        fs::write(stale.join("index.phpx"), "export const stale = true;\n").expect("stale module");
+        let alias = tmp.path().join("php_modules/string");
+        fs::create_dir_all(&alias).expect("tracked unscoped alias");
+        fs::write(alias.join("index.phpx"), "export const compatibility = true;\n")
+            .expect("write tracked alias");
 
         run_php_install_in(
-            vec!["@deka/http".to_string()],
+            vec!["@deka/string".to_string()],
             true,
             tmp.path(),
             "http://127.0.0.1:1",
@@ -1416,7 +1391,7 @@ mod tests {
         .expect("bundled deka install");
         assert!(
             tmp.path()
-                .join("php_modules/@deka/http/index.phpx")
+                .join("php_modules/@deka/string/index.phpx")
                 .is_file()
         );
         let lock_path = tmp.path().join("deka.lock");
@@ -1424,9 +1399,27 @@ mod tests {
         assert!(
             lock::read_lockfile_at(&lock_path)
                 .packages
-                .contains_key("@deka/http")
+                .contains_key("@deka/string")
         );
-        assert!(!stale.exists(), "stale unscoped shadow must be removed");
+        assert_eq!(
+            fs::read_to_string(alias.join("index.phpx")).expect("tracked alias survives"),
+            "export const compatibility = true;\n"
+        );
+
+        // A second locked install must verify the canonical scoped package
+        // without modifying the compatibility alias or relying on cache state.
+        run_php_install_in(
+            vec!["@deka/string".to_string()],
+            true,
+            tmp.path(),
+            "http://127.0.0.1:1",
+            None,
+        )
+        .expect("repeat bundled deka install");
+        assert_eq!(
+            fs::read_to_string(alias.join("index.phpx")).expect("tracked alias still survives"),
+            "export const compatibility = true;\n"
+        );
     }
 
     #[tokio::test]
