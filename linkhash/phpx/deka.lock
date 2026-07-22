@@ -33,7 +33,368 @@
     "dependencies": {}
   },
   "php": {
-    "packages": {},
+    "packages": {
+      "@deka/array": [
+        "0.1.0",
+        "linkhash:@deka/array",
+        {
+          "moduleGraph": {
+            "algo": "sha256",
+            "hash": "f9a3aabcd3dc27e061a75f5574f700d65cbf6cddcf534fda129aa5ffd5fad2e9"
+          },
+          "fsGraph": {
+            "algo": "sha256",
+            "hash": "cfa1d9b73a2295916c21f5bc14c694e145cd5bd368be444697f40ba29fc95f8d"
+          }
+        },
+        ""
+      ],
+      "@deka/auth": [
+        "0.1.0",
+        "linkhash:@deka/auth",
+        {
+          "moduleGraph": {
+            "algo": "sha256",
+            "hash": "0aca4da3ffefff70e994602c85cc706272b05efabe086fe0deda5f784a897493"
+          },
+          "fsGraph": {
+            "algo": "sha256",
+            "hash": "a81738fb33531ec3257db08a5b9ddf5c726802bc575d814851be0c6296c6e8ee"
+          }
+        },
+        ""
+      ],
+      "@deka/buffer": [
+        "0.1.0",
+        "linkhash:@deka/buffer",
+        {
+          "moduleGraph": {
+            "algo": "sha256",
+            "hash": "dcad4d3f0ab01f7bb5f6f1a861d51f8a434c82d098cd63cb108f414118250c5c"
+          },
+          "fsGraph": {
+            "algo": "sha256",
+            "hash": "049df05796b794eb8ddeab16517e6a3cd547967564f30c3cf36c13e7d2f22ee8"
+          }
+        },
+        ""
+      ],
+      "@deka/bytes": [
+        "0.1.0",
+        "linkhash:@deka/bytes",
+        {
+          "moduleGraph": {
+            "algo": "sha256",
+            "hash": "cb4137a993d6614280bd60ad346d4f2e7be31d9896ee2f35c457351faf4eda65"
+          },
+          "fsGraph": {
+            "algo": "sha256",
+            "hash": "d4ebf510152ec7837cff061558bcbcce90f902490273f615889bec968b6fb24e"
+          }
+        },
+        ""
+      ],
+      "@deka/component": [
+        "0.1.0",
+        "linkhash:@deka/component",
+        {
+          "moduleGraph": {
+            "algo": "sha256",
+            "hash": "54fe81a2ffff140f106f35196d377fa8d6cd0cd4cfa10cbf1c0c30e42273fec7"
+          },
+          "fsGraph": {
+            "algo": "sha256",
+            "hash": "58328e3249105f8070a71e1232de2ffa52513d8973225e2b64971003d51e7cbe"
+          }
+        },
+        ""
+      ],
+      "@deka/cookies": [
+        "0.1.0",
+        "linkhash:@deka/cookies",
+        {
+          "moduleGraph": {
+            "algo": "sha256",
+            "hash": "190ade83d5917d45512376675c815b1904feb74f68d9b2856b9b633a8f2ea438"
+          },
+          "fsGraph": {
+            "algo": "sha256",
+            "hash": "3570560c2070d99385c3cb4fb348c89ec72405f98b2f4c8f0022e3bf049f4bbe"
+          }
+        },
+        ""
+      ],
+      "@deka/core": [
+        "0.1.0",
+        "linkhash:@deka/core",
+        {
+          "moduleGraph": {
+            "algo": "sha256",
+            "hash": "873cd35d090c133acfad4c37235c8b12093b357db3b4ea0bfbcfcb5d9a207424"
+          },
+          "fsGraph": {
+            "algo": "sha256",
+            "hash": "8b1c479d1a86d492517137899d1ccd2930c728f0792d6e1211f96fa63d47f8c7"
+          }
+        },
+        ""
+      ],
+      "@deka/crypto": [
+        "0.1.0",
+        "linkhash:@deka/crypto",
+        {
+          "moduleGraph": {
+            "algo": "sha256",
+            "hash": "a64a759112b2b797e52fed6c6323b7a7a76d12266bbaf0550372166caa18dead"
+          },
+          "fsGraph": {
+            "algo": "sha256",
+            "hash": "efe3d3e9a764232cb77f2f04346b8e118bf4403287efba495ba70e0a5c14fd90"
+          }
+        },
+        ""
+      ],
+      "@deka/db": [
+        "0.1.0",
+        "linkhash:@deka/db",
+        {
+          "moduleGraph": {
+            "algo": "sha256",
+            "hash": "dbf7eb028faeb16c4fb68b52d889c662933ee4e57122e60a9903a4a6979bc570"
+          },
+          "fsGraph": {
+            "algo": "sha256",
+            "hash": "be02dfaa680b31da306ddaa406feb98c84ac7351c1e36a0db36efc18c3b63fd9"
+          }
+        },
+        ""
+      ],
+      "@deka/encoding": [
+        "0.1.0",
+        "linkhash:@deka/encoding",
+        {
+          "moduleGraph": {
+            "algo": "sha256",
+            "hash": "83f6f082c22ddfdbd750b5732a5a6f20f4cb42c736e4388c4400abe2d0743e40"
+          },
+          "fsGraph": {
+            "algo": "sha256",
+            "hash": "317dc0c01c62c8053dd43771f9e29f3a2ec429940f031d83139e66c3d7a4035a"
+          }
+        },
+        ""
+      ],
+      "@deka/framework": [
+        "0.1.0",
+        "linkhash:@deka/framework",
+        {
+          "moduleGraph": {
+            "algo": "sha256",
+            "hash": "14964473a5c5964feef2945801fcd21cd9f1b79ce52bb5c0a2690763cff4f3fd"
+          },
+          "fsGraph": {
+            "algo": "sha256",
+            "hash": "ed9066e5cf1da4534c852fc5ed998b3c9a3b0e5481914c6fd3ac45ac0a4bd2b2"
+          }
+        },
+        ""
+      ],
+      "@deka/fs": [
+        "0.1.0",
+        "linkhash:@deka/fs",
+        {
+          "moduleGraph": {
+            "algo": "sha256",
+            "hash": "fd949d4550961eaa2845b0bd391f49a44128d718b1df8e2699cd29697346ae01"
+          },
+          "fsGraph": {
+            "algo": "sha256",
+            "hash": "816afe386d5d8058e6830f9c89e3c32000e90b75800bd23b4f786e042006537f"
+          }
+        },
+        ""
+      ],
+      "@deka/http": [
+        "0.1.0",
+        "linkhash:@deka/http",
+        {
+          "moduleGraph": {
+            "algo": "sha256",
+            "hash": "5bfc583b5c18a4ba5a3cbd9c5faa69a43dc2c2da77a8a5a67e6d20ddc67abb2e"
+          },
+          "fsGraph": {
+            "algo": "sha256",
+            "hash": "355fd0ce24c4f5c5d6fef574b0779a98219990c7172923212699e52d27a90bd3"
+          }
+        },
+        ""
+      ],
+      "@deka/json": [
+        "0.1.0",
+        "linkhash:@deka/json",
+        {
+          "moduleGraph": {
+            "algo": "sha256",
+            "hash": "b7f93b74e2b40831e0a1ff1275149e4c0b8f8e5f2033e2dacbad40bc77358d9d"
+          },
+          "fsGraph": {
+            "algo": "sha256",
+            "hash": "b12d76935ec2664ea7f525cf05e9b5ec324ba45e6c6b6e7d4ee43682b9fdf633"
+          }
+        },
+        ""
+      ],
+      "@deka/jwt": [
+        "0.1.0",
+        "linkhash:@deka/jwt",
+        {
+          "moduleGraph": {
+            "algo": "sha256",
+            "hash": "5c07846ccd37c971ecfc30a005a28cd95168caf7f5a6a0ddada2249913e55277"
+          },
+          "fsGraph": {
+            "algo": "sha256",
+            "hash": "6559b274bf99491174142b9d6f99af186baa8a05d7c6d7667d3eeb532335102f"
+          }
+        },
+        ""
+      ],
+      "@deka/neo4j": [
+        "0.1.0",
+        "linkhash:@deka/neo4j",
+        {
+          "moduleGraph": {
+            "algo": "sha256",
+            "hash": "14cc27b7e2a3e982fd89cbd13753e5821ccee979898576252276f61f66035d3c"
+          },
+          "fsGraph": {
+            "algo": "sha256",
+            "hash": "2d478edce3208f8b3821d882ddeafc1aaab350e3e2a92ff1a553b5f99735ab19"
+          }
+        },
+        ""
+      ],
+      "@deka/payments": [
+        "0.1.0",
+        "linkhash:@deka/payments",
+        {
+          "moduleGraph": {
+            "algo": "sha256",
+            "hash": "3233678cd7a55beab11f63863dcf8b275ea049e90ba93bb1c57ad83c1011ce6f"
+          },
+          "fsGraph": {
+            "algo": "sha256",
+            "hash": "c7a14aca66f44226c7cc53d8b33eed531bb387e6ed3345edca75ce35699fd5ea"
+          }
+        },
+        ""
+      ],
+      "@deka/redis": [
+        "0.1.0",
+        "linkhash:@deka/redis",
+        {
+          "moduleGraph": {
+            "algo": "sha256",
+            "hash": "14cc27b7e2a3e982fd89cbd13753e5821ccee979898576252276f61f66035d3c"
+          },
+          "fsGraph": {
+            "algo": "sha256",
+            "hash": "a4be45e629d2ff3fe75953c0d1ed5acf80573ac478adbf7f7f37574385f5358d"
+          }
+        },
+        ""
+      ],
+      "@deka/registry": [
+        "0.1.0",
+        "linkhash:@deka/registry",
+        {
+          "moduleGraph": {
+            "algo": "sha256",
+            "hash": "3b2b992fc83de0a80c8e83e9c5d329423bc584b5b1865f7df2923a272c464a01"
+          },
+          "fsGraph": {
+            "algo": "sha256",
+            "hash": "ea51736150a1b4df83f6302dfbef875b134ff6639a130fa11268509e4a30adcc"
+          }
+        },
+        ""
+      ],
+      "@deka/string": [
+        "0.1.0",
+        "linkhash:@deka/string",
+        {
+          "moduleGraph": {
+            "algo": "sha256",
+            "hash": "bb5453d75047a6a46de0d6cb999d6c5e64100a58425374db44e38ac201fba0fb"
+          },
+          "fsGraph": {
+            "algo": "sha256",
+            "hash": "1388833237f4886524c81617faeec7c81caea5ecd940853d2313eab04aad7b8a"
+          }
+        },
+        ""
+      ],
+      "@deka/tcp": [
+        "0.1.0",
+        "linkhash:@deka/tcp",
+        {
+          "moduleGraph": {
+            "algo": "sha256",
+            "hash": "52e538ca77a613502f88f5bb5322d5c28289e891a54460417e788108ca321afd"
+          },
+          "fsGraph": {
+            "algo": "sha256",
+            "hash": "e86b5bbe028d3af401f4dfd26d8de5b08968ab30f7f60f76a6727f61a9067017"
+          }
+        },
+        ""
+      ],
+      "@deka/time": [
+        "0.1.0",
+        "linkhash:@deka/time",
+        {
+          "moduleGraph": {
+            "algo": "sha256",
+            "hash": "eb14ed5abccc5a77f9d0bd9f5239c68ce3358271f836b140f76c4ad443bccc0a"
+          },
+          "fsGraph": {
+            "algo": "sha256",
+            "hash": "1ae4fa8b1c2c025a6effd2349e13aa2f3b271303a60509fa0f8d32db7fa08390"
+          }
+        },
+        ""
+      ],
+      "@deka/tls": [
+        "0.1.0",
+        "linkhash:@deka/tls",
+        {
+          "moduleGraph": {
+            "algo": "sha256",
+            "hash": "52e538ca77a613502f88f5bb5322d5c28289e891a54460417e788108ca321afd"
+          },
+          "fsGraph": {
+            "algo": "sha256",
+            "hash": "b00bffc1513221e8b6dd261cd40e0f9422eadaa20f1a77627433b59b7de75f67"
+          }
+        },
+        ""
+      ],
+      "@deka/ui": [
+        "0.1.0",
+        "linkhash:@deka/ui",
+        {
+          "moduleGraph": {
+            "algo": "sha256",
+            "hash": "fd23f45f0ca2db47760e645db7c13edefc1af0f2580a8dcba25ed73218491b08"
+          },
+          "fsGraph": {
+            "algo": "sha256",
+            "hash": "6f9d4c2a60c1864f01fd25651a616389140b5baa7bbd1ee390faa7f93d94d8e9"
+          }
+        },
+        ""
+      ]
+    },
     "cache": {
       "version": 1,
       "compiler": "phpx-cache-v1",
