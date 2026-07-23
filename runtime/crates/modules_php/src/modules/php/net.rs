@@ -7,9 +7,16 @@ pub(super) enum NetConn {
     Tls(TlsStream<TcpStream>),
 }
 
+pub(super) struct NetHandle {
+    conn: NetConn,
+    // Derived from the validated connect request. Handle-only bridge actions
+    // must use this immutable target for their capability check.
+    target: String,
+}
+
 pub(super) struct NetState {
     next_handle: u64,
-    handles: HashMap<u64, NetConn>,
+    handles: HashMap<u64, NetHandle>,
 }
 
 impl NetState {
@@ -25,6 +32,25 @@ static NET_STATE: OnceLock<Mutex<NetState>> = OnceLock::new();
 
 pub(super) fn net_state() -> &'static Mutex<NetState> {
     NET_STATE.get_or_init(|| Mutex::new(NetState::new()))
+}
+
+fn capability_target(host: &str, port: u16) -> String {
+    if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
+fn handle_target(handle: u64) -> Result<String, deno_core::error::CoreError> {
+    let state = net_state()
+        .lock()
+        .map_err(|_| core_err("net lock poisoned"))?;
+    state
+        .handles
+        .get(&handle)
+        .map(|handle| handle.target.clone())
+        .ok_or_else(|| core_err(format!("net: unknown handle {handle}")))
 }
 
 pub(super) fn net_call_impl(
@@ -54,7 +80,8 @@ pub(super) fn net_call_impl(
                 .get("timeout_ms")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(5000);
-            let addr = format!("{}:{}", host, port);
+            let capability_target = capability_target(&host, port);
+            let addr = capability_target.clone();
             let mut addrs = addr
                 .to_socket_addrs()
                 .map_err(|e| err(format!("connect: resolve failed: {}", e)))?;
@@ -68,7 +95,13 @@ pub(super) fn net_call_impl(
                 .map_err(|_| err("net lock poisoned".to_string()))?;
             let handle = state.next_handle;
             state.next_handle += 1;
-            state.handles.insert(handle, NetConn::Tcp(stream));
+            state.handles.insert(
+                handle,
+                NetHandle {
+                    conn: NetConn::Tcp(stream),
+                    target: capability_target,
+                },
+            );
             Ok(serde_json::json!({ "ok": true, "handle": handle }))
         }
         "set_deadline" => {
@@ -90,7 +123,7 @@ pub(super) fn net_call_impl(
                     serde_json::json!({ "ok": false, "error": format!("set_deadline: unknown handle {}", handle) }),
                 );
             };
-            let result = match conn {
+            let result = match &mut conn.conn {
                 NetConn::Tcp(stream) => stream
                     .set_read_timeout(timeout)
                     .and_then(|_| stream.set_write_timeout(timeout)),
@@ -124,7 +157,7 @@ pub(super) fn net_call_impl(
                     serde_json::json!({ "ok": false, "error": format!("read: unknown handle {}", handle) }),
                 );
             };
-            let n = match conn {
+            let n = match &mut conn.conn {
                 NetConn::Tcp(stream) => stream.read(&mut buf),
                 NetConn::Tls(stream) => stream.read(&mut buf),
             };
@@ -155,7 +188,7 @@ pub(super) fn net_call_impl(
                     serde_json::json!({ "ok": false, "error": format!("write: unknown handle {}", handle) }),
                 );
             };
-            let result = match conn {
+            let result = match &mut conn.conn {
                 NetConn::Tcp(stream) => stream.write_all(&data),
                 NetConn::Tls(stream) => stream.write_all(&data),
             };
@@ -188,12 +221,19 @@ pub(super) fn net_call_impl(
                     serde_json::json!({ "ok": false, "error": format!("tls_upgrade: unknown handle {}", handle) }),
                 );
             };
-            let tcp = match conn {
+            let target = conn.target;
+            let tcp = match conn.conn {
                 NetConn::Tcp(stream) => stream,
                 NetConn::Tls(stream) => {
                     let new_handle = state.next_handle;
                     state.next_handle += 1;
-                    state.handles.insert(new_handle, NetConn::Tls(stream));
+                    state.handles.insert(
+                        new_handle,
+                        NetHandle {
+                            conn: NetConn::Tls(stream),
+                            target,
+                        },
+                    );
                     return Ok(
                         serde_json::json!({ "ok": true, "handle": new_handle, "reused": true }),
                     );
@@ -205,7 +245,13 @@ pub(super) fn net_call_impl(
                 Ok(stream) => {
                     let new_handle = state.next_handle;
                     state.next_handle += 1;
-                    state.handles.insert(new_handle, NetConn::Tls(stream));
+                    state.handles.insert(
+                        new_handle,
+                        NetHandle {
+                            conn: NetConn::Tls(stream),
+                            target,
+                        },
+                    );
                     Ok(serde_json::json!({ "ok": true, "handle": new_handle }))
                 }
                 Err(e) => {
@@ -466,7 +512,22 @@ pub(super) fn net_call_proto_impl(request: &[u8]) -> Result<Vec<u8>, deno_core::
         .map_err(|e| core_err(format!("net proto decode failed: {}", e)))?;
     let (action, payload, kind) = net_proto_request_to_action_payload(&req)?;
     validate_tcp_connect_port(&action, &payload)?;
-    enforce_net(net_policy_target(&payload).as_deref())?;
+    let net_target = match kind {
+        NetProtoActionKind::Connect => net_policy_target(&payload)
+            .ok_or_else(|| core_err("connect: missing capability target"))?,
+        NetProtoActionKind::SetDeadline
+        | NetProtoActionKind::Read
+        | NetProtoActionKind::Write
+        | NetProtoActionKind::TlsUpgrade
+        | NetProtoActionKind::Close => {
+            let handle = payload
+                .get("handle")
+                .and_then(|value| value.as_u64())
+                .ok_or_else(|| core_err(format!("{action}: missing handle")))?;
+            handle_target(handle)?
+        }
+    };
+    enforce_net(Some(&net_target))?;
     let response_json = net_call_impl(action, payload)?;
     let response = net_json_response_to_proto(&response_json, kind);
     let out = response.encode_to_vec();
@@ -505,11 +566,10 @@ fn tcp_connect_port(payload: &serde_json::Value) -> Result<u16, deno_core::error
 /// (`registry.internal:443`), rather than every port on that host.
 fn net_policy_target(payload: &serde_json::Value) -> Option<String> {
     let host = payload.get("host")?.as_str()?;
-    let port = payload.get("port").and_then(|value| value.as_u64());
-    Some(match port {
-        Some(port) => format!("{host}:{port}"),
-        None => host.to_string(),
-    })
+    match payload.get("port").and_then(|value| value.as_u64()) {
+        Some(port) => Some(capability_target(host, u16::try_from(port).ok()?)),
+        None => Some(host.to_string()),
+    }
 }
 
 #[op2]
@@ -634,6 +694,92 @@ mod tests {
         assert!(super::super::security::enforce_net(Some("127.0.0.1:9418")).is_ok());
         assert!(super::super::security::enforce_net(Some("127.0.0.1:9419")).is_err());
         assert!(super::super::security::enforce_net(Some("127.0.0.1")).is_err());
+
+        unsafe {
+            match previous {
+                Some(value) => std::env::set_var("DEKA_SECURITY_POLICY", value),
+                None => std::env::remove_var("DEKA_SECURITY_POLICY"),
+            }
+        }
+    }
+
+    #[test]
+    fn tcp_handle_operations_retain_the_allowed_connect_target() {
+        let _lock = policy_lock().lock().expect("policy lock");
+        let previous = std::env::var_os("DEKA_SECURITY_POLICY");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+        let address = listener.local_addr().expect("listener address");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept connection");
+            let mut buffer = [0_u8; 4];
+            std::io::Read::read_exact(&mut stream, &mut buffer).expect("read request");
+            std::io::Write::write_all(&mut stream, &buffer).expect("write response");
+        });
+        let allowed = format!("127.0.0.1:{}", address.port());
+
+        unsafe {
+            std::env::set_var(
+                "DEKA_SECURITY_POLICY",
+                format!(r#"{{"security":{{"allow":{{"net":["{allowed}"]}}}}}}"#),
+            );
+        }
+
+        let connect = super::net_action_payload_to_proto_request(
+            "connect",
+            &json!({ "host": "127.0.0.1", "port": address.port() }),
+        )
+        .expect("encode connect");
+        let connect_response = net_call_proto_impl(&connect.encode_to_vec()).expect("connect");
+        let connect_response = proto::bridge_v1::NetResponse::decode(connect_response.as_slice())
+            .expect("decode connect response");
+        let handle = match connect_response.action.expect("connect action") {
+            proto::bridge_v1::net_response::Action::Connect(response) => response.handle,
+            other => panic!("unexpected connect response: {other:?}"),
+        };
+
+        for (action, payload) in [
+            ("write", json!({ "handle": handle, "data": "ping" })),
+            ("read", json!({ "handle": handle, "max_bytes": 4 })),
+        ] {
+            let request = super::net_action_payload_to_proto_request(action, &payload)
+                .expect("encode handle operation");
+            assert!(
+                net_call_proto_impl(&request.encode_to_vec()).is_ok(),
+                "{action} must use the allowed connect target"
+            );
+        }
+
+        unsafe {
+            std::env::set_var(
+                "DEKA_SECURITY_POLICY",
+                r#"{"security":{"allow":{"net":["127.0.0.1:1"]}}}"#,
+            );
+        }
+        let denied_write = super::net_action_payload_to_proto_request(
+            "write",
+            &json!({ "handle": handle, "data": "nope" }),
+        )
+        .expect("encode denied write");
+        assert!(net_call_proto_impl(&denied_write.encode_to_vec()).is_err());
+
+        let denied_connect = super::net_action_payload_to_proto_request(
+            "connect",
+            &json!({ "host": "127.0.0.1", "port": address.port() }),
+        )
+        .expect("encode denied connect");
+        assert!(net_call_proto_impl(&denied_connect.encode_to_vec()).is_err());
+
+        unsafe {
+            std::env::set_var(
+                "DEKA_SECURITY_POLICY",
+                format!(r#"{{"security":{{"allow":{{"net":["{allowed}"]}}}}}}"#),
+            );
+        }
+        let close =
+            super::net_action_payload_to_proto_request("close", &json!({ "handle": handle }))
+                .expect("encode close");
+        assert!(net_call_proto_impl(&close.encode_to_vec()).is_ok());
+        server.join().expect("server join");
 
         unsafe {
             match previous {
