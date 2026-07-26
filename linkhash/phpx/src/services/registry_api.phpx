@@ -1,0 +1,267 @@
+/*
+ * Path builders and row shaping for the git.tana.gg package registry REST API.
+ *
+ * linkha.sh used to read package/version/org rows out of its own Postgres
+ * mirror. The registry data is owned by the git server, so these helpers turn
+ * the REST payloads into the flat row shape the pages already render.
+ */
+
+function apiField($row, $key, $fallback = null) {
+  if (is_array($row) && array_key_exists($key, $row)) {
+    return $row[$key]
+  }
+  if (is_object($row)) {
+    $vars = get_object_vars($row)
+    if (is_array($vars) && array_key_exists($key, $vars)) {
+      return $vars[$key]
+    }
+  }
+  return $fallback
+}
+
+export function registryPackagesPath() {
+  return '/api/packages'
+}
+
+export function scopedReleaseVersionsPath($scope, $name) {
+  return '/api/scoped-packages/'
+    . rawurlencode(trim('' . $scope))
+    . '/'
+    . rawurlencode(trim('' . $name))
+    . '/versions'
+}
+
+export function scopedReleasePath($scope, $name, $version) {
+  return '/api/scoped-packages/'
+    . rawurlencode(trim('' . $scope))
+    . '/'
+    . rawurlencode(trim('' . $name))
+    . '/'
+    . rawurlencode(trim('' . $version))
+}
+
+/*
+ * '@deka/array' -> [ 'scope' => 'deka', 'name' => 'array' ]
+ * 'array'       -> [ 'scope' => '',     'name' => 'array' ]
+ */
+export function splitScopedPackageName($full) {
+  $raw = trim('' . $full)
+  if (strlen($raw) > 0 && $raw[0] === '@') {
+    $raw = substr($raw, 1)
+  }
+  $slash = strpos($raw, '/')
+  if ($slash === false || $slash <= 0) {
+    return [ 'scope' => '', 'name' => $raw ]
+  }
+  return [ 'scope' => substr($raw, 0, $slash), 'name' => substr($raw, $slash + 1) ]
+}
+
+export function scopedPackageCoord($scope, $name) {
+  $s = trim('' . $scope)
+  $n = trim('' . $name)
+  if ($s === '' || $n === '') {
+    return ''
+  }
+  return '@' . $s . '/' . $n
+}
+
+/*
+ * One entry of GET /api/packages:
+ *   { "name": "@deka/array", "latest": "0.1.0", "versions": [...], "visibility": "public" }
+ * becomes the flat row shape normalizePackage() consumes.
+ */
+export function registryRowFromApiEntry($entry) {
+  $full = '' . apiField($entry, 'name', '')
+  if (trim($full) === '') {
+    return null
+  }
+  $split = splitScopedPackageName($full)
+  $versions = apiField($entry, 'versions', [])
+  if (!is_array($versions)) {
+    $versions = []
+  }
+  return [
+    'orgHandle' => '' . apiField($split, 'scope', ''),
+    'name' => '' . apiField($split, 'name', ''),
+    'fullName' => $full,
+    'description' => '',
+    'latestVersion' => '' . apiField($entry, 'latest', ''),
+    'versions' => $versions,
+    'versionCount' => count($versions),
+    'visibility' => '' . apiField($entry, 'visibility', 'public')
+  ]
+}
+
+export function registryRowsFromApi($entries) {
+  $out = []
+  if (!is_array($entries)) {
+    return $out
+  }
+  foreach ($entries as $entry) {
+    $row = registryRowFromApiEntry($entry)
+    if (isset($row)) {
+      $out[] = $row
+    }
+  }
+  return $out
+}
+
+export function filterRegistryRowsByVisibility($rows, $visibility) {
+  $want = strtolower(trim('' . $visibility))
+  $out = []
+  if (!is_array($rows)) {
+    return $out
+  }
+  foreach ($rows as $row) {
+    if (strtolower('' . apiField($row, 'visibility', 'public')) === $want) {
+      $out[] = $row
+    }
+  }
+  return $out
+}
+
+export function filterRegistryRowsByScope($rows, $scope) {
+  $want = strtolower(trim('' . $scope))
+  $out = []
+  if (!is_array($rows) || $want === '') {
+    return $out
+  }
+  foreach ($rows as $row) {
+    if (strtolower('' . apiField($row, 'orgHandle', '')) === $want) {
+      $out[] = $row
+    }
+  }
+  return $out
+}
+
+export function filterRegistryRowsByQuery($rows, $query) {
+  $q = strtolower(trim('' . $query))
+  if (!is_array($rows)) {
+    return []
+  }
+  if ($q === '') {
+    return $rows
+  }
+  $out = []
+  foreach ($rows as $row) {
+    $name = strtolower('' . apiField($row, 'fullName', apiField($row, 'name', '')))
+    $desc = strtolower('' . apiField($row, 'description', ''))
+    if (strpos($name, $q) !== false || ($desc !== '' && strpos($desc, $q) !== false)) {
+      $out[] = $row
+    }
+  }
+  return $out
+}
+
+/*
+ * The git server does not track download counts, so package ordering is by
+ * coordinate. Deterministic and stable, unlike the old download_count sort.
+ */
+export function sortRegistryRowsByName($rows) {
+  if (!is_array($rows)) {
+    return []
+  }
+  $sorted = $rows
+  usort($sorted, function ($a, $b) {
+    $an = strtolower('' . apiField($a, 'fullName', apiField($a, 'name', '')))
+    $bn = strtolower('' . apiField($b, 'fullName', apiField($b, 'name', '')))
+    if ($an === $bn) {
+      return 0
+    }
+    return $an > $bn ? 1 : -1
+  })
+  return $sorted
+}
+
+export function limitRegistryRows($rows, $max) {
+  $cap = (int) $max
+  if ($cap < 1) {
+    $cap = 1
+  }
+  if (!is_array($rows)) {
+    return []
+  }
+  if (count($rows) > $cap) {
+    return array_slice($rows, 0, $cap)
+  }
+  return $rows
+}
+
+export function findRegistryRow($rows, $scope, $name) {
+  $wantScope = strtolower(trim('' . $scope))
+  $wantName = strtolower(trim('' . $name))
+  if (!is_array($rows) || $wantName === '') {
+    return null
+  }
+  foreach ($rows as $row) {
+    $rowScope = strtolower('' . apiField($row, 'orgHandle', ''))
+    $rowName = strtolower('' . apiField($row, 'name', ''))
+    if ($rowScope === $wantScope && $rowName === $wantName) {
+      return $row
+    }
+  }
+  return null
+}
+
+/*
+ * GET /api/scoped-packages/{scope}/{name}/versions returns
+ *   { "name", "latest", "versions": ["0.2.0","0.1.0"], "visibility" }
+ * The pages want one row per version, newest first.
+ */
+export function versionRowsFromApi($payload) {
+  $versions = apiField($payload, 'versions', [])
+  if (!is_array($versions)) {
+    return []
+  }
+  $latest = '' . apiField($payload, 'latest', '')
+  $out = []
+  foreach ($versions as $version) {
+    $v = trim('' . $version)
+    if ($v === '') {
+      continue
+    }
+    $out[] = [
+      'version' => $v,
+      'isLatest' => $v === $latest
+    ]
+  }
+  usort($out, function ($a, $b) {
+    $al = apiField($a, 'isLatest', false) ? 1 : 0
+    $bl = apiField($b, 'isLatest', false) ? 1 : 0
+    if ($al !== $bl) {
+      return $bl - $al
+    }
+    $an = '' . apiField($a, 'version', '')
+    $bn = '' . apiField($b, 'version', '')
+    if ($an === $bn) {
+      return 0
+    }
+    return $an < $bn ? 1 : -1
+  })
+  return $out
+}
+
+/*
+ * Merge the per-release payload (GET /api/scoped-packages/{s}/{n}/{v}) onto a
+ * version row so the detail page can show publish metadata it used to read out
+ * of the package_versions table.
+ */
+export function decorateVersionRow($row, $release) {
+  $out = is_array($row) ? $row : []
+  if (!isset($release)) {
+    return $out
+  }
+  $out['publishedAt'] = apiField($release, 'created_at', '')
+  $out['gitRef'] = apiField($release, 'git_ref', '')
+  $out['gitCommit'] = apiField($release, 'git_commit', '')
+  $out['treeHash'] = apiField($release, 'tree_hash', '')
+  $out['apiChangeKind'] = apiField($release, 'api_change_kind', '')
+  $out['requiredBump'] = apiField($release, 'required_bump', '')
+  $out['repo'] = apiField($release, 'repo', '')
+  $out['owner'] = apiField($release, 'owner', '')
+  $out['description'] = apiField($release, 'description', '')
+  $out['manifest'] = apiField($release, 'manifest', '')
+  $out['capability_metadata'] = apiField($release, 'capability_metadata', '')
+  $out['api_snapshot'] = apiField($release, 'api_snapshot', '')
+  return $out
+}

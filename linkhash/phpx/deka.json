@@ -1,6 +1,6 @@
 {
   "name": "@tana-admin/linkhash",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "linkha.sh — PHPX package registry web UI",
   "serve": {
     "entry": "main.phpx",
@@ -14,6 +14,28 @@
       "db": ["postgres", "sqlite", "stats"],
       "net": ["127.0.0.1:8508", "localhost:8508", "*"],
       "read": ["*"],
+      "env": [
+        "LINKHASH_GIT_API_URL",
+        "LINKHASH_GIT_TOKEN",
+        "LINKHASH_GIT_API_TOKEN",
+        "LINKHASH_ADWA_BASE_URL",
+        "LINKHASH_LOG_BACKEND",
+        "LINKHASH_OAUTH_CLIENT_ID",
+        "LINKHASH_OAUTH_CLIENT_SECRET",
+        "LINKHASH_OAUTH_CALLBACK",
+        "LINKHASH_OAUTH_AUTH_URL",
+        "LINKHASH_OAUTH_TOKEN_URL",
+        "LINKHASH_OAUTH_PROFILE_URL",
+        "LINKHASH_OAUTH_SCOPE",
+        "LINKHASH_OAUTH_CALLBACK_ALLOWLIST",
+        "LINKHASH_STAFF_ALLOWLIST_EMAILS",
+        "DB_HOST",
+        "DB_PORT",
+        "DB_NAME",
+        "DB_USER",
+        "DB_PASSWORD",
+        "PORT"
+      ],
       "dynamic": true,
       "run": ["git"]
     }

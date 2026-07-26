@@ -138,64 +138,6 @@ export function meta() {
             },
             relations: []
         },
-        Package: {
-            name: 'Package',
-            table: 'packages',
-            fields: {
-                id: { type: 'int', db_name: 'id', annotations: [{ name: 'id' }, { name: 'autoIncrement' }] },
-                orgId: { type: 'int', db_name: 'org_id', annotations: [{ name: 'map', args: ['"org_id"'] }] },
-                name: { type: 'string', db_name: 'name', annotations: [] },
-                description: { type: 'string', db_name: 'description', annotations: [] },
-                latestVersion: { type: 'string', db_name: 'latest_version', annotations: [{ name: 'map', args: ['"latest_version"'] }] },
-                downloadCount: { type: 'int', db_name: 'download_count', annotations: [{ name: 'map', args: ['"download_count"'] }] },
-                visibility: { type: 'string', db_name: 'visibility', annotations: [] },
-                privateReadMask: { type: 'int', db_name: 'private_read_mask', annotations: [{ name: 'map', args: ['"private_read_mask"'] }] },
-                createdAt: { type: 'string', db_name: 'created_at', annotations: [{ name: 'map', args: ['"created_at"'] }] },
-                updatedAt: { type: 'string', db_name: 'updated_at', annotations: [{ name: 'map', args: ['"updated_at"'] }] },
-            },
-            relations: []
-        },
-        PackageVersion: {
-            name: 'PackageVersion',
-            table: 'package_versions',
-            fields: {
-                id: { type: 'int', db_name: 'id', annotations: [{ name: 'id' }, { name: 'autoIncrement' }] },
-                packageId: { type: 'int', db_name: 'package_id', annotations: [{ name: 'map', args: ['"package_id"'] }] },
-                version: { type: 'string', db_name: 'version', annotations: [] },
-                mainFile: { type: 'string', db_name: 'main_file', annotations: [{ name: 'map', args: ['"main_file"'] }] },
-                files: { type: 'array<string>', db_name: 'files', annotations: [] },
-                dependencies: { type: 'array<mixed>', db_name: 'dependencies', annotations: [] },
-                readme: { type: 'string', db_name: 'readme', annotations: [] },
-                publishedAt: { type: 'string', db_name: 'published_at', annotations: [{ name: 'map', args: ['"published_at"'] }] },
-                r2Key: { type: 'string', db_name: 'r2_key', annotations: [{ name: 'map', args: ['"r2_key"'] }] },
-                sha256: { type: 'string', db_name: 'sha256', annotations: [] },
-                canonicalId: { type: 'string', db_name: 'canonical_id', annotations: [{ name: 'map', args: ['"canonical_id"'] }] },
-                lockHash: { type: 'string', db_name: 'lock_hash', annotations: [{ name: 'map', args: ['"lock_hash"'] }] },
-                integrityAlgo: { type: 'string', db_name: 'integrity_algo', annotations: [{ name: 'map', args: ['"integrity_algo"'] }] },
-                moduleGraphHash: { type: 'string', db_name: 'module_graph_hash', annotations: [{ name: 'map', args: ['"module_graph_hash"'] }] },
-                fsGraphHash: { type: 'string', db_name: 'fs_graph_hash', annotations: [{ name: 'map', args: ['"fs_graph_hash"'] }] },
-                artifactBackend: { type: 'string', db_name: 'artifact_backend', annotations: [{ name: 'map', args: ['"artifact_backend"'] }] },
-                artifactKey: { type: 'string', db_name: 'artifact_key', annotations: [{ name: 'map', args: ['"artifact_key"'] }] },
-                artifactMime: { type: 'string', db_name: 'artifact_mime', annotations: [{ name: 'map', args: ['"artifact_mime"'] }] },
-                artifactSizeBytes: { type: 'int', db_name: 'artifact_size_bytes', annotations: [{ name: 'map', args: ['"artifact_size_bytes"'] }] },
-                artifactInlineB64: { type: 'string', db_name: 'artifact_inline_b64', annotations: [{ name: 'map', args: ['"artifact_inline_b64"'] }] },
-                capabilityMetadata: { type: 'array<mixed>', db_name: 'capability_metadata', annotations: [{ name: 'map', args: ['"capability_metadata"'] }] },
-            },
-            relations: []
-        },
-        Download: {
-            name: 'Download',
-            table: 'downloads',
-            fields: {
-                id: { type: 'int', db_name: 'id', annotations: [{ name: 'id' }, { name: 'autoIncrement' }] },
-                packageId: { type: 'int', db_name: 'package_id', annotations: [{ name: 'map', args: ['"package_id"'] }] },
-                versionId: { type: 'int', db_name: 'version_id', annotations: [{ name: 'map', args: ['"version_id"'] }] },
-                downloadedAt: { type: 'string', db_name: 'downloaded_at', annotations: [{ name: 'map', args: ['"downloaded_at"'] }] },
-                ipAddress: { type: 'string', db_name: 'ip_address', annotations: [{ name: 'map', args: ['"ip_address"'] }] },
-                userAgent: { type: 'string', db_name: 'user_agent', annotations: [{ name: 'map', args: ['"user_agent"'] }] },
-            },
-            relations: []
-        },
     }
     }
 }
