@@ -2,11 +2,11 @@ import { jsx, jsxs } from 'component/core'
 
 export function PackageStatPills($props) {
   $latest = isset($props->latestVersion) ? ('' . $props->latestVersion) : 'n/a'
-  $downloads = isset($props->downloadCount) ? (int) $props->downloadCount : 0
+  $versionCount = isset($props->versionCount) ? (int) $props->versionCount : 0
   $visibility = isset($props->visibility) ? ('' . $props->visibility) : 'public'
   return <div class="mt-4 flex flex-wrap gap-3 text-xs">
     <span class="rounded-md bg-gray-100 px-2 py-1">{'latest: ' . $latest}</span>
-    <span class="rounded-md bg-gray-100 px-2 py-1">{'downloads: ' . (string) $downloads}</span>
+    <span class="rounded-md bg-gray-100 px-2 py-1">{'versions: ' . (string) $versionCount}</span>
     <span class="rounded-md bg-gray-100 px-2 py-1">{'visibility: ' . $visibility}</span>
   </div>
 }

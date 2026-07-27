@@ -1,0 +1,37 @@
+/*
+ * Read one field off a decoded JSON value, a PHPX assoc-array literal or a
+ * brace object.
+ *
+ * A decoded JSON object — and a PHPX `[ 'k' => v ]` / `{ k: v }` literal — is
+ * NOT is_array() in PHPX; only JSON arrays and list literals are. is_object()
+ * is true for those, but get_object_vars() does not return an is_array()-true
+ * value here, so both object branches below used to fall through and EVERY
+ * object lookup silently returned the fallback — which made every registry
+ * fetch report 'registry unavailable' and every package row render empty.
+ *
+ * array_key_exists() and index access both work on either shape, so probe the
+ * key directly. The camelCase -> lowercase/snake_case aliases are kept: the
+ * pages read `latestVersion` off rows the API spells `latest_version`.
+ */
+export function rowValue($row, $key, $fallback = null) {
+  if (!isset($row)) {
+    return $fallback
+  }
+  if (!is_array($row) && !is_object($row)) {
+    return $fallback
+  }
+
+  $k = '' . $key
+  $snake = strtolower(preg_replace('/([a-z])([A-Z])/', '$1_$2', $k))
+  $candidates = [ $k, strtolower($k), $snake, str_replace('_', '', $snake) ]
+
+  foreach ($candidates as $candidate) {
+    if (array_key_exists($candidate, $row)) {
+      $value = $row[$candidate]
+      if (isset($value)) {
+        return $value
+      }
+    }
+  }
+  return $fallback
+}

@@ -4,8 +4,11 @@ import { PreviewRouteSection, ForkResultSection } from './src/pages/repo_flows'
 import { PackageStatPills, PackageVersionRows } from './src/pages/package_detail'
 import { RegistryShell, RegistryHero, RegistryFeatureCard, RegistryQuickStart, RegistryEmptyState } from './src/pages/registry_design'
 import { buildAdwaBaseUrl, buildAdwaPreviewUrl, buildAdwaPreviewUrlForRef, buildAdwaEditUrl } from './src/services/adwa'
-import { gitApiDefaultBase, scopedReleaseDocsPath, scopedReleaseTreePath, scopedReleaseBlobPath, publicDekaRepoTreePath, publicDekaRepoBlobPath, repoIssuesPath, repoIssueDetailPath, repoIssueCommentPath, repoPullsPath, repoPullDetailPath, repoPullCommentPath, repoResolvePath, repoForkPath } from './src/services/linkhash_git'
+import { gitApiDefaultBase, gitApiCandidateBases, scopedReleaseDocsPath, scopedReleaseTreePath, scopedReleaseBlobPath, publicDekaRepoTreePath, publicDekaRepoBlobPath, repoIssuesPath, repoIssueDetailPath, repoIssueCommentPath, repoPullsPath, repoPullDetailPath, repoPullCommentPath, repoResolvePath, repoForkPath } from './src/services/linkhash_git'
 import { repoIssueCreateRoute, repoIssueCommentRoute, repoPullCreateRoute, repoPullCommentRoute, repoForkRoute, buildRepoActionRedirectPath } from './src/api/repo_actions'
+import { splitHttpUrl } from './src/services/http_url'
+import { rowValue } from './src/services/row_value'
+import { registryPackagesPath, scopedReleaseVersionsPath, scopedReleasePath, splitScopedPackageName, scopedPackageCoord, registryRowsFromApi, filterRegistryRowsByVisibility, filterRegistryRowsByScope, filterRegistryRowsByQuery, sortRegistryRowsByName, limitRegistryRows, findRegistryRow, versionRowsFromApi, decorateVersionRow, normalizeVisibility, registryRowIsPublic } from './src/services/registry_api'
 import { meta } from './db/meta'
 import { selectMany, selectOne, insertOne, updateWhere, deleteWhere, loadRelation, transaction, eq, ilike, isNull, andWhere, asc, desc, limit } from './db'
 import { stats } from 'db'
@@ -19,7 +22,6 @@ import { connect as tcpConnect, tcp_write as tcpWrite, tcp_read as tcpRead, tcp_
 import { tls_upgrade, tls_write, tls_read, tls_close } from 'tls'
 import { open_handle as dbOpenHandle, close as dbCloseRaw } from 'db'
 import { result_is_ok, result_unwrap, result_ok, result_err } from 'core/result'
-import { canonical_id as registryCanonicalId, artifact_key as registryArtifactKey } from 'registry/artifacts'
 import { connect as neo4jConnect, query as neo4jQuery, close as neo4jClose } from 'neo4j'
 
 function envValue($name, $fallback = null) {
@@ -71,15 +73,40 @@ function parseDotEnvLine($line) {
   return [ 'key' => $key, 'value' => $value ]
 }
 
+function readTextFile($path) {
+  $opened = fsOpen('' . $path, 'r')
+  if (!result_is_ok($opened)) {
+    return null
+  }
+  $handle = $opened->value
+  $out = ''
+  while (true) {
+    $chunk = fsRead($handle, 8192)
+    if (!result_is_ok($chunk)) {
+      break
+    }
+    $piece = bytesToString($chunk->value)
+    if (!is_string($piece) || $piece === '') {
+      break
+    }
+    $out = $out . $piece
+  }
+  fsClose($handle)
+  return $out
+}
+
+/*
+ * PHPX's is_file()/file() do not read the deployment's dotenv here, so the
+ * fs module is used directly. Without this, LINKHASH_GIT_API_URL and
+ * LINKHASH_GIT_TOKEN never reach the app and every registry call falls back
+ * to the unreachable localhost default.
+ */
 function loadDotEnv($path = '.env') {
-  $full = '' . $path
-  if (!is_file($full)) {
+  $contents = readTextFile($path)
+  if (!is_string($contents) || $contents === '') {
     return
   }
-  $lines = file($full)
-  if (!is_array($lines)) {
-    return
-  }
+  $lines = explode("\n", str_replace("\r\n", "\n", $contents))
   foreach ($lines as $line) {
     $pair = parseDotEnvLine($line)
     if (!is_array($pair)) {
@@ -225,86 +252,6 @@ function parseTimestamp($value) {
   return $parsed
 }
 
-function openCatalogFallbackSqlite() {
-  return sqliteConnect({ path: 'db/linkhash.sqlite' })
-}
-
-function sqliteOrgHandle($orgId) {
-  return 'org' . ('' . (int) $orgId)
-}
-
-function fetchFallbackVisiblePackageRows($limit = 25, $query = '') {
-  $conn = openCatalogFallbackSqlite()
-  if (!result_is_ok($conn)) {
-    return { ok: false, error: $conn->error }
-  }
-  $db = $conn->value
-  $max = max(1, (int) $limit)
-  $term = trim('' . $query)
-  $rowsRes = result_err('not run')
-  if ($term === '') {
-    $rowsRes = sqliteQuery(
-      $db,
-      "select id, org_id as orgId, name, description, latest_version as latestVersion, download_count as downloadCount, created_at as createdAt, updated_at as updatedAt
-       from packages
-       order by download_count desc, id desc
-       limit ?",
-      [$max]
-    )
-  } else {
-    $like = '%' . strtolower($term) . '%'
-    $rowsRes = sqliteQuery(
-      $db,
-      "select id, org_id as orgId, name, description, latest_version as latestVersion, download_count as downloadCount, created_at as createdAt, updated_at as updatedAt
-       from packages
-       where lower(name) like ? or lower(description) like ?
-       order by download_count desc, id desc
-       limit ?",
-      [$like, $like, $max]
-    )
-  }
-  sqliteClose($db)
-  if (!result_is_ok($rowsRes)) {
-    return { ok: false, error: $rowsRes->error }
-  }
-  $rows = rowsFromQueryResult($rowsRes)
-  $normalized = []
-  foreach ($rows as $row) {
-    $row['orgHandle'] = sqliteOrgHandle(rowValue($row, 'orgId', rowValue($row, 'org_id', 0)))
-    $row['visibility'] = 'public'
-    $row['canonicalId'] = ''
-    $normalized[] = $row
-  }
-  return { ok: true, rows: $normalized, source: 'sqlite' }
-}
-
-function fetchFallbackRegistryStatsResult() {
-  $conn = openCatalogFallbackSqlite()
-  if (!result_is_ok($conn)) {
-    return { ok: false, error: $conn->error }
-  }
-  $db = $conn->value
-  $row = sqliteQueryOne(
-    $db,
-    "select
-      (select count(*) from packages) as packageCount,
-      (select count(distinct org_id) from packages) as orgCount,
-      0 as versionCount,
-      (select coalesce(sum(download_count), 0) from packages) as totalDownloads",
-    []
-  )
-  sqliteClose($db)
-  if (!result_is_ok($row)) {
-    return { ok: false, error: $row->error }
-  }
-  return { ok: true, stats: [
-    'packageCount' => (int) rowValue($row->value, 'packageCount', 0),
-    'orgCount' => (int) rowValue($row->value, 'orgCount', 0),
-    'versionCount' => (int) rowValue($row->value, 'versionCount', 0),
-    'totalDownloads' => (int) rowValue($row->value, 'totalDownloads', 0)
-  ], source: 'sqlite' }
-}
-
 function rowsFromQueryResult($result): array {
   if (!result_is_ok($result)) {
     return []
@@ -322,47 +269,6 @@ function rowsFromQueryResult($result): array {
   return []
 }
 
-function rowValue($row, $key, $fallback = null) {
-  if (is_array($row) && array_key_exists($key, $row)) {
-    return $row[$key]
-  }
-  if (is_object($row)) {
-    $obj = get_object_vars($row)
-    if (is_array($obj) && array_key_exists($key, $obj)) {
-      return $obj[$key]
-    }
-  }
-
-  $k = '' . $key
-  $lower = strtolower($k)
-  $snake = strtolower(preg_replace('/([a-z])([A-Z])/', '$1_$2', $k))
-  if (is_array($row)) {
-    if (array_key_exists($lower, $row)) {
-      return $row[$lower]
-    }
-    if (array_key_exists($snake, $row)) {
-      return $row[$snake]
-    }
-    $noscore = str_replace('_', '', $snake)
-    if (array_key_exists($noscore, $row)) {
-      return $row[$noscore]
-    }
-  }
-  if (is_object($row)) {
-    $obj = get_object_vars($row)
-    if (is_array($obj) && array_key_exists($lower, $obj)) {
-      return $obj[$lower]
-    }
-    if (is_array($obj) && array_key_exists($snake, $obj)) {
-      return $obj[$snake]
-    }
-    $noscore = str_replace('_', '', $snake)
-    if (is_array($obj) && array_key_exists($noscore, $obj)) {
-      return $obj[$noscore]
-    }
-  }
-  return $fallback
-}
 
 function resultObject($res) {
   if (result_is_ok($res)) {
@@ -684,15 +590,7 @@ function QuickStart() {
 }
 
 function fetchTopPackages($limit = 6): array {
-  $conn = openDbHandle()
-  if (!result_is_ok($conn)) {
-    return []
-  }
-
-  $handle = $conn->value
-  ensureAuthSchema($handle)
-  $rowsRes = fetchPublicPackageRows($handle, $limit, '')
-  dbClose($handle)
+  $rowsRes = fetchPublicPackageRows($limit, '')
   if (!rowValue($rowsRes, 'ok', false)) {
     return []
   }
@@ -704,21 +602,17 @@ function normalizePackage($pkg) {
   $orgHandle = '' . rowValue($pkg, 'orgHandle', rowValue($pkg, 'org_handle', ''))
   $name = '' . rowValue($pkg, 'name', '')
   $latestVersion = rowValue($pkg, 'latestVersion', rowValue($pkg, 'latest_version', 'n/a'))
-  $canonicalId = '' . rowValue($pkg, 'canonicalId', rowValue($pkg, 'canonical_id', ''))
+  $coord = scopedPackageCoord($orgHandle, $name)
   return {
-    id: rowValue($pkg, 'id', null),
-    orgId: rowValue($pkg, 'orgId', rowValue($pkg, 'org_id', null)),
     orgHandle: $orgHandle,
     name: $name,
     description: rowValue($pkg, 'description', ''),
     latestVersion: $latestVersion,
-    downloadCount: rowValue($pkg, 'downloadCount', rowValue($pkg, 'download_count', 0)),
-    canonicalId: $canonicalId,
-    packageCoord: ($orgHandle !== '' && $name !== '') ? ('@' . $orgHandle . '/' . $name) : null,
-    packageVersionCoord: ($orgHandle !== '' && $name !== '' && ('' . $latestVersion) !== '') ? ('@' . $orgHandle . '/' . $name . '@' . $latestVersion) : null,
-    visibility: rowValue($pkg, 'visibility', 'public'),
-    createdAt: rowValue($pkg, 'createdAt', rowValue($pkg, 'created_at', null)),
-    updatedAt: rowValue($pkg, 'updatedAt', rowValue($pkg, 'updated_at', null))
+    versionCount: (int) rowValue($pkg, 'versionCount', 0),
+    versions: rowValue($pkg, 'versions', []),
+    packageCoord: $coord !== '' ? $coord : null,
+    packageVersionCoord: ($coord !== '' && ('' . $latestVersion) !== '') ? ($coord . '@' . $latestVersion) : null,
+    visibility: normalizeVisibility(rowValue($pkg, 'visibility', ''))
   }
 }
 
@@ -731,7 +625,7 @@ function TopPackages($props) {
   foreach ($props->packages as $pkg) {
     $name = rowValue($pkg, 'name', 'unknown')
     $description = rowValue($pkg, 'description', 'No description yet')
-    $downloads = rowValue($pkg, 'downloadCount', 0)
+    $versionCount = (int) rowValue($pkg, 'versionCount', 0)
     $latestVersion = rowValue($pkg, 'latestVersion', 'n/a')
     $orgHandle = '' . rowValue($pkg, 'orgHandle', rowValue($pkg, 'org_handle', ''))
     $packageHref = ($orgHandle !== '' && ('' . $name) !== '')
@@ -746,7 +640,7 @@ function TopPackages($props) {
             : <div class="text-base font-semibold tracking-[-0.02em] text-[#171715]">{$name}</div>}
           <div class="mt-2 text-sm leading-6 text-black/60">{$description}</div>
         </div>
-        <div class="rounded-full bg-[#f5d547] px-3 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-[#171715]">{(string) $downloads . ' downloads'}</div>
+        <div class="rounded-full bg-[#f5d547] px-3 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-[#171715]">{(string) $versionCount . ' versions'}</div>
       </div>
       <div class="mt-4 font-mono text-[11px] text-black/45">{'latest · ' . $latestVersion}</div>
     </article>
@@ -843,36 +737,30 @@ function RuntimeStats($props) {
 }
 
 function fetchRegistryStatsResult() {
-  $conn = openDbHandle()
-  if (!result_is_ok($conn)) {
-    return { ok: false, error: $conn->error }
+  $rowsRes = fetchRegistryPackageRows()
+  if (!rowValue($rowsRes, 'ok', false)) {
+    return { ok: false, error: rowValue($rowsRes, 'error', 'registry unavailable') }
   }
-  $db = $conn->value
-  $client = dbClient($db)
-  $packagesRes = clientSelectMany($client, $client.models.Package)
-  $orgsRes = clientSelectMany($client, $client.models.LhOrg)
-  $versionsRes = clientSelectMany($client, $client.models.PackageVersion)
-  dbClose($db)
-  if (!result_is_ok($packagesRes)) {
-    return { ok: false, error: $packagesRes->error }
-  }
-  if (!result_is_ok($orgsRes)) {
-    return { ok: false, error: $orgsRes->error }
-  }
-  if (!result_is_ok($versionsRes)) {
-    return { ok: false, error: $versionsRes->error }
-  }
-  $downloadRows = $packagesRes->value
-  $totalDownloads = 0
-  foreach ($downloadRows as $drow) {
-    $totalDownloads += (int) rowValue($drow, 'downloadCount', rowValue($drow, 'download_count', 0))
+  $rows = rowValue($rowsRes, 'rows', [])
+  $versionCount = 0
+  $scopes = []
+  $publicCount = 0
+  foreach ($rows as $row) {
+    $versionCount += (int) rowValue($row, 'versionCount', 0)
+    $scope = '' . rowValue($row, 'orgHandle', '')
+    if ($scope !== '' && !in_array($scope, $scopes)) {
+      $scopes[] = $scope
+    }
+    if (registryRowIsPublic($row)) {
+      $publicCount += 1
+    }
   }
   return { ok: true, stats: [
-    'packageCount' => count($packagesRes->value),
-    'orgCount' => count($orgsRes->value),
-    'versionCount' => count($versionsRes->value),
-    'totalDownloads' => (int) $totalDownloads
-  ], source: 'postgres', degraded: false, warning: null }
+    'packageCount' => count($rows),
+    'publicCount' => (int) $publicCount,
+    'orgCount' => count($scopes),
+    'versionCount' => (int) $versionCount
+  ], source: 'git.tana.gg', degraded: false, warning: null }
 }
 
 function fetchRegistryStats() {
@@ -888,7 +776,7 @@ function RegistryStatsPanel($props) {
   $packageCount = array_key_exists('packageCount', $stats) ? $stats['packageCount'] : 0
   $orgCount = array_key_exists('orgCount', $stats) ? $stats['orgCount'] : 0
   $versionCount = array_key_exists('versionCount', $stats) ? $stats['versionCount'] : 0
-  $totalDownloads = array_key_exists('totalDownloads', $stats) ? $stats['totalDownloads'] : 0
+  $publicCount = array_key_exists('publicCount', $stats) ? $stats['publicCount'] : 0
   return <section class="mt-8 rounded-2xl bg-white p-8 shadow-sm">
     <div class="flex items-center justify-between gap-4">
       <div>
@@ -901,7 +789,7 @@ function RegistryStatsPanel($props) {
       <div class="rounded-lg border border-gray-200 p-4"><div class="text-xs text-gray-500">Packages</div><div class="mt-1 text-xl font-bold text-gray-900">{(string) $packageCount}</div></div>
       <div class="rounded-lg border border-gray-200 p-4"><div class="text-xs text-gray-500">Organizations</div><div class="mt-1 text-xl font-bold text-gray-900">{(string) $orgCount}</div></div>
       <div class="rounded-lg border border-gray-200 p-4"><div class="text-xs text-gray-500">Versions</div><div class="mt-1 text-xl font-bold text-gray-900">{(string) $versionCount}</div></div>
-      <div class="rounded-lg border border-gray-200 p-4"><div class="text-xs text-gray-500">Downloads</div><div class="mt-1 text-xl font-bold text-gray-900">{(string) $totalDownloads}</div></div>
+      <div class="rounded-lg border border-gray-200 p-4"><div class="text-xs text-gray-500">Public</div><div class="mt-1 text-xl font-bold text-gray-900">{(string) $publicCount}</div></div>
     </div>
   </section>
 }
@@ -985,24 +873,7 @@ function HmrDemo() {
 function apiPackages() {
   header('Content-Type: application/json')
   header('X-Powered-By: linkha.sh')
-  $conn = openDbHandle()
-  if (!result_is_ok($conn)) {
-    $data = {
-      packages: [],
-      total: 0,
-      registry: 'linkha.sh',
-      version: '0.1.0',
-      ok: false,
-      error: $conn->error
-    }
-    echo jsonReply($data)
-    return
-  }
-
-  $handle = $conn->value
-  ensureAuthSchema($handle)
-  $rowsRes = fetchPublicPackageRows($handle, 25, '')
-  dbClose($handle)
+  $rowsRes = fetchPublicPackageRows(25, '')
   if (!rowValue($rowsRes, 'ok', false)) {
     echo jsonReply({
       packages: [],
@@ -1033,23 +904,8 @@ function apiPackages() {
 function apiSearch() {
   header('Content-Type: application/json')
   header('X-Powered-By: linkha.sh')
-  $query = isset($_GET['q']) ? $_GET['q'] : ''
-  $conn = openDbHandle()
-  if (!result_is_ok($conn)) {
-    $data = {
-      query: $query,
-      results: [],
-      ok: false,
-      error: $conn->error
-    }
-    echo jsonReply($data)
-    return
-  }
-
-  $handle = $conn->value
-  ensureAuthSchema($handle)
-  $rowsRes = fetchPublicPackageRows($handle, 50, $query)
-  dbClose($handle)
+  $query = '' . queryValue('q', '')
+  $rowsRes = fetchPublicPackageRows(50, $query)
   if (!rowValue($rowsRes, 'ok', false)) {
     echo jsonReply({
       query: $query,
@@ -1144,26 +1000,6 @@ function apiRuntimeAction() {
   }
   $result = runtimeWriteProbe($target)
   echo jsonReply($result)
-}
-
-function apiRegistryIdentity() {
-  header('Content-Type: application/json')
-  header('X-Powered-By: linkha.sh')
-
-  $handle = '' . queryValue('handle', 'samifou.ad')
-  $name = '' . queryValue('name', 'demo-package')
-  $version = '' . queryValue('version', '0.1.0')
-  $lockHash = '' . queryValue('lock', 'dev')
-
-  echo jsonReply({
-    ok: true,
-    handle: $handle,
-    name: $name,
-    version: $version,
-    lock_hash: $lockHash,
-    canonical_id: registryCanonicalId($handle, $name, $version, $lockHash),
-    artifact_key: registryArtifactKey($handle, $name, $version, $lockHash)
-  })
 }
 
 function requestData() {
@@ -1265,32 +1101,15 @@ function oauthPkceChallenge($verifier) {
 }
 
 function parseUrlParts($url) {
-  $raw = '' . $url
-  if ($raw === '') {
-    return null
-  }
-  $parts = parse_url($raw)
+  $parts = splitHttpUrl($url)
   if (!is_array($parts)) {
     return null
   }
-  if (!array_key_exists('scheme', $parts) || !array_key_exists('host', $parts)) {
-    return null
-  }
-  $scheme = strtolower('' . $parts['scheme'])
-  $host = '' . $parts['host']
-  $port = array_key_exists('port', $parts) ? (int) $parts['port'] : ($scheme === 'https' ? 443 : 80)
-  $path = array_key_exists('path', $parts) ? ('' . $parts['path']) : '/'
-  if ($path === '') {
-    $path = '/'
-  }
-  if (array_key_exists('query', $parts) && ('' . $parts['query']) !== '') {
-    $path = $path . '?' . $parts['query']
-  }
   return {
-    scheme: $scheme,
-    host: $host,
-    port: $port,
-    path: $path
+    scheme: '' . $parts['scheme'],
+    host: '' . $parts['host'],
+    port: (int) $parts['port'],
+    path: '' . $parts['path']
   }
 }
 
@@ -1476,7 +1295,7 @@ function linkhashGitApiBase() {
   if ($override !== '') {
     return rtrim($override, '/')
   }
-  $candidates = [gitApiDefaultBase(), 'http://127.0.0.1:8608']
+  $candidates = gitApiCandidateBases()
   foreach ($candidates as $candidate) {
     $base = rtrim(trim('' . $candidate), '/')
     if ($base === '') {
@@ -1666,6 +1485,42 @@ function fetchRemoteGitJson($method, $path, $payload = null) {
 
 function fetchRemoteDeployWatchers() {
   return fetchRemoteGitJson('GET', '/api/deploy-watchers')
+}
+
+/*
+ * Registry reads. These replace the package/package_version/org tables that
+ * linkha.sh used to mirror in its own Postgres; the git server owns this data.
+ */
+function fetchRegistryPackageRows() {
+  $res = fetchRemoteGitJson('GET', registryPackagesPath())
+  if (!rowValue($res, 'ok', false)) {
+    return [ 'ok' => false, 'error' => '' . rowValue($res, 'error', 'registry unavailable'), 'status' => (int) rowValue($res, 'status', 502) ]
+  }
+  $payload = rowValue($res, 'value', [])
+  $entries = rowValue($payload, 'packages', null)
+  if (!is_array($entries)) {
+    return [ 'ok' => false, 'error' => 'invalid registry payload', 'status' => 502 ]
+  }
+  return [ 'ok' => true, 'rows' => registryRowsFromApi($entries) ]
+}
+
+function fetchRemoteScopedVersions($org, $name) {
+  $scope = normalizeHandleName($org)
+  $pkg = normalizePackageName($name)
+  if ($scope === '' || $pkg === '') {
+    return [ 'ok' => false, 'error' => 'invalid package target', 'status' => 400 ]
+  }
+  return fetchRemoteGitJson('GET', scopedReleaseVersionsPath($scope, $pkg))
+}
+
+function fetchRemoteScopedRelease($org, $name, $version) {
+  $scope = normalizeHandleName($org)
+  $pkg = normalizePackageName($name)
+  $ver = trim('' . $version)
+  if ($scope === '' || $pkg === '' || $ver === '') {
+    return [ 'ok' => false, 'error' => 'invalid release target', 'status' => 400 ]
+  }
+  return fetchRemoteGitJson('GET', scopedReleasePath($scope, $pkg, $ver))
 }
 
 function fetchRemoteRepoIssues($org, $name, $state = 'open') {
@@ -2761,87 +2616,20 @@ function authUserId($auth) {
   return (int) rowValue($user, 'id', 0)
 }
 
-function fetchPublicPackageRows($db, $limit = 25, $query = '') {
-  $max = max(1, (int) $limit)
-  $q = strtolower(trim('' . $query))
-  $client = dbClient($db)
-
-  $publicRes = clientSelectMany($client, $client.models.Package, eq('visibility', 'public'))
-  if (!result_is_ok($publicRes)) {
-    return { ok: false, error: $publicRes->error }
+/*
+ * Public package listing, served straight from the git.tana.gg registry.
+ * The scope/name split comes from the package coordinate itself, so no org
+ * join is needed; version counts come from the API's `versions` array.
+ */
+function fetchPublicPackageRows($limit = 25, $query = '') {
+  $rowsRes = fetchRegistryPackageRows()
+  if (!rowValue($rowsRes, 'ok', false)) {
+    return { ok: false, error: rowValue($rowsRes, 'error', 'registry unavailable') }
   }
-  $packages = $publicRes->value
-
-  if ($q !== '') {
-    $filtered = []
-    foreach ($packages as $row) {
-      $name = strtolower('' . rowValue($row, 'name', ''))
-      $desc = strtolower('' . rowValue($row, 'description', ''))
-      if (strpos($name, $q) !== false || strpos($desc, $q) !== false) {
-        $filtered[] = $row
-      }
-    }
-    $packages = $filtered
-  }
-
-  usort($packages, function ($a, $b) {
-    $ad = (int) rowValue($a, 'download_count', rowValue($a, 'downloadCount', 0))
-    $bd = (int) rowValue($b, 'download_count', rowValue($b, 'downloadCount', 0))
-    if ($ad === $bd) {
-      $aid = (int) rowValue($a, 'id', 0)
-      $bid = (int) rowValue($b, 'id', 0)
-      if ($aid === $bid) {
-        return 0
-      }
-      return $bid > $aid ? 1 : -1
-    }
-    return $bd > $ad ? 1 : -1
-  })
-
-  if (count($packages) > $max) {
-    $packages = array_slice($packages, 0, $max)
-  }
-
-  $orgsRes = clientSelectMany($client, $client.models.LhOrg)
-  if (!result_is_ok($orgsRes)) {
-    return { ok: false, error: $orgsRes->error }
-  }
-  $orgMap = []
-  foreach ($orgsRes->value as $org) {
-    $orgMap[(int) rowValue($org, 'id', 0)] = '' . rowValue($org, 'handle', '')
-  }
-
-  $versionsRes = clientSelectMany($client, $client.models.PackageVersion)
-  if (!result_is_ok($versionsRes)) {
-    return { ok: false, error: $versionsRes->error }
-  }
-  $latestByPackage = []
-  foreach ($packages as $row) {
-    $latestByPackage[(int) rowValue($row, 'id', 0)] = '' . rowValue($row, 'latest_version', rowValue($row, 'latestVersion', ''))
-  }
-  $canonicalByPackage = []
-  foreach ($versionsRes->value as $ver) {
-    $pid = (int) rowValue($ver, 'package_id', rowValue($ver, 'packageId', 0))
-    $latest = array_key_exists($pid, $latestByPackage) ? $latestByPackage[$pid] : ''
-    if ($latest === '') {
-      continue
-    }
-    $verName = '' . rowValue($ver, 'version', '')
-    if ($verName === $latest) {
-      $canonicalByPackage[$pid] = '' . rowValue($ver, 'canonical_id', rowValue($ver, 'canonicalId', ''))
-    }
-  }
-
-  $out = []
-  foreach ($packages as $row) {
-    $orgId = (int) rowValue($row, 'org_id', rowValue($row, 'orgId', 0))
-    $pid = (int) rowValue($row, 'id', 0)
-    $row['orgHandle'] = array_key_exists($orgId, $orgMap) ? $orgMap[$orgId] : ''
-    $row['canonicalId'] = array_key_exists($pid, $canonicalByPackage) ? $canonicalByPackage[$pid] : ''
-    $out[] = $row
-  }
-
-  return { ok: true, rows: $out }
+  $rows = filterRegistryRowsByVisibility(rowValue($rowsRes, 'rows', []), 'public')
+  $rows = filterRegistryRowsByQuery($rows, $query)
+  $rows = sortRegistryRowsByName($rows)
+  return { ok: true, rows: limitRegistryRows($rows, $limit) }
 }
 
 function devRandomHex($len = 32) {
@@ -4305,77 +4093,6 @@ function apiOrgMembersRemove() {
   echo jsonReply([ 'ok' => true, 'orgId' => $orgId, 'handle' => $targetHandle ])
 }
 
-function apiPackageSetVisibility() {
-  header('Content-Type: application/json')
-  header('X-Powered-By: linkha.sh')
-  $method = requireMethod('POST')
-  if (!$method['ok']) {
-    echo jsonReply($method)
-    return
-  }
-  $auth = authWithScope(2)
-  if (!$auth['ok']) {
-    echo jsonReply([ 'ok' => false, 'error' => $auth['error'] ])
-    return
-  }
-  $csrf = authValidateCsrfForAuth($auth)
-  if (!$csrf['ok']) {
-    echo jsonReply([ 'ok' => false, 'error' => $csrf['error'] ])
-    return
-  }
-  $userId = authUserId($auth)
-  $rateUser = enforceUserRateLimit('publish.mutate.user', $userId, 5, 60)
-  if (!$rateUser['ok']) {
-    echo jsonReply({ ok: false, error: $rateUser['error'], bucket: 'publish.mutate.user' })
-    return
-  }
-  $rateIp = enforceIpRateLimit('publish.mutate.ip', 20, 60)
-  if (!$rateIp['ok']) {
-    echo jsonReply({ ok: false, error: $rateIp['error'], bucket: 'publish.mutate.ip' })
-    return
-  }
-
-  $body = requestData()
-  $name = normalizePackageName(queryValue('name', array_key_exists('name', $body) ? $body['name'] : ''))
-  $visibility = parseVisibility(queryValue('visibility', array_key_exists('visibility', $body) ? $body['visibility'] : ''), null)
-  if ($name === '' || !isset($visibility)) {
-    echo jsonReply([ 'ok' => false, 'error' => 'name and valid visibility are required' ])
-    return
-  }
-
-  $conn = openDbHandle()
-  if (!result_is_ok($conn)) {
-    echo jsonReply([ 'ok' => false, 'error' => $conn->error ])
-    return
-  }
-  $db = $conn->value
-  $client = dbClient($db)
-  $pkg = clientSelectOne($client, $client.models.Package, ilike('name', $name))
-  if (!result_is_ok($pkg)) {
-    dbClose($db)
-    echo jsonReply([ 'ok' => false, 'error' => 'package not found' ])
-    return
-  }
-  $orgId = (int) rowValue($pkg->value, 'orgId', rowValue($pkg->value, 'org_id', 0))
-  if ($orgId <= 0 || !canEditOrg($db, $orgId, $userId)) {
-    dbClose($db)
-    echo jsonReply([ 'ok' => false, 'error' => 'forbidden: missing org edit access' ])
-    return
-  }
-  $up = clientUpdateWhere($client, 
-    $client.models.Package,
-    eq('id', (int) rowValue($pkg->value, 'id', 0)),
-    { visibility: $visibility },
-    false
-  )
-  dbClose($db)
-  if (!result_is_ok($up)) {
-    echo jsonReply([ 'ok' => false, 'error' => $up->error ])
-    return
-  }
-  echo jsonReply([ 'ok' => true, 'name' => $name, 'visibility' => $visibility ])
-}
-
 function sha256Hex($value) {
   if (function_exists('hash')) {
     return strtolower(hash('sha256', '' . $value))
@@ -4397,562 +4114,6 @@ function hmacSha256Raw($key, $data) {
   return sha256Raw(('' . $key) . ':' . ('' . $data))
 }
 
-function r2BackendMode() {
-  return strtolower(trim('' . envValue('LINKHASH_ARTIFACT_BACKEND', 'local')))
-}
-
-function r2Enabled() {
-  $mode = r2BackendMode()
-  return $mode === 'r2' || $mode === 'auto'
-}
-
-function r2Bucket() {
-  return trim('' . envValue('LINKHASH_R2_BUCKET', ''))
-}
-
-function r2AccountId() {
-  return trim('' . envValue('LINKHASH_R2_ACCOUNT_ID', ''))
-}
-
-function r2AccessKeyId() {
-  return trim('' . envValue('LINKHASH_R2_ACCESS_KEY_ID', ''))
-}
-
-function r2SecretAccessKey() {
-  return trim('' . envValue('LINKHASH_R2_SECRET_ACCESS_KEY', ''))
-}
-
-function r2Region() {
-  $v = trim('' . envValue('LINKHASH_R2_REGION', 'auto'))
-  return $v === '' ? 'auto' : $v
-}
-
-function r2EndpointHost() {
-  $explicit = trim('' . envValue('LINKHASH_R2_ENDPOINT', ''))
-  if ($explicit !== '') {
-    if (strpos($explicit, 'http://') === 0) {
-      return substr($explicit, strlen('http://'))
-    }
-    if (strpos($explicit, 'https://') === 0) {
-      return substr($explicit, strlen('https://'))
-    }
-    return $explicit
-  }
-  $acct = r2AccountId()
-  if ($acct === '') {
-    return ''
-  }
-  return $acct . '.r2.cloudflarestorage.com'
-}
-
-function r2ConfigValid() {
-  return r2Bucket() !== '' && r2EndpointHost() !== '' && r2AccessKeyId() !== '' && r2SecretAccessKey() !== ''
-}
-
-function r2EncodePath($bucket, $key) {
-  $parts = explode('/', '' . $key)
-  $encoded = []
-  foreach ($parts as $part) {
-    $encoded[] = rawurlencode($part)
-  }
-  return '/' . rawurlencode('' . $bucket) . '/' . implode('/', $encoded)
-}
-
-function r2SignV4($method, $canonicalPath, $payload, $host) {
-  $accessKey = r2AccessKeyId()
-  $secret = r2SecretAccessKey()
-  $region = r2Region()
-  $amzDate = gmdate('Ymd\THis\Z')
-  $dateStamp = gmdate('Ymd')
-  $payloadHash = sha256Hex($payload)
-
-  $canonicalHeaders =
-    'host:' . strtolower('' . $host) . "\n" .
-    'x-amz-content-sha256:' . $payloadHash . "\n" .
-    'x-amz-date:' . $amzDate . "\n"
-  $signedHeaders = 'host;x-amz-content-sha256;x-amz-date'
-  $canonicalRequest =
-    strtoupper('' . $method) . "\n" .
-    $canonicalPath . "\n" .
-    "\n" .
-    $canonicalHeaders . "\n" .
-    $signedHeaders . "\n" .
-    $payloadHash
-
-  $scope = $dateStamp . '/' . $region . '/s3/aws4_request'
-  $stringToSign =
-    'AWS4-HMAC-SHA256' . "\n" .
-    $amzDate . "\n" .
-    $scope . "\n" .
-    sha256Hex($canonicalRequest)
-
-  $kDate = hmacSha256Raw('AWS4' . $secret, $dateStamp)
-  $kRegion = hmacSha256Raw($kDate, $region)
-  $kService = hmacSha256Raw($kRegion, 's3')
-  $kSigning = hmacSha256Raw($kService, 'aws4_request')
-  $signature = strtolower(bin2hex(hmacSha256Raw($kSigning, $stringToSign)))
-
-  $authHeader = 'AWS4-HMAC-SHA256 Credential=' . $accessKey . '/' . $scope . ', SignedHeaders=' . $signedHeaders . ', Signature=' . $signature
-
-  return [
-    'Authorization' => $authHeader,
-    'x-amz-content-sha256' => $payloadHash,
-    'x-amz-date' => $amzDate
-  ]
-}
-
-function r2PutObject($key, $bytes, $mime = 'application/octet-stream') {
-  if (!r2ConfigValid()) {
-    return [ 'ok' => false, 'error' => 'r2 config incomplete' ]
-  }
-  $host = r2EndpointHost()
-  $path = r2EncodePath(r2Bucket(), $key)
-  $url = 'https://' . $host . $path
-  $sigHeaders = r2SignV4('PUT', $path, $bytes, $host)
-  $headers = [
-    'Host' => $host,
-    'Content-Type' => $mime,
-    'x-amz-content-sha256' => $sigHeaders['x-amz-content-sha256'],
-    'x-amz-date' => $sigHeaders['x-amz-date'],
-    'Authorization' => $sigHeaders['Authorization']
-  ]
-  $res = httpRequestRaw('PUT', $url, $headers, $bytes)
-  if (!is_array($res) || !$res['ok']) {
-    return [ 'ok' => false, 'error' => 'r2 request failed', 'details' => $res ]
-  }
-  $status = (int) $res['status']
-  if ($status < 200 || $status >= 300) {
-    return [ 'ok' => false, 'error' => 'r2 put rejected', 'status' => $status, 'body' => $res['body'] ]
-  }
-  return [ 'ok' => true ]
-}
-
-function r2GetObject($key) {
-  if (!r2ConfigValid()) {
-    return [ 'ok' => false, 'error' => 'r2 config incomplete' ]
-  }
-  $host = r2EndpointHost()
-  $path = r2EncodePath(r2Bucket(), $key)
-  $url = 'https://' . $host . $path
-  $sigHeaders = r2SignV4('GET', $path, '', $host)
-  $headers = [
-    'Host' => $host,
-    'x-amz-content-sha256' => $sigHeaders['x-amz-content-sha256'],
-    'x-amz-date' => $sigHeaders['x-amz-date'],
-    'Authorization' => $sigHeaders['Authorization']
-  ]
-  $res = httpRequestRaw('GET', $url, $headers, '')
-  if (!is_array($res) || !$res['ok']) {
-    return [ 'ok' => false, 'error' => 'r2 request failed', 'details' => $res ]
-  }
-  $status = (int) $res['status']
-  if ($status < 200 || $status >= 300) {
-    return [ 'ok' => false, 'error' => 'r2 get rejected', 'status' => $status, 'body' => $res['body'] ]
-  }
-  $headersOut = is_array($res['headers']) ? $res['headers'] : []
-  $mime = array_key_exists('content-type', $headersOut) ? ('' . $headersOut['content-type']) : 'application/octet-stream'
-  return [ 'ok' => true, 'body' => '' . $res['body'], 'mime' => $mime ]
-}
-
-function packageIsVisibleTo($db, $pkgRow, $auth) {
-  $visibility = '' . rowValue($pkgRow, 'visibility', 'public')
-  if ($visibility === 'public') {
-    return true
-  }
-  if (!rowValue($auth, 'ok', false)) {
-    return false
-  }
-  $userId = authUserId($auth)
-  $orgId = (int) rowValue($pkgRow, 'orgId', rowValue($pkgRow, 'org_id', 0))
-  if ($userId <= 0 || $orgId <= 0) {
-    return false
-  }
-  return canEditOrg($db, $orgId, $userId)
-}
-
-function apiPublishPackage() {
-  header('Content-Type: application/json')
-  header('X-Powered-By: linkha.sh')
-  $method = requireMethod('POST')
-  if (!$method['ok']) {
-    echo jsonReply($method)
-    return
-  }
-  $auth = authWithScope(2)
-  if (!$auth['ok']) {
-    echo jsonReply([ 'ok' => false, 'error' => $auth['error'] ])
-    return
-  }
-  $csrf = authValidateCsrfForAuth($auth)
-  if (!$csrf['ok']) {
-    echo jsonReply([ 'ok' => false, 'error' => $csrf['error'] ])
-    return
-  }
-  $userId = authUserId($auth)
-  $rateUser = enforceUserRateLimit('publish.mutate.user', $userId, 5, 60)
-  if (!$rateUser['ok']) {
-    echo jsonReply({ ok: false, error: $rateUser['error'], bucket: 'publish.mutate.user' })
-    return
-  }
-  $rateIp = enforceIpRateLimit('publish.mutate.ip', 20, 60)
-  if (!$rateIp['ok']) {
-    echo jsonReply({ ok: false, error: $rateIp['error'], bucket: 'publish.mutate.ip' })
-    return
-  }
-
-  $body = requestData()
-  $orgId = (int) queryValue('orgId', array_key_exists('orgId', $body) ? $body['orgId'] : 0)
-  $name = normalizePackageName(queryValue('name', array_key_exists('name', $body) ? $body['name'] : ''))
-  $version = trim('' . queryValue('version', array_key_exists('version', $body) ? $body['version'] : ''))
-  $lockHash = trim('' . queryValue('lockHash', array_key_exists('lockHash', $body) ? $body['lockHash'] : 'dev'))
-  $sha256 = trim('' . queryValue('sha256', array_key_exists('sha256', $body) ? $body['sha256'] : ''))
-  $integrityAlgo = trim('' . queryValue('integrityAlgo', array_key_exists('integrityAlgo', $body) ? $body['integrityAlgo'] : ''))
-  $moduleGraphHash = trim('' . queryValue('moduleGraphHash', array_key_exists('moduleGraphHash', $body) ? $body['moduleGraphHash'] : ''))
-  $fsGraphHash = trim('' . queryValue('fsGraphHash', array_key_exists('fsGraphHash', $body) ? $body['fsGraphHash'] : ''))
-  $mime = trim('' . queryValue('mime', array_key_exists('mime', $body) ? $body['mime'] : 'application/octet-stream'))
-  $mainFile = trim('' . queryValue('mainFile', array_key_exists('mainFile', $body) ? $body['mainFile'] : 'index.phpx'))
-  $artifactB64 = '' . queryValue('artifactBase64', array_key_exists('artifactBase64', $body) ? $body['artifactBase64'] : '')
-  $description = '' . queryValue('description', array_key_exists('description', $body) ? $body['description'] : 'Published package')
-  $visibility = parseVisibility(queryValue('visibility', array_key_exists('visibility', $body) ? $body['visibility'] : 'public'), 'public')
-  $filesInput = array_key_exists('files', $body) ? $body['files'] : []
-  $depsInput = array_key_exists('dependencies', $body) ? $body['dependencies'] : []
-  $readme = '' . queryValue('readme', array_key_exists('readme', $body) ? $body['readme'] : '')
-  $capabilityInput = array_key_exists('capabilityMetadata', $body) ? $body['capabilityMetadata'] : (array_key_exists('capabilities', $body) ? [ 'declared' => $body['capabilities'] ] : null)
-
-  if (array_key_exists('integrity', $body) && (is_array($body['integrity']) || is_object($body['integrity']))) {
-    $integrity = is_array($body['integrity']) ? $body['integrity'] : (array) $body['integrity']
-    if ($integrityAlgo === '' && array_key_exists('algo', $integrity)) {
-      $integrityAlgo = trim('' . $integrity['algo'])
-    }
-    if ($moduleGraphHash === '' && array_key_exists('moduleGraphHash', $integrity)) {
-      $moduleGraphHash = trim('' . $integrity['moduleGraphHash'])
-    }
-    if ($fsGraphHash === '' && array_key_exists('fsGraphHash', $integrity)) {
-      $fsGraphHash = trim('' . $integrity['fsGraphHash'])
-    }
-    if (($moduleGraphHash === '' || $fsGraphHash === '') && array_key_exists('moduleGraph', $integrity)) {
-      $moduleGraph = is_array($integrity['moduleGraph']) ? $integrity['moduleGraph'] : (array) $integrity['moduleGraph']
-      if ($moduleGraphHash === '' && array_key_exists('hash', $moduleGraph)) {
-        $moduleGraphHash = trim('' . $moduleGraph['hash'])
-      }
-      if ($integrityAlgo === '' && array_key_exists('algo', $moduleGraph)) {
-        $integrityAlgo = trim('' . $moduleGraph['algo'])
-      }
-    }
-    if (($moduleGraphHash === '' || $fsGraphHash === '') && array_key_exists('fsGraph', $integrity)) {
-      $fsGraph = is_array($integrity['fsGraph']) ? $integrity['fsGraph'] : (array) $integrity['fsGraph']
-      if ($fsGraphHash === '' && array_key_exists('hash', $fsGraph)) {
-        $fsGraphHash = trim('' . $fsGraph['hash'])
-      }
-      if ($integrityAlgo === '' && array_key_exists('algo', $fsGraph)) {
-        $integrityAlgo = trim('' . $fsGraph['algo'])
-      }
-    }
-  }
-
-  if ($integrityAlgo === '' && ($moduleGraphHash !== '' || $fsGraphHash !== '')) {
-    $integrityAlgo = 'sha256'
-  }
-
-  $filesDecoded = decodeJsonLike($filesInput, [])
-  $depsDecoded = decodeJsonLike($depsInput, [])
-  $capabilityDecoded = decodeJsonLike($capabilityInput, null)
-  $filesPayload = is_array($filesDecoded) ? $filesDecoded : []
-  $depsPayload = is_array($depsDecoded) ? $depsDecoded : []
-  $capabilityPayload = isset($capabilityDecoded) ? $capabilityDecoded : null
-
-  if ($orgId <= 0 || !isValidPackageName($name) || isReservedPackageName($name) || $version === '' || !isset($visibility)) {
-    auditEvent('package.publish', $auth, 'error', 'package', '@' . $orgId . '/' . $name . '@' . $version, [ 'error' => 'invalid publish parameters' ])
-    echo jsonReply([ 'ok' => false, 'error' => 'orgId, valid name, version, and visibility are required' ])
-    return
-  }
-
-  $conn = openDbHandle()
-  if (!result_is_ok($conn)) {
-    echo jsonReply([ 'ok' => false, 'error' => $conn->error ])
-    return
-  }
-  $db = $conn->value
-  $client = dbClient($db)
-  if (!canEditOrg($db, $orgId, $userId)) {
-    auditEvent('package.publish', $auth, 'forbidden', 'org', '' . $orgId, [ 'name' => $name, 'version' => $version ])
-    dbClose($db)
-    echo jsonReply([ 'ok' => false, 'error' => 'forbidden: missing org edit access' ])
-    return
-  }
-
-  $pkg = clientSelectOne($client, 
-    $client.models.Package,
-    andWhere(
-      eq('org_id', $orgId),
-      ilike('name', $name)
-    )
-  )
-  $packageId = 0
-  if (result_is_ok($pkg)) {
-    $packageId = (int) rowValue($pkg->value, 'id', 0)
-  } else if (isNoRowsError($pkg->error)) {
-    $created = clientInsertOne($client, 
-      $client.models.Package,
-      {
-        org_id: $orgId,
-        name: $name,
-        description: $description,
-        latest_version: $version,
-        download_count: 0,
-        visibility: $visibility,
-        private_read_mask: 0,
-        created_at: gmdate('c'),
-        updated_at: gmdate('c')
-      },
-      false
-    )
-    if (!result_is_ok($created)) {
-      dbClose($db)
-      echo jsonReply([ 'ok' => false, 'error' => $created->error ])
-      return
-    }
-    $pkg = clientSelectOne($client, 
-      $client.models.Package,
-      andWhere(
-        eq('org_id', $orgId),
-        ilike('name', $name)
-      )
-    )
-    if (!result_is_ok($pkg)) {
-      dbClose($db)
-      echo jsonReply([ 'ok' => false, 'error' => $pkg->error ])
-      return
-    }
-    $packageId = (int) rowValue($pkg->value, 'id', 0)
-  } else {
-    dbClose($db)
-    echo jsonReply([ 'ok' => false, 'error' => $pkg->error ])
-    return
-  }
-  if ($packageId <= 0) {
-    dbClose($db)
-    echo jsonReply([ 'ok' => false, 'error' => 'failed to resolve package id' ])
-    return
-  }
-
-  $owner = clientSelectOne($client, $client.models.LhOrg, eq('id', $orgId))
-  $ownerHandle = result_is_ok($owner) ? ('' . rowValue($owner->value, 'handle', 'org')) : 'org'
-  $canonicalId = registryCanonicalId($ownerHandle, $name, $version, $lockHash)
-  $artifactKey = registryArtifactKey($ownerHandle, $name, $version, $lockHash)
-
-  $artifactBytes = $artifactB64 !== '' ? base64_decode($artifactB64) : ''
-  if ($artifactBytes === false) {
-    dbClose($db)
-    echo jsonReply([ 'ok' => false, 'error' => 'artifactBase64 is invalid' ])
-    return
-  }
-  $artifactSize = (int) strlen($artifactBytes)
-  $artifactBackend = 'local'
-  $artifactNotice = null
-  if (r2Enabled()) {
-    $put = r2PutObject($artifactKey, $artifactBytes, $mime)
-    if ($put['ok']) {
-      $artifactBackend = 'r2'
-    } else {
-      $artifactNotice = 'r2 upload failed; using inline postgres fallback'
-    }
-  }
-
-  $verRow = clientSelectOne($client, 
-    $client.models.PackageVersion,
-    andWhere(
-      eq('package_id', $packageId),
-      eq('version', $version)
-    )
-  )
-  $upVer = result_err('not run')
-  if (result_is_ok($verRow)) {
-    $upVer = clientUpdateWhere($client,
-      $client.models.PackageVersion,
-      eq('id', (int) rowValue($verRow->value, 'id', 0)),
-      {
-        main_file: $mainFile,
-        files: $filesPayload,
-        dependencies: $depsPayload,
-        readme: $readme,
-        published_at: gmdate('c'),
-        r2_key: null,
-        sha256: $sha256,
-        canonical_id: $canonicalId,
-        lock_hash: $lockHash,
-        integrity_algo: $integrityAlgo,
-        module_graph_hash: $moduleGraphHash,
-        fs_graph_hash: $fsGraphHash,
-        artifact_backend: $artifactBackend,
-        artifact_key: $artifactKey,
-        artifact_mime: $mime,
-        artifact_size_bytes: $artifactSize,
-        artifact_inline_b64: $artifactB64,
-        capability_metadata: $capabilityPayload
-      },
-      false
-    )
-  } else if (isNoRowsError($verRow->error)) {
-    $upVer = clientInsertOne($client, 
-      $client.models.PackageVersion,
-      {
-        package_id: $packageId,
-        version: $version,
-        main_file: $mainFile,
-        files: $filesPayload,
-        dependencies: $depsPayload,
-        readme: $readme,
-        published_at: gmdate('c'),
-        r2_key: null,
-        sha256: $sha256,
-        canonical_id: $canonicalId,
-        lock_hash: $lockHash,
-        integrity_algo: $integrityAlgo,
-        module_graph_hash: $moduleGraphHash,
-        fs_graph_hash: $fsGraphHash,
-        artifact_backend: $artifactBackend,
-        artifact_key: $artifactKey,
-        artifact_mime: $mime,
-        artifact_size_bytes: $artifactSize,
-        artifact_inline_b64: $artifactB64,
-        capability_metadata: $capabilityPayload
-      },
-      false
-    )
-  } else {
-    $upVer = $verRow
-  }
-  if (!result_is_ok($upVer)) {
-    auditEvent('package.publish', $auth, 'error', 'package', '@' . $ownerHandle . '/' . $name . '@' . $version, [ 'error' => $upVer->error ])
-    dbClose($db)
-    echo jsonReply([ 'ok' => false, 'error' => $upVer->error ])
-    return
-  }
-
-  clientUpdateWhere($client, 
-    $client.models.Package,
-    eq('id', $packageId),
-    { latest_version: $version, visibility: $visibility, updated_at: gmdate('c') },
-    false
-  )
-  dbClose($db)
-
-  echo jsonReply([
-    'ok' => true,
-    'package' => [ 'orgId' => $orgId, 'name' => $name, 'version' => $version, 'visibility' => $visibility ],
-    'artifact' => [ 'backend' => $artifactBackend, 'key' => $artifactKey, 'sizeBytes' => $artifactSize ],
-    'notice' => $artifactNotice,
-    'canonicalId' => $canonicalId,
-    'downloadUrl' => '/api/artifacts/' . $canonicalId
-  ])
-  auditEvent('package.publish', $auth, 'ok', 'package', '@' . $ownerHandle . '/' . $name . '@' . $version, [ 'canonicalId' => $canonicalId, 'visibility' => $visibility, 'artifactBackend' => $artifactBackend ])
-}
-
-function apiInstallPackage() {
-  header('Content-Type: application/json')
-  header('X-Powered-By: linkha.sh')
-  $orgHandle = normalizeHandleName(queryValue('org', ''))
-  $name = normalizePackageName(queryValue('name', ''))
-  $version = trim('' . queryValue('version', 'latest'))
-  if ($orgHandle === '' || $name === '') {
-    echo jsonReply([ 'ok' => false, 'error' => 'org and name are required' ])
-    return
-  }
-  $auth = authWithScope(1)
-
-  $conn = openDbHandle()
-  if (!result_is_ok($conn)) {
-    echo jsonReply([ 'ok' => false, 'error' => $conn->error ])
-    return
-  }
-  $db = $conn->value
-  $client = dbClient($db)
-  $org = clientSelectOne($client, $client.models.LhOrg, ilike('handle', $orgHandle))
-  if (!result_is_ok($org)) {
-    dbClose($db)
-    echo jsonReply([ 'ok' => false, 'error' => 'org not found' ])
-    return
-  }
-  $orgId = (int) rowValue($org->value, 'id', 0)
-  $pkg = clientSelectOne($client, 
-    $client.models.Package,
-    andWhere(
-      eq('org_id', $orgId),
-      ilike('name', $name)
-    )
-  )
-  if (!result_is_ok($pkg)) {
-    dbClose($db)
-    echo jsonReply([ 'ok' => false, 'error' => 'package not found' ])
-    return
-  }
-  if (!packageIsVisibleTo($db, $pkg->value, $auth)) {
-    dbClose($db)
-    echo jsonReply([ 'ok' => false, 'error' => 'forbidden: package is private' ])
-    return
-  }
-  $packageId = (int) rowValue($pkg->value, 'id', 0)
-  $resolvedVersion = $version === 'latest' ? ('' . rowValue($pkg->value, 'latestVersion', rowValue($pkg->value, 'latest_version', ''))) : $version
-  $ver = clientSelectOne($client, 
-    $client.models.PackageVersion,
-    andWhere(
-      eq('package_id', $packageId),
-      eq('version', $resolvedVersion)
-    )
-  )
-  if (!result_is_ok($ver)) {
-    dbClose($db)
-    echo jsonReply([ 'ok' => false, 'error' => 'version not found' ])
-    return
-  }
-  $versionId = (int) rowValue($ver->value, 'id', 0)
-  $canonicalId = '' . rowValue($ver->value, 'canonicalId', rowValue($ver->value, 'canonical_id', ''))
-  if ($canonicalId === '') {
-    $lockHash = '' . rowValue($ver->value, 'lockHash', rowValue($ver->value, 'lock_hash', 'dev'))
-    $canonicalId = registryCanonicalId($orgHandle, $name, $resolvedVersion, $lockHash === '' ? 'dev' : $lockHash)
-  }
-  clientInsertOne($client, 
-    $client.models.Download,
-    {
-      package_id: $packageId,
-      version_id: $versionId,
-      downloaded_at: gmdate('c'),
-      ip_address: clientIp(),
-      user_agent: (is_array($_SERVER) && array_key_exists('HTTP_USER_AGENT', $_SERVER)) ? $_SERVER['HTTP_USER_AGENT'] : ''
-    },
-    false
-  )
-  $currentDownloads = (int) rowValue($pkg->value, 'download_count', rowValue($pkg->value, 'downloadCount', 0))
-  clientUpdateWhere($client, 
-    $client.models.Package,
-    eq('id', $packageId),
-    { download_count: $currentDownloads + 1 },
-    false
-  )
-  dbClose($db)
-
-  echo jsonReply([
-    'ok' => true,
-    'org' => $orgHandle,
-    'name' => $name,
-    'version' => $resolvedVersion,
-    'canonicalId' => $canonicalId,
-    'artifact' => [
-      'backend' => rowValue($ver->value, 'artifactBackend', rowValue($ver->value, 'artifact_backend', 'local')),
-      'key' => rowValue($ver->value, 'artifactKey', rowValue($ver->value, 'artifact_key', null)),
-      'mime' => rowValue($ver->value, 'artifactMime', rowValue($ver->value, 'artifact_mime', 'application/octet-stream')),
-      'sizeBytes' => (int) rowValue($ver->value, 'artifactSizeBytes', rowValue($ver->value, 'artifact_size_bytes', 0))
-    ],
-    'integrity' => [
-      'algo' => rowValue($ver->value, 'integrityAlgo', rowValue($ver->value, 'integrity_algo', '')),
-      'moduleGraphHash' => rowValue($ver->value, 'moduleGraphHash', rowValue($ver->value, 'module_graph_hash', '')),
-      'fsGraphHash' => rowValue($ver->value, 'fsGraphHash', rowValue($ver->value, 'fs_graph_hash', ''))
-    ],
-    'downloadUrl' => '/api/artifacts/' . $canonicalId
-  ])
-}
-
 function fetchPackageDetail($orgHandle, $name, $auth) {
   $org = normalizeHandleName($orgHandle)
   $pkgName = normalizePackageName($name)
@@ -4968,41 +4129,49 @@ function fetchPackageDetail($orgHandle, $name, $auth) {
     }
   }
 
-  $conn = openDbHandle()
-  if (!result_is_ok($conn)) {
-    return [ 'ok' => false, 'error' => $conn->error ]
+  $versionsRes = fetchRemoteScopedVersions($org, $pkgName)
+  if (!rowValue($versionsRes, 'ok', false)) {
+    $status = (int) rowValue($versionsRes, 'status', 502)
+    return [
+      'ok' => false,
+      'error' => $status === 404 ? 'package not found' : ('' . rowValue($versionsRes, 'error', 'registry unavailable')),
+      'status' => $status
+    ]
   }
-  $db = $conn->value
-  $client = dbClient($db)
-  $orgRow = clientSelectOne($client, $client.models.LhOrg, ilike('handle', $org))
-  if (!result_is_ok($orgRow)) {
-    dbClose($db)
-    return [ 'ok' => false, 'error' => 'org lookup failed', 'detail' => $orgRow->error ]
+  $versionsPayload = rowValue($versionsRes, 'value', [])
+  $versionRows = versionRowsFromApi($versionsPayload)
+  $activeVersion = '' . rowValue($versionsPayload, 'latest', '')
+  if ($activeVersion === '' && count($versionRows) > 0) {
+    $activeVersion = '' . rowValue($versionRows[0], 'version', '')
   }
-  $orgId = (int) rowValue($orgRow->value, 'id', 0)
-  $pkgRow = clientSelectOne($client, 
-    $client.models.Package,
-    andWhere(
-      eq('org_id', $orgId),
-      ilike('name', $pkgName)
-    )
-  )
-  if (!result_is_ok($pkgRow)) {
-    dbClose($db)
-    return [ 'ok' => false, 'error' => 'package not found' ]
+  $pkgVisibility = normalizeVisibility(rowValue($versionsPayload, 'visibility', ''))
+  $pkgDescription = ''
+  $activeRelease = null
+  if ($activeVersion !== '') {
+    $releaseRes = fetchRemoteScopedRelease($org, $pkgName, $activeVersion)
+    if (rowValue($releaseRes, 'ok', false)) {
+      $activeRelease = rowValue($releaseRes, 'value', null)
+      $pkgDescription = '' . rowValue($activeRelease, 'description', '')
+      $releaseRaw = rowValue($activeRelease, 'visibility', '')
+      if (trim('' . $releaseRaw) !== '') {
+        $pkgVisibility = normalizeVisibility($releaseRaw)
+      }
+    }
   }
-  if (!packageIsVisibleTo($db, $pkgRow->value, $auth)) {
-    dbClose($db)
-    return [ 'ok' => false, 'error' => 'forbidden: package is private' ]
+  if (count($versionRows) > 0 && isset($activeRelease)) {
+    $decorated = decorateVersionRow($versionRows[0], $activeRelease)
+    $manifest = decodeJsonLike(rowValue($decorated, 'manifest', ''), [])
+    if (is_array($manifest)) {
+      $mainEntry = trim('' . rowValue($manifest, 'main', ''))
+      if ($mainEntry !== '') {
+        $decorated['mainFile'] = $mainEntry
+      }
+      if ($pkgDescription === '') {
+        $pkgDescription = '' . rowValue($manifest, 'description', '')
+      }
+    }
+    $versionRows[0] = $decorated
   }
-
-  $versions = clientSelectMany($client, 
-    $client.models.PackageVersion,
-    eq('package_id', (int) rowValue($pkgRow->value, 'id', 0)),
-    desc('published_at')
-  )
-  $versionRows = result_is_ok($versions) ? $versions->value : []
-  $activeVersion = count($versionRows) > 0 ? ('' . rowValue($versionRows[0], 'version', '')) : ''
   $docsSymbols = []
   $docsError = ''
   $treeEntries = []
@@ -5092,18 +4261,18 @@ function fetchPackageDetail($orgHandle, $name, $auth) {
       $activePullError = '' . rowValue($pullDetail, 'error', '')
     }
   }
-  dbClose($db)
 
   return [
     'ok' => true,
-    'org' => rowValue($orgRow->value, 'handle', $org),
+    'org' => $org,
     'package' => [
-      'id' => rowValue($pkgRow->value, 'id', null),
-      'name' => rowValue($pkgRow->value, 'name', $pkgName),
-      'description' => rowValue($pkgRow->value, 'description', ''),
-      'latestVersion' => rowValue($pkgRow->value, 'latestVersion', rowValue($pkgRow->value, 'latest_version', null)),
-      'downloadCount' => (int) rowValue($pkgRow->value, 'downloadCount', rowValue($pkgRow->value, 'download_count', 0)),
-      'visibility' => rowValue($pkgRow->value, 'visibility', 'public')
+      'name' => $pkgName,
+      'orgHandle' => $org,
+      'packageCoord' => scopedPackageCoord($org, $pkgName),
+      'description' => $pkgDescription,
+      'latestVersion' => $activeVersion,
+      'versionCount' => count($versionRows),
+      'visibility' => $pkgVisibility
     ],
     'versions' => $versionRows,
     'docsSymbols' => $docsSymbols,
@@ -5384,46 +4553,6 @@ function findVersionInRows($versions, $targetVersion) {
   return null
 }
 
-function fetchCanonicalTarget($canonicalId, $auth) {
-  $id = trim('' . $canonicalId)
-  if ($id === '' || !strStartsWith($id, 'lh_')) {
-    return [ 'ok' => false, 'error' => 'invalid canonical id' ]
-  }
-  $conn = openDbHandle()
-  if (!result_is_ok($conn)) {
-    return [ 'ok' => false, 'error' => $conn->error ]
-  }
-  $db = $conn->value
-  $client = dbClient($db)
-  $ver = clientSelectOne($client, $client.models.PackageVersion, eq('canonical_id', $id))
-  if (!result_is_ok($ver)) {
-    dbClose($db)
-    return [ 'ok' => false, 'error' => 'canonical package not found' ]
-  }
-  $pkg = clientSelectOne($client, $client.models.Package, eq('id', (int) rowValue($ver->value, 'package_id', 0)))
-  if (!result_is_ok($pkg)) {
-    dbClose($db)
-    return [ 'ok' => false, 'error' => 'package not found' ]
-  }
-  $org = clientSelectOne($client, $client.models.LhOrg, eq('id', (int) rowValue($pkg->value, 'org_id', 0)))
-  if (!result_is_ok($org)) {
-    dbClose($db)
-    return [ 'ok' => false, 'error' => 'org not found' ]
-  }
-  if (!packageIsVisibleTo($db, $pkg->value, $auth)) {
-    dbClose($db)
-    return [ 'ok' => false, 'error' => 'forbidden: package is private' ]
-  }
-  $target = [
-    'org' => '' . rowValue($org->value, 'handle', ''),
-    'name' => '' . rowValue($pkg->value, 'name', ''),
-    'version' => '' . rowValue($ver->value, 'version', ''),
-    'canonicalId' => '' . rowValue($ver->value, 'canonical_id', rowValue($ver->value, 'canonicalId', ''))
-  ]
-  dbClose($db)
-  return [ 'ok' => true, 'target' => $target ]
-}
-
 function repoPackagePath($org, $name) {
   return '/' . rawurlencode(normalizeHandleName($org)) . '/' . rawurlencode(normalizePackageName($name))
 }
@@ -5605,54 +4734,22 @@ function fetchOrgProfile($handle, $auth) {
     return [ 'ok' => false, 'error' => 'org handle is required' ]
   }
 
-  $conn = openDbHandle()
-  if (!result_is_ok($conn)) {
-    return [ 'ok' => false, 'error' => $conn->error ]
+  $rowsRes = fetchRegistryPackageRows()
+  if (!rowValue($rowsRes, 'ok', false)) {
+    return [ 'ok' => false, 'error' => '' . rowValue($rowsRes, 'error', 'registry unavailable'), 'status' => (int) rowValue($rowsRes, 'status', 502) ]
   }
-  $db = $conn->value
-  $client = dbClient($db)
-  $org = clientSelectOne($client, $client.models.LhOrg, ilike('handle', $orgHandle))
-  if (!result_is_ok($org)) {
-    dbClose($db)
-    return [ 'ok' => false, 'error' => 'org lookup failed', 'detail' => $org->error ]
+  $scoped = filterRegistryRowsByScope(rowValue($rowsRes, 'rows', []), $orgHandle)
+  if (count($scoped) === 0) {
+    return [ 'ok' => false, 'error' => 'org not found', 'status' => 404 ]
   }
-  $orgRow = $org->value
-  $orgId = (int) rowValue($orgRow, 'id', 0)
-  $orgVisibility = '' . rowValue($orgRow, 'visibility', 'public')
-  $viewerId = authUserId($auth)
-  $memberAccess = $viewerId > 0 && canEditOrg($db, $orgId, $viewerId)
-  if ($orgVisibility === 'private' && !$memberAccess) {
-    dbClose($db)
-    return [ 'ok' => false, 'error' => 'forbidden: org is private' ]
-  }
-  $where = andWhere(eq('org_id', $orgId), eq('visibility', 'public'))
-  $pkgRes = clientSelectMany($client, $client.models.Package, $where, desc('download_count'))
-  dbClose($db)
-
+  $pkgRows = limitRegistryRows(sortRegistryRowsByName(filterRegistryRowsByVisibility($scoped, 'public')), 100)
   $packages = []
-  $pkgRows = result_is_ok($pkgRes) ? $pkgRes->value : []
-  usort($pkgRows, function ($a, $b) {
-    $ad = (int) rowValue($a, 'download_count', rowValue($a, 'downloadCount', 0))
-    $bd = (int) rowValue($b, 'download_count', rowValue($b, 'downloadCount', 0))
-    if ($ad === $bd) {
-      $aid = (int) rowValue($a, 'id', 0)
-      $bid = (int) rowValue($b, 'id', 0)
-      if ($aid === $bid) {
-        return 0
-      }
-      return $bid > $aid ? 1 : -1
-    }
-    return $bd > $ad ? 1 : -1
-  })
-  if (count($pkgRows) > 100) {
-    $pkgRows = array_slice($pkgRows, 0, 100)
-  }
   foreach ($pkgRows as $row) {
     $packages[] = normalizePackage($row)
   }
   return [
     'ok' => true,
-    'org' => [ 'id' => $orgId, 'handle' => rowValue($orgRow, 'handle', $orgHandle), 'visibility' => $orgVisibility ],
+    'org' => [ 'handle' => $orgHandle, 'visibility' => 'public', 'packageCount' => count($scoped) ],
     'packages' => $packages
   ]
 }
@@ -5663,87 +4760,6 @@ function apiOrgDetail() {
   $auth = authWithScope(1)
   $detail = fetchOrgProfile(queryValue('handle', ''), $auth)
   echo jsonReply($detail)
-}
-
-function apiArtifactDownload($canonicalId) {
-  $id = trim('' . $canonicalId)
-  if ($id === '') {
-    header('HTTP/1.1 400 Bad Request')
-    header('Content-Type: application/json')
-    echo jsonReply([ 'ok' => false, 'error' => 'canonical id is required' ])
-    return
-  }
-  $auth = authWithScope(1)
-  $conn = openDbHandle()
-  if (!result_is_ok($conn)) {
-    header('HTTP/1.1 500 Internal Server Error')
-    header('Content-Type: application/json')
-    echo jsonReply([ 'ok' => false, 'error' => $conn->error ])
-    return
-  }
-  $db = $conn->value
-  $client = dbClient($db)
-  $ver = clientSelectOne($client, $client.models.PackageVersion, eq('canonical_id', $id))
-  if (!result_is_ok($ver)) {
-    dbClose($db)
-    header('HTTP/1.1 404 Not Found')
-    header('Content-Type: application/json')
-    echo jsonReply([ 'ok' => false, 'error' => 'artifact not found' ])
-    return
-  }
-  $pkg = clientSelectOne($client, $client.models.Package, eq('id', (int) rowValue($ver->value, 'package_id', 0)))
-  if (!result_is_ok($pkg)) {
-    dbClose($db)
-    header('HTTP/1.1 404 Not Found')
-    header('Content-Type: application/json')
-    echo jsonReply([ 'ok' => false, 'error' => 'artifact not found' ])
-    return
-  }
-
-  if (!packageIsVisibleTo($db, $pkg->value, $auth)) {
-    dbClose($db)
-    header('HTTP/1.1 403 Forbidden')
-    header('Content-Type: application/json')
-    echo jsonReply([ 'ok' => false, 'error' => 'forbidden: package is private' ])
-    return
-  }
-  $backend = '' . rowValue($ver->value, 'artifactBackend', rowValue($ver->value, 'artifact_backend', 'local'))
-  $mime = '' . rowValue($ver->value, 'artifactMime', rowValue($ver->value, 'artifact_mime', 'application/octet-stream'))
-  $artifactKey = '' . rowValue($ver->value, 'artifactKey', rowValue($ver->value, 'artifact_key', ''))
-  $bytes = ''
-  $bytesLoaded = false
-  if ($backend === 'r2' && $artifactKey !== '') {
-    $fromR2 = r2GetObject($artifactKey)
-    if ($fromR2['ok']) {
-      $bytes = '' . $fromR2['body']
-      $mime = '' . $fromR2['mime']
-      $bytesLoaded = true
-    }
-  }
-  if (!$bytesLoaded) {
-    $b64 = '' . rowValue($ver->value, 'artifactInlineB64', rowValue($ver->value, 'artifact_inline_b64', ''))
-    if ($b64 === '') {
-      dbClose($db)
-      header('HTTP/1.1 404 Not Found')
-      header('Content-Type: application/json')
-      echo jsonReply([ 'ok' => false, 'error' => 'artifact bytes missing' ])
-      return
-    }
-    $decoded = base64_decode($b64)
-    if ($decoded === false) {
-      dbClose($db)
-      header('HTTP/1.1 500 Internal Server Error')
-      header('Content-Type: application/json')
-      echo jsonReply([ 'ok' => false, 'error' => 'artifact decode failed' ])
-      return
-    }
-    $bytes = $decoded
-  }
-  dbClose($db)
-  header('Content-Type: ' . ($mime === '' ? 'application/octet-stream' : $mime))
-  header('Content-Length: ' . strlen($bytes))
-  header('Content-Disposition: attachment; filename="' . $id . '.bin"')
-  echo $bytes
 }
 
 function PackageDetailPage($props) {
@@ -5780,6 +4796,7 @@ function PackageDetailPage($props) {
   $repoAction = '' . rowValue($props, 'repoAction', '')
   $repoMessage = '' . rowValue($props, 'repoMessage', '')
   $packageCoord = '@' . rowValue($props, 'org', '') . '/' . rowValue($pkg, 'name', '')
+  $packageRoutePath = repoPackagePath('' . rowValue($props, 'org', ''), '' . rowValue($pkg, 'name', ''))
   $previewRoute = '/@' . rowValue($props, 'org', '') . '/' . rowValue($pkg, 'name', '') . '/HEAD'
   $forkDefaultRepo = '' . rowValue($pkg, 'name', '') . '-fork'
   $readmeText = '' . rowValue($props, 'readmeText', '')
@@ -5788,15 +4805,17 @@ function PackageDetailPage($props) {
   }
   $items = []
   foreach ($versions as $v) {
-    $ver = rowValue($v, 'version', '')
-    $cid = '' . rowValue($v, 'canonicalId', rowValue($v, 'canonical_id', ''))
-    $size = (int) rowValue($v, 'artifactSizeBytes', rowValue($v, 'artifact_size_bytes', 0))
+    $ver = '' . rowValue($v, 'version', '')
+    $publishedAt = trim('' . rowValue($v, 'publishedAt', ''))
+    $gitRef = trim('' . rowValue($v, 'gitRef', ''))
+    $isLatest = rowValue($v, 'isLatest', false) ? true : false
     $items[] = <li class="rounded-lg border border-gray-200 p-3">
       <div class="flex items-center justify-between gap-3">
-        <div class="text-sm font-semibold text-gray-900">{'v' . $ver}</div>
-        <a class="text-xs text-blue-600 hover:text-blue-800" href={'/api/artifacts/' . $cid}>download</a>
+        <a class="text-sm font-semibold text-blue-600 hover:text-blue-800" href={$packageRoutePath . '?version=' . rawurlencode($ver)}>{'v' . $ver}</a>
+        {$isLatest ? <span class="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">latest</span> : false}
       </div>
-      <div class="mt-1 text-xs text-gray-500">{'size: ' . $size . ' bytes'}</div>
+      <div class="mt-1 text-xs text-gray-500">{$publishedAt !== '' ? ('published: ' . $publishedAt) : 'published: unknown'}</div>
+      {$gitRef !== '' ? <div class="mt-1 font-mono text-[11px] text-gray-400">{'ref: ' . $gitRef}</div> : false}
     </li>
   }
 
@@ -5926,7 +4945,7 @@ function PackageDetailPage($props) {
             </form>
           </div>
         </div>
-        <PackageStatPills latestVersion={rowValue($pkg, 'latestVersion', 'n/a')} downloadCount={rowValue($pkg, 'downloadCount', 0)} visibility={rowValue($pkg, 'visibility', 'public')} />
+        <PackageStatPills latestVersion={rowValue($pkg, 'latestVersion', 'n/a')} versionCount={rowValue($pkg, 'versionCount', 0)} visibility={rowValue($pkg, 'visibility', 'public')} />
       </div>
 
       <div class="border-b border-gray-200 px-6">
@@ -5997,7 +5016,7 @@ function PackageDetailPage($props) {
               <div>{'Package: @' . rowValue($props, 'org', '') . '/' . rowValue($pkg, 'name', '')}</div>
               <div>{'Latest: ' . rowValue($pkg, 'latestVersion', 'n/a')}</div>
               <div>{'Visibility: ' . rowValue($pkg, 'visibility', 'public')}</div>
-              <div>{'Downloads: ' . (string) rowValue($pkg, 'downloadCount', 0)}</div>
+              <div>{'Versions: ' . (string) rowValue($pkg, 'versionCount', 0)}</div>
             </div>
           </section>
 
@@ -6198,7 +5217,7 @@ function PlaygroundPage($props) {
   $resolved = rowValue($props, 'resolved', null)
   $error = '' . rowValue($props, 'error', '')
   $install = rowValue($props, 'install', null)
-  $artifactUrl = '' . rowValue($props, 'artifactUrl', '')
+  $treeUrl = '' . rowValue($props, 'treeUrl', '')
   $versions = rowValue($props, 'versions', [])
 
   $versionItems = []
@@ -6229,16 +5248,16 @@ function PlaygroundPage($props) {
         <div class="text-sm font-semibold text-gray-900">{'@' . $org . '/' . $name . ' @ ' . ('' . rowValue($resolved, 'version', $version))}</div>
         <div class="mt-2 text-sm text-gray-600">{'' . rowValue($resolved, 'description', '')}</div>
         <div class="mt-3 grid gap-2 text-xs text-gray-700 md:grid-cols-2">
-          <div>{'canonicalId: ' . ('' . rowValue($resolved, 'canonicalId', ''))}</div>
-          <div>{'artifact backend: ' . ('' . rowValue($resolved, 'artifactBackend', 'local'))}</div>
-          <div>{'artifact size: ' . (string) rowValue($resolved, 'artifactSizeBytes', 0) . ' bytes'}</div>
+          <div>{'source repo: ' . ('' . rowValue($resolved, 'owner', '')) . '/' . ('' . rowValue($resolved, 'repo', ''))}</div>
+          <div>{'git ref: ' . ('' . rowValue($resolved, 'gitRef', ''))}</div>
+          <div>{'published: ' . ('' . rowValue($resolved, 'publishedAt', ''))}</div>
+          <div>{'api change: ' . ('' . rowValue($resolved, 'apiChangeKind', ''))}</div>
           <div>{'visibility: ' . ('' . rowValue($resolved, 'visibility', 'public'))}</div>
         </div>
         {is_array($install) ? <div class="mt-4 rounded-lg bg-gray-900 p-3 text-xs text-gray-100 whitespace-pre-wrap">{jsonReply($install)}</div> : false}
         <div class="mt-4 flex flex-wrap gap-2">
-          {$artifactUrl !== '' ? <a class="rounded border border-gray-300 px-3 py-1 text-xs text-gray-700 hover:bg-gray-50" href={$artifactUrl}>Download artifact</a> : false}
+          {$treeUrl !== '' ? <a class="rounded border border-gray-300 px-3 py-1 text-xs text-gray-700 hover:bg-gray-50" href={$treeUrl}>Source tree</a> : false}
           <a class="rounded border border-gray-300 px-3 py-1 text-xs text-gray-700 hover:bg-gray-50" href={'/api/package?org=' . rawurlencode($org) . '&name=' . rawurlencode($name)}>Package API</a>
-          <a class="rounded border border-gray-300 px-3 py-1 text-xs text-gray-700 hover:bg-gray-50" href={'/api/install?org=' . rawurlencode($org) . '&name=' . rawurlencode($name) . '&version=' . rawurlencode($version === '' ? 'latest' : $version)}>Install API</a>
         </div>
         <div class="mt-4 flex flex-wrap gap-2">{$versionItems}</div>
       </div> : false}
@@ -6246,201 +5265,7 @@ function PlaygroundPage($props) {
   </Layout>
 }
 
-function apiCreateDemoPackage() {
-  header('Content-Type: application/json')
-  header('X-Powered-By: linkha.sh')
-  $method = requireMethod('POST')
-  if (!$method['ok']) {
-    echo jsonReply($method)
-    return
-  }
-  $auth = authWithScope(2)
-  if (!$auth['ok']) {
-    echo jsonReply({ ok: false, error: $auth['error'] })
-    return
-  }
-  $userId = authUserId($auth)
-  $rateUser = enforceUserRateLimit('publish.mutate.user', $userId, 5, 60)
-  if (!$rateUser['ok']) {
-    echo jsonReply({ ok: false, error: $rateUser['error'], bucket: 'publish.mutate.user' })
-    return
-  }
-  $rateIp = enforceIpRateLimit('publish.mutate.ip', 20, 60)
-  if (!$rateIp['ok']) {
-    echo jsonReply({ ok: false, error: $rateIp['error'], bucket: 'publish.mutate.ip' })
-    return
-  }
-  $csrf = authValidateCsrfForAuth($auth)
-  if (!$csrf['ok']) {
-    echo jsonReply({ ok: false, error: $csrf['error'] })
-    return
-  }
-
-  $conn = openDbHandle()
-  if (!result_is_ok($conn)) {
-    echo jsonReply({ ok: false, error: $conn->error })
-    return
-  }
-
-  $body = requestData()
-  $seed = (int) (microtime(true) * 1000)
-  $orgId = (int) queryValue('orgId', array_key_exists('orgId', $body) ? $body['orgId'] : 0)
-  $pkgName = normalizePackageName('' . queryValue('name', array_key_exists('name', $body) ? $body['name'] : ('demo_pkg_' . (string) ($seed % 100000))))
-  $visibility = parseVisibility(queryValue('visibility', array_key_exists('visibility', $body) ? $body['visibility'] : 'public'), 'public')
-
-  if ($orgId <= 0) {
-    dbClose($conn->value)
-    echo jsonReply({ ok: false, error: 'orgId is required' })
-    return
-  }
-  if (!isValidPackageName($pkgName) || isReservedPackageName($pkgName)) {
-    dbClose($conn->value)
-    echo jsonReply({ ok: false, error: 'invalid or reserved package name' })
-    return
-  }
-  if (!isset($visibility)) {
-    dbClose($conn->value)
-    echo jsonReply({ ok: false, error: 'visibility must be public or private' })
-    return
-  }
-
-  $handle = $conn->value
-  $client = dbClient($handle)
-  if (!canEditOrg($handle, $orgId, $userId)) {
-    dbClose($handle)
-    echo jsonReply({ ok: false, error: 'forbidden: missing org edit access' })
-    return
-  }
-  $insert = clientInsertOne($client, 
-    $client.models.Package,
-    {
-      org_id: $orgId,
-      name: $pkgName,
-      description: 'Demo package created from API',
-      latest_version: '0.1.0',
-      download_count: 0,
-      visibility: $visibility,
-      private_read_mask: 0,
-      created_at: gmdate('c'),
-      updated_at: gmdate('c')
-    },
-    false
-  )
-  $pkgInsert = $insert
-  if (result_is_ok($insert)) {
-    $pkgInsert = clientSelectOne($client, 
-      $client.models.Package,
-      andWhere(
-        eq('org_id', $orgId),
-        ilike('name', $pkgName)
-      )
-    )
-  }
-  dbClose($handle)
-
-  echo jsonReply({
-    ok: result_is_ok($pkgInsert),
-    package: result_is_ok($pkgInsert) ? $pkgInsert->value : $pkgInsert->error,
-    data: {
-      orgId: $orgId,
-      packageName: $pkgName,
-      visibility: $visibility
-    }
-  })
-}
-
-function apiBumpPackageDownloads() {
-  header('Content-Type: application/json')
-  header('X-Powered-By: linkha.sh')
-  $method = requireMethod('POST')
-  if (!$method['ok']) {
-    echo jsonReply($method)
-    return
-  }
-  $auth = authWithScope(2)
-  if (!$auth['ok']) {
-    echo jsonReply({ ok: false, error: $auth['error'] })
-    return
-  }
-  $userId = authUserId($auth)
-  $rateUser = enforceUserRateLimit('publish.mutate.user', $userId, 5, 60)
-  if (!$rateUser['ok']) {
-    echo jsonReply({ ok: false, error: $rateUser['error'], bucket: 'publish.mutate.user' })
-    return
-  }
-  $rateIp = enforceIpRateLimit('publish.mutate.ip', 20, 60)
-  if (!$rateIp['ok']) {
-    echo jsonReply({ ok: false, error: $rateIp['error'], bucket: 'publish.mutate.ip' })
-    return
-  }
-  $csrf = authValidateCsrfForAuth($auth)
-  if (!$csrf['ok']) {
-    echo jsonReply({ ok: false, error: $csrf['error'] })
-    return
-  }
-
-  $body = requestData()
-  $name = '' . queryValue('name', array_key_exists('name', $body) ? $body['name'] : '')
-  $by = (int) queryValue('by', array_key_exists('by', $body) ? $body['by'] : 1)
-  if ($name === '') {
-    echo jsonReply({ ok: false, error: 'name is required' })
-    return
-  }
-  if ($by < 1) {
-    $by = 1
-  }
-
-  $conn = openDbHandle()
-  if (!result_is_ok($conn)) {
-    echo jsonReply({ ok: false, error: $conn->error })
-    return
-  }
-
-  $handle = $conn->value
-  $client = dbClient($handle)
-  $row = clientSelectOne($client, $client.models.Package, ilike('name', $name))
-  if (!result_is_ok($row)) {
-    dbClose($handle)
-    echo jsonReply({ ok: false, error: 'package not found' })
-    return
-  }
-
-  $pkg = $row->value
-  $id = (int) rowValue($pkg, 'id', 0)
-  $orgId = (int) rowValue($pkg, 'orgId', rowValue($pkg, 'org_id', 0))
-  if ($id <= 0) {
-    dbClose($handle)
-    echo jsonReply({ ok: false, error: 'package not found' })
-    return
-  }
-  if ($orgId <= 0 || !canEditOrg($handle, $orgId, $userId)) {
-    dbClose($handle)
-    echo jsonReply({ ok: false, error: 'forbidden: missing org edit access' })
-    return
-  }
-  $current = (int) rowValue($pkg, 'downloadCount', rowValue($pkg, 'download_count', 0))
-  $next = $current + $by
-  $updated = clientUpdateWhere($client, 
-    $client.models.Package,
-    eq('id', $id),
-    { download_count: $next },
-    false
-  )
-  dbClose($handle)
-
-  if (!result_is_ok($updated)) {
-    echo jsonReply({ ok: false, error: $updated->error })
-    return
-  }
-
-  echo jsonReply({
-    ok: true,
-    package: $name,
-    before: $current,
-    after: $next
-  })
-}
-
+loadDotEnv('.env.local')
 loadDotEnv('.env')
 installRuntimeHandlers()
 bootstrapSchema()
@@ -6483,11 +5308,6 @@ if ($path === '/api/runtime-checks') {
 
 if ($path === '/api/runtime-action') {
   apiRuntimeAction()
-  return
-}
-
-if ($path === '/api/registry/identity') {
-  apiRegistryIdentity()
   return
 }
 
@@ -6561,11 +5381,6 @@ if ($path === '/api/orgs/members/remove') {
   return
 }
 
-if ($path === '/api/packages/visibility') {
-  apiPackageSetVisibility()
-  return
-}
-
 if ($path === '/api/package') {
   apiPackageDetail()
   return
@@ -6573,16 +5388,6 @@ if ($path === '/api/package') {
 
 if ($path === '/api/org') {
   apiOrgDetail()
-  return
-}
-
-if ($path === '/api/publish') {
-  apiPublishPackage()
-  return
-}
-
-if ($path === '/api/install') {
-  apiInstallPackage()
   return
 }
 
@@ -6608,22 +5413,6 @@ if ($path === repoPullCommentRoute()) {
 
 if ($path === repoForkRoute()) {
   apiRepoFork()
-  return
-}
-
-if (strpos($path, '/api/artifacts/') === 0) {
-  $canonical = substr($path, strlen('/api/artifacts/'))
-  apiArtifactDownload($canonical)
-  return
-}
-
-if ($path === '/api/dev/create-package') {
-  apiCreateDemoPackage()
-  return
-}
-
-if ($path === '/api/dev/bump-downloads') {
-  apiBumpPackageDownloads()
   return
 }
 
@@ -6745,26 +5534,6 @@ if (strpos($path, '/package/') === 0) {
     }
   }
   $node = <PackageDetailPage ok={rowValue($detail, 'ok', false)} org={rowValue($detail, 'org', '')} package={rowValue($detail, 'package', [])} versions={rowValue($detail, 'versions', [])} docsSymbols={rowValue($detail, 'docsSymbols', [])} docsError={rowValue($detail, 'docsError', '')} treeEntries={rowValue($detail, 'treeEntries', [])} treeError={rowValue($detail, 'treeError', '')} selectedFile={rowValue($detail, 'selectedFile', '')} selectedFileContent={rowValue($detail, 'selectedFileContent', '')} selectedFileError={rowValue($detail, 'selectedFileError', '')} readmeText={rowValue($detail, 'readmeText', '')} error={rowValue($detail, 'error', '')} />
-} else if (strStartsWith($path, '/lh_')) {
-  $cid = substr($path, 1)
-  $auth = authWithScope(1)
-  $resolved = fetchCanonicalTarget($cid, $auth)
-  if (!rowValue($resolved, 'ok', false)) {
-    $node = <PackageDetailPage ok={false} org={''} package={[]} versions={[]} docsSymbols={[]} docsError={''} treeEntries={[]} treeError={''} selectedFile={''} selectedFileContent={''} selectedFileError={''} error={rowValue($resolved, 'error', 'not found')} />
-  } else {
-    $target = rowValue($resolved, 'target', [])
-    $detail = fetchPackageDetail(rowValue($target, 'org', ''), rowValue($target, 'name', ''), $auth)
-    if ($detail['ok']) {
-      $picked = findVersionInRows(rowValue($detail, 'versions', []), rowValue($target, 'version', ''))
-      if (isset($picked)) {
-        $pkgDetail = rowValue($detail, 'package', [])
-        $pkgDetail['latestVersion'] = '' . rowValue($target, 'version', '')
-        $detail['package'] = $pkgDetail
-        $detail['versions'] = [$picked]
-      }
-    }
-    $node = <PackageDetailPage ok={rowValue($detail, 'ok', false)} org={rowValue($detail, 'org', '')} package={rowValue($detail, 'package', [])} versions={rowValue($detail, 'versions', [])} docsSymbols={rowValue($detail, 'docsSymbols', [])} docsError={rowValue($detail, 'docsError', '')} treeEntries={rowValue($detail, 'treeEntries', [])} treeError={rowValue($detail, 'treeError', '')} selectedFile={rowValue($detail, 'selectedFile', '')} selectedFileContent={rowValue($detail, 'selectedFileContent', '')} selectedFileError={rowValue($detail, 'selectedFileError', '')} error={rowValue($detail, 'error', '')} />
-  }
 } else if (strpos($path, '/org/') === 0) {
   $parts = explode('/', trim($path, '/'))
   $org = count($parts) >= 2 ? $parts[1] : ''
@@ -6779,7 +5548,7 @@ if (strpos($path, '/package/') === 0) {
   $error = ''
   $resolved = null
   $install = null
-  $artifactUrl = ''
+  $treeUrl = ''
   $versions = []
   if ($org !== '' && $pkg !== '') {
     $detail = fetchPackageDetail($org, $pkg, $auth)
@@ -6805,29 +5574,37 @@ if (strpos($path, '/package/') === 0) {
       if (count($picked) === 0) {
         $error = 'no published versions found'
       } else {
-        $cid = '' . rowValue($picked, 'canonicalId', rowValue($picked, 'canonical_id', ''))
-        $artifactUrl = $cid === '' ? '' : ('/api/artifacts/' . $cid)
-        $resolved = [
-          'version' => $effectiveVersion,
-          'description' => rowValue($package, 'description', ''),
-          'visibility' => rowValue($package, 'visibility', 'public'),
-          'canonicalId' => $cid,
-          'artifactBackend' => rowValue($picked, 'artifactBackend', rowValue($picked, 'artifact_backend', 'local')),
-          'artifactSizeBytes' => rowValue($picked, 'artifactSizeBytes', rowValue($picked, 'artifact_size_bytes', 0))
-        ]
-        $install = [
-          'ok' => true,
-          'org' => normalizeHandleName($org),
-          'name' => normalizePackageName($pkg),
-          'version' => $effectiveVersion,
-          'canonicalId' => $cid,
-          'downloadUrl' => $artifactUrl
-        ]
-        $requestedVersion = $effectiveVersion
+        $releaseRes = fetchRemoteScopedRelease($org, $pkg, $effectiveVersion)
+        if (!rowValue($releaseRes, 'ok', false)) {
+          $error = 'release lookup failed: ' . ('' . rowValue($releaseRes, 'error', 'registry unavailable'))
+        } else {
+          $release = rowValue($releaseRes, 'value', [])
+          $treePath = scopedReleaseTreePath(normalizeHandleName($org), normalizePackageName($pkg), $effectiveVersion)
+          $resolved = [
+            'version' => $effectiveVersion,
+            'description' => '' . rowValue($release, 'description', ''),
+            'visibility' => normalizeVisibility(rowValue($release, 'visibility', '')),
+            'owner' => '' . rowValue($release, 'owner', ''),
+            'repo' => '' . rowValue($release, 'repo', ''),
+            'gitRef' => '' . rowValue($release, 'git_ref', ''),
+            'apiChangeKind' => '' . rowValue($release, 'api_change_kind', ''),
+            'publishedAt' => '' . rowValue($release, 'created_at', '')
+          ]
+          $install = [
+            'ok' => true,
+            'org' => normalizeHandleName($org),
+            'name' => normalizePackageName($pkg),
+            'version' => $effectiveVersion,
+            'command' => 'deka install ' . scopedPackageCoord(normalizeHandleName($org), normalizePackageName($pkg)) . '@' . $effectiveVersion,
+            'treeUrl' => linkhashGitApiBase() . $treePath
+          ]
+          $treeUrl = linkhashGitApiBase() . $treePath
+          $requestedVersion = $effectiveVersion
+        }
       }
     }
   }
-  $node = <PlaygroundPage org={$org} name={$pkg} version={$requestedVersion} error={$error} resolved={$resolved} install={$install} artifactUrl={$artifactUrl} versions={$versions} />
+  $node = <PlaygroundPage org={$org} name={$pkg} version={$requestedVersion} error={$error} resolved={$resolved} install={$install} treeUrl={$treeUrl} versions={$versions} />
 } else if ($path === '/fork/result') {
   $sourceOwner = '' . queryValue('source_owner', '')
   $sourceRepo = '' . queryValue('source_repo', '')

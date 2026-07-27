@@ -1,0 +1,119 @@
+/*
+ * Absolute-URL splitting for the outbound HTTP client.
+ *
+ * PHPX's builtin parse_url() returns the literal string "undefined" for the
+ * host and omits the port entirely, so every outbound request built from it
+ * fails with "resolve failed". This splits the URL directly.
+ * Runtime bug tracked separately; this module is what linkha.sh actually uses.
+ */
+
+function isAllDigits($value) {
+  $raw = '' . $value
+  $len = strlen($raw)
+  if ($len === 0) {
+    return false
+  }
+  for ($i = 0; $i < $len; $i = $i + 1) {
+    $ch = $raw[$i]
+    if ($ch < '0' || $ch > '9') {
+      return false
+    }
+  }
+  return true
+}
+
+export function splitHttpUrl($url) {
+  $raw = trim('' . $url)
+  if ($raw === '') {
+    return null
+  }
+
+  $schemeEnd = strpos($raw, '://')
+  if ($schemeEnd === false || $schemeEnd <= 0) {
+    return null
+  }
+  $scheme = strtolower(substr($raw, 0, $schemeEnd))
+  if ($scheme !== 'http' && $scheme !== 'https') {
+    return null
+  }
+  $rest = substr($raw, $schemeEnd + 3)
+  if ($rest === '') {
+    return null
+  }
+
+  /* authority ends at the first '/', '?' or '#' */
+  $authorityEnd = strlen($rest)
+  $slash = strpos($rest, '/')
+  if ($slash !== false && $slash < $authorityEnd) {
+    $authorityEnd = $slash
+  }
+  $question = strpos($rest, '?')
+  if ($question !== false && $question < $authorityEnd) {
+    $authorityEnd = $question
+  }
+  $hash = strpos($rest, '#')
+  if ($hash !== false && $hash < $authorityEnd) {
+    $authorityEnd = $hash
+  }
+
+  $authority = substr($rest, 0, $authorityEnd)
+  $target = substr($rest, $authorityEnd)
+
+  /* strip userinfo */
+  $at = strrpos($authority, '@')
+  if ($at !== false) {
+    $authority = substr($authority, $at + 1)
+  }
+  if ($authority === '') {
+    return null
+  }
+
+  $defaultPort = $scheme === 'https' ? 443 : 80
+  $host = $authority
+  $port = $defaultPort
+
+  if (strlen($authority) > 0 && $authority[0] === '[') {
+    /* bracketed IPv6 literal: [::1]:9418 */
+    $close = strpos($authority, ']')
+    if ($close === false) {
+      return null
+    }
+    $host = substr($authority, 1, $close - 1)
+    $tail = substr($authority, $close + 1)
+    if (strlen($tail) > 1 && $tail[0] === ':') {
+      $port = (int) substr($tail, 1)
+    }
+  } else {
+    $colon = strrpos($authority, ':')
+    if ($colon !== false && $colon > 0) {
+      $maybePort = substr($authority, $colon + 1)
+      if ($maybePort !== '' && isAllDigits($maybePort)) {
+        $host = substr($authority, 0, $colon)
+        $port = (int) $maybePort
+      }
+    }
+  }
+
+  if ($host === '' || $port <= 0 || $port > 65535) {
+    return null
+  }
+
+  /* strip fragment; keep path + query as the request target */
+  $frag = strpos($target, '#')
+  if ($frag !== false) {
+    $target = substr($target, 0, $frag)
+  }
+  if ($target === '') {
+    $target = '/'
+  }
+  if ($target[0] === '?') {
+    $target = '/' . $target
+  }
+
+  return [
+    'scheme' => $scheme,
+    'host' => $host,
+    'port' => $port,
+    'path' => $target
+  ]
+}

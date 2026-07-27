@@ -2,6 +2,21 @@ export function gitApiDefaultBase() {
   return 'http://127.0.0.1:8508'
 }
 
+/*
+ * Bases tried in order when LINKHASH_GIT_API_URL is not set (or is not visible
+ * to the isolate). A co-located git server wins; otherwise fall through to the
+ * canonical registry so a fresh deployment serves real data instead of empty
+ * pages. Each candidate is probed against /health before use.
+ */
+export function gitApiCandidateBases() {
+  return [
+    gitApiDefaultBase(),
+    'http://127.0.0.1:8608',
+    'http://127.0.0.1:9418',
+    'https://git.tana.gg'
+  ]
+}
+
 export function scopedReleaseDocsPath($scope, $name, $version) {
   return '/api/scoped-packages/'
     . rawurlencode(trim('' . $scope))

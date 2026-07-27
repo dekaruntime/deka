@@ -399,25 +399,6 @@
       "version": 1,
       "compiler": "phpx-cache-v1",
       "modules": {
-        "registry/artifacts": {
-          "src": "php_modules/registry/artifacts.phpx",
-          "hash": "sha256:fb18323fcb365bbb930efc824558ee1ab6f7738e2902fbd20e3b690dfd4f6da9",
-          "cache": "php_modules/.cache/phpx/registry/artifacts.php",
-          "compiler": "phpx-cache-v3",
-          "lockIdentity": "1:9f9a931b391c19cd077a2b0540653affcff39365f500da056576ea9fabebc0cc",
-          "deps": [
-            "fs",
-            "bytes",
-            "core/result"
-          ],
-          "exports": [
-            "canonical_input",
-            "canonical_id",
-            "artifact_key",
-            "store_artifact",
-            "read_artifact"
-          ]
-        },
         "core/result": {
           "src": "php_modules/core/result.phpx",
           "hash": "sha256:c138f94b55755045e7575843cb791ef653ed1089dd6c6dac0adcde228ae3f3d6",
