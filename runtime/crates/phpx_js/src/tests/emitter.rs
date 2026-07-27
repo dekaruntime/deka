@@ -1195,8 +1195,13 @@ $v = $obj->$key;
 "#;
     let js = phpx_to_js(source).expect("should compile");
     assert!(
-        js.contains("obj[key]"),
-        "expected computed obj[key] property read for ->$key form, got:\n{}",
+        js.contains("v = obj[key]"),
+        "expected computed obj[key] property read assigned to v for ->$key form, got:\n{}",
+        js
+    );
+    assert!(
+        !js.contains("v = obj.key"),
+        "must not collapse ->$key dynamic property read to a literal .key (tana#583 regression), got:\n{}",
         js
     );
 }
