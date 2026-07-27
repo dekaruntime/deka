@@ -7,7 +7,8 @@ import { buildAdwaBaseUrl, buildAdwaPreviewUrl, buildAdwaPreviewUrlForRef, build
 import { gitApiDefaultBase, gitApiCandidateBases, scopedReleaseDocsPath, scopedReleaseTreePath, scopedReleaseBlobPath, publicDekaRepoTreePath, publicDekaRepoBlobPath, repoIssuesPath, repoIssueDetailPath, repoIssueCommentPath, repoPullsPath, repoPullDetailPath, repoPullCommentPath, repoResolvePath, repoForkPath } from './src/services/linkhash_git'
 import { repoIssueCreateRoute, repoIssueCommentRoute, repoPullCreateRoute, repoPullCommentRoute, repoForkRoute, buildRepoActionRedirectPath } from './src/api/repo_actions'
 import { splitHttpUrl } from './src/services/http_url'
-import { registryPackagesPath, scopedReleaseVersionsPath, scopedReleasePath, splitScopedPackageName, scopedPackageCoord, registryRowsFromApi, filterRegistryRowsByVisibility, filterRegistryRowsByScope, filterRegistryRowsByQuery, sortRegistryRowsByName, limitRegistryRows, findRegistryRow, versionRowsFromApi, decorateVersionRow } from './src/services/registry_api'
+import { rowValue } from './src/services/row_value'
+import { registryPackagesPath, scopedReleaseVersionsPath, scopedReleasePath, splitScopedPackageName, scopedPackageCoord, registryRowsFromApi, filterRegistryRowsByVisibility, filterRegistryRowsByScope, filterRegistryRowsByQuery, sortRegistryRowsByName, limitRegistryRows, findRegistryRow, versionRowsFromApi, decorateVersionRow, normalizeVisibility, registryRowIsPublic } from './src/services/registry_api'
 import { meta } from './db/meta'
 import { selectMany, selectOne, insertOne, updateWhere, deleteWhere, loadRelation, transaction, eq, ilike, isNull, andWhere, asc, desc, limit } from './db'
 import { stats } from 'db'
@@ -21,7 +22,6 @@ import { connect as tcpConnect, tcp_write as tcpWrite, tcp_read as tcpRead, tcp_
 import { tls_upgrade, tls_write, tls_read, tls_close } from 'tls'
 import { open_handle as dbOpenHandle, close as dbCloseRaw } from 'db'
 import { result_is_ok, result_unwrap, result_ok, result_err } from 'core/result'
-import { canonical_id as registryCanonicalId, artifact_key as registryArtifactKey } from 'registry/artifacts'
 import { connect as neo4jConnect, query as neo4jQuery, close as neo4jClose } from 'neo4j'
 
 function envValue($name, $fallback = null) {
@@ -269,47 +269,6 @@ function rowsFromQueryResult($result): array {
   return []
 }
 
-function rowValue($row, $key, $fallback = null) {
-  if (is_array($row) && array_key_exists($key, $row)) {
-    return $row[$key]
-  }
-  if (is_object($row)) {
-    $obj = get_object_vars($row)
-    if (is_array($obj) && array_key_exists($key, $obj)) {
-      return $obj[$key]
-    }
-  }
-
-  $k = '' . $key
-  $lower = strtolower($k)
-  $snake = strtolower(preg_replace('/([a-z])([A-Z])/', '$1_$2', $k))
-  if (is_array($row)) {
-    if (array_key_exists($lower, $row)) {
-      return $row[$lower]
-    }
-    if (array_key_exists($snake, $row)) {
-      return $row[$snake]
-    }
-    $noscore = str_replace('_', '', $snake)
-    if (array_key_exists($noscore, $row)) {
-      return $row[$noscore]
-    }
-  }
-  if (is_object($row)) {
-    $obj = get_object_vars($row)
-    if (is_array($obj) && array_key_exists($lower, $obj)) {
-      return $obj[$lower]
-    }
-    if (is_array($obj) && array_key_exists($snake, $obj)) {
-      return $obj[$snake]
-    }
-    $noscore = str_replace('_', '', $snake)
-    if (is_array($obj) && array_key_exists($noscore, $obj)) {
-      return $obj[$noscore]
-    }
-  }
-  return $fallback
-}
 
 function resultObject($res) {
   if (result_is_ok($res)) {
@@ -653,7 +612,7 @@ function normalizePackage($pkg) {
     versions: rowValue($pkg, 'versions', []),
     packageCoord: $coord !== '' ? $coord : null,
     packageVersionCoord: ($coord !== '' && ('' . $latestVersion) !== '') ? ($coord . '@' . $latestVersion) : null,
-    visibility: rowValue($pkg, 'visibility', 'public')
+    visibility: normalizeVisibility(rowValue($pkg, 'visibility', ''))
   }
 }
 
@@ -792,7 +751,7 @@ function fetchRegistryStatsResult() {
     if ($scope !== '' && !in_array($scope, $scopes)) {
       $scopes[] = $scope
     }
-    if (strtolower('' . rowValue($row, 'visibility', 'public')) === 'public') {
+    if (registryRowIsPublic($row)) {
       $publicCount += 1
     }
   }
@@ -1041,26 +1000,6 @@ function apiRuntimeAction() {
   }
   $result = runtimeWriteProbe($target)
   echo jsonReply($result)
-}
-
-function apiRegistryIdentity() {
-  header('Content-Type: application/json')
-  header('X-Powered-By: linkha.sh')
-
-  $handle = '' . queryValue('handle', 'samifou.ad')
-  $name = '' . queryValue('name', 'demo-package')
-  $version = '' . queryValue('version', '0.1.0')
-  $lockHash = '' . queryValue('lock', 'dev')
-
-  echo jsonReply({
-    ok: true,
-    handle: $handle,
-    name: $name,
-    version: $version,
-    lock_hash: $lockHash,
-    canonical_id: registryCanonicalId($handle, $name, $version, $lockHash),
-    artifact_key: registryArtifactKey($handle, $name, $version, $lockHash)
-  })
 }
 
 function requestData() {
@@ -4205,7 +4144,7 @@ function fetchPackageDetail($orgHandle, $name, $auth) {
   if ($activeVersion === '' && count($versionRows) > 0) {
     $activeVersion = '' . rowValue($versionRows[0], 'version', '')
   }
-  $pkgVisibility = '' . rowValue($versionsPayload, 'visibility', 'public')
+  $pkgVisibility = normalizeVisibility(rowValue($versionsPayload, 'visibility', ''))
   $pkgDescription = ''
   $activeRelease = null
   if ($activeVersion !== '') {
@@ -4213,9 +4152,9 @@ function fetchPackageDetail($orgHandle, $name, $auth) {
     if (rowValue($releaseRes, 'ok', false)) {
       $activeRelease = rowValue($releaseRes, 'value', null)
       $pkgDescription = '' . rowValue($activeRelease, 'description', '')
-      $releaseVisibility = trim('' . rowValue($activeRelease, 'visibility', ''))
-      if ($releaseVisibility !== '') {
-        $pkgVisibility = $releaseVisibility
+      $releaseRaw = rowValue($activeRelease, 'visibility', '')
+      if (trim('' . $releaseRaw) !== '') {
+        $pkgVisibility = normalizeVisibility($releaseRaw)
       }
     }
   }
@@ -5372,11 +5311,6 @@ if ($path === '/api/runtime-action') {
   return
 }
 
-if ($path === '/api/registry/identity') {
-  apiRegistryIdentity()
-  return
-}
-
 if ($path === '/api/auth/login') {
   apiAuthLogin()
   return
@@ -5649,7 +5583,7 @@ if (strpos($path, '/package/') === 0) {
           $resolved = [
             'version' => $effectiveVersion,
             'description' => '' . rowValue($release, 'description', ''),
-            'visibility' => '' . rowValue($release, 'visibility', 'public'),
+            'visibility' => normalizeVisibility(rowValue($release, 'visibility', '')),
             'owner' => '' . rowValue($release, 'owner', ''),
             'repo' => '' . rowValue($release, 'repo', ''),
             'gitRef' => '' . rowValue($release, 'git_ref', ''),

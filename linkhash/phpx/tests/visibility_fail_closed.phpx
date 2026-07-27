@@ -1,0 +1,111 @@
+/*
+ * Fail-closed visibility regression test (tana #901).
+ *
+ * linkha.sh reads GET /api/packages from git.tana.gg with its OWN privileged
+ * token and filters the rows on this side before showing them to anonymous
+ * visitors, so the `visibility` default is security-relevant. A missing,
+ * renamed, empty or non-string value must fail CLOSED (row withheld) — never
+ * fall open to public.
+ *
+ * This drives the REAL src/services/registry_api.phpx module through the real
+ * PHPX runtime:
+ *
+ *     cd linkhash/phpx && deka run tests/visibility_fail_closed.phpx
+ *
+ * The entries below are built as PHPX assoc-array literals, which compile to
+ * the same JS object shape that `json_decode_result` produces for a real
+ * registry payload (is_array() false, is_object() true) — the shape that
+ * previously made apiField() return its fallback for every row.
+ *
+ * Exits non-zero on any failure so it can gate CI.
+ */
+
+import { registryRowsFromApi, filterRegistryRowsByVisibility, normalizeVisibility, registryRowIsPublic } from '../src/services/registry_api'
+import { rowValue } from '../src/services/row_value'
+
+$failures = 0
+
+function check($label, $actual, $expected) {
+  $ok = ('' . $actual) === ('' . $expected)
+  echo ($ok ? 'PASS ' : 'FAIL ') . $label . ' (expected ' . $expected . ', got ' . $actual . ")\n"
+  return $ok ? 0 : 1
+}
+
+// Shaped exactly like live GET /api/packages entries, plus the malformed
+// variants a drifting or renamed producer would emit.
+$entries = [
+  [ 'name' => '@t/pub',     'latest' => '1.0.0', 'versions' => ['1.0.0'], 'visibility' => 'public' ],
+  [ 'name' => '@t/upper',   'latest' => '1.0.0', 'versions' => ['1.0.0'], 'visibility' => 'PUBLIC' ],
+  [ 'name' => '@t/priv',    'latest' => '1.0.0', 'versions' => ['1.0.0'], 'visibility' => 'private' ],
+  [ 'name' => '@t/missing', 'latest' => '1.0.0', 'versions' => ['1.0.0'] ],
+  [ 'name' => '@t/renamed', 'latest' => '1.0.0', 'versions' => ['1.0.0'], 'vis' => 'public' ],
+  [ 'name' => '@t/empty',   'latest' => '1.0.0', 'versions' => ['1.0.0'], 'visibility' => '' ],
+  [ 'name' => '@t/weird',   'latest' => '1.0.0', 'versions' => ['1.0.0'], 'visibility' => 'PUBLIC_ISH' ],
+  [ 'name' => '@t/arr',     'latest' => '1.0.0', 'versions' => ['1.0.0'], 'visibility' => ['public'] ]
+]
+
+// --- normalizeVisibility ---------------------------------------------------
+$failures += check('normalize public',        normalizeVisibility('public'),     'public')
+$failures += check('normalize PUBLIC',        normalizeVisibility('PUBLIC'),     'public')
+$failures += check('normalize padded public', normalizeVisibility('  public  '), 'public')
+$failures += check('normalize private',       normalizeVisibility('private'),    'private')
+$failures += check('normalize empty',         normalizeVisibility(''),           'private')
+$failures += check('normalize unknown token', normalizeVisibility('PUBLIC_ISH'), 'private')
+$failures += check('normalize array',         normalizeVisibility(['public']),   'private')
+$failures += check('normalize bool true',     normalizeVisibility(true),         'private')
+
+// --- row normalisation reads real object-shaped entries --------------------
+// Regression guard: apiField() used to return its fallback for object rows,
+// which made this count 0 and emptied the entire public listing.
+$rows = registryRowsFromApi($entries)
+$failures += check('rows normalised', count($rows), 8)
+$failures += check('first row name', count($rows) > 0 ? $rows[0]['fullName'] : '<none>', '@t/pub')
+$failures += check('first row latest', count($rows) > 0 ? $rows[0]['latestVersion'] : '<none>', '1.0.0')
+$failures += check('first row versionCount', count($rows) > 0 ? $rows[0]['versionCount'] : -1, 1)
+
+// --- per-row visibility, fail-closed ---------------------------------------
+foreach ($rows as $row) {
+  $name = '' . $row['fullName']
+  $want = ($name === '@t/pub' || $name === '@t/upper') ? 'public' : 'private'
+  $failures += check('visibility ' . $name, $row['visibility'], $want)
+  $failures += check('isPublic ' . $name, registryRowIsPublic($row) ? 'yes' : 'no', $want === 'public' ? 'yes' : 'no')
+}
+
+// --- the anonymous listing filter ------------------------------------------
+$public = filterRegistryRowsByVisibility($rows, 'public')
+$names = []
+foreach ($public as $row) {
+  $names[] = '' . $row['fullName']
+}
+$failures += check('anonymous listing', implode(',', $names), '@t/pub,@t/upper')
+
+// Everything that is not explicitly public lands in the private set.
+$private = filterRegistryRowsByVisibility($rows, 'private')
+$failures += check('private set size', count($private), 6)
+
+// An unrecognised request must not become a public request.
+$garbage = filterRegistryRowsByVisibility($rows, 'not-a-visibility')
+$failures += check('garbage request excludes public rows', count($garbage), 6)
+
+// --- rowValue reads object-shaped payloads --------------------------------
+// Same class of bug as apiField(): a decoded JSON object / PHPX assoc literal
+// is not is_array(), so the old implementation returned the fallback for every
+// lookup — which made every registry fetch report 'registry unavailable'.
+$assocRes = [ 'ok' => true, 'status' => 200, 'zero' => 0, 'no' => false, 'latest_version' => '1.2.3' ]
+$braceRes = { ok: true, status: 201 }
+
+$failures += check('rowValue assoc ok',      rowValue($assocRes, 'ok', false) ? 'true' : 'false', 'true')
+$failures += check('rowValue assoc status',  rowValue($assocRes, 'status', -1), 200)
+$failures += check('rowValue keeps 0',       rowValue($assocRes, 'zero', -1), 0)
+$failures += check('rowValue keeps false',   rowValue($assocRes, 'no', true) ? 'true' : 'false', 'false')
+$failures += check('rowValue camel alias',   rowValue($assocRes, 'latestVersion', 'x'), '1.2.3')
+$failures += check('rowValue missing key',   rowValue($assocRes, 'nope', 'FB'), 'FB')
+$failures += check('rowValue brace ok',      rowValue($braceRes, 'ok', false) ? 'true' : 'false', 'true')
+$failures += check('rowValue brace status',  rowValue($braceRes, 'status', -1), 201)
+$failures += check('rowValue list index',    rowValue(['a', 'b'], '0', 'FB'), 'a')
+$failures += check('rowValue scalar input',  rowValue('str', 'k', 'FB'), 'FB')
+
+echo "\nRESULT " . ($failures === 0 ? 'OK' : ('FAILURES=' . $failures)) . "\n"
+if ($failures !== 0) {
+  exit(1)
+}

@@ -1,0 +1,33 @@
+// Producer view of `GET /api/packages` on the git.tana.gg registry (gild-vcs,
+// Rust/axum, demon). This is the package-listing boundary that linkha.sh (PHPX,
+// jynx) reads across the network.
+//
+// Shape verified against the live registry on 2026-07-26:
+//   {"packages":[{"latest":"0.1.0","name":"@deka/array",
+//                 "versions":["0.1.0"],"visibility":"public"}, ...]}
+//
+// `visibility` is security-relevant: linkha.sh reads this endpoint with its own
+// privileged token and filters the rows before showing them to anonymous
+// visitors. If this field is ever renamed or dropped, the consumer check below
+// must fail loudly rather than letting the consumer silently fall back.
+
+struct RegistryPackagesRequest {
+    $limit: Option<int>;
+}
+
+struct RegistryPackageEntry {
+    $name: string;
+    $latest: string;
+    $versions: array<string>;
+    $visibility: string;
+}
+
+struct RegistryPackagesResponse {
+    $packages: array<RegistryPackageEntry>;
+}
+
+export function registry_packages($req: RegistryPackagesRequest): RegistryPackagesResponse {
+    return RegistryPackagesResponse {
+        $packages: [],
+    };
+}

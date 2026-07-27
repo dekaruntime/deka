@@ -6,17 +6,68 @@
  * the REST payloads into the flat row shape the pages already render.
  */
 
+/*
+ * Read one field off a decoded JSON value.
+ *
+ * A decoded JSON object is NOT is_array() in PHPX — only JSON arrays are.
+ * `{"name":"@deka/array"}` arrives as an object, for which is_array() is false
+ * and is_object() is true. array_key_exists() and index access both work on
+ * either shape, so test membership directly instead of going through
+ * get_object_vars() (which does not return an is_array()-true value here, and
+ * therefore silently produced the fallback for every object row).
+ *
+ * A JSON null yields the fallback: callers pass a fallback that is safe for
+ * their field, and for `visibility` that means fail-closed.
+ */
 function apiField($row, $key, $fallback = null) {
-  if (is_array($row) && array_key_exists($key, $row)) {
-    return $row[$key]
+  if (!isset($row)) {
+    return $fallback
   }
-  if (is_object($row)) {
-    $vars = get_object_vars($row)
-    if (is_array($vars) && array_key_exists($key, $vars)) {
-      return $vars[$key]
-    }
+  if (!is_array($row) && !is_object($row)) {
+    return $fallback
   }
-  return $fallback
+  if (!array_key_exists($key, $row)) {
+    return $fallback
+  }
+  $value = $row[$key]
+  if (!isset($value)) {
+    return $fallback
+  }
+  return $value
+}
+
+/*
+ * Visibility is a SECURITY-RELEVANT field: it alone decides what an anonymous
+ * visitor is shown. linkha.sh reads the registry with its own privileged token
+ * and filters the result set on this side, so the default MUST fail CLOSED.
+ *
+ * A missing, empty, renamed, non-string or otherwise unrecognised `visibility`
+ * is treated as PRIVATE and withheld. Only the exact literal "public" (after
+ * trim + lowercase) opens a row up. Defaulting to 'public' here would mean a
+ * single upstream field rename silently publishes every private package.
+ */
+export function normalizeVisibility($raw) {
+  if (is_array($raw) || is_object($raw)) {
+    return 'private'
+  }
+  if (!isset($raw)) {
+    return 'private'
+  }
+  if ($raw === true || $raw === false) {
+    return 'private'
+  }
+  $value = strtolower(trim('' . $raw))
+  if ($value === 'public') {
+    return 'public'
+  }
+  return 'private'
+}
+
+/*
+ * True only for rows an anonymous visitor may see.
+ */
+export function registryRowIsPublic($row) {
+  return normalizeVisibility(apiField($row, 'visibility', '')) === 'public'
 }
 
 export function registryPackagesPath() {
@@ -88,7 +139,7 @@ export function registryRowFromApiEntry($entry) {
     'latestVersion' => '' . apiField($entry, 'latest', ''),
     'versions' => $versions,
     'versionCount' => count($versions),
-    'visibility' => '' . apiField($entry, 'visibility', 'public')
+    'visibility' => normalizeVisibility(apiField($entry, 'visibility', ''))
   ]
 }
 
@@ -106,14 +157,19 @@ export function registryRowsFromApi($entries) {
   return $out
 }
 
+/*
+ * Fail-closed visibility filter. Both sides are normalised through
+ * normalizeVisibility(), so a row whose visibility is missing or unrecognised
+ * collapses to 'private' and can never satisfy a 'public' request.
+ */
 export function filterRegistryRowsByVisibility($rows, $visibility) {
-  $want = strtolower(trim('' . $visibility))
+  $want = normalizeVisibility($visibility)
   $out = []
   if (!is_array($rows)) {
     return $out
   }
   foreach ($rows as $row) {
-    if (strtolower('' . apiField($row, 'visibility', 'public')) === $want) {
+    if (normalizeVisibility(apiField($row, 'visibility', '')) === $want) {
       $out[] = $row
     }
   }
