@@ -36,6 +36,22 @@ impl<'a> JsSubsetEmitter<'a> {
         &self.source[span.start..span.end]
     }
 
+    /// Distinguishes `$obj->foo` (bareword literal property) from
+    /// `$obj->$foo` / `$obj->{$foo}` (dynamic property named by a variable's
+    /// value) when the property node is `Expr::Variable`. The php-rs parser
+    /// represents both forms as `Expr::Variable` (see parser/expr.rs, Arrow
+    /// handling: "Using Variable for now, should be Identifier if it's a
+    /// name") — the only surviving distinction is whether the source span
+    /// still carries the `$` sigil. Without this check, dynamic property
+    /// reads/writes silently collapse to a literal property named after the
+    /// variable's identifier text (e.g. `$out->{$k} = $v` emitting as
+    /// `out.k = v` instead of `out[k] = v`), which is the root cause of
+    /// tana#583 (linkha.sh `<main>` always empty — `__component_strip_island_props`
+    /// dropped every prop key down to a literal `"k"`).
+    pub(super) fn property_fetch_is_dynamic(&self, span: php_rs::parser::span::Span) -> bool {
+        self.span_bytes(span).starts_with(b"$")
+    }
+
     pub(super) fn encode_php_string_literal(&self, value: &[u8]) -> String {
         let mut bytes: &[u8] = value;
         let mut quote = None;

@@ -1117,6 +1117,90 @@ $v = $obj?->toString();
     );
 }
 
+// ---- Dynamic property access (tana#583 regression) ----
+//
+// The php-rs parser represents BOTH bareword property fetch (`$obj->foo`) and
+// dynamic property fetch (`$obj->$k` / `$obj->{$k}`) as `Expr::PropertyFetch`
+// with an `Expr::Variable` property node — the only distinguishing signal is
+// whether the source span still has its `$` sigil. Before the fix, the
+// emitter always treated `Expr::Variable` as a literal property name, so
+// `$out->{$k} = $v` compiled to `out.k = v` (a literal ".k" property) instead
+// of `out[k] = v` (indexing by the *value* of $k). This silently dropped
+// every real prop key (e.g. "children") in favor of the literal string "k"
+// anywhere PHPX code looped `foreach ($props as $k => $v) { $out->{$k} = $v }`
+// — the exact pattern in component/dom.phpx's `__component_strip_island_props`,
+// which made linkha.sh's `<main>` render permanently empty.
+
+#[test]
+fn bareword_property_fetch_stays_literal() {
+    let js = phpx_to_js("function f(): void { $obj = { name: 'test' };\n$v = $obj->name; }")
+        .expect("should compile");
+    assert!(
+        js.contains("obj.name"),
+        "expected literal .name property read, got:\n{}",
+        js
+    );
+}
+
+#[test]
+fn dynamic_property_read_indexes_by_variable_value() {
+    let source = r#"
+function f($k): void {
+$obj = { name: 'test' };
+$v = $obj->{$k};
+}
+"#;
+    let js = phpx_to_js(source).expect("should compile");
+    assert!(
+        js.contains("obj[k]"),
+        "expected computed obj[k] property read, got:\n{}",
+        js
+    );
+    assert!(
+        !js.contains("obj.k"),
+        "must not collapse dynamic property read to a literal .k, got:\n{}",
+        js
+    );
+}
+
+#[test]
+fn dynamic_property_write_indexes_by_variable_value() {
+    let source = r#"
+function f($props): void {
+$out = {};
+foreach ($props as $k => $v) {
+$out->{$k} = $v;
+}
+}
+"#;
+    let js = phpx_to_js(source).expect("should compile");
+    assert!(
+        js.contains("out[k] = v"),
+        "expected computed out[k] = v assignment, got:\n{}",
+        js
+    );
+    assert!(
+        !js.contains("out.k = v"),
+        "must not collapse dynamic property write to literal .k (tana#583 regression), got:\n{}",
+        js
+    );
+}
+
+#[test]
+fn dynamic_property_dollar_var_form_indexes_by_variable_value() {
+    let source = r#"
+function f($obj, $key): void {
+$v = $obj->$key;
+}
+"#;
+    let js = phpx_to_js(source).expect("should compile");
+    assert!(
+        js.contains("obj[key]"),
+        "expected computed obj[key] property read for ->$key form, got:\n{}",
+        js
+    );
+}
+
 // ---- CQL (Cypher) ----
 
 #[test]

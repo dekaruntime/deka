@@ -189,6 +189,13 @@ impl<'a> JsSubsetEmitter<'a> {
             } => {
                 let target_js = self.emit_expr(*target)?;
                 match *property {
+                    Expr::Variable { name, .. } if self.property_fetch_is_dynamic(*name) => {
+                        // $obj->$k = ... or $obj->{$k} = ...: computed assignment.
+                        // See property_fetch_is_dynamic for why Expr::Variable is
+                        // ambiguous between bareword and dynamic property names.
+                        let key = self.span_name(*name);
+                        Ok(format!("{}[{}]", target_js, key))
+                    }
                     Expr::Variable { name, .. } => {
                         Ok(format!("{}.{}", target_js, self.span_name(*name)))
                     }
