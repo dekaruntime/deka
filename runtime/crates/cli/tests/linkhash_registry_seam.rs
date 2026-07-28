@@ -33,10 +33,11 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-const REGISTRY_SEAMS: [&str; 3] = [
+const REGISTRY_SEAMS: [&str; 4] = [
     "linkhash.registry_packages",
     "linkhash.registry_versions",
     "linkhash.registry_release",
+    "linkhash.repos_public",
 ];
 
 fn runtime_root() -> PathBuf {
@@ -116,6 +117,47 @@ fn producer_field_rename_is_caught_by_the_gate() {
     assert!(
         report.contains("UnknownField") && report.contains("RegistryPackageEntry.latest"),
         "gate failed but not for the renamed field:\n{report}"
+    );
+}
+
+/// `GET /api/repos/public`'s `head_sha` is `Option<String>` on the producer
+/// (git-server `PublicRepoSummary`, tana#391) because a repo's HEAD can
+/// genuinely fail to resolve. If a future producer change silently widens
+/// that to an always-present `string` while the consumer still declares
+/// `Option<string>`, the two shapes diverge on optionality — the exact class
+/// of drift `compare_field` in `seam_diff` exists to catch (optional <->
+/// required is a breaking change either direction). Prove `check_consumer`
+/// actually flags it rather than trusting `row_get`'s `''` fallback to paper
+/// over a real contract change.
+#[test]
+fn repos_public_head_sha_optionality_drift_is_caught_by_the_gate() {
+    let root = runtime_root();
+    let producer = root.join("contracts/fixtures/linkhash/repos_public_producer.phpx");
+    let source = std::fs::read_to_string(&producer).expect("read repos_public producer fixture");
+
+    // Simulate the producer dropping optionality: `Option<string>` -> `string`.
+    let drifted = source.replace("$head_sha: Option<string>;", "$head_sha: string;");
+    assert_ne!(drifted, source, "fixture no longer declares `head_sha` as Option<string>");
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let drifted_path = dir.path().join("repos_public_producer_drifted.phpx");
+    std::fs::write(&drifted_path, drifted).expect("write drifted producer");
+
+    let (code, report) = contract_check(&[
+        "contract-check",
+        "--producer",
+        &format!("phpx:{}", drifted_path.display()),
+        "--consumer",
+        "phpx:contracts/fixtures/linkhash/repos_public_consumer.phpx",
+    ]);
+
+    assert_eq!(
+        code, 1,
+        "producer dropping head_sha's optionality did not fail the gate:\n{report}"
+    );
+    assert!(
+        report.contains("TypeMismatch") && report.contains("LinkhashPublicRepoSummary.head_sha"),
+        "gate failed but not for the head_sha optionality change:\n{report}"
     );
 }
 
