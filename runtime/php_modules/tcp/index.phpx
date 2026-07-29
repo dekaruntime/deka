@@ -1,19 +1,38 @@
 import { result_ok, result_err, result_is_ok } from 'core/result'
 import { bridge } from 'core/bridge'
 
-function normalize_result($raw) {
-    if (is_array($raw) && array_key_exists('ok', $raw)) {
-        if ($raw['ok']) {
-            return result_ok($raw)
+function to_assoc($value) {
+    if (is_array($value)) {
+        $out = []
+        $is_entries = true
+        foreach ($value as $entry) {
+            if (!is_array($entry) || count($entry) !== 2 || !is_string($entry[0])) {
+                $is_entries = false
+                break
+            }
+            $out[$entry[0]] = $entry[1]
         }
-        $msg = array_key_exists('error', $raw) ? $raw['error'] : 'tcp error'
-        return result_err($msg)
+        if ($is_entries) {
+            return $out
+        }
+        return $value
     }
-    if (is_object($raw) && isset($raw->ok)) {
-        if ($raw->ok) {
-            return result_ok($raw)
+    if (is_object($value)) {
+        return (array) $value
+    }
+    if (gettype($value) === 'object') {
+        return (array) $value
+    }
+    return null
+}
+
+function normalize_result($raw) {
+    $assoc = to_assoc($raw)
+    if (is_array($assoc) && array_key_exists('ok', $assoc)) {
+        if ($assoc['ok']) {
+            return result_ok($assoc)
         }
-        $msg = isset($raw->error) ? $raw->error : 'tcp error'
+        $msg = array_key_exists('error', $assoc) ? $assoc['error'] : 'tcp error'
         return result_err($msg)
     }
     return result_err('invalid tcp response')

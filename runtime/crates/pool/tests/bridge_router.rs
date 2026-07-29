@@ -1,5 +1,7 @@
 use pool::{ExecutionMode, HandlerKey, IsolatePool, PoolConfig, RequestData, RequestParts};
+use std::net::TcpListener;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 fn test_pool() -> IsolatePool {
     let config = PoolConfig {
@@ -13,6 +15,20 @@ fn test_pool() -> IsolatePool {
         ..PoolConfig::default()
     };
     IsolatePool::new(config, Arc::new(Vec::new))
+}
+
+fn net_test_pool() -> IsolatePool {
+    let config = PoolConfig {
+        num_workers: 1,
+        max_isolates_per_worker: 2,
+        idle_timeout_secs: 30,
+        enable_metrics: false,
+        enable_code_cache: false,
+        request_timeout_ms: 10_000,
+        queue_timeout_ms: 10_000,
+        ..PoolConfig::default()
+    };
+    IsolatePool::new(config, Arc::new(platform_server::extensions_for_php_server))
 }
 
 fn test_request(handler_code: &str) -> RequestData {
@@ -117,6 +133,77 @@ globalThis.app = function(req) {
         "result should contain ok field: {}",
         body
     );
+}
+
+#[tokio::test]
+async fn net_bridge_connects_through_isolate_as_entry_pairs() {
+    const CONNECTS: usize = 24;
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind TCP listener");
+    listener
+        .set_nonblocking(true)
+        .expect("make TCP listener nonblocking");
+    let port = listener.local_addr().expect("listener address").port();
+    let accepted = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut count = 0;
+        while count < CONNECTS && Instant::now() < deadline {
+            match listener.accept() {
+                Ok((_stream, _peer)) => count += 1,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("accept TCP connection: {error}"),
+            }
+        }
+        count
+    });
+
+    let previous_policy = std::env::var_os("DEKA_SECURITY_POLICY");
+    unsafe {
+        std::env::set_var(
+            "DEKA_SECURITY_POLICY",
+            format!(r#"{{"security":{{"allow":{{"net":["127.0.0.1:{port}"]}}}}}}"#),
+        );
+    }
+    let pool = net_test_pool();
+    let code = format!(
+        r#"
+globalThis.app = function(req) {{
+  const connects = [];
+  for (let i = 0; i < {CONNECTS}; i++) {{
+    const result = globalThis.__bridge('net', 'connect', {{ host: '127.0.0.1', port: {port} }});
+    if (!Array.isArray(result)) throw new Error(`net bridge result ${{i}} was not entry pairs`);
+    const value = Object.fromEntries(result);
+    if (value.ok !== true || !Number.isInteger(value.handle) || value.handle < 1) {{
+      throw new Error(`invalid net bridge response ${{JSON.stringify(result)}}`);
+    }}
+    connects.push(value.handle);
+  }}
+  const closes = connects.map((handle) => Object.fromEntries(globalThis.__bridge('net', 'close', {{ handle }})));
+  if (!closes.every((result) => result.ok === true)) throw new Error('net bridge close failed');
+  return {{ status: 200, headers: {{}}, body: JSON.stringify({{ connects: connects.length }}) }};
+}};
+"#
+    );
+    let res = pool
+        .execute(
+            HandlerKey::new("net_bridge_tcp_connect"),
+            test_request(&code),
+        )
+        .await;
+    unsafe {
+        match previous_policy {
+            Some(value) => std::env::set_var("DEKA_SECURITY_POLICY", value),
+            None => std::env::remove_var("DEKA_SECURITY_POLICY"),
+        }
+    }
+
+    let response = res.expect("pool execution should succeed");
+    assert!(response.success, "execution failed: {:?}", response.error);
+    let result = response.result.expect("should have result");
+    let body = result.get("body").and_then(|v| v.as_str()).expect("body");
+    assert_eq!(body, format!(r#"{{"connects":{CONNECTS}}}"#));
+    assert_eq!(accepted.join().expect("TCP listener thread"), CONNECTS);
 }
 
 #[tokio::test]

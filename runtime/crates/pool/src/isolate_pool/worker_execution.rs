@@ -370,7 +370,11 @@ impl WorkerThread {
                             if (typeof ops.op_php_net_call_proto === 'function' && typeof ops.op_php_net_proto_encode === 'function' && typeof ops.op_php_net_proto_decode === 'function') {
                                 const request = ops.op_php_net_proto_encode(String(action || ''), payload || {});
                                 const response = ops.op_php_net_call_proto(request);
-                                return ops.op_php_net_proto_decode(response);
+                                // Serde-backed ops decode to host objects. Cross the PHPX
+                                // boundary as key/value entries so the consumer can build a
+                                // keyed PHPX array, matching the fs bridge contract.
+                                const decoded = ops.op_php_net_proto_decode(response);
+                                return Object.entries(decoded || {});
                             }
                             return { ok: false, error: 'net protobuf bridge ops unavailable' };
                         }
