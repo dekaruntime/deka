@@ -1,6 +1,9 @@
 use super::bridge_metrics::record_bridge_proto_metric;
 use super::security::enforce_net;
 use super::*;
+use deno_core::OpState;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 pub(super) enum NetConn {
     Tcp(TcpStream),
@@ -14,24 +17,21 @@ pub(super) struct NetHandle {
     target: String,
 }
 
+/// Per-isolate socket ownership state.  This must live in Deno's `OpState`,
+/// never in a process-global static: a numeric handle is only meaningful in
+/// the isolate that created it.
 pub(super) struct NetState {
     next_handle: u64,
     handles: HashMap<u64, NetHandle>,
 }
 
 impl NetState {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             next_handle: 1,
             handles: HashMap::new(),
         }
     }
-}
-
-static NET_STATE: OnceLock<Mutex<NetState>> = OnceLock::new();
-
-pub(super) fn net_state() -> &'static Mutex<NetState> {
-    NET_STATE.get_or_init(|| Mutex::new(NetState::new()))
 }
 
 fn capability_target(host: &str, port: u16) -> String {
@@ -42,10 +42,7 @@ fn capability_target(host: &str, port: u16) -> String {
     }
 }
 
-fn handle_target(handle: u64) -> Result<String, deno_core::error::CoreError> {
-    let state = net_state()
-        .lock()
-        .map_err(|_| core_err("net lock poisoned"))?;
+fn handle_target(state: &NetState, handle: u64) -> Result<String, deno_core::error::CoreError> {
     state
         .handles
         .get(&handle)
@@ -54,6 +51,7 @@ fn handle_target(handle: u64) -> Result<String, deno_core::error::CoreError> {
 }
 
 pub(super) fn net_call_impl(
+    state: &mut NetState,
     action: String,
     args: serde_json::Value,
 ) -> Result<serde_json::Value, deno_core::error::CoreError> {
@@ -90,9 +88,6 @@ pub(super) fn net_call_impl(
                 .ok_or_else(|| err("connect: no resolved address".to_string()))?;
             let stream = TcpStream::connect_timeout(&target, Duration::from_millis(timeout_ms))
                 .map_err(|e| err(format!("connect: {}", e)))?;
-            let mut state = net_state()
-                .lock()
-                .map_err(|_| err("net lock poisoned".to_string()))?;
             let handle = state.next_handle;
             state.next_handle += 1;
             state.handles.insert(
@@ -115,9 +110,6 @@ pub(super) fn net_call_impl(
             } else {
                 Some(Duration::from_millis(millis))
             };
-            let mut state = net_state()
-                .lock()
-                .map_err(|_| err("net lock poisoned".to_string()))?;
             let Some(conn) = state.handles.get_mut(&handle) else {
                 return Ok(
                     serde_json::json!({ "ok": false, "error": format!("set_deadline: unknown handle {}", handle) }),
@@ -149,9 +141,6 @@ pub(super) fn net_call_impl(
                 .and_then(|v| v.as_u64())
                 .unwrap_or(4096) as usize;
             let mut buf = vec![0_u8; max_bytes.max(1)];
-            let mut state = net_state()
-                .lock()
-                .map_err(|_| err("net lock poisoned".to_string()))?;
             let Some(conn) = state.handles.get_mut(&handle) else {
                 return Ok(
                     serde_json::json!({ "ok": false, "error": format!("read: unknown handle {}", handle) }),
@@ -180,9 +169,6 @@ pub(super) fn net_call_impl(
                 .unwrap_or("")
                 .as_bytes()
                 .to_vec();
-            let mut state = net_state()
-                .lock()
-                .map_err(|_| err("net lock poisoned".to_string()))?;
             let Some(conn) = state.handles.get_mut(&handle) else {
                 return Ok(
                     serde_json::json!({ "ok": false, "error": format!("write: unknown handle {}", handle) }),
@@ -213,9 +199,6 @@ pub(super) fn net_call_impl(
                     serde_json::json!({ "ok": false, "error": "tls_upgrade: missing server_name" }),
                 );
             }
-            let mut state = net_state()
-                .lock()
-                .map_err(|_| err("net lock poisoned".to_string()))?;
             let Some(conn) = state.handles.remove(&handle) else {
                 return Ok(
                     serde_json::json!({ "ok": false, "error": format!("tls_upgrade: unknown handle {}", handle) }),
@@ -264,10 +247,11 @@ pub(super) fn net_call_impl(
                 .get("handle")
                 .and_then(|v| v.as_u64())
                 .ok_or_else(|| err("close: missing handle".to_string()))?;
-            let mut state = net_state()
-                .lock()
-                .map_err(|_| err("net lock poisoned".to_string()))?;
-            state.handles.remove(&handle);
+            if state.handles.remove(&handle).is_none() {
+                return Ok(
+                    serde_json::json!({ "ok": false, "error": format!("close: unknown handle {}", handle) }),
+                );
+            }
             Ok(serde_json::json!({ "ok": true }))
         }
         _ => Ok(serde_json::json!({
@@ -506,7 +490,10 @@ pub(super) fn net_proto_response_to_json(
     serde_json::Value::Object(out)
 }
 
-pub(super) fn net_call_proto_impl(request: &[u8]) -> Result<Vec<u8>, deno_core::error::CoreError> {
+pub(super) fn net_call_proto_impl(
+    state: &mut NetState,
+    request: &[u8],
+) -> Result<Vec<u8>, deno_core::error::CoreError> {
     let started = Instant::now();
     let req = proto::bridge_v1::NetRequest::decode(request)
         .map_err(|e| core_err(format!("net proto decode failed: {}", e)))?;
@@ -524,11 +511,11 @@ pub(super) fn net_call_proto_impl(request: &[u8]) -> Result<Vec<u8>, deno_core::
                 .get("handle")
                 .and_then(|value| value.as_u64())
                 .ok_or_else(|| core_err(format!("{action}: missing handle")))?;
-            handle_target(handle)?
+            handle_target(state, handle)?
         }
     };
     enforce_net(Some(&net_target))?;
-    let response_json = net_call_impl(action, payload)?;
+    let response_json = net_call_impl(state, action, payload)?;
     let response = net_json_response_to_proto(&response_json, kind);
     let out = response.encode_to_vec();
     record_bridge_proto_metric(
@@ -575,9 +562,12 @@ fn net_policy_target(payload: &serde_json::Value) -> Option<String> {
 #[op2]
 #[buffer]
 pub(super) fn op_php_net_call_proto(
+    op_state: Rc<RefCell<OpState>>,
     #[buffer] request: &[u8],
 ) -> Result<Vec<u8>, deno_core::error::CoreError> {
-    net_call_proto_impl(request)
+    let mut op_state = op_state.borrow_mut();
+    let state = op_state.borrow_mut::<NetState>();
+    net_call_proto_impl(state, request)
 }
 
 #[op2]
@@ -603,7 +593,7 @@ pub(super) fn op_php_net_proto_decode(
 #[cfg(test)]
 mod tests {
     use super::proto;
-    use super::{net_call_proto_impl, net_policy_target, tcp_connect_port};
+    use super::{NetState, net_call_proto_impl, net_policy_target, tcp_connect_port};
     use prost::Message;
     use serde_json::json;
     use std::io::ErrorKind;
@@ -643,6 +633,7 @@ mod tests {
 
     #[test]
     fn tcp_proto_rejects_overflow_before_policy_or_socket_connect() {
+        let mut state = NetState::new();
         let _lock = policy_lock().lock().expect("policy lock");
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
         listener
@@ -668,7 +659,8 @@ mod tests {
                 },
             )),
         };
-        let error = net_call_proto_impl(&request.encode_to_vec()).expect_err("overflow rejected");
+        let error = net_call_proto_impl(&mut state, &request.encode_to_vec())
+            .expect_err("overflow rejected");
         assert!(error.to_string().contains("1..=65535"));
         assert!(matches!(listener.accept(), Err(error) if error.kind() == ErrorKind::WouldBlock));
 
@@ -705,6 +697,7 @@ mod tests {
 
     #[test]
     fn tcp_handle_operations_retain_the_allowed_connect_target() {
+        let mut state = NetState::new();
         let _lock = policy_lock().lock().expect("policy lock");
         let previous = std::env::var_os("DEKA_SECURITY_POLICY");
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
@@ -729,7 +722,8 @@ mod tests {
             &json!({ "host": "127.0.0.1", "port": address.port() }),
         )
         .expect("encode connect");
-        let connect_response = net_call_proto_impl(&connect.encode_to_vec()).expect("connect");
+        let connect_response =
+            net_call_proto_impl(&mut state, &connect.encode_to_vec()).expect("connect");
         let connect_response = proto::bridge_v1::NetResponse::decode(connect_response.as_slice())
             .expect("decode connect response");
         let handle = match connect_response.action.expect("connect action") {
@@ -744,7 +738,7 @@ mod tests {
             let request = super::net_action_payload_to_proto_request(action, &payload)
                 .expect("encode handle operation");
             assert!(
-                net_call_proto_impl(&request.encode_to_vec()).is_ok(),
+                net_call_proto_impl(&mut state, &request.encode_to_vec()).is_ok(),
                 "{action} must use the allowed connect target"
             );
         }
@@ -760,14 +754,14 @@ mod tests {
             &json!({ "handle": handle, "data": "nope" }),
         )
         .expect("encode denied write");
-        assert!(net_call_proto_impl(&denied_write.encode_to_vec()).is_err());
+        assert!(net_call_proto_impl(&mut state, &denied_write.encode_to_vec()).is_err());
 
         let denied_connect = super::net_action_payload_to_proto_request(
             "connect",
             &json!({ "host": "127.0.0.1", "port": address.port() }),
         )
         .expect("encode denied connect");
-        assert!(net_call_proto_impl(&denied_connect.encode_to_vec()).is_err());
+        assert!(net_call_proto_impl(&mut state, &denied_connect.encode_to_vec()).is_err());
 
         unsafe {
             std::env::set_var(
@@ -778,7 +772,7 @@ mod tests {
         let close =
             super::net_action_payload_to_proto_request("close", &json!({ "handle": handle }))
                 .expect("encode close");
-        assert!(net_call_proto_impl(&close.encode_to_vec()).is_ok());
+        assert!(net_call_proto_impl(&mut state, &close.encode_to_vec()).is_ok());
         server.join().expect("server join");
 
         unsafe {

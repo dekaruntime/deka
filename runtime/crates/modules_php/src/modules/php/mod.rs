@@ -85,6 +85,7 @@ deno_core::extension!(
     ],
     esm_entry_point = "ext:php_core/php.js",
     esm = [dir "src/modules/php", "php.js"],
+    state = |state| state.put(net::NetState::new()),
 );
 
 pub fn init() -> deno_core::Extension {
@@ -103,7 +104,7 @@ mod tests {
         fs_proto_response_to_json,
     };
     use super::net::{
-        net_action_payload_to_proto_request, net_call_impl, net_call_proto_impl,
+        NetState, net_action_payload_to_proto_request, net_call_impl, net_call_proto_impl,
         net_proto_response_to_json,
     };
     use super::security::default_allow_target_for_capability;
@@ -388,6 +389,7 @@ mod tests {
     #[test]
     #[ignore = "requires security capabilities (net grant) not available in unit tests"]
     fn net_proto_tcp_parity_sanity() {
+        let mut net_state = NetState::new();
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
         let addr = listener.local_addr().expect("local addr");
         let server = std::thread::spawn(move || {
@@ -400,6 +402,7 @@ mod tests {
         });
 
         let json_connect = net_call_impl(
+            &mut net_state,
             "connect".to_string(),
             serde_json::json!({
                 "host": "127.0.0.1",
@@ -415,6 +418,7 @@ mod tests {
             .expect("json handle missing");
 
         let json_write = net_call_impl(
+            &mut net_state,
             "write".to_string(),
             serde_json::json!({
                 "handle": json_handle,
@@ -425,6 +429,7 @@ mod tests {
         assert_ok(&json_write);
 
         let json_read = net_call_impl(
+            &mut net_state,
             "read".to_string(),
             serde_json::json!({
                 "handle": json_handle,
@@ -436,6 +441,7 @@ mod tests {
         assert_eq!(json_read.get("data").and_then(|v| v.as_str()), Some("ping"));
 
         let json_close = net_call_impl(
+            &mut net_state,
             "close".to_string(),
             serde_json::json!({ "handle": json_handle }),
         )
@@ -452,7 +458,8 @@ mod tests {
         )
         .expect("proto connect build failed");
         let proto_connect_resp =
-            net_call_proto_impl(&proto_connect_req.encode_to_vec()).expect("proto connect failed");
+            net_call_proto_impl(&mut net_state, &proto_connect_req.encode_to_vec())
+                .expect("proto connect failed");
         let proto_connect_json = net_proto_response_to_json(
             &proto::bridge_v1::NetResponse::decode(proto_connect_resp.as_slice())
                 .expect("decode connect"),
@@ -472,7 +479,8 @@ mod tests {
         )
         .expect("proto write build failed");
         let proto_write_resp =
-            net_call_proto_impl(&proto_write_req.encode_to_vec()).expect("proto write failed");
+            net_call_proto_impl(&mut net_state, &proto_write_req.encode_to_vec())
+                .expect("proto write failed");
         let proto_write_json = net_proto_response_to_json(
             &proto::bridge_v1::NetResponse::decode(proto_write_resp.as_slice())
                 .expect("decode write"),
@@ -487,8 +495,8 @@ mod tests {
             }),
         )
         .expect("proto read build failed");
-        let proto_read_resp =
-            net_call_proto_impl(&proto_read_req.encode_to_vec()).expect("proto read failed");
+        let proto_read_resp = net_call_proto_impl(&mut net_state, &proto_read_req.encode_to_vec())
+            .expect("proto read failed");
         let proto_read_json = net_proto_response_to_json(
             &proto::bridge_v1::NetResponse::decode(proto_read_resp.as_slice())
                 .expect("decode read"),
@@ -505,7 +513,8 @@ mod tests {
         )
         .expect("proto close build failed");
         let proto_close_resp =
-            net_call_proto_impl(&proto_close_req.encode_to_vec()).expect("proto close failed");
+            net_call_proto_impl(&mut net_state, &proto_close_req.encode_to_vec())
+                .expect("proto close failed");
         let proto_close_json = net_proto_response_to_json(
             &proto::bridge_v1::NetResponse::decode(proto_close_resp.as_slice())
                 .expect("decode close"),
@@ -519,7 +528,7 @@ mod tests {
     fn proto_bridge_rejects_malformed_payloads() {
         assert!(db_call_proto_impl(&[0xff, 0x00, 0x01]).is_err());
         assert!(fs_call_proto_impl(&[0xff, 0x00, 0x01]).is_err());
-        assert!(net_call_proto_impl(&[0xff, 0x00, 0x01]).is_err());
+        assert!(net_call_proto_impl(&mut NetState::new(), &[0xff, 0x00, 0x01]).is_err());
     }
 
     #[test]

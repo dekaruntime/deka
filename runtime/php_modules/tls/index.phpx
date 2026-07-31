@@ -23,7 +23,7 @@ function to_assoc($value) {
     if (gettype($value) === 'object') {
         return (array) $value
     }
-    return null
+    return []
 }
 
 function normalize_result($raw) {
