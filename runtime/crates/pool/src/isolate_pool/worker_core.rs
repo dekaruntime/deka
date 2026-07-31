@@ -85,6 +85,10 @@ pub(super) struct WorkerThread {
     pub(super) load: Arc<WorkerLoad>,
     pub(super) isolates: HashMap<HandlerKey, WarmIsolate>,
     pub(super) lru_order: Vec<HandlerKey>, // Front = oldest, back = newest
+    /// V8 `OwnedIsolate`s are entered when constructed and must be dropped
+    /// in reverse construction order. This is deliberately separate from the
+    /// LRU list, whose order changes on cache hits.
+    pub(super) isolate_creation_order: Vec<HandlerKey>,
     pub(super) code_cache: HashMap<u64, Vec<u8>>,
     pub(super) extensions_provider: Arc<dyn Fn() -> Vec<Extension> + Send + Sync>,
     pub(super) request_history: VecDeque<RequestTrace>,
@@ -120,6 +124,7 @@ impl WorkerThread {
             load,
             isolates: HashMap::new(),
             lru_order: Vec::new(),
+            isolate_creation_order: Vec::new(),
             code_cache: HashMap::new(),
             extensions_provider,
             request_history: VecDeque::new(),
@@ -166,7 +171,9 @@ impl WorkerThread {
                     }
                     // Handle control commands
                     Some(cmd) = ctrl_rx.recv() => {
-                        self.handle_control(cmd);
+                        if self.handle_control(cmd) {
+                            break;
+                        }
                     }
                     // Both channels closed - shutdown
                     else => break,
@@ -178,11 +185,17 @@ impl WorkerThread {
     }
 
     /// Handle control commands
-    fn handle_control(&mut self, cmd: WorkerControl) {
+    fn handle_control(&mut self, cmd: WorkerControl) -> bool {
         match cmd {
+            WorkerControl::Shutdown { response_tx } => {
+                self.dispose_all_isolates();
+                self.code_cache.clear();
+                let _ = response_tx.send(());
+                return true;
+            }
             WorkerControl::EvictAll { response_tx } => {
                 let count = self.isolates.len();
-                self.isolates.clear();
+                self.dispose_all_isolates();
                 self.lru_order.clear();
                 self.code_cache.clear();
                 tracing::debug!("Worker {} evicted {} isolates", self.worker_id, count);
@@ -270,6 +283,23 @@ impl WorkerThread {
                 let _ = response_tx.send(drained);
             }
         }
+        false
+    }
+
+    /// Dispose runtimes while this worker still owns their V8 thread.
+    ///
+    /// `OwnedIsolate` exits itself in `Drop` and requires the current isolate
+    /// to be the most recently-created one. `HashMap::clear()` has no such
+    /// ordering guarantee, which made shutdown depend on hash iteration and
+    /// could enter V8 without the correct scope at test-process teardown.
+    fn dispose_all_isolates(&mut self) {
+        while let Some(key) = self.isolate_creation_order.pop() {
+            self.isolates.remove(&key);
+        }
+        debug_assert!(
+            self.isolates.is_empty(),
+            "all isolates must be tracked for ordered disposal"
+        );
     }
 
     /// Handle a single request
@@ -675,6 +705,7 @@ impl WorkerThread {
                 Ok(isolate) => {
                     self.isolates.insert(key.clone(), isolate);
                     self.lru_order.push(key.clone());
+                    self.isolate_creation_order.push(key.clone());
                 }
                 Err(err) => {
                     return Err(err);

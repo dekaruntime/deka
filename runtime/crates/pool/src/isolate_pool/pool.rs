@@ -10,7 +10,7 @@ struct WorkerHandle {
     control_tx: mpsc::UnboundedSender<WorkerControl>,
     load: Arc<WorkerLoad>,
     #[allow(dead_code)]
-    thread: JoinHandle<()>,
+    thread: Option<JoinHandle<()>>,
 }
 
 // ========== Main Pool ==========
@@ -80,7 +80,7 @@ impl IsolatePool {
                 request_tx: tx,
                 control_tx: ctrl_tx,
                 load,
-                thread,
+                thread: Some(thread),
             });
         }
 
@@ -409,5 +409,41 @@ impl IsolatePool {
         }
 
         traces
+    }
+}
+
+impl Drop for IsolatePool {
+    fn drop(&mut self) {
+        // Dropping a JoinHandle detaches its thread. That allowed test pools
+        // to leave thread-affine JsRuntimes alive until the process was
+        // already tearing V8 down. Ask each worker to dispose its isolates,
+        // wait for that acknowledgement, then join it before returning.
+        let workers = std::mem::take(&mut self.workers);
+        let mut shutdown_acks = Vec::with_capacity(workers.len());
+        let mut threads = Vec::with_capacity(workers.len());
+
+        for mut worker in workers {
+            // `IsolatePool` commonly drops from an async test. Use the
+            // standard channel here: `oneshot::Receiver::blocking_recv()`
+            // would panic when called from that Tokio runtime.
+            let (response_tx, response_rx) = std_mpsc::channel();
+            if worker
+                .control_tx
+                .send(WorkerControl::Shutdown { response_tx })
+                .is_ok()
+            {
+                shutdown_acks.push(response_rx);
+            }
+            if let Some(thread) = worker.thread.take() {
+                threads.push(thread);
+            }
+        }
+
+        for ack in shutdown_acks {
+            let _ = ack.recv();
+        }
+        for thread in threads {
+            let _ = thread.join();
+        }
     }
 }

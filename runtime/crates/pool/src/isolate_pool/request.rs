@@ -91,6 +91,13 @@ pub(super) struct WorkerRequest {
 
 /// Control commands sent to workers
 pub(super) enum WorkerControl {
+    /// Stop the worker after disposing its V8 runtimes on the worker thread.
+    ///
+    /// `JsRuntime`/`OwnedIsolate` are thread-affine.  A pool must therefore
+    /// wait for this acknowledgement before its worker `JoinHandle` is
+    /// released, rather than leaving teardown to process exit.
+    Shutdown { response_tx: std_mpsc::Sender<()> },
+
     /// Clear all cached isolates
     EvictAll { response_tx: oneshot::Sender<usize> },
 
