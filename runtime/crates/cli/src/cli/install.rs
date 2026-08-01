@@ -1,7 +1,11 @@
 use anyhow::Result;
 use core::{CommandSpec, Context, FlagSpec, ParamSpec, Registry};
 use linkhash_client::{LinkhashClient, is_phpx_package};
-use pm::{InstallPayload, run_install};
+use pm::{
+    InstallPayload,
+    registry_integrity::{fetch_package_digest, verify_package_digest},
+    run_install,
+};
 use runtime_core::module_spec::canonical_php_package_spec;
 use std::path::{Path, PathBuf};
 use stdio;
@@ -173,7 +177,14 @@ pub fn cmd_update(context: &Context) {
 
         for spec in &phpx_specs {
             let (name, version_range) = parse_spec_with_version(spec);
-            match install_phpx_package(&client, &name, &version_range, &project_dir) {
+            match install_phpx_package(
+                &client,
+                &registry_url,
+                token.as_deref(),
+                &name,
+                &version_range,
+                &project_dir,
+            ) {
                 Ok(version) => {
                     stdio::log("update", &format!("updated {}@{}", name, version));
                 }
@@ -274,7 +285,14 @@ fn run_shop_update(context: &Context, project_dir: &std::path::Path) -> Result<(
         // latest matching version, so we never silently cross a major
         // boundary — merchants must edit deka.json explicitly for that.
         let (name, version_range) = parse_spec_with_version(spec);
-        match install_phpx_package(&client, &name, &version_range, project_dir) {
+        match install_phpx_package(
+            &client,
+            &registry_url,
+            token.as_deref(),
+            &name,
+            &version_range,
+            project_dir,
+        ) {
             Ok(v) => stdio::log("update", &format!("resolved {}@{}", name, v)),
             Err(err) => {
                 stdio::error("update", &format!("failed {}: {}", name, err));
@@ -759,6 +777,8 @@ fn rehash_phpx_packages(project_dir: &Path, specs: &[String]) -> Result<Vec<Stri
 /// Returns the installed version on success.
 fn install_phpx_package(
     client: &LinkhashClient,
+    registry: &str,
+    token: Option<&str>,
     name: &str,
     version_range: &str,
     project_dir: &std::path::Path,
@@ -766,21 +786,35 @@ fn install_phpx_package(
     // Resolve the version
     let resolved = client.resolve(name, version_range)?;
 
-    // Determine target: php_modules/@scope/name
+    // Download into a disposable sibling. The existing package stays in
+    // place until the registry digest has passed.
     let target = project_dir.join("php_modules").join(name);
-
-    // Remove existing installation if present
-    if target.exists() {
-        std::fs::remove_dir_all(&target)?;
+    let staging = target
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("package target has no parent"))?
+        .join(format!(".deka-install-{}", std::process::id()));
+    if staging.exists() {
+        std::fs::remove_dir_all(&staging)?;
     }
-
-    // Download
-    client.download(name, &resolved.version, &target)?;
+    client.download(name, &resolved.version, &staging)?;
 
     // Compute integrity hashes for the installed package so the lock matches
     // what the module validator recomputes at load time.
-    let integrity = modules_php::integrity::compute_package_integrity(&target)
+    let integrity = modules_php::integrity::compute_package_integrity(&staging)
         .map_err(|err| anyhow::anyhow!("integrity hash failed for {}: {}", name, err))?;
+    let advertised = fetch_package_digest(registry, token, name, &resolved.version)?;
+    if let Err(err) = verify_package_digest(name, &advertised, &integrity) {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(err);
+    }
+
+    if target.exists() {
+        std::fs::remove_dir_all(&target)?;
+    }
+    std::fs::rename(&staging, &target).or_else(|_| {
+        copy_dir_all(&staging, &target)?;
+        std::fs::remove_dir_all(&staging)
+    })?;
 
     // Update deka.lock with the resolved version + integrity hashes
     update_deka_lock(
@@ -792,6 +826,21 @@ fn install_phpx_package(
     )?;
 
     Ok(resolved.version)
+}
+
+fn copy_dir_all(source: &std::path::Path, target: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(target)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+        if source_path.is_dir() {
+            copy_dir_all(&source_path, &target_path)?;
+        } else {
+            std::fs::copy(source_path, target_path)?;
+        }
+    }
+    Ok(())
 }
 
 /// Update deka.lock with the installed package version.
