@@ -530,7 +530,7 @@ fn write_bundled_package_manifest(name: &str, destination: &Path) -> Result<()> 
         "index.phpx"
     };
     let manifest = format!(
-        "{{\n  \"name\": \"{}\",\n  \"version\": \"{}\",\n  \"description\": \"PHPX stdlib: {}\",\n  \"main\": \"{}\",\n  \"deka.security\": {{ \"allow\": {{ \"run\": true }} }}\n}}\n",
+        "{{\n  \"name\": \"{}\",\n  \"version\": \"{}\",\n  \"description\": \"PHPX stdlib: {}\",\n  \"main\": \"{}\",\n  \"security\": {{ \"allow\": {{ \"run\": true }} }}\n}}\n",
         name, BUNDLED_STDLIB_VERSION, package_name, main
     );
     let target = destination.join("deka.json");
