@@ -265,7 +265,7 @@ fn free_port() -> u16 {
 
 fn manifest_source(version: &str) -> String {
     format!(
-        "{{\n  \"name\": \"@tana/store\",\n  \"version\": \"{version}\",\n  \"deka.security\": {{ \"allow\": {{}} }}\n}}\n"
+        "{{\n  \"name\": \"@tana/store\",\n  \"version\": \"{version}\",\n  \"security\": {{ \"allow\": {{}} }}\n}}\n"
     )
 }
 
