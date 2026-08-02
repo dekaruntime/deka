@@ -174,6 +174,7 @@ pub fn cmd_update(context: &Context) {
         let (registry_url, token) = get_registry_config(context);
         let client = LinkhashClient::new(&registry_url, token.as_deref());
         let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let mut update_failed = false;
 
         for spec in &phpx_specs {
             let (name, version_range) = parse_spec_with_version(spec);
@@ -190,8 +191,16 @@ pub fn cmd_update(context: &Context) {
                 }
                 Err(err) => {
                     stdio::error("update", &format!("failed to update {}: {}", name, err));
+                    update_failed = true;
                 }
             }
+        }
+
+        // An integrity rejection is a failed update, even when every request
+        // was for a PHPX package and the generic installer has no work left.
+        // Rollout callers use the process status as the success signal.
+        if update_failed {
+            std::process::exit(1);
         }
     }
 
