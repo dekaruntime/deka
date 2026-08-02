@@ -14,7 +14,18 @@ fn update_process_rejects_tampered_missing_and_malformed_digests() {
         DigestCase::Missing,
         DigestCase::Malformed,
     ] {
-        assert_update_rejected(case);
+        assert_update_rejected(case, false);
+    }
+}
+
+#[test]
+fn shop_update_process_rejects_tampered_missing_and_malformed_digests() {
+    for case in [
+        DigestCase::Tampered,
+        DigestCase::Missing,
+        DigestCase::Malformed,
+    ] {
+        assert_update_rejected(case, true);
     }
 }
 
@@ -25,16 +36,75 @@ enum DigestCase {
     Malformed,
 }
 
-fn assert_update_rejected(case: DigestCase) {
+fn assert_update_rejected(case: DigestCase, shop_mode: bool) {
     let project = tempfile::tempdir().expect("project tempdir");
-    let package = project.path().join("php_modules/@tana/store");
+    let worktree = if shop_mode {
+        project.path().join("store/tenants/shop_alpha")
+    } else {
+        project.path().to_path_buf()
+    };
+    std::fs::create_dir_all(&worktree).expect("worktree directory");
+    if shop_mode {
+        std::fs::write(
+            worktree.join("deka.json"),
+            r#"{"dependencies":{"@tana/store":"1.0.0"}}"#,
+        )
+        .expect("shop manifest");
+        std::fs::write(
+            worktree.join("deka.lock"),
+            json!({
+                "lockfileVersion": 1,
+                "packages": {
+                    "@tana/store": ["0.9.0", "linkhash:@tana/store", {}, ""]
+                }
+            })
+            .to_string(),
+        )
+        .expect("shop lock");
+        let init = Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(&worktree)
+            .status()
+            .expect("init shop git repo");
+        assert!(init.success(), "git init failed");
+        let config_name = Command::new("git")
+            .args(["config", "user.name", "fixture"])
+            .current_dir(&worktree)
+            .status()
+            .expect("configure git user name");
+        assert!(config_name.success(), "git config user.name failed");
+        let config_email = Command::new("git")
+            .args(["config", "user.email", "fixture@example.test"])
+            .current_dir(&worktree)
+            .status()
+            .expect("configure git user email");
+        assert!(config_email.success(), "git config user.email failed");
+    }
+
+    let package = worktree.join("php_modules/@tana/store");
     std::fs::create_dir_all(&package).expect("package directory");
     std::fs::write(package.join("marker.phpx"), "old\n").expect("old package marker");
+
+    let original_lock = std::fs::read(worktree.join("deka.lock")).ok();
+    if shop_mode {
+        let add = Command::new("git")
+            .args(["add", "deka.json", "deka.lock", "php_modules"])
+            .current_dir(&worktree)
+            .status()
+            .expect("stage shop fixture");
+        assert!(add.success(), "git add failed");
+        let commit = Command::new("git")
+            .args(["commit", "--quiet", "-m", "fixture"])
+            .current_dir(&worktree)
+            .status()
+            .expect("commit shop fixture");
+        assert!(commit.success(), "git commit failed");
+    }
 
     let server = FixtureServer::start(case);
     let cli = std::env::var("CARGO_BIN_EXE_cli").expect("Cargo must provide the cli binary");
     let output = Command::new(cli)
-        .current_dir(project.path())
+        .current_dir(&worktree)
         .args(["update", "@tana/store@1.0.0"])
         .env("LINKHASH_REGISTRY_URL", &server.url)
         .output()
@@ -50,7 +120,14 @@ fn assert_update_rejected(case: DigestCase) {
         std::fs::read_to_string(package.join("marker.phpx")).expect("old marker remains"),
         "old\n"
     );
-    assert!(!project.path().join("deka.lock").exists());
+    if shop_mode {
+        assert_eq!(
+            std::fs::read(worktree.join("deka.lock")).expect("shop lock remains"),
+            original_lock.expect("original shop lock")
+        );
+    } else {
+        assert!(!worktree.join("deka.lock").exists());
+    }
 }
 
 struct FixtureServer {

@@ -154,6 +154,7 @@ pub fn cmd_update(context: &Context) {
     if let Some(shop_dir) = detect_shop_working_tree() {
         if let Err(err) = run_shop_update(context, &shop_dir) {
             stdio::error("update", &err);
+            std::process::exit(1);
         }
         return;
     }
@@ -214,11 +215,13 @@ pub fn cmd_update(context: &Context) {
             if let Err(err) = runtime.block_on(run_install(payload)) {
                 let message = err.to_string();
                 stdio::error("update", &message);
+                std::process::exit(1);
             }
         }
         Err(err) => {
             let message = err.to_string();
             stdio::error("update", &message);
+            std::process::exit(1);
         }
     }
 }
