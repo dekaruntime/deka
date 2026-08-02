@@ -1,8 +1,8 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -83,9 +83,25 @@ pub fn write_lockfile(lock: &DekaLock) -> Result<()> {
 }
 
 pub fn write_lockfile_at(path: &Path, lock: &DekaLock) -> Result<()> {
-    let mut file = File::create(&path)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("lock path has no parent"))?;
+    fs::create_dir_all(parent)?;
+    let temp = parent.join(format!(
+        ".{}.tmp-{}-{}",
+        LOCKFILE_NAME,
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default()
+    ));
+    let mut file = File::create(&temp)?;
     serde_json::to_writer_pretty(&mut file, lock)?;
     file.write_all(b"\n")?;
+    file.sync_all()?;
+    fs::rename(&temp, path)?;
+    fs::File::open(parent)?.sync_all()?;
     Ok(())
 }
 
