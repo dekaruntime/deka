@@ -1,9 +1,14 @@
-use crate::{lock, payload::InstallPayload, spec::parse_package_spec};
-use anyhow::{Context, Result, anyhow, bail};
+use crate::{
+    lock,
+    payload::InstallPayload,
+    registry_integrity::{fetch_package_digest, verify_package_digest},
+    spec::parse_package_spec,
+};
+use anyhow::{anyhow, bail, Context, Result};
 use linkhash_client::LinkhashClient;
 use modules_php::integrity::compute_package_integrity;
 use runtime_core::module_spec::canonical_php_package_spec;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, VecDeque},
     fs,
@@ -104,6 +109,14 @@ fn run_php_install_in(
 
         let package_integrity = compute_package_integrity(&staging)
             .map_err(|err| anyhow!("failed to compute package integrity for {}: {}", name, err))?;
+        if install_source.requires_registry_digest {
+            let digest =
+                fetch_package_digest(&registry, token.as_deref(), &name, &install_source.version)?;
+            if let Err(err) = verify_package_digest(&name, &digest, &package_integrity) {
+                cleanup_install_staging(&staging);
+                return Err(err);
+            }
+        }
 
         if let Some(locked) = &locked {
             if let Err(err) =
@@ -373,6 +386,7 @@ struct InstalledSource {
     repo: Option<String>,
     git_ref: Option<String>,
     source: &'static str,
+    requires_registry_digest: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -396,6 +410,7 @@ fn install_from_linkhash(
         repo: resolved.repo,
         git_ref: resolved.git_ref,
         source: "linkhash",
+        requires_registry_digest: true,
     })
 }
 
@@ -450,6 +465,7 @@ fn install_from_bundled_stdlib(
         repo: None,
         git_ref: None,
         source: "linkhash",
+        requires_registry_digest: false,
     })
 }
 
@@ -857,13 +873,13 @@ fn php_modules_path_for_in(project_dir: &Path, package_name: &str) -> Result<Pat
 #[cfg(test)]
 mod tests {
     use super::{
-        InstalledSource, LockedPackage, bundled_stdlib_prefix, collect_project_install_specs,
-        enqueue_package_spec, install_from_bundled_stdlib, locked_package, package_dependencies,
-        php_modules_path_for, rehash_php_packages_in, reject_vendored_php_modules,
-        replace_installed_package, run_php_install_in, verify_locked_integrity,
+        bundled_stdlib_prefix, collect_project_install_specs, enqueue_package_spec,
+        install_from_bundled_stdlib, locked_package, package_dependencies, php_modules_path_for,
+        rehash_php_packages_in, reject_vendored_php_modules, replace_installed_package,
+        run_php_install_in, verify_locked_integrity, InstalledSource, LockedPackage,
     };
     use crate::{lock, payload::InstallPayload};
-    use modules_php::integrity::{PackageIntegrity, compute_package_integrity};
+    use modules_php::integrity::{compute_package_integrity, PackageIntegrity};
     use serde_json::json;
     use std::{collections::BTreeMap, fs};
 
@@ -1150,6 +1166,7 @@ mod tests {
             repo: None,
             git_ref: None,
             source: "linkhash",
+            requires_registry_digest: false,
         };
         let integrity = PackageIntegrity {
             module_graph: "attacker-module".to_string(),
@@ -1274,12 +1291,11 @@ mod tests {
             fs::read_to_string(destination.join("index.phpx")).expect("read replaced"),
             "export function ok() { return 'verified'; }\n"
         );
-        assert!(
-            !tmp.path()
-                .join("php_modules")
-                .join(".deka-install-test")
-                .exists()
-        );
+        assert!(!tmp
+            .path()
+            .join("php_modules")
+            .join(".deka-install-test")
+            .exists());
     }
 
     #[test]
@@ -1392,8 +1408,11 @@ mod tests {
         let tmp = tempfile::tempdir().expect("project");
         let alias = tmp.path().join("php_modules/string");
         fs::create_dir_all(&alias).expect("tracked unscoped alias");
-        fs::write(alias.join("index.phpx"), "export const compatibility = true;\n")
-            .expect("write tracked alias");
+        fs::write(
+            alias.join("index.phpx"),
+            "export const compatibility = true;\n",
+        )
+        .expect("write tracked alias");
 
         run_php_install_in(
             vec!["@deka/string".to_string()],
@@ -1403,18 +1422,15 @@ mod tests {
             None,
         )
         .expect("bundled deka install");
-        assert!(
-            tmp.path()
-                .join("php_modules/@deka/string/index.phpx")
-                .is_file()
-        );
+        assert!(tmp
+            .path()
+            .join("php_modules/@deka/string/index.phpx")
+            .is_file());
         let lock_path = tmp.path().join("deka.lock");
         assert!(lock_path.is_file());
-        assert!(
-            lock::read_lockfile_at(&lock_path)
-                .packages
-                .contains_key("@deka/string")
-        );
+        assert!(lock::read_lockfile_at(&lock_path)
+            .packages
+            .contains_key("@deka/string"));
         assert_eq!(
             fs::read_to_string(alias.join("index.phpx")).expect("tracked alias survives"),
             "export const compatibility = true;\n"
@@ -1511,9 +1527,9 @@ mod tests {
         packages: BTreeMap<String, serde_json::Value>,
     ) -> (String, tokio::sync::oneshot::Sender<()>) {
         use axum::{
-            Json, Router,
             extract::{Path as AxumPath, Query, State},
             routing::get,
+            Json, Router,
         };
         use std::{collections::HashMap, sync::Arc};
         #[derive(Clone)]
@@ -1529,9 +1545,18 @@ mod tests {
             Json(json!({ "versions": versions }))
         }
         async fn resolve(
-            AxumPath((_scope, _package, version)): AxumPath<(String, String, String)>,
+            AxumPath((scope, package, version)): AxumPath<(String, String, String)>,
+            State(Fixture(packages)): State<Fixture>,
         ) -> Json<serde_json::Value> {
-            Json(json!({ "version": version, "repo": "fixture", "git_ref": "fixture" }))
+            let name = format!("@{scope}/{package}");
+            let dependencies = packages.get(&name).cloned().unwrap_or_else(|| json!({}));
+            let digest = fixture_package_digest(&name, &version, &dependencies);
+            Json(json!({
+                "version": version,
+                "repo": "fixture",
+                "git_ref": "fixture",
+                "digest": format!("sha256:{digest}"),
+            }))
         }
         async fn tree(
             AxumPath((scope, package, _version)): AxumPath<(String, String, String)>,
@@ -1590,6 +1615,27 @@ mod tests {
                 .expect("fixture registry");
         });
         (format!("http://{address}"), shutdown_tx)
+    }
+
+    fn fixture_package_digest(
+        name: &str,
+        version: &str,
+        dependencies: &serde_json::Value,
+    ) -> String {
+        let root = tempfile::tempdir().expect("digest fixture tempdir");
+        fs::write(
+            root.path().join("deka.json"),
+            json!({ "name": name, "version": version, "dependencies": dependencies }).to_string(),
+        )
+        .expect("digest fixture manifest");
+        fs::write(
+            root.path().join("index.phpx"),
+            "export const fixture = true;\n",
+        )
+        .expect("digest fixture module");
+        compute_package_integrity(root.path())
+            .expect("digest fixture integrity")
+            .fs_graph
     }
 }
 
