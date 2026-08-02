@@ -4,18 +4,20 @@ use crate::{
     registry_integrity::{fetch_package_digest, verify_package_digest},
     spec::parse_package_spec,
 };
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{anyhow, bail, Context, Result};
 use linkhash_client::LinkhashClient;
 use modules_php::integrity::compute_package_integrity;
 use runtime_core::module_spec::canonical_php_package_spec;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, VecDeque},
     fs,
     path::{Path, PathBuf},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
+
+const STAGED_MARKER: &str = ".deka-staged-package";
 
 mod bundled_stdlib {
     include!(concat!(env!("OUT_DIR"), "/stdlib_snapshot.rs"));
@@ -209,6 +211,7 @@ fn run_php_install_in_transaction(
             packages: installed.clone(),
         },
     )?;
+    pause_for_kill_test("after-lock");
 
     transaction.finish()?;
 
@@ -542,6 +545,8 @@ impl InstallTransaction {
             ));
             fs::copy(lock_path, &backup)
                 .with_context(|| format!("failed to snapshot {}", lock_path.display()))?;
+            fs::File::open(&backup)?.sync_all()?;
+            sync_directory(project_dir)?;
             Some(backup)
         } else {
             None
@@ -569,10 +574,12 @@ impl InstallTransaction {
         let file = fs::OpenOptions::new().read(true).open(&temp)?;
         file.sync_all()?;
         fs::rename(temp, &self.journal_path)?;
+        sync_directory(parent)?;
         Ok(())
     }
 
     fn commit_package(&mut self, staging: &Path, destination: &Path) -> Result<()> {
+        mark_staging_tree(staging)?;
         self.journal.packages.push(InstallJournalPackage {
             staging: staging.to_path_buf(),
             destination: destination.to_path_buf(),
@@ -580,12 +587,14 @@ impl InstallTransaction {
             swapped: false,
         });
         self.persist()?;
+        pause_for_kill_test("before-swap");
         replace_installed_package(staging, destination)?;
         self.journal
             .packages
             .last_mut()
             .expect("journal entry was just added")
             .swapped = true;
+        pause_for_kill_test("after-swap");
         self.persist()
     }
 
@@ -593,10 +602,16 @@ impl InstallTransaction {
         // Clearing the journal is the commit point. Cleanup after this point
         // is best-effort and cannot make the live package/lock inconsistent.
         fs::remove_file(&self.journal_path)?;
+        sync_directory(
+            self.journal_path
+                .parent()
+                .ok_or_else(|| anyhow!("transaction journal has no parent"))?,
+        )?;
         if let Some(backup) = self.journal.lock_backup {
             let _ = fs::remove_file(backup);
         }
         for package in self.journal.packages {
+            let _ = fs::remove_file(package.destination.join(STAGED_MARKER));
             if package.had_destination {
                 cleanup_install_staging(&package.staging);
             } else if let Some(root) = package.staging.parent() {
@@ -613,6 +628,7 @@ impl InstallTransaction {
         destination: &Path,
         point: &str,
     ) -> Result<()> {
+        mark_staging_tree(staging)?;
         self.journal.packages.push(InstallJournalPackage {
             staging: staging.to_path_buf(),
             destination: destination.to_path_buf(),
@@ -634,11 +650,19 @@ impl InstallTransaction {
     }
 }
 
-#[cfg(test)]
 fn pause_for_kill_test(point: &str) {
     if std::env::var("DEKA_PM_KILL_POINT").ok().as_deref() == Some(point) {
         std::thread::sleep(std::time::Duration::from_secs(30));
     }
+}
+
+fn mark_staging_tree(staging: &Path) -> Result<()> {
+    fs::write(staging.join(STAGED_MARKER), b"staged\n")?;
+    sync_directory(
+        staging
+            .parent()
+            .ok_or_else(|| anyhow!("staging path has no parent"))?,
+    )
 }
 
 fn unique_suffix() -> u128 {
@@ -656,14 +680,20 @@ fn recover_install_transaction(project_dir: &Path) -> Result<()> {
     let journal: InstallJournal = serde_json::from_slice(&fs::read(&journal_path)?)
         .context("failed to parse install transaction journal")?;
     for package in journal.packages.iter().rev() {
-        if package.swapped && package.had_destination {
+        let exchange_completed = package.swapped
+            || package.destination.join(STAGED_MARKER).is_file()
+            || (!package.had_destination && package.destination.exists());
+        if exchange_completed && package.had_destination {
             if package.staging.exists() && package.destination.exists() {
                 swap_directories(&package.staging, &package.destination)?;
             } else if package.staging.exists() {
                 fs::rename(&package.staging, &package.destination)?;
             }
-        } else if package.swapped && package.destination.exists() {
+        } else if exchange_completed && package.destination.exists() {
             fs::remove_dir_all(&package.destination)?;
+        }
+        if let Some(parent) = package.destination.parent() {
+            sync_directory(parent)?;
         }
     }
     if let Some(backup) = journal.lock_backup {
@@ -671,12 +701,16 @@ fn recover_install_transaction(project_dir: &Path) -> Result<()> {
             if journal.lock_path.exists() {
                 fs::remove_file(&journal.lock_path)?;
             }
-            fs::rename(backup, journal.lock_path)?;
+            fs::rename(backup, &journal.lock_path)?;
+            if let Some(parent) = journal.lock_path.parent() {
+                sync_directory(parent)?;
+            }
         }
     } else if journal.lock_path.exists() {
         fs::remove_file(journal.lock_path)?;
     }
-    let _ = fs::remove_file(journal_path);
+    fs::remove_file(journal_path)?;
+    sync_directory(project_dir)?;
     Ok(())
 }
 
@@ -690,6 +724,9 @@ fn replace_installed_package(staging: &Path, destination: &Path) -> Result<()> {
     } else {
         fs::rename(staging, destination)
             .with_context(|| format!("failed to install {}", destination.display()))?;
+    }
+    if let Some(parent) = destination.parent() {
+        sync_directory(parent)?;
     }
     Ok(())
 }
@@ -717,15 +754,39 @@ fn swap_directories(first: &Path, second: &Path) -> Result<()> {
 
     #[cfg(not(target_os = "macos"))]
     {
-        let backup = second.with_file_name(format!(".deka-backup-{}", unique_suffix()));
-        fs::rename(second, &backup)?;
-        if let Err(error) = fs::rename(first, second) {
-            let _ = fs::rename(&backup, second);
-            return Err(error.into());
+        #[cfg(target_os = "linux")]
+        {
+            use std::ffi::CString;
+            use std::os::unix::ffi::OsStrExt;
+            let first = CString::new(first.as_os_str().as_bytes())?;
+            let second = CString::new(second.as_os_str().as_bytes())?;
+            let result = unsafe {
+                libc::syscall(
+                    libc::SYS_renameat2,
+                    libc::AT_FDCWD,
+                    first.as_ptr(),
+                    libc::AT_FDCWD,
+                    second.as_ptr(),
+                    libc::RENAME_EXCHANGE,
+                )
+            };
+            if result != 0 {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            return Ok(());
         }
-        fs::remove_dir_all(backup)?;
-        Ok(())
+
+        #[cfg(not(target_os = "linux"))]
+        compile_error!("directory replacement must use an atomic platform primitive");
     }
+}
+
+fn sync_directory(path: &Path) -> Result<()> {
+    fs::File::open(path)
+        .with_context(|| format!("failed to open directory {} for sync", path.display()))?
+        .sync_all()
+        .with_context(|| format!("failed to sync directory {}", path.display()))?;
+    Ok(())
 }
 
 fn cleanup_install_staging(staging: &Path) {
@@ -1071,14 +1132,14 @@ fn php_modules_path_for_in(project_dir: &Path, package_name: &str) -> Result<Pat
 #[cfg(test)]
 mod tests {
     use super::{
-        InstallTransaction, InstalledSource, LockedPackage, bundled_stdlib_prefix,
-        collect_project_install_specs, enqueue_package_spec, install_from_bundled_stdlib,
-        locked_package, package_dependencies, pause_for_kill_test, php_modules_path_for,
-        recover_install_transaction, rehash_php_packages_in, reject_vendored_php_modules,
-        run_php_install_in, verify_locked_integrity,
+        bundled_stdlib_prefix, collect_project_install_specs, enqueue_package_spec,
+        install_from_bundled_stdlib, locked_package, package_dependencies, pause_for_kill_test,
+        php_modules_path_for, recover_install_transaction, rehash_php_packages_in,
+        reject_vendored_php_modules, run_php_install_in, verify_locked_integrity,
+        InstallTransaction, InstalledSource, LockedPackage,
     };
     use crate::{lock, payload::InstallPayload};
-    use modules_php::integrity::{PackageIntegrity, compute_package_integrity};
+    use modules_php::integrity::{compute_package_integrity, PackageIntegrity};
     use serde_json::json;
     use std::{collections::BTreeMap, fs};
 
@@ -1495,12 +1556,11 @@ mod tests {
             fs::read_to_string(destination.join("index.phpx")).expect("read replaced"),
             "export function ok() { return 'verified'; }\n"
         );
-        assert!(
-            !tmp.path()
-                .join("php_modules")
-                .join(".deka-install-test")
-                .exists()
-        );
+        assert!(!tmp
+            .path()
+            .join("php_modules")
+            .join(".deka-install-test")
+            .exists());
     }
 
     #[test]
@@ -1599,6 +1659,71 @@ mod tests {
                 fs::read_to_string(lock_path).expect("lock"),
                 old_lock,
                 "point {point}"
+            );
+        }
+    }
+
+    #[test]
+    fn real_cli_invocation_recovers_each_atomic_swap_boundary() {
+        let cli = std::env::var_os("DEKA_PM_CLI_BIN")
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                option_env!("CARGO_TARGET_DIR")
+                    .map(std::path::PathBuf::from)
+                    .map(|target| target.join("release/cli"))
+            })
+            .unwrap_or_else(|| {
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../target/release/cli")
+            });
+        assert!(
+            cli.is_file(),
+            "build the release CLI before this test: {}",
+            cli.display()
+        );
+
+        for point in ["before-swap", "after-swap", "after-journal", "after-lock"] {
+            let tmp = tempfile::tempdir().expect("tmp");
+            fs::write(
+                tmp.path().join("deka.json"),
+                json!({"dependencies": {"@deka/core": "0.1.0"}}).to_string(),
+            )
+            .expect("manifest");
+
+            let mut child = std::process::Command::new(&cli)
+                .args(["install", "--quiet"])
+                .current_dir(tmp.path())
+                .env("LINKHASH_REGISTRY_URL", "http://127.0.0.1:1")
+                .env("DEKA_PM_KILL_POINT", point)
+                .spawn()
+                .expect("spawn real deka install");
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            child.kill().expect("kill real installer");
+            let _ = child.wait();
+
+            let status = std::process::Command::new(&cli)
+                .args(["install", "--quiet"])
+                .current_dir(tmp.path())
+                .env("LINKHASH_REGISTRY_URL", "http://127.0.0.1:1")
+                .status()
+                .expect("run recovery install");
+            assert!(status.success(), "recovery install failed at {point}");
+
+            let package = tmp.path().join("php_modules/@deka/core");
+            assert!(package.join("bridge.phpx").is_file(), "package at {point}");
+            assert!(!tmp.path().join(".deka-install-transaction.json").exists());
+            let lock = lock::read_lockfile_at(&tmp.path().join("deka.lock"));
+            let entry = lock.packages.get("@deka/core").expect("lock entry");
+            let integrity = compute_package_integrity(&package).expect("package integrity");
+            assert_eq!(
+                entry.2["moduleGraph"]["hash"].as_str(),
+                Some(integrity.module_graph.as_str()),
+                "module graph at {point}"
+            );
+            assert_eq!(
+                entry.2["fsGraph"]["hash"].as_str(),
+                Some(integrity.fs_graph.as_str()),
+                "filesystem graph at {point}"
             );
         }
     }
@@ -1727,18 +1852,15 @@ mod tests {
             None,
         )
         .expect("bundled deka install");
-        assert!(
-            tmp.path()
-                .join("php_modules/@deka/string/index.phpx")
-                .is_file()
-        );
+        assert!(tmp
+            .path()
+            .join("php_modules/@deka/string/index.phpx")
+            .is_file());
         let lock_path = tmp.path().join("deka.lock");
         assert!(lock_path.is_file());
-        assert!(
-            lock::read_lockfile_at(&lock_path)
-                .packages
-                .contains_key("@deka/string")
-        );
+        assert!(lock::read_lockfile_at(&lock_path)
+            .packages
+            .contains_key("@deka/string"));
         assert_eq!(
             fs::read_to_string(alias.join("index.phpx")).expect("tracked alias survives"),
             "export const compatibility = true;\n"
@@ -1835,9 +1957,9 @@ mod tests {
         packages: BTreeMap<String, serde_json::Value>,
     ) -> (String, tokio::sync::oneshot::Sender<()>) {
         use axum::{
-            Json, Router,
             extract::{Path as AxumPath, Query, State},
             routing::get,
+            Json, Router,
         };
         use std::{collections::HashMap, sync::Arc};
         #[derive(Clone)]

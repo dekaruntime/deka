@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -101,6 +101,7 @@ pub fn write_lockfile_at(path: &Path, lock: &DekaLock) -> Result<()> {
     file.write_all(b"\n")?;
     file.sync_all()?;
     fs::rename(&temp, path)?;
+    fs::File::open(parent)?.sync_all()?;
     Ok(())
 }
 
