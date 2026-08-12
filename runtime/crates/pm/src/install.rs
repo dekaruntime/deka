@@ -1102,7 +1102,15 @@ fn verify_locked_integrity(
             installed.version
         );
     }
-    if locked.resolved != format!("linkhash:{}", name) {
+    let allowed_sources = ["linkhash", "github", "deka.gg"];
+    let Some((source, _)) = locked.resolved.split_once(':') else {
+        bail!(
+            "integrity verification failed for {}: malformed lock source {}",
+            name,
+            locked.resolved
+        );
+    };
+    if !allowed_sources.contains(&source) {
         bail!(
             "integrity verification failed for {}: unsupported lock source {}",
             name,
