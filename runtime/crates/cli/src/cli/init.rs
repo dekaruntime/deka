@@ -23,6 +23,8 @@ const DEFAULT_PHP_PACKAGES: &[&str] = &[
     "@deka/time",
 ];
 
+const DEFAULT_DEKA_PHP: &str = include_str!("../../../../php_modules/deka.php");
+
 pub fn register(registry: &mut Registry) {
     registry.add_command(COMMAND);
 }
@@ -73,17 +75,16 @@ pub fn cmd(context: &Context) {
         return;
     }
 
+    if let Err(err) = std::fs::create_dir_all(target.join("app")) {
+        stdio_error("init", &format!("failed to create app/: {}", err));
+        return;
+    }
     if let Err(err) = ensure_file(
-        &target.join("main.phpx"),
+        &target.join("app").join("main.phpx"),
         default_main_phpx().to_string(),
         &mut touched,
     ) {
         stdio_error("init", &err);
-        return;
-    }
-
-    if let Err(err) = std::fs::create_dir_all(target.join("app")) {
-        stdio_error("init", &format!("failed to create app/: {}", err));
         return;
     }
     if let Err(err) = ensure_file(
@@ -97,6 +98,19 @@ pub fn cmd(context: &Context) {
     if let Err(err) = ensure_file(
         &target.join("app").join("layout.phpx"),
         default_app_layout_phpx().to_string(),
+        &mut touched,
+    ) {
+        stdio_error("init", &err);
+        return;
+    }
+
+    if let Err(err) = std::fs::create_dir_all(target.join("php_modules")) {
+        stdio_error("init", &format!("failed to create php_modules/: {}", err));
+        return;
+    }
+    if let Err(err) = ensure_file(
+        &target.join("php_modules").join("deka.php"),
+        DEFAULT_DEKA_PHP.to_string(),
         &mut touched,
     ) {
         stdio_error("init", &err);
@@ -189,7 +203,7 @@ fn path_display(path: &Path) -> String {
 
 fn default_deka_json(name: &str) -> String {
     format!(
-        "{{\n  \"name\": \"{}\",\n  \"type\": \"serve\",\n  \"serve\": {{ \"entry\": \"main.phpx\", \"mode\": \"php\" }},\n  \"tasks\": {{ \"dev\": \"deka serve --dev\" }},\n  \"security\": {{\n    \"allow\": {{}},\n    \"deny\": {{}},\n    \"prompt\": true\n  }}\n}}\n",
+        "{{\n  \"name\": \"{}\",\n  \"type\": \"serve\",\n  \"serve\": {{ \"entry\": \"app/main.phpx\", \"mode\": \"php\" }},\n  \"tasks\": {{ \"dev\": \"deka serve --dev\" }},\n  \"security\": {{\n    \"allow\": {{}},\n    \"deny\": {{}},\n    \"prompt\": true\n  }}\n}}\n",
         name
     )
 }
@@ -203,7 +217,7 @@ fn default_app_page_phpx() -> &'static str {
 }
 
 fn default_main_phpx() -> &'static str {
-    "import { Layout } from './app/layout.phpx';\nimport { Page } from './app/page.phpx';\n\nfunction request_path($req: mixed): string {\n    if (isset($_SERVER['PATH_INFO'])) {\n        return normalize_path($_SERVER['PATH_INFO']);\n    }\n    if (isset($_SERVER['REQUEST_URI'])) {\n        return normalize_path($_SERVER['REQUEST_URI']);\n    }\n    if (is_array($req) && array_key_exists('url', $req)) {\n        return normalize_path($req['url']);\n    }\n    if (is_object($req) && isset($req.url)) {\n        return normalize_path($req.url);\n    }\n    return '/';\n}\n\nfunction normalize_path($value: mixed): string {\n    $path = '' . $value;\n    $parts = explode('?', $path, 2);\n    $path = $parts[0];\n    if (strpos($path, '://') !== false) {\n        $segments = explode('/', $path, 4);\n        $path = count($segments) >= 4 ? '/' . $segments[3] : '/';\n    }\n    if ($path === '') return '/';\n    return $path;\n}\n\nfunction App($req: mixed) {\n    $path = request_path($req);\n    if ($path !== '/') {\n        return {\n            status: 404,\n            headers: { 'content-type': 'text/plain; charset=utf-8' },\n            body: 'Not Found',\n        };\n    }\n    return {\n        status: 200,\n        headers: { 'content-type': 'text/html; charset=utf-8' },\n        body: \"<!doctype html>\\n\" . Layout({ children: Page() }),\n    };\n}\n\n$app = App;\n"
+    "import { Layout } from './layout.phpx';\nimport { Page } from './page.phpx';\n\nfunction request_path($req: mixed): string {\n    if (isset($_SERVER['PATH_INFO'])) {\n        return normalize_path($_SERVER['PATH_INFO']);\n    }\n    if (isset($_SERVER['REQUEST_URI'])) {\n        return normalize_path($_SERVER['REQUEST_URI']);\n    }\n    if (is_array($req) && array_key_exists('url', $req)) {\n        return normalize_path($req['url']);\n    }\n    if (is_object($req) && isset($req.url)) {\n        return normalize_path($req.url);\n    }\n    return '/';\n}\n\nfunction normalize_path($value: mixed): string {\n    $path = '' . $value;\n    $parts = explode('?', $path, 2);\n    $path = $parts[0];\n    if (strpos($path, '://') !== false) {\n        $segments = explode('/', $path, 4);\n        $path = count($segments) >= 4 ? '/' . $segments[3] : '/';\n    }\n    if ($path === '') return '/';\n    return $path;\n}\n\nfunction App($req: mixed) {\n    $path = request_path($req);\n    if ($path !== '/') {\n        return {\n            status: 404,\n            headers: { 'content-type': 'text/plain; charset=utf-8' },\n            body: 'Not Found',\n        };\n    }\n    return {\n        status: 200,\n        headers: { 'content-type': 'text/html; charset=utf-8' },\n        body: \"<!doctype html>\\n\" . Layout({ children: Page() }),\n    };\n}\n\n$app = App;\n"
 }
 
 fn default_app_layout_phpx() -> &'static str {
@@ -221,8 +235,8 @@ mod tests {
     #[test]
     fn default_main_uses_explicit_page_layout_entry() {
         let template = default_main_phpx();
-        assert!(template.contains("import { Layout } from './app/layout.phpx';"));
-        assert!(template.contains("import { Page } from './app/page.phpx';"));
+        assert!(template.contains("import { Layout } from './layout.phpx';"));
+        assert!(template.contains("import { Page } from './page.phpx';"));
         assert!(template.contains("Layout({ children: Page() })"));
         assert!(template.contains("body: \"<!doctype html>\\n\""));
         assert!(template.contains("if ($path !== '/')"));
