@@ -164,6 +164,9 @@ function listFiles(rootDir) {
       continue
     }
     const entryPath = path.join(rootDir, entry.name)
+    if (entry.isSymbolicLink()) {
+      continue
+    }
     if (entry.isDirectory()) {
       files.push(...listFiles(entryPath))
     } else {
