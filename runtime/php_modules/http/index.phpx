@@ -18,7 +18,7 @@ import { result_ok, result_err, result_is_ok } from 'core/result'
 
 /// docid: phpx/http/http_get()
 /// <Function name="http_get">
-///   <Description>GET request. Returns Result<HttpResponse, HttpError>.</Description>
+///   <Description>GET request. Returns `Result<HttpResponse, HttpError>`.</Description>
 ///   <ReturnType type="mixed" />
 /// </Function>
 export function http_get($url, $headers = {}) {
@@ -31,7 +31,7 @@ export function http_get($url, $headers = {}) {
 
 /// docid: phpx/http/http_post()
 /// <Function name="http_post">
-///   <Description>POST request with body + content type. Returns Result<HttpResponse, HttpError>.</Description>
+///   <Description>POST request with body + content type. Returns `Result<HttpResponse, HttpError>`.</Description>
 ///   <ReturnType type="mixed" />
 /// </Function>
 export function http_post($url, $content_type, $body, $headers = {}) {
@@ -54,7 +54,7 @@ export function http_post($url, $content_type, $body, $headers = {}) {
 
 /// docid: phpx/http/http_request()
 /// <Function name="http_request">
-///   <Description>Dispatch an HTTP request described by a map. Returns Result<HttpResponse, HttpError>.</Description>
+///   <Description>Dispatch an HTTP request described by a map. Returns `Result<HttpResponse, HttpError>`.</Description>
 ///   <ReturnType type="mixed" />
 /// </Function>
 export function http_request($req) {
@@ -189,7 +189,7 @@ export function http_client($opts = {}) {
 
 /// docid: phpx/http/ws_connect()
 /// <Function name="ws_connect">
-///   <Description>Open a WebSocket. Returns Result<WsHandle, HttpError>.</Description>
+///   <Description>Open a WebSocket. Returns `Result<WsHandle, HttpError>`.</Description>
 ///   <ReturnType type="mixed" />
 /// </Function>
 export function ws_connect($url, $opts = {}) {
