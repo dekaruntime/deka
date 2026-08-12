@@ -1052,6 +1052,18 @@ function strStartsWith($value, $prefix) {
   return substr($sv, 0, strlen($sp)) === $sp
 }
 
+function strEndsWith($value, $suffix) {
+  $sv = '' . $value
+  $ss = '' . $suffix
+  if (strlen($ss) > strlen($sv)) {
+    return false
+  }
+  if ($ss === '') {
+    return true
+  }
+  return substr($sv, strlen($sv) - strlen($ss)) === $ss
+}
+
 function oauthB64Url($raw) {
   $b64 = base64_encode($raw)
   $out = str_replace('+', '-', $b64)
@@ -4201,20 +4213,20 @@ function fetchPackageDetail($orgHandle, $name, $auth) {
     }
   }
 
-  if ($org === 'deka' || $activeVersion !== '') {
-    $tree = $org === 'deka' ? $publicTree : fetchRemoteReleaseTree($org, $pkgName, $activeVersion)
-    if (rowValue($tree, 'ok', false)) {
-      $treeEntries = rowValue(rowValue($tree, 'value', []), 'entries', [])
-      $readmePath = $org === 'deka' ? publicReadmePath($treeEntries) : ''
-      if ($readmePath !== '') {
-        $readmeBlob = fetchPublicDekaRepoBlob($pkgName, $readmePath)
-        if (rowValue($readmeBlob, 'ok', false)) {
-          $readmeText = '' . rowValue(rowValue($readmeBlob, 'value', []), 'content', '')
+    if ($org === 'deka' || $activeVersion !== '') {
+      $tree = $org === 'deka' ? $publicTree : fetchRemoteReleaseTree($org, $pkgName, $activeVersion)
+      if (rowValue($tree, 'ok', false)) {
+        $treeEntries = normalizeTreeEntries(rowValue(rowValue($tree, 'value', []), 'entries', []))
+        $readmePath = $org === 'deka' ? publicReadmePath($treeEntries) : ''
+        if ($readmePath !== '') {
+          $readmeBlob = fetchPublicDekaRepoBlob($pkgName, $readmePath)
+          if (rowValue($readmeBlob, 'ok', false)) {
+            $readmeText = '' . rowValue(rowValue($readmeBlob, 'value', []), 'content', '')
+          }
         }
-      }
-      if ($selectedFile === '' && is_array($treeEntries) && count($treeEntries) > 0) {
-        $selectedFile = '' . rowValue($treeEntries[0], 'path', '')
-      }
+        if ($selectedFile === '' && is_array($treeEntries) && count($treeEntries) > 0) {
+          $selectedFile = defaultTreeFilePath($treeEntries)
+        }
       if ($selectedFile !== '') {
         $blob = $org === 'deka'
           ? fetchPublicDekaRepoBlob($pkgName, $selectedFile)
@@ -4438,6 +4450,228 @@ function normalizeVersionFiles($rawFiles, $mainFile = 'index.phpx'): array {
     }
   }
   return $out
+}
+
+function normalizeTreeEntries($entries): array {
+  if (!is_array($entries)) {
+    return []
+  }
+  $out = []
+  foreach ($entries as $entry) {
+    if (!is_array($entry) && !is_object($entry)) {
+      continue
+    }
+    $row = is_array($entry) ? $entry : (array) $entry
+    $path = trim('' . rowValue($row, 'path', rowValue($row, 'name', rowValue($row, 'file', ''))))
+    if ($path === '') {
+      continue
+    }
+    $kind = strtolower(trim('' . rowValue($row, 'kind', rowValue($row, 'type', 'blob'))))
+    if ($kind === 'tree' || $kind === 'dir' || $kind === 'directory') {
+      continue
+    }
+    if ($kind === '') {
+      $kind = 'blob'
+    }
+    $size = rowValue($row, 'sizeBytes', rowValue($row, 'size', null))
+    $out[] = [
+      'path' => $path,
+      'kind' => $kind,
+      'sizeBytes' => is_numeric($size) ? (int) $size : null
+    ]
+  }
+  usort($out, function($a, $b) {
+    $aPath = '' . rowValue($a, 'path', '')
+    $bPath = '' . rowValue($b, 'path', '')
+    if ($aPath === $bPath) {
+      return 0
+    }
+    return $aPath < $bPath ? -1 : 1
+  })
+  return $out
+}
+
+function defaultTreeFilePath($entries): string {
+  if (!is_array($entries)) {
+    return ''
+  }
+  foreach ($entries as $entry) {
+    $path = trim('' . rowValue($entry, 'path', rowValue($entry, 'name', '')))
+    if ($path === '') {
+      continue
+    }
+    return $path
+  }
+  return ''
+}
+
+function buildFileTreeRows($entries): array {
+  $treeEntries = normalizeTreeEntries($entries)
+  $rows = []
+  if (count($treeEntries) === 0) {
+    return $rows
+  }
+  $folderSeen = []
+  foreach ($treeEntries as $entry) {
+    $filePath = '' . rowValue($entry, 'path', '')
+    if ($filePath === '') {
+      continue
+    }
+    $parts = explode('/', $filePath)
+    if (count($parts) > 1) {
+      $folderPath = ''
+      for ($i = 0; $i < count($parts) - 1; $i = $i + 1) {
+        $folderPath = $folderPath === '' ? $parts[$i] : ($folderPath . '/' . $parts[$i])
+        if (!array_key_exists($folderPath, $folderSeen)) {
+          $folderSeen[$folderPath] = [
+            'name' => $parts[$i],
+            'depth' => $i,
+            'path' => $folderPath
+          ]
+        }
+      }
+    }
+    $rows[] = [
+      'kind' => 'file',
+      'path' => $filePath,
+      'name' => $parts[count($parts) - 1],
+      'sizeBytes' => rowValue($entry, 'sizeBytes', null),
+      'depth' => max(0, count($parts) - 1)
+    ]
+  }
+
+  $folders = array_values($folderSeen)
+  usort($folders, function($a, $b) {
+    $aPath = '' . rowValue($a, 'path', '')
+    $bPath = '' . rowValue($b, 'path', '')
+    if ($aPath === $bPath) {
+      return 0
+    }
+    return $aPath < $bPath ? -1 : 1
+  })
+  $folderNodes = []
+  foreach ($folders as $f) {
+    $folderNodes[] = [
+      'kind' => 'dir',
+      'path' => '' . rowValue($f, 'path', ''),
+      'name' => '' . rowValue($f, 'name', ''),
+      'depth' => (int) rowValue($f, 'depth', 0)
+    ]
+  }
+
+  $all = []
+  $filePathSet = []
+  foreach ($treeEntries as $entry) {
+    $path = '' . rowValue($entry, 'path', '')
+    if ($path === '') {
+      continue
+    }
+    $filePathSet[$path] = true
+  }
+  foreach ($folderNodes as $folder) {
+    $all[] = $folder
+  }
+  foreach ($rows as $row) {
+    if (!array_key_exists('' . $row['path'], $filePathSet)) {
+      continue
+    }
+    $all[] = $row
+  }
+  usort($all, function($a, $b) {
+    $aPath = '' . rowValue($a, 'path', '')
+    $bPath = '' . rowValue($b, 'path', '')
+    if ($aPath === $bPath) {
+      return 0
+    }
+    return $aPath < $bPath ? -1 : 1
+  })
+  return $all
+}
+
+function sourceLanguageForPath($path): string {
+  $file = strtolower(trim('' . $path))
+  if (strEndsWith($file, '.json')) {
+    return 'json'
+  }
+  if (strEndsWith($file, '.phpx') || strEndsWith($file, '.php')) {
+    return 'phpx'
+  }
+  if (strEndsWith($file, '.js') || strEndsWith($file, '.ts') || strEndsWith($file, '.tsx')) {
+    return 'javascript'
+  }
+  if (strEndsWith($file, '.rs')) {
+    return 'rust'
+  }
+  if (strEndsWith($file, '.md')) {
+    return 'markdown'
+  }
+  return 'text'
+}
+
+function sourceSyntaxTokenNodes($content, $path): array {
+  $language = sourceLanguageForPath($path)
+  $parts = preg_split('/(\/\/.*$|#.*$|"(?:\\\\.|[^"\\\\])*"|\'(?:\\\\.|[^\'\\\\])*\')/', '' . $content, -1, PREG_SPLIT_DELIM_CAPTURE)
+  if (!is_array($parts)) {
+    return ['' . $content]
+  }
+  $keywords = [
+    'async' => true, 'await' => true, 'const' => true, 'else' => true,
+    'enum' => true, 'export' => true, 'false' => true, 'fn' => true,
+    'foreach' => true, 'function' => true, 'if' => true, 'import' => true,
+    'let' => true, 'match' => true, 'pub' => true, 'return' => true,
+    'struct' => true, 'true' => true, 'use' => true, 'while' => true
+  ]
+  $nodes = []
+  foreach ($parts as $part) {
+    $token = '' . $part
+    if ($token === '') {
+      continue
+    }
+    $first = substr($token, 0, 1)
+    if (strStartsWith($token, '//') || strStartsWith($token, '#') || strStartsWith($token, '/*')) {
+      $nodes[] = <span class="text-slate-500">{$token}</span>
+      continue
+    }
+    if ($first === '"' || $first === "'") {
+      $nodes[] = <span class={$language === 'json' ? 'text-emerald-300' : 'text-amber-300'}>{$token}</span>
+      continue
+    }
+    $codeParts = preg_split('/(\b(?:async|await|const|else|enum|export|false|fn|foreach|function|if|import|let|match|pub|return|struct|true|use|while)\b|\b[0-9]+(?:\.[0-9]+)?\b)/', $token, -1, PREG_SPLIT_DELIM_CAPTURE)
+    if (!is_array($codeParts)) {
+      $nodes[] = $token
+      continue
+    }
+    foreach ($codeParts as $codePart) {
+      $code = '' . $codePart
+      if ($code === '') {
+        continue
+      }
+      if (array_key_exists($code, $keywords)) {
+        $nodes[] = <span class="text-violet-300">{$code}</span>
+      } else if (preg_match('/^[0-9]+(?:\.[0-9]+)?$/', $code)) {
+        $nodes[] = <span class="text-cyan-300">{$code}</span>
+      } else {
+        $nodes[] = $code
+      }
+    }
+  }
+  return $nodes
+}
+
+function sourceLinesWithLineNumbers($content, $path = ''): array {
+  $raw = str_replace(["\r\n", "\r"], "\n", '' . $content)
+  $lines = explode("\n", $raw)
+  if (count($lines) === 1 && $lines[0] === '') {
+    return []
+  }
+  $rows = []
+  for ($i = 0; $i < count($lines); $i = $i + 1) {
+    $rows[] = <tr class="align-top">
+      <td class="w-14 select-none border-r border-gray-700/50 px-3 py-0.5 text-right text-[11px] text-gray-400">{(string) ($i + 1)}</td>
+      <td class="px-3 py-0.5 whitespace-pre-wrap break-words text-gray-100">{sourceSyntaxTokenNodes($lines[$i], $path)}</td>
+    </tr>
+  }
+  return $rows
 }
 
 function versionReadmeText($versionRow, $packageCoord, $versionTag) {
@@ -4857,21 +5091,34 @@ function PackageDetailPage($props) {
   }
 
   $fileSource = (is_array($treeEntries) && count($treeEntries) > 0) ? $treeEntries : $fileRows
+  $fileNodes = buildFileTreeRows($fileSource)
+  $fileLimit = min(120, count($fileNodes))
   $fileItems = []
-  $fileLimit = min(120, count($fileSource))
+  $treeNodeCount = count($fileNodes)
   $packagePath = repoPackagePath(rowValue($props, 'org', ''), rowValue($pkg, 'name', ''))
   for ($i = 0; $i < $fileLimit; $i = $i + 1) {
-    $f = $fileSource[$i]
-    $path = '' . rowValue($f, 'path', '')
-    $sizeRaw = rowValue($f, 'sizeBytes', rowValue($f, 'size', null))
+    $node = $fileNodes[$i]
+    if (rowValue($node, 'kind', 'file') === 'dir') {
+      $dirName = '' . rowValue($node, 'name', '')
+      $dirDepth = (int) rowValue($node, 'depth', 0)
+      $indentPx = max(0, $dirDepth * 12)
+      $fileItems[] = <li class="rounded border border-dashed border-gray-300 bg-gray-50 px-3 py-1.5 text-xs text-gray-500" style={'padding-left: ' . (string) $indentPx . 'px'}>
+        {'/ ' . $dirName}
+      </li>
+      continue
+    }
+    $path = '' . rowValue($node, 'path', '')
+    $sizeRaw = rowValue($node, 'sizeBytes', rowValue($node, 'size', null))
     $sizeText = is_numeric($sizeRaw) ? ((string) ((int) $sizeRaw) . ' B') : ''
+    $depth = (int) rowValue($node, 'depth', 0)
+    $indentPx = max(0, $depth * 12)
     $isSelected = $selectedFile !== '' && $selectedFile === $path
-    $fileItems[] = <li class="flex items-center justify-between gap-2 rounded border border-gray-200 bg-gray-50 px-3 py-1.5">
+    $fileItems[] = <li class="flex items-center justify-between gap-2 rounded border border-gray-200 bg-gray-50 px-3 py-1.5" style={'padding-left: ' . (string) $indentPx . 'px'}>
       <a class={'truncate font-mono text-xs ' . ($isSelected ? 'text-blue-700 font-semibold' : 'text-gray-700 hover:text-blue-700')} href={$packagePath . '?file=' . rawurlencode($path)}>{$path}</a>
       {$sizeText !== '' ? <span class="text-[11px] text-gray-500">{$sizeText}</span> : <span class="text-[11px] text-gray-400">-</span>}
     </li>
   }
-  $hasMoreFiles = count($fileSource) > $fileLimit
+  $hasMoreFiles = $treeNodeCount > $fileLimit
   $docRows = []
   $docLimit = min(12, is_array($docsSymbols) ? count($docsSymbols) : 0)
   for ($i = 0; $i < $docLimit; $i = $i + 1) {
@@ -4979,10 +5226,17 @@ function PackageDetailPage($props) {
               </div>
               <div>
                 <div class="border-b border-gray-200 px-4 py-2 text-xs text-gray-600">
-                  {$selectedFile !== '' ? $selectedFile : 'Select a file'}
+                  <span>{$selectedFile !== '' ? $selectedFile : 'Select a file'}</span>
+                  {$selectedFile !== '' ? <span class="ml-2 rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-500">{sourceLanguageForPath($selectedFile)}</span> : false}
                 </div>
                 {$selectedFileError !== '' ? <div class="px-4 py-2 text-xs text-amber-800">{'Blob source: ' . $selectedFileError}</div> : false}
-                {$selectedFileContent !== '' ? <pre class="max-h-[380px] overflow-auto bg-gray-900 p-4 text-[12px] leading-5 text-gray-100 whitespace-pre-wrap">{$selectedFileContent}</pre> : <div class="p-4 text-sm text-gray-500">Select a file from the list.</div>}
+                {$selectedFileContent !== '' ? <div class="max-h-[380px] overflow-auto bg-gray-900 p-4">
+                  <table class="w-full table-fixed text-[12px] leading-5">
+                    <tbody>
+                      {sourceLinesWithLineNumbers($selectedFileContent, $selectedFile)}
+                    </tbody>
+                  </table>
+                </div> : <div class="p-4 text-sm text-gray-500">Select a file from the list.</div>}
               </div>
             </div>
           </section>
