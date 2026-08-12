@@ -105,25 +105,23 @@ fn run_php_install_in_transaction(
     while let Some(name) = pending.pop_front() {
         let requirements = requested.get(&name).expect("queued package requirement");
         let locked = locked_package(&existing_lock, &name)?;
-        let version = select_version(&client, &name, requirements, locked.as_ref())?;
         let destination = php_modules_path_for_in(cwd, &name)?;
         let staging = install_staging_path(&destination)?;
         cleanup_install_staging(&staging);
-        let install_source = match install_from_linkhash(&client, &name, &version, &staging) {
-            Ok(source) => source,
-            Err(err) if is_deka_package(&name) => {
-                cleanup_install_staging(&staging);
-                if !quiet {
-                    eprintln!(
-                        "[install] LinkHash unavailable for {} ({}); using bundled stdlib snapshot",
-                        name, err
-                    );
+
+        // @deka stdlib packages now live on GitHub (dekaruntime/<name>). Pull
+        // them directly so installs work without Linkhash.
+        let install_source = if is_deka_package(&name) {
+            install_from_github(&name, requirements, locked.as_ref(), &staging)
+                .with_context(|| format!("failed to install {} from GitHub", name))?
+        } else {
+            let version = select_version(&client, &name, requirements, locked.as_ref())?;
+            match install_from_linkhash(&client, &name, &version, &staging) {
+                Ok(source) => source,
+                Err(err) => {
+                    cleanup_install_staging(&staging);
+                    return Err(err);
                 }
-                install_from_bundled_stdlib(&name, locked.as_ref(), &staging)?
-            }
-            Err(err) => {
-                cleanup_install_staging(&staging);
-                return Err(err);
             }
         };
 
@@ -192,7 +190,7 @@ fn run_php_install_in_transaction(
             name.clone(),
             (
                 format!("{}@{}", name, install_source.version),
-                format!("linkhash:{}", name),
+                format!("{}:{}", install_source.source, name),
                 metadata,
                 String::new(),
             ),
@@ -440,6 +438,124 @@ fn install_from_linkhash(
         source: "linkhash",
         requires_registry_digest: true,
     })
+}
+
+const GITHUB_STDLIB_ORG: &str = "dekaruntime";
+const GITHUB_STDLIB_VERSION: &str = "0.1.0";
+
+/// Install a @deka stdlib package directly from its dekaruntime GitHub repo.
+///
+/// Uses git clone --depth 1 --branch v{version}. This bypasses Linkhash and
+/// avoids the bundled stdlib snapshot, which is critical now that stdlib source
+/// lives on GitHub.
+fn install_from_github(
+    name: &str,
+    requirements: &[VersionRequirement],
+    locked: Option<&LockedPackage>,
+    destination: &Path,
+) -> Result<InstalledSource> {
+    let package_name = name
+        .strip_prefix("@deka/")
+        .ok_or_else(|| anyhow!("install_from_github called with non-@deka package: {}", name))?;
+
+    let version = if let Some(locked) = locked {
+        if requirements
+            .iter()
+            .all(|requirement| version_satisfies(&locked.version, &requirement.range))
+        {
+            locked.version.clone()
+        } else {
+            GITHUB_STDLIB_VERSION.to_string()
+        }
+    } else {
+        GITHUB_STDLIB_VERSION.to_string()
+    };
+
+    let repo_url = format!(
+        "https://github.com/{}/{}.git",
+        GITHUB_STDLIB_ORG, package_name
+    );
+    let tag = format!("v{}", version);
+
+    let temp_dir = tempfile::tempdir()
+        .with_context(|| format!("failed to create temp dir for {}@{}", name, version))?;
+
+    let status = std::process::Command::new("git")
+        .args([
+            "clone",
+            "--depth",
+            "1",
+            "--branch",
+            &tag,
+            &repo_url,
+        ])
+        .arg(temp_dir.path())
+        .status()
+        .with_context(|| format!("failed to run git clone for {}@{}", name, version))?;
+
+    if !status.success() {
+        bail!("git clone failed for {}@{} from {}", name, version, repo_url);
+    }
+
+    copy_github_package_files(temp_dir.path(), destination)
+        .with_context(|| format!("failed to copy {}@{} to staging", name, version))?;
+
+    Ok(InstalledSource {
+        version,
+        repo: Some(repo_url),
+        git_ref: Some(tag),
+        source: "github",
+        requires_registry_digest: false,
+    })
+}
+
+fn copy_github_package_files(source: &Path, target: &Path) -> Result<()> {
+    fs::create_dir_all(target)
+        .with_context(|| format!("failed to create target dir {}", target.display()))?;
+
+    for entry in fs::read_dir(source)
+        .with_context(|| format!("failed to read source dir {}", source.display()))?
+    {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+
+        if name_str == ".git" {
+            continue;
+        }
+
+        let src_path = entry.path();
+        let dst_path = target.join(&name);
+        let file_type = entry.file_type()?;
+
+        if name_str.eq_ignore_ascii_case("php_modules") {
+            bail!(
+                "package artifact contains vendored php_modules at {}; packages must declare dependencies in deka.json",
+                src_path.display()
+            );
+        }
+
+        if file_type.is_symlink() {
+            bail!(
+                "package artifact contains symlink {}; package artifacts may not contain symlinks",
+                src_path.display()
+            );
+        }
+
+        if file_type.is_dir() {
+            copy_github_package_files(&src_path, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path).with_context(|| {
+                format!(
+                    "failed to copy {} to {}",
+                    src_path.display(),
+                    dst_path.display()
+                )
+            })?;
+        }
+    }
+
+    Ok(())
 }
 
 fn install_from_bundled_stdlib(
