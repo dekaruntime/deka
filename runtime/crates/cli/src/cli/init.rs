@@ -140,7 +140,7 @@ pub fn cmd(context: &Context) {
         raw(&format!("  - {}", path));
     }
     match run_default_install(&target) {
-        Ok(()) => raw("[init] installed default stdlib packages from LinkHash"),
+        Ok(()) => raw("[init] installed default stdlib packages"),
         Err(err) => stdio_error(
             "init",
             &format!(
