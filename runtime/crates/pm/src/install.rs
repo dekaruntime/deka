@@ -441,7 +441,7 @@ fn install_from_linkhash(
 
 const GITHUB_STDLIB_ORG: &str = "dekaruntime";
 const GITHUB_STDLIB_VERSION: &str = "0.1.0";
-const DEKA_REGISTRY_URL: &str = "https://deka-gg.tananetwork.workers.dev";
+const DEKA_REGISTRY_URL: &str = "https://deka.gg";
 const DEKA_STDLIB_CDN: &str = "https://pub-6d81db17678348abba85f93fde4b4400.r2.dev";
 
 /// Install a @deka stdlib package from the deka.gg registry + R2 tarball CDN.
