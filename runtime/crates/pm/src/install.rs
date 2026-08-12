@@ -109,11 +109,10 @@ fn run_php_install_in_transaction(
         let staging = install_staging_path(&destination)?;
         cleanup_install_staging(&staging);
 
-        // @deka stdlib packages now live on GitHub (dekaruntime/<name>). Pull
-        // them directly so installs work without Linkhash.
+        // @deka stdlib packages are now served from deka.gg metadata + R2 tarballs.
         let install_source = if is_deka_package(&name) {
-            install_from_github(&name, requirements, locked.as_ref(), &staging)
-                .with_context(|| format!("failed to install {} from GitHub", name))?
+            install_from_registry(&name, locked.as_ref(), &staging)
+                .with_context(|| format!("failed to install {} from deka.gg", name))?
         } else {
             let version = select_version(&client, &name, requirements, locked.as_ref())?;
             match install_from_linkhash(&client, &name, &version, &staging) {
@@ -442,69 +441,87 @@ fn install_from_linkhash(
 
 const GITHUB_STDLIB_ORG: &str = "dekaruntime";
 const GITHUB_STDLIB_VERSION: &str = "0.1.0";
+const DEKA_REGISTRY_URL: &str = "https://deka-gg.tananetwork.workers.dev";
+const DEKA_STDLIB_CDN: &str = "https://pub-6d81db17678348abba85f93fde4b4400.r2.dev";
 
-/// Install a @deka stdlib package directly from its dekaruntime GitHub repo.
+/// Install a @deka stdlib package from the deka.gg registry + R2 tarball CDN.
 ///
-/// Uses git clone --depth 1 --branch v{version}. This bypasses Linkhash and
-/// avoids the bundled stdlib snapshot, which is critical now that stdlib source
-/// lives on GitHub.
-fn install_from_github(
+/// Registry metadata is fetched over HTTPS from deka.gg, and the release bytes
+/// come from a public Cloudflare R2 bucket. This removes the git/Linkhash
+/// dependency for stdlib installs.
+fn install_from_registry(
     name: &str,
-    requirements: &[VersionRequirement],
     locked: Option<&LockedPackage>,
     destination: &Path,
 ) -> Result<InstalledSource> {
     let package_name = name
         .strip_prefix("@deka/")
-        .ok_or_else(|| anyhow!("install_from_github called with non-@deka package: {}", name))?;
+        .ok_or_else(|| anyhow!("install_from_registry called with non-@deka package: {}", name))?;
 
-    let version = if let Some(locked) = locked {
-        if requirements
-            .iter()
-            .all(|requirement| version_satisfies(&locked.version, &requirement.range))
-        {
-            locked.version.clone()
-        } else {
-            GITHUB_STDLIB_VERSION.to_string()
-        }
-    } else {
-        GITHUB_STDLIB_VERSION.to_string()
-    };
+    let version = locked
+        .map(|locked| locked.version.clone())
+        .unwrap_or_else(|| GITHUB_STDLIB_VERSION.to_string());
 
-    let repo_url = format!(
-        "https://github.com/{}/{}.git",
-        GITHUB_STDLIB_ORG, package_name
-    );
+    // Validate the package exists in the deka.gg registry.
+    let registry_url = format!("{}/api/registry/{}.json", DEKA_REGISTRY_URL, package_name);
+    let registry_resp = reqwest::blocking::get(&registry_url)
+        .with_context(|| format!("failed to contact deka.gg registry for {}", name))?;
+    if !registry_resp.status().is_success() {
+        bail!("package {} not found in deka.gg registry (status {})", name, registry_resp.status());
+    }
+
+    let repo_url = format!("https://github.com/{}/{}.git", GITHUB_STDLIB_ORG, package_name);
     let tag = format!("v{}", version);
+    let tarball_url = format!(
+        "{}/{}/{}/{}-{}.tgz",
+        DEKA_STDLIB_CDN, package_name, version, package_name, version
+    );
 
     let temp_dir = tempfile::tempdir()
         .with_context(|| format!("failed to create temp dir for {}@{}", name, version))?;
+    let tarball_path = temp_dir.path().join("package.tgz");
 
-    let status = std::process::Command::new("git")
-        .args([
-            "clone",
-            "--depth",
-            "1",
-            "--branch",
-            &tag,
-            &repo_url,
-        ])
-        .arg(temp_dir.path())
-        .status()
-        .with_context(|| format!("failed to run git clone for {}@{}", name, version))?;
-
-    if !status.success() {
-        bail!("git clone failed for {}@{} from {}", name, version, repo_url);
+    let mut resp = reqwest::blocking::get(&tarball_url)
+        .with_context(|| format!("failed to download tarball for {}@{}", name, version))?;
+    if !resp.status().is_success() {
+        bail!(
+            "tarball download failed for {}@{}: status {}",
+            name,
+            version,
+            resp.status()
+        );
+    }
+    {
+        let mut file = fs::File::create(&tarball_path)
+            .with_context(|| format!("failed to create tarball file for {}", name))?;
+        resp.copy_to(&mut file)
+            .with_context(|| format!("failed to write tarball for {}", name))?;
     }
 
-    copy_github_package_files(temp_dir.path(), destination)
+    let extract_dir = temp_dir.path().join("extract");
+    fs::create_dir_all(&extract_dir)
+        .with_context(|| format!("failed to create extract dir for {}", name))?;
+    let status = std::process::Command::new("tar")
+        .args([
+            "-xzf",
+            tarball_path.to_str().expect("tarball path is valid utf-8"),
+            "-C",
+            extract_dir.to_str().expect("extract path is valid utf-8"),
+        ])
+        .status()
+        .with_context(|| format!("failed to run tar for {}@{}", name, version))?;
+    if !status.success() {
+        bail!("tar extraction failed for {}@{}", name, version);
+    }
+
+    copy_github_package_files(&extract_dir, destination)
         .with_context(|| format!("failed to copy {}@{} to staging", name, version))?;
 
     Ok(InstalledSource {
         version,
         repo: Some(repo_url),
         git_ref: Some(tag),
-        source: "github",
+        source: "deka.gg",
         requires_registry_digest: false,
     })
 }
