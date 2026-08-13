@@ -56,9 +56,9 @@ impl<'a> JsSubsetEmitter<'a> {
     }
 
     /// Emit the frontmatter template section (everything after the closing `---`)
-    /// as a series of `__dekaPrint` calls. This makes PHPX files with frontmatter
-    /// render their markup body when executed, which is what the browser tour and
-    /// server-side handlers expect.
+    /// as a response body assignment. The template body is collected into a local
+    /// string and then written to `globalThis.__phpxCurrentResponse.body`, which is
+    /// what the browser tour and server-side handlers use as the rendered HTML.
     ///
     /// Simple `{$var}` / `{$obj.prop}` interpolations are translated to JS
     /// identifiers inline. Anything more complex is left as literal text.
@@ -77,13 +77,15 @@ impl<'a> JsSubsetEmitter<'a> {
         }
 
         std::mem::swap(&mut self.body, &mut self.main_body);
+        self.body.push_str("globalThis.__phpxCurrentResponse = { status: 200, headers: {}, body: '' };\n");
+        self.body.push_str("let __phpxTemplateBody = '';\n");
         for line in template {
-            // If the whole line is a JSX element, evaluate it instead of printing
+            // If the whole line is a JSX element, evaluate it instead of treating
             // it as literal text.
             if let Some(jsx_expr) = self.try_emit_template_jsx(line) {
                 self.body.push_str(&format!(
-                    "(globalThis.__dekaPrint ? globalThis.__dekaPrint({}) : console.log({}));\n",
-                    jsx_expr, jsx_expr
+                    "__phpxTemplateBody += String({} ?? '');\n",
+                    jsx_expr
                 ));
             } else {
                 let mut last_end = 0;
@@ -109,16 +111,16 @@ impl<'a> JsSubsetEmitter<'a> {
                             if !literal.is_empty() {
                                 let escaped = serde_json::to_string(literal).unwrap_or_else(|_| "\"\"".to_string());
                                 self.body.push_str(&format!(
-                                    "(globalThis.__dekaPrint ? globalThis.__dekaPrint({}) : console.log({}));\n",
-                                    escaped, escaped
+                                    "__phpxTemplateBody += {};\n",
+                                    escaped
                                 ));
                             }
                             let expr: String = chars[expr_start..expr_end].iter().collect();
                             let js_expr = expr.replace('$', "");
                             if !js_expr.is_empty() {
                                 self.body.push_str(&format!(
-                                    "(globalThis.__dekaPrint ? globalThis.__dekaPrint({}) : console.log({}));\n",
-                                    js_expr, js_expr
+                                    "__phpxTemplateBody += String({} ?? '');\n",
+                                    js_expr
                                 ));
                             }
                             last_end = i;
@@ -132,18 +134,19 @@ impl<'a> JsSubsetEmitter<'a> {
                 if !trailing.is_empty() || !line.is_empty() {
                     let escaped = serde_json::to_string(trailing).unwrap_or_else(|_| "\"\"".to_string());
                     self.body.push_str(&format!(
-                        "(globalThis.__dekaPrint ? globalThis.__dekaPrint({}) : console.log({}));\n",
-                        escaped, escaped
+                        "__phpxTemplateBody += {};\n",
+                        escaped
                     ));
                 }
             }
             // Preserve newlines between template lines.
             let newline = serde_json::to_string("\n").unwrap_or_else(|_| "\"\\n\"".to_string());
             self.body.push_str(&format!(
-                "(globalThis.__dekaPrint ? globalThis.__dekaPrint({}) : console.log({}));\n",
-                newline, newline
+                "__phpxTemplateBody += {};\n",
+                newline
             ));
         }
+        self.body.push_str("globalThis.__phpxCurrentResponse.body = __phpxTemplateBody;\n");
         std::mem::swap(&mut self.body, &mut self.main_body);
         Ok(())
     }
