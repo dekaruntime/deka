@@ -3,6 +3,7 @@
 //! Shared validation and error formatting logic for Deka runtimes.
 //! Supports both native Rust and WebAssembly compilation.
 
+#[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::*;
 
 /// Format a validation error with beautiful Rust/Gleam-style output
@@ -55,7 +56,7 @@ use wasm_bindgen::prelude::*;
 /// ```
 // Pre-existing WASM API; refactoring is out of scope for #231.
 #[allow(clippy::too_many_arguments)]
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub fn format_validation_error(
     code: &str,
     file_path: &str,
@@ -81,7 +82,7 @@ pub fn format_validation_error(
 
 // Pre-existing WASM API; refactoring is out of scope for #231.
 #[allow(clippy::too_many_arguments)]
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub fn format_validation_error_extended(
     code: &str,
     file_path: &str,
@@ -113,7 +114,7 @@ pub fn format_validation_error_extended(
 
 // Pre-existing WASM API; refactoring is out of scope for #231.
 #[allow(clippy::too_many_arguments)]
-#[wasm_bindgen]
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub fn format_validation_error_with_suggestion(
     code: &str,
     file_path: &str,

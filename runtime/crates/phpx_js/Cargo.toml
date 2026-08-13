@@ -5,6 +5,6 @@ edition = "2024"
 
 [dependencies]
 bumpalo = "3.12"
-modules_php = { path = "../modules_php" }
-php-rs = { path = "../php-rs" }
+modules_php = { path = "../modules_php", default-features = false, features = ["compiler"] }
+php-rs = { path = "../php-rs", default-features = false }
 serde_json = { workspace = true }

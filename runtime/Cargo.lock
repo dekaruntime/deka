@@ -4091,6 +4091,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "phpx_compiler_wasm"
+version = "0.1.0"
+dependencies = [
+ "bumpalo",
+ "modules_php",
+ "phpx_js",
+ "serde_json",
+]
+
+[[package]]
 name = "phpx_js"
 version = "0.1.0"
 dependencies = [
