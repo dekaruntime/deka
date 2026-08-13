@@ -51,6 +51,91 @@ impl<'a> JsSubsetEmitter<'a> {
                 self.emit_stmt_to_main(*stmt)?;
             }
         }
+        self.emit_template_to_main()?;
+        Ok(())
+    }
+
+    /// Emit the frontmatter template section (everything after the closing `---`)
+    /// as a series of `__dekaPrint` calls. This makes PHPX files with frontmatter
+    /// render their markup body when executed, which is what the browser tour and
+    /// server-side handlers expect.
+    ///
+    /// Simple `{$var}` / `{$obj.prop}` interpolations are translated to JS
+    /// identifiers inline. Anything more complex is left as literal text.
+    pub(super) fn emit_template_to_main(&mut self) -> Result<(), String> {
+        let Some(template_start) = self.meta.template_start_line else {
+            return Ok(());
+        };
+        let source_str = std::str::from_utf8(self.source).unwrap_or("");
+        let lines: Vec<&str> = source_str.lines().collect();
+        if template_start >= lines.len() {
+            return Ok(());
+        }
+        let template: Vec<&str> = lines.iter().skip(template_start).copied().collect();
+        if template.iter().all(|l| l.trim().is_empty()) {
+            return Ok(());
+        }
+
+        std::mem::swap(&mut self.body, &mut self.main_body);
+        for line in template {
+            let mut last_end = 0;
+            let chars: Vec<char> = line.chars().collect();
+            let mut i = 0;
+            while i < chars.len() {
+                if chars[i] == '{' && i + 1 < chars.len() && chars[i + 1] == '$' {
+                    let start = i;
+                    i += 2;
+                    let expr_start = i;
+                    while i < chars.len() {
+                        let ch = chars[i];
+                        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' {
+                            i += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    let expr_end = i;
+                    if expr_end > expr_start && chars.get(i) == Some(&'}') {
+                        i += 1;
+                        let literal = &line[last_end..start];
+                        if !literal.is_empty() {
+                            let escaped = serde_json::to_string(literal).unwrap_or_else(|_| "\"\"".to_string());
+                            self.body.push_str(&format!(
+                                "(globalThis.__dekaPrint ? globalThis.__dekaPrint({}) : console.log({}));\n",
+                                escaped, escaped
+                            ));
+                        }
+                        let expr: String = chars[expr_start..expr_end].iter().collect();
+                        let js_expr = expr.replace('$', "");
+                        if !js_expr.is_empty() {
+                            self.body.push_str(&format!(
+                                "(globalThis.__dekaPrint ? globalThis.__dekaPrint({}) : console.log({}));\n",
+                                js_expr, js_expr
+                            ));
+                        }
+                        last_end = i;
+                        continue;
+                    }
+                    i = expr_start;
+                }
+                i += 1;
+            }
+            let trailing = &line[last_end..];
+            if !trailing.is_empty() || !line.is_empty() {
+                let escaped = serde_json::to_string(trailing).unwrap_or_else(|_| "\"\"".to_string());
+                self.body.push_str(&format!(
+                    "(globalThis.__dekaPrint ? globalThis.__dekaPrint({}) : console.log({}));\n",
+                    escaped, escaped
+                ));
+            }
+            // Preserve newlines between template lines.
+            let newline = serde_json::to_string("\n").unwrap_or_else(|_| "\"\\n\"".to_string());
+            self.body.push_str(&format!(
+                "(globalThis.__dekaPrint ? globalThis.__dekaPrint({}) : console.log({}));\n",
+                newline, newline
+            ));
+        }
+        std::mem::swap(&mut self.body, &mut self.main_body);
         Ok(())
     }
 
@@ -504,8 +589,12 @@ impl<'a> JsSubsetEmitter<'a> {
             }
             Stmt::InlineHtml { value, .. } => {
                 let text = String::from_utf8_lossy(value);
-                self.body
-                    .push_str(&format!("// inline html: {}\n", text.replace('\n', "\\n")));
+                let escaped = serde_json::to_string(&text.to_string())
+                    .unwrap_or_else(|_| "\"\"".to_string());
+                self.body.push_str(&format!(
+                    "(globalThis.__dekaPrint ? globalThis.__dekaPrint({}) : console.log({}));\n",
+                    escaped, escaped
+                ));
                 Ok(())
             }
             Stmt::Nop { .. } => Ok(()),
