@@ -1,3 +1,11 @@
+---
+title: "PHPX JavaScript Target Semantics"
+section: "phpx"
+category: "reference"
+categoryLabel: "Reference"
+categoryOrder: 100
+---
+
 # PHPX JavaScript Target Semantics
 
 Status: Locked

@@ -1,3 +1,11 @@
+---
+title: "PHPX Components (JSX + VNode)"
+section: "phpx"
+category: "components"
+categoryLabel: "Components"
+categoryOrder: 50
+---
+
 # PHPX Components (JSX + VNode)
 
 This document defines the JSX + component runtime for PHPX.

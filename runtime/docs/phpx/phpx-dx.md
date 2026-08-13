@@ -1,3 +1,11 @@
+---
+title: "PHPX DX + Syntax Summary"
+section: "phpx"
+category: "reference"
+categoryLabel: "Reference"
+categoryOrder: 100
+---
+
 # PHPX DX + Syntax Summary
 
 This is a concise, developer-facing summary of the PHPX experience and the

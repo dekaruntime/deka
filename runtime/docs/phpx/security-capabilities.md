@@ -1,3 +1,11 @@
+---
+title: "PHPX Security Capabilities"
+section: "phpx"
+category: "security"
+categoryLabel: "Security"
+categoryOrder: 60
+---
+
 # PHPX Security Capabilities (MVP)
 
 `deka` supports a Deno-inspired capability model for runtime guard rails.

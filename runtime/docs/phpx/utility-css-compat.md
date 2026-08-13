@@ -1,3 +1,11 @@
+---
+title: "Utility CSS Compatibility"
+section: "phpx"
+category: "styling"
+categoryLabel: "Styling"
+categoryOrder: 70
+---
+
 # Utility CSS Compatibility (Runtime)
 
 This documents the current runtime utility CSS surface used by `crates/http/src/utility_css.rs`.

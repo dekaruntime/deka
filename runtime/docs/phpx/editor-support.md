@@ -1,3 +1,11 @@
+---
+title: "PHPX Editor Support"
+section: "phpx"
+category: "reference"
+categoryLabel: "Reference"
+categoryOrder: 100
+---
+
 # PHPX Editor Support
 
 ## Overview
