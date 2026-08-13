@@ -78,55 +78,64 @@ impl<'a> JsSubsetEmitter<'a> {
 
         std::mem::swap(&mut self.body, &mut self.main_body);
         for line in template {
-            let mut last_end = 0;
-            let chars: Vec<char> = line.chars().collect();
-            let mut i = 0;
-            while i < chars.len() {
-                if chars[i] == '{' && i + 1 < chars.len() && chars[i + 1] == '$' {
-                    let start = i;
-                    i += 2;
-                    let expr_start = i;
-                    while i < chars.len() {
-                        let ch = chars[i];
-                        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' {
-                            i += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                    let expr_end = i;
-                    if expr_end > expr_start && chars.get(i) == Some(&'}') {
-                        i += 1;
-                        let literal = &line[last_end..start];
-                        if !literal.is_empty() {
-                            let escaped = serde_json::to_string(literal).unwrap_or_else(|_| "\"\"".to_string());
-                            self.body.push_str(&format!(
-                                "(globalThis.__dekaPrint ? globalThis.__dekaPrint({}) : console.log({}));\n",
-                                escaped, escaped
-                            ));
-                        }
-                        let expr: String = chars[expr_start..expr_end].iter().collect();
-                        let js_expr = expr.replace('$', "");
-                        if !js_expr.is_empty() {
-                            self.body.push_str(&format!(
-                                "(globalThis.__dekaPrint ? globalThis.__dekaPrint({}) : console.log({}));\n",
-                                js_expr, js_expr
-                            ));
-                        }
-                        last_end = i;
-                        continue;
-                    }
-                    i = expr_start;
-                }
-                i += 1;
-            }
-            let trailing = &line[last_end..];
-            if !trailing.is_empty() || !line.is_empty() {
-                let escaped = serde_json::to_string(trailing).unwrap_or_else(|_| "\"\"".to_string());
+            // If the whole line is a JSX element, evaluate it instead of printing
+            // it as literal text.
+            if let Some(jsx_expr) = self.try_emit_template_jsx(line) {
                 self.body.push_str(&format!(
                     "(globalThis.__dekaPrint ? globalThis.__dekaPrint({}) : console.log({}));\n",
-                    escaped, escaped
+                    jsx_expr, jsx_expr
                 ));
+            } else {
+                let mut last_end = 0;
+                let chars: Vec<char> = line.chars().collect();
+                let mut i = 0;
+                while i < chars.len() {
+                    if chars[i] == '{' && i + 1 < chars.len() && chars[i + 1] == '$' {
+                        let start = i;
+                        i += 2;
+                        let expr_start = i;
+                        while i < chars.len() {
+                            let ch = chars[i];
+                            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' {
+                                i += 1;
+                            } else {
+                                break;
+                            }
+                        }
+                        let expr_end = i;
+                        if expr_end > expr_start && chars.get(i) == Some(&'}') {
+                            i += 1;
+                            let literal = &line[last_end..start];
+                            if !literal.is_empty() {
+                                let escaped = serde_json::to_string(literal).unwrap_or_else(|_| "\"\"".to_string());
+                                self.body.push_str(&format!(
+                                    "(globalThis.__dekaPrint ? globalThis.__dekaPrint({}) : console.log({}));\n",
+                                    escaped, escaped
+                                ));
+                            }
+                            let expr: String = chars[expr_start..expr_end].iter().collect();
+                            let js_expr = expr.replace('$', "");
+                            if !js_expr.is_empty() {
+                                self.body.push_str(&format!(
+                                    "(globalThis.__dekaPrint ? globalThis.__dekaPrint({}) : console.log({}));\n",
+                                    js_expr, js_expr
+                                ));
+                            }
+                            last_end = i;
+                            continue;
+                        }
+                        i = expr_start;
+                    }
+                    i += 1;
+                }
+                let trailing = &line[last_end..];
+                if !trailing.is_empty() || !line.is_empty() {
+                    let escaped = serde_json::to_string(trailing).unwrap_or_else(|_| "\"\"".to_string());
+                    self.body.push_str(&format!(
+                        "(globalThis.__dekaPrint ? globalThis.__dekaPrint({}) : console.log({}));\n",
+                        escaped, escaped
+                    ));
+                }
             }
             // Preserve newlines between template lines.
             let newline = serde_json::to_string("\n").unwrap_or_else(|_| "\"\\n\"".to_string());
@@ -173,8 +182,13 @@ impl<'a> JsSubsetEmitter<'a> {
                 self.emit_enum(name, members)?;
                 Ok(())
             }
-            Stmt::Class { .. } | Stmt::Trait { .. } | Stmt::Interface { .. } => {
+            Stmt::Class { .. } | Stmt::Trait { .. } => {
                 Err("class-like declarations are not supported in JS subset emitter".to_string())
+            }
+            Stmt::Interface { .. } => {
+                // Interfaces have no runtime representation in the JS subset;
+                // they are erased like type annotations.
+                Ok(())
             }
             Stmt::TypeAlias { .. } => {
                 Err("type aliases are not supported in JS subset emitter".to_string())
@@ -193,9 +207,42 @@ impl<'a> JsSubsetEmitter<'a> {
                 if !self.is_declared(&fn_name) {
                     self.declare_in_scope(&fn_name);
                 }
+
+                // Object-pattern parameters are lowered to a single synthetic
+                // props argument followed by explicit `const` bindings. This
+                // matches the component-call convention used by the JSX runtime
+                // and keeps the emitted signature readable.
+                let mut destructure_map: std::collections::HashMap<
+                    String,
+                    (String, Vec<String>),
+                > = std::collections::HashMap::new();
+                let mut destructure_index = 0usize;
+                for p in *params {
+                    if let Some(php_rs::parser::ast::Type::ObjectShape(fields)) = p.ty {
+                        let original = self.token_name(p.name);
+                        let synthetic = if destructure_index == 0 {
+                            "__phpx_props".to_string()
+                        } else {
+                            format!("__phpx_props_{}", destructure_index)
+                        };
+                        destructure_index += 1;
+                        let field_names: Vec<String> = fields
+                            .iter()
+                            .map(|f| self.token_name(f.name))
+                            .collect();
+                        destructure_map.insert(original, (synthetic, field_names));
+                    }
+                }
+
                 let js_params = params
                     .iter()
-                    .map(|p| self.token_name(p.name))
+                    .map(|p| {
+                        let original = self.token_name(p.name);
+                        destructure_map
+                            .get(&original)
+                            .map(|(synthetic, _)| synthetic.clone())
+                            .unwrap_or(original)
+                    })
                     .collect::<Vec<_>>()
                     .join(", ");
 
@@ -217,10 +264,31 @@ impl<'a> JsSubsetEmitter<'a> {
                 self.push_scope();
                 self.function_scope_entry.push(self.scopes.len() - 1);
                 for p in *params {
-                    self.declare_in_scope(&self.token_name(p.name));
+                    let original = self.token_name(p.name);
+                    if let Some((synthetic, _)) = destructure_map.get(&original) {
+                        self.declare_in_scope(synthetic);
+                    } else {
+                        self.declare_in_scope(&original);
+                    }
                 }
-                self.emit_param_default_guards(params)?;
+
+                // Emit `const field = props.field;` for each object-pattern field.
+                for (_, (synthetic, fields)) in &destructure_map {
+                    for field in fields {
+                        self.body
+                            .push_str(&format!("const {} = {}.{};\n", field, synthetic, field));
+                        self.declare_in_scope(field);
+                    }
+                }
+
+                self.emit_param_default_guards(params, &destructure_map)?;
+
+                let destructure_sources: Vec<String> =
+                    destructure_map.keys().cloned().collect();
                 for inner in *body {
+                    if self.is_param_pattern_prologue(inner, &destructure_sources) {
+                        continue;
+                    }
                     self.emit_stmt(*inner)?;
                 }
                 self.function_scope_entry.pop();
