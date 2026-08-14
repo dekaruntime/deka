@@ -38,10 +38,32 @@ jobs:
         working-directory: runtime/assets/utility-css
         run: bun test.ts
 
-  # Rust tests are temporarily disabled in CI because the workspace depends on a
-  # private cargo registry (sparse+https://git.tana.gg/index/) for
-  # harar-client. Once that dependency is publicly resolvable or vendored, add
-  # the cargo build/test steps back here.
-  # rust:
-  #   name: Rust tests
-  ###############################################################################
+  rust:
+    name: Rust tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: runtime
+
+      - name: Build workspace
+        working-directory: runtime
+        run: cargo build
+
+      - name: Test deka_http
+        working-directory: runtime
+        run: cargo test -p deka_http
+
+      - name: Test pool
+        working-directory: runtime
+        run: cargo test -p pool
+
+      - name: Test engine
+        working-directory: runtime
+        run: cargo test -p engine
