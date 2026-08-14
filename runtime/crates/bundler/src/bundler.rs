@@ -7,7 +7,7 @@ use swc_bundler::{BundleKind, Bundler, Config, Hook, Load, ModuleData, ModuleTyp
 use swc_common::{
     FileName, GLOBALS, Globals, Mark, SourceMap, comments::SingleThreadedComments, sync::Lrc,
 };
-use swc_ecma_ast::{EsVersion, KeyValueProp, Pass, Program};
+use swc_ecma_ast::{EsVersion, KeyValueProp, Module, Pass, Program};
 use swc_ecma_codegen::{Emitter, text_writer::JsWriter};
 use swc_ecma_loader::resolve::{Resolution, Resolve};
 use swc_ecma_minifier::optimize;
@@ -42,6 +42,76 @@ pub struct BundleOptions {
 }
 
 pub type BuildOptions = BundleOptions;
+
+/// Optimize one already-emitted ESM module without resolving or bundling its
+/// imports. This is the same SWC optimization path used for bundled output,
+/// exposed for tools that need to preserve the module graph on disk.
+pub fn optimize_emitted_module(source: &str, path: &Path) -> Result<String, String> {
+    let cm: Lrc<SourceMap> = Default::default();
+    let fm = cm.new_source_file(
+        FileName::Real(path.to_path_buf()).into(),
+        source.to_string(),
+    );
+    let syntax = Syntax::Es(EsSyntax {
+        jsx: false,
+        export_default_from: true,
+        import_attributes: true,
+        ..Default::default()
+    });
+    let lexer = Lexer::new(syntax, EsVersion::Es2022, StringInput::from(&*fm), None);
+    let mut parser = Parser::new_from(lexer);
+    let module = parser
+        .parse_module()
+        .map_err(|err| format!("failed to parse emitted JavaScript: {err:?}"))?;
+    let globals = Globals::new();
+    let module = GLOBALS.set(&globals, || optimize_module(module, cm.clone()));
+    emit_module(&module, cm)
+}
+
+fn optimize_module(module: Module, cm: Lrc<SourceMap>) -> Module {
+    let top_level_mark = Mark::new();
+    let unresolved_mark = Mark::new();
+    let mut compress = CompressOptions::default();
+    compress.conditionals = false;
+    compress.bools = false;
+    compress.sequences = 0;
+    compress.inline = 0;
+    compress.if_return = false;
+    let minify_options = MinifyOptions {
+        compress: Some(compress),
+        mangle: None,
+        ..Default::default()
+    };
+    match optimize(
+        Program::Module(module),
+        cm,
+        None,
+        None,
+        &minify_options,
+        &swc_ecma_minifier::option::ExtraOptions {
+            unresolved_mark,
+            top_level_mark,
+            mangle_name_cache: Default::default(),
+        },
+    ) {
+        Program::Module(module) => module,
+        Program::Script(_) => unreachable!("module optimization returned a script"),
+    }
+}
+
+fn emit_module(module: &Module, cm: Lrc<SourceMap>) -> Result<String, String> {
+    let mut buf = Vec::new();
+    let mut emitter = Emitter {
+        cfg: swc_ecma_codegen::Config::default(),
+        comments: None,
+        cm: cm.clone(),
+        wr: JsWriter::new(cm, "\n", &mut buf, None),
+    };
+    emitter
+        .emit_module(module)
+        .map_err(|err| format!("failed to emit optimized JavaScript: {err}"))?;
+    String::from_utf8(buf).map_err(|err| format!("optimized JavaScript was not UTF-8: {err}"))
+}
 
 pub trait VirtualSource: Send + Sync {
     fn load_virtual(&self, path: &Path) -> Result<Option<String>, String>;
