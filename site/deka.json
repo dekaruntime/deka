@@ -3,11 +3,11 @@
   "version": "0.1.0",
   "type": "serve",
   "serve": {
-    "entry": "main.phpx",
+    "entry": "main.ds",
     "mode": "php"
   },
   "tasks": {
-    "dev": "deka serve main.phpx"
+    "dev": "deka serve main.ds"
   },
   "security": {
     "allow": {},
