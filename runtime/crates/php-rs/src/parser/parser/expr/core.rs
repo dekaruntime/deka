@@ -715,6 +715,13 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             | TokenKind::IncludeOnce
             | TokenKind::Require
             | TokenKind::RequireOnce => {
+                if self.is_ds() {
+                    self.errors.push(ParseError::with_help(
+                        token.span,
+                        "include and require are not part of DekaScript",
+                        "Use an explicit DekaScript import instead.",
+                    ));
+                }
                 let start = token.span.start;
                 self.bump();
                 let expr = self.parse_expr(0);

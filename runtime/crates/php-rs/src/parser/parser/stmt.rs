@@ -247,11 +247,15 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 self.parse_foreach()
             }
             TokenKind::Function => self.parse_function(&[], doc_comment, false),
-            TokenKind::Class => self.parse_class(&[], &[], doc_comment),
+            TokenKind::Class => {
+                self.reject_ds_php_statement("Use DekaScript structs or plain object values.");
+                self.parse_class(&[], &[], doc_comment)
+            }
             TokenKind::Interface => self.parse_interface(&[], doc_comment),
             TokenKind::Trait => self.parse_trait(&[], doc_comment),
             TokenKind::Enum => self.parse_enum(&[], doc_comment),
             TokenKind::Namespace => {
+                self.reject_ds_php_statement("Use explicit module imports and exports.");
                 if self.is_phpx() && !self.allow_phpx_namespace() {
                     self.errors.push(ParseError::new(
                         self.current_token.span,
@@ -280,6 +284,9 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             }
             TokenKind::Switch => self.parse_switch(),
             TokenKind::Try => {
+                self.reject_ds_php_statement(
+                    "Use Result or Option values for fallible operations.",
+                );
                 if self.is_phpx() {
                     self.errors.push(ParseError::new(
                         self.current_token.span,
@@ -289,6 +296,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 self.parse_try()
             }
             TokenKind::Throw => {
+                self.reject_ds_php_statement("Return an explicit Result error value instead.");
                 if self.is_phpx() {
                     self.errors.push(ParseError::new(
                         self.current_token.span,
@@ -310,8 +318,14 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             TokenKind::Break => self.parse_break(),
             TokenKind::Continue => self.parse_continue(),
             TokenKind::Declare => self.parse_declare(),
-            TokenKind::Global => self.parse_global(),
+            TokenKind::Global => {
+                self.reject_ds_php_statement(
+                    "Pass values explicitly through parameters and returns.",
+                );
+                self.parse_global()
+            }
             TokenKind::Static => {
+                self.reject_ds_php_statement("Use a module const or let binding instead.");
                 if matches!(
                     self.next_token.kind,
                     TokenKind::Variable
@@ -931,6 +945,16 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             vars: self.arena.alloc_slice_copy(&vars),
             span: Span::new(start, end),
         })
+    }
+
+    fn reject_ds_php_statement(&mut self, help: &'static str) {
+        if self.is_ds() {
+            self.errors.push(ParseError::with_help(
+                self.current_token.span,
+                "PHP/PHPX construct is not part of DekaScript",
+                help,
+            ));
+        }
     }
 
     fn parse_global(&mut self) -> StmtId<'ast> {
