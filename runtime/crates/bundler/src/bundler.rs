@@ -43,9 +43,11 @@ pub struct BundleOptions {
 
 pub type BuildOptions = BundleOptions;
 
-/// Optimize one already-emitted ESM module without resolving or bundling its
-/// imports. This is the same SWC optimization path used for bundled output,
-/// exposed for tools that need to preserve the module graph on disk.
+/// Optimize already-emitted ESM without resolving or bundling imports.
+///
+/// Contract: source and output are ESM; relative specifiers are preserved.
+/// This is the same safe SWC configuration used for `BundleOptions::minify`
+/// and exists for the CLI's module-preserving `--treeshake` mode.
 pub fn optimize_emitted_module(source: &str, path: &Path) -> Result<String, String> {
     let cm: Lrc<SourceMap> = Default::default();
     let fm = cm.new_source_file(
@@ -64,13 +66,18 @@ pub fn optimize_emitted_module(source: &str, path: &Path) -> Result<String, Stri
         .parse_module()
         .map_err(|err| format!("failed to parse emitted JavaScript: {err:?}"))?;
     let globals = Globals::new();
-    let module = GLOBALS.set(&globals, || optimize_module(module, cm.clone()));
+    let module = GLOBALS.set(&globals, || minify_module(module, cm.clone()));
     emit_module(&module, cm)
 }
 
-fn optimize_module(module: Module, cm: Lrc<SourceMap>) -> Module {
+fn minify_module(module: Module, cm: Lrc<SourceMap>) -> Module {
     let top_level_mark = Mark::new();
     let unresolved_mark = Mark::new();
+    // These restrictions guard known SWC output bugs: conditionals/bools can
+    // emit invalid assignment expressions, sequences can corrupt for-of heads,
+    // inline can merge module-local bindings, and if_return can lose ternary
+    // parentheses. Keep this shared configuration in sync for bundling and
+    // module-preserving transpile optimization.
     let mut compress = CompressOptions::default();
     compress.conditionals = false;
     compress.bools = false;
@@ -167,74 +174,7 @@ pub fn bundle_virtual_entry(
         .ok_or_else(|| "Failed to find bundled output".to_string())?;
 
     let module = if options.minify {
-        GLOBALS.set(&globals, || {
-            let top_level_mark = Mark::new();
-            let unresolved_mark = Mark::new();
-            // SWC compress with workarounds for genuine bugs in
-            // swc_ecma_minifier 42.x.  Every workaround is pinned to
-            // the upstream source file so future upgrades can re-check.
-            // Validated by `bundle_minified_preserves_*` tests below.
-            //
-            //  1. compress/pure/bools.rs :: `compress_if_stmt_as_expr`
-            //     Rewrites `if (c) x = y;` into `c && x = y` without
-            //     parens on the assignment LHS — invalid JS.  Gated on
-            //     `conditionals || bools`; both must stay off.
-            //
-            //  2. compress/pure/sequences.rs (for-of head bug)
-            //     Folds adjacent statements into comma-sequence exprs
-            //     then pushes them into `for-of` heads, producing
-            //     `for (let _ of count = 0, arr)` — a parse error.
-            //     `sequences = 0` disables it.  Still triggers on the
-            //     transpiler's `count()` rewrite pattern even after the
-            //     globalThis polyfill removal (Phase 2).
-            //
-            //  3. compress/optimize/inline.rs
-            //     `inline = 3` inlines callee bodies into callers,
-            //     which hoists block-local `let`s into a shared scope
-            //     and collides when two modules declare the same name
-            //     in different block bodies.  Still triggers on the
-            //     bundled output (e.g. `let code` in hexdec inlined
-            //     into a scope that already has `let code`).
-            //     `inline = 0` disables it.
-            //
-            //  4. compress/optimize/if_return.rs
-            //     Merges `{ stmt; return expr; }` into
-            //     `return (stmt, expr)` and — when inside a ternary —
-            //     drops parens, yielding `cond ? stmt, expr : alt`
-            //     which is a parse error.  Still triggers on the
-            //     transpiler's prelude helpers (e.g. `sort`).
-            //
-            // All five workarounds are genuine SWC bugs that persist
-            // even after the JS-first polyfill removal (Phase 2).
-            // No passes were safe to re-enable.
-            let mut compress = CompressOptions::default();
-            compress.conditionals = false;
-            compress.bools = false;
-            compress.sequences = 0;
-            compress.inline = 0;
-            compress.if_return = false;
-            let minify_options = MinifyOptions {
-                compress: Some(compress),
-                mangle: None,
-                ..Default::default()
-            };
-
-            match optimize(
-                Program::Module(bundle.module),
-                cm.clone(),
-                None,
-                None,
-                &minify_options,
-                &swc_ecma_minifier::option::ExtraOptions {
-                    unresolved_mark,
-                    top_level_mark,
-                    mangle_name_cache: Default::default(),
-                },
-            ) {
-                Program::Module(module) => module,
-                _ => panic!("Minifier returned non-module output"),
-            }
-        })
+        GLOBALS.set(&globals, || minify_module(bundle.module, cm.clone()))
     } else {
         bundle.module
     };
