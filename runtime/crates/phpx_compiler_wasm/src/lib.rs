@@ -2,7 +2,7 @@
 //!
 //! The neutral `deka_compiler_*` exports are the only browser-facing ABI.
 
-use std::alloc::{alloc, dealloc, Layout};
+use std::alloc::{Layout, alloc, dealloc};
 use std::{ptr, slice, str};
 
 use bumpalo::Bump;
@@ -350,9 +350,11 @@ mod tests {
         assert_eq!(response["ok"], true);
         assert_eq!(response["metadata"]["language"], "deka");
         assert_eq!(response["metadata"]["filename"], "lesson.ds");
-        assert!(response["output"]["code"]
-            .as_str()
-            .is_some_and(|code| code.contains("const answer = 42")));
+        assert!(
+            response["output"]["code"]
+                .as_str()
+                .is_some_and(|code| code.contains("const answer = 42"))
+        );
         assert_eq!(response["diagnostics"].as_array().map(Vec::len), Some(0));
     }
 
@@ -367,17 +369,21 @@ mod tests {
 
         assert_eq!(filename_response["ok"], false);
         assert_eq!(filename_response["metadata"]["language"], "unknown");
-        assert!(filename_response["diagnostics"][0]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("only accepts .ds")));
+        assert!(
+            filename_response["diagnostics"][0]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("only accepts .ds"))
+        );
 
         let mode_response: Value =
             serde_json::from_str(&compile_request("const answer = 42;", "lesson.ds", "phpx"))
                 .expect("response JSON");
         assert_eq!(mode_response["ok"], false);
-        assert!(mode_response["diagnostics"][0]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("supported modes are `auto` and `deka`")));
+        assert!(
+            mode_response["diagnostics"][0]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("supported modes are `auto` and `deka`"))
+        );
     }
 
     #[test]
@@ -404,5 +410,53 @@ mod tests {
         assert_eq!(response["ok"], false);
         assert_eq!(response["diagnostics"][0]["code"], "emitter");
         assert_eq!(response["metadata"]["filename"], "lesson.txt");
+    }
+
+    #[test]
+    fn deka_tour_surface_compiles_with_native_abi_contract() {
+        let cases = [
+            (
+                "typed functions",
+                "function add(left: number, right: number): number { return left + right; } console.log(add(20, 22));",
+            ),
+            ("list literal", "const parts = [\"north\", \"star\"];"),
+            (
+                "list indexing",
+                "const parts = [\"north\", \"star\"]; const first = parts[0];",
+            ),
+            (
+                "object literal and property access",
+                "const parts = [\"north\", \"star\"]; const first = parts[0]; const label = { first: first, count: parts.length };",
+            ),
+            (
+                "lists objects and indexing",
+                "const parts = [\"north\", \"star\"]; const first = parts[0]; const label = { first: first, count: parts.length }; console.log(`${label.first}:${label.count}`);",
+            ),
+        ];
+
+        for (name, source) in cases {
+            let response: Value = serde_json::from_str(&compile_request(source, "tour.ds", "deka"))
+                .unwrap_or_else(|error| panic!("{name}: invalid response JSON: {error}"));
+            assert_eq!(response["ok"], true, "{name}: {response}");
+            assert!(
+                response["output"]["code"].as_str().is_some(),
+                "{name}: {response}"
+            );
+        }
+
+        let sigil: Value =
+            serde_json::from_str(&compile_request("const $value = 1;", "tour.ds", "deka"))
+                .expect("sigil response JSON");
+        assert_eq!(sigil["ok"], false, "{sigil}");
+        assert!(
+            sigil["diagnostics"]
+                .as_array()
+                .is_some_and(|diagnostics| diagnostics.iter().any(|diagnostic| {
+                    diagnostic["message"]
+                        .as_str()
+                        .is_some_and(|message| message.contains("bare identifiers"))
+                })),
+            "sigil diagnostic must explain the DS binding contract: {sigil}"
+        );
     }
 }
