@@ -1372,6 +1372,7 @@ dependencies = [
  "bytes",
  "chrono",
  "dashmap 5.5.3",
+ "deno_core",
  "engine",
  "futures-util",
  "http-body-util",
