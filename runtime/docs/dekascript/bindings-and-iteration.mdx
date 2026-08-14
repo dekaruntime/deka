@@ -1,10 +1,17 @@
 ---
-title: DekaScript bindings and iteration
-description: Native DekaScript binding, collection, and PHPX exclusion rules.
+title: DekaScript compiler-core syntax
+description: The currently implemented DekaScript bindings, collections, and iteration slice.
 ---
 
-DekaScript (`.ds`) has a TypeScript-familiar surface and Deka runtime semantics.
-It is not a PHPX compatibility mode.
+DekaScript source uses the `.ds` extension and a TypeScript-familiar surface.
+
+## Availability
+
+This page describes only the compiler-core slice supplied by the current
+stacked work. It is validated through the parser and JavaScript emitter. Public
+CLI execution, serving, routing, imports, editor support, Wasm integration, and
+a broader standard-library contract are not established by this slice and are
+not documented as available here.
 
 ```ts
 export function initials(parts: Array<string>): string {
@@ -23,10 +30,7 @@ bindings, normal and compound assignment, string methods, list and object
 literals, indexed access, property access, and `for (const item of items)`.
 Use `Array<T>` for typed lists in this slice.
 
-Fallible APIs return explicit Deka error values such as `Result`; DekaScript does
-not use exception control flow.
-
-The following PHP/PHPX syntax is deliberately rejected in `.ds`: `$` sigils,
-PHP casts, `array()`, `echo`, `foreach`, `.` concatenation, PHP built-ins,
-classes, namespaces, globals, statics, `try`/`throw`, and `include`/`require`.
-Use imports, explicit values, object/list syntax, and Deka result values instead.
+The following PHP-derived syntax is deliberately rejected in `.ds`: `$` sigils,
+casts, `array()`, `echo`, `foreach`, `.` concatenation, built-ins, classes,
+namespaces, globals, statics, `try`/`throw`, and `include`/`require`. Use plain
+values, object/list syntax, and explicit imports once the module contract lands.

@@ -1,9 +1,0 @@
-export function add(byte $a, byte $b): byte {
-    int $total = $a + $b;
-    return $total;
-}
-
-export function greet(string $name): string {
-    $label: string = 'hi ';
-    return $label . $name;
-}

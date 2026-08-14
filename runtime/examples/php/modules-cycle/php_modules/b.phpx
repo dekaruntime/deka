@@ -1,5 +1,0 @@
-import { a_fn } from './a.phpx';
-
-export function b_fn() {
-    return a_fn();
-}

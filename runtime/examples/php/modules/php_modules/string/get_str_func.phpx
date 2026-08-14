@@ -1,5 +1,0 @@
-import { format_value } from './format.phpx';
-
-export function get_str_func($value) {
-    return format_value($value);
-}

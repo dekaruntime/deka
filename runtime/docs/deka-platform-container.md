@@ -52,7 +52,7 @@ Common optional environment:
 - `DEKA_SHARD_CONFIG`: path to shard config mounted into the container.
 - `DEKA_PLATFORM_API=1`: enables built-in `/api/*` platform routes.
 - `DEKA_PLATFORM_ENV_ALLOWLIST`: comma-separated extra env vars to expose to
-  tenant PHPX isolates.
+  tenant isolates.
 - `STRIPE_PUBLISHABLE_KEY`, `TANA_INTERNAL_API_SECRET`, `STRIPE_STUB`: default
   tenant-visible platform env vars when present.
 

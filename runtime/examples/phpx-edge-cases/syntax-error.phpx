@@ -1,2 +1,0 @@
-function bad($x: int): int {
-    return $x
