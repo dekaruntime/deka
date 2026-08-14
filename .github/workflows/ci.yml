@@ -52,9 +52,12 @@ jobs:
         with:
           workspaces: runtime
 
-      - name: Build workspace
+      # Build only the crates we test. The full workspace includes
+      # phpx_compiler_wasm, which fails to link on ubuntu-latest due to V8
+      # TLS relocation issues and is not needed for these test suites.
+      - name: Build tested crates
         working-directory: runtime
-        run: cargo build
+        run: cargo build -p deka_http -p pool -p engine
 
       - name: Test deka_http
         working-directory: runtime
