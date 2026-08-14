@@ -1,9 +1,0 @@
-{
-  "module": "module.wasm",
-  "wit": "module.wit",
-  "abi": "wit",
-  "records": "struct",
-  "stubs": "module.d.phpx",
-  "world": "hello",
-  "interfacePrefix": false
-}
