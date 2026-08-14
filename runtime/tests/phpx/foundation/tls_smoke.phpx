@@ -1,9 +1,0 @@
-/*
-TEST: tls module API wiring (default SKIP without external TLS test server)
-*/
-if (getenv('PHPX_TLS_SMOKE') !== '1') {
-    echo "SKIP\n"
-    return
-}
-
-echo "SKIP\n"

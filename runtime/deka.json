@@ -31,8 +31,7 @@
         "SQLITE_PATH",
         "PHPX_NET_SMOKE",
         "NET_HOST",
-        "NET_PORT",
-        "PHPX_TLS_SMOKE"
+        "NET_PORT"
       ]
     }
   }
