@@ -4024,6 +4024,7 @@ dependencies = [
  "bumpalo",
  "modules_php",
  "phpx_js",
+ "serde",
  "serde_json",
 ]
 
