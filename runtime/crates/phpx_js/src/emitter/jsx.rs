@@ -86,7 +86,7 @@ impl<'a> JsSubsetEmitter<'a> {
                         i += 1;
                     }
                     let expr = &s[expr_start..i.saturating_sub(1)];
-                    let js_expr = expr.replace('$', "");
+                    let js_expr = expr.trim().replace('$', "");
                     attrs.push(format!("{}: {}", json_string(attr_name), js_expr));
                 } else {
                     return None;
@@ -117,33 +117,43 @@ impl<'a> JsSubsetEmitter<'a> {
             let mut j = 0usize;
             let cbytes = content.as_bytes();
             while j < content.len() {
-                if cbytes[j] == b'{'
-                    && j + 1 < content.len()
-                    && cbytes[j + 1] == b'$'
-                {
-                    let expr_start = j + 2;
-                    let mut k = expr_start;
-                    while k < content.len()
-                        && (cbytes[k].is_ascii_alphanumeric()
-                            || cbytes[k] == b'_'
-                            || cbytes[k] == b'.')
-                    {
-                        k += 1;
+                if cbytes[j] == b'{' {
+                    let start = j;
+                    j += 1;
+                    while j < content.len() && cbytes[j].is_ascii_whitespace() {
+                        j += 1;
                     }
-                    if k < content.len() && cbytes[k] == b'}' {
-                        let expr = &content[expr_start..k];
-                        let js_expr = expr.replace('$', "");
-                        children.push(js_expr);
-                        j = k + 1;
-                        continue;
+                    if j >= content.len() || cbytes[j] != b'$' {
+                        j = start;
+                    } else {
+                        j += 1;
+                        while j < content.len() && cbytes[j].is_ascii_whitespace() {
+                            j += 1;
+                        }
+                        let expr_start = j;
+                        while j < content.len()
+                            && (cbytes[j].is_ascii_alphanumeric()
+                                || cbytes[j] == b'_'
+                                || cbytes[j] == b'.')
+                        {
+                            j += 1;
+                        }
+                        let expr_end = j;
+                        while j < content.len() && cbytes[j].is_ascii_whitespace() {
+                            j += 1;
+                        }
+                        if expr_end > expr_start && j < content.len() && cbytes[j] == b'}' {
+                            let expr = &content[expr_start..expr_end];
+                            let js_expr = expr.replace('$', "");
+                            children.push(js_expr);
+                            j += 1;
+                            continue;
+                        }
+                        j = start;
                     }
                 }
                 let text_start = j;
-                while j < content.len()
-                    && !(cbytes[j] == b'{'
-                        && j + 1 < content.len()
-                        && cbytes[j + 1] == b'$')
-                {
+                while j < content.len() && cbytes[j] != b'{' {
                     j += 1;
                 }
                 let text = &content[text_start..j];

@@ -92,9 +92,22 @@ impl<'a> JsSubsetEmitter<'a> {
                 let chars: Vec<char> = line.chars().collect();
                 let mut i = 0;
                 while i < chars.len() {
-                    if chars[i] == '{' && i + 1 < chars.len() && chars[i + 1] == '$' {
+                    if chars[i] == '{' {
                         let start = i;
-                        i += 2;
+                        i += 1;
+                        // Allow whitespace between { and $.
+                        while i < chars.len() && chars[i].is_ascii_whitespace() {
+                            i += 1;
+                        }
+                        if i >= chars.len() || chars[i] != '$' {
+                            i = start + 1;
+                            continue;
+                        }
+                        i += 1;
+                        // Allow whitespace between $ and the variable name.
+                        while i < chars.len() && chars[i].is_ascii_whitespace() {
+                            i += 1;
+                        }
                         let expr_start = i;
                         while i < chars.len() {
                             let ch = chars[i];
@@ -105,6 +118,10 @@ impl<'a> JsSubsetEmitter<'a> {
                             }
                         }
                         let expr_end = i;
+                        // Allow whitespace before the closing }.
+                        while i < chars.len() && chars[i].is_ascii_whitespace() {
+                            i += 1;
+                        }
                         if expr_end > expr_start && chars.get(i) == Some(&'}') {
                             i += 1;
                             let literal = &line[last_end..start];
@@ -126,7 +143,7 @@ impl<'a> JsSubsetEmitter<'a> {
                             last_end = i;
                             continue;
                         }
-                        i = expr_start;
+                        i = start + 1;
                     }
                     i += 1;
                 }
