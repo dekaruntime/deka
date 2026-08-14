@@ -42,6 +42,10 @@ pub fn compile_phpx<'a>(source: &str, file_path: &str, arena: &'a Bump) -> Valid
     compile_phpx_with_mode(source, file_path, arena, ParserMode::Phpx, true)
 }
 
+pub fn compile_deka<'a>(source: &str, file_path: &str, arena: &'a Bump) -> ValidationResult<'a> {
+    compile_phpx_with_mode(source, file_path, arena, ParserMode::Ds, true)
+}
+
 pub fn compile_phpx_internal<'a>(
     source: &str,
     file_path: &str,
@@ -57,7 +61,7 @@ fn compile_phpx_with_mode<'a>(
     mode: ParserMode,
     strict: bool,
 ) -> ValidationResult<'a> {
-    let parser_source = preprocess_phpx_source(source);
+    let parser_source = preprocess_source(source, mode);
     let lexer = Lexer::new(parser_source.as_bytes());
     let mut parser = Parser::new_with_mode(lexer, arena, mode);
     let program = parser.parse_program();
@@ -128,7 +132,7 @@ fn compile_phpx_with_mode<'a>(
     }
 }
 
-fn preprocess_phpx_source(source: &str) -> String {
+fn preprocess_source(source: &str, mode: ParserMode) -> String {
     let line_refs: Vec<&str> = source.lines().collect();
     let bounds = frontmatter_bounds(&line_refs);
     let mut output = String::with_capacity(source.len());
@@ -154,11 +158,15 @@ fn preprocess_phpx_source(source: &str) -> String {
             masked = true;
         } else if trimmed.starts_with("export {") {
             masked = true;
-        } else if trimmed.starts_with("export ")
+        } else if mode != ParserMode::Ds && trimmed.starts_with("export ")
             && !trimmed.starts_with("export function")
             && !trimmed.starts_with("export async function")
         {
             masked = true;
+        } else if mode == ParserMode::Ds && trimmed.starts_with("export ") {
+            output.push_str(&mask_export_keyword(segment));
+            line_index += 1;
+            continue;
         }
 
         if masked {

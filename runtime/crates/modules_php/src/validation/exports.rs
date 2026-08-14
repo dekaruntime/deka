@@ -69,6 +69,14 @@ pub fn validate_exports(source: &str, file_path: &str, program: &Program) -> Vec
             continue;
         }
 
+        if trimmed.starts_with("export const ") {
+            match parse_export_const(trimmed, line, idx + 1, file_path) {
+                Ok(spec) => exports.push(spec),
+                Err(err) => errors.push(err),
+            }
+            continue;
+        }
+
         if trimmed.starts_with("export {") {
             if is_template {
                 errors.push(export_error(
@@ -93,7 +101,7 @@ pub fn validate_exports(source: &str, file_path: &str, program: &Program) -> Vec
                 find_column(line, "export"),
                 trimmed.len(),
                 format!("Unsupported export syntax in {}.", file_path),
-                "Use `export function name(...)` or `export { name }`.",
+                "Use `export function name(...)`, `export const name = ...`, or `export { name }`.",
                 Some("export function name() { }"),
             ));
         }
@@ -138,6 +146,12 @@ pub fn validate_exports(source: &str, file_path: &str, program: &Program) -> Vec
     }
 
     errors
+}
+
+fn parse_export_const(line: &str, raw_line: &str, line_number: usize, file_path: &str) -> Result<ExportSpec, ValidationError> {
+    let rest = line.trim_start_matches("export const ").trim_start();
+    let name = rest.split(|ch: char| ch == '=' || ch.is_whitespace()).next().filter(|name| is_ident(name)).ok_or_else(|| export_error(line_number, find_column(raw_line, "const"), line.trim().len(), format!("Expected a const name after `export const` in {}.", file_path), "Write `export const name = value;."))?;
+    Ok(ExportSpec { name: name.to_string(), line: line_number, column: find_column(raw_line, name), is_reexport: false })
 }
 
 fn collect_import_locals(
