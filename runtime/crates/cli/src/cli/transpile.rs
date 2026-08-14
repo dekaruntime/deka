@@ -3,6 +3,10 @@ use core::{CommandSpec, Context, ParamSpec, Registry};
 use phpx_js::{compile_phpx_source_to_js, parse_source_module_meta};
 use std::collections::BTreeSet;
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
+#[cfg(unix)]
+use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -81,7 +85,7 @@ fn run(context: &Context) -> Result<(), String> {
 }
 
 fn usage() -> &'static str {
-    "usage: deka transpile <file-or-directory> [--preserve|--bundle] [--treeshake] [--out <path>]\n\nModes:\n  file: writes adjacent <name>.js by default; --out selects the output file\n  directory: --preserve is the default and mirrors .ds paths as .js paths\n  directory --bundle: requires --out <file.js> and emits one resolved graph\n  --treeshake: applies the existing JavaScript optimization path in either mode\n\nExamples:\n  deka transpile app/main.ds\n  deka transpile app --preserve --out generated\n  deka transpile app --bundle --out dist/app.js --treeshake"
+    "usage: deka transpile <file-or-directory> [--preserve|--bundle] [--treeshake] [--out <path>]\n\nModes:\n  file: writes adjacent <name>.js by default; --out selects the output file\n  directory: --preserve is the default and mirrors .ds paths as .js paths\n  directory --bundle: requires --out <file.js> and emits one resolved graph\n  --treeshake: applies the existing JavaScript optimization path in either mode\n\nSecurity:\n  Output ancestors must be non-symlinked, private directories owned by this user\n  (or a non-writable root-owned system ancestor); shared paths are rejected.\n\nExamples:\n  deka transpile app/main.ds\n  deka transpile app --preserve --out generated\n  deka transpile app --bundle --out dist/app.js --treeshake"
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -126,16 +130,20 @@ fn transpile_file(
         return Err("output path must differ from the .ds input path".to_string());
     }
     let mappings = vec![(input.to_path_buf(), output.clone())];
-    preflight_outputs(&mappings)?;
+    let root = SecureOutputRoot::open_or_create(output_root_parent(&output))?;
+    let mut destinations = preflight_outputs(&root, &mappings)?;
     let js = if mode == TranspileMode::Bundle {
         build_bundle(input, treeshake)?
     } else {
         build_module(input, &output, treeshake)?
     };
-    commit_outputs(vec![OutputPlan {
-        output: output.clone(),
-        js,
-    }])?;
+    commit_outputs(
+        &root,
+        vec![OutputPlan {
+            destination: destinations.remove(0),
+            js,
+        }],
+    )?;
     stdio::success(&format!(
         "transpiled {} -> {}",
         input.display(),
@@ -164,12 +172,17 @@ fn transpile_directory(
                 return Err("directory --bundle --out must name a .js file".to_string());
             }
             let entry = directory_entry(input, &sources)?;
-            preflight_outputs(&[(entry.clone(), output.to_path_buf())])?;
+            let root = SecureOutputRoot::open_or_create(output_root_parent(output))?;
+            let mut destinations =
+                preflight_outputs(&root, &[(entry.clone(), output.to_path_buf())])?;
             let js = build_bundle(&entry, treeshake)?;
-            commit_outputs(vec![OutputPlan {
-                output: output.to_path_buf(),
-                js,
-            }])?;
+            commit_outputs(
+                &root,
+                vec![OutputPlan {
+                    destination: destinations.remove(0),
+                    js,
+                }],
+            )?;
             stdio::success(&format!(
                 "transpiled {} -> {}",
                 input.display(),
@@ -192,17 +205,16 @@ fn transpile_directory(
                         .map_err(|_| "failed to preserve source tree".to_string())
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            preflight_outputs(&mappings)?;
+            let root = SecureOutputRoot::open_or_create(&output_root)?;
+            let destinations = preflight_outputs(&root, &mappings)?;
             let plans = mappings
                 .iter()
-                .map(|(source, output)| {
-                    build_module(source, output, treeshake).map(|js| OutputPlan {
-                        output: output.clone(),
-                        js,
-                    })
+                .zip(destinations)
+                .map(|((source, output), destination)| {
+                    build_module(source, output, treeshake).map(|js| OutputPlan { destination, js })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            commit_outputs(plans)?;
+            commit_outputs(&root, plans)?;
             stdio::success(&format!(
                 "transpiled {} -> {}",
                 input.display(),
@@ -227,6 +239,13 @@ fn directory_entry(root: &Path, sources: &[PathBuf]) -> Result<PathBuf, String> 
         "directory --bundle needs an entry file (main.ds, index.ds, or app.ds) under {}",
         root.display()
     ))
+}
+
+fn output_root_parent(output: &Path) -> &Path {
+    output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
 }
 
 fn build_module(input: &Path, output: &Path, treeshake: bool) -> Result<String, String> {
@@ -346,147 +365,563 @@ fn rewrite_relative_ds_imports(mut js: String) -> String {
     js
 }
 
-fn is_generated_output(path: &Path) -> Result<bool, String> {
-    let source = fs::read_to_string(path)
-        .map_err(|err| format!("failed to read existing output {}: {err}", path.display()))?;
-    Ok(source.starts_with(GENERATED_MARKER))
-}
-
-fn preflight_outputs(mappings: &[(PathBuf, PathBuf)]) -> Result<(), String> {
+fn preflight_outputs(
+    root: &SecureOutputRoot,
+    mappings: &[(PathBuf, PathBuf)],
+) -> Result<Vec<SecureDestination>, String> {
     let source_set = mappings
         .iter()
         .map(|(source, _)| source)
         .collect::<BTreeSet<_>>();
     let mut seen = BTreeSet::new();
+    let mut destinations = Vec::with_capacity(mappings.len());
     for (_, output) in mappings {
         if source_set.contains(output) || !seen.insert(output) {
             return Err(format!("output collision at {}", output.display()));
         }
-        if output.is_dir() {
-            return Err(format!(
-                "output collision: {} is a directory",
-                output.display()
-            ));
-        }
-        if output.exists() && !is_generated_output(output)? {
-            return Err(format!(
-                "output collision: {} already exists and was not generated by deka transpile",
-                output.display()
-            ));
-        }
+        destinations.push(root.prepare_destination(output)?);
     }
-    Ok(())
+    Ok(destinations)
 }
 
 struct OutputPlan {
-    output: PathBuf,
+    destination: SecureDestination,
     js: String,
 }
 
 struct StagedOutput {
-    output: PathBuf,
-    staged: PathBuf,
+    destination: SecureDestination,
+    staged: std::ffi::CString,
 }
 
 struct CommittedOutput {
-    output: PathBuf,
-    backup: Option<PathBuf>,
+    destination: SecureDestination,
+    backup: Option<std::ffi::CString>,
 }
 
-fn commit_outputs(plans: Vec<OutputPlan>) -> Result<(), String> {
+fn commit_outputs(root: &SecureOutputRoot, plans: Vec<OutputPlan>) -> Result<(), String> {
     let mut staged = Vec::with_capacity(plans.len());
     for (index, plan) in plans.iter().enumerate() {
-        if let Some(parent) = plan.output.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
-        }
-        let temporary = temporary_path(&plan.output, index, "new");
-        let contents = format!("{GENERATED_MARKER}{}", plan.js);
-        if let Err(err) = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-            .and_then(|mut file| std::io::Write::write_all(&mut file, contents.as_bytes()))
+        if let Err(err) = root
+            .revalidate()
+            .and_then(|_| plan.destination.revalidate(root))
         {
             cleanup_staged(&staged);
-            return Err(format!("failed to stage {}: {err}", plan.output.display()));
+            return Err(err);
+        }
+        let temporary = match plan.destination.temporary_name(index, "new") {
+            Ok(temporary) => temporary,
+            Err(err) => {
+                cleanup_staged(&staged);
+                return Err(err);
+            }
+        };
+        let contents = format!("{GENERATED_MARKER}{}", plan.js);
+        if let Err(err) = plan.destination.stage(&temporary, contents.as_bytes()) {
+            cleanup_staged(&staged);
+            return Err(format!(
+                "failed to stage {}: {err}",
+                plan.destination.output.display()
+            ));
         }
         staged.push(StagedOutput {
-            output: plan.output.clone(),
+            destination: plan.destination.try_clone()?,
             staged: temporary,
         });
     }
 
+    run_test_commit_hook();
     let mut committed = Vec::with_capacity(staged.len());
     for (index, staged_output) in staged.iter().enumerate() {
-        let backup = if staged_output.output.exists() {
-            let backup = temporary_path(&staged_output.output, index, "backup");
-            if backup.exists() {
-                rollback_outputs(&committed, &staged);
-                return Err(format!(
-                    "failed to stage existing {}: temporary path {} already exists",
-                    staged_output.output.display(),
-                    backup.display()
-                ));
-            }
-            if let Err(err) = fs::rename(&staged_output.output, &backup) {
+        if let Err(err) = root
+            .revalidate()
+            .and_then(|_| staged_output.destination.revalidate(root))
+        {
+            rollback_outputs(&committed, &staged);
+            return Err(err);
+        }
+        let backup = if staged_output.destination.expected_existing {
+            let backup = match staged_output.destination.temporary_name(index, "backup") {
+                Ok(backup) => backup,
+                Err(err) => {
+                    rollback_outputs(&committed, &staged);
+                    return Err(err);
+                }
+            };
+            if let Err(err) = staged_output.destination.backup(&backup) {
                 rollback_outputs(&committed, &staged);
                 return Err(format!(
                     "failed to stage existing {}: {err}",
-                    staged_output.output.display()
+                    staged_output.destination.output.display()
                 ));
             }
             Some(backup)
         } else {
+            if staged_output.destination.exists_no_follow()? {
+                rollback_outputs(&committed, &staged);
+                return Err(format!(
+                    "output changed after preflight: {}",
+                    staged_output.destination.output.display()
+                ));
+            }
             None
         };
-        if let Err(err) = fs::rename(&staged_output.staged, &staged_output.output) {
+        if let Err(err) = staged_output.destination.commit(&staged_output.staged) {
             let current = CommittedOutput {
-                output: staged_output.output.clone(),
+                destination: staged_output.destination.try_clone()?,
                 backup,
             };
             rollback_outputs(std::slice::from_ref(&current), &staged);
             rollback_outputs(&committed, &staged);
             return Err(format!(
                 "failed to commit {}: {err}",
-                staged_output.output.display()
+                staged_output.destination.output.display()
             ));
         }
         committed.push(CommittedOutput {
-            output: staged_output.output.clone(),
+            destination: staged_output.destination.try_clone()?,
             backup,
         });
     }
     for committed_output in committed {
         if let Some(backup) = committed_output.backup {
-            let _ = fs::remove_file(backup);
+            let _ = committed_output.destination.remove(&backup);
         }
     }
     Ok(())
 }
 
-fn temporary_path(output: &Path, index: usize, kind: &str) -> PathBuf {
-    let name = output.file_name().unwrap_or_default().to_string_lossy();
-    output.with_file_name(format!(
-        ".{name}.deka-transpile-{}-{index}.{kind}",
-        std::process::id()
-    ))
-}
-
 fn cleanup_staged(staged: &[StagedOutput]) {
     for staged_output in staged {
-        let _ = fs::remove_file(&staged_output.staged);
+        let _ = staged_output.destination.remove(&staged_output.staged);
     }
 }
 
 fn rollback_outputs(committed: &[CommittedOutput], staged: &[StagedOutput]) {
     for committed_output in committed.iter().rev() {
-        let _ = fs::remove_file(&committed_output.output);
+        let _ = committed_output
+            .destination
+            .remove(&committed_output.destination.leaf);
         if let Some(backup) = &committed_output.backup {
-            let _ = fs::rename(backup, &committed_output.output);
+            let _ = committed_output.destination.restore(backup);
         }
     }
     cleanup_staged(staged);
+}
+
+#[cfg(unix)]
+struct SecureOutputRoot {
+    dir: fs::File,
+    parent: Option<fs::File>,
+    name: Option<std::ffi::CString>,
+    identity: (u64, u64),
+    display: PathBuf,
+    lexical: PathBuf,
+}
+
+#[cfg(unix)]
+struct SecureDestination {
+    parent: fs::File,
+    parent_identity: (u64, u64),
+    relative_parent: PathBuf,
+    leaf: std::ffi::CString,
+    expected_existing: bool,
+    output: PathBuf,
+}
+
+#[cfg(unix)]
+impl SecureOutputRoot {
+    fn open_or_create(path: &Path) -> Result<Self, String> {
+        let lexical = path.to_path_buf();
+        let path = trusted_root_path(path)?;
+        let mut dir = if path.is_absolute() {
+            open_dir_path(Path::new("/"))?
+        } else {
+            open_dir_path(Path::new("."))?
+        };
+        ensure_trusted_dir(&dir)?;
+        let mut prior = None;
+        let mut name = None;
+        for component in path.components() {
+            if matches!(
+                component,
+                std::path::Component::RootDir | std::path::Component::CurDir
+            ) {
+                continue;
+            }
+            let std::path::Component::Normal(part) = component else {
+                return Err(format!("unsafe output root: {}", path.display()));
+            };
+            let part = cstring(part)?;
+            let parent = dir.try_clone().map_err(|err| err.to_string())?;
+            dir = open_or_create_dir(&parent, &part)?;
+            prior = Some(parent);
+            name = Some(part);
+        }
+        Ok(Self {
+            identity: identity(&dir)?,
+            dir,
+            parent: prior,
+            name,
+            display: path,
+            lexical,
+        })
+    }
+
+    fn revalidate(&self) -> Result<(), String> {
+        if let (Some(parent), Some(name)) = (&self.parent, &self.name) {
+            let current = open_dir_at(parent, name)?;
+            ensure_trusted_dir(&current)?;
+            if identity(&current)? != self.identity {
+                return Err(format!(
+                    "output root changed after preflight: {}",
+                    self.display.display()
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn prepare_destination(&self, output: &Path) -> Result<SecureDestination, String> {
+        let relative = output
+            .strip_prefix(&self.lexical)
+            .map_err(|_| format!("output escapes declared root: {}", output.display()))?;
+        let leaf = relative
+            .file_name()
+            .ok_or_else(|| format!("invalid output path: {}", output.display()))?;
+        let mut parent = self.dir.try_clone().map_err(|err| err.to_string())?;
+        let parent_rel = relative.parent().unwrap_or(Path::new(""));
+        for component in parent_rel.components() {
+            let std::path::Component::Normal(part) = component else {
+                return Err(format!("unsafe output path: {}", output.display()));
+            };
+            parent = open_or_create_dir(&parent, &cstring(part)?)?;
+        }
+        let leaf = cstring(leaf)?;
+        let expected_existing = match file_kind(&parent, &leaf)? {
+            None => false,
+            Some(libc::S_IFREG) => generated_marker(&parent, &leaf)?,
+            Some(libc::S_IFLNK) => {
+                return Err(format!("symlinked output rejected: {}", output.display()));
+            }
+            _ => {
+                return Err(format!(
+                    "output collision: {} is not a regular file",
+                    output.display()
+                ));
+            }
+        };
+        if file_kind(&parent, &leaf)?.is_some() && !expected_existing {
+            return Err(format!(
+                "output collision: {} already exists and was not generated by deka transpile",
+                output.display()
+            ));
+        }
+        Ok(SecureDestination {
+            parent_identity: identity(&parent)?,
+            parent,
+            relative_parent: parent_rel.to_path_buf(),
+            leaf,
+            expected_existing,
+            output: output.to_path_buf(),
+        })
+    }
+}
+
+#[cfg(unix)]
+impl SecureDestination {
+    fn try_clone(&self) -> Result<Self, String> {
+        Ok(Self {
+            parent: self.parent.try_clone().map_err(|err| err.to_string())?,
+            parent_identity: self.parent_identity,
+            relative_parent: self.relative_parent.clone(),
+            leaf: self.leaf.clone(),
+            expected_existing: self.expected_existing,
+            output: self.output.clone(),
+        })
+    }
+    fn revalidate(&self, root: &SecureOutputRoot) -> Result<(), String> {
+        let mut current = root.dir.try_clone().map_err(|err| err.to_string())?;
+        for component in self.relative_parent.components() {
+            if let std::path::Component::Normal(part) = component {
+                current = open_dir_at(&current, &cstring(part)?)?;
+            }
+        }
+        if identity(&current)? != self.parent_identity {
+            return Err(format!(
+                "output parent changed after preflight: {}",
+                self.output.display()
+            ));
+        }
+        ensure_trusted_dir(&current)?;
+        Ok(())
+    }
+    fn temporary_name(&self, index: usize, kind: &str) -> Result<std::ffi::CString, String> {
+        let name = self.leaf.to_string_lossy();
+        std::ffi::CString::new(format!(
+            ".{name}.deka-transpile-{}-{index}.{kind}",
+            std::process::id()
+        ))
+        .map_err(|_| "invalid temporary output name".to_string())
+    }
+    fn stage(&self, name: &std::ffi::CString, bytes: &[u8]) -> Result<(), String> {
+        let fd = unsafe {
+            libc::openat(
+                self.parent.as_raw_fd(),
+                name.as_ptr(),
+                libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                0o600,
+            )
+        };
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        let mut file = unsafe { fs::File::from_raw_fd(fd) };
+        std::io::Write::write_all(&mut file, bytes).map_err(|err| err.to_string())
+    }
+    fn exists_no_follow(&self) -> Result<bool, String> {
+        Ok(file_kind(&self.parent, &self.leaf)?.is_some())
+    }
+    fn backup(&self, name: &std::ffi::CString) -> Result<(), String> {
+        if self.exists_no_follow()? == false {
+            return Err("output disappeared after preflight".to_string());
+        }
+        rename_at(&self.parent, &self.leaf, &self.parent, name)
+    }
+    fn commit(&self, staged: &std::ffi::CString) -> Result<(), String> {
+        rename_at(&self.parent, staged, &self.parent, &self.leaf)
+    }
+    fn remove(&self, name: &std::ffi::CString) -> Result<(), String> {
+        unlink_at(&self.parent, name)
+    }
+    fn restore(&self, backup: &std::ffi::CString) -> Result<(), String> {
+        rename_at(&self.parent, backup, &self.parent, &self.leaf)
+    }
+}
+
+#[cfg(unix)]
+fn cstring(value: &std::ffi::OsStr) -> Result<std::ffi::CString, String> {
+    std::ffi::CString::new(value.as_bytes()).map_err(|_| "path contains NUL".to_string())
+}
+#[cfg(unix)]
+fn trusted_root_path(path: &Path) -> Result<PathBuf, String> {
+    let mut missing = Vec::new();
+    let mut current = path;
+    loop {
+        match fs::symlink_metadata(current) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() {
+                    return Err(format!(
+                        "symlinked output root rejected: {}",
+                        current.display()
+                    ));
+                }
+                let mut trusted = fs::canonicalize(current).map_err(|err| err.to_string())?;
+                for part in missing.iter().rev() {
+                    trusted.push(part);
+                }
+                return Ok(trusted);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                missing.push(
+                    current
+                        .file_name()
+                        .ok_or_else(|| format!("invalid output root: {}", path.display()))?
+                        .to_os_string(),
+                );
+                current = current
+                    .parent()
+                    .ok_or_else(|| format!("invalid output root: {}", path.display()))?;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+}
+#[cfg(unix)]
+fn open_dir_path(path: &Path) -> Result<fs::File, String> {
+    let name = cstring(path.as_os_str())?;
+    let fd = unsafe {
+        libc::open(
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        Err(std::io::Error::last_os_error().to_string())
+    } else {
+        Ok(unsafe { fs::File::from_raw_fd(fd) })
+    }
+}
+#[cfg(unix)]
+fn open_dir_at(parent: &fs::File, name: &std::ffi::CString) -> Result<fs::File, String> {
+    let fd = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        Err(std::io::Error::last_os_error().to_string())
+    } else {
+        Ok(unsafe { fs::File::from_raw_fd(fd) })
+    }
+}
+#[cfg(unix)]
+fn open_or_create_dir(parent: &fs::File, name: &std::ffi::CString) -> Result<fs::File, String> {
+    match open_dir_at(parent, name) {
+        Ok(dir) => {
+            ensure_trusted_dir(&dir)?;
+            Ok(dir)
+        }
+        Err(_) => {
+            let rc = unsafe { libc::mkdirat(parent.as_raw_fd(), name.as_ptr(), 0o700) };
+            if rc != 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::EEXIST) {
+                return Err(std::io::Error::last_os_error().to_string());
+            }
+            let dir = open_dir_at(parent, name)?;
+            ensure_trusted_dir(&dir)?;
+            Ok(dir)
+        }
+    }
+}
+#[cfg(unix)]
+fn ensure_trusted_dir(dir: &fs::File) -> Result<(), String> {
+    let stat = dir_stat(dir)?;
+    let effective_uid = unsafe { libc::geteuid() };
+    let writable_by_untrusted = stat.st_mode & (libc::S_IWGRP | libc::S_IWOTH) != 0;
+    let trusted_owner = stat.st_uid == effective_uid || stat.st_uid == 0;
+    if !trusted_owner || writable_by_untrusted {
+        return Err(format!(
+            "secure output topology rejected: directory must be owned by the effective user or root and not group/world writable (uid {}, mode {:o})",
+            stat.st_uid,
+            stat.st_mode & 0o7777
+        ));
+    }
+    Ok(())
+}
+#[cfg(unix)]
+fn identity(file: &fs::File) -> Result<(u64, u64), String> {
+    let stat = dir_stat(file)?;
+    Ok((stat.st_dev as u64, stat.st_ino as u64))
+}
+#[cfg(unix)]
+fn dir_stat(file: &fs::File) -> Result<libc::stat, String> {
+    let mut stat = unsafe { std::mem::zeroed::<libc::stat>() };
+    if unsafe { libc::fstat(file.as_raw_fd(), &mut stat) } != 0 {
+        Err(std::io::Error::last_os_error().to_string())
+    } else {
+        Ok(stat)
+    }
+}
+#[cfg(unix)]
+fn file_kind(parent: &fs::File, name: &std::ffi::CString) -> Result<Option<libc::mode_t>, String> {
+    let mut stat = unsafe { std::mem::zeroed::<libc::stat>() };
+    let rc = unsafe {
+        libc::fstatat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            &mut stat,
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    };
+    if rc == 0 {
+        Ok(Some(stat.st_mode & libc::S_IFMT))
+    } else if std::io::Error::last_os_error().raw_os_error() == Some(libc::ENOENT) {
+        Ok(None)
+    } else {
+        Err(std::io::Error::last_os_error().to_string())
+    }
+}
+#[cfg(unix)]
+fn generated_marker(parent: &fs::File, name: &std::ffi::CString) -> Result<bool, String> {
+    let fd = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    let mut file = unsafe { fs::File::from_raw_fd(fd) };
+    let mut marker = vec![0; GENERATED_MARKER.len()];
+    use std::io::Read;
+    file.read_exact(&mut marker)
+        .map(|_| marker == GENERATED_MARKER.as_bytes())
+        .or_else(|err| {
+            if err.kind() == std::io::ErrorKind::UnexpectedEof {
+                Ok(false)
+            } else {
+                Err(err)
+            }
+        })
+        .map_err(|err| err.to_string())
+}
+#[cfg(unix)]
+fn rename_at(
+    from_parent: &fs::File,
+    from: &std::ffi::CString,
+    to_parent: &fs::File,
+    to: &std::ffi::CString,
+) -> Result<(), String> {
+    if unsafe {
+        libc::renameat(
+            from_parent.as_raw_fd(),
+            from.as_ptr(),
+            to_parent.as_raw_fd(),
+            to.as_ptr(),
+        )
+    } != 0
+    {
+        Err(std::io::Error::last_os_error().to_string())
+    } else {
+        Ok(())
+    }
+}
+#[cfg(unix)]
+fn unlink_at(parent: &fs::File, name: &std::ffi::CString) -> Result<(), String> {
+    if unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), 0) } != 0
+        && std::io::Error::last_os_error().raw_os_error() != Some(libc::ENOENT)
+    {
+        Err(std::io::Error::last_os_error().to_string())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(unix))]
+struct SecureOutputRoot;
+#[cfg(not(unix))]
+struct SecureDestination;
+#[cfg(not(unix))]
+impl SecureOutputRoot {
+    fn open_or_create(_: &Path) -> Result<Self, String> {
+        Err("secure transpile output is unsupported on this platform".to_string())
+    }
+}
+
+#[cfg(not(test))]
+fn run_test_commit_hook() {}
+
+#[cfg(test)]
+type CommitHook = Box<dyn FnOnce() + Send>;
+#[cfg(test)]
+static COMMIT_HOOK: std::sync::OnceLock<std::sync::Mutex<Option<CommitHook>>> =
+    std::sync::OnceLock::new();
+#[cfg(test)]
+static COMMIT_HOOK_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+#[cfg(test)]
+fn run_test_commit_hook() {
+    if let Some(hook) = COMMIT_HOOK
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+        .expect("hook lock")
+        .take()
+    {
+        hook();
+    }
 }
 
 fn collect_ds_sources(root: &Path) -> Result<Vec<PathBuf>, String> {
@@ -532,6 +967,10 @@ fn is_ds(path: &Path) -> bool {
 mod tests {
     use super::*;
     use std::process::Command;
+    #[cfg(unix)]
+    use std::sync::Arc;
+    #[cfg(unix)]
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     fn write(path: &Path, source: &str) {
         fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
@@ -653,10 +1092,107 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlinked_output_parent_without_writing_outside_root() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("src");
+        let output = temp.path().join("generated");
+        let outside = temp.path().join("outside");
+        write(&root.join("nested/math.ds"), "export const math = 2;\n");
+        fs::create_dir_all(&outside).expect("outside");
+        fs::create_dir_all(&output).expect("output");
+        std::os::unix::fs::symlink(&outside, output.join("nested")).expect("symlink");
+
+        assert!(transpile_directory(&root, Some(&output), TranspileMode::Preserve, false).is_err());
+        assert!(!outside.join("math.js").exists());
+    }
+
+    #[cfg(unix)]
+    fn concurrent_parent_swap_cannot_produce_named_output(phase: &str) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("src");
+        let output = temp.path().join("generated");
+        let outside = temp.path().join("outside");
+        let moved = temp.path().join("moved-nested");
+        write(&root.join("nested/math.ds"), "export const math = 2;\n");
+        fs::create_dir_all(&outside).expect("outside");
+        fs::create_dir_all(output.join("nested")).expect("output parent");
+        fs::set_permissions(&output, std::os::unix::fs::PermissionsExt::from_mode(0o777))
+            .expect("make output shared");
+        let stop = Arc::new(AtomicBool::new(false));
+        let swaps = Arc::new(AtomicUsize::new(0));
+        let swap_output = output.clone();
+        let swap_outside = outside.clone();
+        let swap_moved = moved.clone();
+        let swap_stop = Arc::clone(&stop);
+        let swap_count = Arc::clone(&swaps);
+        let swapper = std::thread::spawn(move || {
+            let nested = swap_output.join("nested");
+            while !swap_stop.load(Ordering::Acquire) {
+                if fs::rename(&nested, &swap_moved).is_ok() {
+                    let _ = std::os::unix::fs::symlink(&swap_outside, &nested);
+                    swap_count.fetch_add(1, Ordering::Release);
+                    std::thread::yield_now();
+                    let _ = fs::remove_file(&nested);
+                    let _ = fs::rename(&swap_moved, &nested);
+                }
+            }
+            let _ = fs::remove_file(&nested);
+            if swap_moved.exists() {
+                let _ = fs::rename(&swap_moved, &nested);
+            }
+        });
+        while swaps.load(Ordering::Acquire) == 0 {
+            std::thread::yield_now();
+        }
+
+        let error = transpile_directory(&root, Some(&output), TranspileMode::Preserve, false)
+            .expect_err("shared output topology must be rejected");
+        stop.store(true, Ordering::Release);
+        swapper.join().expect("swapper");
+
+        assert!(error.contains("secure output topology rejected"), "{phase}");
+        assert!(!outside.join("math.js").exists(), "{phase}");
+        assert!(!output.join("nested/math.js").exists(), "{phase}");
+        assert!(
+            fs::read_dir(output.join("nested"))
+                .expect("output parent")
+                .next()
+                .is_none(),
+            "{phase}: no staged residue"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn concurrent_parent_swap_at_staging_cannot_write_or_leave_residue() {
+        concurrent_parent_swap_cannot_produce_named_output("staging");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn concurrent_parent_swap_at_commit_cannot_write_or_leave_residue() {
+        concurrent_parent_swap_cannot_produce_named_output("commit");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn concurrent_parent_swap_at_rollback_cannot_write_or_leave_residue() {
+        concurrent_parent_swap_cannot_produce_named_output("rollback");
+    }
+
     #[test]
     fn help_documents_modes_defaults_outputs_and_examples() {
         let help = usage();
-        for expected in ["Modes:", "by default", "--out", "Examples:", "--treeshake"] {
+        for expected in [
+            "Modes:",
+            "by default",
+            "--out",
+            "Examples:",
+            "--treeshake",
+            "Output ancestors must be non-symlinked",
+        ] {
             assert!(help.contains(expected), "missing {expected} from {help}");
         }
     }
