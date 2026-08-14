@@ -28,10 +28,15 @@ impl<'a> JsSubsetEmitter<'a> {
     pub(super) fn emit_param_default_guards(
         &mut self,
         params: &[php_rs::parser::ast::Param<'_>],
+        destructure_map: &std::collections::HashMap<String, (String, Vec<String>)>,
     ) -> Result<(), String> {
         for param in params {
             if let Some(default) = param.default {
-                let name = self.token_name(param.name);
+                let original = self.token_name(param.name);
+                let name = destructure_map
+                    .get(&original)
+                    .map(|(synthetic, _)| synthetic.clone())
+                    .unwrap_or(original);
                 let default_js = self.emit_expr(default)?;
                 self.body.push_str(&format!(
                     "if ({} === undefined) {{ {} = {}; }}\n",
@@ -45,11 +50,16 @@ impl<'a> JsSubsetEmitter<'a> {
     pub(super) fn emit_param_default_guards_inline(
         &mut self,
         params: &[php_rs::parser::ast::Param<'_>],
+        destructure_map: &std::collections::HashMap<String, (String, Vec<String>)>,
     ) -> Result<String, String> {
         let mut out = String::new();
         for param in params {
             if let Some(default) = param.default {
-                let name = self.token_name(param.name);
+                let original = self.token_name(param.name);
+                let name = destructure_map
+                    .get(&original)
+                    .map(|(synthetic, _)| synthetic.clone())
+                    .unwrap_or(original);
                 let default_js = self.emit_expr(default)?;
                 out.push_str(&format!(
                     "if ({} === undefined) {{ {} = {}; }}\n",
@@ -58,6 +68,32 @@ impl<'a> JsSubsetEmitter<'a> {
             }
         }
         Ok(out)
+    }
+
+    /// Detect parser-generated destructuring prologue assignments so the
+    /// emitter can skip them when it has already emitted explicit `const`
+    /// bindings for a synthetic props parameter.
+    pub(super) fn is_param_pattern_prologue(
+        &self,
+        stmt: &php_rs::parser::ast::Stmt<'_>,
+        original_names: &[String],
+    ) -> bool {
+        let php_rs::parser::ast::Stmt::Expression { expr, .. } = stmt else {
+            return false;
+        };
+        let php_rs::parser::ast::Expr::Assign { expr: rhs, .. } = **expr else {
+            return false;
+        };
+        let target = match rhs {
+            php_rs::parser::ast::Expr::PropertyFetch { target, .. } => target,
+            php_rs::parser::ast::Expr::ArrayDimFetch { array, .. } => array,
+            _ => return false,
+        };
+        let php_rs::parser::ast::Expr::Variable { name, .. } = *target else {
+            return false;
+        };
+        let target_name = self.span_name(*name);
+        original_names.contains(&target_name)
     }
 
     pub(super) fn is_declared(&self, name: &str) -> bool {

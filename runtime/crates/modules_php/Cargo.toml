@@ -4,46 +4,71 @@ version = "0.1.0"
 edition = "2024"
 build = "build.rs"
 
+[features]
+default = ["compiler", "runtime"]
+compiler = []
+runtime = [
+    "dep:deno_core",
+    "dep:tokio",
+    "dep:postgres",
+    "dep:mysql",
+    "dep:rusqlite",
+    "dep:neo4rs",
+    "dep:redis",
+    "dep:reqwest",
+    "dep:tokio-tungstenite",
+    "dep:tokio-stream",
+    "dep:futures-util",
+    "dep:native-tls",
+    "dep:bcrypt",
+    "dep:aes-gcm",
+    "dep:getrandom",
+    "dep:deka-shard",
+    "dep:runtime_core",
+    "dep:stdio",
+    "php-rs/pcre2",
+]
+
 [dependencies]
-deno_core = { workspace = true }
+deno_core = { workspace = true, optional = true }
 bumpalo = "3"
 bytes = "1"
 chrono = { version = "0.4", features = ["clock"] }
-php-rs = { path = "../php-rs" }
+php-rs = { path = "../php-rs", default-features = false }
 seam_ir = { path = "../seam_ir" }
 cypher = { path = "../cypher" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 prost = "0.13"
 sha2 = "0.10"
-postgres = { version = "0.19", features = ["with-chrono-0_4"] }
-mysql = "26"
-rusqlite = { version = "0.32", features = ["bundled"] }
+postgres = { version = "0.19", features = ["with-chrono-0_4"], optional = true }
+mysql = { version = "26", optional = true }
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }
 wit-parser = "0.219.2"
-deka-validation = { path = "../deka-validation" }
-runtime_core = { path = "../runtime_core" }
-stdio = { path = "../stdio" }
-native-tls = "0.2"
-getrandom = "0.2"
-aes-gcm = "0.10"
-bcrypt = "0.15"
-neo4rs = { workspace = true }
-redis = { workspace = true }
-tokio = { workspace = true }
-deka-shard = { path = "../shard" }
+deka-validation = { path = "../deka-validation", default-features = false }
+runtime_core = { path = "../runtime_core", optional = true }
+stdio = { path = "../stdio", optional = true }
+native-tls = { version = "0.2", optional = true }
+getrandom = { version = "0.2", optional = true }
+aes-gcm = { version = "0.10", optional = true }
+bcrypt = { version = "0.15", optional = true }
+neo4rs = { workspace = true, optional = true }
+redis = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+deka-shard = { path = "../shard", optional = true }
 
 # @deka/http — outbound HTTP/1.1, HTTP/2 (ALPN h2), streaming bodies,
 # opt-in cookie jars. rustls keeps the TLS stack pure-Rust (no OpenSSL
 # system dep surprise) and matches what `crates/runtime` already uses.
-reqwest = { version = "0.11", default-features = false, features = ["rustls-tls", "stream", "cookies", "gzip", "json"] }
+reqwest = { version = "0.11", default-features = false, features = ["rustls-tls", "stream", "cookies", "gzip", "json"], optional = true }
 # @deka/http WebSocket client. tokio-tungstenite gives us the RFC 6455
 # implementation with TLS via rustls, fragmentation reassembly, and
 # ping/pong keepalive. Chosen over reqwest-websocket because it exposes
 # full frame control (text/binary, close codes, ping payloads) which
 # Stripe-style streaming APIs need.
-tokio-tungstenite = { version = "0.21", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
-tokio-stream = "0.1"
-futures-util = "0.3"
+tokio-tungstenite = { version = "0.21", default-features = false, features = ["connect", "rustls-tls-webpki-roots"], optional = true }
+tokio-stream = { version = "0.1", optional = true }
+futures-util = { version = "0.3", optional = true }
 url = "2"
 
 [build-dependencies]

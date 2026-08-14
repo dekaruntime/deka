@@ -1,0 +1,13 @@
+[package]
+name = "phpx_compiler_wasm"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+bumpalo = "3"
+serde_json = { workspace = true }
+phpx_js = { path = "../phpx_js", default-features = false }
+modules_php = { path = "../modules_php", default-features = false, features = ["compiler"] }

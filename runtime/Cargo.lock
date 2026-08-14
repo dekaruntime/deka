@@ -747,7 +747,6 @@ dependencies = [
  "ctrlc",
  "deno_task_shell",
  "glob",
- "harar-client",
  "introspect",
  "linkhash-client",
  "modules_php",
@@ -761,7 +760,7 @@ dependencies = [
  "runtime_core",
  "rusqlite",
  "seam_diff",
- "seam_ir 0.1.0",
+ "seam_ir",
  "seam_ts",
  "serde",
  "serde_json",
@@ -1141,33 +1140,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "curve25519-dalek"
-version = "4.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97fb8b7c4503de7d6ae7b42ab72a5a59857b4c937ec27a3d4539dba95b5ab2be"
-dependencies = [
- "cfg-if",
- "cpufeatures 0.2.17",
- "curve25519-dalek-derive",
- "digest 0.10.7",
- "fiat-crypto",
- "rustc_version",
- "subtle",
- "zeroize",
-]
-
-[[package]]
-name = "curve25519-dalek-derive"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f46882e17999c6cc590af592290432be3bce0428cb0d5f8b6715e4dc7b383eb3"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.118",
-]
-
-[[package]]
 name = "cypher"
 version = "0.1.0"
 dependencies = [
@@ -1372,6 +1344,7 @@ dependencies = [
  "bytes",
  "chrono",
  "dashmap 5.5.3",
+ "deno_core",
  "engine",
  "futures-util",
  "http-body-util",
@@ -1767,31 +1740,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ed25519"
-version = "2.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "115531babc129696a58c64a4fef0a8bf9e9698629fb97e9e40767d235cfbcd53"
-dependencies = [
- "pkcs8",
- "signature",
-]
-
-[[package]]
-name = "ed25519-dalek"
-version = "2.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70e796c081cee67dc755e1a36a0a172b897fab85fc3f6bc48307991f64e4eca9"
-dependencies = [
- "curve25519-dalek",
- "ed25519",
- "rand_core 0.6.4",
- "serde",
- "sha2 0.10.9",
- "subtle",
- "zeroize",
-]
-
-[[package]]
 name = "either"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1901,12 +1849,6 @@ name = "fastrand"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
-
-[[package]]
-name = "fiat-crypto"
-version = "0.2.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 
 [[package]]
 name = "filetime"
@@ -2209,21 +2151,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
-]
-
-[[package]]
-name = "harar-client"
-version = "0.2.0"
-source = "sparse+https://git.tana.gg/index/"
-checksum = "3f159e15067859b215968c2cea96b0743a7cdca4dbe12bad8ffe01c425c5db11"
-dependencies = [
- "base64 0.22.1",
- "ed25519-dalek",
- "rand_core 0.6.4",
- "seam_ir 0.1.0 (sparse+https://git.tana.gg/index/)",
- "serde",
- "serde_json",
- "tokio",
 ]
 
 [[package]]
@@ -3316,7 +3243,7 @@ dependencies = [
  "runtime_core",
  "rusqlite",
  "seam_diff",
- "seam_ir 0.1.0",
+ "seam_ir",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -4091,6 +4018,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "phpx_compiler_wasm"
+version = "0.1.0"
+dependencies = [
+ "bumpalo",
+ "modules_php",
+ "phpx_js",
+ "serde_json",
+]
+
+[[package]]
 name = "phpx_js"
 version = "0.1.0"
 dependencies = [
@@ -4241,7 +4178,6 @@ dependencies = [
  "deka-validation",
  "deno_core",
  "deno_error",
- "harar-client",
  "libc",
  "mach2",
  "nanoid",
@@ -5023,7 +4959,7 @@ dependencies = [
 name = "runtime_core"
 version = "0.1.0"
 dependencies = [
- "seam_ir 0.1.0",
+ "seam_ir",
  "serde",
  "serde_json",
 ]
@@ -5074,15 +5010,6 @@ name = "rustc-hash"
 version = "2.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
-
-[[package]]
-name = "rustc_version"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfcb3a22ef46e85b45de6ee7e79d063319ebb6594faafcf1c225ea92ab6e9b92"
-dependencies = [
- "semver",
-]
 
 [[package]]
 name = "rustix"
@@ -5297,22 +5224,12 @@ checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
 name = "seam_diff"
 version = "0.1.0"
 dependencies = [
- "seam_ir 0.1.0",
+ "seam_ir",
 ]
 
 [[package]]
 name = "seam_ir"
 version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "seam_ir"
-version = "0.1.0"
-source = "sparse+https://git.tana.gg/index/"
-checksum = "4c56e7e0013ac492af2c4acf4a04715cc596c70c77ed607fe3922fd5cb6c0a20"
 dependencies = [
  "serde",
  "serde_json",
@@ -5322,7 +5239,7 @@ dependencies = [
 name = "seam_ts"
 version = "0.1.0"
 dependencies = [
- "seam_ir 0.1.0",
+ "seam_ir",
  "serde_json",
  "swc_common",
  "swc_ecma_ast",

@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  utility-css:
+    name: Utility CSS generator
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Regenerate bundle
+        working-directory: runtime/assets/utility-css
+        run: bun build.ts
+
+      - name: Check for uncommitted changes
+        run: |
+          if [ -n "$(git status --porcelain runtime/assets/utility-css/bundle.js)" ]; then
+            echo "::error::runtime/assets/utility-css/bundle.js is out of date. Run 'bun build.ts' in that directory and commit the result."
+            git diff runtime/assets/utility-css/bundle.js
+            exit 1
+          fi
+
+      - name: Run utility-css smoke tests
+        working-directory: runtime/assets/utility-css
+        run: bun test.ts
+
+  rust:
+    name: Rust tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: runtime
+
+      # Build only the crates we test. The full workspace includes
+      # phpx_compiler_wasm, which fails to link on ubuntu-latest due to V8
+      # TLS relocation issues and is not needed for these test suites.
+      - name: Build tested crates
+        working-directory: runtime
+        run: cargo build -p deka_http -p pool -p engine
+
+      - name: Test deka_http
+        working-directory: runtime
+        run: cargo test -p deka_http
+
+      - name: Test pool
+        working-directory: runtime
+        run: cargo test -p pool
+
+      - name: Test engine
+        working-directory: runtime
+        run: cargo test -p engine
+
+      - name: Test PHPX compiler
+        working-directory: runtime
+        run: cargo test -p phpx_js --lib

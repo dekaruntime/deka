@@ -3,7 +3,14 @@ use crate::{ImportDecl, ImportSpec, SourceModuleMeta};
 pub fn parse_source_module_meta(source: &str) -> SourceModuleMeta {
     let mut meta = SourceModuleMeta::empty();
     let lines: Vec<&str> = source.lines().collect();
-    let (start, end) = frontmatter_range(&lines).unwrap_or((0, lines.len()));
+    let bounds = frontmatter_range(&lines);
+    let (start, end) = bounds.unwrap_or((0, lines.len()));
+
+    if let Some((s, e)) = bounds {
+        meta.frontmatter_start_line = Some(s);
+        meta.frontmatter_end_line = Some(e);
+        meta.template_start_line = Some(e + 1);
+    }
 
     for line in &lines[start..end] {
         let trimmed = line.trim();

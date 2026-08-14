@@ -1,6 +1,187 @@
 use super::*;
 
 impl<'a> JsSubsetEmitter<'a> {
+    /// Try to interpret a frontmatter template line as a JSX element and emit it
+    /// as a `jsx(...)` / `jsxs(...)` expression. Returns `None` for lines that
+    /// should fall back to literal text emission.
+    pub(super) fn try_emit_template_jsx(&mut self, line: &str) -> Option<String> {
+        let s = line.trim();
+        if s.is_empty() || !s.starts_with('<') {
+            return None;
+        }
+
+        let bytes = s.as_bytes();
+        let mut i = 1usize;
+
+        // Parse tag name.
+        let tag_start = i;
+        while i < bytes.len()
+            && !bytes[i].is_ascii_whitespace()
+            && bytes[i] != b'>'
+            && bytes[i] != b'/'
+        {
+            i += 1;
+        }
+        if i == tag_start {
+            return None;
+        }
+        let tag_name = &s[tag_start..i];
+        let is_component = tag_name
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_uppercase())
+            .unwrap_or(false);
+
+        // Parse attributes.
+        let mut attrs: Vec<String> = Vec::new();
+        loop {
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i >= bytes.len() || bytes[i] == b'/' || bytes[i] == b'>' {
+                break;
+            }
+            let name_start = i;
+            while i < bytes.len()
+                && (bytes[i].is_ascii_alphanumeric()
+                    || bytes[i] == b'_'
+                    || bytes[i] == b'-')
+            {
+                i += 1;
+            }
+            if i == name_start {
+                return None;
+            }
+            let attr_name = &s[name_start..i];
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i < bytes.len() && bytes[i] == b'=' {
+                i += 1;
+                while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+                if i < bytes.len() && (bytes[i] == b'"' || bytes[i] == b'\'') {
+                    let quote = bytes[i];
+                    i += 1;
+                    let val_start = i;
+                    while i < bytes.len() && bytes[i] != quote {
+                        i += 1;
+                    }
+                    let value = &s[val_start..i];
+                    attrs.push(format!("{}: {}", json_string(attr_name), json_string(value)));
+                    if i < bytes.len() {
+                        i += 1;
+                    }
+                } else if i < bytes.len() && bytes[i] == b'{' {
+                    i += 1;
+                    let expr_start = i;
+                    let mut depth = 1usize;
+                    while i < bytes.len() && depth > 0 {
+                        if bytes[i] == b'{' {
+                            depth += 1;
+                        } else if bytes[i] == b'}' {
+                            depth -= 1;
+                        }
+                        i += 1;
+                    }
+                    let expr = &s[expr_start..i.saturating_sub(1)];
+                    let js_expr = expr.trim().replace('$', "");
+                    attrs.push(format!("{}: {}", json_string(attr_name), js_expr));
+                } else {
+                    return None;
+                }
+            } else {
+                attrs.push(format!("{}: true", json_string(attr_name)));
+            }
+        }
+
+        let self_closing = if i < bytes.len() && bytes[i] == b'/' {
+            i += 1;
+            true
+        } else {
+            false
+        };
+        if i >= bytes.len() || bytes[i] != b'>' {
+            return None;
+        }
+        i += 1;
+
+        let mut children: Vec<String> = Vec::new();
+        if !self_closing {
+            let content_start = i;
+            let close_tag = format!("</{}>", tag_name);
+            let close_pos = s[content_start..].find(&close_tag)? + content_start;
+            let content = &s[content_start..close_pos];
+
+            let mut j = 0usize;
+            let cbytes = content.as_bytes();
+            while j < content.len() {
+                if cbytes[j] == b'{' {
+                    let start = j;
+                    j += 1;
+                    while j < content.len() && cbytes[j].is_ascii_whitespace() {
+                        j += 1;
+                    }
+                    if j >= content.len() || cbytes[j] != b'$' {
+                        j = start;
+                    } else {
+                        j += 1;
+                        while j < content.len() && cbytes[j].is_ascii_whitespace() {
+                            j += 1;
+                        }
+                        let expr_start = j;
+                        while j < content.len()
+                            && (cbytes[j].is_ascii_alphanumeric()
+                                || cbytes[j] == b'_'
+                                || cbytes[j] == b'.')
+                        {
+                            j += 1;
+                        }
+                        let expr_end = j;
+                        while j < content.len() && cbytes[j].is_ascii_whitespace() {
+                            j += 1;
+                        }
+                        if expr_end > expr_start && j < content.len() && cbytes[j] == b'}' {
+                            let expr = &content[expr_start..expr_end];
+                            let js_expr = expr.replace('$', "");
+                            children.push(js_expr);
+                            j += 1;
+                            continue;
+                        }
+                        j = start;
+                    }
+                }
+                let text_start = j;
+                while j < content.len() && cbytes[j] != b'{' {
+                    j += 1;
+                }
+                let text = &content[text_start..j];
+                if !text.is_empty() {
+                    children.push(json_string(text));
+                }
+            }
+        }
+
+        self.uses_jsx_runtime = true;
+        if !children.is_empty() {
+            if children.len() == 1 {
+                attrs.push(format!("\"children\": {}", children[0]));
+            } else {
+                attrs.push(format!("\"children\": [{}]", children.join(", ")));
+            }
+        }
+
+        let tag_expr = if is_component {
+            tag_name.to_string()
+        } else {
+            json_string(tag_name)
+        };
+        let props_expr = format!("{{{}}}", attrs.join(", "));
+        let fn_name = if children.len() > 1 { "jsxs" } else { "jsx" };
+        Some(format!("{}({}, {})", fn_name, tag_expr, props_expr))
+    }
+
     pub(super) fn emit_jsx(
         &mut self,
         name: Option<php_rs::parser::ast::Name<'_>>,
@@ -96,7 +277,8 @@ impl<'a> JsSubsetEmitter<'a> {
         for param in params {
             self.declare_in_scope(&self.token_name(param.name));
         }
-        let defaults = self.emit_param_default_guards_inline(params)?;
+        let defaults =
+            self.emit_param_default_guards_inline(params, &std::collections::HashMap::new())?;
         if !defaults.is_empty() {
             self.body.push_str(&defaults);
         }

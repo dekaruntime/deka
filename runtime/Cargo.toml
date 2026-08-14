@@ -33,6 +33,7 @@ members = [
     "crates/linkhash-client",
     "examples/wasm_hello_rust",
     "crates/phpx_lsp",
+    "crates/phpx_compiler_wasm",
     "crates/cypher",
     "crates/shard",
     "crates/zega_backend",
