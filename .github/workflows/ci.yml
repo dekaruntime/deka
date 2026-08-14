@@ -70,3 +70,7 @@ jobs:
       - name: Test engine
         working-directory: runtime
         run: cargo test -p engine
+
+      - name: Test PHPX compiler
+        working-directory: runtime
+        run: cargo test -p phpx_js
