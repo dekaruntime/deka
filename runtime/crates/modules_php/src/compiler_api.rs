@@ -74,7 +74,7 @@ fn compile_phpx_with_mode<'a>(
     errors.extend(import_errors);
     warnings.extend(import_warnings);
 
-    let export_errors = validate_exports(source, file_path, &program);
+    let export_errors = validate_exports(source, file_path, &program, mode == ParserMode::Ds);
     errors.extend(export_errors);
 
     let (mut wasm_functions, wasm_errors) = collect_wasm_stub_signatures(source, file_path, arena);
@@ -445,4 +445,18 @@ fn preprocess_stub_source(source: &str) -> String {
         output.push_str(&line);
     }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compile_deka;
+    use bumpalo::Bump;
+
+    #[test]
+    fn ds_export_const_validates_through_compiler_api() {
+        let arena = Bump::new();
+        let result = compile_deka("export const answer = 42;", "lesson.ds", &arena);
+        assert!(result.errors.is_empty(), "unexpected errors: {:?}", result.errors);
+        assert!(result.ast.is_some(), "expected validated AST");
+    }
 }

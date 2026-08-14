@@ -16,7 +16,12 @@ pub(crate) struct ExportSpec {
     is_reexport: bool,
 }
 
-pub fn validate_exports(source: &str, file_path: &str, program: &Program) -> Vec<ValidationError> {
+pub fn validate_exports(
+    source: &str,
+    file_path: &str,
+    program: &Program,
+    allow_export_const: bool,
+) -> Vec<ValidationError> {
     let lines: Vec<&str> = source.lines().collect();
     let bounds = frontmatter_bounds(&lines);
     let scan_end = bounds.map(|(_, end)| end).unwrap_or(lines.len());
@@ -70,9 +75,20 @@ pub fn validate_exports(source: &str, file_path: &str, program: &Program) -> Vec
         }
 
         if trimmed.starts_with("export const ") {
-            match parse_export_const(trimmed, line, idx + 1, file_path) {
-                Ok(spec) => exports.push(spec),
-                Err(err) => errors.push(err),
+            if allow_export_const {
+                match parse_export_const(trimmed, line, idx + 1, file_path) {
+                    Ok(spec) => exports.push(spec),
+                    Err(err) => errors.push(err),
+                }
+            } else {
+                errors.push(export_error_with_suggestion(
+                    idx + 1,
+                    find_column(line, "export"),
+                    trimmed.len(),
+                    format!("Unsupported export syntax in {}.", file_path),
+                    "Use `export function name(...)` or `export { name }` in PHPX.",
+                    Some("export { name };"),
+                ));
             }
             continue;
         }
@@ -150,7 +166,7 @@ pub fn validate_exports(source: &str, file_path: &str, program: &Program) -> Vec
 
 fn parse_export_const(line: &str, raw_line: &str, line_number: usize, file_path: &str) -> Result<ExportSpec, ValidationError> {
     let rest = line.trim_start_matches("export const ").trim_start();
-    let name = rest.split(|ch: char| ch == '=' || ch.is_whitespace()).next().filter(|name| is_ident(name)).ok_or_else(|| export_error(line_number, find_column(raw_line, "const"), line.trim().len(), format!("Expected a const name after `export const` in {}.", file_path), "Write `export const name = value;."))?;
+    let name = rest.split(|ch: char| ch == '=' || ch.is_whitespace()).next().filter(|name| is_ident(name)).ok_or_else(|| export_error(line_number, find_column(raw_line, "const"), line.trim().len(), format!("Expected a const name after `export const` in {}.", file_path), "Write `export const name = value;"))?;
     Ok(ExportSpec { name: name.to_string(), line: line_number, column: find_column(raw_line, name), is_reexport: false })
 }
 
