@@ -34,6 +34,13 @@ impl<'src, 'ast> Parser<'src, 'ast> {
 
         let doc_comment = self.current_doc_comment;
 
+        if self.is_ds()
+            && self.current_token.kind == TokenKind::Identifier
+            && self.token_eq_ident(&self.current_token, b"let")
+        {
+            return self.parse_ds_let();
+        }
+
         if self.current_token.kind == TokenKind::Identifier
             && self.next_token.kind == TokenKind::Colon
         {
@@ -208,13 +215,37 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                     span: Span::new(start, end),
                 })
             }
-            TokenKind::Echo | TokenKind::OpenTagEcho => self.parse_echo(),
+            TokenKind::Echo | TokenKind::OpenTagEcho => {
+                if self.is_ds() {
+                    self.errors.push(ParseError::with_help(
+                        self.current_token.span,
+                        "echo is not part of DekaScript",
+                        "Return a value from a function or use an explicit output module.",
+                    ));
+                }
+                self.parse_echo()
+            }
             TokenKind::Return => self.parse_return(),
             TokenKind::If => self.parse_if(),
             TokenKind::While => self.parse_while(),
             TokenKind::Do => self.parse_do_while(),
-            TokenKind::For => self.parse_for(),
-            TokenKind::Foreach => self.parse_foreach(),
+            TokenKind::For => {
+                if self.is_ds() && self.next_token.kind == TokenKind::OpenParen {
+                    self.parse_ds_for_of()
+                } else {
+                    self.parse_for()
+                }
+            }
+            TokenKind::Foreach => {
+                if self.is_ds() {
+                    self.errors.push(ParseError::with_help(
+                        self.current_token.span,
+                        "foreach is not part of DekaScript",
+                        "Use `for (const item of items) { ... }`.",
+                    ));
+                }
+                self.parse_foreach()
+            }
             TokenKind::Function => self.parse_function(&[], doc_comment, false),
             TokenKind::Class => self.parse_class(&[], &[], doc_comment),
             TokenKind::Interface => self.parse_interface(&[], doc_comment),
@@ -267,7 +298,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 self.parse_throw()
             }
             TokenKind::Const => {
-                if !top_level {
+                if !top_level && !self.is_ds() {
                     self.errors.push(ParseError::new(
                         self.current_token.span,
                         "Const declarations are only allowed at the top level",
@@ -845,6 +876,59 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             attributes,
             consts: self.arena.alloc_slice_copy(&consts),
             doc_comment,
+            span: Span::new(start, end),
+        })
+    }
+
+    /// Parse the DekaScript mutable binding form. We reuse the existing
+    /// `Static` AST node as a compact internal representation; it is lowered
+    /// to a lexical `let` by the JS emitter and never exposes PHP `static`
+    /// semantics to `.ds` authors.
+    fn parse_ds_let(&mut self) -> StmtId<'ast> {
+        let start = self.current_token.span.start;
+        self.bump(); // let
+        let mut vars = std::vec::Vec::new();
+        loop {
+            if self.current_token.kind != TokenKind::Identifier {
+                self.errors.push(ParseError::with_help(
+                    self.current_token.span,
+                    "DekaScript let declarations require a bare identifier",
+                    "Write `let name = value;`.",
+                ));
+                break;
+            }
+            let name = self.current_token;
+            self.bump();
+            let var = self.arena.alloc(crate::parser::ast::Expr::Variable {
+                name: name.span,
+                span: name.span,
+            });
+            let default = if self.current_token.kind == TokenKind::Eq {
+                self.bump();
+                Some(self.parse_expr(0))
+            } else {
+                self.errors.push(ParseError::with_help(
+                    self.current_token.span,
+                    "DekaScript let declarations require an initializer",
+                    "Write `let name = value;`.",
+                ));
+                None
+            };
+            let end = default.map_or(name.span.end, |expr| expr.span().end);
+            vars.push(StaticVar {
+                var,
+                default,
+                span: Span::new(name.span.start, end),
+            });
+            if self.current_token.kind != TokenKind::Comma {
+                break;
+            }
+            self.bump();
+        }
+        self.expect_semicolon();
+        let end = self.current_token.span.end;
+        self.arena.alloc(Stmt::Static {
+            vars: self.arena.alloc_slice_copy(&vars),
             span: Span::new(start, end),
         })
     }
