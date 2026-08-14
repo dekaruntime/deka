@@ -73,4 +73,25 @@ if (failure.ok || diagnostic?.severity !== "error" || diagnostic.filename !== "b
   throw new Error(`diagnostic compile did not match the ABI contract: ${JSON.stringify(failure)}`);
 }
 
+for (const [name, source] of [
+  [
+    "typed functions",
+    "function add(left: number, right: number): number { return left + right; } console.log(add(20, 22));",
+  ],
+  [
+    "lists objects and indexing",
+    "const parts = [\"north\", \"star\"]; const first = parts[0]; const label = { first: first, count: parts.length }; console.log(`${label.first}:${label.count}`);",
+  ],
+]) {
+  const response = compile(source, "tour.ds", "deka");
+  if (!response.ok || typeof response.output?.code !== "string") {
+    throw new Error(`${name} did not compile through the browser WASM ABI: ${JSON.stringify(response)}`);
+  }
+}
+
+const sigil = compile("const $value = 1;", "tour.ds", "deka");
+if (sigil.ok || !sigil.diagnostics?.some((diagnostic) => diagnostic.message?.includes("bare identifiers"))) {
+  throw new Error(`sigil diagnostic did not explain the DS binding contract: ${JSON.stringify(sigil)}`);
+}
+
 console.log("browser WASM parity fixtures passed");
