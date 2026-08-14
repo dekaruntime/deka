@@ -40,6 +40,23 @@ if (!success.ok || success.metadata.language !== "deka" || !success.output?.code
   throw new Error(`successful .ds compile did not match the ABI contract: ${JSON.stringify(success)}`);
 }
 
+const tourSurface = compile([
+  "export function initials(parts: Array<string>): string {",
+  "  let output = \"\";",
+  "  for (const part of parts) {",
+  "    output += part.slice(0, 1);",
+  "  }",
+  "  const first = parts[0];",
+  "  const summary = { first: first, count: parts.length };",
+  "  return `${first}:${output}`;",
+  "}",
+].join("\n"), "tour-surface.ds", "deka");
+if (!tourSurface.ok || !tourSurface.output?.code?.includes("for (const part of (")
+  || !tourSurface.output.code.includes("parts[0]")
+  || !tourSurface.output.code.includes("const summary")) {
+  throw new Error(`Deka tour surface did not compile through the browser ABI: ${JSON.stringify(tourSurface)}`);
+}
+
 const rejectedFilename = compile("function greeting($name: string): string { return $name; }", "legacy.phpx", "phpx");
 if (rejectedFilename.ok || !rejectedFilename.diagnostics?.[0]?.message.includes("only accepts .ds")) {
   throw new Error(`PHPX filename fallback was not rejected: ${JSON.stringify(rejectedFilename)}`);
