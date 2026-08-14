@@ -1,0 +1,2 @@
+const greeting = "Hello from DekaScript";
+runtime.result(greeting);
