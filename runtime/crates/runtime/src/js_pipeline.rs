@@ -153,7 +153,10 @@ impl VirtualSource for PhpxBundleProvider {
             return Ok(Some(self.entry_source.clone()));
         }
 
-        if path.extension().and_then(|ext| ext.to_str()) != Some("phpx") {
+        if !matches!(
+            path.extension().and_then(|ext| ext.to_str()),
+            Some("ds" | "phpx")
+        ) {
             return Ok(None);
         }
 
@@ -309,11 +312,13 @@ fn resolve_module_file(modules_dir: &Path, spec: &str) -> Option<PathBuf> {
     }
     let mut candidates = Vec::new();
     for alias in aliases {
+        candidates.push(modules_dir.join(format!("{}.ds", alias)));
         candidates.push(modules_dir.join(format!("{}.phpx", alias)));
         candidates.push(modules_dir.join(format!("{}.php", alias)));
+        candidates.push(modules_dir.join(alias.as_str()).join("index.ds"));
         candidates.push(modules_dir.join(alias.as_str()).join("index.phpx"));
         candidates.push(modules_dir.join(alias.as_str()).join("index.php"));
-        if alias.ends_with(".phpx") || alias.ends_with(".php") {
+        if alias.ends_with(".ds") || alias.ends_with(".phpx") || alias.ends_with(".php") {
             candidates.push(modules_dir.join(alias));
         }
     }

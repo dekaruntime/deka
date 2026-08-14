@@ -80,24 +80,24 @@ pub fn cmd(context: &Context) {
         return;
     }
     if let Err(err) = ensure_file(
-        &target.join("app").join("main.phpx"),
-        default_main_phpx().to_string(),
+        &target.join("app").join("main.ds"),
+        default_main_ds().to_string(),
         &mut touched,
     ) {
         stdio_error("init", &err);
         return;
     }
     if let Err(err) = ensure_file(
-        &target.join("app").join("page.phpx"),
-        default_app_page_phpx().to_string(),
+        &target.join("app").join("page.ds"),
+        default_app_page_ds().to_string(),
         &mut touched,
     ) {
         stdio_error("init", &err);
         return;
     }
     if let Err(err) = ensure_file(
-        &target.join("app").join("layout.phpx"),
-        default_app_layout_phpx().to_string(),
+        &target.join("app").join("layout.ds"),
+        default_app_layout_ds().to_string(),
         &mut touched,
     ) {
         stdio_error("init", &err);
@@ -203,7 +203,7 @@ fn path_display(path: &Path) -> String {
 
 fn default_deka_json(name: &str) -> String {
     format!(
-        "{{\n  \"name\": \"{}\",\n  \"type\": \"serve\",\n  \"serve\": {{ \"entry\": \"app/main.phpx\", \"mode\": \"php\" }},\n  \"tasks\": {{ \"dev\": \"deka serve --dev\" }},\n  \"security\": {{\n    \"allow\": {{}},\n    \"deny\": {{}},\n    \"prompt\": true\n  }}\n}}\n",
+        "{{\n  \"name\": \"{}\",\n  \"type\": \"serve\",\n  \"serve\": {{ \"entry\": \"app/main.ds\", \"mode\": \"php\" }},\n  \"tasks\": {{ \"dev\": \"deka serve --dev\" }},\n  \"security\": {{\n    \"allow\": {{}},\n    \"deny\": {{}},\n    \"prompt\": true\n  }}\n}}\n",
         name
     )
 }
@@ -212,34 +212,32 @@ fn default_deka_lock_json() -> String {
     "{\n  \"lockfileVersion\": 1,\n  \"packages\": {}\n}\n".to_string()
 }
 
-fn default_app_page_phpx() -> &'static str {
-    "export function Page(): string {\n    return \"<section class=\\\"p-8\\\">\\n  <h1>Deka App</h1>\\n  <p>Project initialized. Edit <code>app/page.phpx</code>.</p>\\n</section>\";\n}\n"
+fn default_app_page_ds() -> &'static str {
+    "export function Page(): string {\n    return \"<section class=\\\"p-8\\\">\\n  <h1>Deka App</h1>\\n  <p>Project initialized. Edit <code>app/page.ds</code>.</p>\\n</section>\";\n}\n"
 }
 
-fn default_main_phpx() -> &'static str {
-    "import { Layout } from './layout.phpx';\nimport { Page } from './page.phpx';\n\nfunction request_path($req: mixed): string {\n    if (isset($_SERVER['PATH_INFO'])) {\n        return normalize_path($_SERVER['PATH_INFO']);\n    }\n    if (isset($_SERVER['REQUEST_URI'])) {\n        return normalize_path($_SERVER['REQUEST_URI']);\n    }\n    if (is_array($req) && array_key_exists('url', $req)) {\n        return normalize_path($req['url']);\n    }\n    if (is_object($req) && isset($req.url)) {\n        return normalize_path($req.url);\n    }\n    return '/';\n}\n\nfunction normalize_path($value: mixed): string {\n    $path = '' . $value;\n    $parts = explode('?', $path, 2);\n    $path = $parts[0];\n    if (strpos($path, '://') !== false) {\n        $segments = explode('/', $path, 4);\n        $path = count($segments) >= 4 ? '/' . $segments[3] : '/';\n    }\n    if ($path === '') return '/';\n    return $path;\n}\n\nfunction App($req: mixed) {\n    $path = request_path($req);\n    if ($path !== '/') {\n        return {\n            status: 404,\n            headers: { 'content-type': 'text/plain; charset=utf-8' },\n            body: 'Not Found',\n        };\n    }\n    return {\n        status: 200,\n        headers: { 'content-type': 'text/html; charset=utf-8' },\n        body: \"<!doctype html>\\n\" . Layout({ children: Page() }),\n    };\n}\n\n$app = App;\n"
+fn default_main_ds() -> &'static str {
+    "export function App(request: Object): Object {\n    return {\n        status: 200,\n        headers: { 'content-type': 'text/html; charset=utf-8' },\n        body: \"<!doctype html>\\n<html lang=\\\"en\\\">\\n<body>\\n  <main id=\\\"app\\\">Deka App</main>\\n</body>\\n</html>\",\n    };\n}\n"
 }
 
-fn default_app_layout_phpx() -> &'static str {
-    "export function Layout($props: mixed): string {\n    $children = '';\n    if (is_array($props) && array_key_exists('children', $props)) {\n        $children = '' . $props['children'];\n    } else if (is_object($props) && isset($props.children)) {\n        $children = '' . $props.children;\n    }\n\n    return \"<html lang=\\\"en\\\">\\n<head>\\n  <meta charset=\\\"utf-8\\\" />\\n  <meta name=\\\"viewport\\\" content=\\\"width=device-width, initial-scale=1\\\" />\\n  <title>Deka App</title>\\n</head>\\n<body>\\n  <main id=\\\"app\\\">\" . $children . \"</main>\\n</body>\\n</html>\";\n}\n"
+fn default_app_layout_ds() -> &'static str {
+    "export function Layout(props: Object): string {\n    return \"<html lang=\\\"en\\\">\\n<head>\\n  <meta charset=\\\"utf-8\\\" />\\n  <meta name=\\\"viewport\\\" content=\\\"width=device-width, initial-scale=1\\\" />\\n  <title>Deka App</title>\\n</head>\\n<body>\\n  <main id=\\\"app\\\">\" + props.children + \"</main>\\n</body>\\n</html>\";\n}\n"
 }
 
 fn default_public_index_html() -> &'static str {
-    "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>Deka</title>\n  </head>\n  <body>\n    <!-- Static shell only. `deka serve` executes main.phpx. -->\n    <div id=\"app\"></div>\n  </body>\n</html>\n"
+    "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>Deka</title>\n  </head>\n  <body>\n    <!-- Static shell only. `deka serve` executes main.ds. -->\n    <div id=\"app\"></div>\n  </body>\n</html>\n"
 }
 
 #[cfg(test)]
 mod tests {
-    use super::default_main_phpx;
+    use super::default_main_ds;
 
     #[test]
-    fn default_main_uses_explicit_page_layout_entry() {
-        let template = default_main_phpx();
-        assert!(template.contains("import { Layout } from './layout.phpx';"));
-        assert!(template.contains("import { Page } from './page.phpx';"));
-        assert!(template.contains("Layout({ children: Page() })"));
-        assert!(template.contains("body: \"<!doctype html>\\n\""));
-        assert!(template.contains("if ($path !== '/')"));
+    fn default_main_uses_dekascript_page_layout_entry() {
+        let template = default_main_ds();
+        assert!(template.contains("export function App(request: Object): Object"));
+        assert!(template.contains("body: \"<!doctype html>\\n<html"));
+        assert!(!template.contains('$'));
         assert!(!template.contains("component/router"));
     }
 }

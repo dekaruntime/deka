@@ -1,6 +1,6 @@
-use bundler::{bundle_virtual_entry, BuildOptions, VirtualSource};
+use bundler::{BuildOptions, VirtualSource, bundle_virtual_entry};
 use core::{CommandSpec, Context, ParamSpec, Registry};
-use phpx_js::{compile_phpx_source_to_js, parse_source_module_meta, SourceModuleMeta};
+use phpx_js::{SourceModuleMeta, compile_phpx_source_to_js, parse_source_module_meta};
 use runtime_core::module_spec::module_spec_aliases;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -10,7 +10,7 @@ use std::sync::Arc;
 const COMMAND: CommandSpec = CommandSpec {
     name: "build",
     category: "project",
-    summary: "build a PHPX file into a JavaScript module (JS runtime semantics)",
+    summary: "build a DekaScript file into a JavaScript module",
     aliases: &[],
     subcommands: &[],
     handler: cmd,
@@ -43,7 +43,17 @@ pub fn cmd(context: &Context) {
 
 fn run(context: &Context) -> Result<(), String> {
     if let Some(first) = context.args.positionals.first() {
-        if first.ends_with(".phpx") {
+        if Path::new(first)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("phpx"))
+        {
+            return Err(format!(
+                "DekaScript uses .ds only; migrate '{}' before building it",
+                first
+            ));
+        }
+        if is_deka_source_path(Path::new(first)) {
             return run_single_file_build(context, first);
         }
     }
@@ -52,9 +62,9 @@ fn run(context: &Context) -> Result<(), String> {
 }
 
 fn run_single_file_build(context: &Context, input: &str) -> Result<(), String> {
-    if !input.ends_with(".phpx") {
+    if !is_deka_source_path(Path::new(input)) {
         return Err(format!(
-            "build currently supports .phpx input only; got '{}'",
+            "DekaScript uses .ds only; migrate '{}' before building it",
             input
         ));
     }
@@ -527,7 +537,7 @@ fn resolve_web_entry(project_root: &Path) -> Result<PathBuf, String> {
         .filter(|v| !v.trim().is_empty())
         .ok_or_else(|| {
             format!(
-                "web build requires deka.json serve.entry (example: \"app/main.phpx\") in {}",
+                "web build requires deka.json serve.entry (example: \"app/main.ds\") in {}",
                 project_root.join("deka.json").display()
             )
         })?;
@@ -548,9 +558,9 @@ fn resolve_web_entry(project_root: &Path) -> Result<PathBuf, String> {
         ));
     }
 
-    if entry_path.extension().and_then(|e| e.to_str()) != Some("phpx") {
+    if !is_deka_source_path(&entry_path) {
         return Err(format!(
-            "serve.entry must be a .phpx file: {}",
+            "serve.entry must be a .ds file: {}",
             entry_path.display()
         ));
     }
@@ -845,7 +855,7 @@ impl VirtualSource for PhpxProvider {
             return Ok(Some(self.entry_source.clone()));
         }
 
-        if path.extension().and_then(|ext| ext.to_str()) != Some("phpx") {
+        if !is_deka_source_path(path) {
             return Ok(None);
         }
 
@@ -858,6 +868,10 @@ impl VirtualSource for PhpxProvider {
         let js = compile_phpx_source_to_js(&source, input, meta)?;
         Ok(Some(js))
     }
+}
+
+fn is_deka_source_path(path: &Path) -> bool {
+    matches!(path.extension().and_then(|ext| ext.to_str()), Some("ds"))
 }
 
 #[cfg(test)]
@@ -880,6 +894,13 @@ mod tests {
             resolve_output_path(Some("build/out.js".to_string()), Path::new("src/home.phpx"))
                 .expect("path");
         assert_eq!(path, PathBuf::from("build/out.js"));
+    }
+
+    #[test]
+    fn accepts_dekascript_entries_only() {
+        assert!(is_deka_source_path(Path::new("app/main.ds")));
+        assert!(!is_deka_source_path(Path::new("app/main.phpx")));
+        assert!(!is_deka_source_path(Path::new("app/main.ts")));
     }
 
     #[test]
@@ -1646,19 +1667,11 @@ class User {}
 
         let app_dir = tmp.path().join("app");
         std::fs::create_dir_all(&app_dir).expect("app dir");
-        std::fs::write(
-            app_dir.join("util.phpx"),
-            "export function shout($text: string): string { return $text . \"!\"; }",
-        )
-        .expect("util.phpx");
-        std::fs::write(
-            app_dir.join("main.phpx"),
-            "import { shout } from './util.phpx'\n\necho shout(\"ok\")\n",
-        )
-        .expect("main.phpx");
+        std::fs::write(app_dir.join("main.ds"), "export const output = \"ok\";\n")
+            .expect("main.ds");
 
         let output_path = tmp.path().join("bundle.js");
-        build_single_file_bundle_to_path(&app_dir.join("main.phpx"), &output_path, false)
+        build_single_file_bundle_to_path(&app_dir.join("main.ds"), &output_path, false)
             .expect("bundle");
         let output = std::fs::read_to_string(&output_path).expect("bundle output");
         assert!(!output.contains("import {"));

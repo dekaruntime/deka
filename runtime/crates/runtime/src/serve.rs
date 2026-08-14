@@ -78,6 +78,12 @@ async fn serve_async(context: &Context) -> Result<(), String> {
     runtime_config::load_database_config(config_dir);
 
     let handler_path = resolved.path.to_string_lossy().to_string();
+    if handler_path.to_ascii_lowercase().ends_with(".phpx") {
+        return Err(format!(
+            "DekaScript uses .ds only; migrate '{}' before serving it",
+            handler_path
+        ));
+    }
     if handler_is_unsupported_script(&handler_path) {
         return Err(format!(
             "Serve mode does not execute JavaScript/TypeScript handlers: {}",
