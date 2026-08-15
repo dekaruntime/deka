@@ -253,10 +253,15 @@ impl<'a> JsSubsetEmitter<'a> {
                     .iter()
                     .map(|p| {
                         let original = self.token_name(p.name);
-                        destructure_map
+                        let name = destructure_map
                             .get(&original)
                             .map(|(synthetic, _)| synthetic.clone())
-                            .unwrap_or(original)
+                            .unwrap_or(original);
+                        if p.variadic {
+                            format!("...{}", name)
+                        } else {
+                            name
+                        }
                     })
                     .collect::<Vec<_>>()
                     .join(", ");

@@ -109,6 +109,30 @@ fn ds_lowers_native_string_collection_and_for_of_primitives() {
 }
 
 #[test]
+fn ds_generic_variadic_identity_preserves_all_rest_values() {
+    let source = r#"
+        export function collect(...values: Array<mixed>): Array<mixed> {
+            return values;
+        }
+    "#;
+    let js = crate::compile_phpx_source_to_js(
+        source,
+        "array/collect.ds",
+        crate::parse_source_module_meta(source),
+    )
+    .expect("Array<mixed> variadic identity should type-check");
+
+    assert!(
+        js.contains("function collect(...values)"),
+        "variadic parameters must lower to a JS rest parameter so collect(1, 2, 3) retains every value: {js}"
+    );
+    assert!(
+        js.contains("return values;"),
+        "variadic identity must return the full rest array: {js}"
+    );
+}
+
+#[test]
 fn ds_rejects_php_surface_and_const_reassignment() {
     for (source, expected) in [
         ("$name;", "bare identifiers"),
