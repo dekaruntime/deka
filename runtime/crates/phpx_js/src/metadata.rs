@@ -28,12 +28,23 @@ pub fn parse_source_module_meta(source: &str) -> SourceModuleMeta {
             continue;
         }
 
+        if let Some(name) = parse_export_const_line(trimmed) {
+            meta.export_specs.push(ImportSpec { imported: name.clone(), local: name });
+            continue;
+        }
+
         if let Some(specs) = parse_export_specs_line(trimmed) {
             meta.export_specs.extend(specs);
         }
     }
 
     meta
+}
+
+fn parse_export_const_line(line: &str) -> Option<String> {
+    let rest = line.trim_start().strip_prefix("export const ")?.trim_start();
+    let name = rest.split(|ch: char| ch == '=' || ch.is_whitespace()).next()?;
+    (!name.is_empty()).then(|| name.to_string())
 }
 fn frontmatter_range(lines: &[&str]) -> Option<(usize, usize)> {
     let mut first = None;

@@ -1,6 +1,6 @@
 use crate::{SourceModuleMeta, emitter::JsSubsetEmitter};
 use bumpalo::Bump;
-use modules_php::compiler_api::{compile_phpx, compile_phpx_internal};
+use modules_php::compiler_api::{compile_deka, compile_phpx, compile_phpx_internal};
 use modules_php::validation::format_multiple_errors;
 use php_rs::parser::ast::Program;
 use std::path::Path;
@@ -12,7 +12,9 @@ pub fn compile_phpx_source_to_js(
 ) -> Result<String, String> {
     let arena = Bump::new();
     let path = Path::new(input);
-    let result = if is_internal_phpx_path(path) {
+    let result = if path.extension().and_then(|ext| ext.to_str()) == Some("ds") {
+        compile_deka(source, input, &arena)
+    } else if is_internal_phpx_path(path) {
         compile_phpx_internal(source, input, &arena)
     } else {
         compile_phpx(source, input, &arena)
