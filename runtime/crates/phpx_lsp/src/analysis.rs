@@ -143,27 +143,37 @@ fn source_range(
     let lines: Vec<&str> = source.split('\n').collect();
     let line_index = line.saturating_sub(1).min(lines.len().saturating_sub(1));
     let current_line = lines.get(line_index).copied().unwrap_or_default();
-    let start_scalar = column.saturating_sub(1).min(current_line.chars().count());
-    let end_scalar = start_scalar
-        .saturating_add(underline_length.max(1))
-        .min(current_line.chars().count());
+    let start_byte = floor_char_boundary(current_line, column.saturating_sub(1));
+    let end_byte = floor_char_boundary(
+        current_line,
+        start_byte
+            .saturating_add(underline_length.max(1))
+            .min(current_line.len()),
+    );
     AnalysisRange {
         start: AnalysisPosition {
             line: line_index as u32,
-            character: utf16_offset(current_line, start_scalar),
+            character: utf16_offset_at_byte(current_line, start_byte),
         },
         end: AnalysisPosition {
             line: line_index as u32,
-            character: utf16_offset(current_line, end_scalar),
+            character: utf16_offset_at_byte(current_line, end_byte),
         },
     }
 }
 
-fn utf16_offset(line: &str, scalar_offset: usize) -> u32 {
-    line.chars()
-        .take(scalar_offset)
-        .map(char::len_utf16)
-        .sum::<usize>() as u32
+fn floor_char_boundary(line: &str, byte_offset: usize) -> usize {
+    let mut byte_offset = byte_offset.min(line.len());
+    while byte_offset > 0 && !line.is_char_boundary(byte_offset) {
+        byte_offset -= 1;
+    }
+    byte_offset
+}
+
+fn utf16_offset_at_byte(line: &str, byte_offset: usize) -> u32 {
+    line[..floor_char_boundary(line, byte_offset)]
+        .encode_utf16()
+        .count() as u32
 }
 
 #[cfg(test)]
@@ -207,7 +217,7 @@ mod tests {
                 character: 0
             }
         );
-        let range = source_range("éx", 1, 2, 1);
+        let range = source_range("éx", 1, 3, 1);
         assert_eq!(
             range.start,
             AnalysisPosition {
@@ -220,6 +230,26 @@ mod tests {
             AnalysisPosition {
                 line: 0,
                 character: 2
+            }
+        );
+    }
+
+    #[test]
+    fn compiler_diagnostic_after_non_ascii_uses_utf16_range() {
+        let source = "const label = 'é'; const = ;\n";
+        let diagnostics = analyze(source, &AnalysisContext::new("file:///workspace/main.ds"));
+        let diagnostic = diagnostics.first().expect("compiler diagnostic");
+        assert_eq!(
+            diagnostic.range,
+            AnalysisRange {
+                start: AnalysisPosition {
+                    line: 0,
+                    character: 25,
+                },
+                end: AnalysisPosition {
+                    line: 0,
+                    character: 26,
+                },
             }
         );
     }
