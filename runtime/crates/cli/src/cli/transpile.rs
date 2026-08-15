@@ -402,6 +402,7 @@ struct CommittedOutput {
 fn commit_outputs(root: &SecureOutputRoot, plans: Vec<OutputPlan>) -> Result<(), String> {
     let mut staged = Vec::with_capacity(plans.len());
     for (index, plan) in plans.iter().enumerate() {
+        run_test_phase_hook(TestPhase::Stage, index);
         if let Err(err) = root
             .revalidate()
             .and_then(|_| plan.destination.revalidate(root))
@@ -433,6 +434,10 @@ fn commit_outputs(root: &SecureOutputRoot, plans: Vec<OutputPlan>) -> Result<(),
     run_test_commit_hook();
     let mut committed = Vec::with_capacity(staged.len());
     for (index, staged_output) in staged.iter().enumerate() {
+        run_test_phase_hook(TestPhase::Commit, index);
+        // Test-only rollback hooks are installed at this revalidation seam so a
+        // deterministic topology change exercises cleanup after prior commits.
+        run_test_phase_hook(TestPhase::Rollback, index);
         if let Err(err) = root
             .revalidate()
             .and_then(|_| staged_output.destination.revalidate(root))
@@ -905,6 +910,16 @@ impl SecureOutputRoot {
 #[cfg(not(test))]
 fn run_test_commit_hook() {}
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TestPhase {
+    Stage,
+    Commit,
+    Rollback,
+}
+
+#[cfg(not(test))]
+fn run_test_phase_hook(_: TestPhase, _: usize) {}
+
 #[cfg(test)]
 type CommitHook = Box<dyn FnOnce() + Send>;
 #[cfg(test)]
@@ -921,6 +936,25 @@ fn run_test_commit_hook() {
         .take()
     {
         hook();
+    }
+}
+
+#[cfg(test)]
+type PhaseHook = Box<dyn Fn(TestPhase, usize) + Send + Sync>;
+#[cfg(test)]
+static PHASE_HOOK: std::sync::OnceLock<std::sync::Mutex<Option<PhaseHook>>> =
+    std::sync::OnceLock::new();
+#[cfg(test)]
+static PHASE_HOOK_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+#[cfg(test)]
+fn run_test_phase_hook(phase: TestPhase, index: usize) {
+    if let Some(hook) = PHASE_HOOK
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+        .expect("phase hook lock")
+        .as_ref()
+    {
+        hook(phase, index);
     }
 }
 
@@ -968,9 +1002,9 @@ mod tests {
     use super::*;
     use std::process::Command;
     #[cfg(unix)]
-    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     #[cfg(unix)]
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     fn write(path: &Path, source: &str) {
         fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
@@ -1109,77 +1143,130 @@ mod tests {
     }
 
     #[cfg(unix)]
-    fn concurrent_parent_swap_cannot_produce_named_output(phase: &str) {
+    fn assert_no_transaction_residue(dir: &Path, phase: &str) {
+        for entry in fs::read_dir(dir).expect("transaction directory") {
+            let entry = entry.expect("transaction entry");
+            assert!(
+                !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .contains(".deka-transpile-"),
+                "{phase}: transaction residue at {}",
+                entry.path().display()
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    fn parent_swap_hook(
+        phase: TestPhase,
+        target_phase: TestPhase,
+        index: usize,
+        target_index: usize,
+        output: &Path,
+        outside: &Path,
+        moved: &Path,
+        swapped: &AtomicBool,
+    ) {
+        if phase != target_phase || index != target_index {
+            return;
+        }
+        let nested = output.join("nested");
+        fs::rename(&nested, moved).expect("move trusted parent outside output root");
+        std::os::unix::fs::symlink(outside, &nested).expect("replace parent with outside symlink");
+        swapped.store(true, Ordering::Release);
+    }
+
+    #[cfg(unix)]
+    fn deterministic_parent_swap_cannot_escape_or_leave_residue(
+        phase: TestPhase,
+        target_index: usize,
+        preserve_existing_output: bool,
+    ) {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path().join("src");
         let output = temp.path().join("generated");
         let outside = temp.path().join("outside");
-        let moved = temp.path().join("moved-nested");
+        let moved = outside.join("moved-nested");
+        write(&root.join("first.ds"), "export const first = 1;\n");
         write(&root.join("nested/math.ds"), "export const math = 2;\n");
         fs::create_dir_all(&outside).expect("outside");
         fs::create_dir_all(output.join("nested")).expect("output parent");
-        fs::set_permissions(&output, std::os::unix::fs::PermissionsExt::from_mode(0o777))
-            .expect("make output shared");
-        let stop = Arc::new(AtomicBool::new(false));
-        let swaps = Arc::new(AtomicUsize::new(0));
-        let swap_output = output.clone();
-        let swap_outside = outside.clone();
-        let swap_moved = moved.clone();
-        let swap_stop = Arc::clone(&stop);
-        let swap_count = Arc::clone(&swaps);
-        let swapper = std::thread::spawn(move || {
-            let nested = swap_output.join("nested");
-            while !swap_stop.load(Ordering::Acquire) {
-                if fs::rename(&nested, &swap_moved).is_ok() {
-                    let _ = std::os::unix::fs::symlink(&swap_outside, &nested);
-                    swap_count.fetch_add(1, Ordering::Release);
-                    std::thread::yield_now();
-                    let _ = fs::remove_file(&nested);
-                    let _ = fs::rename(&swap_moved, &nested);
-                }
-            }
-            let _ = fs::remove_file(&nested);
-            if swap_moved.exists() {
-                let _ = fs::rename(&swap_moved, &nested);
-            }
-        });
-        while swaps.load(Ordering::Acquire) == 0 {
-            std::thread::yield_now();
+        let original = format!("{GENERATED_MARKER}export const old = true;\n");
+        if preserve_existing_output {
+            write(&output.join("first.js"), &original);
         }
 
+        let _guard = PHASE_HOOK_TEST_GUARD.lock().expect("phase hook test guard");
+        let swapped = Arc::new(AtomicBool::new(false));
+        let hook_output = output.clone();
+        let hook_outside = outside.clone();
+        let hook_moved = moved.clone();
+        let hook_swapped = Arc::clone(&swapped);
+        *PHASE_HOOK
+            .get_or_init(|| std::sync::Mutex::new(None))
+            .lock()
+            .expect("phase hook install") = Some(Box::new(move |current_phase, index| {
+            parent_swap_hook(
+                current_phase,
+                phase,
+                index,
+                target_index,
+                &hook_output,
+                &hook_outside,
+                &hook_moved,
+                &hook_swapped,
+            );
+        }));
         let error = transpile_directory(&root, Some(&output), TranspileMode::Preserve, false)
-            .expect_err("shared output topology must be rejected");
-        stop.store(true, Ordering::Release);
-        swapper.join().expect("swapper");
+            .expect_err("swapped output parent must be rejected");
+        *PHASE_HOOK
+            .get_or_init(|| std::sync::Mutex::new(None))
+            .lock()
+            .expect("phase hook clear") = None;
 
-        assert!(error.contains("secure output topology rejected"), "{phase}");
-        assert!(!outside.join("math.js").exists(), "{phase}");
-        assert!(!output.join("nested/math.js").exists(), "{phase}");
+        assert!(swapped.load(Ordering::Acquire), "phase hook did not run");
+        assert!(!error.is_empty(), "topology change must report an error");
+        assert!(!outside.join("math.js").exists(), "external write");
+        assert!(!moved.join("math.js").exists(), "escaped output");
+        assert_no_transaction_residue(&outside, "outside");
+        assert_no_transaction_residue(&moved, "moved parent");
+        assert_no_transaction_residue(&output, "output root");
+        assert_no_transaction_residue(&output.join("nested"), "external target");
+        assert_no_transaction_residue(&root, "source root");
+        assert_eq!(
+            fs::read_to_string(output.join("first.js")).ok(),
+            preserve_existing_output.then_some(original),
+            "rollback must restore the pre-existing generated output"
+        );
+
+        fs::remove_file(output.join("nested")).expect("remove outside symlink");
+        fs::rename(&moved, output.join("nested")).expect("restore trusted parent");
         assert!(
             fs::read_dir(output.join("nested"))
                 .expect("output parent")
                 .next()
                 .is_none(),
-            "{phase}: no staged residue"
+            "no staged residue after restoring parent"
         );
     }
 
     #[cfg(unix)]
     #[test]
     fn concurrent_parent_swap_at_staging_cannot_write_or_leave_residue() {
-        concurrent_parent_swap_cannot_produce_named_output("staging");
+        deterministic_parent_swap_cannot_escape_or_leave_residue(TestPhase::Stage, 0, false);
     }
 
     #[cfg(unix)]
     #[test]
     fn concurrent_parent_swap_at_commit_cannot_write_or_leave_residue() {
-        concurrent_parent_swap_cannot_produce_named_output("commit");
+        deterministic_parent_swap_cannot_escape_or_leave_residue(TestPhase::Commit, 0, false);
     }
 
     #[cfg(unix)]
     #[test]
     fn concurrent_parent_swap_at_rollback_cannot_write_or_leave_residue() {
-        concurrent_parent_swap_cannot_produce_named_output("rollback");
+        deterministic_parent_swap_cannot_escape_or_leave_residue(TestPhase::Rollback, 1, true);
     }
 
     #[test]
