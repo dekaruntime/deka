@@ -1,91 +1,45 @@
 use super::*;
 
-pub(crate) fn diagnostic_from_error(
-    _file_path: &str,
-    _source: &str,
-    error: &ValidationError,
-) -> Diagnostic {
+pub(crate) fn diagnostic_from_analysis(diagnostic: AnalysisDiagnostic) -> Diagnostic {
     Diagnostic {
-        range: diagnostic_range(error.line, error.column, error.underline_length),
-        severity: Some(severity_to_lsp(error.severity)),
+        range: Range {
+            start: Position {
+                line: diagnostic.range.start.line,
+                character: diagnostic.range.start.character,
+            },
+            end: Position {
+                line: diagnostic.range.end.line,
+                character: diagnostic.range.end.character,
+            },
+        },
+        severity: Some(severity_to_lsp(diagnostic.severity)),
         code: Some(tower_lsp::lsp_types::NumberOrString::String(
-            error.kind.as_str().to_string(),
+            diagnostic.code,
         )),
         source: Some(LANGUAGE_ID.to_string()),
-        message: plain_message(
-            &error.message,
-            &error.help_text,
-            error.suggestion.as_deref(),
-        ),
+        message: diagnostic.message,
         ..Diagnostic::default()
     }
 }
 
-pub(crate) fn diagnostic_from_warning(
-    _file_path: &str,
-    _source: &str,
-    warning: &ValidationWarning,
-) -> Diagnostic {
-    Diagnostic {
-        range: diagnostic_range(warning.line, warning.column, warning.underline_length),
-        severity: Some(severity_to_lsp(warning.severity)),
-        code: Some(tower_lsp::lsp_types::NumberOrString::String(
-            warning.kind.as_str().to_string(),
-        )),
-        source: Some(LANGUAGE_ID.to_string()),
-        message: plain_message(
-            &warning.message,
-            &warning.help_text,
-            warning.suggestion.as_deref(),
-        ),
-        ..Diagnostic::default()
-    }
-}
-
-pub(crate) fn plain_message(message: &str, help_text: &str, suggestion: Option<&str>) -> String {
-    let mut parts = vec![message.trim()];
-    let help_text = help_text.trim();
-    if !help_text.is_empty() {
-        parts.push(help_text);
-    }
-    if let Some(suggestion) = suggestion.map(str::trim).filter(|value| !value.is_empty()) {
-        parts.push(suggestion);
-    }
-    parts.join("\n")
-}
-
-pub(crate) fn severity_to_lsp(severity: Severity) -> DiagnosticSeverity {
+pub(crate) fn severity_to_lsp(severity: AnalysisSeverity) -> DiagnosticSeverity {
     match severity {
-        Severity::Error => DiagnosticSeverity::ERROR,
-        Severity::Warning => DiagnosticSeverity::WARNING,
-        Severity::Info => DiagnosticSeverity::INFORMATION,
-    }
-}
-
-pub(crate) fn diagnostic_range(line: usize, column: usize, underline_length: usize) -> Range {
-    let line = line.saturating_sub(1) as u32;
-    let start_char = column.saturating_sub(1) as u32;
-    let end_char = start_char + underline_length.max(1) as u32;
-    Range {
-        start: Position {
-            line,
-            character: start_char,
-        },
-        end: Position {
-            line,
-            character: end_char,
-        },
+        AnalysisSeverity::Error => DiagnosticSeverity::ERROR,
+        AnalysisSeverity::Warning => DiagnosticSeverity::WARNING,
+        AnalysisSeverity::Information => DiagnosticSeverity::INFORMATION,
     }
 }
 
 pub(crate) fn should_skip_unused_import_warning(
-    warning: &ValidationWarning,
+    warning: &Diagnostic,
     unresolved_ranges: &std::collections::HashSet<(u32, u32, u32, u32)>,
 ) -> bool {
-    if !warning.message.contains("Unused import") {
+    if warning.severity != Some(DiagnosticSeverity::WARNING)
+        || !warning.message.contains("Unused import")
+    {
         return false;
     }
-    let range = diagnostic_range(warning.line, warning.column, warning.underline_length);
+    let range = warning.range;
     let key = (
         range.start.line,
         range.start.character,

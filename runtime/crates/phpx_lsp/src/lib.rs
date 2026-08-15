@@ -1,20 +1,31 @@
 #![allow(clippy::all)]
 
+#[cfg(feature = "native")]
 use bumpalo::Bump;
+#[cfg(feature = "native")]
 use modules_php::compiler_api::compile_deka;
-use modules_php::validation::{Severity, ValidationError, ValidationWarning};
+#[cfg(feature = "native")]
 use php_rs::parser::ast::{
     BinaryOp, ClassKind, ClassMember, Expr, ExprId, Name, ObjectKey, Param, Program, Stmt, StmtId,
     Type,
 };
+#[cfg(feature = "native")]
 use php_rs::parser::lexer::token::Token;
+#[cfg(feature = "native")]
 use php_rs::parser::span::Span;
+#[cfg(feature = "native")]
 use php_rs::phpx::typeck::{ExternalFunctionSig, Type as PhpType};
+#[cfg(feature = "native")]
 use std::collections::HashMap;
+#[cfg(feature = "native")]
 use std::fs;
+#[cfg(feature = "native")]
 use std::path::{Path, PathBuf};
+#[cfg(feature = "native")]
 use std::sync::Arc;
+#[cfg(feature = "native")]
 use tokio::sync::RwLock;
+#[cfg(feature = "native")]
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse,
     Diagnostic, DiagnosticOptions, DiagnosticServerCapabilities, DiagnosticSeverity,
@@ -26,36 +37,53 @@ use tower_lsp::lsp_types::{
     RenameParams, ServerCapabilities, SymbolKind, TextDocumentSyncCapability, TextDocumentSyncKind,
     TextEdit, Url, WorkspaceEdit,
 };
+#[cfg(feature = "native")]
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
+mod analysis;
+#[cfg(feature = "native")]
 mod completion;
+#[cfg(feature = "native")]
 mod diagnostics;
+#[cfg(feature = "native")]
 mod documents;
+#[cfg(feature = "native")]
 mod handlers;
+#[cfg(feature = "native")]
 mod symbols;
 
+pub use analysis::{
+    AnalysisContext, AnalysisDiagnostic, AnalysisPosition, AnalysisRange, AnalysisSeverity, analyze,
+};
+#[cfg(feature = "native")]
 pub use handlers::run_stdio;
 
+#[cfg(feature = "native")]
 pub(crate) use completion::*;
+#[cfg(feature = "native")]
 pub(crate) use diagnostics::*;
+#[cfg(feature = "native")]
 pub(crate) use documents::*;
+#[cfg(feature = "native")]
 pub(crate) use handlers::TargetMode;
-#[cfg(test)]
-pub(crate) use handlers::should_skip_template_html_diagnostic;
+#[cfg(feature = "native")]
 pub(crate) use symbols::*;
 
+#[cfg(feature = "native")]
 pub(crate) const LANGUAGE_ID: &str = "dekascript";
 
+#[cfg(feature = "native")]
 pub(crate) fn is_dekascript_path(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| extension.eq_ignore_ascii_case("ds"))
 }
 
+#[cfg(feature = "native")]
 pub(crate) fn is_dekascript_uri(uri: &Url) -> bool {
     uri.to_file_path()
         .is_ok_and(|path| is_dekascript_path(&path))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "native"))]
 mod tests;

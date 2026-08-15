@@ -1376,9 +1376,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bumpalo",
- "deka-validation",
  "modules_php",
  "php-rs",
+ "serde",
  "serde_json",
  "tokio",
  "tower-lsp",
