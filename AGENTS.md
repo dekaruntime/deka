@@ -3,9 +3,9 @@
 ## Project Layout
 - `deka/`: Central monorepo with core implementation
   - `crates/`: 26+ Rust workspace crates (cli, runtime, php-rs compiler)
-  - `php_modules/`: PHPX standard library and language implementation
+  - `php_modules/`: legacy implementation substrate; do not document it as a public language surface
   - `target/release/cli`: Main CLI binary (113MB ARM64)
-  - `target/release/php`: PHP binary with PHPX integration
+  - `target/release/php`: PHP binary
 - `deka-runtime/`: Rust runtime binary (`deka-runtime`) + JS/TS bootstrap modules.
 - `deka-cli/`: Bun-based CLI (packaged as `deka`).
 - `deka-rs/`: Cargo workspace for Deka services (crates under `deka-rs/crates/`).
@@ -34,10 +34,11 @@ Runtime helpers:
 - `deka test [files...]`: run runtime tests (optionally `--no-rust`).
 - `deka introspect`: inspect runtime scheduler state.
 
-PHPX operations:
-- `deka run <file.phpx>`: execute PHPX file directly
-- `deka serve <file.phpx>`: serve PHPX web application
-- `deka compile <file.phpx>`: compile PHPX to PHP (outputs to .cache/)
+DekaScript compiler-core status:
+- `.ds` is the only public source extension.
+- The currently stacked compiler slice covers parsing and JS emission only.
+- Do not document or rely on public `run`, `serve`, `build`, routing, editor,
+  Wasm, import, or broad-stdlib behavior until its owning lane lands it.
 
 Note: `deka run` executes runtime modules; container commands live under `deka c ...` (or `deka container ...`).
 
@@ -45,62 +46,20 @@ Note: `deka run` executes runtime modules; container commands live under `deka c
 - The local `deka` command is wired to `deka/target/release/cli` for this repo.
 - Build policy: release-only builds for this repo. Do not build or rely on `target/debug` binaries.
 - After Rust changes: `cargo build --release -p cli`
-- After PHPX compiler changes: 
-  `cargo build -p php-rs --release --target wasm32-unknown-unknown --lib --no-default-features`
-  then `cargo build --release -p cli`
-- PHPX files execute directly: `deka run app.phpx`
+## DekaScript compiler-core syntax
 
-## PHPX Module Root (lockfile)
-- PHPX resolves the project root by locating `deka.lock`.
-- Set `PHPX_MODULE_ROOT=/path/to/project` to override root discovery.
-- For this repo, `deka.lock` and `php_modules/` live at `deka/`.
-
-## PHPX Language
-PHPX is a modern typed language that compiles to PHP:
-
-### Core Syntax
-```phpx
-struct User { 
-    $name: string; 
-    $age: int = 0; 
-}
-
-enum Result {
-    case Ok(mixed $value);
-    case Err(mixed $error);
-}
-
-function divide($a: int, $b: int): Result {
-    if ($b === 0) return Result::Err("Division by zero");
-    return Result::Ok($a / $b);
-}
-
-match divide(10, 2) {
-    Result::Ok($v) => $v,
-    Result::Err($e) => handle_error($e),
+```ts
+export function initials(parts: Array<string>): string {
+  let output = "";
+  for (const part of parts) output += part.slice(0, 1);
+  return `${parts[0]}:${output}`;
 }
 ```
 
-### Module System
-```phpx
-import { str_contains } from 'string';
-import { UserCard } from 'component/user';
-
-export function create_user($name: string): User {
-    return User { $name: $name, $age: 0 };
-}
-```
-
-### JSX Components
-```phpx
-function Button($props) {
-    return <button class={$props.variant}>
-        {$props.children}
-    </button>;
-}
-```
-
-Note: Semicolons are optional in PHPX (JS-style automatic semicolon insertion).
+This is the supported compiler-core slice: typed bare parameters, `const`/`let`,
+objects/lists, property/index access, string methods, template strings, and
+`for (const item of items)`. PHP-derived syntax is rejected. The module and
+runtime contracts are not available from this slice.
 
 ## Service Ports (deka-cli defaults)
 - `postgres`: 5432
@@ -110,11 +69,11 @@ Note: Semicolons are optional in PHPX (JS-style automatic semicolon insertion).
 - `gild-vcs`: 8508
 - `deploy`: 8509
 
-## PHPX Module System
-- Core modules: `core/`, `string/`, `array/`, `json/`, `component/`
-- User modules: `@user/*` namespace  
-- Module resolution: via `deka.lock` in project root
-- Standard library: defined in `php_modules/stdlib.json`
+## DekaScript module system
+
+No public module-resolution or standard-library contract is available in the
+current compiler-core stack. Do not add examples or compatibility aliases until
+the owning runtime/stdlib lanes define and validate one.
 
 ## Runtime Features (deka-runtime)
 - V8 isolate pool with warm caching.
@@ -128,22 +87,13 @@ Note: Semicolons are optional in PHPX (JS-style automatic semicolon insertion).
 - Rust: `cargo test` (in `deka-runtime/` or `deka-rs/`).
 - Runtime compat suite: `deka-runtime/scripts/compat.sh` → `deka-runtime/test/compat/REPORT.md`.
 - CLI: `bun test` if present; build via `bun run build`.
-- PHPX: `deka test` (PHPX test suite), `deka test --no-rust` (skip Rust tests)
-
-### PHPX Conformance Tests (required after runtime changes)
-PHPX has a dedicated fixture suite under `deka/tests/phpx/` that guards language/runtime behavior.
-Run this after any parser/compiler/VM or module-system change:
-```
-PHPX_BIN=target/release/cli PHPX_BIN_ARGS=run bun tests/phpx/testrunner.js
-```
-Each fixture must include a short `TEST:` header comment describing its intent.
-See `tests/phpx/CONFORMANCE.md` for the feature-to-fixture map.
+- DekaScript compiler core: run the owning parser/emitter crate tests for the
+  implemented syntax slice; do not claim a CLI conformance suite yet.
 
 ## Documentation Workflow (required)
 - Keep `runtime/docs/` user-facing only. Put internal plans/task lists under `tasks/` (or `tasks/archive/`).
 - After runtime/language/module changes, update docs in the same PR:
-  - Language/runtime behavior: `runtime/docs/phpx/**`
-  - PHP runtime behavior: `runtime/docs/php/**`
+  - Language behavior: `runtime/docs/dekascript/**`
   - Keep examples current and include expected output for non-trivial features.
 - Publish docs from `runtime/` with:
   ```sh

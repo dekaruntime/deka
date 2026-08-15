@@ -1,5 +1,0 @@
-import { format_value as fmt } from 'string';
-
-export function get_str_func($value) {
-    return fmt($value);
-}

@@ -1,3 +1,0 @@
-<?php
-__phpx_load('core/option');
-echo "loaded";
