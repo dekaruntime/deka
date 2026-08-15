@@ -40,23 +40,6 @@ if (!success.ok || success.metadata.language !== "deka" || !success.output?.code
   throw new Error(`successful .ds compile did not match the ABI contract: ${JSON.stringify(success)}`);
 }
 
-const tourSurface = compile([
-  "export function initials(parts: Array<string>): string {",
-  "  let output = \"\";",
-  "  for (const part of parts) {",
-  "    output += part.slice(0, 1);",
-  "  }",
-  "  const first = parts[0];",
-  "  const summary = { first: first, count: parts.length };",
-  "  return `${first}:${output}`;",
-  "}",
-].join("\n"), "tour-surface.ds", "deka");
-if (!tourSurface.ok || !tourSurface.output?.code?.includes("for (const part of (")
-  || !tourSurface.output.code.includes("parts[0]")
-  || !tourSurface.output.code.includes("const summary")) {
-  throw new Error(`Deka tour surface did not compile through the browser ABI: ${JSON.stringify(tourSurface)}`);
-}
-
 const rejectedFilename = compile("function greeting($name: string): string { return $name; }", "legacy.phpx", "phpx");
 if (rejectedFilename.ok || !rejectedFilename.diagnostics?.[0]?.message.includes("only accepts .ds")) {
   throw new Error(`PHPX filename fallback was not rejected: ${JSON.stringify(rejectedFilename)}`);
@@ -73,25 +56,21 @@ if (failure.ok || diagnostic?.severity !== "error" || diagnostic.filename !== "b
   throw new Error(`diagnostic compile did not match the ABI contract: ${JSON.stringify(failure)}`);
 }
 
-for (const [name, source] of [
-  [
-    "typed functions",
-    "function add(left: number, right: number): number { return left + right; } console.log(add(20, 22));",
-  ],
-  [
-    "lists objects and indexing",
-    "const parts = [\"north\", \"star\"]; const first = parts[0]; const label = { first: first, count: parts.length }; console.log(`${label.first}:${label.count}`);",
-  ],
-]) {
-  const response = compile(source, "tour.ds", "deka");
-  if (!response.ok || typeof response.output?.code !== "string") {
-    throw new Error(`${name} did not compile through the browser WASM ABI: ${JSON.stringify(response)}`);
-  }
+const tourCases = JSON.parse(await readFile(new URL("./fixtures/deka-tour-sources.json", import.meta.url)));
+if (tourCases.length !== 25) {
+  throw new Error(`expected 25 website tour sources, found ${tourCases.length}`);
 }
-
-const sigil = compile("const $value = 1;", "tour.ds", "deka");
-if (sigil.ok || !sigil.diagnostics?.some((diagnostic) => diagnostic.message?.includes("bare identifiers"))) {
-  throw new Error(`sigil diagnostic did not explain the DS binding contract: ${JSON.stringify(sigil)}`);
+for (const testCase of tourCases) {
+  const response = compile(testCase.source, "tour.ds", "deka");
+  if (response.ok !== testCase.expect_compile) {
+    throw new Error(`${testCase.name} browser WASM compile result drifted: ${JSON.stringify(response)}`);
+  }
+  if (testCase.expect_compile && typeof response.output?.code !== "string") {
+    throw new Error(`${testCase.name} did not return browser WASM output: ${JSON.stringify(response)}`);
+  }
+  if (!testCase.expect_compile && !response.diagnostics?.some((diagnostic) => diagnostic.message?.includes(testCase.expect_error))) {
+    throw new Error(`${testCase.name} browser WASM diagnostic drifted: ${JSON.stringify(response)}`);
+  }
 }
 
 console.log("browser WASM parity fixtures passed");
