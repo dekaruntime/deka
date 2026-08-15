@@ -49,7 +49,7 @@ where
 
 pub fn is_php_entry(path: &str) -> bool {
     let lowered = path.to_ascii_lowercase();
-    lowered.ends_with(".ds")
+    lowered.ends_with(".ds") || lowered.ends_with(".phpx")
 }
 
 pub fn is_html_entry(path: &str) -> bool {
@@ -85,9 +85,9 @@ mod tests {
     }
 
     #[test]
-    fn php_and_html_detection() {
+    fn dekascript_phpx_and_html_detection() {
         assert!(is_php_entry("index.DS"));
-        assert!(!is_php_entry("index.PHPX"));
+        assert!(is_php_entry("index.PHPX"));
         assert!(!is_php_entry("index.html"));
         assert!(is_html_entry("index.html"));
         assert!(is_html_entry("index.HTML"));

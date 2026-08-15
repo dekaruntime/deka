@@ -80,14 +80,8 @@ async fn run_async(context: &Context) -> Result<(), String> {
     }
 
     if !is_php_entry(&normalized) {
-        if normalized.to_ascii_lowercase().ends_with(".phpx") {
-            return Err(format!(
-                "DekaScript uses .ds only; migrate '{}' before running it",
-                normalized
-            ));
-        }
         return Err(format!(
-            "Run mode supports .ds entrypoints only: {}",
+            "Run mode supports .ds entrypoints (and .phpx during the DekaScript integration): {}",
             normalized
         ));
     }
