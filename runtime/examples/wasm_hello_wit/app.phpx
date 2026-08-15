@@ -1,7 +1,0 @@
-import { greet, get_position, make_user } from '@user/hello' as wasm;
-
-$pos = get_position();
-echo "pos: " . $pos.x . ", " . $pos.y . "\n";
-
-$user = make_user('Sami', 34);
-echo greet($user.name) . "\n";
