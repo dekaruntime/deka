@@ -17,7 +17,10 @@ mkdir -p "$out_dir"
 cd "$runtime_dir"
 CARGO_INCREMENTAL=0 DEKA_SOURCE_COMMIT="$source_commit" \
   cargo build --locked --release \
-  --target wasm32-unknown-unknown -p phpx_compiler_wasm -p dekascript_lsp
+  --target wasm32-unknown-unknown -p phpx_compiler_wasm --no-default-features
+CARGO_INCREMENTAL=0 DEKA_SOURCE_COMMIT="$source_commit" \
+  cargo build --locked --release \
+  --target wasm32-unknown-unknown -p dekascript_lsp --no-default-features
 
 source_artifact="$target_dir/wasm32-unknown-unknown/release/phpx_compiler_wasm.wasm"
 test -f "$source_artifact"
