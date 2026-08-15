@@ -39,7 +39,7 @@ where
     F: FnOnce(&Program, &[u8]) -> R,
 {
     let arena = Bump::new();
-    let result = compile_phpx(source, file_path, &arena);
+    let result = compile_deka(source, file_path, &arena);
     let program = result.ast?;
     Some(f(&program, source.as_bytes()))
 }
@@ -123,19 +123,19 @@ impl SymbolIndex {
     pub(crate) fn hover_at(&self, offset: usize) -> Option<String> {
         for func in &self.functions {
             if span_contains(func.span, offset) {
-                return Some(format!("```php\n{}\n```", func.signature));
+                return Some(format!("```dekascript\n{}\n```", func.signature));
             }
             for var in &func.vars {
                 if span_contains(var.span, offset) {
                     let ty = var.ty.clone().unwrap_or_else(|| "unknown".to_string());
-                    return Some(format!("```php\n{}: {}\n```", var.name, ty));
+                    return Some(format!("```dekascript\n{}: {}\n```", var.name, ty));
                 }
             }
         }
 
         for strukt in &self.structs {
             if span_contains(strukt.span, offset) {
-                let mut out = format!("```php\nstruct {}\n", strukt.name);
+                let mut out = format!("```dekascript\nstruct {}\n", strukt.name);
                 for field in &strukt.fields {
                     let ty = field.ty.clone().unwrap_or_else(|| "mixed".to_string());
                     out.push_str(&format!(
@@ -151,7 +151,7 @@ impl SymbolIndex {
                 if span_contains(field.span, offset) {
                     let ty = field.ty.clone().unwrap_or_else(|| "mixed".to_string());
                     return Some(format!(
-                        "```php\n${}: {}\n```",
+                        "```dekascript\n${}: {}\n```",
                         field.name.trim_start_matches('$'),
                         ty
                     ));
@@ -161,7 +161,7 @@ impl SymbolIndex {
 
         for iface in &self.interfaces {
             if span_contains(iface.span, offset) {
-                let mut out = format!("```php\ninterface {} {{\n", iface.name);
+                let mut out = format!("```dekascript\ninterface {} {{\n", iface.name);
                 for field in &iface.fields {
                     let ty = field.ty.clone().unwrap_or_else(|| "mixed".to_string());
                     out.push_str(&format!(
@@ -177,7 +177,7 @@ impl SymbolIndex {
                 if span_contains(field.span, offset) {
                     let ty = field.ty.clone().unwrap_or_else(|| "mixed".to_string());
                     return Some(format!(
-                        "```php\n${}: {}\n```",
+                        "```dekascript\n${}: {}\n```",
                         field.name.trim_start_matches('$'),
                         ty
                     ));
@@ -187,7 +187,7 @@ impl SymbolIndex {
 
         for en in &self.enums {
             if span_contains(en.span, offset) {
-                let mut out = format!("```php\nenum {}\n", en.name);
+                let mut out = format!("```dekascript\nenum {}\n", en.name);
                 for case_info in &en.cases {
                     out.push_str(&format!("  case {}\n", case_info.name));
                 }
@@ -196,20 +196,26 @@ impl SymbolIndex {
             }
             for case_info in &en.cases {
                 if span_contains(case_info.span, offset) {
-                    return Some(format!("```php\n{}::{}\n```", en.name, case_info.name));
+                    return Some(format!(
+                        "```dekascript\n{}::{}\n```",
+                        en.name, case_info.name
+                    ));
                 }
             }
         }
 
         for alias in &self.type_aliases {
             if span_contains(alias.span, offset) {
-                return Some(format!("```php\ntype {} = {}\n```", alias.name, alias.ty));
+                return Some(format!(
+                    "```dekascript\ntype {} = {}\n```",
+                    alias.name, alias.ty
+                ));
             }
         }
 
         for konst in &self.consts {
             if span_contains(konst.span, offset) {
-                return Some(format!("```php\nconst {}\n```", konst.name));
+                return Some(format!("```dekascript\nconst {}\n```", konst.name));
             }
         }
 
@@ -1198,7 +1204,7 @@ pub(crate) fn hover_from_import(source: &str, offset: usize) -> Option<String> {
             } else {
                 format!("import {{ {} }} from '{}'", import.local, import.from)
             };
-            return Some(format!("```php\n{}\n```", line));
+            return Some(format!("```dekascript\n{}\n```", line));
         }
     }
     None
@@ -1209,7 +1215,7 @@ pub(crate) fn hover_for_annotation(source: &str, offset: usize) -> Option<String
     let (_, detail) = annotation_catalog()
         .into_iter()
         .find(|(label, _)| *label == name.as_str())?;
-    Some(format!("```php\n@{}\n```\n{}", name, detail))
+    Some(format!("```dekascript\n@{}\n```\n{}", name, detail))
 }
 
 pub(crate) fn annotation_name_at_offset(source: &str, offset: usize) -> Option<String> {

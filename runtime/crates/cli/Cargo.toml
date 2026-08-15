@@ -13,7 +13,7 @@ native = [
   "dep:tokio",
   "dep:postgres",
   "dep:php-rs",
-  "dep:phpx_lsp",
+  "dep:dekascript_lsp",
   "dep:modules_php",
   "dep:phpx_js",
   "dep:bundler",
@@ -41,7 +41,7 @@ reqwest = { version = "0.11", features = ["blocking", "json"] }
 tokio = { version = "1.35", features = ["rt-multi-thread", "net", "io-util"], optional = true }
 postgres = { version = "0.19", optional = true }
 php-rs = { path = "../php-rs", optional = true }
-phpx_lsp = { path = "../phpx_lsp", optional = true }
+dekascript_lsp = { path = "../phpx_lsp", optional = true }
 modules_php = { path = "../modules_php", optional = true }
 phpx_js = { path = "../phpx_js", optional = true }
 bumpalo = "3.12"

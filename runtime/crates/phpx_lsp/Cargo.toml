@@ -1,5 +1,5 @@
 [package]
-name = "phpx_lsp"
+name = "dekascript_lsp"
 version = "0.1.0"
 edition = "2024"
 

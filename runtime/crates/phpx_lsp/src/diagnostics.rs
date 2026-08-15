@@ -11,7 +11,7 @@ pub(crate) fn diagnostic_from_error(
         code: Some(tower_lsp::lsp_types::NumberOrString::String(
             error.kind.as_str().to_string(),
         )),
-        source: Some("phpx".to_string()),
+        source: Some(LANGUAGE_ID.to_string()),
         message: plain_message(
             &error.message,
             &error.help_text,
@@ -32,7 +32,7 @@ pub(crate) fn diagnostic_from_warning(
         code: Some(tower_lsp::lsp_types::NumberOrString::String(
             warning.kind.as_str().to_string(),
         )),
-        source: Some("phpx".to_string()),
+        source: Some(LANGUAGE_ID.to_string()),
         message: plain_message(
             &warning.message,
             &warning.help_text,
@@ -137,7 +137,7 @@ pub(crate) fn unresolved_import_diagnostics(
             code: Some(tower_lsp::lsp_types::NumberOrString::String(
                 "Import Error".to_string(),
             )),
-            source: Some("phpx".to_string()),
+            source: Some(LANGUAGE_ID.to_string()),
             message: format!(
                 "Import Error: Module '{}' has no export named '{}'.",
                 import.from, import.imported
@@ -172,7 +172,7 @@ pub(crate) fn target_capability_diagnostics(
                 code: Some(tower_lsp::lsp_types::NumberOrString::String(
                     "Target Capability Error".to_string(),
                 )),
-                source: Some("phpx".to_string()),
+                source: Some(LANGUAGE_ID.to_string()),
                 message: format!(
                     "Target Capability Error: Module '{}' is unavailable for target 'adwa' ({}).\nhelp: {}",
                     import.from, block.reason, block.suggestion
@@ -201,7 +201,7 @@ pub(crate) fn adwa_capability_block(module_spec: &str) -> Option<CapabilityBlock
     {
         return Some(CapabilityBlock {
             reason: "database host capability is disabled",
-            suggestion: "Run with `phpx.target = server` or move database access behind a server endpoint.",
+            suggestion: "Run with `dekascript.target = server` or move database access behind a server endpoint.",
         });
     }
     if module_spec == "process"

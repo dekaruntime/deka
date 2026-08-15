@@ -537,7 +537,7 @@ pub(crate) fn completion_for_import(
     Some(items)
 }
 pub(crate) fn find_php_modules_root(start: &Path, workspace_roots: &[PathBuf]) -> Option<PathBuf> {
-    if let Ok(root) = std::env::var("PHPX_MODULE_ROOT") {
+    if let Ok(root) = std::env::var("DEKA_MODULE_ROOT") {
         let root_path = PathBuf::from(root);
         let candidate = root_path.join("php_modules");
         if candidate.is_dir() {
@@ -619,7 +619,7 @@ pub(crate) fn list_project_modules(project_root: &Path) -> Vec<String> {
             modules.push(name);
         } else if path.is_file() {
             if let Some(ext) = path.extension().and_then(|ext| ext.to_str()) {
-                if ext == "phpx" || ext == "php" {
+                if ext == "ds" {
                     modules.push(name);
                 }
             }
@@ -640,33 +640,25 @@ pub(crate) fn resolve_module_file(
     } else {
         root.join(module_spec)
     };
-    if base.is_file() {
+    if base.is_file() && is_dekascript_path(&base) {
         return Some(base);
     }
-    let phpx = base.with_extension("phpx");
-    if phpx.is_file() {
-        return Some(phpx);
-    }
-    let php = base.with_extension("php");
-    if php.is_file() {
-        return Some(php);
+    let dekascript = base.with_extension("ds");
+    if dekascript.is_file() {
+        return Some(dekascript);
     }
     if base.is_dir() {
         if is_wasm {
-            let stub = base.join("module.d.phpx");
+            let stub = base.join("module.d.ds");
             if stub.is_file() {
                 return Some(stub);
             }
         }
-        let index = base.join("index.phpx");
+        let index = base.join("index.ds");
         if index.is_file() {
             return Some(index);
         }
-        let index_php = base.join("index.php");
-        if index_php.is_file() {
-            return Some(index_php);
-        }
-        let module = base.join("module.phpx");
+        let module = base.join("module.ds");
         if module.is_file() {
             return Some(module);
         }
@@ -683,7 +675,7 @@ pub(crate) fn collect_module_rename_edits(
 ) -> HashMap<Url, Vec<TextEdit>> {
     let mut changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
     for root in roots {
-        for file in collect_phpx_files(root) {
+        for file in collect_dekascript_files(root) {
             let file_uri = match Url::from_file_path(&file) {
                 Ok(uri) => uri,
                 Err(_) => continue,
@@ -717,7 +709,7 @@ pub(crate) fn collect_reference_locations(
 ) -> Vec<Location> {
     let mut locations = Vec::new();
     for root in roots {
-        for file in collect_phpx_files(root) {
+        for file in collect_dekascript_files(root) {
             let file_uri = match Url::from_file_path(&file) {
                 Ok(uri) => uri,
                 Err(_) => continue,
@@ -748,7 +740,7 @@ pub(crate) fn collect_symbol_rename_edits(
 ) -> HashMap<Url, Vec<TextEdit>> {
     let mut changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
     for root in roots {
-        for file in collect_phpx_files(root) {
+        for file in collect_dekascript_files(root) {
             let file_uri = match Url::from_file_path(&file) {
                 Ok(uri) => uri,
                 Err(_) => continue,
@@ -774,7 +766,7 @@ pub(crate) fn collect_symbol_rename_edits(
     changes
 }
 
-pub(crate) fn collect_phpx_files(root: &Path) -> Vec<PathBuf> {
+pub(crate) fn collect_dekascript_files(root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -791,12 +783,13 @@ pub(crate) fn collect_phpx_files(root: &Path) -> Vec<PathBuf> {
                 continue;
             }
             if let Some(ext) = path.extension().and_then(|ext| ext.to_str()) {
-                if ext == "phpx" || ext == "php" {
+                if ext == "ds" {
                     files.push(path);
                 }
             }
         }
     }
+    files.sort();
     files
 }
 

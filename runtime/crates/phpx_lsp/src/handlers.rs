@@ -22,10 +22,10 @@ impl TargetMode {
         let Some(root) = options.as_object() else {
             return Self::Server;
         };
-        let Some(phpx) = root.get("phpx").and_then(|value| value.as_object()) else {
+        let Some(dekascript) = root.get(LANGUAGE_ID).and_then(|value| value.as_object()) else {
             return Self::Server;
         };
-        let Some(target) = phpx.get("target").and_then(|value| value.as_str()) else {
+        let Some(target) = dekascript.get("target").and_then(|value| value.as_str()) else {
             return Self::Server;
         };
         if target.eq_ignore_ascii_case("adwa") {
@@ -43,7 +43,7 @@ impl Backend {
         file_path: &str,
     ) -> Vec<Diagnostic> {
         let arena = Bump::new();
-        let result = compile_phpx(text, file_path, &arena);
+        let result = compile_deka(text, file_path, &arena);
         let mut diagnostics = Vec::new();
         let workspace_roots = self.workspace_roots.read().await.clone();
         let target_mode = *self.target_mode.read().await;
@@ -79,6 +79,9 @@ impl Backend {
     }
 
     pub(crate) async fn validate_document(&self, uri: Url, text: &str) {
+        if !is_dekascript_uri(&uri) {
+            return;
+        }
         let file_path = uri
             .to_file_path()
             .ok()
@@ -152,7 +155,7 @@ impl LanguageServer for Backend {
                 }),
                 diagnostic_provider: Some(DiagnosticServerCapabilities::Options(
                     DiagnosticOptions {
-                        identifier: Some("phpx".to_string()),
+                        identifier: Some(LANGUAGE_ID.to_string()),
                         inter_file_dependencies: true,
                         workspace_diagnostics: false,
                         work_done_progress_options: Default::default(),
@@ -170,7 +173,7 @@ impl LanguageServer for Backend {
 
     async fn initialized(&self, _params: InitializedParams) {
         self._client
-            .log_message(MessageType::INFO, "PHPX LSP initialized")
+            .log_message(MessageType::INFO, "DekaScript LSP initialized")
             .await;
     }
 
@@ -183,6 +186,9 @@ impl LanguageServer for Backend {
         params: DocumentDiagnosticParams,
     ) -> tower_lsp::jsonrpc::Result<DocumentDiagnosticReportResult> {
         let uri = params.text_document.uri;
+        if !is_dekascript_uri(&uri) {
+            return Ok(empty_diagnostic_report());
+        }
         let text = if let Some(in_memory) = self.get_document(&uri).await {
             in_memory
         } else if let Ok(path) = uri.to_file_path() {
@@ -208,6 +214,9 @@ impl LanguageServer for Backend {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        if params.text_document.language_id != LANGUAGE_ID {
+            return;
+        }
         self._client
             .log_message(
                 MessageType::INFO,
@@ -216,6 +225,9 @@ impl LanguageServer for Backend {
             .await;
 
         let uri = params.text_document.uri;
+        if !is_dekascript_uri(&uri) {
+            return;
+        }
         let text = params.text_document.text;
         self.documents
             .write()
@@ -233,6 +245,9 @@ impl LanguageServer for Backend {
             .await;
 
         let uri = params.text_document.uri;
+        if !is_dekascript_uri(&uri) {
+            return;
+        }
         let text = params
             .content_changes
             .last()
@@ -251,6 +266,9 @@ impl LanguageServer for Backend {
         params: tower_lsp::lsp_types::HoverParams,
     ) -> tower_lsp::jsonrpc::Result<Option<Hover>> {
         let uri = params.text_document_position_params.text_document.uri;
+        if !is_dekascript_uri(&uri) {
+            return Ok(None);
+        }
         let position = params.text_document_position_params.position;
         let Some(text) = self.get_document(&uri).await else {
             return Ok(None);
@@ -269,7 +287,7 @@ impl LanguageServer for Backend {
         };
 
         let arena = Bump::new();
-        let result = compile_phpx(&text, &file_path, &arena);
+        let result = compile_deka(&text, &file_path, &arena);
         let mut hover_text = None;
         if let Some(program) = result.ast.as_ref() {
             let index = build_index(program, text.as_bytes());
@@ -280,7 +298,7 @@ impl LanguageServer for Backend {
             if let Some(word) = word_at_offset(text.as_bytes(), offset) {
                 if let Some(sig) = result.wasm_functions.get(&word) {
                     let signature = format_external_signature(&word, sig);
-                    hover_text = Some(format!("```php\n{}\n```", signature));
+                    hover_text = Some(format!("```dekascript\n{}\n```", signature));
                 }
             }
         }
@@ -309,6 +327,9 @@ impl LanguageServer for Backend {
         params: CompletionParams,
     ) -> tower_lsp::jsonrpc::Result<Option<CompletionResponse>> {
         let uri = params.text_document_position.text_document.uri;
+        if !is_dekascript_uri(&uri) {
+            return Ok(None);
+        }
         let position = params.text_document_position.position;
         let Some(text) = self.get_document(&uri).await else {
             return Ok(None);
@@ -362,6 +383,9 @@ impl LanguageServer for Backend {
         params: tower_lsp::lsp_types::GotoDefinitionParams,
     ) -> tower_lsp::jsonrpc::Result<Option<tower_lsp::lsp_types::GotoDefinitionResponse>> {
         let uri = params.text_document_position_params.text_document.uri;
+        if !is_dekascript_uri(&uri) {
+            return Ok(None);
+        }
         let position = params.text_document_position_params.position;
         let Some(text) = self.get_document(&uri).await else {
             return Ok(None);
@@ -416,6 +440,9 @@ impl LanguageServer for Backend {
         params: DocumentSymbolParams,
     ) -> tower_lsp::jsonrpc::Result<Option<tower_lsp::lsp_types::DocumentSymbolResponse>> {
         let uri = params.text_document.uri;
+        if !is_dekascript_uri(&uri) {
+            return Ok(None);
+        }
         let Some(text) = self.get_document(&uri).await else {
             return Ok(None);
         };
@@ -442,6 +469,9 @@ impl LanguageServer for Backend {
         params: ReferenceParams,
     ) -> tower_lsp::jsonrpc::Result<Option<Vec<Location>>> {
         let uri = params.text_document_position.text_document.uri;
+        if !is_dekascript_uri(&uri) {
+            return Ok(None);
+        }
         let position = params.text_document_position.position;
         let mut text = self.get_document(&uri).await;
         if text.is_none() {
@@ -481,6 +511,9 @@ impl LanguageServer for Backend {
         params: RenameParams,
     ) -> tower_lsp::jsonrpc::Result<Option<WorkspaceEdit>> {
         let uri = params.text_document_position.text_document.uri;
+        if !is_dekascript_uri(&uri) {
+            return Ok(None);
+        }
         let position = params.text_document_position.position;
         let new_name = params.new_name;
         let mut text = self.get_document(&uri).await;
@@ -534,6 +567,18 @@ impl LanguageServer for Backend {
             change_annotations: None,
         }))
     }
+}
+
+fn empty_diagnostic_report() -> DocumentDiagnosticReportResult {
+    DocumentDiagnosticReportResult::Report(DocumentDiagnosticReport::Full(
+        RelatedFullDocumentDiagnosticReport {
+            related_documents: None,
+            full_document_diagnostic_report: FullDocumentDiagnosticReport {
+                result_id: None,
+                items: Vec::new(),
+            },
+        },
+    ))
 }
 
 pub async fn run_stdio() -> anyhow::Result<()> {
