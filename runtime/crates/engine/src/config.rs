@@ -184,7 +184,7 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
     }
 
     // Directory: search for index files in priority order
-    let index_files = ["index.php", "index.phpx", "index.html"];
+    let index_files = ["index.ds", "index.html"];
 
     for index_file in &index_files {
         let index_path = abs_path.join(index_file);
@@ -212,7 +212,7 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
 fn detect_mode(path: &std::path::Path) -> ServeMode {
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
         match ext {
-            "php" | "phpx" => ServeMode::Php,
+            "ds" => ServeMode::Php,
             "html" | "htm" => ServeMode::Static,
             _ => ServeMode::Static,
         }

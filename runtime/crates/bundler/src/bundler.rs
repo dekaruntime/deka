@@ -752,11 +752,13 @@ impl Resolve for FsResolver {
 
         let mut candidates = Vec::new();
         if target.extension().is_none() {
+            candidates.push(target.with_extension("ds"));
             candidates.push(target.with_extension("ts"));
             candidates.push(target.with_extension("tsx"));
             candidates.push(target.with_extension("jsx"));
             candidates.push(target.with_extension("js"));
             candidates.push(target.with_extension("mjs"));
+            candidates.push(target.join("index.ds"));
             candidates.push(target.join("index.ts"));
             candidates.push(target.join("index.tsx"));
             candidates.push(target.join("index.jsx"));
@@ -793,7 +795,7 @@ impl Hook for NoopHook {
 
 fn syntax_for_path(path: &Path) -> Syntax {
     match path.extension().and_then(|ext| ext.to_str()).unwrap_or("") {
-        "phpx" => Syntax::Es(EsSyntax {
+        "ds" => Syntax::Es(EsSyntax {
             jsx: false,
             export_default_from: true,
             import_attributes: true,
@@ -830,7 +832,7 @@ fn syntax_for_path(path: &Path) -> Syntax {
 
 fn is_typescript(path: &Path) -> bool {
     match path.extension().and_then(|ext| ext.to_str()) {
-        Some("phpx") => false,
+        Some("ds") => false,
         Some("ts") | Some("tsx") => true,
         _ => false,
     }
@@ -1029,13 +1031,13 @@ impl Resolve for DekaResolver {
 fn resolve_with_candidates(target: &Path) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if target.extension().is_none() {
-        candidates.push(target.with_extension("phpx"));
+        candidates.push(target.with_extension("ds"));
         candidates.push(target.with_extension("ts"));
         candidates.push(target.with_extension("tsx"));
         candidates.push(target.with_extension("jsx"));
         candidates.push(target.with_extension("js"));
         candidates.push(target.with_extension("mjs"));
-        candidates.push(target.join("index.phpx"));
+        candidates.push(target.join("index.ds"));
         candidates.push(target.join("index.ts"));
         candidates.push(target.join("index.tsx"));
         candidates.push(target.join("index.jsx"));
