@@ -6,7 +6,7 @@ use crate::extensions::extensions_for_mode;
 use crate::js_pipeline::build_phpx_handler_bundle;
 use crate::security::resolve_security_policy;
 use core::Context;
-use engine::{RuntimeEngine, config as runtime_config, set_engine};
+use engine::{config as runtime_config, set_engine, RuntimeEngine};
 use modules_php::validation::{format_validation_error, modules::validate_module_resolution};
 use platform::Platform;
 use platform_server::ServerPlatform;
