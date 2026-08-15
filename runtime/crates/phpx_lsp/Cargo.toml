@@ -3,6 +3,9 @@ name = "dekascript_lsp"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [features]
 default = ["native"]
 native = ["dep:anyhow", "dep:php-rs", "dep:tokio", "dep:tower-lsp"]

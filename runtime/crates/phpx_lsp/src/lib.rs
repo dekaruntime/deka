@@ -51,12 +51,15 @@ mod documents;
 mod handlers;
 #[cfg(feature = "native")]
 mod symbols;
+mod wasm;
 
 pub use analysis::{
-    AnalysisContext, AnalysisDiagnostic, AnalysisPosition, AnalysisRange, AnalysisSeverity, analyze,
+    AnalysisContext, AnalysisDiagnostic, AnalysisPosition, AnalysisRange, AnalysisSeverity,
+    analyze, is_dekascript_context,
 };
 #[cfg(feature = "native")]
 pub use handlers::run_stdio;
+pub use wasm::{DIAGNOSTICS_ABI_VERSION, diagnostics_json};
 
 #[cfg(feature = "native")]
 pub(crate) use completion::*;
