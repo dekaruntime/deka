@@ -74,6 +74,15 @@ fn run_executes_declared_array_function_call() {
 }
 
 #[test]
+fn run_executes_dekascript_generic_variadic_collect_candidate() {
+    run_dekascript(
+        "collect",
+        "export function collect(...values: Array<mixed>): Array<mixed> {\n    return values;\n}\nconst result = collect(1, 2, 3);\nprint(result);\n",
+        "1,2,3",
+    );
+}
+
+#[test]
 fn run_rejects_phpx_entry_before_execution() {
     let project = tempfile::tempdir().expect("create PHPX project");
     fs::write(project.path().join("deka.json"), "{}\n").expect("write project manifest");
