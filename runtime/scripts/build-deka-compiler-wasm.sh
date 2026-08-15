@@ -56,7 +56,7 @@ cat > "$out_dir/$diagnostics_artifact_name.metadata.json" <<EOF
   "target": "wasm32-unknown-unknown",
   "cargo_lock_sha256": "$cargo_lock_sha256",
   "rustc": "$rustc_version",
-  "build_command": "cd runtime && cargo build --locked --release --target wasm32-unknown-unknown -p dekascript_lsp"
+  "build_command": "cd runtime && cargo build --locked --release --target wasm32-unknown-unknown -p dekascript_lsp --no-default-features"
 }
 EOF
 printf '%s  %s\n' "$diagnostics_artifact_sha256" "$diagnostics_artifact_name" > "$out_dir/$diagnostics_artifact_name.sha256"
