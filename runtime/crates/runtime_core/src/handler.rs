@@ -47,9 +47,8 @@ where
     }
 }
 
-pub fn is_php_entry(path: &str) -> bool {
-    let lowered = path.to_ascii_lowercase();
-    lowered.ends_with(".ds") || lowered.ends_with(".phpx")
+pub fn is_deka_entry(path: &str) -> bool {
+    path.to_ascii_lowercase().ends_with(".ds")
 }
 
 pub fn is_html_entry(path: &str) -> bool {
@@ -85,10 +84,10 @@ mod tests {
     }
 
     #[test]
-    fn dekascript_phpx_and_html_detection() {
-        assert!(is_php_entry("index.DS"));
-        assert!(is_php_entry("index.PHPX"));
-        assert!(!is_php_entry("index.html"));
+    fn dekascript_entry_detection_rejects_phpx_and_html() {
+        assert!(is_deka_entry("index.DS"));
+        assert!(!is_deka_entry("index.PHPX"));
+        assert!(!is_deka_entry("index.html"));
         assert!(is_html_entry("index.html"));
         assert!(is_html_entry("index.HTML"));
     }

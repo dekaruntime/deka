@@ -13,7 +13,7 @@ use platform_server::ServerPlatform;
 use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData, RequestParts};
 use runtime_core::env::{set_default_log_level_with, set_handler_path_with, set_runtime_args_with};
 use runtime_core::handler::{
-    handler_input_with, is_html_entry, is_php_entry, normalize_handler_path_with,
+    handler_input_with, is_deka_entry, is_html_entry, normalize_handler_path_with,
 };
 use runtime_core::modules::ensure_phpx_module_root_env_with;
 use runtime_core::process::parse_exit_code;
@@ -79,11 +79,8 @@ async fn run_async(context: &Context) -> Result<(), String> {
         ));
     }
 
-    if !is_php_entry(&normalized) {
-        return Err(format!(
-            "Run mode supports .ds entrypoints (and .phpx during the DekaScript integration): {}",
-            normalized
-        ));
+    if !is_deka_entry(&normalized) {
+        return Err(format!("Run mode supports .ds entrypoints: {}", normalized));
     }
     let mut env_set = |key: &str, value: &str| {
         let _ = platform.env().set(key, value);
