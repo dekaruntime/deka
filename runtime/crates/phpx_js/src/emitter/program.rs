@@ -77,7 +77,9 @@ impl<'a> JsSubsetEmitter<'a> {
         }
 
         std::mem::swap(&mut self.body, &mut self.main_body);
-        self.body.push_str("globalThis.__phpxCurrentResponse = { status: 200, headers: {}, body: '' };\n");
+        self.body.push_str(
+            "globalThis.__phpxCurrentResponse = { status: 200, headers: {}, body: '' };\n",
+        );
         self.body.push_str("let __phpxTemplateBody = '';\n");
         for line in template {
             // If the whole line is a JSX element, evaluate it instead of treating
@@ -126,11 +128,10 @@ impl<'a> JsSubsetEmitter<'a> {
                             i += 1;
                             let literal = &line[last_end..start];
                             if !literal.is_empty() {
-                                let escaped = serde_json::to_string(literal).unwrap_or_else(|_| "\"\"".to_string());
-                                self.body.push_str(&format!(
-                                    "__phpxTemplateBody += {};\n",
-                                    escaped
-                                ));
+                                let escaped = serde_json::to_string(literal)
+                                    .unwrap_or_else(|_| "\"\"".to_string());
+                                self.body
+                                    .push_str(&format!("__phpxTemplateBody += {};\n", escaped));
                             }
                             let expr: String = chars[expr_start..expr_end].iter().collect();
                             let js_expr = expr.replace('$', "");
@@ -149,21 +150,19 @@ impl<'a> JsSubsetEmitter<'a> {
                 }
                 let trailing = &line[last_end..];
                 if !trailing.is_empty() || !line.is_empty() {
-                    let escaped = serde_json::to_string(trailing).unwrap_or_else(|_| "\"\"".to_string());
-                    self.body.push_str(&format!(
-                        "__phpxTemplateBody += {};\n",
-                        escaped
-                    ));
+                    let escaped =
+                        serde_json::to_string(trailing).unwrap_or_else(|_| "\"\"".to_string());
+                    self.body
+                        .push_str(&format!("__phpxTemplateBody += {};\n", escaped));
                 }
             }
             // Preserve newlines between template lines.
             let newline = serde_json::to_string("\n").unwrap_or_else(|_| "\"\\n\"".to_string());
-            self.body.push_str(&format!(
-                "__phpxTemplateBody += {};\n",
-                newline
-            ));
+            self.body
+                .push_str(&format!("__phpxTemplateBody += {};\n", newline));
         }
-        self.body.push_str("globalThis.__phpxCurrentResponse.body = __phpxTemplateBody;\n");
+        self.body
+            .push_str("globalThis.__phpxCurrentResponse.body = __phpxTemplateBody;\n");
         std::mem::swap(&mut self.body, &mut self.main_body);
         Ok(())
     }
@@ -232,10 +231,8 @@ impl<'a> JsSubsetEmitter<'a> {
                 // props argument followed by explicit `const` bindings. This
                 // matches the component-call convention used by the JSX runtime
                 // and keeps the emitted signature readable.
-                let mut destructure_map: std::collections::HashMap<
-                    String,
-                    (String, Vec<String>),
-                > = std::collections::HashMap::new();
+                let mut destructure_map: std::collections::HashMap<String, (String, Vec<String>)> =
+                    std::collections::HashMap::new();
                 let mut destructure_index = 0usize;
                 for p in *params {
                     if let Some(php_rs::parser::ast::Type::ObjectShape(fields)) = p.ty {
@@ -246,10 +243,8 @@ impl<'a> JsSubsetEmitter<'a> {
                             format!("__phpx_props_{}", destructure_index)
                         };
                         destructure_index += 1;
-                        let field_names: Vec<String> = fields
-                            .iter()
-                            .map(|f| self.token_name(f.name))
-                            .collect();
+                        let field_names: Vec<String> =
+                            fields.iter().map(|f| self.token_name(f.name)).collect();
                         destructure_map.insert(original, (synthetic, field_names));
                     }
                 }
@@ -303,8 +298,7 @@ impl<'a> JsSubsetEmitter<'a> {
 
                 self.emit_param_default_guards(params, &destructure_map)?;
 
-                let destructure_sources: Vec<String> =
-                    destructure_map.keys().cloned().collect();
+                let destructure_sources: Vec<String> = destructure_map.keys().cloned().collect();
                 for inner in *body {
                     if self.is_param_pattern_prologue(inner, &destructure_sources) {
                         continue;
@@ -460,7 +454,7 @@ impl<'a> JsSubsetEmitter<'a> {
                     let value = self.emit_expr(item.value)?;
                     self.body
                         .push_str(&format!("const {} = {};\n", name, value));
-                    self.declare_in_scope(&name);
+                    self.declare_immutable_in_scope(&name);
                 }
                 Ok(())
             }
@@ -677,8 +671,8 @@ impl<'a> JsSubsetEmitter<'a> {
             }
             Stmt::InlineHtml { value, .. } => {
                 let text = String::from_utf8_lossy(value);
-                let escaped = serde_json::to_string(&text.to_string())
-                    .unwrap_or_else(|_| "\"\"".to_string());
+                let escaped =
+                    serde_json::to_string(&text.to_string()).unwrap_or_else(|_| "\"\"".to_string());
                 self.body.push_str(&format!(
                     "(globalThis.__dekaPrint ? globalThis.__dekaPrint({}) : console.log({}));\n",
                     escaped, escaped

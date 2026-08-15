@@ -3,9 +3,11 @@ use super::*;
 impl<'a> JsSubsetEmitter<'a> {
     pub(super) fn push_scope(&mut self) {
         self.scopes.push(HashSet::new());
+        self.immutable_scopes.push(HashSet::new());
     }
 
     pub(super) fn pop_scope(&mut self) {
+        self.immutable_scopes.pop();
         if let Some(popped) = self.scopes.pop() {
             // Record variables that were declared only in this block scope
             // (not also in an enclosing scope).  If they are later referenced,
@@ -23,6 +25,20 @@ impl<'a> JsSubsetEmitter<'a> {
         if let Some(scope) = self.scopes.last_mut() {
             scope.insert(name.to_string());
         }
+    }
+
+    pub(super) fn declare_immutable_in_scope(&mut self, name: &str) {
+        self.declare_in_scope(name);
+        if let Some(scope) = self.immutable_scopes.last_mut() {
+            scope.insert(name.to_string());
+        }
+    }
+
+    pub(super) fn is_immutable(&self, name: &str) -> bool {
+        self.immutable_scopes
+            .iter()
+            .rev()
+            .any(|scope| scope.contains(name))
     }
 
     pub(super) fn emit_param_default_guards(

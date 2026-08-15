@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use bumpalo::Bump;
 
-use modules_php::compiler_api::compile_phpx;
+use modules_php::compiler_api::{compile_deka, compile_phpx};
 use modules_php::validation::imports::validate_imports;
 use modules_php::validation::{ErrorKind, ValidationResult};
 
@@ -18,7 +18,11 @@ fn load_fixture(path: &Path) -> String {
 fn compile_fixture(path: &Path) -> ValidationResult<'static> {
     let source = load_fixture(path);
     let arena = Box::leak(Box::new(Bump::new()));
-    compile_phpx(&source, path.to_string_lossy().as_ref(), arena)
+    if path.extension().is_some_and(|ext| ext == "ds") {
+        compile_deka(&source, path.to_string_lossy().as_ref(), arena)
+    } else {
+        compile_phpx(&source, path.to_string_lossy().as_ref(), arena)
+    }
 }
 
 fn compile_source(source: &str, file_path: &str) -> ValidationResult<'static> {
@@ -62,6 +66,24 @@ fn module_import_ok() {
         "unexpected errors: {:?}",
         result.errors
     );
+}
+
+#[test]
+fn dekascript_string_subset_fixture_compiles() {
+    let path = fixtures_root().join("dekascript/string_subset.ds");
+    let result = compile_fixture(&path);
+    assert!(
+        result.errors.is_empty(),
+        "unexpected errors: {:?}",
+        result.errors
+    );
+}
+
+#[test]
+fn dekascript_fixture_rejects_php_surface() {
+    let path = fixtures_root().join("dekascript/php_surface_rejected.ds");
+    let result = compile_fixture(&path);
+    assert_has_error(&result, ErrorKind::SyntaxError);
 }
 
 #[test]

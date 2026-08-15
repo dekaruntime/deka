@@ -1,0 +1,32 @@
+---
+title: DekaScript bindings and iteration
+description: Native DekaScript binding, collection, and PHPX exclusion rules.
+---
+
+DekaScript (`.ds`) has a TypeScript-familiar surface and Deka runtime semantics.
+It is not a PHPX compatibility mode.
+
+```ts
+export function initials(parts: Array<string>): string {
+  let output = "";
+  for (const part of parts) {
+    output += part.slice(0, 1);
+  }
+  const first = parts[0];
+  const summary = { first: first, count: parts.length };
+  return `${first}:${output}`;
+}
+```
+
+Supported in this core slice are bare identifier references, `const` and `let`
+bindings, normal and compound assignment, string methods, list and object
+literals, indexed access, property access, and `for (const item of items)`.
+Use `Array<T>` for typed lists in this slice.
+
+Fallible APIs return explicit Deka error values such as `Result`; DekaScript does
+not use exception control flow.
+
+The following PHP/PHPX syntax is deliberately rejected in `.ds`: `$` sigils,
+PHP casts, `array()`, `echo`, `foreach`, `.` concatenation, PHP built-ins,
+classes, namespaces, globals, statics, `try`/`throw`, and `include`/`require`.
+Use imports, explicit values, object/list syntax, and Deka result values instead.

@@ -30,6 +30,7 @@ pub(crate) struct JsSubsetEmitter<'a> {
     uses_jsx_runtime: bool,
     uses_include_stub: bool,
     scopes: Vec<HashSet<String>>,
+    immutable_scopes: Vec<HashSet<String>>,
     /// Scope depth at which we entered the current function body.
     /// Variables first assigned inside a function should use `let`, not bare
     /// assignment, even if the name exists in an outer (module-level) scope —
@@ -77,6 +78,7 @@ impl<'a> JsSubsetEmitter<'a> {
             uses_include_stub: false,
             function_scope_entry: Vec::new(),
             scopes: vec![HashSet::new()],
+            immutable_scopes: vec![HashSet::new()],
             popped_declarations: HashSet::new(),
             warnings: Vec::new(),
             meta,
