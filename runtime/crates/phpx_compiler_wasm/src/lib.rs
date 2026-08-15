@@ -338,7 +338,16 @@ fn box_result(json: &str) -> *mut WasmResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
     use serde_json::Value;
+
+    #[derive(Deserialize)]
+    struct TourCase {
+        name: String,
+        source: String,
+        expect_compile: bool,
+        expect_error: Option<String>,
+    }
 
     #[test]
     fn deka_mode_compiles_a_ds_fixture_with_structured_metadata() {
@@ -413,50 +422,44 @@ mod tests {
     }
 
     #[test]
-    fn deka_tour_surface_compiles_with_native_abi_contract() {
-        let cases = [
-            (
-                "typed functions",
-                "function add(left: number, right: number): number { return left + right; } console.log(add(20, 22));",
-            ),
-            ("list literal", "const parts = [\"north\", \"star\"];"),
-            (
-                "list indexing",
-                "const parts = [\"north\", \"star\"]; const first = parts[0];",
-            ),
-            (
-                "object literal and property access",
-                "const parts = [\"north\", \"star\"]; const first = parts[0]; const label = { first: first, count: parts.length };",
-            ),
-            (
-                "lists objects and indexing",
-                "const parts = [\"north\", \"star\"]; const first = parts[0]; const label = { first: first, count: parts.length }; console.log(`${label.first}:${label.count}`);",
-            ),
-        ];
+    fn all_website_tour_sources_match_the_native_abi_contract() {
+        let cases: Vec<TourCase> =
+            serde_json::from_str(include_str!("../tests/fixtures/deka-tour-sources.json"))
+                .expect("website tour fixture JSON");
+        assert_eq!(cases.len(), 25, "all website tour sources must be covered");
 
-        for (name, source) in cases {
-            let response: Value = serde_json::from_str(&compile_request(source, "tour.ds", "deka"))
-                .unwrap_or_else(|error| panic!("{name}: invalid response JSON: {error}"));
-            assert_eq!(response["ok"], true, "{name}: {response}");
-            assert!(
-                response["output"]["code"].as_str().is_some(),
-                "{name}: {response}"
+        for case in cases {
+            let response: Value =
+                serde_json::from_str(&compile_request(&case.source, "tour.ds", "deka"))
+                    .unwrap_or_else(|error| {
+                        panic!("{}: invalid response JSON: {error}", case.name)
+                    });
+            assert_eq!(
+                response["ok"], case.expect_compile,
+                "{}: {response}",
+                case.name
             );
+            if case.expect_compile {
+                assert!(
+                    response["output"]["code"].as_str().is_some(),
+                    "{}: {response}",
+                    case.name
+                );
+            } else if let Some(expected_error) = case.expect_error {
+                assert!(
+                    response["diagnostics"]
+                        .as_array()
+                        .is_some_and(|diagnostics| {
+                            diagnostics.iter().any(|diagnostic| {
+                                diagnostic["message"]
+                                    .as_str()
+                                    .is_some_and(|message| message.contains(&expected_error))
+                            })
+                        }),
+                    "{}: expected diagnostic containing {expected_error:?}: {response}",
+                    case.name
+                );
+            }
         }
-
-        let sigil: Value =
-            serde_json::from_str(&compile_request("const $value = 1;", "tour.ds", "deka"))
-                .expect("sigil response JSON");
-        assert_eq!(sigil["ok"], false, "{sigil}");
-        assert!(
-            sigil["diagnostics"]
-                .as_array()
-                .is_some_and(|diagnostics| diagnostics.iter().any(|diagnostic| {
-                    diagnostic["message"]
-                        .as_str()
-                        .is_some_and(|message| message.contains("bare identifiers"))
-                })),
-            "sigil diagnostic must explain the DS binding contract: {sigil}"
-        );
     }
 }
