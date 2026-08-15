@@ -1,6 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="PHPX file icon">
-  <rect width="64" height="64" rx="10" fill="#1f6feb"/>
-  <path d="M18 20h20l8 8v16a4 4 0 0 1-4 4H18a4 4 0 0 1-4-4V24a4 4 0 0 1 4-4z" fill="#fff" opacity="0.95"/>
-  <path d="M38 20v8h8" fill="none" stroke="#1f6feb" stroke-width="2.5"/>
-  <text x="32" y="42" text-anchor="middle" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#1f6feb">PX</text>
-</svg>
