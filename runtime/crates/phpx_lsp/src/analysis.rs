@@ -24,6 +24,7 @@ impl AnalysisContext {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AnalysisSeverity {
     Error,
     Warning,
@@ -97,7 +98,7 @@ pub fn analyze(source: &str, context: &AnalysisContext) -> Vec<AnalysisDiagnosti
         .collect()
 }
 
-fn is_dekascript_context(context: &AnalysisContext) -> bool {
+pub fn is_dekascript_context(context: &AnalysisContext) -> bool {
     let path = context
         .uri_or_path
         .split(['?', '#'])

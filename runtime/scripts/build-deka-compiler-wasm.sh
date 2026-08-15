@@ -5,6 +5,7 @@ runtime_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 repo_dir=$(cd "$runtime_dir/.." && pwd)
 out_dir=${1:-"$runtime_dir/dist/deka-compiler-wasm"}
 artifact_name=deka_compiler.wasm
+diagnostics_artifact_name=deka_diagnostics.wasm
 target_dir=${CARGO_TARGET_DIR:-"$runtime_dir/target"}
 git -C "$repo_dir" diff --quiet
 git -C "$repo_dir" diff --cached --quiet
@@ -16,12 +17,16 @@ mkdir -p "$out_dir"
 cd "$runtime_dir"
 CARGO_INCREMENTAL=0 DEKA_SOURCE_COMMIT="$source_commit" \
   cargo build --locked --release \
-  --target wasm32-unknown-unknown -p phpx_compiler_wasm
+  --target wasm32-unknown-unknown -p phpx_compiler_wasm -p dekascript_lsp
 
 source_artifact="$target_dir/wasm32-unknown-unknown/release/phpx_compiler_wasm.wasm"
 test -f "$source_artifact"
 cp "$source_artifact" "$out_dir/$artifact_name"
 artifact_sha256=$(shasum -a 256 "$out_dir/$artifact_name" | awk '{print $1}')
+diagnostics_source_artifact="$target_dir/wasm32-unknown-unknown/release/dekascript_lsp.wasm"
+test -f "$diagnostics_source_artifact"
+cp "$diagnostics_source_artifact" "$out_dir/$diagnostics_artifact_name"
+diagnostics_artifact_sha256=$(shasum -a 256 "$out_dir/$diagnostics_artifact_name" | awk '{print $1}')
 
 cat > "$out_dir/$artifact_name.metadata.json" <<EOF
 {
@@ -38,4 +43,21 @@ cat > "$out_dir/$artifact_name.metadata.json" <<EOF
 EOF
 printf '%s  %s\n' "$artifact_sha256" "$artifact_name" > "$out_dir/$artifact_name.sha256"
 
-printf 'Built %s\nMetadata: %s\n' "$out_dir/$artifact_name" "$out_dir/$artifact_name.metadata.json"
+cat > "$out_dir/$diagnostics_artifact_name.metadata.json" <<EOF
+{
+  "schema_version": 1,
+  "artifact": "$diagnostics_artifact_name",
+  "sha256": "$diagnostics_artifact_sha256",
+  "source_commit": "$source_commit",
+  "adapter": {"name": "deka_diagnostics", "abi_version": 1},
+  "target": "wasm32-unknown-unknown",
+  "cargo_lock_sha256": "$cargo_lock_sha256",
+  "rustc": "$rustc_version",
+  "build_command": "cd runtime && cargo build --locked --release --target wasm32-unknown-unknown -p dekascript_lsp"
+}
+EOF
+printf '%s  %s\n' "$diagnostics_artifact_sha256" "$diagnostics_artifact_name" > "$out_dir/$diagnostics_artifact_name.sha256"
+
+printf 'Built %s\nMetadata: %s\nBuilt %s\nMetadata: %s\n' \
+  "$out_dir/$artifact_name" "$out_dir/$artifact_name.metadata.json" \
+  "$out_dir/$diagnostics_artifact_name" "$out_dir/$diagnostics_artifact_name.metadata.json"
