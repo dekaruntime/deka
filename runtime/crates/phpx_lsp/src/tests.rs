@@ -54,7 +54,7 @@ fn target_mode_defaults_to_server() {
 fn target_mode_reads_adwa_from_init_options() {
     let mut params = InitializeParams::default();
     params.initialization_options = Some(json!({
-        "phpx": {
+        "dekascript": {
             "target": "adwa"
         }
     }));
@@ -101,9 +101,9 @@ fn finds_whole_word_occurrences_only() {
 
 #[test]
 fn collects_module_rename_edits_across_workspace_files() {
-    let dir = temp_dir("phpx_lsp_module_rename");
-    let file_a = dir.join("a.phpx");
-    let file_b = dir.join("b.phpx");
+    let dir = temp_dir("dekascript_lsp_module_rename");
+    let file_a = dir.join("a.ds");
+    let file_b = dir.join("b.ds");
     let src_a = "import { query } from 'db/postgres'\n";
     let src_b = "import { exec } from 'db/postgres'\n";
     fs::write(&file_a, src_a).expect("write a");
@@ -125,17 +125,17 @@ fn collects_module_rename_edits_across_workspace_files() {
 
 #[test]
 fn collects_symbol_rename_edits_with_word_boundaries_across_files() {
-    let dir = temp_dir("phpx_lsp_symbol_rename");
-    let file_a = dir.join("a.phpx");
-    let file_b = dir.join("b.phpx");
-    let src_a = "$foo = 1\n$food = 2\n";
-    let src_b = "function run($foo) { return $foo }\n";
+    let dir = temp_dir("dekascript_lsp_symbol_rename");
+    let file_a = dir.join("a.ds");
+    let file_b = dir.join("b.ds");
+    let src_a = "const foo = 1;\nconst food = 2;\n";
+    let src_b = "function run(foo: number): number { return foo; }\n";
     fs::write(&file_a, src_a).expect("write a");
     fs::write(&file_b, src_b).expect("write b");
 
     let uri_a = Url::from_file_path(&file_a).expect("uri a");
     let edits =
-        collect_symbol_rename_edits(std::slice::from_ref(&dir), &uri_a, src_a, "$foo", "$bar");
+        collect_symbol_rename_edits(std::slice::from_ref(&dir), &uri_a, src_a, "foo", "bar");
     let uri_b = Url::from_file_path(&file_b).expect("uri b");
     assert_eq!(edits.get(&uri_a).map(|v| v.len()), Some(1));
     assert_eq!(edits.get(&uri_b).map(|v| v.len()), Some(2));
@@ -143,16 +143,16 @@ fn collects_symbol_rename_edits_with_word_boundaries_across_files() {
 
 #[test]
 fn collects_references_across_workspace_files() {
-    let dir = temp_dir("phpx_lsp_refs");
-    let file_a = dir.join("a.phpx");
-    let file_b = dir.join("b.phpx");
-    let src_a = "function run($user) { return $user }\n";
-    let src_b = "$user = 'sami'\n";
+    let dir = temp_dir("dekascript_lsp_refs");
+    let file_a = dir.join("a.ds");
+    let file_b = dir.join("b.ds");
+    let src_a = "function run(user: string): string { return user; }\n";
+    let src_b = "const user = 'sami';\n";
     fs::write(&file_a, src_a).expect("write a");
     fs::write(&file_b, src_b).expect("write b");
 
     let uri_a = Url::from_file_path(&file_a).expect("uri a");
-    let refs = collect_reference_locations(std::slice::from_ref(&dir), &uri_a, src_a, "$user");
+    let refs = collect_reference_locations(std::slice::from_ref(&dir), &uri_a, src_a, "user");
     assert_eq!(refs.len(), 3);
 }
 
@@ -176,23 +176,23 @@ fn provides_annotation_hover_docs() {
 
 #[test]
 fn resolves_project_alias_module_file() {
-    let dir = temp_dir("phpx_lsp_alias_resolve");
+    let dir = temp_dir("dekascript_lsp_alias_resolve");
     let php_modules = dir.join("php_modules");
     let db = dir.join("db");
     fs::create_dir_all(&php_modules).expect("mkdir php_modules");
     fs::create_dir_all(&db).expect("mkdir db");
-    fs::write(db.join("index.phpx"), "export const x = 1").expect("write module");
+    fs::write(db.join("index.ds"), "export const x = 1;").expect("write module");
 
     let resolved = resolve_module_file(&php_modules, "@/db", false).expect("resolve alias");
-    assert_eq!(resolved, db.join("index.phpx"));
+    assert_eq!(resolved, db.join("index.ds"));
 }
 
 #[test]
 fn finds_php_modules_from_workspace_roots_fallback() {
-    let workspace = temp_dir("phpx_lsp_workspace_modules");
+    let workspace = temp_dir("dekascript_lsp_workspace_modules");
     let php_modules = workspace.join("php_modules");
     let project = workspace.join("apps").join("sample");
-    let file = project.join("main.phpx");
+    let file = project.join("main.ds");
     fs::create_dir_all(&php_modules).expect("mkdir php_modules");
     fs::create_dir_all(&project).expect("mkdir project");
     fs::write(&file, "import { x } from 'core/result'").expect("write file");
@@ -204,16 +204,16 @@ fn finds_php_modules_from_workspace_roots_fallback() {
 
 #[test]
 fn completes_named_exports_for_import_clause() {
-    let workspace = temp_dir("phpx_lsp_import_exports");
+    let workspace = temp_dir("dekascript_lsp_import_exports");
     let php_modules = workspace.join("php_modules");
     let db = php_modules.join("db");
     fs::create_dir_all(&db).expect("mkdir db");
     fs::write(
-        db.join("index.phpx"),
+        db.join("index.ds"),
         "export function stats() {}\nexport function status() {}\n",
     )
     .expect("write module");
-    let file = workspace.join("main.phpx");
+    let file = workspace.join("main.ds");
     fs::write(&file, "import { sta } from 'db'\n").expect("write main");
 
     let source = fs::read_to_string(&file).expect("read main");
@@ -238,12 +238,12 @@ fn completes_named_exports_for_import_clause() {
 
 #[test]
 fn completes_named_exports_without_closing_brace() {
-    let workspace = temp_dir("phpx_lsp_import_partial");
+    let workspace = temp_dir("dekascript_lsp_import_partial");
     let php_modules = workspace.join("php_modules");
     let db = php_modules.join("db");
     fs::create_dir_all(&db).expect("mkdir db");
-    fs::write(db.join("index.phpx"), "export function stats() {}\n").expect("write module");
-    let file = workspace.join("main.phpx");
+    fs::write(db.join("index.ds"), "export function stats() {}\n").expect("write module");
+    let file = workspace.join("main.ds");
     let source = "import { sta from 'db'\n";
 
     let offset = source.find("sta").expect("sta") + 3;
@@ -366,12 +366,12 @@ fn jsx_props_completion_skips_already_used_props() {
 
 #[test]
 fn reports_missing_named_import_export() {
-    let workspace = temp_dir("phpx_lsp_missing_export");
+    let workspace = temp_dir("dekascript_lsp_missing_export");
     let php_modules = workspace.join("php_modules");
     let db = php_modules.join("db");
     fs::create_dir_all(&db).expect("mkdir db");
-    fs::write(db.join("index.phpx"), "export function stats() {}\n").expect("write module");
-    let file = workspace.join("main.phpx");
+    fs::write(db.join("index.ds"), "export function stats() {}\n").expect("write module");
+    let file = workspace.join("main.ds");
     let source = "import { stat } from 'db'\n";
     fs::write(&file, source).expect("write main");
 
@@ -392,12 +392,12 @@ fn reports_missing_named_import_export() {
 
 #[test]
 fn accepts_valid_named_import_alias() {
-    let workspace = temp_dir("phpx_lsp_import_alias_ok");
+    let workspace = temp_dir("dekascript_lsp_import_alias_ok");
     let php_modules = workspace.join("php_modules");
     let db = php_modules.join("db");
     fs::create_dir_all(&db).expect("mkdir db");
-    fs::write(db.join("index.phpx"), "export function stats() {}\n").expect("write module");
-    let file = workspace.join("main.phpx");
+    fs::write(db.join("index.ds"), "export function stats() {}\n").expect("write module");
+    let file = workspace.join("main.ds");
     let source = "import { stats as stat } from 'db'\n";
     fs::write(&file, source).expect("write main");
 
@@ -410,161 +410,52 @@ fn accepts_valid_named_import_alias() {
 }
 
 #[test]
-fn diagnostics_reject_struct_typed_destructured_props_with_guidance() {
-    let source = r#"
-interface Ignored {}
-struct NameProps { $name: string }
-function FullName({ $name }: NameProps): string {
-  return $name
-}
-"#;
+fn compiles_dekascript_and_uses_dekascript_hover_fences() {
+    let source = "export function fullName(name: string): string { return name; }\n";
     let arena = Bump::new();
-    let result = compile_phpx(source, "/tmp/props.phpx", &arena);
-    let diag_messages: Vec<String> = result
-        .errors
-        .iter()
-        .map(|error| diagnostic_from_error("/tmp/props.phpx", source, error).message)
-        .collect();
-    assert!(
-        diag_messages
-            .iter()
-            .any(|m| { m.contains("Destructured parameter") && m.contains("use interface") }),
-        "messages={diag_messages:?}"
-    );
-}
-
-#[test]
-fn diagnostics_accept_interface_typed_destructured_props() {
-    let source = r#"
-interface NameProps { $name: string }
-function FullName({ $name }: NameProps): string {
-  return $name
-}
-"#;
-    let arena = Bump::new();
-    let result = compile_phpx(source, "/tmp/props_ok.phpx", &arena);
-    let has_destructure_struct_error = result
-        .errors
-        .iter()
-        .any(|error| error.message.contains("Destructured parameter"));
-    assert!(
-        !has_destructure_struct_error,
-        "unexpected errors={:?}",
-        result.errors
-    );
-}
-
-#[test]
-fn diagnostics_report_unknown_jsx_prop_with_suggestion() {
-    let source = r#"
-interface NameProps { $name: string; }
-function FullName($props: NameProps): string {
-  return $props.name;
-}
-$v = <FullName nam="Bob" />;
-"#;
-    let arena = Bump::new();
-    let result = compile_phpx(source, "/tmp/props_typo.phpx", &arena);
-    let messages: Vec<String> = result.errors.iter().map(|e| e.message.clone()).collect();
-    assert!(
-        messages
-            .iter()
-            .any(|m| m.contains("Unknown prop 'nam'") && m.contains("did you mean 'name'")),
-        "messages={messages:?}"
-    );
-}
-
-#[test]
-fn diagnostics_report_unknown_variable_with_suggestion() {
-    let source = r#"
-function fullName($name: string): string {
-  return $nam;
-}
-"#;
-    let arena = Bump::new();
-    let result = compile_phpx(source, "/tmp/var_typo.phpx", &arena);
-    let messages: Vec<String> = result.errors.iter().map(|e| e.message.clone()).collect();
-    assert!(
-        messages
-            .iter()
-            .any(|m| m.contains("Unknown variable '$nam'") && m.contains("did you mean '$name'")),
-        "messages={messages:?}"
-    );
-}
-
-#[test]
-fn diagnostics_report_missing_required_props_in_template_section() {
-    let source = r#"---
-interface NameProps {
-  $name: string;
-}
-function FullName($props: NameProps): string {
-  return $props.name;
-}
----
-<div>
-  <FullName />
-</div>
-"#;
-    let arena = Bump::new();
-    let result = compile_phpx(source, "/tmp/template_missing_props.phpx", &arena);
-    let missing = result
-        .errors
-        .iter()
-        .find(|e| e.message.contains("Missing required prop 'name'"))
-        .expect("missing required prop diagnostic");
-    assert_eq!(missing.line, 10, "diagnostic={missing:?}");
-    assert!(missing.column >= 3, "diagnostic={missing:?}");
-    let messages: Vec<String> = result.errors.iter().map(|e| e.message.clone()).collect();
-    assert!(
-        messages
-            .iter()
-            .any(|m| m.contains("Missing required prop 'name'")
-                && m.contains("component 'FullName'")),
-        "messages={messages:?}"
-    );
-}
-
-#[test]
-fn hover_shows_interface_shape() {
-    let source = "interface NameProps { $name: string; }\nfunction FullName($props: NameProps): string { return $props.name; }\n";
-    let file_path = "/tmp/hover_iface.phpx";
-    let arena = Bump::new();
-    let result = compile_phpx(source, file_path, &arena);
-    let program = result.ast.expect("ast");
+    let result = compile_deka(source, "/tmp/full_name.ds", &arena);
+    let program = result.ast.expect("DekaScript AST");
     let index = build_index(&program, source.as_bytes());
-    let offset = source.find("NameProps").expect("offset");
+    let offset = source.find("fullName").expect("function name");
     let hover = index.hover_at(offset).expect("hover");
-    assert!(
-        hover.contains("interface NameProps") && hover.contains("$name: string"),
-        "hover={hover}"
-    );
+    assert!(hover.starts_with("```dekascript\n"), "hover={hover}");
 }
 
 #[test]
-fn index_infers_destructured_default_binding_type() {
-    let source = r#"
-function FullName({ age: $age = 18 }: Object<{ age: int }>): int {
-  return $age;
-}
-"#;
-    let arena = Bump::new();
-    let result = compile_phpx(source, "/tmp/destructure_default.phpx", &arena);
-    let program = result.ast.expect("ast");
-    let index = build_index(&program, source.as_bytes());
-    let function = index
-        .functions
-        .iter()
-        .find(|f| f.name == "FullName")
-        .expect("function");
-    let has_int_binding = function
-        .vars
-        .iter()
-        .any(|v| v.name == "$age" && v.ty.as_deref() == Some("int"));
-    assert!(
-        has_int_binding,
-        "expected at least one `$age` binding inferred as int"
+fn indexes_resolves_and_renames_only_dekascript_files() {
+    let dir = temp_dir("dekascript_lsp_extension_boundary");
+    let source = "import { value } from './module';\nconst renamed = value;\n";
+    let ds_file = dir.join("main.ds");
+    let legacy_phpx = dir.join("legacy.phpx");
+    let legacy_php = dir.join("legacy.php");
+    fs::write(&ds_file, source).expect("write DekaScript fixture");
+    fs::write(dir.join("module.ds"), "export const value = 1;\n").expect("write module");
+    fs::write(&legacy_phpx, "const renamed = value;\n").expect("write legacy fixture");
+    fs::write(&legacy_php, "const renamed = value;\n").expect("write legacy fixture");
+
+    assert_eq!(
+        collect_dekascript_files(&dir),
+        vec![ds_file.clone(), dir.join("module.ds")]
     );
+    assert_eq!(
+        resolve_module_file(&dir, "./module", false),
+        Some(dir.join("module.ds"))
+    );
+    assert!(resolve_module_file(&dir, "./legacy.phpx", false).is_none());
+    assert!(resolve_module_file(&dir, "./legacy.php", false).is_none());
+
+    let uri = Url::from_file_path(&ds_file).expect("DekaScript URI");
+    let edits = collect_symbol_rename_edits(
+        std::slice::from_ref(&dir),
+        &uri,
+        source,
+        "renamed",
+        "updated",
+    );
+    assert_eq!(edits.len(), 1);
+    assert!(edits.contains_key(&uri));
+    assert!(!is_dekascript_path(&legacy_phpx));
+    assert!(!is_dekascript_path(&legacy_php));
 }
 
 #[test]

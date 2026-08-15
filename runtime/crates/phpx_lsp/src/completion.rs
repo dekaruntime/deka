@@ -294,28 +294,28 @@ pub(crate) fn snippet_completion_items() -> Vec<CompletionItem> {
         CompletionItem {
             label: "snippet:function".to_string(),
             kind: Some(CompletionItemKind::SNIPPET),
-            insert_text: Some("function ${1:name}(${2:$arg}: ${3:string}): ${4:string} {\n    ${5:return ''}\n}".to_string()),
+            insert_text: Some("function ${1:name}(${2:arg}: ${3:string}): ${4:string} {\n    return ${5:''};\n}".to_string()),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
-            detail: Some("PHPX function template".to_string()),
+            detail: Some("DekaScript function template".to_string()),
             ..CompletionItem::default()
         },
         CompletionItem {
             label: "snippet:async-function".to_string(),
             kind: Some(CompletionItemKind::SNIPPET),
             insert_text: Some(
-                "async function ${1:name}(${2:$arg}: Promise<${3:string}>): Promise<${3:string}> {\n    return await ${2:$arg}\n}"
+                "async function ${1:name}(${2:arg}: Promise<${3:string}>): Promise<${3:string}> {\n    return await ${2:arg};\n}"
                     .to_string(),
             ),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
-            detail: Some("PHPX async function template".to_string()),
+            detail: Some("DekaScript async function template".to_string()),
             ..CompletionItem::default()
         },
         CompletionItem {
-            label: "snippet:struct".to_string(),
+            label: "snippet:object".to_string(),
             kind: Some(CompletionItemKind::SNIPPET),
-            insert_text: Some("struct ${1:Name} {\n    $${2:field}: ${3:string}\n}".to_string()),
+            insert_text: Some("const ${1:name}: { ${2:field}: ${3:string} } = { ${2:field}: ${4:''} };".to_string()),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
-            detail: Some("PHPX struct template".to_string()),
+            detail: Some("DekaScript object template".to_string()),
             ..CompletionItem::default()
         },
         CompletionItem {
@@ -323,23 +323,23 @@ pub(crate) fn snippet_completion_items() -> Vec<CompletionItem> {
             kind: Some(CompletionItemKind::SNIPPET),
             insert_text: Some("import { ${1:symbol} } from '${2:module}'".to_string()),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
-            detail: Some("PHPX import template".to_string()),
+            detail: Some("DekaScript import template".to_string()),
             ..CompletionItem::default()
         },
         CompletionItem {
             label: "snippet:component".to_string(),
             kind: Some(CompletionItemKind::SNIPPET),
-            insert_text: Some("function ${1:Component}($props: Object<{ ${2:message}: string }>) {\n    return <div>{$props.${2:message}}</div>\n}".to_string()),
+            insert_text: Some("function ${1:component}(${2:props}: { ${3:message}: string }): string {\n    return ${2:props}.${3:message};\n}".to_string()),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
-            detail: Some("PHPX JSX component template".to_string()),
+            detail: Some("DekaScript component template".to_string()),
             ..CompletionItem::default()
         },
         CompletionItem {
             label: "snippet:frontmatter".to_string(),
             kind: Some(CompletionItemKind::SNIPPET),
-            insert_text: Some("---\nimport { ${1:Component} } from '${2:module}'\n\n$${3:data} = ${4:null}\n---\n<${1:Component} />\n".to_string()),
+            insert_text: Some("import { ${1:symbol} } from '${2:module}';\n\nconst ${3:value} = ${1:symbol};\n".to_string()),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
-            detail: Some("PHPX frontmatter template".to_string()),
+            detail: Some("DekaScript module template".to_string()),
             ..CompletionItem::default()
         },
     ]

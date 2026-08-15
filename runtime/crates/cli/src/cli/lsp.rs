@@ -3,7 +3,7 @@ use core::{CommandSpec, Context, FlagSpec, Registry};
 const COMMAND: CommandSpec = CommandSpec {
     name: "lsp",
     category: "tooling",
-    summary: "run the PHPX language server",
+    summary: "run the DekaScript language server",
     aliases: &[],
     subcommands: &[],
     handler: cmd,
@@ -30,9 +30,9 @@ pub fn cmd(_context: &Context) {
         }
     };
 
-    let status = runtime.block_on(async { phpx_lsp::run_stdio().await });
+    let status = runtime.block_on(async { dekascript_lsp::run_stdio().await });
     if let Err(err) = status {
-        stdio::error("cli", &format!("failed to start phpx lsp: {}", err));
+        stdio::error("cli", &format!("failed to start DekaScript lsp: {}", err));
         std::process::exit(1);
     }
 }

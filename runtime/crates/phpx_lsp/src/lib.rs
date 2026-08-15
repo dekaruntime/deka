@@ -1,7 +1,7 @@
 #![allow(clippy::all)]
 
 use bumpalo::Bump;
-use modules_php::compiler_api::compile_phpx;
+use modules_php::compiler_api::compile_deka;
 use modules_php::validation::{Severity, ValidationError, ValidationWarning};
 use php_rs::parser::ast::{
     BinaryOp, ClassKind, ClassMember, Expr, ExprId, Name, ObjectKey, Param, Program, Stmt, StmtId,
@@ -39,10 +39,23 @@ pub use handlers::run_stdio;
 pub(crate) use completion::*;
 pub(crate) use diagnostics::*;
 pub(crate) use documents::*;
+pub(crate) use handlers::TargetMode;
 #[cfg(test)]
 pub(crate) use handlers::should_skip_template_html_diagnostic;
-pub(crate) use handlers::TargetMode;
 pub(crate) use symbols::*;
+
+pub(crate) const LANGUAGE_ID: &str = "dekascript";
+
+pub(crate) fn is_dekascript_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("ds"))
+}
+
+pub(crate) fn is_dekascript_uri(uri: &Url) -> bool {
+    uri.to_file_path()
+        .is_ok_and(|path| is_dekascript_path(&path))
+}
 
 #[cfg(test)]
 mod tests;
