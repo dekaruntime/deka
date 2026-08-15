@@ -42,9 +42,7 @@ impl Backend {
         text: &str,
         file_path: &str,
     ) -> Vec<Diagnostic> {
-        let arena = Bump::new();
-        let result = compile_deka(text, file_path, &arena);
-        let mut diagnostics = Vec::new();
+        let core_diagnostics = analyze(text, &AnalysisContext::new(file_path));
         let workspace_roots = self.workspace_roots.read().await.clone();
         let target_mode = *self.target_mode.read().await;
         let unresolved_imports = unresolved_import_diagnostics(text, file_path, &workspace_roots);
@@ -60,18 +58,13 @@ impl Backend {
             })
             .collect();
 
-        for error in result.errors {
-            if should_skip_template_html_diagnostic(&error) {
+        let mut diagnostics = Vec::new();
+        for diagnostic in core_diagnostics {
+            let diagnostic = diagnostic_from_analysis(diagnostic);
+            if should_skip_unused_import_warning(&diagnostic, &unresolved_ranges) {
                 continue;
             }
-            diagnostics.push(diagnostic_from_error(file_path, text, &error));
-        }
-
-        for warning in result.warnings {
-            if should_skip_unused_import_warning(&warning, &unresolved_ranges) {
-                continue;
-            }
-            diagnostics.push(diagnostic_from_warning(file_path, text, &warning));
+            diagnostics.push(diagnostic);
         }
         diagnostics.extend(unresolved_imports);
         diagnostics.extend(target_capability_diagnostics(text, target_mode));
@@ -98,15 +91,6 @@ impl Backend {
         let docs = self.documents.read().await;
         docs.get(uri).cloned()
     }
-}
-
-pub(crate) fn should_skip_template_html_diagnostic(error: &ValidationError) -> bool {
-    // Frontmatter template sections intentionally allow HTML-style markup.
-    // Runtime handles this as template HTML, but compile-time JSX-style validation
-    // can emit false positives for opening/closing tag rules in editor feedback.
-    error
-        .help_text
-        .contains("Fix JSX/template syntax in the template section.")
 }
 
 #[tower_lsp::async_trait]

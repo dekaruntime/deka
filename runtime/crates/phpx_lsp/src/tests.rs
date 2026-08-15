@@ -92,6 +92,18 @@ fn target_capability_diagnostics_allow_db_modules_for_server() {
 }
 
 #[test]
+fn analysis_core_returns_structured_diagnostics_for_ds_context() {
+    let diagnostics = analyze("const = ;\n", &AnalysisContext::new("file:///tmp/main.ds"));
+    assert!(!diagnostics.is_empty());
+    assert!(diagnostics.iter().all(|diagnostic| {
+        (
+            diagnostic.range.start.line,
+            diagnostic.range.start.character,
+        ) <= (diagnostic.range.end.line, diagnostic.range.end.character)
+    }));
+}
+
+#[test]
 fn finds_whole_word_occurrences_only() {
     let src = b"foo food foo\nfoo_bar foo\n";
     let spans = find_word_occurrences(src, "foo");
@@ -460,15 +472,11 @@ fn indexes_resolves_and_renames_only_dekascript_files() {
 
 #[test]
 fn skips_unused_warning_when_unresolved_import_exists_at_same_span() {
-    let warning = ValidationWarning {
-        kind: modules_php::validation::ErrorKind::ImportError,
-        line: 1,
-        column: 10,
+    let warning = Diagnostic {
+        range: Range::new(Position::new(0, 9), Position::new(0, 13)),
         message: "Unused import 'stat'.".to_string(),
-        help_text: String::new(),
-        suggestion: None,
-        underline_length: 4,
-        severity: Severity::Warning,
+        severity: Some(DiagnosticSeverity::WARNING),
+        ..Diagnostic::default()
     };
     let mut unresolved = std::collections::HashSet::new();
     unresolved.insert((0, 9, 0, 13));
@@ -477,31 +485,12 @@ fn skips_unused_warning_when_unresolved_import_exists_at_same_span() {
 
 #[test]
 fn keeps_non_unused_or_non_overlapping_warnings() {
-    let warning = ValidationWarning {
-        kind: modules_php::validation::ErrorKind::ImportError,
-        line: 1,
-        column: 10,
+    let warning = Diagnostic {
+        range: Range::new(Position::new(0, 9), Position::new(0, 13)),
         message: "Unused import 'stat'.".to_string(),
-        help_text: String::new(),
-        suggestion: None,
-        underline_length: 4,
-        severity: Severity::Warning,
+        severity: Some(DiagnosticSeverity::WARNING),
+        ..Diagnostic::default()
     };
     let unresolved = std::collections::HashSet::new();
     assert!(!should_skip_unused_import_warning(&warning, &unresolved));
-}
-
-#[test]
-fn skips_template_section_jsx_diagnostics() {
-    let err = ValidationError {
-        kind: modules_php::validation::ErrorKind::JsxError,
-        line: 12,
-        column: 5,
-        message: "Mismatched closing tag".to_string(),
-        help_text: "Fix JSX/template syntax in the template section.".to_string(),
-        suggestion: None,
-        underline_length: 4,
-        severity: Severity::Error,
-    };
-    assert!(should_skip_template_html_diagnostic(&err));
 }
