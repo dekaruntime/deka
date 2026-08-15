@@ -1,5 +1,0 @@
-import { len } from 'strings';
-
-export function value() {
-    return len('abcdefg');
-}
