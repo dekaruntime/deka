@@ -86,3 +86,38 @@ fn run_rejects_phpx_entry_before_execution() {
         "PHPX entry reached execution: {combined}"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn run_rejects_absolute_ds_symlink_to_phpx_before_execution() {
+    let project = tempfile::tempdir().expect("create DekaScript project");
+    fs::write(project.path().join("deka.json"), "{}\n").expect("write project manifest");
+    let target = project.path().join("legacy.phpx");
+    fs::write(&target, "print(\"must-not-execute\");\n").expect("write PHPX target");
+    let entry = project.path().join("entry.ds");
+    std::os::unix::fs::symlink(&target, &entry).expect("create DekaScript symlink");
+
+    let output = Command::new(cli_bin())
+        .args(["run", entry.to_str().expect("UTF-8 entry")])
+        .current_dir(project.path())
+        .output()
+        .expect("run absolute DekaScript symlink through the CLI runtime");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        !output.status.success(),
+        "PHPX symlink target unexpectedly ran: {combined}"
+    );
+    assert!(
+        combined.contains("Run mode supports .ds entrypoints"),
+        "missing PHPX target rejection in runtime output: {combined}"
+    );
+    assert!(
+        !combined.contains("must-not-execute"),
+        "PHPX symlink target reached execution: {combined}"
+    );
+}

@@ -34,7 +34,10 @@ where
 {
     let path = Path::new(path);
     if path.is_absolute() {
-        return path.to_string_lossy().to_string();
+        return canonicalize(path)
+            .unwrap_or_else(|| path.to_path_buf())
+            .to_string_lossy()
+            .to_string();
     }
     let cwd = match cwd_get() {
         Some(dir) => dir,
@@ -98,5 +101,16 @@ mod tests {
         let canonicalize = |_path: &std::path::Path| None;
         let path = normalize_handler_path_with("main.ds", &cwd, &canonicalize);
         assert_eq!(path, "/tmp/project/main.ds");
+    }
+
+    #[test]
+    fn normalize_handler_path_with_canonicalizes_existing_absolute_paths() {
+        let cwd = || Some(std::path::PathBuf::from("/tmp/project"));
+        let canonicalize = |path: &std::path::Path| {
+            assert_eq!(path, std::path::Path::new("/tmp/project/entry.ds"));
+            Some(std::path::PathBuf::from("/tmp/project/legacy.phpx"))
+        };
+        let path = normalize_handler_path_with("/tmp/project/entry.ds", &cwd, &canonicalize);
+        assert_eq!(path, "/tmp/project/legacy.phpx");
     }
 }
