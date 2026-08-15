@@ -1,6 +1,0 @@
-name = "PHPX"
-grammar = "phpx_only"
-path_suffixes = ["phpx"]
-line_comments = ["// "]
-block_comments = [["/*", "*/"]]
-language_servers = ["phpx-lsp"]
