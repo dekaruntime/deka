@@ -1,8 +1,8 @@
 //! `deka platform` — multi-tenant serve mode.
 //!
-//! Each tenant gets their own PHPX handler from `tenants/{shop_id}/main.phpx`.
-//! Falls back to `default/main.phpx` if the tenant dir doesn't exist.
-//! Uses the bundler (same as `deka serve`) to compile PHPX→JS with stdlib prelude.
+//! Each tenant gets their own DekaScript handler from `tenants/{shop_id}/main.ds`.
+//! Falls back to `default/main.ds` if the tenant dir doesn't exist.
+//! Uses the bundler (same as `deka serve`) to compile DekaScript to JS with the stdlib prelude.
 
 use std::collections::HashMap;
 use std::net::TcpListener;
@@ -107,13 +107,13 @@ impl PlatformState {
 
         // Resolve handler path — try tenant-specific, fall back to default
         let handler_path = if shop_id.is_empty() {
-            self.root.join("default").join("main.phpx")
+            self.root.join("default").join("main.ds")
         } else {
-            let tenant = self.root.join("tenants").join(shop_id).join("main.phpx");
+            let tenant = self.root.join("tenants").join(shop_id).join("main.ds");
             if tenant.exists() {
                 tenant
             } else {
-                self.root.join("default").join("main.phpx")
+                self.root.join("default").join("main.ds")
             }
         };
 
@@ -134,7 +134,7 @@ impl PlatformState {
                     "platform",
                     &format!("bundle failed for {}: {}", display_key, err),
                 );
-                let default_path = self.root.join("default").join("main.phpx");
+                let default_path = self.root.join("default").join("main.ds");
                 let default_str = default_path.to_string_lossy().to_string();
                 if handler_path != default_path {
                     match build_phpx_handler_bundle(&default_str) {
@@ -262,7 +262,7 @@ async fn platform_async(context: &Context) {
     // Validate directory structure
     let default_dir = root.join("default");
     let tenants_dir = root.join("tenants");
-    let default_handler = default_dir.join("main.phpx");
+    let default_handler = default_dir.join("main.ds");
 
     if let Err(err) = install_platform_security_for_root(&default_dir, &context.args.flags) {
         stdio::error("platform", &err);
@@ -272,7 +272,7 @@ async fn platform_async(context: &Context) {
     if !default_handler.exists() {
         stdio::error(
             "platform",
-            &format!("missing default/main.phpx at {}", default_dir.display()),
+            &format!("missing default/main.ds at {}", default_dir.display()),
         );
         std::process::exit(1);
     }

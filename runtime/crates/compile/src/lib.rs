@@ -32,7 +32,7 @@ pub fn run(context: &Context) {
     // Get current directory
     let current_dir = env::current_dir().expect("Failed to get current directory");
 
-    // Find entry point (PHP/PHPX only in reboot MVP)
+    // Find the DekaScript entry point.
     let entry_point = find_entry_point(&current_dir);
 
     match entry_point {
@@ -201,7 +201,7 @@ pub fn run(context: &Context) {
         None => {
             stdio_log::error(
                 "compile",
-                "No entry point found. Looking for app.php, index.php, or index.phpx",
+                "No DekaScript entry point found. Looking for app.ds or index.ds",
             );
         }
     }
@@ -209,7 +209,7 @@ pub fn run(context: &Context) {
 
 /// Find the entry point file in the current directory
 fn find_entry_point(dir: &PathBuf) -> Option<String> {
-    let candidates = vec!["app.php", "index.php", "index.phpx"];
+    let candidates = vec!["app.ds", "index.ds"];
 
     for candidate in candidates {
         let path = dir.join(candidate);

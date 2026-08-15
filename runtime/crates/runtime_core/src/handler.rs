@@ -49,7 +49,7 @@ where
 
 pub fn is_php_entry(path: &str) -> bool {
     let lowered = path.to_ascii_lowercase();
-    lowered.ends_with(".phpx")
+    lowered.ends_with(".ds")
 }
 
 pub fn is_html_entry(path: &str) -> bool {
@@ -63,19 +63,19 @@ mod tests {
 
     #[test]
     fn handler_input_prefers_first_positional() {
-        let env = HashMap::<String, String>::from([("HANDLER_PATH".into(), "env.phpx".into())]);
+        let env = HashMap::<String, String>::from([("HANDLER_PATH".into(), "env.ds".into())]);
         let env_get = |k: &str| env.get(k).cloned();
-        let (handler, extra) = handler_input_with(&["main.phpx".into(), "a".into()], &env_get);
-        assert_eq!(handler, "main.phpx");
+        let (handler, extra) = handler_input_with(&["main.ds".into(), "a".into()], &env_get);
+        assert_eq!(handler, "main.ds");
         assert_eq!(extra, vec!["a".to_string()]);
     }
 
     #[test]
     fn handler_input_uses_env_then_default() {
-        let env = HashMap::<String, String>::from([("HANDLER_PATH".into(), "env.phpx".into())]);
+        let env = HashMap::<String, String>::from([("HANDLER_PATH".into(), "env.ds".into())]);
         let env_get = |k: &str| env.get(k).cloned();
         let (handler, extra) = handler_input_with(&[], &env_get);
-        assert_eq!(handler, "env.phpx");
+        assert_eq!(handler, "env.ds");
         assert!(extra.is_empty());
 
         let none_get = |_k: &str| None;
@@ -86,7 +86,8 @@ mod tests {
 
     #[test]
     fn php_and_html_detection() {
-        assert!(is_php_entry("index.PHPX"));
+        assert!(is_php_entry("index.DS"));
+        assert!(!is_php_entry("index.PHPX"));
         assert!(!is_php_entry("index.html"));
         assert!(is_html_entry("index.html"));
         assert!(is_html_entry("index.HTML"));
@@ -96,7 +97,7 @@ mod tests {
     fn normalize_handler_path_with_uses_injected_closures() {
         let cwd = || Some(std::path::PathBuf::from("/tmp/project"));
         let canonicalize = |_path: &std::path::Path| None;
-        let path = normalize_handler_path_with("main.phpx", &cwd, &canonicalize);
-        assert_eq!(path, "/tmp/project/main.phpx");
+        let path = normalize_handler_path_with("main.ds", &cwd, &canonicalize);
+        assert_eq!(path, "/tmp/project/main.ds");
     }
 }

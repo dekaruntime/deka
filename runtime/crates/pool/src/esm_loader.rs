@@ -37,7 +37,7 @@ pub struct PhpxEsmLoader {
 
 impl PhpxEsmLoader {
     pub fn new(project_root: PathBuf, entry_path: PathBuf) -> Result<Self, JsErrorBox> {
-        let cache_dir = project_root.join(".cache").join("phpx_js");
+        let cache_dir = project_root.join(".cache").join("dekascript");
         std::fs::create_dir_all(&cache_dir).map_err(|err| {
             JsErrorBox::generic(format!("failed to create {}: {}", cache_dir.display(), err))
         })?;
@@ -81,7 +81,13 @@ impl PhpxEsmLoader {
     fn cache_path_for(&self, path: &Path) -> PathBuf {
         let rel = path.strip_prefix(&self.project_root).unwrap_or(path);
         let mut out = self.cache_dir.join(rel);
-        out.set_extension("js");
+        // Keep the input extension in the generated filename so distinct source
+        // paths can never share a cache entry.
+        let filename = out
+            .file_name()
+            .map(|name| format!("{}.js", name.to_string_lossy()))
+            .unwrap_or_else(|| "module.js".to_string());
+        out.set_file_name(filename);
         out
     }
 
@@ -123,6 +129,13 @@ impl PhpxEsmLoader {
             }
             return Err(JsErrorBox::generic(format!(
                 "unable to resolve module '{}'; check php_modules",
+                specifier
+            )));
+        }
+
+        if specifier.to_ascii_lowercase().ends_with(".phpx") {
+            return Err(JsErrorBox::generic(format!(
+                "DekaScript uses .ds imports only; migrate '{}'",
                 specifier
             )));
         }
@@ -174,18 +187,18 @@ impl PhpxEsmLoader {
         let raw_path = specifier
             .to_file_path()
             .map_err(|_| JsErrorBox::generic("Only file:// URLs are supported"))?;
-        // If the specifier has no extension, try .phpx, .js, index.phpx, index.js candidates.
+        // If the specifier has no extension, try DekaScript and JS candidates.
         let path = if raw_path.extension().is_none() {
-            let phpx = raw_path.with_extension("phpx");
+            let ds = raw_path.with_extension("ds");
             let js = raw_path.with_extension("js");
-            let idx_phpx = raw_path.join("index.phpx");
+            let idx_ds = raw_path.join("index.ds");
             let idx_js = raw_path.join("index.js");
-            if phpx.is_file() {
-                phpx
+            if ds.is_file() {
+                ds
             } else if js.is_file() {
                 js
-            } else if idx_phpx.is_file() {
-                idx_phpx
+            } else if idx_ds.is_file() {
+                idx_ds
             } else if idx_js.is_file() {
                 idx_js
             } else {
@@ -196,7 +209,7 @@ impl PhpxEsmLoader {
         };
         let ext = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
         let mut code = match ext {
-            "phpx" => self.load_phpx_source(&path)?,
+            "ds" | "phpx" => self.load_phpx_source(&path)?,
             _ => self.load_js_source(&path)?,
         };
         if specifier == &self.entry_specifier {
@@ -218,6 +231,8 @@ const __candidate = typeof __dekaMain.default !== \"undefined\"\n\
   ? __dekaMain.default\n\
   : typeof __dekaMain.app !== \"undefined\"\n\
   ? __dekaMain.app\n\
+  : typeof __dekaMain.App !== \"undefined\"\n\
+  ? __dekaMain.App\n\
   : typeof __dekaMain.handler !== \"undefined\"\n\
   ? __dekaMain.handler\n\
   : __dekaMain;\n\
@@ -311,21 +326,21 @@ pub fn resolve_project_root(entry_path: &Path) -> Result<PathBuf, String> {
 pub fn entry_wrapper_path(project_root: &Path) -> PathBuf {
     project_root
         .join(".cache")
-        .join("phpx_js")
+        .join("dekascript")
         .join("__deka_entry.js")
 }
 
 pub fn app_directory_entry_path(project_root: &Path) -> PathBuf {
     project_root
         .join(".cache")
-        .join("phpx_js")
+        .join("dekascript")
         .join("__deka_app_entry.js")
 }
 
 pub fn entry_prelude_path(project_root: &Path) -> PathBuf {
     project_root
         .join(".cache")
-        .join("phpx_js")
+        .join("dekascript")
         .join("__deka_prelude.js")
 }
 
@@ -361,7 +376,7 @@ pub fn hash_module_graph(entry_path: &Path) -> Result<u64, String> {
         source.hash(&mut hasher);
 
         let ext = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
-        if ext == "phpx" {
+        if ext == "ds" {
             let meta = parse_source_module_meta(&source);
             for decl in meta.imports {
                 if let Some(resolved) = resolve_import_path(&project_root, &path, decl.from.trim())
@@ -384,27 +399,27 @@ fn collect_app_route_files(project_root: &Path) -> Result<Vec<PathBuf>, String> 
             app_dir.display()
         ));
     }
-    collect_phpx_files_recursive(&app_dir, &mut out)?;
+    collect_deka_source_files_recursive(&app_dir, &mut out)?;
     out.sort();
     Ok(out)
 }
 
-fn collect_phpx_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+fn collect_deka_source_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     let entries = std::fs::read_dir(dir)
         .map_err(|err| format!("failed to read {}: {}", dir.display(), err))?;
     for entry in entries {
         let entry = entry.map_err(|err| format!("failed to read dir entry: {}", err))?;
         let path = entry.path();
         if path.is_dir() {
-            collect_phpx_files_recursive(&path, out)?;
+            collect_deka_source_files_recursive(&path, out)?;
             continue;
         }
-        let is_phpx = path
+        let is_deka_source = path
             .extension()
             .and_then(|ext| ext.to_str())
-            .map(|ext| ext.eq_ignore_ascii_case("phpx"))
+            .map(|ext| ext.eq_ignore_ascii_case("ds"))
             .unwrap_or(false);
-        if is_phpx {
+        if is_deka_source {
             out.push(path);
         }
     }
@@ -541,7 +556,7 @@ fn resolve_phpx_module_spec(project_root: &Path, specifier: &str) -> Option<Path
         let has_traversal = rel.split('/').any(|seg| seg == ".." || seg == ".");
         if !has_traversal {
             let base = project_root.join(rel);
-            if let Some(resolved) = resolve_with_candidates(&base) {
+            if let Some(resolved) = resolve_public_source_candidates(&base) {
                 // Canonicalize both sides and confirm the resolved file is
                 // inside project_root. If canonicalize fails (path doesn't
                 // exist, etc.) we fall through to the next resolver — never
@@ -576,7 +591,7 @@ fn resolve_phpx_module_spec(project_root: &Path, specifier: &str) -> Option<Path
         } else {
             modules_dir.join(alias)
         };
-        if let Some(resolved) = resolve_with_candidates(&base) {
+        if let Some(resolved) = resolve_internal_module_candidates(&base) {
             return Some(resolved);
         }
     }
@@ -592,7 +607,7 @@ fn resolve_phpx_module_spec(project_root: &Path, specifier: &str) -> Option<Path
             } else {
                 root.join(alias)
             };
-            if let Some(resolved) = resolve_with_candidates(&base) {
+            if let Some(resolved) = resolve_internal_module_candidates(&base) {
                 return Some(resolved);
             }
         }
@@ -615,15 +630,15 @@ fn resolve_import_path(project_root: &Path, referrer: &Path, specifier: &str) ->
     } else {
         referrer.parent().unwrap_or(Path::new(".")).join(specifier)
     };
-    resolve_with_candidates(&base)
+    resolve_public_source_candidates(&base)
 }
 
-fn resolve_with_candidates(target: &Path) -> Option<PathBuf> {
+fn resolve_public_source_candidates(target: &Path) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if target.extension().is_none() {
-        candidates.push(target.with_extension("phpx"));
+        candidates.push(target.with_extension("ds"));
         candidates.push(target.with_extension("js"));
-        candidates.push(target.join("index.phpx"));
+        candidates.push(target.join("index.ds"));
         candidates.push(target.join("index.js"));
     }
     candidates.push(target.to_path_buf());
@@ -634,6 +649,23 @@ fn resolve_with_candidates(target: &Path) -> Option<PathBuf> {
         }
     }
     None
+}
+
+fn resolve_internal_module_candidates(target: &Path) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if target.extension().is_none() {
+        candidates.push(target.with_extension("ds"));
+        candidates.push(target.with_extension("phpx"));
+        candidates.push(target.with_extension("php"));
+        candidates.push(target.with_extension("js"));
+        candidates.push(target.join("index.ds"));
+        candidates.push(target.join("index.phpx"));
+        candidates.push(target.join("index.php"));
+        candidates.push(target.join("index.js"));
+    }
+    candidates.push(target.to_path_buf());
+
+    candidates.into_iter().find(|candidate| candidate.is_file())
 }
 
 fn is_bare_specifier(spec: &str) -> bool {
@@ -659,5 +691,63 @@ fn append_entry_footer(code: ModuleSourceCode) -> ModuleSourceCode {
             ModuleSourceCode::String(text.into())
         }
         other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        PhpxEsmLoader, resolve_import_path, resolve_phpx_module_spec,
+        resolve_public_source_candidates,
+    };
+    use std::fs;
+
+    #[test]
+    fn source_extensions_have_distinct_cache_paths() {
+        let root = tempfile::tempdir().expect("temp project");
+        let loader = PhpxEsmLoader::new(root.path().to_path_buf(), root.path().join("main.ds"))
+            .expect("loader");
+
+        let ds = loader.cache_path_for(&root.path().join("main.ds"));
+        let js = loader.cache_path_for(&root.path().join("main.js"));
+        assert_ne!(ds, js);
+        assert!(ds.ends_with("main.ds.js"));
+        assert!(js.ends_with("main.js.js"));
+    }
+
+    #[test]
+    fn extensionless_import_resolves_dekascript() {
+        let root = tempfile::tempdir().expect("temp project");
+        let target = root.path().join("shared");
+        fs::write(target.with_extension("ds"), "export const value = 1;").expect("ds");
+
+        assert_eq!(
+            resolve_public_source_candidates(&target),
+            Some(target.with_extension("ds"))
+        );
+    }
+
+    #[test]
+    fn extensionless_public_import_does_not_fall_back_to_phpx() {
+        let root = tempfile::tempdir().expect("temp project");
+        let target = root.path().join("legacy");
+        fs::write(target.with_extension("phpx"), "export const value = 1;").expect("phpx");
+        fs::create_dir_all(&target).expect("legacy directory");
+        fs::write(target.join("index.phpx"), "export const value = 2;").expect("index phpx");
+
+        let referrer = root.path().join("main.ds");
+        assert_eq!(
+            resolve_import_path(root.path(), &referrer, "./legacy"),
+            None
+        );
+        assert_eq!(resolve_phpx_module_spec(root.path(), "@/legacy"), None);
+    }
+
+    #[test]
+    fn wrapper_accepts_exported_dekascript_app() {
+        let root = tempfile::tempdir().expect("temp project");
+        let loader = PhpxEsmLoader::new(root.path().to_path_buf(), root.path().join("main.ds"))
+            .expect("loader");
+        assert!(loader.wrapper_source().contains("__dekaMain.App"));
     }
 }
