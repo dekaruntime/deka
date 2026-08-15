@@ -7,7 +7,7 @@ use swc_bundler::{BundleKind, Bundler, Config, Hook, Load, ModuleData, ModuleTyp
 use swc_common::{
     FileName, GLOBALS, Globals, Mark, SourceMap, comments::SingleThreadedComments, sync::Lrc,
 };
-use swc_ecma_ast::{EsVersion, KeyValueProp, Pass, Program};
+use swc_ecma_ast::{EsVersion, KeyValueProp, Module, Pass, Program};
 use swc_ecma_codegen::{Emitter, text_writer::JsWriter};
 use swc_ecma_loader::resolve::{Resolution, Resolve};
 use swc_ecma_minifier::optimize;
@@ -42,6 +42,83 @@ pub struct BundleOptions {
 }
 
 pub type BuildOptions = BundleOptions;
+
+/// Optimize already-emitted ESM without resolving or bundling imports.
+///
+/// Contract: source and output are ESM; relative specifiers are preserved.
+/// This is the same safe SWC configuration used for `BundleOptions::minify`
+/// and exists for the CLI's module-preserving `--treeshake` mode.
+pub fn optimize_emitted_module(source: &str, path: &Path) -> Result<String, String> {
+    let cm: Lrc<SourceMap> = Default::default();
+    let fm = cm.new_source_file(
+        FileName::Real(path.to_path_buf()).into(),
+        source.to_string(),
+    );
+    let syntax = Syntax::Es(EsSyntax {
+        jsx: false,
+        export_default_from: true,
+        import_attributes: true,
+        ..Default::default()
+    });
+    let lexer = Lexer::new(syntax, EsVersion::Es2022, StringInput::from(&*fm), None);
+    let mut parser = Parser::new_from(lexer);
+    let module = parser
+        .parse_module()
+        .map_err(|err| format!("failed to parse emitted JavaScript: {err:?}"))?;
+    let globals = Globals::new();
+    let module = GLOBALS.set(&globals, || minify_module(module, cm.clone()));
+    emit_module(&module, cm)
+}
+
+fn minify_module(module: Module, cm: Lrc<SourceMap>) -> Module {
+    let top_level_mark = Mark::new();
+    let unresolved_mark = Mark::new();
+    // These restrictions guard known SWC output bugs: conditionals/bools can
+    // emit invalid assignment expressions, sequences can corrupt for-of heads,
+    // inline can merge module-local bindings, and if_return can lose ternary
+    // parentheses. Keep this shared configuration in sync for bundling and
+    // module-preserving transpile optimization.
+    let mut compress = CompressOptions::default();
+    compress.conditionals = false;
+    compress.bools = false;
+    compress.sequences = 0;
+    compress.inline = 0;
+    compress.if_return = false;
+    let minify_options = MinifyOptions {
+        compress: Some(compress),
+        mangle: None,
+        ..Default::default()
+    };
+    match optimize(
+        Program::Module(module),
+        cm,
+        None,
+        None,
+        &minify_options,
+        &swc_ecma_minifier::option::ExtraOptions {
+            unresolved_mark,
+            top_level_mark,
+            mangle_name_cache: Default::default(),
+        },
+    ) {
+        Program::Module(module) => module,
+        Program::Script(_) => unreachable!("module optimization returned a script"),
+    }
+}
+
+fn emit_module(module: &Module, cm: Lrc<SourceMap>) -> Result<String, String> {
+    let mut buf = Vec::new();
+    let mut emitter = Emitter {
+        cfg: swc_ecma_codegen::Config::default(),
+        comments: None,
+        cm: cm.clone(),
+        wr: JsWriter::new(cm, "\n", &mut buf, None),
+    };
+    emitter
+        .emit_module(module)
+        .map_err(|err| format!("failed to emit optimized JavaScript: {err}"))?;
+    String::from_utf8(buf).map_err(|err| format!("optimized JavaScript was not UTF-8: {err}"))
+}
 
 pub trait VirtualSource: Send + Sync {
     fn load_virtual(&self, path: &Path) -> Result<Option<String>, String>;
@@ -97,74 +174,7 @@ pub fn bundle_virtual_entry(
         .ok_or_else(|| "Failed to find bundled output".to_string())?;
 
     let module = if options.minify {
-        GLOBALS.set(&globals, || {
-            let top_level_mark = Mark::new();
-            let unresolved_mark = Mark::new();
-            // SWC compress with workarounds for genuine bugs in
-            // swc_ecma_minifier 42.x.  Every workaround is pinned to
-            // the upstream source file so future upgrades can re-check.
-            // Validated by `bundle_minified_preserves_*` tests below.
-            //
-            //  1. compress/pure/bools.rs :: `compress_if_stmt_as_expr`
-            //     Rewrites `if (c) x = y;` into `c && x = y` without
-            //     parens on the assignment LHS — invalid JS.  Gated on
-            //     `conditionals || bools`; both must stay off.
-            //
-            //  2. compress/pure/sequences.rs (for-of head bug)
-            //     Folds adjacent statements into comma-sequence exprs
-            //     then pushes them into `for-of` heads, producing
-            //     `for (let _ of count = 0, arr)` — a parse error.
-            //     `sequences = 0` disables it.  Still triggers on the
-            //     transpiler's `count()` rewrite pattern even after the
-            //     globalThis polyfill removal (Phase 2).
-            //
-            //  3. compress/optimize/inline.rs
-            //     `inline = 3` inlines callee bodies into callers,
-            //     which hoists block-local `let`s into a shared scope
-            //     and collides when two modules declare the same name
-            //     in different block bodies.  Still triggers on the
-            //     bundled output (e.g. `let code` in hexdec inlined
-            //     into a scope that already has `let code`).
-            //     `inline = 0` disables it.
-            //
-            //  4. compress/optimize/if_return.rs
-            //     Merges `{ stmt; return expr; }` into
-            //     `return (stmt, expr)` and — when inside a ternary —
-            //     drops parens, yielding `cond ? stmt, expr : alt`
-            //     which is a parse error.  Still triggers on the
-            //     transpiler's prelude helpers (e.g. `sort`).
-            //
-            // All five workarounds are genuine SWC bugs that persist
-            // even after the JS-first polyfill removal (Phase 2).
-            // No passes were safe to re-enable.
-            let mut compress = CompressOptions::default();
-            compress.conditionals = false;
-            compress.bools = false;
-            compress.sequences = 0;
-            compress.inline = 0;
-            compress.if_return = false;
-            let minify_options = MinifyOptions {
-                compress: Some(compress),
-                mangle: None,
-                ..Default::default()
-            };
-
-            match optimize(
-                Program::Module(bundle.module),
-                cm.clone(),
-                None,
-                None,
-                &minify_options,
-                &swc_ecma_minifier::option::ExtraOptions {
-                    unresolved_mark,
-                    top_level_mark,
-                    mangle_name_cache: Default::default(),
-                },
-            ) {
-                Program::Module(module) => module,
-                _ => panic!("Minifier returned non-module output"),
-            }
-        })
+        GLOBALS.set(&globals, || minify_module(bundle.module, cm.clone()))
     } else {
         bundle.module
     };
@@ -752,11 +762,13 @@ impl Resolve for FsResolver {
 
         let mut candidates = Vec::new();
         if target.extension().is_none() {
+            candidates.push(target.with_extension("ds"));
             candidates.push(target.with_extension("ts"));
             candidates.push(target.with_extension("tsx"));
             candidates.push(target.with_extension("jsx"));
             candidates.push(target.with_extension("js"));
             candidates.push(target.with_extension("mjs"));
+            candidates.push(target.join("index.ds"));
             candidates.push(target.join("index.ts"));
             candidates.push(target.join("index.tsx"));
             candidates.push(target.join("index.jsx"));
@@ -793,7 +805,7 @@ impl Hook for NoopHook {
 
 fn syntax_for_path(path: &Path) -> Syntax {
     match path.extension().and_then(|ext| ext.to_str()).unwrap_or("") {
-        "phpx" => Syntax::Es(EsSyntax {
+        "ds" => Syntax::Es(EsSyntax {
             jsx: false,
             export_default_from: true,
             import_attributes: true,
@@ -830,7 +842,7 @@ fn syntax_for_path(path: &Path) -> Syntax {
 
 fn is_typescript(path: &Path) -> bool {
     match path.extension().and_then(|ext| ext.to_str()) {
-        Some("phpx") => false,
+        Some("ds") => false,
         Some("ts") | Some("tsx") => true,
         _ => false,
     }
@@ -1029,13 +1041,13 @@ impl Resolve for DekaResolver {
 fn resolve_with_candidates(target: &Path) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if target.extension().is_none() {
-        candidates.push(target.with_extension("phpx"));
+        candidates.push(target.with_extension("ds"));
         candidates.push(target.with_extension("ts"));
         candidates.push(target.with_extension("tsx"));
         candidates.push(target.with_extension("jsx"));
         candidates.push(target.with_extension("js"));
         candidates.push(target.with_extension("mjs"));
-        candidates.push(target.join("index.phpx"));
+        candidates.push(target.join("index.ds"));
         candidates.push(target.join("index.ts"));
         candidates.push(target.join("index.tsx"));
         candidates.push(target.join("index.jsx"));

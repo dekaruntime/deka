@@ -48,8 +48,8 @@ Do not add Node/Bun compatibility work in this mission.
   - Run release builds/tests for touched areas.
   - Verify local artifact wiring and lineage (`deka`, `deka lsp`, manifest).
   - Execute basic human validation flow:
-    - `deka run` smoke on a minimal PHPX file.
-    - `deka serve` smoke and confirm endpoint behavior.
+    - Run the owning parser/emitter tests for the implemented `.ds` slice.
+    - Do not substitute a CLI or serve smoke until those contracts are owned and available.
     - `scripts/test-islands-smoke.sh` for islands SSR/hydration metadata + directive alias checks.
     - ADWA build/e2e checks for browser platform updates.
   - Record a short checkpoint summary in commit message or task notes:
@@ -67,12 +67,12 @@ Do not add Node/Bun compatibility work in this mission.
 - Use `scripts/verify-release-manifest.sh` to fail fast on stale/mismatched `cli` and `php_rs.wasm` artifacts.
 - Keep local PATH wiring pinned to this repo's release binaries:
   - `~/.local/bin/deka -> ~/Projects/deka/mvp2/target/release/cli`
-  - Do not wire a separate `phpx_lsp` binary; use `deka lsp`.
+  - No public DekaScript editor contract is available in the compiler-core slice.
 
 ADWA runtime/UI changes (current script names still use `adwa`):
 
 1. `scripts/run-adwa-playground.sh --build-only`
-2. `ADWA_E2E_INCLUDE_PHPX=1 ./scripts/test-adwa-playground-e2e.sh`
+2. Run only the browser checks owned by the ADWA lane.
 
 ## Artifact/version discipline
 
@@ -91,20 +91,20 @@ ADWA runtime/UI changes (current script names still use `adwa`):
 ## Docs and tasks policy
 
 - Keep active plans and checklists in `tasks/`.
-- Keep user-facing docs in `docs/phpx/`.
-- Keep internal plans/devlogs/design notes in `tasks/phpx/` (never under `docs/phpx/`).
+- Keep user-facing compiler-core docs in `docs/dekascript/`.
+- Keep internal plans/devlogs/design notes outside public docs.
 - If runtime behavior changes, update relevant docs in the same task.
 - `php_modules` exported APIs must include `/// docid:` blocks; docs publish/build must fail when coverage is missing.
 - Use `scripts/build-release-docs.sh` as the default release pipeline (build `cli` + publish/bundle docs).
-- CI docs gates live in `.github/workflows/phpx-docs.yml` (`scripts/check-module-docs.sh` and `scripts/build-release-docs.sh`).
+- Do not claim a DekaScript docs CI contract until its owner establishes one.
 
 
-## Runtime language support (explicit)
+## DekaScript availability (explicit)
 
-- Dynamic runtime execution supports **PHPX only** (`.phpx`).
-- Do not implement or preserve dynamic execution support for `.php`, `.js`, `.jsx`, `.ts`, or `.tsx`.
-- File-based routing under `app/` and `api/` must resolve `.phpx` route files only.
-- Static assets (HTML/CSS/JS files) may be served as static files; this is distinct from dynamic handler execution.
+- `.ds` is the only intended public source extension.
+- The current stacked compiler-core work proves parser/emitter support only.
+- CLI execution, serving, routing, static assets, imports, editor integration,
+  and package resolution have no public DekaScript contract in this slice.
 
 ## deka.json project contract (build/runtime)
 
@@ -113,27 +113,11 @@ ADWA runtime/UI changes (current script names still use `adwa`):
   - `type: "lib"` => library/module package (no runnable app entry).
   - `type: "serve"` => runnable app package.
 - For runnable apps (`type: "serve"`), `serve.entry` is required and must point to the runtime entry file.
-- `deka build` web-project mode requires:
-  - `type: "serve"`
-  - `serve.entry` set to a `.phpx` file under `app/`
-  - `deka.lock` present
-  - `public/index.html` present
-- Do not infer project kind from folder shape alone when `deka.json` explicitly defines `type`.
+## Runtime/bootstrap status
 
-## PHPX module resolution contract (MVP)
-
-- Resolver order is deterministic:
-  1) local `<project>/php_modules` (requires local `deka.lock`)
-  2) global `<PHPX_MODULE_ROOT>/php_modules` (requires global `deka.lock`)
-- `deka.lock` is source of truth for package-style PHPX module resolution.
-- Runtime must reject drift:
-  - lock entry missing for requested package module
-  - lock entry points to missing bytes
-  - lock hash/integrity mismatch
-- Import shorthand/index behavior must be consistent for both `@/...` and package paths (`Foo.phpx` and `Foo/index.phpx`).
-- Compiled module cache keys must include lock identity (`lockfileVersion` + lock hash).
-- Only `PHPX_MODULE_ROOT` is supported for global root overrides.
-- Each module-resolution task update requires tests and a commit before moving to the next task.
+`deka.json` and module-resolution requirements belong to the CLI/runtime lane.
+Do not publish a DekaScript bootstrap contract until that lane has implemented
+and validated it.
 
 ## Introspect metrics (quick reality check)
 

@@ -34,7 +34,10 @@ where
 {
     let path = Path::new(path);
     if path.is_absolute() {
-        return path.to_string_lossy().to_string();
+        return canonicalize(path)
+            .unwrap_or_else(|| path.to_path_buf())
+            .to_string_lossy()
+            .to_string();
     }
     let cwd = match cwd_get() {
         Some(dir) => dir,
@@ -47,9 +50,8 @@ where
     }
 }
 
-pub fn is_php_entry(path: &str) -> bool {
-    let lowered = path.to_ascii_lowercase();
-    lowered.ends_with(".phpx")
+pub fn is_deka_entry(path: &str) -> bool {
+    path.to_ascii_lowercase().ends_with(".ds")
 }
 
 pub fn is_html_entry(path: &str) -> bool {
@@ -63,19 +65,19 @@ mod tests {
 
     #[test]
     fn handler_input_prefers_first_positional() {
-        let env = HashMap::<String, String>::from([("HANDLER_PATH".into(), "env.phpx".into())]);
+        let env = HashMap::<String, String>::from([("HANDLER_PATH".into(), "env.ds".into())]);
         let env_get = |k: &str| env.get(k).cloned();
-        let (handler, extra) = handler_input_with(&["main.phpx".into(), "a".into()], &env_get);
-        assert_eq!(handler, "main.phpx");
+        let (handler, extra) = handler_input_with(&["main.ds".into(), "a".into()], &env_get);
+        assert_eq!(handler, "main.ds");
         assert_eq!(extra, vec!["a".to_string()]);
     }
 
     #[test]
     fn handler_input_uses_env_then_default() {
-        let env = HashMap::<String, String>::from([("HANDLER_PATH".into(), "env.phpx".into())]);
+        let env = HashMap::<String, String>::from([("HANDLER_PATH".into(), "env.ds".into())]);
         let env_get = |k: &str| env.get(k).cloned();
         let (handler, extra) = handler_input_with(&[], &env_get);
-        assert_eq!(handler, "env.phpx");
+        assert_eq!(handler, "env.ds");
         assert!(extra.is_empty());
 
         let none_get = |_k: &str| None;
@@ -85,9 +87,10 @@ mod tests {
     }
 
     #[test]
-    fn php_and_html_detection() {
-        assert!(is_php_entry("index.PHPX"));
-        assert!(!is_php_entry("index.html"));
+    fn dekascript_entry_detection_rejects_phpx_and_html() {
+        assert!(is_deka_entry("index.DS"));
+        assert!(!is_deka_entry("index.PHPX"));
+        assert!(!is_deka_entry("index.html"));
         assert!(is_html_entry("index.html"));
         assert!(is_html_entry("index.HTML"));
     }
@@ -96,7 +99,18 @@ mod tests {
     fn normalize_handler_path_with_uses_injected_closures() {
         let cwd = || Some(std::path::PathBuf::from("/tmp/project"));
         let canonicalize = |_path: &std::path::Path| None;
-        let path = normalize_handler_path_with("main.phpx", &cwd, &canonicalize);
-        assert_eq!(path, "/tmp/project/main.phpx");
+        let path = normalize_handler_path_with("main.ds", &cwd, &canonicalize);
+        assert_eq!(path, "/tmp/project/main.ds");
+    }
+
+    #[test]
+    fn normalize_handler_path_with_canonicalizes_existing_absolute_paths() {
+        let cwd = || Some(std::path::PathBuf::from("/tmp/project"));
+        let canonicalize = |path: &std::path::Path| {
+            assert_eq!(path, std::path::Path::new("/tmp/project/entry.ds"));
+            Some(std::path::PathBuf::from("/tmp/project/legacy.phpx"))
+        };
+        let path = normalize_handler_path_with("/tmp/project/entry.ds", &cwd, &canonicalize);
+        assert_eq!(path, "/tmp/project/legacy.phpx");
     }
 }

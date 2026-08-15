@@ -11,6 +11,8 @@ pub mod auth_store;
 #[cfg(feature = "native")]
 pub mod build;
 #[cfg(feature = "native")]
+pub mod check;
+#[cfg(feature = "native")]
 pub mod compile;
 #[cfg(feature = "native")]
 pub mod contract_check;
@@ -47,6 +49,8 @@ pub mod serve;
 pub mod task;
 #[cfg(feature = "native")]
 pub mod test;
+#[cfg(feature = "native")]
+pub mod transpile;
 pub mod user;
 
 pub fn register_global_flags(registry: &mut Registry) {

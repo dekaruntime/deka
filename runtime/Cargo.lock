@@ -748,6 +748,7 @@ dependencies = [
  "deno_task_shell",
  "glob",
  "introspect",
+ "libc",
  "linkhash-client",
  "modules_php",
  "php-rs",
@@ -4024,6 +4025,7 @@ dependencies = [
  "bumpalo",
  "modules_php",
  "phpx_js",
+ "serde",
  "serde_json",
 ]
 

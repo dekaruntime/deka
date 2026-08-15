@@ -1,2 +1,0 @@
-<?php
-var_dump(isset($GLOBALS['__DEKA_PHPX_STDLIB']));

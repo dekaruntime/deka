@@ -1,7 +1,7 @@
 use super::super::Parser;
 use crate::parser::ast::{
-    Arg, ArrayItem, AssignOp, AttributeGroup, BinaryOp, CastKind, Expr, ExprId,
-    IncludeKind, MagicConstKind, MatchArm, ObjectItem, ObjectKey, ParseError, UnaryOp,
+    Arg, ArrayItem, AssignOp, AttributeGroup, BinaryOp, CastKind, Expr, ExprId, IncludeKind,
+    MagicConstKind, MatchArm, ObjectItem, ObjectKey, ParseError, UnaryOp,
 };
 use crate::parser::lexer::token::{Token, TokenKind};
 use crate::parser::span::Span;
@@ -28,7 +28,11 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 let left_span = left.span();
                 let tight = left_span.end == dot_span.start && dot_span.end == next.span.start;
 
-                if tight && (next.kind == TokenKind::Identifier || next.kind.is_semi_reserved()) {
+                if tight
+                    && (next.kind == TokenKind::Identifier
+                        || next.kind == TokenKind::StringVarname
+                        || next.kind.is_semi_reserved())
+                {
                     let l_bp = 210;
                     if l_bp < min_bp {
                         break;
@@ -45,6 +49,14 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                     just_parsed_ternary = false;
                     continue;
                 }
+            }
+
+            if self.is_ds() && self.current_token.kind == TokenKind::Dot {
+                self.errors.push(ParseError::with_help(
+                    self.current_token.span,
+                    "PHP `.` concatenation is not part of DekaScript",
+                    "Use `+` to concatenate strings; property access must be written without spaces.",
+                ));
             }
 
             let op = match self.current_token.kind {
@@ -707,6 +719,13 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             | TokenKind::IncludeOnce
             | TokenKind::Require
             | TokenKind::RequireOnce => {
+                if self.is_ds() {
+                    self.errors.push(ParseError::with_help(
+                        token.span,
+                        "include and require are not part of DekaScript",
+                        "Use an explicit DekaScript import instead.",
+                    ));
+                }
                 let start = token.span.start;
                 self.bump();
                 let expr = self.parse_expr(0);
@@ -1068,6 +1087,13 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 })
             }
             TokenKind::Variable => {
+                if self.is_ds() {
+                    self.errors.push(ParseError::with_help(
+                        token.span,
+                        "DekaScript references use bare identifiers",
+                        "Write `name`, not `$name`.",
+                    ));
+                }
                 self.bump();
                 self.arena.alloc(Expr::Variable {
                     name: token.span,
@@ -1132,6 +1158,26 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             | TokenKind::TypeCallable
             | TokenKind::Readonly => {
                 let name = self.parse_name();
+                if self.is_ds()
+                    && (self.lexer.slice(name.span).eq_ignore_ascii_case(b"count")
+                        || matches!(
+                            self.lexer.slice(name.span),
+                            b"strlen"
+                                | b"substr"
+                                | b"array_keys"
+                                | b"array_values"
+                                | b"is_array"
+                                | b"in_array"
+                                | b"array_map"
+                                | b"array_filter"
+                        ))
+                {
+                    self.errors.push(ParseError::with_help(
+                        name.span,
+                        "PHP built-ins are not part of DekaScript",
+                        "Use DekaScript string and collection methods instead.",
+                    ));
+                }
                 if self.is_phpx() && self.current_token.kind == TokenKind::OpenBrace {
                     return self.parse_struct_literal(name, name.span.start);
                 }
@@ -1184,6 +1230,13 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             | TokenKind::ObjectCast
             | TokenKind::UnsetCast
             | TokenKind::VoidCast => {
+                if self.is_ds() {
+                    self.errors.push(ParseError::with_help(
+                        token.span,
+                        "PHP casts are not part of DekaScript",
+                        "Use explicit DekaScript conversion APIs instead.",
+                    ));
+                }
                 let kind = match token.kind {
                     TokenKind::IntCast => CastKind::Int,
                     TokenKind::BoolCast => CastKind::Bool,
@@ -1201,6 +1254,13 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 self.arena.alloc(Expr::Cast { kind, expr, span })
             }
             TokenKind::Array => {
+                if self.is_ds() {
+                    self.errors.push(ParseError::with_help(
+                        token.span,
+                        "PHP array() is not part of DekaScript",
+                        "Use `[]` for a list or `{}` for an object.",
+                    ));
+                }
                 let start = token.span.start;
                 self.bump();
                 if self.current_token.kind == TokenKind::OpenParen {

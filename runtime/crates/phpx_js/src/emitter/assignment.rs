@@ -176,7 +176,16 @@ impl<'a> JsSubsetEmitter<'a> {
 
     pub(super) fn emit_assignable_expr(&mut self, expr: ExprId<'_>) -> Result<String, String> {
         match expr {
-            Expr::Variable { name, .. } => Ok(self.span_name(*name)),
+            Expr::Variable { name, .. } => {
+                let name = self.span_name(*name);
+                if self.is_immutable(&name) {
+                    return Err(format!(
+                        "cannot assign to immutable DekaScript const `{}`",
+                        name
+                    ));
+                }
+                Ok(name)
+            }
             Expr::DotAccess {
                 target, property, ..
             } => {

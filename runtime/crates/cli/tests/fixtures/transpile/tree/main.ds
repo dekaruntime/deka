@@ -1,0 +1,4 @@
+---
+import { value } from './nested/math.ds'
+---
+export const answer = value + 1;

@@ -29,25 +29,44 @@ fn directory_with_serve_entry_routes_to_correct_handler() {
     fs::write(dir.join("main.js"), "").unwrap();
     fs::write(dir.join("serve.json"), r#"{"entry":"main.js"}"#).unwrap();
     let resolved = resolve_handler_path(dir.to_str().unwrap()).unwrap();
-    assert_eq!(resolved.path, dir.join("main.js"));
+    assert_eq!(
+        resolved.path.canonicalize().unwrap(),
+        dir.join("main.js").canonicalize().unwrap()
+    );
 }
 
 #[test]
 fn directory_with_app_subdir_routes_to_php_mode() {
     let dir = temp_dir("engine_test_app");
     fs::create_dir(dir.join("app")).unwrap();
-    fs::write(dir.join("app").join("page.phpx"), "").unwrap();
+    fs::write(dir.join("app").join("page.ds"), "").unwrap();
     let resolved = resolve_handler_path(dir.to_str().unwrap()).unwrap();
     assert!(resolved.path.is_dir());
     assert!(matches!(resolved.mode, engine::config::ServeMode::Php));
 }
 
 #[test]
-fn index_phpx_routes_to_correct_handler() {
+fn index_ds_routes_to_correct_handler() {
     let dir = temp_dir("engine_test_index");
-    fs::write(dir.join("index.phpx"), "").unwrap();
+    fs::write(dir.join("index.ds"), "").unwrap();
     let resolved = resolve_handler_path(dir.to_str().unwrap()).unwrap();
-    assert_eq!(resolved.path, dir.join("index.phpx"));
+    assert_eq!(
+        resolved.path.canonicalize().unwrap(),
+        dir.join("index.ds").canonicalize().unwrap()
+    );
+}
+
+#[test]
+fn index_ds_routes_to_dekascript_handler() {
+    let dir = temp_dir("engine_test_dekascript_index");
+    fs::write(dir.join("index.ds"), "export const app = 1;").unwrap();
+
+    let resolved = resolve_handler_path(dir.to_str().unwrap()).unwrap();
+    assert_eq!(
+        resolved.path.canonicalize().unwrap(),
+        dir.join("index.ds").canonicalize().unwrap()
+    );
+    assert!(matches!(resolved.mode, engine::config::ServeMode::Php));
 }
 
 #[test]
@@ -56,7 +75,10 @@ fn package_json_main_is_ignored_for_handler_resolution() {
     fs::write(dir.join("package.json"), r#"{"main":"lib.js"}"#).unwrap();
     fs::write(dir.join("lib.js"), "").unwrap();
     let resolved = resolve_handler_path(dir.to_str().unwrap()).unwrap();
-    assert_eq!(resolved.path, dir);
+    assert_eq!(
+        resolved.path.canonicalize().unwrap(),
+        dir.canonicalize().unwrap()
+    );
 }
 
 #[test]
