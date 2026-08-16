@@ -8,6 +8,14 @@ impl<'a> JsSubsetEmitter<'a> {
                 if ident == "this" {
                     return Ok("this".to_string());
                 }
+                // RFD 19: `self` inside an impl-block method body binds to
+                // the JS `this` a regular (non-arrow) function already gets
+                // for free when called as `receiver.method()`. Mirrors the
+                // existing `this` passthrough immediately above rather than
+                // inventing a second mechanism.
+                if ident == "self" {
+                    return Ok("this".to_string());
+                }
                 if self.is_declared(&ident) {
                     Ok(ident)
                 } else {

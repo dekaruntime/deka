@@ -48,6 +48,16 @@ pub(crate) struct JsSubsetEmitter<'a> {
     struct_schemas: Vec<(String, String)>,
     struct_names: HashSet<String>,
     struct_methods: HashMap<String, Vec<(String, String)>>,
+    /// Default method bodies declared directly on a `trait`, keyed by trait
+    /// name (NOT by any impl target). RFD 19: an `impl Trait for X { }` that
+    /// doesn't override a trait's default method still needs that default's
+    /// JS body to actually run at `x.method()` call sites -- the typechecker
+    /// already allows this (a non-overridden default satisfies conformance),
+    /// but codegen was only ever emitting what the impl block itself
+    /// provided. Collected in a pre-pass (mirrors the enum-impl
+    /// order-independence fix, deka#71) so trait declaration order relative
+    /// to its impls doesn't matter.
+    trait_default_methods: HashMap<String, Vec<(String, String)>>,
     enum_cases: HashMap<String, Vec<EnumCaseDef>>,
     value_kinds: HashMap<String, JsValueKind>,
     /// Tier B helpers needed by this module. Populated during AST traversal
@@ -85,6 +95,7 @@ impl<'a> JsSubsetEmitter<'a> {
             struct_schemas: Vec::new(),
             struct_names: HashSet::new(),
             struct_methods: HashMap::new(),
+            trait_default_methods: HashMap::new(),
             enum_cases: HashMap::new(),
             value_kinds: HashMap::new(),
             needed_helpers: BTreeSet::new(),

@@ -11,6 +11,41 @@ impl<'a> JsSubsetEmitter<'a> {
         for local in import_locals {
             self.declare_in_scope(&local);
         }
+        // RFD 19: collect each trait's default method bodies (non-empty
+        // bodies only -- an abstract signature has nothing to fall back to
+        // and must always be overridden, conformance-checked separately)
+        // BEFORE the main pre-pass below processes any `impl` block. This
+        // has to be a fully separate, earlier pass, not folded into the
+        // loop underneath: a trait declared AFTER its impl in source order
+        // must still be visible when that impl needs its defaults, the
+        // exact same order-independence reasoning as the enum-impl fix
+        // (deka#71) directly below.
+        for stmt in program.statements {
+            if let Stmt::Trait { name, members, .. } = stmt {
+                let trait_name = self.token_name(name);
+                // Only members with a non-empty body are real defaults --
+                // an abstract signature (empty body) has nothing to fall
+                // back to and must always be overridden by the impl
+                // (conformance-checked separately in the typechecker).
+                // Filter to a fresh owned Vec first rather than zipping
+                // emit_struct_methods' output against `members` positionally
+                // -- ClassMember has non-Method variants too (Property,
+                // PropertyHook, ...), so a zip would silently misalign the
+                // moment a trait ever mixes member kinds.
+                let default_members: Vec<ClassMember<'_>> = members
+                    .iter()
+                    .copied()
+                    .filter(|m| matches!(m, ClassMember::Method { body, .. } if !body.is_empty()))
+                    .collect();
+                if !default_members.is_empty() {
+                    let defaults = self.emit_struct_methods(&default_members)?;
+                    self.trait_default_methods
+                        .entry(trait_name)
+                        .or_default()
+                        .extend(defaults);
+                }
+            }
+        }
         for stmt in program.statements {
             match stmt {
                 Stmt::Function { name, .. } => {
@@ -32,6 +67,53 @@ impl<'a> JsSubsetEmitter<'a> {
                 } => {
                     let struct_name = self.token_name(name);
                     self.struct_names.insert(struct_name);
+                }
+                Stmt::Impl {
+                    trait_name,
+                    target,
+                    members,
+                    ..
+                } => {
+                    // RFD 19 (deka#71): registering impl-provided methods
+                    // here, in the pre-pass, rather than when Stmt::Impl is
+                    // reached in the main emission loop below, is what
+                    // makes this order-independent -- an `impl` appearing
+                    // AFTER the `enum`/`struct` it targets must still be
+                    // visible when that declaration emits itself. Pragmatic
+                    // reuse of the struct-method registry, not the
+                    // destination (RFD 13 / #47 both argue against new
+                    // globalThis dispatch); chosen for speed given RFD
+                    // 15-18 are stacked waiting on impl actually running.
+                    let target_name = self.token_name(&target.parts[0]);
+                    let mut methods = self.emit_struct_methods(*members)?;
+                    // RFD 19: a trait impl that doesn't override one of the
+                    // trait's default methods still needs that default's
+                    // body to actually be callable -- the typechecker
+                    // already allows this (a non-overridden default
+                    // satisfies conformance, see check_trait_conflicts),
+                    // but codegen was only ever emitting what the impl
+                    // block's own members provided, so `x.defaultMethod()`
+                    // threw "is not a function" at runtime even though
+                    // `deka check` passed clean. Merge in any trait default
+                    // whose name isn't already provided by this impl.
+                    if let Some(trait_name) = trait_name {
+                        let trait_key = self.token_name(&trait_name.parts[0]);
+                        if let Some(defaults) = self.trait_default_methods.get(&trait_key).cloned() {
+                            let provided: std::collections::HashSet<String> =
+                                methods.iter().map(|(name, _)| name.clone()).collect();
+                            for (name, body) in defaults {
+                                if !provided.contains(&name) {
+                                    methods.push((name, body));
+                                }
+                            }
+                        }
+                    }
+                    if !methods.is_empty() {
+                        self.struct_methods
+                            .entry(target_name)
+                            .or_default()
+                            .extend(methods);
+                    }
                 }
                 _ => {}
             }
@@ -201,8 +283,30 @@ impl<'a> JsSubsetEmitter<'a> {
                 self.emit_enum(name, members)?;
                 Ok(())
             }
-            Stmt::Class { .. } | Stmt::Trait { .. } => {
+            Stmt::Class { .. } => {
                 Err("class-like declarations are not supported in JS subset emitter".to_string())
+            }
+            Stmt::Trait { .. } => {
+                // DekaScript traits (RFD 19) are a compile-time contract only
+                // -- any Stmt::Trait reaching the emitter is the .ds meaning,
+                // since the legacy PHP meaning is already rejected earlier by
+                // validate_no_oop. Erased like an interface; `impl` blocks
+                // are what produce runtime methods.
+                Ok(())
+            }
+            Stmt::Impl { .. } => {
+                // RFD 19 codegen: registration into self.struct_methods
+                // happens in emit_program's pre-pass (below), not here --
+                // deka#71 found that doing it here (only when this
+                // statement is reached in source order) means an `impl`
+                // appearing AFTER the `enum`/`struct` it targets is too
+                // late for that declaration's own emission to see it.
+                // The pre-pass runs before ALL declaration emission,
+                // order-independent. This arm is now a pure erasure, same
+                // as Stmt::Trait/Stmt::Interface -- an impl block has no
+                // runtime representation of its own, only the side effect
+                // of registering methods, which already happened.
+                Ok(())
             }
             Stmt::Interface { .. } => {
                 // Interfaces have no runtime representation in the JS subset;
@@ -753,6 +857,20 @@ impl<'a> JsSubsetEmitter<'a> {
                     "{}({}) {{\n{}    }}",
                     method_name, js_params, block
                 ));
+            }
+        }
+
+        // RFD 19 (deka#71): fold in methods from `impl Trait for Enum` /
+        // `impl Enum { }`, registered into self.struct_methods by
+        // emit_program's pre-pass (order-independent -- the impl block may
+        // appear before or after this enum in source). Stored there as full
+        // `function(...) { ... }` expressions, so these become `key: value`
+        // entries rather than shorthand-method syntax; JS object literals
+        // permit freely mixing both forms, same as `__enum`/`__case` above
+        // already do.
+        if let Some(impl_methods) = self.struct_methods.get(&enum_name) {
+            for (name, func_text) in impl_methods.clone() {
+                method_srcs.push(format!("{}: {}", name, func_text));
             }
         }
 

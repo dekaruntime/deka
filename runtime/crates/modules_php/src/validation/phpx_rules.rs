@@ -31,10 +31,11 @@ pub fn validate_no_exceptions(program: &Program, source: &str) -> Vec<Validation
     validator.errors
 }
 
-pub fn validate_no_oop(program: &Program, source: &str) -> Vec<ValidationError> {
+pub fn validate_no_oop(program: &Program, source: &str, is_ds: bool) -> Vec<ValidationError> {
     let mut validator = NoOopValidator {
         source,
         errors: Vec::new(),
+        is_ds,
     };
     validator.visit_program(program);
     validator.errors
@@ -165,6 +166,10 @@ impl NoExceptionValidator<'_> {
 struct NoOopValidator<'a> {
     source: &'a str,
     errors: Vec<ValidationError>,
+    // DekaScript traits (RFD 19) reuse the Stmt::Trait AST node for a
+    // different feature than PHP's horizontal-reuse trait; only the latter
+    // is rejected here.
+    is_ds: bool,
 }
 
 impl<'ast> Visitor<'ast> for NoOopValidator<'_> {
@@ -203,12 +208,14 @@ impl<'ast> Visitor<'ast> for NoOopValidator<'_> {
                 }
             }
             Stmt::Trait { span, .. } => {
-                self.push_error(
-                    ErrorKind::OopNotAllowed,
-                    *span,
-                    "Traits are not allowed in PHPX.".to_string(),
-                    "Use struct composition instead of traits.",
-                );
+                if !self.is_ds {
+                    self.push_error(
+                        ErrorKind::OopNotAllowed,
+                        *span,
+                        "Traits are not allowed in PHPX.".to_string(),
+                        "Use struct composition instead of traits.",
+                    );
+                }
             }
             Stmt::Interface { extends, span, .. } => {
                 if !extends.is_empty() {

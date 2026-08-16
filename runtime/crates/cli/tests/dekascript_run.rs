@@ -73,6 +73,231 @@ fn run_executes_declared_array_function_call() {
     );
 }
 
+// RFD 19: `self: Self` is how an impl-block method accesses its own
+// receiver's fields (no implicit `this`, no PHP-style `$this`). This is
+// the exact case that printed "hi from undefined" before self/this
+// binding existed -- real end-to-end proof it now reads the real field.
+#[test]
+fn run_executes_inherent_impl_method_reading_self_field() {
+    run_dekascript(
+        "inherent_impl_self",
+        "struct Point { $x: int; }\n\
+         impl Point { doubled(self: Self): int { return self.x * 2; } }\n\
+         const p = Point { $x: 5 };\n\
+         print(p.doubled());\n",
+        "10",
+    );
+}
+
+#[test]
+fn run_executes_impl_method_calling_sibling_method_via_self() {
+    // Regression test for a real bug found and fixed live: self.method()
+    // calls inside an impl method body were misdiagnosed as unknown field
+    // accesses by the first cut of the self.field validator. Verifies the
+    // fix end-to-end, not just typechecked.
+    run_dekascript(
+        "impl_self_method_call",
+        "struct Point { $x: int; }\n\
+         impl Point {\n\
+           double(self: Self): int { return self.x * 2; }\n\
+           quad(self: Self): int { return self.double() * 2; }\n\
+         }\n\
+         const p = Point { $x: 3 };\n\
+         print(p.quad());\n",
+        "12",
+    );
+}
+
+#[test]
+fn run_executes_trait_impl_method_reading_self_field() {
+    run_dekascript(
+        "trait_impl_self",
+        "trait Greeter {\n  greet(self: Self): string\n}\n\
+         struct Bot { $name: string; }\n\
+         impl Greeter for Bot { greet(self: Self): string { return \"hi from \" + self.name; } }\n\
+         const b = Bot { $name: \"Rex\" };\n\
+         print(b.greet());\n",
+        "hi from Rex",
+    );
+}
+
+// deka#71: impl Trait for Enum typechecked clean but silently produced no
+// runtime method at all -- `c.label is not a function`. Fixed by moving
+// method registration into emit_program's pre-pass so it runs before
+// Stmt::Enum's own emission regardless of source order.
+#[test]
+fn run_executes_impl_trait_for_enum_method() {
+    run_dekascript(
+        "impl_for_enum",
+        "trait Namer {\n  label(self: Self): string\n}\n\
+         enum Color { case Red; case Green; }\n\
+         impl Namer for Color { label(self: Self): string { return \"a color\"; } }\n\
+         const c = Color::Red;\n\
+         print(c.label());\n",
+        "a color",
+    );
+}
+
+#[test]
+fn run_executes_trait_default_method_when_not_overridden() {
+    // Real bug found and fixed live: a trait impl that doesn't override
+    // one of the trait's default methods typechecked clean (the
+    // typechecker correctly allows a non-overridden default to satisfy
+    // conformance) but crashed at runtime with "x.method is not a
+    // function" -- codegen was only ever emitting what the impl block's
+    // OWN members provided, never falling back to the trait's default
+    // body for methods left unoverridden.
+    run_dekascript(
+        "trait_default_not_overridden",
+        "trait Shape {\n  area(self: Self): int\n  describe(self: Self): string { return \"a shape\"; }\n}\n\
+         struct Square { $side: int; }\n\
+         impl Shape for Square { area(self: Self): int { return self.side * self.side; } }\n\
+         const s = Square { $side: 4 };\n\
+         print(s.describe());\n",
+        "a shape",
+    );
+}
+
+#[test]
+fn run_executes_impl_override_wins_over_trait_default() {
+    // Same fix, opposite direction: when the impl DOES override a default,
+    // the override must win, not silently get shadowed by the merge logic
+    // that adds trait defaults for methods "not already provided."
+    run_dekascript(
+        "trait_default_overridden",
+        "trait Shape {\n  describe(self: Self): string { return \"a shape\"; }\n}\n\
+         struct Square { $side: int; }\n\
+         impl Shape for Square { describe(self: Self): string { return \"a square override\"; } }\n\
+         const s = Square { $side: 4 };\n\
+         print(s.describe());\n",
+        "a square override",
+    );
+}
+
+#[test]
+fn run_executes_trait_default_method_when_trait_declared_after_its_impl() {
+    // Order-independence for the default-method fix, mirroring deka#71's
+    // enum-impl fix: the trait declaring the default appears AFTER the
+    // impl block that relies on it.
+    run_dekascript(
+        "trait_default_declared_after_impl",
+        "struct Square { $side: int; }\n\
+         impl Shape for Square { area(self: Self): int { return self.side * self.side; } }\n\
+         trait Shape {\n  area(self: Self): int\n  describe(self: Self): string { return \"declared after its impl\"; }\n}\n\
+         const s = Square { $side: 3 };\n\
+         print(s.describe());\n",
+        "declared after its impl",
+    );
+}
+
+#[test]
+fn run_executes_two_traits_each_contributing_a_default_method() {
+    // A struct implementing two DIFFERENT traits via two separate impl
+    // blocks, neither overriding its trait's default -- confirms the
+    // per-impl-block merge (struct_methods.entry(...).extend(...)) doesn't
+    // clobber defaults contributed by a sibling impl block for the same
+    // target.
+    run_dekascript(
+        "two_trait_defaults_merge",
+        "trait Reader { readLabel(self: Self): string { return \"reading\"; } }\n\
+         trait Writer { writeLabel(self: Self): string { return \"writing\"; } }\n\
+         struct Conn { $id: int; }\n\
+         impl Reader for Conn { }\n\
+         impl Writer for Conn { }\n\
+         const c = Conn { $id: 1 };\n\
+         print(c.readLabel() + \" \" + c.writeLabel());\n",
+        "reading writing",
+    );
+}
+
+#[test]
+fn run_executes_trait_default_method_for_enum_target_when_not_overridden() {
+    // Same default-method fix, verified on an ENUM target -- struct_methods
+    // is a shared map keyed by target name regardless of struct vs enum, so
+    // this was expected to already work without separate handling, but
+    // hadn't been directly verified until now.
+    run_dekascript(
+        "trait_default_enum_target",
+        "trait Namer {\n  label(self: Self): string\n  describe(self: Self): string { return \"an enum value\"; }\n}\n\
+         enum Color { case Red; case Green; }\n\
+         impl Namer for Color { label(self: Self): string { return \"a color\"; } }\n\
+         const c = Color::Red;\n\
+         print(c.label() + \" \" + c.describe());\n",
+        "a color an enum value",
+    );
+}
+
+#[test]
+fn run_executes_template_method_pattern_default_calling_abstract() {
+    // The most common real-world trait idiom: a default method that calls
+    // an abstract method the impl is required to provide (the "template
+    // method" pattern). Exercises both fixes from tonight together -- the
+    // self.method() call fix (self.area() inside the DEFAULT body, not an
+    // impl-provided one) and the default-method emission fix (describe()
+    // itself must be attached even though Square never overrides it).
+    // JS method dispatch on `this.area()` resolves correctly because both
+    // the trait default and the impl's own methods end up merged onto the
+    // same struct_methods entry for Square.
+    run_dekascript(
+        "template_method_pattern",
+        "trait Shape {\n  area(self: Self): int\n  describe(self: Self): string { return \"area is \" + self.area(); }\n}\n\
+         struct Square { $side: int; }\n\
+         impl Shape for Square { area(self: Self): int { return self.side * self.side; } }\n\
+         const s = Square { $side: 5 };\n\
+         print(s.describe());\n",
+        "area is 25",
+    );
+}
+
+// Same case, but with `impl` appearing BEFORE the `enum` it targets --
+// proves the fix is genuinely order-independent, not incidentally correct
+// for one source ordering.
+// Inherent impl (no trait) for an enum -- a distinct combination from the
+// trait-impl-for-enum cases above, confirming the fix in deka#71 was
+// correctly unconditional on trait_name rather than only fixing the
+// trait-impl path.
+#[test]
+fn run_executes_inherent_impl_for_enum_method() {
+    run_dekascript(
+        "inherent_impl_enum",
+        "enum Color { case Red; case Green; }\n\
+         impl Color { describe(self: Self): string { return \"a color value\"; } }\n\
+         const c = Color::Green;\n\
+         print(c.describe());\n",
+        "a color value",
+    );
+}
+
+// Struct target, impl declared BEFORE the struct -- rounds out the
+// ordering matrix alongside the enum cases above. Structs read their
+// method table at construction time (always later than both declarations,
+// regardless of source order), so this was expected to already work --
+// verified rather than assumed.
+#[test]
+fn run_executes_impl_before_struct_declaration_method() {
+    run_dekascript(
+        "impl_before_struct",
+        "impl Point { norm(self: Self): int { return self.x * 2; } }\n\
+         struct Point { $x: int; }\n\
+         const p = Point { $x: 5 };\n\
+         print(p.norm());\n",
+        "10",
+    );
+}
+
+#[test]
+fn run_executes_impl_before_enum_declaration_method() {
+    run_dekascript(
+        "impl_before_enum",
+        "trait Namer {\n  label(self: Self): string\n}\n\
+         impl Namer for Color { label(self: Self): string { return \"reversed order works\"; } }\n\
+         enum Color { case Red; case Green; }\n\
+         const c = Color::Red;\n\
+         print(c.label());\n",
+        "reversed order works",
+    );
+}
+
 #[test]
 fn run_executes_dekascript_generic_variadic_collect_candidate() {
     run_dekascript(
