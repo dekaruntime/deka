@@ -4,11 +4,11 @@ Releases are fully automated through GitHub Actions and published to Cloudflare 
 
 ## Versioning policy
 
-We follow [Semantic Versioning 2.0](https://semver.org/). While the runtime is pre-1.0, we still increment versions for every user-visible change:
+We follow [Semantic Versioning 2.0](https://semver.org/) with one deliberate constraint: **v1.0.0 is a milestone we will choose explicitly**, not something we drift into. Until then we stay in the `0.x` line and keep incrementing normally:
 
 - **PATCH** (`0.9.0` → `0.9.1`): bug fixes, performance improvements, build/CI fixes, and other backward-compatible corrections.
-- **MINOR** (`0.9.x` → `0.10.0`): new language features, new stdlib modules, new CLI commands, or other backward-compatible capability additions.
-- **MAJOR** (`0.x.y` → `1.0.0`): reserved for the eventual stable 1.0 release. Until then, breaking changes can land in minor versions as part of normal pre-1.0 iteration.
+- **MINOR** (`0.9.x` → `0.10.0`, `0.10.x` → `0.11.0`, etc.): new language features, new stdlib modules, new CLI commands, or breaking changes that are not yet the v1.0 milestone.
+- **MAJOR** (`0.x.y` → `1.0.0`): reserved for the stable 1.0 release. We will not bump to v1.0 until we consciously decide the runtime is ready for that milestone.
 
 Every pull request that changes runtime behavior, the CLI, or the browser compiler must bump the version before it merges. Do not wait for a "release branch" or batch multiple changes into a single version bump. Version bumps are part of the change that needs them.
 
