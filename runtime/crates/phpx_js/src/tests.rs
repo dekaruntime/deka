@@ -172,6 +172,7 @@ fn ds_rejects_php_surface_and_const_reassignment() {
 }
 
 mod builtin_rewrites;
+mod bytes;
 mod emitter;
 mod jsx;
 mod pipe;

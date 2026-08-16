@@ -39,6 +39,10 @@ jobs:
         run: cargo build --release -p phpx_lsp
       - name: Build CLI
         run: cargo build --release -p cli
+      - name: Test php-rs (parser + typechecker)
+        run: cargo test -p php-rs
+      - name: Test phpx_js (emitter)
+        run: cargo test -p phpx_js
       - name: Build release manifest
         run: scripts/build-release-manifest.sh
       - name: Verify release manifest

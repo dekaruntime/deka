@@ -5,7 +5,7 @@
 ///   <ReturnType type="bytes" />
 /// </Function>
 export function bytes_from_string($str) {
-    return \__deka_bytes_from_string('' . $str);
+    return __deka_bytes_from_string('' . $str);
 }
 
 /// docid: phpx/core/bytes_to_string()
@@ -15,7 +15,7 @@ export function bytes_from_string($str) {
 ///   <ReturnType type="string" />
 /// </Function>
 export function bytes_to_string($bytes) {
-    return \__deka_bytes_to_string($bytes);
+    return __deka_bytes_to_string($bytes);
 }
 
 /// docid: phpx/core/bytes_len()
@@ -25,7 +25,7 @@ export function bytes_to_string($bytes) {
 ///   <ReturnType type="int" />
 /// </Function>
 export function bytes_len($bytes) {
-    return \__deka_bytes_len($bytes);
+    return __deka_bytes_len($bytes);
 }
 
 /// docid: phpx/core/bytes_get()
@@ -36,7 +36,7 @@ export function bytes_len($bytes) {
 ///   <ReturnType type="int|null" />
 /// </Function>
 export function bytes_get($bytes, $index) {
-    return \__deka_bytes_get($bytes, $index);
+    return __deka_bytes_get($bytes, $index);
 }
 
 /// docid: phpx/core/bytes_set()
@@ -48,7 +48,7 @@ export function bytes_get($bytes, $index) {
 ///   <ReturnType type="bytes" />
 /// </Function>
 export function bytes_set($bytes, $index, $byte) {
-    return \__deka_bytes_set($bytes, $index, $byte);
+    return __deka_bytes_set($bytes, $index, $byte);
 }
 
 /// docid: phpx/core/bytes_slice()
@@ -60,7 +60,7 @@ export function bytes_set($bytes, $index, $byte) {
 ///   <ReturnType type="bytes" />
 /// </Function>
 export function bytes_slice($bytes, $start, $length = null) {
-    return \__deka_bytes_slice($bytes, $start, $length);
+    return __deka_bytes_slice($bytes, $start, $length);
 }
 
 /// docid: phpx/core/bytes_concat()
@@ -71,7 +71,7 @@ export function bytes_slice($bytes, $start, $length = null) {
 ///   <ReturnType type="bytes" />
 /// </Function>
 export function bytes_concat($a, $b) {
-    return \__deka_bytes_concat($a, $b);
+    return __deka_bytes_concat($a, $b);
 }
 
 /// docid: phpx/core/bytes_to_array()
@@ -81,7 +81,7 @@ export function bytes_concat($a, $b) {
 ///   <ReturnType type="array<int>" />
 /// </Function>
 export function bytes_to_array($bytes) {
-    return \__deka_bytes_to_array($bytes);
+    return __deka_bytes_to_array($bytes);
 }
 
 /// docid: phpx/core/bytes_from_array()
@@ -91,5 +91,5 @@ export function bytes_to_array($bytes) {
 ///   <ReturnType type="bytes" />
 /// </Function>
 export function bytes_from_array($arr) {
-    return \__deka_bytes_from_array($arr);
+    return __deka_bytes_from_array($arr);
 }
