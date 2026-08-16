@@ -33,6 +33,26 @@ impl<'a> JsSubsetEmitter<'a> {
                     let struct_name = self.token_name(name);
                     self.struct_names.insert(struct_name);
                 }
+                Stmt::Impl { target, members, .. } => {
+                    // RFD 19 (deka#71): registering impl-provided methods
+                    // here, in the pre-pass, rather than when Stmt::Impl is
+                    // reached in the main emission loop below, is what
+                    // makes this order-independent -- an `impl` appearing
+                    // AFTER the `enum`/`struct` it targets must still be
+                    // visible when that declaration emits itself. Pragmatic
+                    // reuse of the struct-method registry, not the
+                    // destination (RFD 13 / #47 both argue against new
+                    // globalThis dispatch); chosen for speed given RFD
+                    // 15-18 are stacked waiting on impl actually running.
+                    let target_name = self.token_name(&target.parts[0]);
+                    let methods = self.emit_struct_methods(*members)?;
+                    if !methods.is_empty() {
+                        self.struct_methods
+                            .entry(target_name)
+                            .or_default()
+                            .extend(methods);
+                    }
+                }
                 _ => {}
             }
         }
@@ -212,30 +232,18 @@ impl<'a> JsSubsetEmitter<'a> {
                 // are what produce runtime methods.
                 Ok(())
             }
-            Stmt::Impl { target, members, .. } => {
-                // RFD 19 codegen, first cut: reuse the existing struct
-                // method registry/mechanism (emit_struct_methods + the
-                // globalThis.__phpxStructMethods merge already used for a
-                // struct's own inline methods) rather than building a new
-                // no-globalThis mechanism right now. Pragmatic, not the
-                // destination: RFD 13 / #47 both argue against new
-                // globalThis dispatch, and struct methods should eventually
-                // move off it too. Chosen here because RFD 15-18 (Bytes,
-                // TCP, TLS, HTTP) are stacked waiting on impl actually
-                // running, not just typechecking, and this reuses proven,
-                // tested infrastructure instead of inventing a second
-                // mechanism under time pressure. A trait is erased at
-                // runtime same as an interface -- the emitted method is
-                // indistinguishable from an inherent one; only the
-                // typechecker knows which trait it came from.
-                let target_name = self.token_name(&target.parts[0]);
-                let methods = self.emit_struct_methods(*members)?;
-                if !methods.is_empty() {
-                    self.struct_methods
-                        .entry(target_name)
-                        .or_default()
-                        .extend(methods);
-                }
+            Stmt::Impl { .. } => {
+                // RFD 19 codegen: registration into self.struct_methods
+                // happens in emit_program's pre-pass (below), not here --
+                // deka#71 found that doing it here (only when this
+                // statement is reached in source order) means an `impl`
+                // appearing AFTER the `enum`/`struct` it targets is too
+                // late for that declaration's own emission to see it.
+                // The pre-pass runs before ALL declaration emission,
+                // order-independent. This arm is now a pure erasure, same
+                // as Stmt::Trait/Stmt::Interface -- an impl block has no
+                // runtime representation of its own, only the side effect
+                // of registering methods, which already happened.
                 Ok(())
             }
             Stmt::Interface { .. } => {
@@ -787,6 +795,20 @@ impl<'a> JsSubsetEmitter<'a> {
                     "{}({}) {{\n{}    }}",
                     method_name, js_params, block
                 ));
+            }
+        }
+
+        // RFD 19 (deka#71): fold in methods from `impl Trait for Enum` /
+        // `impl Enum { }`, registered into self.struct_methods by
+        // emit_program's pre-pass (order-independent -- the impl block may
+        // appear before or after this enum in source). Stored there as full
+        // `function(...) { ... }` expressions, so these become `key: value`
+        // entries rather than shorthand-method syntax; JS object literals
+        // permit freely mixing both forms, same as `__enum`/`__case` above
+        // already do.
+        if let Some(impl_methods) = self.struct_methods.get(&enum_name) {
+            for (name, func_text) in impl_methods.clone() {
+                method_srcs.push(format!("{}: {}", name, func_text));
             }
         }
 

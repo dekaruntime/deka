@@ -102,6 +102,39 @@ fn run_executes_trait_impl_method_reading_self_field() {
     );
 }
 
+// deka#71: impl Trait for Enum typechecked clean but silently produced no
+// runtime method at all -- `c.label is not a function`. Fixed by moving
+// method registration into emit_program's pre-pass so it runs before
+// Stmt::Enum's own emission regardless of source order.
+#[test]
+fn run_executes_impl_trait_for_enum_method() {
+    run_dekascript(
+        "impl_for_enum",
+        "trait Namer {\n  label(self: Self): string\n}\n\
+         enum Color { case Red; case Green; }\n\
+         impl Namer for Color { label(self: Self): string { return \"a color\"; } }\n\
+         const c = Color::Red;\n\
+         print(c.label());\n",
+        "a color",
+    );
+}
+
+// Same case, but with `impl` appearing BEFORE the `enum` it targets --
+// proves the fix is genuinely order-independent, not incidentally correct
+// for one source ordering.
+#[test]
+fn run_executes_impl_before_enum_declaration_method() {
+    run_dekascript(
+        "impl_before_enum",
+        "trait Namer {\n  label(self: Self): string\n}\n\
+         impl Namer for Color { label(self: Self): string { return \"reversed order works\"; } }\n\
+         enum Color { case Red; case Green; }\n\
+         const c = Color::Red;\n\
+         print(c.label());\n",
+        "reversed order works",
+    );
+}
+
 #[test]
 fn run_executes_dekascript_generic_variadic_collect_candidate() {
     run_dekascript(
