@@ -2,5 +2,7 @@
   "core/*",
   "encoding/json",
   "string/*",
-  "array/*"
+  "array/*",
+  "bytes",
+  "buffer"
 ]

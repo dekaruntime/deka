@@ -1,0 +1,30 @@
+---
+title: Primitive types
+description: Primitive types available in the DekaScript compiler-core slice.
+---
+
+DekaScript shares its type system with PHPX. The compiler-core slice currently
+supports these primitive type annotations:
+
+- `int` — signed integer.
+- `float` — floating-point number.
+- `bool` — boolean.
+- `string` — UTF-8 text.
+- `bytes` — raw binary data, represented at runtime as a `Uint8Array`.
+
+`bytes` is new in this slice. It is distinct from `string`: a string is valid
+UTF-8 text, while `bytes` can hold arbitrary values in the 0..255 range. Use
+the `bytes` stdlib package (backed by `core/bytes`) to convert to and from
+strings and to manipulate buffers:
+
+```ts
+import { from_string, to_string, len, slice, concat } from "bytes";
+
+export function header(): bytes {
+  const b = from_string("GET / HTTP/1.1\r\n");
+  return concat(b, from_string("Host: deka.gg\r\n\r\n"));
+}
+```
+
+Nullable types (`?T`, `T|null`) are not supported. Use `Option<T>` once the
+stdlib contract is available.

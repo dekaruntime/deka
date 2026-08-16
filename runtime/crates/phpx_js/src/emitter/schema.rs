@@ -53,6 +53,7 @@ impl<'a> JsSubsetEmitter<'a> {
         match ty {
             AstType::Simple(tok) => match self.token_name(tok).as_str() {
                 "string" => ("{ kind: 'string' }".to_string(), false),
+                "bytes" => ("{ kind: 'object' }".to_string(), false),
                 "int" | "float" | "number" => ("{ kind: 'number' }".to_string(), false),
                 "bool" | "boolean" => ("{ kind: 'boolean' }".to_string(), false),
                 _ => ("{ kind: 'unknown' }".to_string(), false),

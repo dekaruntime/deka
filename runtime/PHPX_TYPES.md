@@ -35,9 +35,29 @@ interact with the Rust/WASM bridge.
 - `int`, `float`, `string`, `bool`, `array`, `object`, `callable`, `mixed`,
   `null` map directly to PHP equivalents.
 - `byte` is a phpx-only alias for an integer in the range 0..255.
+- `bytes` is a primitive type for raw binary data. In the JS runtime it is
+  represented as a `Uint8Array`; in PHP-runtime contexts it is a binary string.
+  The `bytes` type is distinct from `string`: strings are UTF-8 text, while
+  `bytes` holds arbitrary 0..255 values.
 - `Option<T>` is a builtin enum:
   - `Option::Some(<T>)` and `Option::None`.
   - `Option<T>` values are enum instances, not `null`.
+
+## Bytes operations
+The `bytes` primitive is supported by the `core/bytes` module, which is also
+re-exported from the `bytes` stdlib package:
+
+- `bytes_from_string(string $s): bytes` — encode a UTF-8 string into bytes.
+- `bytes_to_string(bytes $b): string` — decode bytes as UTF-8.
+- `bytes_len(bytes $b): int` — number of bytes in the buffer.
+- `bytes_get(bytes $b, int $i): int|null` — byte at index, or null if out of bounds.
+- `bytes_set(bytes $b, int $i, int $byte): bytes` — copy of the buffer with the
+  byte at index replaced.
+- `bytes_slice(bytes $b, int $start, ?int $length = null): bytes` — slice of the
+  buffer.
+- `bytes_concat(bytes $a, bytes $b): bytes` — concatenate two buffers.
+- `bytes_to_array(bytes $b): array<int>` — copy bytes into an int array.
+- `bytes_from_array(array<int> $a): bytes` — create a buffer from an int array.
 - `Result<T, E>` is a builtin enum:
   - `Result::Ok(<T>)` and `Result::Err(<E>)`.
 - `null` literals and nullable type syntax (`?T`, `T|null`) are rejected in PHPX.

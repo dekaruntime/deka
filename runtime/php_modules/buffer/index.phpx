@@ -1,7 +1,7 @@
 import { bytes_from_string, bytes_to_string, bytes_len, bytes_slice, bytes_concat, bytes_get, bytes_set } from 'core/bytes'
 
 struct Buffer {
-    $data: string = ''
+    $data: bytes = bytes_from_string('')
     $cursor: int = 0
 }
 
