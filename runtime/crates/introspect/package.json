@@ -1,6 +1,6 @@
 {
   "name": "@deka/introspect",
-  "version": "0.1.0",
+  "version": "0.9.0",
   "type": "module",
   "dependencies": {
     "signal-exit": "3.0.7",
