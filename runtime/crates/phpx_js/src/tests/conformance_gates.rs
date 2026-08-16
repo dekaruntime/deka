@@ -1,0 +1,150 @@
+// RFD 13 conformance gate #1 — diagnostic snapshots.
+//
+// RFD 13 principle under test: "Diagnostics are part of the language. A
+// misleading error message is a defect." These tests pin down exactly what
+// `compile_phpx_source_to_js` says TODAY for a fixed set of `.ds` inputs. A
+// test here fails the moment a message text changes — which is the point:
+// nobody should be able to silently reword (or silently regress) a
+// diagnostic. When a fix lands for one of the `KNOWN-BAD` cases below, its
+// assertion must be updated to the corrected text in the same PR that fixes
+// it — that diff is the proof the fix landed, and it is a welcome one.
+//
+// Two defects are already filed and are expected to still be present:
+//   - #50: `(n) => n * 2` (JS/TS arrow syntax) is reported as "Missing
+//     semicolon" instead of naming the real cause (arrow functions/JS arrow
+//     syntax are not accepted; use `fn(...) => ...`).
+//   - #55: several `.ds` diagnostics say "PHPX" — a name DekaScript
+//     superseded per #17/#11 — instead of "DekaScript". Filed while
+//     building this gate; every message below containing the literal
+//     "PHPX" is one instance of that same defect.
+//
+// `enum Color { Red, Green }` is a third symptom of the "Missing semicolon"
+// misdirection class (RFD 9/RFD 10 syntax migration, referenced from #50):
+// the JS-style enum body isn't accepted yet, and the parser reports it as a
+// punctuation problem rather than an unsupported-syntax problem.
+
+/// Compile `.ds` source through the same entry point the CLI's `transpile`
+/// and `run` commands use, and return the formatted diagnostic string on
+/// failure (this is exactly what a `.ds` author sees on screen today).
+fn ds_diagnostic(source: &str) -> Result<String, String> {
+    crate::compile_phpx_source_to_js(source, "conformance.ds", crate::parse_source_module_meta(source))
+}
+
+#[test]
+fn snapshot_null_literal_is_currently_accepted_without_diagnostic() {
+    // NOTE: CLAUDE.md's "No null" rule says `null` literals should be
+    // rejected in PHPX/DekaScript. Today, in `.ds` mode, a bare `null`
+    // literal binding compiles clean with no diagnostic at all. This is a
+    // real gap (not one of the two defects this gate was built to track),
+    // recorded here so a future gate change is visible as a diff, not a
+    // surprise.
+    let result = ds_diagnostic("const a = null;");
+    let js = result.expect("`const a = null;` currently compiles without a diagnostic");
+    assert!(
+        js.contains("const a = null"),
+        "expected the null literal to pass through unchanged: {js}"
+    );
+}
+
+#[test]
+fn snapshot_null_comparison_names_isset_but_says_phpx() {
+    // KNOWN-BAD (#55): message says "PHPX", not "DekaScript".
+    let err = ds_diagnostic("export function f(a: int): bool { return a == null; }")
+        .expect_err("null comparison must be rejected");
+    assert!(
+        err.contains("Null comparisons are not allowed in PHPX; use isset() instead"),
+        "diagnostic text changed, update this snapshot: {err}"
+    );
+}
+
+#[test]
+fn snapshot_try_catch_rejected_but_says_phpx() {
+    // KNOWN-BAD (#55): message says "PHPX", not "DekaScript".
+    let err = ds_diagnostic("try { } catch (e) { }").expect_err("try/catch must be rejected");
+    assert!(
+        err.contains("try/catch is not allowed in PHPX."),
+        "diagnostic text changed, update this snapshot: {err}"
+    );
+    assert!(
+        err.contains("Use Result<T, E> instead of exceptions."),
+        "diagnostic text changed, update this snapshot: {err}"
+    );
+}
+
+#[test]
+fn snapshot_throw_rejected_but_says_phpx() {
+    // KNOWN-BAD (#55): message says "PHPX", not "DekaScript".
+    let err = ds_diagnostic("throw \"boom\";").expect_err("throw must be rejected");
+    assert!(
+        err.contains("throw is not allowed in PHPX."),
+        "diagnostic text changed, update this snapshot: {err}"
+    );
+}
+
+#[test]
+fn snapshot_class_rejected_but_says_phpx() {
+    // KNOWN-BAD (#55): message says "PHPX", not "DekaScript".
+    let err = ds_diagnostic("class Foo { }").expect_err("class declarations must be rejected");
+    assert!(
+        err.contains("Classes are not allowed in PHPX."),
+        "diagnostic text changed, update this snapshot: {err}"
+    );
+    assert!(
+        err.contains("Use structs instead of classes."),
+        "diagnostic text changed, update this snapshot: {err}"
+    );
+}
+
+#[test]
+fn snapshot_js_arrow_function_reports_missing_semicolon() {
+    // KNOWN-BAD (#50): the real cause is that `(n) => ...` (JS/TS arrow
+    // syntax) is unsupported — DekaScript still only accepts `fn(n) => ...`.
+    // The parser instead reports a missing semicolon, sending the reader
+    // hunting for punctuation that isn't the problem.
+    let err = ds_diagnostic("const f = (n) => n * 2;")
+        .expect_err("JS-style arrow functions are not accepted yet");
+    assert!(
+        err.contains("Missing semicolon"),
+        "diagnostic text changed — if this now names arrow functions, #50 is fixed: update this snapshot: {err}"
+    );
+}
+
+#[test]
+fn snapshot_struct_field_requires_dollar_sigil_but_says_phpx() {
+    // KNOWN-BAD (#55): message says "PHPX", not "DekaScript". Also notes a
+    // second, structural gap tracked alongside #55: DekaScript struct
+    // fields still require the PHP-style `$name: Type` form rather than the
+    // TypeScript-familiar `name: Type` form issue #11's target syntax sample shows.
+    let err = ds_diagnostic("struct Point { x: int }").expect_err("bare struct field name must be rejected");
+    assert!(
+        err.contains("struct fields must use `$name: Type` syntax in PHPX"),
+        "diagnostic text changed, update this snapshot: {err}"
+    );
+}
+
+#[test]
+fn snapshot_enum_js_style_body_reports_missing_semicolon() {
+    // Same misdirection class as #50 (see module doc comment): the JS-style
+    // enum body (`Red, Green`) isn't accepted — DekaScript still expects
+    // PHP-style `case Red;` members (RFD 10) — and the parser reports
+    // punctuation errors instead of naming the unsupported syntax.
+    let err = ds_diagnostic("enum Color { Red, Green }")
+        .expect_err("JS-style enum member list is not accepted yet");
+    assert!(
+        err.contains("Missing semicolon"),
+        "diagnostic text changed, update this snapshot: {err}"
+    );
+}
+
+#[test]
+fn snapshot_async_function_return_type_is_diagnosed_correctly() {
+    // Not a known-bad case: this diagnostic is accurate and names the real
+    // cause (async functions must return `Promise<T>`). Recorded so a
+    // regression here — e.g. if it started saying "PHPX" too — is caught.
+    let err = ds_diagnostic("export async function f(): int { return 1; }")
+        .expect_err("async function must declare a Promise<T> return type");
+    assert!(
+        err.contains("Async function must declare Promise<T> return type, got int"),
+        "diagnostic text changed, update this snapshot: {err}"
+    );
+}
