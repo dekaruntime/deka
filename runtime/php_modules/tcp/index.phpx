@@ -397,3 +397,159 @@ export function tcp_set_deadline($handle, $millis) {
 export function tcp_close($handle) {
     return closeSync($handle)
 }
+
+function __tcp_opt_int($options, $key, $default) {
+    if (is_array($options) && array_key_exists($key, $options)) {
+        return (int) $options[$key]
+    }
+    if (is_object($options) && isset($options->$key)) {
+        return (int) $options->$key
+    }
+    return $default
+}
+
+function __tcp_opt_bytes_array($options, $key) {
+    $value = null
+    if (is_array($options) && array_key_exists($key, $options)) {
+        $value = $options[$key]
+    } else if (is_object($options) && isset($options->$key)) {
+        $value = $options->$key
+    }
+    if ($value === null) {
+        return []
+    }
+    return bytes_to_array(__tcp_ensure_bytes($value))
+}
+
+/// docid: phpx/tcp/startTlsSync()
+/// <Function name="startTlsSync">
+///   <Description>Upgrade an existing TCP connection to TLS.</Description>
+///   <Parameter name="$handle" type="int" required="true">Connection handle.</Parameter>
+///   <Parameter name="$server_name" type="string" required="true">SNI host name.</Parameter>
+///   <ReturnType type="Result<int, string>" />
+/// </Function>
+export function startTlsSync($handle, $server_name) {
+    $res = normalize_result(bridge('net', 'tls_upgrade', {
+        handle: (int) $handle,
+        server_name: '' . $server_name
+    }))
+    if (!result_is_ok($res)) {
+        return result_err($res->error)
+    }
+    if (!is_array($res->value) || !array_key_exists('handle', $res->value)) {
+        return result_err('tls upgrade succeeded without handle')
+    }
+    return result_ok((int) $res->value['handle'])
+}
+
+/// docid: phpx/tcp/connectTlsSync()
+/// <Function name="connectTlsSync">
+///   <Description>Connect to a host and immediately negotiate TLS.</Description>
+///   <Parameter name="$host" type="string" required="true" />
+///   <Parameter name="$port" type="int" required="true" />
+///   <Parameter name="$server_name" type="string" required="false">SNI host name; defaults to $host.</Parameter>
+///   <Parameter name="$options" type="Object" required="false">timeout_ms, ca_cert.</Parameter>
+///   <ReturnType type="Result<int, string>" />
+/// </Function>
+export function connectTlsSync($host, $port, $server_name = null, $options = {}) {
+    $sni = $server_name === null ? ('' . $host) : ('' . $server_name)
+    $payload = {
+        host: '' . $host,
+        port: (int) $port,
+        server_name: $sni,
+        timeout_ms: __tcp_opt_int($options, 'timeout_ms', 5000),
+        ca_cert: __tcp_opt_bytes_array($options, 'ca_cert')
+    }
+    $res = normalize_result(bridge('net', 'connect_tls', $payload))
+    if (!result_is_ok($res)) {
+        return result_err($res->error)
+    }
+    if (!is_array($res->value) || !array_key_exists('handle', $res->value)) {
+        return result_err('connect_tls succeeded without handle')
+    }
+    return result_ok((int) $res->value['handle'])
+}
+
+/// docid: phpx/tcp/listenSync()
+/// <Function name="listenSync">
+///   <Description>Bind a plain TCP listener.</Description>
+///   <Parameter name="$host" type="string" required="true" />
+///   <Parameter name="$port" type="int" required="true" />
+///   <Parameter name="$options" type="Object" required="false">backlog (ignored on this runtime).</Parameter>
+///   <ReturnType type="Result<int, string>" />
+/// </Function>
+export function listenSync($host, $port, $options = {}) {
+    $res = normalize_result(bridge('net', 'listen', {
+        host: '' . $host,
+        port: (int) $port,
+        backlog: __tcp_opt_int($options, 'backlog', 128)
+    }))
+    if (!result_is_ok($res)) {
+        return result_err($res->error)
+    }
+    if (!is_array($res->value) || !array_key_exists('handle', $res->value)) {
+        return result_err('listen succeeded without handle')
+    }
+    return result_ok((int) $res->value['handle'])
+}
+
+/// docid: phpx/tcp/listenTlsSync()
+/// <Function name="listenTlsSync">
+///   <Description>Bind a TLS listener.</Description>
+///   <Parameter name="$host" type="string" required="true" />
+///   <Parameter name="$port" type="int" required="true" />
+///   <Parameter name="$cert" type="bytes" required="true">PEM-encoded certificate.</Parameter>
+///   <Parameter name="$key" type="bytes" required="true">PEM-encoded private key.</Parameter>
+///   <Parameter name="$options" type="Object" required="false">backlog.</Parameter>
+///   <ReturnType type="Result<int, string>" />
+/// </Function>
+export function listenTlsSync($host, $port, $cert, $key, $options = {}) {
+    $res = normalize_result(bridge('net', 'listen_tls', {
+        host: '' . $host,
+        port: (int) $port,
+        backlog: __tcp_opt_int($options, 'backlog', 128),
+        cert: bytes_to_array(__tcp_ensure_bytes($cert)),
+        key: bytes_to_array(__tcp_ensure_bytes($key))
+    }))
+    if (!result_is_ok($res)) {
+        return result_err($res->error)
+    }
+    if (!is_array($res->value) || !array_key_exists('handle', $res->value)) {
+        return result_err('listen_tls succeeded without handle')
+    }
+    return result_ok((int) $res->value['handle'])
+}
+
+/// docid: phpx/tcp/acceptSync()
+/// <Function name="acceptSync">
+///   <Description>Accept a connection from a listener.</Description>
+///   <Parameter name="$handle" type="int" required="true">Listener handle.</Parameter>
+///   <ReturnType type="Result<int, string>" />
+/// </Function>
+export function acceptSync($handle) {
+    $res = normalize_result(bridge('net', 'accept', { handle: (int) $handle }))
+    if (!result_is_ok($res)) {
+        return result_err($res->error)
+    }
+    if (!is_array($res->value) || !array_key_exists('handle', $res->value)) {
+        return result_err('accept succeeded without handle')
+    }
+    return result_ok((int) $res->value['handle'])
+}
+
+// Async wrappers.
+export function startTls($handle, $server_name) {
+    return startTlsSync($handle, $server_name)
+}
+export function connectTls($host, $port, $server_name = null, $options = {}) {
+    return connectTlsSync($host, $port, $server_name, $options)
+}
+export function listen($host, $port, $options = {}) {
+    return listenSync($host, $port, $options)
+}
+export function listenTls($host, $port, $cert, $key, $options = {}) {
+    return listenTlsSync($host, $port, $cert, $key, $options)
+}
+export function accept($handle) {
+    return acceptSync($handle)
+}

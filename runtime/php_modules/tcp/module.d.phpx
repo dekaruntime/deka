@@ -6,6 +6,11 @@ export function readExact($handle: int, $count: int): Promise<Result<bytes, stri
 export function write($handle: int, $data: bytes): Promise<Result<int, string>>
 export function setDeadline($handle: int, $millis: int): Promise<Result<Object, string>>
 export function close($handle: int): Promise<Result<Object, string>>
+export function startTls($handle: int, $server_name: string): Promise<Result<int, string>>
+export function connectTls($host: string, $port: int, $server_name: string|null = null, $options: Object = {}): Promise<Result<int, string>>
+export function listen($host: string, $port: int, $options: Object = {}): Promise<Result<int, string>>
+export function listenTls($host: string, $port: int, $cert: bytes, $key: bytes, $options: Object = {}): Promise<Result<int, string>>
+export function accept($handle: int): Promise<Result<int, string>>
 
 export function connectSync($host: string, $port: int, $options: Object = {}): Result<int, string>
 export function readSync($handle: int, $max_bytes: int = 4096): Result<bytes, string>
@@ -13,6 +18,11 @@ export function readExactSync($handle: int, $count: int): Result<bytes, string>
 export function writeSync($handle: int, $data: bytes): Result<int, string>
 export function setDeadlineSync($handle: int, $millis: int): Result<Object, string>
 export function closeSync($handle: int): Result<Object, string>
+export function startTlsSync($handle: int, $server_name: string): Result<int, string>
+export function connectTlsSync($host: string, $port: int, $server_name: string|null = null, $options: Object = {}): Result<int, string>
+export function listenSync($host: string, $port: int, $options: Object = {}): Result<int, string>
+export function listenTlsSync($host: string, $port: int, $cert: bytes, $key: bytes, $options: Object = {}): Result<int, string>
+export function acceptSync($handle: int): Result<int, string>
 
 export function tcp_connect($host: string, $port: int, $options: Object = {}): Result<int, string>
 export function tcp_read($handle: int, $max_bytes: int = 4096): Result<bytes, string>

@@ -4,7 +4,7 @@ use bumpalo::Bump;
 use deno_core::op2;
 use mysql::prelude::Queryable;
 use mysql::{OptsBuilder, Params as MyParams, Pool as MyPool, Value as MyValue};
-use native_tls::{TlsConnector, TlsStream};
+
 use php_rs::parser::ast::{ClassKind, ClassMember, Program, Stmt, Type as AstType};
 use php_rs::parser::lexer::Lexer;
 use php_rs::parser::lexer::token::Token;
