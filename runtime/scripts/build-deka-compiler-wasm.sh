@@ -4,6 +4,12 @@ set -euo pipefail
 runtime_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 repo_dir=$(cd "$runtime_dir/.." && pwd)
 out_dir=${1:-"$runtime_dir/dist/deka-compiler-wasm"}
+# The caller may pass a relative path (e.g. in CI). Normalize it now so the
+# subsequent `cd "$runtime_dir"` does not change where the artifacts land.
+case "$out_dir" in
+  /*) ;;
+  *) out_dir="$repo_dir/$out_dir" ;;
+esac
 artifact_name=deka_compiler.wasm
 diagnostics_artifact_name=deka_diagnostics.wasm
 target_dir=${CARGO_TARGET_DIR:-"$runtime_dir/target"}
