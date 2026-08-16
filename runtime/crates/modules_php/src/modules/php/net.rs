@@ -42,6 +42,33 @@ fn capability_target(host: &str, port: u16) -> String {
     }
 }
 
+/// Convert a JSON bridge value into raw bytes. Arrays are treated as byte
+/// sequences (mirroring the fs bridge); strings are UTF-8 encoded for
+/// backwards compatibility with callers that have not migrated to `bytes`.
+fn json_value_to_bytes(value: Option<&serde_json::Value>) -> Vec<u8> {
+    let Some(value) = value else {
+        return Vec::new();
+    };
+    if let Some(arr) = value.as_array() {
+        arr.iter()
+            .map(|v| v.as_u64().unwrap_or(0).min(255) as u8)
+            .collect()
+    } else if let Some(s) = value.as_str() {
+        s.as_bytes().to_vec()
+    } else {
+        Vec::new()
+    }
+}
+
+fn bytes_to_json_array(bytes: &[u8]) -> serde_json::Value {
+    serde_json::Value::Array(
+        bytes
+            .iter()
+            .map(|b| serde_json::Value::Number((*b as u64).into()))
+            .collect(),
+    )
+}
+
 fn handle_target(state: &NetState, handle: u64) -> Result<String, deno_core::error::CoreError> {
     state
         .handles
@@ -152,8 +179,8 @@ pub(super) fn net_call_impl(
             };
             match n {
                 Ok(n) => {
-                    let data = String::from_utf8_lossy(&buf[..n]).to_string();
-                    Ok(serde_json::json!({ "ok": true, "data": data, "eof": n == 0 }))
+                    buf.truncate(n);
+                    Ok(serde_json::json!({ "ok": true, "data": buf, "eof": n == 0 }))
                 }
                 Err(e) => Ok(serde_json::json!({ "ok": false, "error": format!("read: {}", e) })),
             }
@@ -163,12 +190,7 @@ pub(super) fn net_call_impl(
                 .get("handle")
                 .and_then(|v| v.as_u64())
                 .ok_or_else(|| err("write: missing handle".to_string()))?;
-            let data = args_obj
-                .get("data")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .as_bytes()
-                .to_vec();
+            let data = json_value_to_bytes(args_obj.get("data"));
             let Some(conn) = state.handles.get_mut(&handle) else {
                 return Ok(
                     serde_json::json!({ "ok": false, "error": format!("write: unknown handle {}", handle) }),
@@ -303,11 +325,7 @@ pub(super) fn net_action_payload_to_proto_request(
         }),
         "write" => Action::Write(proto::bridge_v1::NetWriteRequest {
             handle: args.get("handle").and_then(|v| v.as_u64()).unwrap_or(0),
-            data: args
-                .get("data")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
+            data: json_value_to_bytes(args.get("data")),
         }),
         "tls_upgrade" => Action::TlsUpgrade(proto::bridge_v1::NetTlsUpgradeRequest {
             handle: args.get("handle").and_then(|v| v.as_u64()).unwrap_or(0),
@@ -370,7 +388,7 @@ pub(super) fn net_proto_request_to_action_payload(
             "write".to_string(),
             serde_json::json!({
                 "handle": write.handle,
-                "data": write.data,
+                "data": bytes_to_json_array(&write.data),
             }),
             NetProtoActionKind::Write,
         )),
@@ -416,11 +434,7 @@ pub(super) fn net_json_response_to_proto(
             }))
         }
         NetProtoActionKind::Read => Some(Action::Read(proto::bridge_v1::NetReadResponse {
-            data: resp
-                .get("data")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
+            data: json_value_to_bytes(resp.get("data")),
             eof: resp.get("eof").and_then(|v| v.as_bool()).unwrap_or(false),
         })),
         NetProtoActionKind::Write => Some(Action::Write(proto::bridge_v1::NetWriteResponse {
@@ -472,10 +486,7 @@ pub(super) fn net_proto_response_to_json(
                 out.insert("ok".to_string(), serde_json::Value::Bool(unit.ok));
             }
             Action::Read(read) => {
-                out.insert(
-                    "data".to_string(),
-                    serde_json::Value::String(read.data.clone()),
-                );
+                out.insert("data".to_string(), bytes_to_json_array(&read.data));
                 out.insert("eof".to_string(), serde_json::Value::Bool(read.eof));
             }
             Action::Write(write) => {
@@ -772,6 +783,97 @@ mod tests {
         let close =
             super::net_action_payload_to_proto_request("close", &json!({ "handle": handle }))
                 .expect("encode close");
+        assert!(net_call_proto_impl(&mut state, &close.encode_to_vec()).is_ok());
+        server.join().expect("server join");
+
+        unsafe {
+            match previous {
+                Some(value) => std::env::set_var("DEKA_SECURITY_POLICY", value),
+                None => std::env::remove_var("DEKA_SECURITY_POLICY"),
+            }
+        }
+    }
+
+    #[test]
+    fn tcp_proto_binary_roundtrip_preserves_non_utf8_bytes() {
+        let mut state = NetState::new();
+        let _lock = policy_lock().lock().expect("policy lock");
+        let previous = std::env::var_os("DEKA_SECURITY_POLICY");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+        let address = listener.local_addr().expect("listener address");
+        let payload = vec![0_u8, 1, 2, 127, 128, 200, 255];
+        let server = std::thread::spawn({
+            let payload = payload.clone();
+            move || {
+                let (mut stream, _) = listener.accept().expect("accept connection");
+                let mut buf = vec![0_u8; payload.len()];
+                std::io::Read::read_exact(&mut stream, &mut buf).expect("read request");
+                assert_eq!(buf, payload, "server received unexpected bytes");
+                std::io::Write::write_all(&mut stream, &buf).expect("write response");
+            }
+        });
+        let allowed = format!("127.0.0.1:{}", address.port());
+
+        unsafe {
+            std::env::set_var(
+                "DEKA_SECURITY_POLICY",
+                format!(r#"{{"security":{{"allow":{{"net":["{allowed}"]}}}}}}"#),
+            );
+        }
+
+        let connect = super::net_action_payload_to_proto_request(
+            "connect",
+            &json!({ "host": "127.0.0.1", "port": address.port() }),
+        )
+        .expect("encode connect");
+        let connect_response =
+            net_call_proto_impl(&mut state, &connect.encode_to_vec()).expect("connect");
+        let connect_response = proto::bridge_v1::NetResponse::decode(connect_response.as_slice())
+            .expect("decode connect response");
+        let handle = match connect_response.action.expect("connect action") {
+            proto::bridge_v1::net_response::Action::Connect(response) => response.handle,
+            other => panic!("unexpected connect response: {other:?}"),
+        };
+
+        let write = super::net_action_payload_to_proto_request(
+            "write",
+            &json!({
+                "handle": handle,
+                "data": payload.iter().map(|b| *b as u64).collect::<Vec<_>>()
+            }),
+        )
+        .expect("encode write");
+        let write_response =
+            net_call_proto_impl(&mut state, &write.encode_to_vec()).expect("write");
+        let write_response = proto::bridge_v1::NetResponse::decode(write_response.as_slice())
+            .expect("decode write response");
+        assert_eq!(
+            write_response
+                .action
+                .and_then(|a| match a {
+                    proto::bridge_v1::net_response::Action::Write(w) => Some(w.written),
+                    _ => None,
+                })
+                .unwrap_or(0) as usize,
+            payload.len()
+        );
+
+        let read = super::net_action_payload_to_proto_request(
+            "read",
+            &json!({ "handle": handle, "max_bytes": payload.len() as u64 }),
+        )
+        .expect("encode read");
+        let read_response = net_call_proto_impl(&mut state, &read.encode_to_vec()).expect("read");
+        let read_response = proto::bridge_v1::NetResponse::decode(read_response.as_slice())
+            .expect("decode read response");
+        let read_bytes = match read_response.action.expect("read action") {
+            proto::bridge_v1::net_response::Action::Read(r) => r.data,
+            other => panic!("unexpected read response: {other:?}"),
+        };
+        assert_eq!(read_bytes, payload);
+
+        let close = super::net_action_payload_to_proto_request("close", &json!({ "handle": handle }))
+            .expect("encode close");
         assert!(net_call_proto_impl(&mut state, &close.encode_to_vec()).is_ok());
         server.join().expect("server join");
 

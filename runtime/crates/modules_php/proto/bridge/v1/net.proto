@@ -24,7 +24,7 @@ message NetReadRequest {
 
 message NetWriteRequest {
   uint64 handle = 1;
-  string data = 2;
+  bytes data = 2;
 }
 
 message NetTlsUpgradeRequest {
@@ -50,7 +50,7 @@ message NetHandleResponse {
 }
 
 message NetReadResponse {
-  string data = 1;
+  bytes data = 1;
   bool eof = 2;
 }
 

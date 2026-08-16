@@ -1,7 +1,7 @@
 import { result_ok, result_err, result_is_ok } from 'core/result'
 import { openHandle, query as db_query, queryOne as db_query_one, exec as db_exec, begin as db_begin, commit as db_commit, rollback as db_rollback, close as db_close, openHandleSync, querySync as db_query_sync, queryOneSync as db_query_one_sync, execSync as db_exec_sync, beginSync as db_begin_sync, commitSync as db_commit_sync, rollbackSync as db_rollback_sync, closeSync as db_close_sync } from 'db'
 import { tcp_connect, tcp_read_exact, tcp_write, tcp_close, tcp_set_deadline } from 'tcp'
-import { bytes_get } from 'core/bytes'
+import { bytes_get, bytes_to_string, bytes_from_string } from 'core/bytes'
 import { rtrim } from 'string/rtrim'
 
 const CLIENT_LONG_PASSWORD = 0x00000001
@@ -120,7 +120,13 @@ function __my_read_lenenc_str($bytes, &$offset) {
 function __my_send_packet($conn, $payload) {
     $header = __my_i24le(strlen($payload)) . chr($conn.seq & 255)
     $conn.seq = ($conn.seq + 1) & 255
-    return tcp_write($conn.sock, $header . $payload)
+    return tcp_write($conn.sock, bytes_from_string($header . $payload))
+}
+
+function __my_u24le_bytes($bytes) {
+    return ((int) bytes_get($bytes, 0))
+        | (((int) bytes_get($bytes, 1)) << 8)
+        | (((int) bytes_get($bytes, 2)) << 16)
 }
 
 function __my_read_packet($conn) {
@@ -128,7 +134,7 @@ function __my_read_packet($conn) {
     if (!result_is_ok($h)) {
         return result_err($h.error)
     }
-    $len = __my_u24le_at($h.value, 0)
+    $len = __my_u24le_bytes($h.value)
     $seq = bytes_get($h.value, 3)
     if ($seq === null) {
         return result_err('mysql bad header')
@@ -141,7 +147,7 @@ function __my_read_packet($conn) {
     if (!result_is_ok($b)) {
         return result_err($b.error)
     }
-    return result_ok($b.value)
+    return result_ok(bytes_to_string($b.value))
 }
 
 function __my_err($payload) {
