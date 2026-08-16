@@ -190,6 +190,26 @@ fn run_executes_trait_default_method_when_trait_declared_after_its_impl() {
     );
 }
 
+#[test]
+fn run_executes_two_traits_each_contributing_a_default_method() {
+    // A struct implementing two DIFFERENT traits via two separate impl
+    // blocks, neither overriding its trait's default -- confirms the
+    // per-impl-block merge (struct_methods.entry(...).extend(...)) doesn't
+    // clobber defaults contributed by a sibling impl block for the same
+    // target.
+    run_dekascript(
+        "two_trait_defaults_merge",
+        "trait Reader { readLabel(self: Self): string { return \"reading\"; } }\n\
+         trait Writer { writeLabel(self: Self): string { return \"writing\"; } }\n\
+         struct Conn { $id: int; }\n\
+         impl Reader for Conn { }\n\
+         impl Writer for Conn { }\n\
+         const c = Conn { $id: 1 };\n\
+         print(c.readLabel() + \" \" + c.writeLabel());\n",
+        "reading writing",
+    );
+}
+
 // Same case, but with `impl` appearing BEFORE the `enum` it targets --
 // proves the fix is genuinely order-independent, not incidentally correct
 // for one source ordering.
