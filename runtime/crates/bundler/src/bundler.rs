@@ -762,12 +762,14 @@ impl Resolve for FsResolver {
 
         let mut candidates = Vec::new();
         if target.extension().is_none() {
+            candidates.push(target.with_extension("phpx"));
             candidates.push(target.with_extension("ds"));
             candidates.push(target.with_extension("ts"));
             candidates.push(target.with_extension("tsx"));
             candidates.push(target.with_extension("jsx"));
             candidates.push(target.with_extension("js"));
             candidates.push(target.with_extension("mjs"));
+            candidates.push(target.join("index.phpx"));
             candidates.push(target.join("index.ds"));
             candidates.push(target.join("index.ts"));
             candidates.push(target.join("index.tsx"));
@@ -1041,12 +1043,14 @@ impl Resolve for DekaResolver {
 fn resolve_with_candidates(target: &Path) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if target.extension().is_none() {
+        candidates.push(target.with_extension("phpx"));
         candidates.push(target.with_extension("ds"));
         candidates.push(target.with_extension("ts"));
         candidates.push(target.with_extension("tsx"));
         candidates.push(target.with_extension("jsx"));
         candidates.push(target.with_extension("js"));
         candidates.push(target.with_extension("mjs"));
+        candidates.push(target.join("index.phpx"));
         candidates.push(target.join("index.ds"));
         candidates.push(target.join("index.ts"));
         candidates.push(target.join("index.tsx"));
