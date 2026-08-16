@@ -4,5 +4,6 @@
   "string/*",
   "array/*",
   "bytes",
-  "buffer"
+  "buffer",
+  "concurrency"
 ]
