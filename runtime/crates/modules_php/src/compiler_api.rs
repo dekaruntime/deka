@@ -83,12 +83,13 @@ fn compile_phpx_with_mode<'a>(
     if strict {
         errors.extend(validate_type_annotations(&program, source));
 
-        let type_errors = if wasm_functions.is_empty() {
+        let (type_errors, type_warnings) = if wasm_functions.is_empty() {
             check_types(&program, source, Some(file_path))
         } else {
             check_types_with_externals(&program, source, Some(file_path), &wasm_functions)
         };
         errors.extend(type_errors);
+        warnings.extend(type_warnings);
 
         let (generic_errors, generic_warnings) = validate_generics(&program, source);
         errors.extend(generic_errors);
