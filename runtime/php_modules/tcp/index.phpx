@@ -1,5 +1,6 @@
 import { result_ok, result_err, result_is_ok } from 'core/result'
 import { bridge } from 'core/bridge'
+import { bytes_from_array, bytes_from_string, bytes_to_array, bytes_len, bytes_concat } from 'core/bytes'
 
 function to_assoc($value) {
     if (is_array($value)) {
@@ -36,6 +37,16 @@ function normalize_result($raw) {
         return result_err($msg)
     }
     return result_err('invalid tcp response')
+}
+
+function __tcp_ensure_bytes($value) {
+    if (is_string($value)) {
+        return bytes_from_string($value)
+    }
+    if (is_array($value)) {
+        return bytes_from_array($value)
+    }
+    return $value
 }
 
 /// docid: phpx/tcp/connectSync()
@@ -90,7 +101,7 @@ export function readSync($handle, $max_bytes = 4096) {
     if (!is_array($res->value) || !array_key_exists('data', $res->value)) {
         return result_err('read succeeded without data')
     }
-    return result_ok($res->value['data'])
+    return result_ok(bytes_from_array($res->value['data']))
 }
 
 /// docid: phpx/tcp/readExactSync()
@@ -106,16 +117,16 @@ export function readSync($handle, $max_bytes = 4096) {
 /// </Function>
 export function readExactSync($handle, $count) {
     $target = (int) $count
-    $out = ''
-    while (strlen($out) < $target) {
-        $chunk = readSync($handle, $target - strlen($out))
+    $out = bytes_from_array([])
+    while (bytes_len($out) < $target) {
+        $chunk = readSync($handle, $target - bytes_len($out))
         if (!result_is_ok($chunk)) {
             return result_err($chunk->error)
         }
-        if ($chunk->value === '') {
+        if (bytes_len($chunk->value) === 0) {
             return result_err('short read')
         }
-        $out = $out . $chunk->value
+        $out = bytes_concat($out, $chunk->value)
     }
     return result_ok($out)
 }
@@ -132,9 +143,10 @@ export function readExactSync($handle, $count) {
 ///   <ReturnType type="mixed" />
 /// </Function>
 export function writeSync($handle, $data) {
+    $buf = __tcp_ensure_bytes($data)
     $res = normalize_result(bridge('net', 'write', {
         handle: (int) $handle,
-        data: '' . $data
+        data: bytes_to_array($buf)
     }))
     if (!result_is_ok($res)) {
         return result_err($res->error)

@@ -438,7 +438,10 @@ mod tests {
         )
         .expect("json read failed");
         assert_ok(&json_read);
-        assert_eq!(json_read.get("data").and_then(|v| v.as_str()), Some("ping"));
+        assert_eq!(
+            json_read.get("data"),
+            Some(&serde_json::json!([112, 105, 110, 103]))
+        );
 
         let json_close = net_call_impl(
             &mut net_state,
@@ -474,7 +477,7 @@ mod tests {
             "write",
             &serde_json::json!({
                 "handle": proto_handle,
-                "data": "pong"
+                "data": [112, 111, 110, 103]
             }),
         )
         .expect("proto write build failed");
@@ -503,8 +506,8 @@ mod tests {
         );
         assert_ok(&proto_read_json);
         assert_eq!(
-            proto_read_json.get("data").and_then(|v| v.as_str()),
-            Some("pong")
+            proto_read_json.get("data"),
+            Some(&serde_json::json!([112, 111, 110, 103]))
         );
 
         let proto_close_req = net_action_payload_to_proto_request(
