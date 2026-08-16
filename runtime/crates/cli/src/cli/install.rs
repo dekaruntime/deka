@@ -1,9 +1,7 @@
 use anyhow::Result;
 use core::{CommandSpec, Context, FlagSpec, ParamSpec, Registry};
-use linkhash_client::{LinkhashClient, is_phpx_package};
 use pm::{
     InstallPayload,
-    registry_integrity::{fetch_package_digest, verify_package_digest},
     run_install,
 };
 use runtime_core::module_spec::canonical_php_package_spec;
@@ -94,9 +92,6 @@ pub fn register(registry: &mut Registry) {
 }
 
 pub fn cmd(context: &Context) {
-    // Set registry env vars from flags/env before delegating to pm
-    apply_registry_env(context);
-
     if context.args.flags.contains_key("--rehash") {
         let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let specs = rehash_specs(context);
@@ -145,9 +140,6 @@ fn install_explicit_specs(context: &Context) -> Vec<String> {
 }
 
 pub fn cmd_update(context: &Context) {
-    // Set registry env vars from flags/env before delegating to pm
-    apply_registry_env(context);
-
     // Shop-mode: cwd is inside store/tenants/{shop_id}/. Run the per-shop
     // flow (bump, build-verify, git commit with a version-diff message)
     // so a downstream post-commit hook can redeploy via #84.
@@ -172,41 +164,11 @@ pub fn cmd_update(context: &Context) {
         .collect();
 
     if !phpx_specs.is_empty() {
-        let (registry_url, token) = get_registry_config(context);
-        let client = LinkhashClient::new(&registry_url, token.as_deref());
-        let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let mut update_failed = false;
-
-        for spec in &phpx_specs {
-            let (name, version_range) = parse_spec_with_version(spec);
-            match install_phpx_package(
-                &client,
-                &registry_url,
-                token.as_deref(),
-                &name,
-                &version_range,
-                &project_dir,
-            ) {
-                Ok(version) => {
-                    stdio::log("update", &format!("updated {}@{}", name, version));
-                }
-                Err(err) => {
-                    stdio::error("update", &format!("failed to update {}: {}", name, err));
-                    update_failed = true;
-                }
-            }
-        }
-
-        // An integrity rejection is a failed update, even when every request
-        // was for a PHPX package and the generic installer has no work left.
-        // Rollout callers use the process status as the success signal.
-        if update_failed {
-            std::process::exit(1);
-        }
-    }
-
-    if phpx_specs.len() == specs.len() {
-        return;
+        stdio::error(
+            "update",
+            "legacy linkhash/harar registry support has been removed. Use @deka/* stdlib packages or publish to GitHub.",
+        );
+        std::process::exit(1);
     }
 
     match build_update_payload(context) {
@@ -265,92 +227,7 @@ fn run_shop_update(context: &Context, project_dir: &std::path::Path) -> Result<(
         &format!("shop-mode: bumping deps for {}", shop_id),
     );
 
-    // Read current versions from deka.lock (authoritative) before bump.
-    let before = read_php_lock_versions(project_dir);
-
-    // Collect scoped specs from deka.json dependencies. Shop-mode restricts
-    // updates to deps declared in deka.json (not arbitrary positionals) so
-    // the commit diff is predictable.
-    let (registry_url, token) = get_registry_config(context);
-    let client = LinkhashClient::new(&registry_url, token.as_deref());
-
-    let mut specs = context.args.positionals.clone();
-    if specs.is_empty() {
-        specs = collect_deka_json_deps_in(project_dir);
-    }
-
-    let phpx_specs: Vec<String> = specs
-        .iter()
-        .filter(|s| is_phpx_package(s))
-        .cloned()
-        .collect();
-
-    if phpx_specs.is_empty() {
-        stdio::log("update", "no scoped deps declared; nothing to bump");
-        return Ok(());
-    }
-
-    let mut any_failed = false;
-    for spec in &phpx_specs {
-        // parse_spec_with_version yields the declared semver range from
-        // deka.json (e.g. `^0.1.0`). The registry's resolve() picks the
-        // latest matching version, so we never silently cross a major
-        // boundary — merchants must edit deka.json explicitly for that.
-        let (name, version_range) = parse_spec_with_version(spec);
-        match install_phpx_package(
-            &client,
-            &registry_url,
-            token.as_deref(),
-            &name,
-            &version_range,
-            project_dir,
-        ) {
-            Ok(v) => stdio::log("update", &format!("resolved {}@{}", name, v)),
-            Err(err) => {
-                stdio::error("update", &format!("failed {}: {}", name, err));
-                any_failed = true;
-            }
-        }
-    }
-
-    if any_failed {
-        revert_shop_update(project_dir);
-        return Err("one or more deps failed to resolve; working tree reverted".to_string());
-    }
-
-    // Read versions after bump and compute the diff.
-    let after = read_php_lock_versions(project_dir);
-    let diff = diff_versions(&before, &after);
-
-    if diff.is_empty() {
-        stdio::log("update", "already up to date");
-        return Ok(());
-    }
-
-    // Verify with a build. The shop working tree must still compile after
-    // the dep bump; if not, revert and report which bump broke it.
-    stdio::log("update", "verifying build...");
-    let build_ok = run_verify_build(project_dir);
-    if let Err(err) = build_ok {
-        revert_shop_update(project_dir);
-        return Err(format!(
-            "build failed after bump ({}). Reverted deka.json + deka.lock. Offending diff: {}",
-            err,
-            format_diff_line(&diff)
-        ));
-    }
-
-    // Commit the lock/json changes with an identifying author. The
-    // post-commit hook (or the git-server receive-pack path for bare
-    // repos) triggers the runtime reload.
-    let diff_line = format_diff_line(&diff);
-    let subject = format!("platform: {}", diff_line);
-    if let Err(err) = git_commit_shop_update(project_dir, &subject) {
-        return Err(format!("git commit failed: {}", err));
-    }
-
-    stdio::log("update", &format!("committed: {}", subject));
-    Ok(())
+    Err("shop-mode update depends on the legacy linkhash/harar registry, which has been removed".to_string())
 }
 
 /// Read the current package version map from deka.lock in `dir`.
@@ -785,59 +662,19 @@ fn rehash_phpx_packages(project_dir: &Path, specs: &[String]) -> Result<Vec<Stri
     Ok(packages)
 }
 
-/// Install a scoped PHPX package using linkhash-client.
-/// Returns the installed version on success.
-fn install_phpx_package(
-    client: &LinkhashClient,
-    registry: &str,
-    token: Option<&str>,
-    name: &str,
-    version_range: &str,
-    project_dir: &std::path::Path,
-) -> Result<String> {
-    // Resolve the version
-    let resolved = client.resolve(name, version_range)?;
-
-    // Download into a disposable sibling. The existing package stays in
-    // place until the registry digest has passed.
-    let target = project_dir.join("php_modules").join(name);
-    let staging = target
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("package target has no parent"))?
-        .join(format!(".deka-install-{}", std::process::id()));
-    if staging.exists() {
-        std::fs::remove_dir_all(&staging)?;
+/// Returns true for scoped package names like `@deka/core` or `@tana/app`.
+fn is_phpx_package(spec: &str) -> bool {
+    let trimmed = spec.trim();
+    if !trimmed.starts_with('@') {
+        return false;
     }
-    client.download(name, &resolved.version, &staging)?;
-
-    // Compute integrity hashes for the installed package so the lock matches
-    // what the module validator recomputes at load time.
-    let integrity = modules_php::integrity::compute_package_integrity(&staging)
-        .map_err(|err| anyhow::anyhow!("integrity hash failed for {}: {}", name, err))?;
-    let advertised = fetch_package_digest(registry, token, name, &resolved.version)?;
-    if let Err(err) = verify_package_digest(name, &advertised, &integrity) {
-        let _ = std::fs::remove_dir_all(&staging);
-        return Err(err);
-    }
-
-    if target.exists() {
-        std::fs::remove_dir_all(&target)?;
-    }
-    std::fs::rename(&staging, &target).or_else(|_| {
-        copy_dir_all(&staging, &target)?;
-        std::fs::remove_dir_all(&staging)
-    })?;
-
-    // Update deka.lock with the resolved version + integrity hashes
-    update_deka_lock(
-        project_dir,
-        name,
-        &resolved.version,
-        &integrity.module_graph,
-        &integrity.fs_graph,
-    )?;
-
-    Ok(resolved.version)
+    // Strip an optional version suffix: @scope/name@version
+    let name_part = if let Some(idx) = trimmed[1..].find('@') {
+        &trimmed[..idx + 1]
+    } else {
+        trimmed
+    };
+    name_part.contains('/')
 }
 
 fn copy_dir_all(source: &std::path::Path, target: &std::path::Path) -> std::io::Result<()> {

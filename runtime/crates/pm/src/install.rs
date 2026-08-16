@@ -1,11 +1,9 @@
 use crate::{
     lock,
     payload::InstallPayload,
-    registry_integrity::{fetch_package_digest, verify_package_digest},
     spec::parse_package_spec,
 };
 use anyhow::{anyhow, bail, Context, Result};
-use linkhash_client::LinkhashClient;
 use modules_php::integrity::compute_package_integrity;
 use runtime_core::module_spec::canonical_php_package_spec;
 use serde::{Deserialize, Serialize};
@@ -40,24 +38,12 @@ pub async fn run_install(payload: InstallPayload) -> Result<()> {
 
 fn run_php_install(specs: Vec<String>, quiet: bool) -> Result<()> {
     let cwd = std::env::current_dir().context("failed to resolve current directory")?;
-    run_php_install_in(
-        specs,
-        quiet,
-        &cwd,
-        &linkhash_registry_url(),
-        linkhash_token().as_deref(),
-    )
+    run_php_install_in(specs, quiet, &cwd)
 }
 
-fn run_php_install_in(
-    specs: Vec<String>,
-    quiet: bool,
-    cwd: &Path,
-    registry: &str,
-    token: Option<&str>,
-) -> Result<()> {
+fn run_php_install_in(specs: Vec<String>, quiet: bool, cwd: &Path) -> Result<()> {
     recover_install_transaction(cwd)?;
-    let result = run_php_install_in_transaction(specs, quiet, cwd, registry, token);
+    let result = run_php_install_in_transaction(specs, quiet, cwd);
     if let Err(error) = result {
         let recovery = recover_install_transaction(cwd);
         return match recovery {
@@ -74,8 +60,6 @@ fn run_php_install_in_transaction(
     specs: Vec<String>,
     quiet: bool,
     cwd: &Path,
-    registry: &str,
-    token: Option<&str>,
 ) -> Result<()> {
     let specs = if specs.is_empty() {
         collect_project_install_specs(cwd)?
@@ -87,7 +71,6 @@ fn run_php_install_in_transaction(
         bail!("no PHP packages declared in deka.json or deka.lock");
     }
 
-    let client = LinkhashClient::new(registry, token);
     let lock_path = cwd.join(lock::LOCKFILE_NAME);
     let existing_lock = lock::read_lockfile_at(&lock_path);
     let mut transaction = InstallTransaction::begin(cwd, &lock_path)?;
@@ -110,18 +93,15 @@ fn run_php_install_in_transaction(
         cleanup_install_staging(&staging);
 
         // @deka stdlib packages are now served from deka.gg metadata + R2 tarballs.
+        // Legacy linkhash/harar registry support has been removed.
         let install_source = if is_deka_package(&name) {
             install_from_registry(&name, locked.as_ref(), &staging)
                 .with_context(|| format!("failed to install {} from deka.gg", name))?
         } else {
-            let version = select_version(&client, &name, requirements, locked.as_ref())?;
-            match install_from_linkhash(&client, &name, &version, &staging) {
-                Ok(source) => source,
-                Err(err) => {
-                    cleanup_install_staging(&staging);
-                    return Err(err);
-                }
-            }
+            bail!(
+                "package {} cannot be installed: legacy linkhash/harar registry support has been removed. Use @deka/* stdlib packages or publish to GitHub.",
+                name
+            );
         };
 
         if let Err(err) = reject_vendored_php_modules(&staging, &name) {
@@ -131,14 +111,6 @@ fn run_php_install_in_transaction(
 
         let package_integrity = compute_package_integrity(&staging)
             .map_err(|err| anyhow!("failed to compute package integrity for {}: {}", name, err))?;
-        if install_source.requires_registry_digest {
-            let digest =
-                fetch_package_digest(&registry, token.as_deref(), &name, &install_source.version)?;
-            if let Err(err) = verify_package_digest(&name, &digest, &package_integrity) {
-                cleanup_install_staging(&staging);
-                return Err(err);
-            }
-        }
 
         if let Some(locked) = &locked {
             if let Err(err) =
@@ -245,88 +217,6 @@ struct VersionRequirement {
     requested_by: String,
 }
 
-fn select_version(
-    client: &LinkhashClient,
-    name: &str,
-    requirements: &[VersionRequirement],
-    locked: Option<&LockedPackage>,
-) -> Result<String> {
-    if let Some(locked) = locked {
-        if requirements
-            .iter()
-            .all(|requirement| version_satisfies(&locked.version, &requirement.range))
-        {
-            return Ok(locked.version.clone());
-        }
-    }
-    let mut versions = match client.list_versions(name) {
-        Ok(versions) => versions,
-        // Built-in packages remain installable offline.  They have one
-        // bundled version, so this does not weaken multi-version resolution.
-        Err(_) if is_deka_package(name) => return Ok(BUNDLED_STDLIB_VERSION.to_string()),
-        Err(err) => return Err(err),
-    };
-    versions.sort_by(|left, right| {
-        semver::Version::parse(left)
-            .ok()
-            .cmp(&semver::Version::parse(right).ok())
-    });
-    let selected = versions.into_iter().rev().find(|version| {
-        semver::Version::parse(version).is_ok()
-            && requirements
-                .iter()
-                .all(|requirement| version_satisfies(version, &requirement.range))
-    });
-    selected.ok_or_else(|| version_conflict(name, requirements))
-}
-
-fn version_satisfies(version: &str, range: &str) -> bool {
-    if range.trim().is_empty() || matches!(range.trim(), "latest" | "*") {
-        return true;
-    }
-    let Ok(version) = semver::Version::parse(version) else {
-        return false;
-    };
-    let range = normalize_version_range(range);
-    semver::VersionReq::parse(&range).is_ok_and(|requirement| requirement.matches(&version))
-}
-
-fn normalize_version_range(range: &str) -> String {
-    let range = range.trim();
-    let (prefix, bare) = range
-        .strip_prefix('^')
-        .map_or(("", range), |value| ("^", value));
-    let components = bare.split('.').count();
-    if bare
-        .chars()
-        .all(|character| character.is_ascii_digit() || character == '.')
-        && components < 3
-    {
-        format!("{prefix}{bare}{}", ".0".repeat(3 - components))
-    } else {
-        range.to_string()
-    }
-}
-
-fn version_conflict(name: &str, requirements: &[VersionRequirement]) -> anyhow::Error {
-    let left = requirements
-        .first()
-        .expect("version conflict has requirement");
-    let right = requirements
-        .iter()
-        .skip(1)
-        .find(|requirement| requirement.range != left.range)
-        .unwrap_or(left);
-    anyhow!(
-        "version conflict: {} required as {} by {} and {} by {}",
-        name,
-        left.range,
-        left.requested_by,
-        right.range,
-        right.requested_by
-    )
-}
-
 fn package_dependencies(package_root: &Path, package_name: &str) -> Result<Vec<String>> {
     let manifest_path = package_root.join("deka.json");
     if !manifest_path.exists() {
@@ -420,23 +310,6 @@ struct LockedPackage {
     resolved: String,
     module_graph: String,
     fs_graph: String,
-}
-
-fn install_from_linkhash(
-    client: &LinkhashClient,
-    name: &str,
-    version_range: &str,
-    destination: &Path,
-) -> Result<InstalledSource> {
-    let resolved = client.resolve(name, version_range)?;
-    client.download(name, &resolved.version, destination)?;
-    Ok(InstalledSource {
-        version: resolved.version,
-        repo: resolved.repo,
-        git_ref: resolved.git_ref,
-        source: "linkhash",
-        requires_registry_digest: true,
-    })
 }
 
 const GITHUB_STDLIB_ORG: &str = "dekaruntime";
@@ -1234,19 +1107,6 @@ fn is_valid_scoped_name(spec: &str) -> bool {
         && name
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
-}
-
-fn linkhash_registry_url() -> String {
-    std::env::var("LINKHASH_REGISTRY_URL")
-        .or_else(|_| std::env::var("LINKHASH_REGISTRY"))
-        .or_else(|_| std::env::var("TANA_GIT_SERVER"))
-        .unwrap_or_else(|_| "https://git.tana.gg".to_string())
-}
-
-fn linkhash_token() -> Option<String> {
-    std::env::var("LINKHASH_TOKEN")
-        .or_else(|_| std::env::var("TANA_GIT_TOKEN"))
-        .ok()
 }
 
 #[cfg(test)]
