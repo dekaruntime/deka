@@ -108,3 +108,29 @@ the owning runtime/stdlib lanes define and validate one.
 - Prefer helpful validation errors (see `deka-validation`).
 - Keep imports explicit in JS/TS examples.
 - Follow Bun-like ergonomics for runtime APIs where possible (serve/build/run behavior).
+
+## Workspace hygiene (issue-based work)
+
+To avoid worktree/branch pollution in the main project folders, every issue gets
+its own fresh clone and a branch named after the issue.
+
+1. Create a working directory named after the repo and issue:
+   ```sh
+   mkdir -p ~/Projects/work
+   cd ~/Projects/work
+   git clone git@github.com:dekaruntime/<repo>.git <repo>-issue-<number>
+   cd <repo>-issue-<number>
+   ```
+2. Create a branch with the same name for context:
+   ```sh
+   git checkout -b agent/ava/issue-<number>
+   ```
+3. Do the work, commit, push, and open a PR.
+4. After the PR merges, delete the directory:
+   ```sh
+   rm -rf ~/Projects/work/<repo>-issue-<number>
+   ```
+
+Do not use `git worktree` inside `~/Projects/deka/` or other canonical repos.
+The canonical repos (`~/Projects/deka/`, `~/Projects/deka/website`, etc.) should
+stay on `main` and remain clean between tasks.
