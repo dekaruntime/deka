@@ -34,10 +34,16 @@ fn core_bytes_module_compiles_to_bytes_helpers() {
     );
 }
 
-/// Verifies a small PHPX snippet using the bytes type annotation compiles
-/// and the emitter installs the bytes helpers in its prelude.
+/// Verifies a small PHPX snippet using the bytes type annotation compiles.
+///
+/// Was `bytes_type_snippet_emits_helpers_in_prelude`, which also asserted the
+/// bytes helpers landed in the prelude. A bare `$input: bytes` annotation
+/// references no helper at all -- types are erased at compile time -- so under
+/// the demand-driven prelude (#47) nothing is emitted for it, correctly. The
+/// valuable part of this test is that the `bytes` type annotation compiles
+/// end-to-end; that is what it now asserts.
 #[test]
-fn bytes_type_snippet_emits_helpers_in_prelude() {
+fn bytes_type_snippet_compiles() {
     let source = r#"
 function encode($input: bytes): bytes {
     return $input;
@@ -51,7 +57,7 @@ function encode($input: bytes): bytes {
     let js = emit_js_from_ast(&program, source.as_bytes(), SourceModuleMeta::empty())
         .expect("bytes snippet should emit JS");
     assert!(
-        js.contains("__deka_bytes_from_string"),
-        "bytes helpers missing from prelude: {js}"
+        js.contains("function encode"),
+        "bytes-annotated function should still emit its body: {js}"
     );
 }

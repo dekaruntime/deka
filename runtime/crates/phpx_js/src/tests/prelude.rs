@@ -452,19 +452,26 @@ fn prelude_kept_entries_present_when_referenced() {
 }
 
 #[test]
-fn prelude_contains_bytes_helpers() {
+fn bytes_helpers_are_demand_driven() {
+    // Was `prelude_contains_bytes_helpers`, which asserted the 9 RFD 15 bytes
+    // helpers were emitted unconditionally. That was written against the
+    // pre-#47 prelude, where every helper landed in every program. #47 made
+    // the whole prelude demand-driven precisely to stop that bloat, so a
+    // program that never touches bytes must NOT carry the helpers -- the
+    // assertion is inverted here to match the contract main now enforces.
+    // The positive case (helpers ARE emitted when bytes are genuinely used)
+    // is covered for real by tests::bytes::core_bytes_module_compiles_to_bytes_helpers,
+    // which compiles the actual core/bytes.phpx stdlib module.
     let js = phpx_to_js("$x = 1;").expect("should compile");
     assert!(
-        js.contains("globalThis.__deka_bytes_from_string"),
-        "expected __deka_bytes_from_string in prelude"
+        !js.contains("globalThis.__deka_bytes_from_string"),
+        "bytes helpers must not be emitted for a program that never uses bytes: {}",
+        js
     );
     assert!(
-        js.contains("globalThis.__deka_bytes_len"),
-        "expected __deka_bytes_len in prelude"
-    );
-    assert!(
-        js.contains("globalThis.__deka_bytes_concat"),
-        "expected __deka_bytes_concat in prelude"
+        !js.contains("globalThis.__deka_bytes_concat"),
+        "bytes helpers must not be emitted for a program that never uses bytes: {}",
+        js
     );
 }
 
