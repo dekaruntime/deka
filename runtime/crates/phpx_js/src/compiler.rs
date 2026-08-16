@@ -1,15 +1,43 @@
 use crate::{SourceModuleMeta, emitter::JsSubsetEmitter};
 use bumpalo::Bump;
 use modules_php::compiler_api::{compile_deka, compile_phpx, compile_phpx_internal};
-use modules_php::validation::format_multiple_errors;
+use modules_php::validation::{format_multiple_errors, format_validation_warning};
 use php_rs::parser::ast::Program;
 use std::path::Path;
 
+/// Result of a successful compile that also carries warning-severity
+/// diagnostics (deka#59). `deka build`'s exit-code path does not use this --
+/// see `compile_phpx_source_to_js` below, which is untouched and still
+/// discards warnings exactly as it did before this change (that exit-code
+/// behavior belongs to a different lane fixing deka#5).
+pub struct CompileOutcome {
+    pub js: String,
+    /// Pre-rendered, human-readable warning text (same renderer used for
+    /// errors, just yellow instead of red) -- one entry per warning.
+    pub warnings: Vec<String>,
+}
+
+/// Compile `source` to JS. Warnings are silently discarded on success --
+/// this is the function `deka build` calls, and its Ok/Err (and therefore
+/// exit-code) behavior must stay exactly as it was pre-deka#59. Callers that
+/// want to see warnings (e.g. `deka check`) should call
+/// `compile_phpx_source_to_js_with_warnings` instead.
 pub fn compile_phpx_source_to_js(
     source: &str,
     input: &str,
     meta: SourceModuleMeta,
 ) -> Result<String, String> {
+    compile_phpx_source_to_js_with_warnings(source, input, meta).map(|outcome| outcome.js)
+}
+
+/// Like `compile_phpx_source_to_js`, but on success also returns rendered
+/// warning-severity diagnostics instead of discarding them. `Err` behavior
+/// (including the exact formatted string) is unchanged.
+pub fn compile_phpx_source_to_js_with_warnings(
+    source: &str,
+    input: &str,
+    meta: SourceModuleMeta,
+) -> Result<CompileOutcome, String> {
     let arena = Bump::new();
     let path = Path::new(input);
     let result = if path.extension().and_then(|ext| ext.to_str()) == Some("ds") {
@@ -24,6 +52,12 @@ pub fn compile_phpx_source_to_js(
         return Err(formatted);
     }
 
+    let warnings: Vec<String> = result
+        .warnings
+        .iter()
+        .map(|warning| format_validation_warning(source, input, warning))
+        .collect();
+
     let js = if let Some(program) = result.ast {
         match emit_js_from_ast(&program, source.as_bytes(), meta) {
             Ok(emitted) => emitted,
@@ -33,7 +67,7 @@ pub fn compile_phpx_source_to_js(
         emit_js_scaffold_with_reason(source, input, "no AST available after validation")
     };
 
-    Ok(js)
+    Ok(CompileOutcome { js, warnings })
 }
 
 fn is_internal_phpx_path(path: &Path) -> bool {
