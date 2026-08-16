@@ -195,13 +195,12 @@ impl<'a> JsSubsetEmitter<'a> {
         // `self.body` / `self.main_body` hold the program's fully emitted JS.
         // Every builtin-style call/reference this emitter doesn't otherwise
         // special-case resolves through the `Expr::Variable`/`Expr::Call`
-        // fallback paths in emitter/expr.rs, which always emit the fully
-        // qualified `globalThis.<name>` form (never a bare identifier) — see
-        // `Expr::Variable`'s undeclared-identifier branch. So a plain
-        // substring scan of the already-emitted body for `globalThis.<name>`
-        // finds every real usage without needing per-call-site
-        // instrumentation, exactly mirroring what `needed_helpers` already
-        // does for Tier B helpers (base64/hash/date/pack) below.
+        // fallback paths in emitter/expr.rs. Undeclared identifiers emit as
+        // bare names (e.g. `console`) for readable output, while references to
+        // PHPX builtins still show up in the emitted body. `body_refs_global`
+        // scans for both the bare whole-word identifier and the fully qualified
+        // `globalThis.<name>` form, so helper inclusion stays demand-driven
+        // without per-call-site instrumentation.
         //
         // A handful of entries call each other internally purely through
         // their own `globalThis.*` bodies (e.g. `header` writes through
@@ -774,20 +773,40 @@ fn body_uses_await(text: &str) -> bool {
     false
 }
 
-/// True if `text` (the already-emitted program body) references
-/// `globalThis.<name>` as a whole identifier — not as a substring of a
-/// longer one (so `globalThis.is_file` doesn't false-positive on some
-/// hypothetical `globalThis.is_filed`).
+/// True if `text` (the already-emitted program body) references `name` as a
+/// whole identifier, either as `globalThis.<name>` or as a bare identifier.
+/// The bare form is accepted so that undeclared user identifiers (which now
+/// emit without the `globalThis.` prefix) still trigger demand-driven helper
+/// inclusion. Boundaries prevent substring false-positives.
 fn body_refs_global(text: &str, name: &str) -> bool {
-    let pat = format!("globalThis.{}", name);
+    let qualified = format!("globalThis.{}", name);
     let bytes = text.as_bytes();
     let mut start = 0;
-    while let Some(pos) = text[start..].find(pat.as_str()) {
+    while let Some(pos) = text[start..].find(qualified.as_str()) {
         let idx = start + pos;
-        let after = idx + pat.len();
+        let after = idx + qualified.len();
         let boundary_ok =
             after >= bytes.len() || !(bytes[after].is_ascii_alphanumeric() || bytes[after] == b'_');
         if boundary_ok {
+            return true;
+        }
+        start = idx + 1;
+    }
+    // Bare reference: whole-word match, not preceded by `.` (which would make
+    // it a property access on something else) and not followed by an
+    // identifier continuation.
+    let mut start = 0;
+    let name_bytes = name.as_bytes();
+    while let Some(pos) = text[start..].find(name) {
+        let idx = start + pos;
+        let before_ok = idx == 0
+            || !(bytes[idx - 1].is_ascii_alphanumeric()
+                || bytes[idx - 1] == b'_'
+                || bytes[idx - 1] == b'.');
+        let after = idx + name_bytes.len();
+        let after_ok = after >= bytes.len()
+            || !(bytes[after].is_ascii_alphanumeric() || bytes[after] == b'_');
+        if before_ok && after_ok {
             return true;
         }
         start = idx + 1;

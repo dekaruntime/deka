@@ -31,7 +31,12 @@ impl<'a> JsSubsetEmitter<'a> {
                             ident
                         ));
                     }
-                    Ok(format!("globalThis.{}", ident))
+                    // Emit undeclared identifiers as bare names. They resolve
+                    // through normal JavaScript global lookup, which keeps the
+                    // RAW tab output readable. The prelude helper scan still
+                    // catches references to PHPX builtins by also matching bare
+                    // whole-word identifiers.
+                    Ok(ident)
                 }
             }
             Expr::Integer { value, .. } | Expr::Float { value, .. } => {
