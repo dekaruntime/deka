@@ -181,6 +181,7 @@ pub(super) async fn op_php_concurrency_lock_release(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     fn unique_name(prefix: &str) -> String {
         format!(
@@ -274,5 +275,76 @@ mod tests {
             release2.get("error").and_then(|v| v.as_str()),
             Some("lock_token_not_found")
         );
+    }
+
+    #[tokio::test]
+    async fn lock_waiters_are_served_in_fifo_order() {
+        let name = unique_name("fifo");
+        let first = lock_acquire_impl(name.clone(), 1000).await;
+        let token1 = first.get("token").and_then(|v| v.as_u64()).unwrap();
+
+        let order = Arc::new(Mutex::new(Vec::<usize>::new()));
+        let mut handles = Vec::new();
+
+        for i in 0..3 {
+            let name_i = name.clone();
+            let order_i = Arc::clone(&order);
+            handles.push(tokio::spawn(async move {
+                let res = lock_acquire_impl(name_i, 5000).await;
+                assert_eq!(res.get("ok").and_then(|v| v.as_bool()), Some(true));
+                order_i.lock().await.push(i);
+                res.get("token").and_then(|v| v.as_u64()).unwrap()
+            }));
+            // Stagger starts slightly so enqueue order is deterministic.
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        // Give all waiters time to queue.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Release the initial holder; waiters should be granted one by one.
+        let _ = lock_release_impl(token1).await;
+
+        for h in handles {
+            let token = h.await.expect("spawn join");
+            let _ = lock_release_impl(token).await;
+        }
+
+        let observed = order.lock().await.clone();
+        assert_eq!(observed, vec![0, 1, 2]);
+    }
+
+    #[tokio::test]
+    async fn lock_registry_cleans_up_when_lock_is_fully_released() {
+        let name = unique_name("cleanup");
+        let res = lock_acquire_impl(name.clone(), 1000).await;
+        let token = res.get("token").and_then(|v| v.as_u64()).unwrap();
+
+        let _ = lock_release_impl(token).await;
+
+        // The lock entry should be removed from the registry when there is no
+        // holder and no waiters.
+        let reg = lock_registry().lock().await;
+        assert!(
+            !reg.locks.contains_key(&name),
+            "lock entry should be removed after release"
+        );
+    }
+
+    #[tokio::test]
+    async fn lock_multiple_independent_names_do_not_interfere() {
+        let name_a = unique_name("multi_a");
+        let name_b = unique_name("multi_b");
+
+        let a = lock_acquire_impl(name_a.clone(), 1000).await;
+        let token_a = a.get("token").and_then(|v| v.as_u64()).unwrap();
+
+        let b = lock_acquire_impl(name_b.clone(), 1000).await;
+        let token_b = b.get("token").and_then(|v| v.as_u64()).unwrap();
+
+        assert_ne!(token_a, token_b);
+
+        let _ = lock_release_impl(token_a).await;
+        let _ = lock_release_impl(token_b).await;
     }
 }
