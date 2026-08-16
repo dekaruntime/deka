@@ -11,6 +11,7 @@ export function connectTls($host: string, $port: int, $server_name: string|null 
 export function listen($host: string, $port: int, $options: Object = {}): Promise<Result<int, string>>
 export function listenTls($host: string, $port: int, $cert: bytes, $key: bytes, $options: Object = {}): Promise<Result<int, string>>
 export function accept($handle: int): Promise<Result<int, string>>
+export function readUntil($handle: int, $delimiter: bytes, $max_bytes: int = 65536): Promise<Result<Object<{ data: bytes, found: bool, eof: bool }>, string>>
 
 export function connectSync($host: string, $port: int, $options: Object = {}): Result<int, string>
 export function readSync($handle: int, $max_bytes: int = 4096): Result<bytes, string>
@@ -23,6 +24,7 @@ export function connectTlsSync($host: string, $port: int, $server_name: string|n
 export function listenSync($host: string, $port: int, $options: Object = {}): Result<int, string>
 export function listenTlsSync($host: string, $port: int, $cert: bytes, $key: bytes, $options: Object = {}): Result<int, string>
 export function acceptSync($handle: int): Result<int, string>
+export function readUntilSync($handle: int, $delimiter: bytes, $max_bytes: int = 65536): Result<Object<{ data: bytes, found: bool, eof: bool }>, string>,
 
 export function tcp_connect($host: string, $port: int, $options: Object = {}): Result<int, string>
 export function tcp_read($handle: int, $max_bytes: int = 4096): Result<bytes, string>
