@@ -36,6 +36,13 @@ impl<'a> JsSubsetEmitter<'a> {
                 let method_name = self.token_name(name);
                 let js_params = params
                     .iter()
+                    // RFD 19: `self` is not a real JS parameter -- it binds
+                    // to `this` (see the Expr::Variable passthrough), so it
+                    // must not appear in the emitted signature at all, or
+                    // `b.greet()` (zero call-site args) would leave it
+                    // permanently undefined if ever referenced by its own
+                    // parameter binding rather than through the this-mapping.
+                    .filter(|p| self.token_name(p.name) != "self")
                     .map(|p| self.token_name(p.name))
                     .collect::<Vec<_>>()
                     .join(", ");

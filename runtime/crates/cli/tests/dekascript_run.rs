@@ -73,6 +73,35 @@ fn run_executes_declared_array_function_call() {
     );
 }
 
+// RFD 19: `self: Self` is how an impl-block method accesses its own
+// receiver's fields (no implicit `this`, no PHP-style `$this`). This is
+// the exact case that printed "hi from undefined" before self/this
+// binding existed -- real end-to-end proof it now reads the real field.
+#[test]
+fn run_executes_inherent_impl_method_reading_self_field() {
+    run_dekascript(
+        "inherent_impl_self",
+        "struct Point { $x: int; }\n\
+         impl Point { doubled(self: Self): int { return self.x * 2; } }\n\
+         const p = Point { $x: 5 };\n\
+         print(p.doubled());\n",
+        "10",
+    );
+}
+
+#[test]
+fn run_executes_trait_impl_method_reading_self_field() {
+    run_dekascript(
+        "trait_impl_self",
+        "trait Greeter {\n  greet(self: Self): string\n}\n\
+         struct Bot { $name: string; }\n\
+         impl Greeter for Bot { greet(self: Self): string { return \"hi from \" + self.name; } }\n\
+         const b = Bot { $name: \"Rex\" };\n\
+         print(b.greet());\n",
+        "hi from Rex",
+    );
+}
+
 #[test]
 fn run_executes_dekascript_generic_variadic_collect_candidate() {
     run_dekascript(

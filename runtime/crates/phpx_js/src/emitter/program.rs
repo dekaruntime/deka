@@ -212,14 +212,31 @@ impl<'a> JsSubsetEmitter<'a> {
                 // are what produce runtime methods.
                 Ok(())
             }
-            Stmt::Impl { .. } => {
-                // TODO(RFD 19): impl-block codegen is not implemented yet.
-                // Parsing/typechecking traits and impls is the current slice;
-                // lowering methods onto the target's frozen-object shape
-                // (matching the struct/enum lowering, never globalThis) is
-                // the next piece of work. Fail loudly rather than silently
-                // emit nothing and produce a program missing its methods.
-                Err("impl blocks do not yet emit runtime methods (RFD 19, in progress)".to_string())
+            Stmt::Impl { target, members, .. } => {
+                // RFD 19 codegen, first cut: reuse the existing struct
+                // method registry/mechanism (emit_struct_methods + the
+                // globalThis.__phpxStructMethods merge already used for a
+                // struct's own inline methods) rather than building a new
+                // no-globalThis mechanism right now. Pragmatic, not the
+                // destination: RFD 13 / #47 both argue against new
+                // globalThis dispatch, and struct methods should eventually
+                // move off it too. Chosen here because RFD 15-18 (Bytes,
+                // TCP, TLS, HTTP) are stacked waiting on impl actually
+                // running, not just typechecking, and this reuses proven,
+                // tested infrastructure instead of inventing a second
+                // mechanism under time pressure. A trait is erased at
+                // runtime same as an interface -- the emitted method is
+                // indistinguishable from an inherent one; only the
+                // typechecker knows which trait it came from.
+                let target_name = self.token_name(&target.parts[0]);
+                let methods = self.emit_struct_methods(*members)?;
+                if !methods.is_empty() {
+                    self.struct_methods
+                        .entry(target_name)
+                        .or_default()
+                        .extend(methods);
+                }
+                Ok(())
             }
             Stmt::Interface { .. } => {
                 // Interfaces have no runtime representation in the JS subset;
