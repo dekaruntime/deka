@@ -122,6 +122,22 @@ fn run_executes_impl_trait_for_enum_method() {
 // Same case, but with `impl` appearing BEFORE the `enum` it targets --
 // proves the fix is genuinely order-independent, not incidentally correct
 // for one source ordering.
+// Inherent impl (no trait) for an enum -- a distinct combination from the
+// trait-impl-for-enum cases above, confirming the fix in deka#71 was
+// correctly unconditional on trait_name rather than only fixing the
+// trait-impl path.
+#[test]
+fn run_executes_inherent_impl_for_enum_method() {
+    run_dekascript(
+        "inherent_impl_enum",
+        "enum Color { case Red; case Green; }\n\
+         impl Color { describe(self: Self): string { return \"a color value\"; } }\n\
+         const c = Color::Green;\n\
+         print(c.describe());\n",
+        "a color value",
+    );
+}
+
 #[test]
 fn run_executes_impl_before_enum_declaration_method() {
     run_dekascript(
