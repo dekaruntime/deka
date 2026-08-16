@@ -103,11 +103,24 @@ impl<'a> JsSubsetEmitter<'a> {
 
         let mut checks = Vec::with_capacity(conditions.len());
         for cond in conditions {
+            // `_` is the match wildcard, never an identifier reference. It
+            // must never lower to a variable lookup (`globalThis._`), which
+            // is both dead in the common case and, if some library (lodash)
+            // has set `globalThis._`, wrongly matches an unrelated value.
+            // See deka#48. The wildcard makes the whole guard unconditional.
+            if self.is_wildcard_pattern(*cond) {
+                return Ok("true".to_string());
+            }
             if let Some((enum_name, case_name)) = self.enum_case_from_expr(*cond) {
+                // Discriminate on the `__enum`/`__case` tags, never
+                // `instanceof` — enum values are frozen plain objects (no
+                // class, no prototype), so `__enum`/`__case` are the only
+                // thing that survives a JSON or structuredClone boundary
+                // (deka isolates, the sandboxed worker). See deka#49.
                 checks.push(format!(
-                    "({} instanceof {} && {}.__case === {})",
+                    "({}.__enum === {} && {}.__case === {})",
                     condition_js,
-                    enum_name,
+                    json_string(&enum_name),
                     condition_js,
                     json_string(&case_name)
                 ));
@@ -117,6 +130,15 @@ impl<'a> JsSubsetEmitter<'a> {
             checks.push(format!("({} === {})", condition_js, rhs));
         }
         Ok(format!("({})", checks.join(" || ")))
+    }
+
+    /// True when `expr` is the bare `_` wildcard pattern in a match arm
+    /// condition. `_` is not a variable — it is a pattern that always
+    /// matches — so it must never be routed through normal expression
+    /// emission (which would look it up as an undeclared identifier and
+    /// fall back to `globalThis._`). See deka#48.
+    pub(super) fn is_wildcard_pattern(&self, expr: ExprId<'_>) -> bool {
+        matches!(expr, Expr::Variable { name, .. } if self.span_name(*name) == "_")
     }
 
     pub(super) fn enum_case_from_expr(&self, expr: ExprId<'_>) -> Option<(String, String)> {
