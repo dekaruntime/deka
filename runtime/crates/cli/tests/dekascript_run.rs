@@ -138,6 +138,58 @@ fn run_executes_impl_trait_for_enum_method() {
     );
 }
 
+#[test]
+fn run_executes_trait_default_method_when_not_overridden() {
+    // Real bug found and fixed live: a trait impl that doesn't override
+    // one of the trait's default methods typechecked clean (the
+    // typechecker correctly allows a non-overridden default to satisfy
+    // conformance) but crashed at runtime with "x.method is not a
+    // function" -- codegen was only ever emitting what the impl block's
+    // OWN members provided, never falling back to the trait's default
+    // body for methods left unoverridden.
+    run_dekascript(
+        "trait_default_not_overridden",
+        "trait Shape {\n  area(self: Self): int\n  describe(self: Self): string { return \"a shape\"; }\n}\n\
+         struct Square { $side: int; }\n\
+         impl Shape for Square { area(self: Self): int { return self.side * self.side; } }\n\
+         const s = Square { $side: 4 };\n\
+         print(s.describe());\n",
+        "a shape",
+    );
+}
+
+#[test]
+fn run_executes_impl_override_wins_over_trait_default() {
+    // Same fix, opposite direction: when the impl DOES override a default,
+    // the override must win, not silently get shadowed by the merge logic
+    // that adds trait defaults for methods "not already provided."
+    run_dekascript(
+        "trait_default_overridden",
+        "trait Shape {\n  describe(self: Self): string { return \"a shape\"; }\n}\n\
+         struct Square { $side: int; }\n\
+         impl Shape for Square { describe(self: Self): string { return \"a square override\"; } }\n\
+         const s = Square { $side: 4 };\n\
+         print(s.describe());\n",
+        "a square override",
+    );
+}
+
+#[test]
+fn run_executes_trait_default_method_when_trait_declared_after_its_impl() {
+    // Order-independence for the default-method fix, mirroring deka#71's
+    // enum-impl fix: the trait declaring the default appears AFTER the
+    // impl block that relies on it.
+    run_dekascript(
+        "trait_default_declared_after_impl",
+        "struct Square { $side: int; }\n\
+         impl Shape for Square { area(self: Self): int { return self.side * self.side; } }\n\
+         trait Shape {\n  area(self: Self): int\n  describe(self: Self): string { return \"declared after its impl\"; }\n}\n\
+         const s = Square { $side: 3 };\n\
+         print(s.describe());\n",
+        "declared after its impl",
+    );
+}
+
 // Same case, but with `impl` appearing BEFORE the `enum` it targets --
 // proves the fix is genuinely order-independent, not incidentally correct
 // for one source ordering.
