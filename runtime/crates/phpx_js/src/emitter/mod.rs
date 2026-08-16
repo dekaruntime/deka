@@ -546,10 +546,20 @@ impl<'a> JsSubsetEmitter<'a> {
 
         if !self.main_body.is_empty() {
             out.push('\n');
-            out.push_str("const __phpx_main = async () => {\n");
-            out.push_str(&self.main_body);
-            out.push_str("};\n");
-            out.push_str("await __phpx_main();\n");
+            // Top-level statements only need the async IIFE when they actually
+            // await something. Emitting it unconditionally turned a two-line
+            // program into a wrapped closure for no reason, which is most of
+            // what the tour's RAW tab was showing. Note the wrapper was never
+            // what enabled await either -- it emits `await __phpx_main()` at
+            // top level, so the module already had to support top-level await.
+            if body_uses_await(&self.main_body) {
+                out.push_str("const __phpx_main = async () => {\n");
+                out.push_str(&self.main_body);
+                out.push_str("};\n");
+                out.push_str("await __phpx_main();\n");
+            } else {
+                out.push_str(&self.main_body);
+            }
         }
 
         if !self.meta.export_specs.is_empty() {
@@ -743,6 +753,25 @@ fn global_deps(name: &str) -> &'static [&'static str] {
         ],
         _ => &[],
     }
+}
+
+/// True if the emitted top-level body actually awaits something, as a whole
+/// word rather than a substring (so `awaited` or `myawait` do not count).
+/// Decides whether the `__phpx_main` async wrapper is worth emitting at all.
+fn body_uses_await(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut start = 0;
+    while let Some(pos) = text[start..].find("await") {
+        let idx = start + pos;
+        let before_ok = idx == 0 || !(bytes[idx - 1].is_ascii_alphanumeric() || bytes[idx - 1] == b'_' || bytes[idx - 1] == b'.');
+        let after = idx + "await".len();
+        let after_ok = after >= bytes.len() || !(bytes[after].is_ascii_alphanumeric() || bytes[after] == b'_');
+        if before_ok && after_ok {
+            return true;
+        }
+        start = idx + 1;
+    }
+    false
 }
 
 /// True if `text` (the already-emitted program body) references
