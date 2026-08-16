@@ -217,7 +217,7 @@ jobs:
         id: manifest
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          PREFIX="runtime/v${VERSION}"
+          PREFIX="v${VERSION}"
           OUT="dist/${PREFIX}"
 
           mkdir -p "${OUT}"
@@ -275,13 +275,13 @@ jobs:
       - name: Update latest manifest
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          PREFIX="runtime/v${VERSION}"
-          aws s3 cp "dist/${PREFIX}/manifest.json" "s3://${R2_RELEASES_BUCKET}/runtime/latest.json" --endpoint-url "${R2_ENDPOINT}"
+          PREFIX="v${VERSION}"
+          aws s3 cp "dist/${PREFIX}/manifest.json" "s3://${R2_RELEASES_BUCKET}/latest.json" --endpoint-url "${R2_ENDPOINT}"
 
       - name: Upload WASM artifacts to deka-wasm bucket
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          SRC="dist/runtime/v${VERSION}"
+          SRC="dist/v${VERSION}"
           aws s3 cp "${SRC}/deka_compiler.wasm" "s3://${R2_WASM_BUCKET}/v${VERSION}/deka_compiler.wasm" --endpoint-url "${R2_ENDPOINT}"
           aws s3 cp "${SRC}/deka_diagnostics.wasm" "s3://${R2_WASM_BUCKET}/v${VERSION}/deka_diagnostics.wasm" --endpoint-url "${R2_ENDPOINT}"
           aws s3 cp "${SRC}/deka_compiler.wasm.sha256" "s3://${R2_WASM_BUCKET}/v${VERSION}/deka_compiler.wasm.sha256" --endpoint-url "${R2_ENDPOINT}" || true
@@ -290,6 +290,6 @@ jobs:
       - name: Update deka-wasm latest pointers
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          SRC="dist/runtime/v${VERSION}"
+          SRC="dist/v${VERSION}"
           aws s3 cp "${SRC}/deka_compiler.wasm" "s3://${R2_WASM_BUCKET}/latest/deka_compiler.wasm" --endpoint-url "${R2_ENDPOINT}"
           aws s3 cp "${SRC}/deka_diagnostics.wasm" "s3://${R2_WASM_BUCKET}/latest/deka_diagnostics.wasm" --endpoint-url "${R2_ENDPOINT}"
