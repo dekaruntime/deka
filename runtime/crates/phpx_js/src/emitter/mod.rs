@@ -172,20 +172,84 @@ impl<'a> JsSubsetEmitter<'a> {
         out.push_str("export const phpxBuildMode = \"subset-ast\";\n");
         out.push_str("export const phpxTargetSemantics = \"js\";\n\n");
 
+        // --- Demand-driven mission/runtime globalThis prelude (#47) ---
+        //
+        // Historically every entry below was emitted unconditionally on every
+        // compiled program: ~74 lines of `globalThis.X ??= ...` plumbing even
+        // for a 4-line program that referenced none of it (#47), and
+        // `--treeshake` made it worse because DCE cannot see through
+        // `globalThis.X ??= ...` writes.
+        //
+        // By the time `finish()` runs, AST traversal is complete and
+        // `self.body` / `self.main_body` hold the program's fully emitted JS.
+        // Every builtin-style call/reference this emitter doesn't otherwise
+        // special-case resolves through the `Expr::Variable`/`Expr::Call`
+        // fallback paths in emitter/expr.rs, which always emit the fully
+        // qualified `globalThis.<name>` form (never a bare identifier) — see
+        // `Expr::Variable`'s undeclared-identifier branch. So a plain
+        // substring scan of the already-emitted body for `globalThis.<name>`
+        // finds every real usage without needing per-call-site
+        // instrumentation, exactly mirroring what `needed_helpers` already
+        // does for Tier B helpers (base64/hash/date/pack) below.
+        //
+        // A handful of entries call each other internally purely through
+        // their own `globalThis.*` bodies (e.g. `header` writes through
+        // `globalThis.__phpxCurrentResponse`, `phpxWrapHandler` calls
+        // `phpxStartBuffer`/`phpxEndBuffer`) — those internal edges can't
+        // show up in the *user's* body text, so `GLOBAL_DEPS` below expands
+        // the requested set transitively before anything is emitted.
+        let program_text = format!("{}\n{}", self.body, self.main_body);
+        let mut needed_globals: BTreeSet<&'static str> = LEAF_GLOBALS
+            .iter()
+            .copied()
+            .filter(|&name| body_refs_global(&program_text, name))
+            .collect();
+        loop {
+            let mut grew = false;
+            for name in needed_globals.clone() {
+                for &dep in global_deps(name) {
+                    if needed_globals.insert(dep) {
+                        grew = true;
+                    }
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        let want = |name: &str| needed_globals.contains(name);
+
         // --- Class (c): mission helpers ---
-        out.push_str("globalThis.panic ??= (msg) => { throw new Error(String(msg)); };\n");
+        if want("panic") {
+            out.push_str("globalThis.panic ??= (msg) => { throw new Error(String(msg)); };\n");
+        }
         // function_exists / class_exists are compile-time rewrites in try_rewrite_builtin.
         // No globalThis polyfill emitted here.
-        out.push_str("globalThis.class_alias ??= () => false;\n\n");
-        out.push_str("globalThis.defined ??= (name) => Object.prototype.hasOwnProperty.call(globalThis, String(name));\n\n");
+        if want("class_alias") {
+            out.push_str("globalThis.class_alias ??= () => false;\n\n");
+        }
+        if want("defined") {
+            out.push_str("globalThis.defined ??= (name) => Object.prototype.hasOwnProperty.call(globalThis, String(name));\n\n");
+        }
 
         // --- Class (b): runtime helpers ---
-        out.push_str("globalThis.__phpx_is_struct ??= (value, name) => Boolean(value && typeof value === 'object' && value.__struct === name);\n\n");
-        out.push_str("globalThis.__phpx_func_num_args ??= (args) => args.length;\n");
-        out.push_str(
-            "globalThis.__phpx_func_get_args ??= (args) => Array.prototype.slice.call(args);\n",
-        );
-        out.push_str("globalThis.__phpx_func_get_arg ??= (args, idx) => (idx >= 0 && idx < args.length ? args[idx] : null);\n\n");
+        if want("__phpx_is_struct") {
+            out.push_str("globalThis.__phpx_is_struct ??= (value, name) => Boolean(value && typeof value === 'object' && value.__struct === name);\n\n");
+        }
+        // func_num_args/func_get_args/func_get_arg are emitted directly as
+        // `globalThis.__phpx_func_X(...)` literal calls in expr.rs regardless
+        // of try_rewrite_builtin, so the same body-text scan covers them.
+        if want("__phpx_func_num_args") {
+            out.push_str("globalThis.__phpx_func_num_args ??= (args) => args.length;\n");
+        }
+        if want("__phpx_func_get_args") {
+            out.push_str(
+                "globalThis.__phpx_func_get_args ??= (args) => Array.prototype.slice.call(args);\n",
+            );
+        }
+        if want("__phpx_func_get_arg") {
+            out.push_str("globalThis.__phpx_func_get_arg ??= (args, idx) => (idx >= 0 && idx < args.length ? args[idx] : null);\n\n");
+        }
 
         // Class (a) entries REMOVED: chr, ord, strlen, substr, ltrim, rtrim, trim,
         // strpos, strrpos, str_starts_with, str_ends_with, str_contains,
@@ -193,36 +257,76 @@ impl<'a> JsSubsetEmitter<'a> {
         // count, time, is_array, array_map, array_filter — now compile-time rewrites in emit_expr.
 
         // --- Class (c): mission helpers (continued) ---
-        out.push_str("globalThis.getenv ??= (name) => { const key = String(name ?? ''); const env = globalThis.process && globalThis.process.env ? globalThis.process.env : null; if (!env || !Object.prototype.hasOwnProperty.call(env, key)) return false; const value = env[key]; return value === undefined || value === null ? false : String(value); };\n");
-        out.push_str("globalThis.is_promise ??= (value) => Boolean(value && typeof value === 'object' && typeof value.then === 'function');\n");
-        out.push_str("globalThis.GLOBALS ??= {};\n");
-        out.push_str("globalThis.JSON_ERROR_NONE ??= 0;\n");
-        out.push_str("globalThis.JSON_ERROR_DEPTH ??= 1;\n");
-        out.push_str("globalThis.JSON_ERROR_STATE_MISMATCH ??= 2;\n");
-        out.push_str("globalThis.JSON_ERROR_CTRL_CHAR ??= 3;\n");
-        out.push_str("globalThis.JSON_ERROR_SYNTAX ??= 4;\n");
-        out.push_str("globalThis.JSON_ERROR_UTF8 ??= 5;\n");
-        out.push_str("globalThis.JSON_ERROR_RECURSION ??= 6;\n");
-        out.push_str("globalThis.JSON_ERROR_INF_OR_NAN ??= 7;\n");
-        out.push_str("globalThis.JSON_ERROR_UNSUPPORTED_TYPE ??= 8;\n");
-        out.push_str("globalThis.JSON_ERROR_INVALID_PROPERTY_NAME ??= 9;\n");
-        out.push_str("globalThis.JSON_ERROR_UTF16 ??= 10;\n");
+        if want("getenv") {
+            out.push_str("globalThis.getenv ??= (name) => { const key = String(name ?? ''); const env = globalThis.process && globalThis.process.env ? globalThis.process.env : null; if (!env || !Object.prototype.hasOwnProperty.call(env, key)) return false; const value = env[key]; return value === undefined || value === null ? false : String(value); };\n");
+        }
+        if want("is_promise") {
+            out.push_str("globalThis.is_promise ??= (value) => Boolean(value && typeof value === 'object' && typeof value.then === 'function');\n");
+        }
+        if want("GLOBALS") {
+            out.push_str("globalThis.GLOBALS ??= {};\n");
+        }
+        const JSON_ERROR_CONSTS: &[(&str, u8)] = &[
+            ("JSON_ERROR_NONE", 0),
+            ("JSON_ERROR_DEPTH", 1),
+            ("JSON_ERROR_STATE_MISMATCH", 2),
+            ("JSON_ERROR_CTRL_CHAR", 3),
+            ("JSON_ERROR_SYNTAX", 4),
+            ("JSON_ERROR_UTF8", 5),
+            ("JSON_ERROR_RECURSION", 6),
+            ("JSON_ERROR_INF_OR_NAN", 7),
+            ("JSON_ERROR_UNSUPPORTED_TYPE", 8),
+            ("JSON_ERROR_INVALID_PROPERTY_NAME", 9),
+            ("JSON_ERROR_UTF16", 10),
+        ];
+        for &(name, value) in JSON_ERROR_CONSTS {
+            if want(name) {
+                out.push_str(&format!("globalThis.{} ??= {};\n", name, value));
+            }
+        }
 
         // --- Class (b): runtime helpers (continued) ---
-        out.push_str("globalThis.__deka_chr ??= (code) => String.fromCharCode((Number(code) || 0) & 0xff);\n");
-        out.push_str("globalThis.__deka_ord ??= (s) => { const str = String(s ?? ''); return str.length > 0 ? str.charCodeAt(0) : 0; };\n");
-        out.push_str("globalThis.__deka_object_set ??= (obj, key, value) => { if (obj && typeof obj === 'object') { obj[key] = value; } return obj; };\n");
-        // Bytes helpers (RFD 15). bytes values are Uint8Array instances; these helpers
-        // provide the canonical bridge between UTF-8 strings and raw byte buffers.
-        out.push_str("globalThis.__deka_bytes_from_string ??= (s) => new TextEncoder().encode(String(s ?? ''));\n");
-        out.push_str("globalThis.__deka_bytes_to_string ??= (b) => new TextDecoder().decode(b ?? new Uint8Array());\n");
-        out.push_str("globalThis.__deka_bytes_len ??= (b) => (b instanceof Uint8Array ? b.length : 0);\n");
-        out.push_str("globalThis.__deka_bytes_get ??= (b, i) => { const buf = b instanceof Uint8Array ? b : new Uint8Array(); const idx = Number(i) || 0; return (idx >= 0 && idx < buf.length) ? buf[idx] : null; };\n");
-        out.push_str("globalThis.__deka_bytes_set ??= (b, i, v) => { const src = b instanceof Uint8Array ? b : new Uint8Array(); const idx = Number(i) || 0; const val = Number(v) || 0; const out = new Uint8Array(src); if (idx >= 0 && idx < out.length) out[idx] = val & 0xff; return out; };\n");
-        out.push_str("globalThis.__deka_bytes_slice ??= (b, start, len) => { const buf = b instanceof Uint8Array ? b : new Uint8Array(); const s = Number(start) || 0; const e = len === null || len === undefined ? buf.length : s + (Number(len) || 0); return buf.slice(s, e); };\n");
-        out.push_str("globalThis.__deka_bytes_concat ??= (a, b) => { const aa = a instanceof Uint8Array ? a : new Uint8Array(); const bb = b instanceof Uint8Array ? b : new Uint8Array(); const out = new Uint8Array(aa.length + bb.length); out.set(aa, 0); out.set(bb, aa.length); return out; };\n");
-        out.push_str("globalThis.__deka_bytes_to_array ??= (b) => { const buf = b instanceof Uint8Array ? b : new Uint8Array(); return Array.from(buf); };\n");
-        out.push_str("globalThis.__deka_bytes_from_array ??= (a) => { if (!Array.isArray(a)) return new Uint8Array(); return Uint8Array.from(a.map((v) => { const n = Number(v) || 0; return n < 0 ? 0 : n > 255 ? 255 : n; })); };\n");
+        if want("__deka_chr") {
+            out.push_str("globalThis.__deka_chr ??= (code) => String.fromCharCode((Number(code) || 0) & 0xff);\n");
+        }
+        if want("__deka_ord") {
+            out.push_str("globalThis.__deka_ord ??= (s) => { const str = String(s ?? ''); return str.length > 0 ? str.charCodeAt(0) : 0; };\n");
+        }
+        if want("__deka_object_set") {
+            out.push_str("globalThis.__deka_object_set ??= (obj, key, value) => { if (obj && typeof obj === 'object') { obj[key] = value; } return obj; };\n");
+        }
+        // Bytes helpers (RFD 15). bytes values are Uint8Array instances; these
+        // helpers bridge UTF-8 strings and raw byte buffers. Demand-driven like
+        // every other prelude entry (#47): a program that never touches bytes must
+        // not carry 9 unused helpers, and DCE cannot see through globalThis writes.
+        // Each name below is registered in LEAF_GLOBALS so `want()` can ever be true.
+        if want("__deka_bytes_from_string") {
+            out.push_str("globalThis.__deka_bytes_from_string ??= (s) => new TextEncoder().encode(String(s ?? ''));\n");
+        }
+        if want("__deka_bytes_to_string") {
+            out.push_str("globalThis.__deka_bytes_to_string ??= (b) => new TextDecoder().decode(b ?? new Uint8Array());\n");
+        }
+        if want("__deka_bytes_len") {
+            out.push_str("globalThis.__deka_bytes_len ??= (b) => (b instanceof Uint8Array ? b.length : 0);\n");
+        }
+        if want("__deka_bytes_get") {
+            out.push_str("globalThis.__deka_bytes_get ??= (b, i) => { const buf = b instanceof Uint8Array ? b : new Uint8Array(); const idx = Number(i) || 0; return (idx >= 0 && idx < buf.length) ? buf[idx] : null; };\n");
+        }
+        if want("__deka_bytes_set") {
+            out.push_str("globalThis.__deka_bytes_set ??= (b, i, v) => { const src = b instanceof Uint8Array ? b : new Uint8Array(); const idx = Number(i) || 0; const val = Number(v) || 0; const out = new Uint8Array(src); if (idx >= 0 && idx < out.length) out[idx] = val & 0xff; return out; };\n");
+        }
+        if want("__deka_bytes_slice") {
+            out.push_str("globalThis.__deka_bytes_slice ??= (b, start, len) => { const buf = b instanceof Uint8Array ? b : new Uint8Array(); const s = Number(start) || 0; const e = len === null || len === undefined ? buf.length : s + (Number(len) || 0); return buf.slice(s, e); };\n");
+        }
+        if want("__deka_bytes_concat") {
+            out.push_str("globalThis.__deka_bytes_concat ??= (a, b) => { const aa = a instanceof Uint8Array ? a : new Uint8Array(); const bb = b instanceof Uint8Array ? b : new Uint8Array(); const out = new Uint8Array(aa.length + bb.length); out.set(aa, 0); out.set(bb, aa.length); return out; };\n");
+        }
+        if want("__deka_bytes_to_array") {
+            out.push_str("globalThis.__deka_bytes_to_array ??= (b) => { const buf = b instanceof Uint8Array ? b : new Uint8Array(); return Array.from(buf); };\n");
+        }
+        if want("__deka_bytes_from_array") {
+            out.push_str("globalThis.__deka_bytes_from_array ??= (a) => { if (!Array.isArray(a)) return new Uint8Array(); return Uint8Array.from(a.map((v) => { const n = Number(v) || 0; return n < 0 ? 0 : n > 255 ? 255 : n; })); };\n");
+        }
         // --- Tier B helpers: module-scoped function declarations (DCE-visible) ---
         // Emitted only when needed (self.needed_helpers tracks which ones were
         // referenced during AST traversal). Plain `function` declarations are in
@@ -232,20 +336,42 @@ impl<'a> JsSubsetEmitter<'a> {
         out.push_str(&emit_needed_helpers(&self.needed_helpers));
 
         // hash_equals is a compile-time inline IIFE rewrite in try_rewrite_builtin. No globalThis install.
-        out.push_str("globalThis.__phpx_symbol_table ??= Object.create(null);\n");
-        out.push_str("globalThis.__deka_symbol_set ??= (name, value) => { const key = String(name); globalThis.__phpx_symbol_table[key] = value; return true; };\n");
-        out.push_str("globalThis.__deka_symbol_get ??= (name) => { const key = String(name); return Object.prototype.hasOwnProperty.call(globalThis.__phpx_symbol_table, key) ? globalThis.__phpx_symbol_table[key] : null; };\n");
-        out.push_str("globalThis.__deka_symbol_exists ??= (name) => { const key = String(name); return Object.prototype.hasOwnProperty.call(globalThis.__phpx_symbol_table, key); };\n");
-        out.push_str("globalThis.__phpx_array_cursor ??= new WeakMap();\n");
-        out.push_str("globalThis.__deka_array_cursor ??= (arr, action) => { if (!arr || (typeof arr !== 'object' && !Array.isArray(arr))) return null; const map = globalThis.__phpx_array_cursor; let state = map.get(arr); if (!state) { state = { idx: 0 }; map.set(arr, state); } const keys = Object.keys(arr); if (keys.length === 0) return null; const clamp = () => { if (state.idx < 0) state.idx = 0; if (state.idx >= keys.length) state.idx = keys.length - 1; }; switch (String(action)) { case 'reset': state.idx = 0; break; case 'end': state.idx = keys.length - 1; break; case 'next': state.idx += 1; if (state.idx >= keys.length) return null; break; case 'prev': state.idx -= 1; if (state.idx < 0) return null; break; case 'pos': case 'current': break; case 'key': break; default: return null; } clamp(); const key = keys[state.idx]; if (String(action) === 'key') return key; return arr[key]; };\n");
+        if want("__phpx_symbol_table") {
+            out.push_str("globalThis.__phpx_symbol_table ??= Object.create(null);\n");
+        }
+        if want("__deka_symbol_set") {
+            out.push_str("globalThis.__deka_symbol_set ??= (name, value) => { const key = String(name); globalThis.__phpx_symbol_table[key] = value; return true; };\n");
+        }
+        if want("__deka_symbol_get") {
+            out.push_str("globalThis.__deka_symbol_get ??= (name) => { const key = String(name); return Object.prototype.hasOwnProperty.call(globalThis.__phpx_symbol_table, key) ? globalThis.__phpx_symbol_table[key] : null; };\n");
+        }
+        if want("__deka_symbol_exists") {
+            out.push_str("globalThis.__deka_symbol_exists ??= (name) => { const key = String(name); return Object.prototype.hasOwnProperty.call(globalThis.__phpx_symbol_table, key); };\n");
+        }
+        if want("__phpx_array_cursor") {
+            out.push_str("globalThis.__phpx_array_cursor ??= new WeakMap();\n");
+        }
+        if want("__deka_array_cursor") {
+            out.push_str("globalThis.__deka_array_cursor ??= (arr, action) => { if (!arr || (typeof arr !== 'object' && !Array.isArray(arr))) return null; const map = globalThis.__phpx_array_cursor; let state = map.get(arr); if (!state) { state = { idx: 0 }; map.set(arr, state); } const keys = Object.keys(arr); if (keys.length === 0) return null; const clamp = () => { if (state.idx < 0) state.idx = 0; if (state.idx >= keys.length) state.idx = keys.length - 1; }; switch (String(action)) { case 'reset': state.idx = 0; break; case 'end': state.idx = keys.length - 1; break; case 'next': state.idx += 1; if (state.idx >= keys.length) return null; break; case 'prev': state.idx -= 1; if (state.idx < 0) return null; break; case 'pos': case 'current': break; case 'key': break; default: return null; } clamp(); const key = keys[state.idx]; if (String(action) === 'key') return key; return arr[key]; };\n");
+        }
         // PHP filesystem builtins — polyfilled using __dekaFs (Deno/Node FS adapter injected by runtime).
         // Capability-gated FS: __dekaFs is the runtime-injected adapter. NEVER fall
         // through to raw Deno.* — that bypasses the deka.json security manifest.
-        out.push_str("globalThis.__phpx_stat ??= (p) => { try { const fs = (typeof __dekaFs !== 'undefined' && __dekaFs) ? __dekaFs : null; if (fs && typeof fs.statSync === 'function') return fs.statSync(String(p)); } catch(_) {} return null; };\n");
-        out.push_str("globalThis.is_file ??= (p) => { const s = globalThis.__phpx_stat(p); if (!s) return false; return typeof s.isFile === 'function' ? s.isFile() : !!s.isFile; };\n");
-        out.push_str("globalThis.is_dir ??= (p) => { const s = globalThis.__phpx_stat(p); if (!s) return false; return typeof s.isDirectory === 'function' ? s.isDirectory() : !!s.isDirectory; };\n");
-        out.push_str("globalThis.mkdir ??= (p, _mode, recursive) => { try { const fs = (typeof __dekaFs !== 'undefined' && __dekaFs) ? __dekaFs : null; if (fs && typeof fs.mkdirSync === 'function') { fs.mkdirSync(String(p), { recursive: !!recursive }); return true; } } catch(_) {} return false; };\n");
-        out.push_str("globalThis.file ??= (p) => { try { const fs = (typeof __dekaFs !== 'undefined' && __dekaFs) ? __dekaFs : null; if (!fs || typeof fs.readFileSync !== 'function') return false; const raw = fs.readFileSync(String(p)); const text = typeof raw === 'string' ? raw : (new TextDecoder()).decode(raw); if (text === null) return false; const lines = text.split('\\n'); return lines[lines.length - 1] === '' ? lines.slice(0, -1).map((l, i) => l + '\\n') : lines.map((l, i, a) => i < a.length - 1 ? l + '\\n' : l); } catch(_) { return false; } };\n");
+        if want("__phpx_stat") {
+            out.push_str("globalThis.__phpx_stat ??= (p) => { try { const fs = (typeof __dekaFs !== 'undefined' && __dekaFs) ? __dekaFs : null; if (fs && typeof fs.statSync === 'function') return fs.statSync(String(p)); } catch(_) {} return null; };\n");
+        }
+        if want("is_file") {
+            out.push_str("globalThis.is_file ??= (p) => { const s = globalThis.__phpx_stat(p); if (!s) return false; return typeof s.isFile === 'function' ? s.isFile() : !!s.isFile; };\n");
+        }
+        if want("is_dir") {
+            out.push_str("globalThis.is_dir ??= (p) => { const s = globalThis.__phpx_stat(p); if (!s) return false; return typeof s.isDirectory === 'function' ? s.isDirectory() : !!s.isDirectory; };\n");
+        }
+        if want("mkdir") {
+            out.push_str("globalThis.mkdir ??= (p, _mode, recursive) => { try { const fs = (typeof __dekaFs !== 'undefined' && __dekaFs) ? __dekaFs : null; if (fs && typeof fs.mkdirSync === 'function') { fs.mkdirSync(String(p), { recursive: !!recursive }); return true; } } catch(_) {} return false; };\n");
+        }
+        if want("file") {
+            out.push_str("globalThis.file ??= (p) => { try { const fs = (typeof __dekaFs !== 'undefined' && __dekaFs) ? __dekaFs : null; if (!fs || typeof fs.readFileSync !== 'function') return false; const raw = fs.readFileSync(String(p)); const text = typeof raw === 'string' ? raw : (new TextDecoder()).decode(raw); if (text === null) return false; const lines = text.split('\\n'); return lines[lines.length - 1] === '' ? lines.slice(0, -1).map((l, i) => l + '\\n') : lines.map((l, i, a) => i < a.length - 1 ? l + '\\n' : l); } catch(_) { return false; } };\n");
+        }
         // PHP math and type builtins.
         // max / min are compile-time rewrites in try_rewrite_builtin. No globalThis polyfill needed.
         // is_int / is_float / is_numeric / is_string / is_object are compile-time rewrites
@@ -265,25 +391,45 @@ impl<'a> JsSubsetEmitter<'a> {
         // dechex/hexdec are compile-time rewrites in JsSubsetEmitter::emit_builtin_call.
         // pack / date / gmdate — moved to emit_needed_helpers(); emitted only when needed.
         // No globalThis.pack / globalThis.date / globalThis.gmdate install.
-        out.push_str("globalThis.error_log ??= (msg, type, dest) => { if (type === 3 && dest) { try { const fs = (typeof __dekaFs !== 'undefined' && __dekaFs) ? __dekaFs : null; if (fs && typeof fs.appendFileSync === 'function') { fs.appendFileSync(String(dest), String(msg ?? '')); return true; } } catch(_) {} } console.error(String(msg ?? '')); return true; };\n");
-        out.push_str("globalThis.error_get_last ??= () => null;\n");
-        out.push_str("globalThis.set_error_handler ??= () => null;\n");
-        out.push_str("globalThis.register_shutdown_function ??= () => undefined;\n");
+        if want("error_log") {
+            out.push_str("globalThis.error_log ??= (msg, type, dest) => { if (type === 3 && dest) { try { const fs = (typeof __dekaFs !== 'undefined' && __dekaFs) ? __dekaFs : null; if (fs && typeof fs.appendFileSync === 'function') { fs.appendFileSync(String(dest), String(msg ?? '')); return true; } } catch(_) {} } console.error(String(msg ?? '')); return true; };\n");
+        }
+        if want("error_get_last") {
+            out.push_str("globalThis.error_get_last ??= () => null;\n");
+        }
+        if want("set_error_handler") {
+            out.push_str("globalThis.set_error_handler ??= () => null;\n");
+        }
+        if want("register_shutdown_function") {
+            out.push_str("globalThis.register_shutdown_function ??= () => undefined;\n");
+        }
         // array_slice is a compile-time rewrite in try_rewrite_builtin. No globalThis polyfill needed.
         // htmlspecialchars is a compile-time rewrite in JsSubsetEmitter::emit_builtin_call.
         // PHP serve adapter helper — allows PHPX template files to export themselves as ESM handlers.
         // Mangled __phpx_X name (NOT a plain `servePhp` global) so it can't collide with a user-defined
         // `$servePhp` variable in PHPX source. Tree-shakable through bundler DCE since it's a
         // string-keyed assignment instead of a free identifier.
-        out.push_str("globalThis.__phpx_serve_php ??= (path) => { if (globalThis.__dekaPhp && typeof globalThis.__dekaPhp.servePhp === 'function') { return globalThis.__dekaPhp.servePhp(String(path || '')); } return null; };\n");
+        if want("__phpx_serve_php") {
+            out.push_str("globalThis.__phpx_serve_php ??= (path) => { if (globalThis.__dekaPhp && typeof globalThis.__dekaPhp.servePhp === 'function') { return globalThis.__dekaPhp.servePhp(String(path || '')); } return null; };\n");
+        }
         // PHP output buffering — enables echo/header() pattern in $app request handlers.
-        out.push_str(
-            "globalThis.__phpxCurrentResponse ??= { status: 200, headers: {}, body: '' };\n",
-        );
-        out.push_str("globalThis.header ??= (str) => { const s = String(str ?? ''); if (/^HTTP\\/[0-9]/i.test(s)) { const m = s.match(/^HTTP\\/[0-9.]+\\s+(\\d+)/i); if (m) globalThis.__phpxCurrentResponse.status = parseInt(m[1]); } else { const colon = s.indexOf(':'); if (colon > 0) { const name = s.slice(0, colon).trim().toLowerCase(); const value = s.slice(colon + 1).trim(); if (name === 'location' && globalThis.__phpxCurrentResponse.status === 200) globalThis.__phpxCurrentResponse.status = 302; globalThis.__phpxCurrentResponse.headers[name] = value; } } };\n");
-        out.push_str("globalThis.__phpxPrintOrig ??= null;\n");
-        out.push_str("globalThis.phpxStartBuffer ??= () => { globalThis.__phpxCurrentResponse = { status: 200, headers: {}, body: '' }; if (!globalThis.__phpxPrintOrig) { globalThis.__phpxPrintOrig = globalThis.__dekaPrint; } globalThis.__dekaPrint = (v) => { globalThis.__phpxCurrentResponse.body += String(v ?? ''); }; };\n");
-        out.push_str("globalThis.phpxEndBuffer ??= () => { if (globalThis.__phpxPrintOrig) { globalThis.__dekaPrint = globalThis.__phpxPrintOrig; globalThis.__phpxPrintOrig = null; } return globalThis.__phpxCurrentResponse; };\n");
+        if want("__phpxCurrentResponse") {
+            out.push_str(
+                "globalThis.__phpxCurrentResponse ??= { status: 200, headers: {}, body: '' };\n",
+            );
+        }
+        if want("header") {
+            out.push_str("globalThis.header ??= (str) => { const s = String(str ?? ''); if (/^HTTP\\/[0-9]/i.test(s)) { const m = s.match(/^HTTP\\/[0-9.]+\\s+(\\d+)/i); if (m) globalThis.__phpxCurrentResponse.status = parseInt(m[1]); } else { const colon = s.indexOf(':'); if (colon > 0) { const name = s.slice(0, colon).trim().toLowerCase(); const value = s.slice(colon + 1).trim(); if (name === 'location' && globalThis.__phpxCurrentResponse.status === 200) globalThis.__phpxCurrentResponse.status = 302; globalThis.__phpxCurrentResponse.headers[name] = value; } } };\n");
+        }
+        if want("__phpxPrintOrig") {
+            out.push_str("globalThis.__phpxPrintOrig ??= null;\n");
+        }
+        if want("phpxStartBuffer") {
+            out.push_str("globalThis.phpxStartBuffer ??= () => { globalThis.__phpxCurrentResponse = { status: 200, headers: {}, body: '' }; if (!globalThis.__phpxPrintOrig) { globalThis.__phpxPrintOrig = globalThis.__dekaPrint; } globalThis.__dekaPrint = (v) => { globalThis.__phpxCurrentResponse.body += String(v ?? ''); }; };\n");
+        }
+        if want("phpxEndBuffer") {
+            out.push_str("globalThis.phpxEndBuffer ??= () => { if (globalThis.__phpxPrintOrig) { globalThis.__dekaPrint = globalThis.__phpxPrintOrig; globalThis.__phpxPrintOrig = null; } return globalThis.__phpxCurrentResponse; };\n");
+        }
         // Wrap a PHP-style echo/header handler so it always returns the buffered response.
         //
         // LEGACY-COMPAT ONLY: this wrapper is the linkhash-registry escape hatch for handlers
@@ -293,24 +439,31 @@ impl<'a> JsSubsetEmitter<'a> {
         // logs AND surfaces a typed error to the caller. New PHPX handlers should return
         // Result<Response, Error> directly; only linkhash uses this wrapper today. Followup issue
         // tracks migrating linkhash off this pattern.
-        out.push_str("globalThis.phpxWrapHandler ??= (fn) => async (req, ctx) => { phpxStartBuffer(); try { const r = await fn(req, ctx); if (r != null) return r; } catch(_e) { const stack = _e && _e.stack ? String(_e.stack) : ''; const err = { kind: 'phpxWrapHandler.error', message: String(_e), stack }; if (typeof Deno !== 'undefined' && Deno.core && typeof Deno.core.print === 'function') { Deno.core.print('[phpxWrap] ' + JSON.stringify(err) + '\\n', true); } return { status: 500, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ error: 'internal_error', kind: err.kind }) }; } return phpxEndBuffer(); };\n\n");
+        if want("phpxWrapHandler") {
+            out.push_str("globalThis.phpxWrapHandler ??= (fn) => async (req, ctx) => { phpxStartBuffer(); try { const r = await fn(req, ctx); if (r != null) return r; } catch(_e) { const stack = _e && _e.stack ? String(_e.stack) : ''; const err = { kind: 'phpxWrapHandler.error', message: String(_e), stack }; if (typeof Deno !== 'undefined' && Deno.core && typeof Deno.core.print === 'function') { Deno.core.print('[phpxWrap] ' + JSON.stringify(err) + '\\n', true); } return { status: 500, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ error: 'internal_error', kind: err.kind }) }; } return phpxEndBuffer(); };\n\n");
+        }
 
         // JSX runtime — converts JSX calls to HTML strings for both server and browser targets.
-        out.push_str("globalThis.jsx ??= (tag, props) => {\n");
-        out.push_str("  if (typeof tag === 'function') return tag(props ?? {});\n");
-        out.push_str("  const attrs = Object.entries(props ?? {}).filter(([k]) => k !== 'children').map(([k, v]) => ` ${k}=\"${String(v ?? '').replace(/\\\"/g, '&quot;')}\"`).join('');\n");
-        out.push_str("  const children = props?.children;\n");
-        out.push_str("  let inner = '';\n");
-        out.push_str("  if (children !== undefined) {\n");
-        out.push_str("    if (Array.isArray(children)) { inner = children.map((c) => String(c ?? '')).join(''); }\n");
-        out.push_str("    else { inner = String(children); }\n");
-        out.push_str("  }\n");
-        out.push_str("  if (tag === '__fragment__') return inner;\n");
-        out.push_str("  return `<${tag}${attrs}>${inner}</${tag}>`;\n");
-        out.push_str("};\n");
-        out.push_str("globalThis.jsxs ??= globalThis.jsx;\n");
-        out.push_str("const jsx = globalThis.jsx;\n");
-        out.push_str("const jsxs = globalThis.jsxs;\n\n");
+        // `self.uses_jsx_runtime` is already set precisely (jsx.rs) whenever a
+        // JsxElement/JsxFragment was actually emitted, so this is gated on
+        // that flag directly rather than a body-text scan.
+        if self.uses_jsx_runtime {
+            out.push_str("globalThis.jsx ??= (tag, props) => {\n");
+            out.push_str("  if (typeof tag === 'function') return tag(props ?? {});\n");
+            out.push_str("  const attrs = Object.entries(props ?? {}).filter(([k]) => k !== 'children').map(([k, v]) => ` ${k}=\"${String(v ?? '').replace(/\\\"/g, '&quot;')}\"`).join('');\n");
+            out.push_str("  const children = props?.children;\n");
+            out.push_str("  let inner = '';\n");
+            out.push_str("  if (children !== undefined) {\n");
+            out.push_str("    if (Array.isArray(children)) { inner = children.map((c) => String(c ?? '')).join(''); }\n");
+            out.push_str("    else { inner = String(children); }\n");
+            out.push_str("  }\n");
+            out.push_str("  if (tag === '__fragment__') return inner;\n");
+            out.push_str("  return `<${tag}${attrs}>${inner}</${tag}>`;\n");
+            out.push_str("};\n");
+            out.push_str("globalThis.jsxs ??= globalThis.jsx;\n");
+            out.push_str("const jsx = globalThis.jsx;\n");
+            out.push_str("const jsxs = globalThis.jsxs;\n\n");
+        }
 
         let mut imports = self.meta.imports.clone();
         let deka_i_locals = extract_deka_i_imports(&mut imports);
@@ -357,7 +510,13 @@ impl<'a> JsSubsetEmitter<'a> {
             out.push_str("}\n\n");
         }
 
-        out.push_str("globalThis.__phpxStructMethods ??= Object.create(null);\n");
+        // __phpxStructMethods is read by struct-literal-with-methods codegen
+        // (see expr.rs's StructLiteral handling, `globalThis.__phpxStructMethods
+        // ? globalThis.__phpxStructMethods[...]`), so gate it on either this
+        // file registering methods itself or the emitted body reading it.
+        if !self.struct_methods.is_empty() || want("__phpxStructMethods") {
+            out.push_str("globalThis.__phpxStructMethods ??= Object.create(null);\n");
+        }
         if !self.struct_methods.is_empty() {
             for (name, methods) in &self.struct_methods {
                 out.push_str(&format!(
@@ -487,6 +646,114 @@ fn unescape_php_double(raw: &str) -> String {
         }
     }
     out
+}
+
+/// Every name `finish()` may conditionally install onto `globalThis`, keyed
+/// by exactly the identifier that appears after `globalThis.` in the
+/// already-emitted program body when that entry is genuinely referenced.
+/// See the demand-driven-prelude comment inside `finish()` (#47).
+const LEAF_GLOBALS: &[&str] = &[
+    "panic",
+    "class_alias",
+    "defined",
+    "__phpx_is_struct",
+    "__phpx_func_num_args",
+    "__phpx_func_get_args",
+    "__phpx_func_get_arg",
+    "getenv",
+    "is_promise",
+    "GLOBALS",
+    "JSON_ERROR_NONE",
+    "JSON_ERROR_DEPTH",
+    "JSON_ERROR_STATE_MISMATCH",
+    "JSON_ERROR_CTRL_CHAR",
+    "JSON_ERROR_SYNTAX",
+    "JSON_ERROR_UTF8",
+    "JSON_ERROR_RECURSION",
+    "JSON_ERROR_INF_OR_NAN",
+    "JSON_ERROR_UNSUPPORTED_TYPE",
+    "JSON_ERROR_INVALID_PROPERTY_NAME",
+    "JSON_ERROR_UTF16",
+    "__deka_chr",
+    "__deka_ord",
+    "__deka_object_set",
+    "__deka_bytes_from_string",
+    "__deka_bytes_to_string",
+    "__deka_bytes_len",
+    "__deka_bytes_get",
+    "__deka_bytes_set",
+    "__deka_bytes_slice",
+    "__deka_bytes_concat",
+    "__deka_bytes_to_array",
+    "__deka_bytes_from_array",
+    "__phpx_symbol_table",
+    "__deka_symbol_set",
+    "__deka_symbol_get",
+    "__deka_symbol_exists",
+    "__phpx_array_cursor",
+    "__deka_array_cursor",
+    "__phpx_stat",
+    "is_file",
+    "is_dir",
+    "mkdir",
+    "file",
+    "error_log",
+    "error_get_last",
+    "set_error_handler",
+    "register_shutdown_function",
+    "__phpx_serve_php",
+    "__phpxCurrentResponse",
+    "header",
+    "__phpxPrintOrig",
+    "phpxStartBuffer",
+    "phpxEndBuffer",
+    "phpxWrapHandler",
+    "__phpxStructMethods",
+];
+
+/// Internal dependency edges between `LEAF_GLOBALS` entries: each key's
+/// polyfill body itself references the listed names via their own
+/// `globalThis.*` reads/writes, which can never show up in a scan of the
+/// *user's* emitted body text — so once a name is wanted, its deps must be
+/// forced in too. `finish()` expands this to a fixed point before emitting.
+fn global_deps(name: &str) -> &'static [&'static str] {
+    match name {
+        "__deka_symbol_set" | "__deka_symbol_get" | "__deka_symbol_exists" => {
+            &["__phpx_symbol_table"]
+        }
+        "__deka_array_cursor" => &["__phpx_array_cursor"],
+        "is_file" | "is_dir" => &["__phpx_stat"],
+        "header" => &["__phpxCurrentResponse"],
+        "phpxStartBuffer" | "phpxEndBuffer" => &["__phpxCurrentResponse", "__phpxPrintOrig"],
+        "phpxWrapHandler" => &[
+            "phpxStartBuffer",
+            "phpxEndBuffer",
+            "__phpxCurrentResponse",
+            "__phpxPrintOrig",
+        ],
+        _ => &[],
+    }
+}
+
+/// True if `text` (the already-emitted program body) references
+/// `globalThis.<name>` as a whole identifier — not as a substring of a
+/// longer one (so `globalThis.is_file` doesn't false-positive on some
+/// hypothetical `globalThis.is_filed`).
+fn body_refs_global(text: &str, name: &str) -> bool {
+    let pat = format!("globalThis.{}", name);
+    let bytes = text.as_bytes();
+    let mut start = 0;
+    while let Some(pos) = text[start..].find(pat.as_str()) {
+        let idx = start + pos;
+        let after = idx + pat.len();
+        let boundary_ok =
+            after >= bytes.len() || !(bytes[after].is_ascii_alphanumeric() || bytes[after] == b'_');
+        if boundary_ok {
+            return true;
+        }
+        start = idx + 1;
+    }
+    false
 }
 
 /// Emit module-scoped `function __phpx_X(...)` declarations for every Tier B

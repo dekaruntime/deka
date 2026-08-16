@@ -693,6 +693,13 @@ impl<'a> JsSubsetEmitter<'a> {
         name: &php_rs::parser::lexer::token::Token,
         members: &[ClassMember<'_>],
     ) -> Result<(), String> {
+        // Enums lower to frozen tagged plain objects, allocated once — never a
+        // JS `class`. This matches how structs already lower
+        // (`{"__struct": "Point", ...}`) and gives unit variants stable
+        // identity (`Color.Red === Color.Red`) that survives JSON/
+        // structuredClone round-trips, since `match` discriminates on the
+        // `__enum`/`__case` tags rather than `instanceof` (which depends on a
+        // prototype serialization discards). See deka#48, deka#49.
         let enum_name = self.token_name(name);
         if !self.is_declared(&enum_name) {
             self.declare_in_scope(&enum_name);
@@ -726,17 +733,10 @@ impl<'a> JsSubsetEmitter<'a> {
 
         self.enum_cases.insert(enum_name.clone(), cases.clone());
 
-        self.body.push_str(&format!("class {} {{\n", enum_name));
-        self.body.push_str("  constructor(__case, __payload) {\n");
-        self.body
-            .push_str(&format!("    this.__enum = {};\n", json_string(&enum_name)));
-        self.body.push_str("    this.__case = __case;\n");
-        self.body.push_str("    if (__payload) {\n");
-        self.body
-            .push_str("      Object.assign(this, __payload);\n");
-        self.body.push_str("    }\n");
-        self.body.push_str("  }\n");
-
+        // Method bodies (if any) are emitted once and attached as own
+        // properties on every case object below — there is no shared
+        // prototype to hang them on now that there is no class.
+        let mut method_srcs: Vec<String> = Vec::new();
         for member in methods {
             if let ClassMember::Method {
                 name, params, body, ..
@@ -749,41 +749,42 @@ impl<'a> JsSubsetEmitter<'a> {
                     .collect::<Vec<_>>()
                     .join(", ");
                 let block = self.emit_method_block(params, body)?;
-                self.body.push_str(&format!(
-                    "  {}({}) {{\n{}  }}\n",
+                method_srcs.push(format!(
+                    "{}({}) {{\n{}    }}",
                     method_name, js_params, block
                 ));
             }
         }
 
-        for case in &cases {
+        self.body
+            .push_str(&format!("const {} = Object.freeze({{\n", enum_name));
+        for (idx, case) in cases.iter().enumerate() {
+            let mut entries = vec![
+                format!("__enum: {}", json_string(&enum_name)),
+                format!("__case: {}", json_string(&case.name)),
+            ];
+            entries.extend(
+                case.params
+                    .iter()
+                    .map(|p| format!("{}: {}", json_string(p), p)),
+            );
+            entries.extend(method_srcs.iter().cloned());
+            let object_body = entries.join(", ");
+            let comma = if idx + 1 == cases.len() { "" } else { "," };
             if case.params.is_empty() {
                 self.body.push_str(&format!(
-                    "  static get {}() {{ return new {}({}, null); }}\n",
-                    case.name,
-                    enum_name,
-                    json_string(&case.name)
+                    "  {}: Object.freeze({{ {} }}){}\n",
+                    case.name, object_body, comma
                 ));
             } else {
                 let param_list = case.params.join(", ");
-                let payload_entries = case
-                    .params
-                    .iter()
-                    .map(|p| format!("{}: {}", json_string(p), p))
-                    .collect::<Vec<_>>()
-                    .join(", ");
                 self.body.push_str(&format!(
-                    "  static {}({}) {{ return new {}({}, {{{}}}); }}\n",
-                    case.name,
-                    param_list,
-                    enum_name,
-                    json_string(&case.name),
-                    payload_entries
+                    "  {}: ({}) => Object.freeze({{ {} }}){}\n",
+                    case.name, param_list, object_body, comma
                 ));
             }
         }
-
-        self.body.push_str("}\n");
+        self.body.push_str("});\n");
         Ok(())
     }
 }

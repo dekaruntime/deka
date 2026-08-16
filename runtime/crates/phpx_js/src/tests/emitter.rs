@@ -825,9 +825,41 @@ $val = $obj.x;
 }
 
 // ---- Enums ----
+//
+// Enums lower to frozen tagged plain objects, allocated once — never a JS
+// `class`. Two bugs this fixes (deka#48, deka#49):
+//   - `class` + `static get` accessors allocate a new instance on every
+//     access, so `Color.Red === Color.Red` was false.
+//   - `match` lowered to `instanceof`, which depends on a prototype that
+//     does not survive `structuredClone`/JSON, so match silently broke
+//     across any serialization boundary (exactly what deka's V8 isolates
+//     and the sandboxed worker do).
+//   - the `_` wildcard arm lowered to `c === globalThis._`, so it never
+//     matched (and could be hijacked by any code that sets `globalThis._`,
+//     e.g. lodash).
+//
+// `run_node` below (duplicated per-test-file, matching the existing pattern
+// in builtin_rewrites.rs / pipe.rs) actually executes the emitted JS so
+// these tests prove runtime behavior, not just emitted-string shape.
+
+#[cfg(test)]
+fn run_node(script: &str) -> Result<String, String> {
+    use std::process::Command;
+    let out = Command::new("node")
+        .arg("--input-type=module")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .map_err(|e| format!("node not available: {e}"))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
 
 #[test]
-fn enum_declaration_emits_class() {
+fn enum_declaration_emits_frozen_object_not_class() {
     let source = r#"
 enum Color {
 case Red;
@@ -837,8 +869,14 @@ case Green;
 "#;
     let js = phpx_to_js(source).expect("should compile");
     assert!(
-        js.contains("class Color"),
-        "expected class for enum, got:\n{}",
+        !js.contains("class "),
+        "enum declarations must never emit a JS class (no-classes is a founding \
+         language rule — deka#49), got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("Object.freeze"),
+        "expected frozen tagged objects for enum cases, got:\n{}",
         js
     );
     assert!(js.contains("Red"), "expected Red case, got:\n{}", js);
@@ -880,10 +918,15 @@ case Rectangle($width: float, $height: float);
         "expected Rectangle case, got:\n{}",
         js
     );
+    assert!(
+        !js.contains("class "),
+        "payload-carrying enum cases must not emit a class either, got:\n{}",
+        js
+    );
 }
 
 #[test]
-fn match_on_enum_emits_instanceof_check() {
+fn match_on_enum_emits_tag_check_not_instanceof() {
     let source = r#"
 enum Color {
 case Red;
@@ -900,10 +943,124 @@ return $name;
 "#;
     let js = phpx_to_js(source).expect("should compile");
     assert!(
-        js.contains("instanceof") || js.contains("__case"),
-        "expected enum match pattern, got:\n{}",
+        !js.contains("instanceof"),
+        "match on enum must discriminate on __enum/__case tags, never instanceof \
+         (instanceof depends on a prototype that JSON/structuredClone discard — \
+         deka#49), got:\n{}",
         js
     );
+    assert!(
+        js.contains("__enum") && js.contains("__case"),
+        "expected tag-based match guard, got:\n{}",
+        js
+    );
+}
+
+#[test]
+fn enum_case_identity_is_stable_across_access() {
+    // deka#49, problem 1: each `Color.Red` access used to allocate a new
+    // class instance, so `Color.Red === Color.Red` was false.
+    let source = r#"
+enum Color {
+case Red;
+case Green;
+}
+function same(): bool {
+return Color::Red === Color::Red;
+}
+"#;
+    let js = phpx_to_js(source).expect("should compile");
+    let script = format!("{js}\nconsole.log(same());");
+    match run_node(&script) {
+        Err(e) if e.contains("node not available") => return, // skip if no node
+        Err(e) => panic!("node error running enum identity check: {e}\n{script}"),
+        Ok(got) => assert_eq!(
+            got, "true",
+            "Color.Red === Color.Red must be true (stable identity), got {got:?} from:\n{script}"
+        ),
+    }
+}
+
+#[test]
+fn enum_match_survives_json_round_trip() {
+    // deka#49, problem 2: `match` lowered to `instanceof`, which depends on
+    // a prototype JSON/structuredClone discard. Deka runs V8 isolates and
+    // the tour runs a sandboxed worker, so crossing that boundary is a real,
+    // live scenario, not a theoretical one.
+    let source = r#"
+enum Color {
+case Red;
+case Green;
+}
+function name($c): string {
+$result = match ($c) {
+    Color::Red => "red",
+    Color::Green => "green",
+    _ => "?",
+};
+return $result;
+}
+function roundTripped(): string {
+$cloned = JSON.parse(JSON.stringify(Color::Green));
+return name($cloned);
+}
+"#;
+    let js = phpx_to_js(source).expect("should compile");
+    let script = format!("{js}\nconsole.log(roundTripped());");
+    match run_node(&script) {
+        Err(e) if e.contains("node not available") => return, // skip if no node
+        Err(e) => panic!("node error running JSON round-trip match: {e}\n{script}"),
+        Ok(got) => assert_eq!(
+            got, "green",
+            "match must still resolve to \"green\" after a JSON.parse(JSON.stringify(...)) \
+             round trip, got {got:?} from:\n{script}"
+        ),
+    }
+}
+
+#[test]
+fn enum_match_wildcard_arm_is_reached_and_returns_its_value() {
+    // deka#48: the `_` wildcard used to lower to `c === globalThis._`, so it
+    // was dead in the normal case (globalThis._ is undefined) and could be
+    // hijacked by any library that sets globalThis._ (lodash uses exactly
+    // that name).
+    let source = r#"
+enum Color {
+case Red;
+case Green;
+}
+function name($c): string {
+return match ($c) {
+    Color::Red => "red",
+    Color::Green => "green",
+    _ => "wildcard-hit",
+};
+}
+function unmatched(): string {
+return name("not-a-color");
+}
+"#;
+    let js = phpx_to_js(source).expect("should compile");
+    // Check the emitted match guard specifically, not the whole file — the
+    // prelude legitimately defines many globalThis.__phpx_* / globalThis.__deka_*
+    // helpers, and a blanket "globalThis._" substring check would false-positive
+    // on those (they also start with an underscore right after the dot).
+    let body = js.split("function name(").nth(1).expect("expected name() function in output");
+    assert!(
+        !body.contains("globalThis._"),
+        "the _ wildcard must never lower to a globalThis._ variable reference, got:\n{}",
+        js
+    );
+    let script = format!("{js}\nconsole.log(unmatched());");
+    match run_node(&script) {
+        Err(e) if e.contains("node not available") => return, // skip if no node
+        Err(e) => panic!("node error running wildcard match: {e}\n{script}"),
+        Ok(got) => assert_eq!(
+            got, "wildcard-hit",
+            "the _ wildcard arm must actually be reached and return its value, \
+             got {got:?} from:\n{script}"
+        ),
+    }
 }
 
 // ---- isset() and Option patterns ----

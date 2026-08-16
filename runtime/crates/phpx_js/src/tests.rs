@@ -109,6 +109,25 @@ fn ds_lowers_native_string_collection_and_for_of_primitives() {
 }
 
 #[test]
+fn ds_allows_declared_array_function_calls() {
+    let source = r#"
+        export function array(value: mixed): void {
+            print(value);
+        }
+
+        array(41);
+    "#;
+    let js = crate::compile_phpx_source_to_js(
+        source,
+        "array.ds",
+        crate::parse_source_module_meta(source),
+    )
+    .expect("a declared DekaScript array function should be callable");
+    assert!(js.contains("function array(value)"), "missing function: {js}");
+    assert!(js.contains("array(41)"), "missing function call: {js}");
+}
+
+#[test]
 fn ds_generic_variadic_identity_preserves_all_rest_values() {
     let source = r#"
         export function collect(...values: Array<mixed>): Array<mixed> {
@@ -173,6 +192,8 @@ fn ds_rejects_php_surface_and_const_reassignment() {
 
 mod builtin_rewrites;
 mod bytes;
+mod conformance_gates;
+mod emission_budget;
 mod emitter;
 mod jsx;
 mod pipe;

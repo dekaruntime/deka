@@ -105,6 +105,15 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     let bundle = bundle_enabled(context);
     let minify = minify_enabled(context);
 
+    // `build` must fail closed: every .ds source under app/ has to compile
+    // before we write anything to dist/. Historically this function only
+    // ever compiled `entry_path` (and only when hydration was enabled) and
+    // otherwise copied app/ into dist/server/app as raw, unvalidated bytes
+    // (see copy_dir_recursive below) -- so a project with a syntactically
+    // invalid non-entry file, or an invalid entry file with no hydration
+    // component, would "build" successfully. Validate everything up front.
+    validate_app_dir_sources(&app_dir)?;
+
     let dist_root = project_root.join("dist");
     let dist_client = dist_root.join("client");
     let dist_server = dist_root.join("server");
@@ -608,6 +617,55 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Recursively finds every `.ds` file under `app_dir` and compiles it with
+/// the same `compile_phpx_source_to_js` call `deka check` uses, discarding
+/// the emitted JS. This is validation only -- dist/server/app still receives
+/// the original source bytes via `copy_dir_recursive`, unchanged. The point
+/// is solely to make `deka build` fail closed (non-zero exit, no dist/
+/// output written) on any source under app/ that the compiler itself would
+/// reject, matching what `deka check` already reports for that same file.
+fn validate_app_dir_sources(app_dir: &Path) -> Result<(), String> {
+    for path in collect_deka_source_files(app_dir)? {
+        let input = path
+            .to_str()
+            .ok_or_else(|| format!("invalid utf-8 path: {}", path.display()))?;
+        let source = fs::read_to_string(&path)
+            .map_err(|err| format!("failed to read {}: {}", path.display(), err))?;
+        let meta = parse_source_module_meta(&source);
+        compile_phpx_source_to_js(&source, input, meta)
+            .map_err(|err| format!("{}: {}", path.display(), err))?;
+    }
+    Ok(())
+}
+
+fn collect_deka_source_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut files = Vec::new();
+    if !dir.is_dir() {
+        return Ok(files);
+    }
+
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let entries = fs::read_dir(&current)
+            .map_err(|err| format!("failed to read {}: {}", current.display(), err))?;
+        for entry in entries {
+            let entry = entry.map_err(|err| format!("read_dir entry error: {}", err))?;
+            let path = entry.path();
+            let file_type = entry
+                .file_type()
+                .map_err(|err| format!("file_type error for {}: {}", path.display(), err))?;
+            if file_type.is_dir() {
+                stack.push(path);
+            } else if file_type.is_file() && is_deka_source_path(&path) {
+                files.push(path);
+            }
+        }
+    }
+
+    files.sort();
+    Ok(files)
 }
 
 fn inject_web_bootstrap_tags(

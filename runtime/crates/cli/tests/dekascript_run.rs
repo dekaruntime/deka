@@ -5,9 +5,18 @@ fn cli_bin() -> &'static str {
     env!("CARGO_BIN_EXE_cli")
 }
 
+/// Minimal valid lockfile content. `ensure_project_layout` (crates/pool/src/esm_loader.rs)
+/// only checks that `deka.lock` exists at the project root — it does not require any
+/// specific packages — but a project root with a `deka.json` and no `deka.lock` is
+/// rejected before the program ever executes ("deka runtime requires deka.lock at
+/// project root"). Mirrors the lockfile shape used by
+/// crates/cli/tests/update_integrity_process.rs and the `deka init` output.
+const EMPTY_DEKA_LOCK: &str = r#"{"lockfileVersion":1,"packages":{}}"#;
+
 fn run_dekascript(name: &str, source: &str, expected_output: &str) {
     let project = tempfile::tempdir().expect("create DekaScript project");
     fs::write(project.path().join("deka.json"), "{}\n").expect("write project manifest");
+    fs::write(project.path().join("deka.lock"), EMPTY_DEKA_LOCK).expect("write project lockfile");
     let entry = project.path().join(format!("{name}.ds"));
     fs::write(&entry, source).expect("write DekaScript entry");
 
@@ -56,6 +65,15 @@ fn run_executes_dekascript_if_else_candidate() {
 }
 
 #[test]
+fn run_executes_declared_array_function_call() {
+    run_dekascript(
+        "array_call",
+        "export function array(value: mixed): void { print(value); }\narray(41);\n",
+        "41",
+    );
+}
+
+#[test]
 fn run_executes_dekascript_generic_variadic_collect_candidate() {
     run_dekascript(
         "collect",
@@ -68,6 +86,7 @@ fn run_executes_dekascript_generic_variadic_collect_candidate() {
 fn run_rejects_phpx_entry_before_execution() {
     let project = tempfile::tempdir().expect("create PHPX project");
     fs::write(project.path().join("deka.json"), "{}\n").expect("write project manifest");
+    fs::write(project.path().join("deka.lock"), EMPTY_DEKA_LOCK).expect("write project lockfile");
     let entry = project.path().join("legacy.phpx");
     fs::write(&entry, "print(\"must-not-execute\");\n").expect("write PHPX entry");
 
@@ -101,6 +120,7 @@ fn run_rejects_phpx_entry_before_execution() {
 fn run_rejects_absolute_ds_symlink_to_phpx_before_execution() {
     let project = tempfile::tempdir().expect("create DekaScript project");
     fs::write(project.path().join("deka.json"), "{}\n").expect("write project manifest");
+    fs::write(project.path().join("deka.lock"), EMPTY_DEKA_LOCK).expect("write project lockfile");
     let target = project.path().join("legacy.phpx");
     fs::write(&target, "print(\"must-not-execute\");\n").expect("write PHPX target");
     let entry = project.path().join("entry.ds");
