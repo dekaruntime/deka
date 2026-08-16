@@ -3246,17 +3246,19 @@ dependencies = [
  "hex",
  "hmac 0.12.1",
  "mysql",
- "native-tls",
  "neo4rs",
  "php-rs",
  "postgres",
  "prost",
  "prost-build",
  "protoc-bin-vendored",
+ "rcgen",
  "redis",
  "reqwest 0.11.27",
  "runtime_core",
  "rusqlite",
+ "rustls 0.21.12",
+ "rustls-pemfile 1.0.4",
  "seam_diff",
  "seam_ir",
  "serde",
@@ -3268,6 +3270,7 @@ dependencies = [
  "tokio-stream",
  "tokio-tungstenite 0.21.0",
  "url",
+ "webpki-roots 0.25.4",
  "wit-parser",
 ]
 
@@ -4641,6 +4644,19 @@ checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
+]
+
+[[package]]
+name = "rcgen"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75e669e5202259b5314d1ea5397316ad400819437857b90861765f24c4cf80a2"
+dependencies = [
+ "pem",
+ "ring",
+ "rustls-pki-types",
+ "time",
+ "yasna",
 ]
 
 [[package]]
@@ -7751,6 +7767,15 @@ name = "xxhash-rust"
 version = "0.8.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4d93c89cdc2d3a63c3ec48ffe926931bdc069eafa8e4402fe6d8f790c9d1e576"
+
+[[package]]
+name = "yasna"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e17bb3549cc1321ae1296b9cdc2698e2b6cb1992adfa19a8c72e5b7a738f44cd"
+dependencies = [
+ "time",
+]
 
 [[package]]
 name = "yoke"

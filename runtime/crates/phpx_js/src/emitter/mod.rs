@@ -306,6 +306,38 @@ impl<'a> JsSubsetEmitter<'a> {
         if want("__deka_object_set") {
             out.push_str("globalThis.__deka_object_set ??= (obj, key, value) => { if (obj && typeof obj === 'object') { obj[key] = value; } return obj; };\n");
         }
+        // Bytes helpers (RFD 15). bytes values are Uint8Array instances; these
+        // helpers bridge UTF-8 strings and raw byte buffers. Demand-driven like
+        // every other prelude entry (#47): a program that never touches bytes must
+        // not carry 9 unused helpers, and DCE cannot see through globalThis writes.
+        // Each name below is registered in LEAF_GLOBALS so `want()` can ever be true.
+        if want("__deka_bytes_from_string") {
+            out.push_str("globalThis.__deka_bytes_from_string ??= (s) => new TextEncoder().encode(String(s ?? ''));\n");
+        }
+        if want("__deka_bytes_to_string") {
+            out.push_str("globalThis.__deka_bytes_to_string ??= (b) => new TextDecoder().decode(b ?? new Uint8Array());\n");
+        }
+        if want("__deka_bytes_len") {
+            out.push_str("globalThis.__deka_bytes_len ??= (b) => (b instanceof Uint8Array ? b.length : 0);\n");
+        }
+        if want("__deka_bytes_get") {
+            out.push_str("globalThis.__deka_bytes_get ??= (b, i) => { const buf = b instanceof Uint8Array ? b : new Uint8Array(); const idx = Number(i) || 0; return (idx >= 0 && idx < buf.length) ? buf[idx] : null; };\n");
+        }
+        if want("__deka_bytes_set") {
+            out.push_str("globalThis.__deka_bytes_set ??= (b, i, v) => { const src = b instanceof Uint8Array ? b : new Uint8Array(); const idx = Number(i) || 0; const val = Number(v) || 0; const out = new Uint8Array(src); if (idx >= 0 && idx < out.length) out[idx] = val & 0xff; return out; };\n");
+        }
+        if want("__deka_bytes_slice") {
+            out.push_str("globalThis.__deka_bytes_slice ??= (b, start, len) => { const buf = b instanceof Uint8Array ? b : new Uint8Array(); const s = Number(start) || 0; const e = len === null || len === undefined ? buf.length : s + (Number(len) || 0); return buf.slice(s, e); };\n");
+        }
+        if want("__deka_bytes_concat") {
+            out.push_str("globalThis.__deka_bytes_concat ??= (a, b) => { const aa = a instanceof Uint8Array ? a : new Uint8Array(); const bb = b instanceof Uint8Array ? b : new Uint8Array(); const out = new Uint8Array(aa.length + bb.length); out.set(aa, 0); out.set(bb, aa.length); return out; };\n");
+        }
+        if want("__deka_bytes_to_array") {
+            out.push_str("globalThis.__deka_bytes_to_array ??= (b) => { const buf = b instanceof Uint8Array ? b : new Uint8Array(); return Array.from(buf); };\n");
+        }
+        if want("__deka_bytes_from_array") {
+            out.push_str("globalThis.__deka_bytes_from_array ??= (a) => { if (!Array.isArray(a)) return new Uint8Array(); return Uint8Array.from(a.map((v) => { const n = Number(v) || 0; return n < 0 ? 0 : n > 255 ? 255 : n; })); };\n");
+        }
         // --- Tier B helpers: module-scoped function declarations (DCE-visible) ---
         // Emitted only when needed (self.needed_helpers tracks which ones were
         // referenced during AST traversal). Plain `function` declarations are in
@@ -656,6 +688,15 @@ const LEAF_GLOBALS: &[&str] = &[
     "__deka_chr",
     "__deka_ord",
     "__deka_object_set",
+    "__deka_bytes_from_string",
+    "__deka_bytes_to_string",
+    "__deka_bytes_len",
+    "__deka_bytes_get",
+    "__deka_bytes_set",
+    "__deka_bytes_slice",
+    "__deka_bytes_concat",
+    "__deka_bytes_to_array",
+    "__deka_bytes_from_array",
     "__phpx_symbol_table",
     "__deka_symbol_set",
     "__deka_symbol_get",

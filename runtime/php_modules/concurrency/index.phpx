@@ -1,0 +1,89 @@
+import { result_ok, result_err, result_is_ok } from 'core/result'
+import { bridge } from 'core/bridge'
+
+function to_assoc($value) {
+    if (is_array($value)) {
+        $out = []
+        $is_entries = true
+        foreach ($value as $entry) {
+            if (!is_array($entry) || count($entry) !== 2 || !is_string($entry[0])) {
+                $is_entries = false
+                break
+            }
+            $out[$entry[0]] = $entry[1]
+        }
+        if ($is_entries) {
+            return $out
+        }
+        return $value
+    }
+    if (is_object($value)) {
+        return (array) $value
+    }
+    if (gettype($value) === 'object') {
+        return (array) $value
+    }
+    return []
+}
+
+function normalize_result($raw) {
+    $assoc = to_assoc($raw)
+    if (is_array($assoc) && array_key_exists('ok', $assoc)) {
+        if ($assoc['ok']) {
+            return result_ok($assoc)
+        }
+        $msg = array_key_exists('error', $assoc) ? $assoc['error'] : 'concurrency error'
+        return result_err($msg)
+    }
+    return result_err('invalid concurrency response')
+}
+
+/// docid: phpx/concurrency/Lock.acquire()
+/// <Function name="Lock::acquire">
+///   <Description>Acquire a runtime-scoped named lock.</Description>
+///   <Parameter name="$name" type="string" required="true">
+///     Lock name. Must be unique within the runtime.
+///   </Parameter>
+///   <Parameter name="$timeout_ms" type="int" required="false">
+///     Maximum time to wait for the lock in milliseconds. Defaults to 30000.
+///   </Parameter>
+///   <ReturnType type="Promise&lt;Result&lt;int, string&gt;&gt;" />
+/// </Function>
+export namespace Lock {
+    export async function acquire($name: string, $timeout_ms: int = 30000): Promise<Result<int, string>> {
+        $payload = {
+            name: '' . $name,
+            timeout_ms: (int) $timeout_ms
+        }
+        $raw = await bridge('concurrency', 'lock_acquire', $payload)
+        $res = normalize_result($raw)
+        if (!result_is_ok($res)) {
+            return result_err($res->error)
+        }
+        $value = $res->value
+        if (!is_array($value) || !array_key_exists('token', $value)) {
+            return result_err('lock acquire succeeded without token')
+        }
+        return result_ok((int) $value['token'])
+    }
+
+/// docid: phpx/concurrency/Lock.release()
+/// <Function name="Lock::release">
+///   <Description>Release a lock previously acquired with Lock::acquire.</Description>
+///   <Parameter name="$token" type="int" required="true">
+///     Token returned by Lock::acquire.
+///   </Parameter>
+///   <ReturnType type="Promise&lt;Result&lt;void, string&gt;&gt;" />
+/// </Function>
+    export async function release($token: int): Promise<Result<void, string>> {
+        $payload = {
+            token: (int) $token
+        }
+        $raw = await bridge('concurrency', 'lock_release', $payload)
+        $res = normalize_result($raw)
+        if (!result_is_ok($res)) {
+            return result_err($res->error)
+        }
+        return result_ok(null)
+    }
+}

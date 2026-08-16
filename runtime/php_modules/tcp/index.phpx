@@ -1,5 +1,6 @@
 import { result_ok, result_err, result_is_ok } from 'core/result'
 import { bridge } from 'core/bridge'
+import { bytes_from_array, bytes_from_string, bytes_to_array, bytes_len, bytes_concat } from 'core/bytes'
 
 function to_assoc($value) {
     if (is_array($value)) {
@@ -36,6 +37,16 @@ function normalize_result($raw) {
         return result_err($msg)
     }
     return result_err('invalid tcp response')
+}
+
+function __tcp_ensure_bytes($value) {
+    if (is_string($value)) {
+        return bytes_from_string($value)
+    }
+    if (is_array($value)) {
+        return bytes_from_array($value)
+    }
+    return $value
 }
 
 /// docid: phpx/tcp/connectSync()
@@ -90,7 +101,7 @@ export function readSync($handle, $max_bytes = 4096) {
     if (!is_array($res->value) || !array_key_exists('data', $res->value)) {
         return result_err('read succeeded without data')
     }
-    return result_ok($res->value['data'])
+    return result_ok(bytes_from_array($res->value['data']))
 }
 
 /// docid: phpx/tcp/readExactSync()
@@ -106,16 +117,16 @@ export function readSync($handle, $max_bytes = 4096) {
 /// </Function>
 export function readExactSync($handle, $count) {
     $target = (int) $count
-    $out = ''
-    while (strlen($out) < $target) {
-        $chunk = readSync($handle, $target - strlen($out))
+    $out = bytes_from_array([])
+    while (bytes_len($out) < $target) {
+        $chunk = readSync($handle, $target - bytes_len($out))
         if (!result_is_ok($chunk)) {
             return result_err($chunk->error)
         }
-        if ($chunk->value === '') {
+        if (bytes_len($chunk->value) === 0) {
             return result_err('short read')
         }
-        $out = $out . $chunk->value
+        $out = bytes_concat($out, $chunk->value)
     }
     return result_ok($out)
 }
@@ -132,9 +143,10 @@ export function readExactSync($handle, $count) {
 ///   <ReturnType type="mixed" />
 /// </Function>
 export function writeSync($handle, $data) {
+    $buf = __tcp_ensure_bytes($data)
     $res = normalize_result(bridge('net', 'write', {
         handle: (int) $handle,
-        data: '' . $data
+        data: bytes_to_array($buf)
     }))
     if (!result_is_ok($res)) {
         return result_err($res->error)
@@ -384,4 +396,190 @@ export function tcp_set_deadline($handle, $millis) {
 /// </Function>
 export function tcp_close($handle) {
     return closeSync($handle)
+}
+
+function __tcp_opt_int($options, $key, $default) {
+    if (is_array($options) && array_key_exists($key, $options)) {
+        return (int) $options[$key]
+    }
+    if (is_object($options) && isset($options->$key)) {
+        return (int) $options->$key
+    }
+    return $default
+}
+
+function __tcp_opt_bytes_array($options, $key) {
+    $value = null
+    if (is_array($options) && array_key_exists($key, $options)) {
+        $value = $options[$key]
+    } else if (is_object($options) && isset($options->$key)) {
+        $value = $options->$key
+    }
+    if ($value === null) {
+        return []
+    }
+    return bytes_to_array(__tcp_ensure_bytes($value))
+}
+
+/// docid: phpx/tcp/startTlsSync()
+/// <Function name="startTlsSync">
+///   <Description>Upgrade an existing TCP connection to TLS.</Description>
+///   <Parameter name="$handle" type="int" required="true">Connection handle.</Parameter>
+///   <Parameter name="$server_name" type="string" required="true">SNI host name.</Parameter>
+///   <ReturnType type="Result<int, string>" />
+/// </Function>
+export function startTlsSync($handle, $server_name) {
+    $res = normalize_result(bridge('net', 'tls_upgrade', {
+        handle: (int) $handle,
+        server_name: '' . $server_name
+    }))
+    if (!result_is_ok($res)) {
+        return result_err($res->error)
+    }
+    if (!is_array($res->value) || !array_key_exists('handle', $res->value)) {
+        return result_err('tls upgrade succeeded without handle')
+    }
+    return result_ok((int) $res->value['handle'])
+}
+
+/// docid: phpx/tcp/connectTlsSync()
+/// <Function name="connectTlsSync">
+///   <Description>Connect to a host and immediately negotiate TLS.</Description>
+///   <Parameter name="$host" type="string" required="true" />
+///   <Parameter name="$port" type="int" required="true" />
+///   <Parameter name="$server_name" type="string" required="false">SNI host name; defaults to $host.</Parameter>
+///   <Parameter name="$options" type="Object" required="false">timeout_ms, ca_cert.</Parameter>
+///   <ReturnType type="Result<int, string>" />
+/// </Function>
+export function connectTlsSync($host, $port, $server_name = null, $options = {}) {
+    $sni = $server_name === null ? ('' . $host) : ('' . $server_name)
+    $payload = {
+        host: '' . $host,
+        port: (int) $port,
+        server_name: $sni,
+        timeout_ms: __tcp_opt_int($options, 'timeout_ms', 5000),
+        ca_cert: __tcp_opt_bytes_array($options, 'ca_cert')
+    }
+    $res = normalize_result(bridge('net', 'connect_tls', $payload))
+    if (!result_is_ok($res)) {
+        return result_err($res->error)
+    }
+    if (!is_array($res->value) || !array_key_exists('handle', $res->value)) {
+        return result_err('connect_tls succeeded without handle')
+    }
+    return result_ok((int) $res->value['handle'])
+}
+
+/// docid: phpx/tcp/listenSync()
+/// <Function name="listenSync">
+///   <Description>Bind a plain TCP listener.</Description>
+///   <Parameter name="$host" type="string" required="true" />
+///   <Parameter name="$port" type="int" required="true" />
+///   <Parameter name="$options" type="Object" required="false">backlog (ignored on this runtime).</Parameter>
+///   <ReturnType type="Result<int, string>" />
+/// </Function>
+export function listenSync($host, $port, $options = {}) {
+    $res = normalize_result(bridge('net', 'listen', {
+        host: '' . $host,
+        port: (int) $port,
+        backlog: __tcp_opt_int($options, 'backlog', 128)
+    }))
+    if (!result_is_ok($res)) {
+        return result_err($res->error)
+    }
+    if (!is_array($res->value) || !array_key_exists('handle', $res->value)) {
+        return result_err('listen succeeded without handle')
+    }
+    return result_ok((int) $res->value['handle'])
+}
+
+/// docid: phpx/tcp/listenTlsSync()
+/// <Function name="listenTlsSync">
+///   <Description>Bind a TLS listener.</Description>
+///   <Parameter name="$host" type="string" required="true" />
+///   <Parameter name="$port" type="int" required="true" />
+///   <Parameter name="$cert" type="bytes" required="true">PEM-encoded certificate.</Parameter>
+///   <Parameter name="$key" type="bytes" required="true">PEM-encoded private key.</Parameter>
+///   <Parameter name="$options" type="Object" required="false">backlog.</Parameter>
+///   <ReturnType type="Result<int, string>" />
+/// </Function>
+export function listenTlsSync($host, $port, $cert, $key, $options = {}) {
+    $res = normalize_result(bridge('net', 'listen_tls', {
+        host: '' . $host,
+        port: (int) $port,
+        backlog: __tcp_opt_int($options, 'backlog', 128),
+        cert: bytes_to_array(__tcp_ensure_bytes($cert)),
+        key: bytes_to_array(__tcp_ensure_bytes($key))
+    }))
+    if (!result_is_ok($res)) {
+        return result_err($res->error)
+    }
+    if (!is_array($res->value) || !array_key_exists('handle', $res->value)) {
+        return result_err('listen_tls succeeded without handle')
+    }
+    return result_ok((int) $res->value['handle'])
+}
+
+/// docid: phpx/tcp/acceptSync()
+/// <Function name="acceptSync">
+///   <Description>Accept a connection from a listener.</Description>
+///   <Parameter name="$handle" type="int" required="true">Listener handle.</Parameter>
+///   <ReturnType type="Result<int, string>" />
+/// </Function>
+export function acceptSync($handle) {
+    $res = normalize_result(bridge('net', 'accept', { handle: (int) $handle }))
+    if (!result_is_ok($res)) {
+        return result_err($res->error)
+    }
+    if (!is_array($res->value) || !array_key_exists('handle', $res->value)) {
+        return result_err('accept succeeded without handle')
+    }
+    return result_ok((int) $res->value['handle'])
+}
+
+/// docid: phpx/tcp/readUntilSync()
+/// <Function name="readUntilSync">
+///   <Description>Read bytes from a connection until a delimiter is found.</Description>
+///   <Parameter name="$handle" type="int" required="true">Connection handle.</Parameter>
+///   <Parameter name="$delimiter" type="bytes" required="true">Delimiter bytes.</Parameter>
+///   <Parameter name="$max_bytes" type="int" required="false">Maximum bytes to read.</Parameter>
+///   <ReturnType type="Result<Object<{ data: bytes, found: bool, eof: bool }>, string>" />
+/// </Function>
+export function readUntilSync($handle, $delimiter, $max_bytes = 65536) {
+    $res = normalize_result(bridge('net', 'read_until', {
+        handle: (int) $handle,
+        delimiter: bytes_to_array(__tcp_ensure_bytes($delimiter)),
+        max_bytes: (int) $max_bytes
+    }))
+    if (!result_is_ok($res)) {
+        return result_err($res->error)
+    }
+    if (!is_array($res->value) || !array_key_exists('data', $res->value)) {
+        return result_err('read_until succeeded without data')
+    }
+    return result_ok({
+        data: bytes_from_array($res->value['data']),
+        found: (bool) $res->value['found'],
+        eof: (bool) $res->value['eof']
+    })
+}
+
+// Async wrappers.
+export function startTls($handle, $server_name) {
+    return startTlsSync($handle, $server_name)
+}
+export function readUntil($handle, $delimiter, $max_bytes = 65536) {
+    return readUntilSync($handle, $delimiter, $max_bytes)
+}
+export function connectTls($host, $port, $server_name = null, $options = {}) {
+    return connectTlsSync($host, $port, $server_name, $options)
+}
+export function listen($host, $port, $options = {}) {
+    return listenSync($host, $port, $options)
+}
+export function listenTls($host, $port, $cert, $key, $options = {}) {
+    return listenTlsSync($host, $port, $cert, $key, $options)
+}
+export function accept($handle) {
+    return acceptSync($handle)
 }

@@ -4779,6 +4779,11 @@ function phpWasmCall(modulePtr, moduleLen, exportPtr, exportLen, argsPtr, argsLe
                     }
                 } else if (isTimeBridge || moduleId.includes('time')) {
                     result = routeHostCall('time', String(exportName || ''), payload);
+                } else if (moduleId === '__deka_concurrency' || moduleId.includes('concurrency')) {
+                    result = {
+                        ok: false,
+                        error: 'concurrency bridge is not supported in the PHP/WASM runtime; use the JS runtime path'
+                    };
                 } else {
                     result = {
                         ok: false,

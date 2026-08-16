@@ -4,7 +4,7 @@ use bumpalo::Bump;
 use deno_core::op2;
 use mysql::prelude::Queryable;
 use mysql::{OptsBuilder, Params as MyParams, Pool as MyPool, Value as MyValue};
-use native_tls::{TlsConnector, TlsStream};
+
 use php_rs::parser::ast::{ClassKind, ClassMember, Program, Stmt, Type as AstType};
 use php_rs::parser::lexer::Lexer;
 use php_rs::parser::lexer::token::Token;
@@ -32,6 +32,7 @@ mod proto {
 
 mod bridge_metrics;
 mod compat;
+mod concurrency;
 mod crypto_env;
 mod db;
 mod db_pg;
@@ -82,6 +83,8 @@ deno_core::extension!(
         compat::op_redis_call,
         compat::op_shard_for,
         compat::op_deka_http_call,
+        concurrency::op_php_concurrency_lock_acquire,
+        concurrency::op_php_concurrency_lock_release,
     ],
     esm_entry_point = "ext:php_core/php.js",
     esm = [dir "src/modules/php", "php.js"],
@@ -438,7 +441,10 @@ mod tests {
         )
         .expect("json read failed");
         assert_ok(&json_read);
-        assert_eq!(json_read.get("data").and_then(|v| v.as_str()), Some("ping"));
+        assert_eq!(
+            json_read.get("data"),
+            Some(&serde_json::json!([112, 105, 110, 103]))
+        );
 
         let json_close = net_call_impl(
             &mut net_state,
@@ -474,7 +480,7 @@ mod tests {
             "write",
             &serde_json::json!({
                 "handle": proto_handle,
-                "data": "pong"
+                "data": [112, 111, 110, 103]
             }),
         )
         .expect("proto write build failed");
@@ -503,8 +509,8 @@ mod tests {
         );
         assert_ok(&proto_read_json);
         assert_eq!(
-            proto_read_json.get("data").and_then(|v| v.as_str()),
-            Some("pong")
+            proto_read_json.get("data"),
+            Some(&serde_json::json!([112, 111, 110, 103]))
         );
 
         let proto_close_req = net_action_payload_to_proto_request(

@@ -3,6 +3,7 @@ TEST: tcp module can connect/write/read against a local test socket
 */
 import { connect, write, read_exact, close } from 'tcp'
 import { result_is_ok } from 'core/result'
+import { bytes_to_string } from 'core/bytes'
 
 if (getenv('PHPX_NET_SMOKE') !== '1') {
     echo "SKIP\n"
@@ -37,4 +38,4 @@ if (!result_is_ok($r)) {
     return
 }
 
-echo "OK " . $r->value
+echo "OK " . bytes_to_string($r->value)
