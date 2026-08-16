@@ -1,5 +1,5 @@
 use core::{CommandSpec, Context, Registry};
-use phpx_js::{compile_phpx_source_to_js, parse_source_module_meta};
+use phpx_js::{compile_phpx_source_to_js_with_warnings, parse_source_module_meta};
 use std::fs;
 use std::path::Path;
 
@@ -39,7 +39,18 @@ fn run(context: &Context) -> Result<(), String> {
 
     let source = fs::read_to_string(path)
         .map_err(|err| format!("failed to read {}: {}", path.display(), err))?;
-    compile_phpx_source_to_js(&source, input, parse_source_module_meta(&source))?;
+    let outcome =
+        compile_phpx_source_to_js_with_warnings(&source, input, parse_source_module_meta(&source))?;
+
+    // Warnings never gate `deka check` -- a program with only warnings is a
+    // successful check (deka#59). They're printed with the same colored,
+    // span-anchored renderer used for errors so they read as "worth
+    // knowing" rather than a pass/fail signal, and are never confusable
+    // with a `[fail]` line since we still report success below.
+    for warning in &outcome.warnings {
+        eprintln!("{}", warning);
+    }
+
     stdio::success(&format!("checked {}", path.display()));
     Ok(())
 }
