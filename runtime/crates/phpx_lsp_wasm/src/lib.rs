@@ -3,7 +3,7 @@
 //! This module intentionally only exposes source analysis. It has no document
 //! store, filesystem, network, or LSP transport dependency.
 
-use crate::{AnalysisContext, AnalysisDiagnostic, analyze, is_dekascript_context};
+use dekascript_lsp::{AnalysisContext, AnalysisDiagnostic, analyze, is_dekascript_context};
 use serde::Serialize;
 
 /// Version of the DekaScript diagnostics JSON and WASM ABI.

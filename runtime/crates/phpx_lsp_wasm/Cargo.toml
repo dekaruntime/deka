@@ -1,0 +1,12 @@
+[package]
+name = "dekascript_lsp_wasm"
+version = "0.9.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+dekascript_lsp = { path = "../phpx_lsp", default-features = false }
+serde = { workspace = true }
+serde_json = { workspace = true }
