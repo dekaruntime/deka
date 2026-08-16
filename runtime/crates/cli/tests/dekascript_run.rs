@@ -138,6 +138,23 @@ fn run_executes_inherent_impl_for_enum_method() {
     );
 }
 
+// Struct target, impl declared BEFORE the struct -- rounds out the
+// ordering matrix alongside the enum cases above. Structs read their
+// method table at construction time (always later than both declarations,
+// regardless of source order), so this was expected to already work --
+// verified rather than assumed.
+#[test]
+fn run_executes_impl_before_struct_declaration_method() {
+    run_dekascript(
+        "impl_before_struct",
+        "impl Point { norm(self: Self): int { return self.x * 2; } }\n\
+         struct Point { $x: int; }\n\
+         const p = Point { $x: 5 };\n\
+         print(p.norm());\n",
+        "10",
+    );
+}
+
 #[test]
 fn run_executes_impl_before_enum_declaration_method() {
     run_dekascript(
