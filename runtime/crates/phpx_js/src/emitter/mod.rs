@@ -454,29 +454,28 @@ impl<'a> JsSubsetEmitter<'a> {
             out.push_str("globalThis.phpxWrapHandler ??= (fn) => async (req, ctx) => { phpxStartBuffer(); try { const r = await fn(req, ctx); if (r != null) return r; } catch(_e) { const stack = _e && _e.stack ? String(_e.stack) : ''; const err = { kind: 'phpxWrapHandler.error', message: String(_e), stack }; if (typeof Deno !== 'undefined' && Deno.core && typeof Deno.core.print === 'function') { Deno.core.print('[phpxWrap] ' + JSON.stringify(err) + '\\n', true); } return { status: 500, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ error: 'internal_error', kind: err.kind }) }; } return phpxEndBuffer(); };\n\n");
         }
 
+        let mut imports = self.meta.imports.clone();
+
         // JSX runtime — converts JSX calls to HTML strings for both server and browser targets.
         // `self.uses_jsx_runtime` is already set precisely (jsx.rs) whenever a
         // JsxElement/JsxFragment was actually emitted, so this is gated on
         // that flag directly rather than a body-text scan.
         if self.uses_jsx_runtime {
-            out.push_str("globalThis.jsx ??= (tag, props) => {\n");
-            out.push_str("  if (typeof tag === 'function') return tag(props ?? {});\n");
-            out.push_str("  const attrs = Object.entries(props ?? {}).filter(([k]) => k !== 'children').map(([k, v]) => ` ${k}=\"${String(v ?? '').replace(/\\\"/g, '&quot;')}\"`).join('');\n");
-            out.push_str("  const children = props?.children;\n");
-            out.push_str("  let inner = '';\n");
-            out.push_str("  if (children !== undefined) {\n");
-            out.push_str("    if (Array.isArray(children)) { inner = children.map((c) => String(c ?? '')).join(''); }\n");
-            out.push_str("    else { inner = String(children); }\n");
-            out.push_str("  }\n");
-            out.push_str("  if (tag === '__fragment__') return inner;\n");
-            out.push_str("  return `<${tag}${attrs}>${inner}</${tag}>`;\n");
-            out.push_str("};\n");
-            out.push_str("globalThis.jsxs ??= globalThis.jsx;\n");
-            out.push_str("const jsx = globalThis.jsx;\n");
-            out.push_str("const jsxs = globalThis.jsxs;\n\n");
+            add_or_merge_import(
+                &mut imports,
+                "component/core",
+                vec![
+                    ImportSpec {
+                        imported: "jsx".to_string(),
+                        local: "jsx".to_string(),
+                    },
+                    ImportSpec {
+                        imported: "jsxs".to_string(),
+                        local: "jsxs".to_string(),
+                    },
+                ],
+            );
         }
-
-        let mut imports = self.meta.imports.clone();
         let deka_i_locals = extract_deka_i_imports(&mut imports);
 
         for decl in &imports {
