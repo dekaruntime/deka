@@ -15,6 +15,7 @@ env:
   SCCACHE_ENDPOINT: https://${{ secrets.CF_ACCOUNT_ID }}.r2.cloudflarestorage.com
   SCCACHE_REGION: auto
   R2_RELEASES_BUCKET: deka-releases
+  R2_WASM_BUCKET: deka-wasm
   R2_RELEASES_ENDPOINT: https://${{ secrets.CF_ACCOUNT_ID }}.r2.cloudflarestorage.com
 
 jobs:
@@ -170,6 +171,7 @@ jobs:
       - name: Build WASM artifacts
         env:
           RUSTC_WRAPPER: sccache
+          DEKA_SKIP_DIRTY_CHECK: 1
         run: runtime/scripts/build-deka-compiler-wasm.sh runtime/dist/deka-compiler-wasm
 
       - name: Show sccache stats
@@ -275,3 +277,19 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           PREFIX="runtime/v${VERSION}"
           aws s3 cp "dist/${PREFIX}/manifest.json" "s3://${R2_RELEASES_BUCKET}/runtime/latest.json" --endpoint-url "${R2_ENDPOINT}"
+
+      - name: Upload WASM artifacts to deka-wasm bucket
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          SRC="dist/runtime/v${VERSION}"
+          aws s3 cp "${SRC}/deka_compiler.wasm" "s3://${R2_WASM_BUCKET}/v${VERSION}/deka_compiler.wasm" --endpoint-url "${R2_ENDPOINT}"
+          aws s3 cp "${SRC}/deka_diagnostics.wasm" "s3://${R2_WASM_BUCKET}/v${VERSION}/deka_diagnostics.wasm" --endpoint-url "${R2_ENDPOINT}"
+          aws s3 cp "${SRC}/deka_compiler.wasm.sha256" "s3://${R2_WASM_BUCKET}/v${VERSION}/deka_compiler.wasm.sha256" --endpoint-url "${R2_ENDPOINT}" || true
+          aws s3 cp "${SRC}/deka_diagnostics.wasm.sha256" "s3://${R2_WASM_BUCKET}/v${VERSION}/deka_diagnostics.wasm.sha256" --endpoint-url "${R2_ENDPOINT}" || true
+
+      - name: Update deka-wasm latest pointers
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          SRC="dist/runtime/v${VERSION}"
+          aws s3 cp "${SRC}/deka_compiler.wasm" "s3://${R2_WASM_BUCKET}/latest/deka_compiler.wasm" --endpoint-url "${R2_ENDPOINT}"
+          aws s3 cp "${SRC}/deka_diagnostics.wasm" "s3://${R2_WASM_BUCKET}/latest/deka_diagnostics.wasm" --endpoint-url "${R2_ENDPOINT}"

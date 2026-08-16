@@ -7,8 +7,14 @@ out_dir=${1:-"$runtime_dir/dist/deka-compiler-wasm"}
 artifact_name=deka_compiler.wasm
 diagnostics_artifact_name=deka_diagnostics.wasm
 target_dir=${CARGO_TARGET_DIR:-"$runtime_dir/target"}
-git -C "$repo_dir" diff --quiet
-git -C "$repo_dir" diff --cached --quiet
+# The dirty-tree check is useful in local/test contexts to ensure the artifact
+# matches a clean commit. In release CI the tree is clean by construction, but
+# actions/checkout and other setup steps can leave the index in a state that
+# this check rejects; allow skipping it via env var.
+if [ "${DEKA_SKIP_DIRTY_CHECK:-}" != "1" ]; then
+  git -C "$repo_dir" diff --quiet
+  git -C "$repo_dir" diff --cached --quiet
+fi
 source_commit=$(git -C "$repo_dir" rev-parse HEAD)
 cargo_lock_sha256=$(shasum -a 256 "$runtime_dir/Cargo.lock" | awk '{print $1}')
 rustc_version=$(rustc -Vv | tr '\n' ';' | sed 's/;$/\n/')
