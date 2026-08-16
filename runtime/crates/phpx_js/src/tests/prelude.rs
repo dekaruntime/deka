@@ -4,7 +4,11 @@ use super::*;
 
 #[test]
 fn prelude_uses_nullish_assignment() {
-    let js = phpx_to_js("$x = 1;").expect("should compile");
+    // #47: the prelude is demand-driven, so `$x = 1;` alone (referencing no
+    // mission/runtime helper) now emits ZERO globalThis lines — see
+    // `prelude_no_helpers_emits_no_globalthis_prelude`. To check the ??=
+    // pattern itself, use a source that actually triggers a polyfill.
+    let js = phpx_to_js("panic(\"boom\");").expect("should compile");
     // The prelude should use ??= for global setup
     assert!(js.contains("??="), "expected ??= in prelude, got:\n{}", js);
     // Should NOT use the anti-pattern `if (!globalThis.X) { globalThis.X = ... }`
@@ -212,14 +216,18 @@ fn prelude_no_removed_polyfills() {
         !js.contains("globalThis.array_slice ??="),
         "globalThis.array_slice polyfill should be removed"
     );
-    // But kept entries should still be present
+    // Kept entries (panic, defined, etc.) are demand-driven as of #47: they
+    // no longer appear unconditionally for a program that never references
+    // them. See `prelude_kept_entries_present_when_referenced` below for the
+    // positive case, and `prelude_no_helpers_emits_no_globalthis_prelude` for
+    // the "referenced nothing -> nothing" case this program falls into.
     assert!(
-        js.contains("globalThis.panic ??="),
-        "globalThis.panic should still be in prelude"
+        !js.contains("globalThis.panic ??="),
+        "globalThis.panic should NOT be in the prelude when panic() is never called (#47)"
     );
     assert!(
-        js.contains("globalThis.defined ??="),
-        "globalThis.defined should still be in prelude"
+        !js.contains("globalThis.defined ??="),
+        "globalThis.defined should NOT be in the prelude when defined() is never called (#47)"
     );
 }
 
@@ -319,23 +327,127 @@ fn prelude_batch3_no_removed_polyfills() {
     );
 }
 
+// #47: the mission/runtime globalThis prelude is demand-driven — an entry
+// is only emitted when the compiled program's own body actually references
+// it. `$x = 1;` references none of it, so these two tests (which previously
+// asserted __phpx_is_struct / panic were ALWAYS present) now use fixtures
+// that actually trigger each helper, and a new pair of tests directly below
+// covers the "referenced nothing" / "referenced exactly one thing" cases.
+
 #[test]
-fn prelude_contains_phpx_is_struct() {
-    let js = phpx_to_js("$x = 1;").expect("should compile");
+fn prelude_contains_phpx_is_struct_when_instanceof_struct_used() {
+    let source = r#"
+struct Point {
+$x: int;
+$y: int;
+}
+function f(): bool {
+$p = { x: 1, y: 2, __struct: 'Point' };
+return $p instanceof Point;
+}
+"#;
+    let js = phpx_to_js(source).expect("should compile");
     assert!(
         js.contains("__phpx_is_struct"),
-        "expected __phpx_is_struct in prelude, got first 500 chars:\n{}",
+        "expected __phpx_is_struct in prelude when `instanceof` on a struct is used, got:\n{}",
+        js
+    );
+}
+
+#[test]
+fn prelude_contains_panic_when_panic_called() {
+    let js = phpx_to_js("panic(\"boom\");").expect("should compile");
+    assert!(
+        js.contains("globalThis.panic ??="),
+        "expected panic in prelude when panic() is called, got first 500 chars:\n{}",
         &js[..std::cmp::min(500, js.len())]
     );
 }
 
 #[test]
-fn prelude_contains_panic() {
+fn prelude_no_helpers_emits_no_globalthis_prelude() {
+    // #47 acceptance: a program referencing no mission/runtime helper emits
+    // no `globalThis.<name> ??= ...` prelude lines at all — not "a smaller
+    // one", none.
     let js = phpx_to_js("$x = 1;").expect("should compile");
+    let assignment_lines: Vec<&str> = js
+        .lines()
+        .filter(|line| line.starts_with("globalThis.") && line.contains("??="))
+        .collect();
     assert!(
-        js.contains("globalThis.panic"),
-        "expected panic in prelude, got first 500 chars:\n{}",
-        &js[..std::cmp::min(500, js.len())]
+        assignment_lines.is_empty(),
+        "expected zero globalThis.* ??= prelude lines for a program that references none \
+         of them, got:\n{}",
+        assignment_lines.join("\n")
+    );
+}
+
+#[test]
+fn prelude_exactly_one_helper_emits_only_that_helper() {
+    // #47 acceptance: a program referencing exactly one helper (getenv)
+    // emits that helper and none of the other ~40 mission/runtime entries.
+    let js = phpx_to_js("$v = getenv(\"HOME\");").expect("should compile");
+    assert!(
+        js.contains("globalThis.getenv ??="),
+        "expected globalThis.getenv in prelude when getenv() is called, got:\n{}",
+        js
+    );
+    let other_entries = [
+        "globalThis.panic ??=",
+        "globalThis.class_alias ??=",
+        "globalThis.defined ??=",
+        "globalThis.__phpx_is_struct ??=",
+        "globalThis.is_promise ??=",
+        "globalThis.GLOBALS ??=",
+        "globalThis.JSON_ERROR_NONE ??=",
+        "globalThis.__deka_chr ??=",
+        "globalThis.__deka_ord ??=",
+        "globalThis.__deka_object_set ??=",
+        "globalThis.__phpx_symbol_table ??=",
+        "globalThis.__phpx_array_cursor ??=",
+        "globalThis.__phpx_stat ??=",
+        "globalThis.is_file ??=",
+        "globalThis.is_dir ??=",
+        "globalThis.mkdir ??=",
+        "globalThis.file ??=",
+        "globalThis.error_log ??=",
+        "globalThis.error_get_last ??=",
+        "globalThis.set_error_handler ??=",
+        "globalThis.register_shutdown_function ??=",
+        "globalThis.__phpx_serve_php ??=",
+        "globalThis.__phpxCurrentResponse ??=",
+        "globalThis.header ??=",
+        "globalThis.phpxStartBuffer ??=",
+        "globalThis.phpxEndBuffer ??=",
+        "globalThis.phpxWrapHandler ??=",
+        "globalThis.jsx ??=",
+        "globalThis.jsxs ??=",
+        "globalThis.__phpxStructMethods ??=",
+    ];
+    for entry in other_entries {
+        assert!(
+            !js.contains(entry),
+            "expected `{}` to be absent when the program only calls getenv(), got:\n{}",
+            entry,
+            js
+        );
+    }
+}
+
+#[test]
+fn prelude_kept_entries_present_when_referenced() {
+    // Companion to `prelude_no_removed_polyfills`'s negative assertions:
+    // panic/defined ARE still real prelude entries, just demand-driven now.
+    let js = phpx_to_js("panic(\"boom\"); $seen = defined(\"X\");").expect("should compile");
+    assert!(
+        js.contains("globalThis.panic ??="),
+        "globalThis.panic should be present when panic() is called: {}",
+        js
+    );
+    assert!(
+        js.contains("globalThis.defined ??="),
+        "globalThis.defined should be present when defined() is called: {}",
+        js
     );
 }
 
