@@ -2,13 +2,25 @@
 
 Releases are fully automated through GitHub Actions and published to Cloudflare R2.
 
+## Versioning policy
+
+We follow [Semantic Versioning 2.0](https://semver.org/). While the runtime is pre-1.0, we still increment versions for every user-visible change:
+
+- **PATCH** (`0.9.0` → `0.9.1`): bug fixes, performance improvements, build/CI fixes, and other backward-compatible corrections.
+- **MINOR** (`0.9.x` → `0.10.0`): new language features, new stdlib modules, new CLI commands, or other backward-compatible capability additions.
+- **MAJOR** (`0.x.y` → `1.0.0`): reserved for the eventual stable 1.0 release. Until then, breaking changes can land in minor versions as part of normal pre-1.0 iteration.
+
+Every pull request that changes runtime behavior, the CLI, or the browser compiler must bump the version before it merges. Do not wait for a "release branch" or batch multiple changes into a single version bump. Version bumps are part of the change that needs them.
+
+The version lives in each `runtime/crates/*/Cargo.toml`. Keep them in lockstep; the release workflow expects a single version for the entire runtime/CLI distribution.
+
 ## Triggering a release
 
-Push a git tag matching `v*`. For example:
+Push a git tag matching `v*` after the version has been bumped on `main`. For example:
 
 ```sh
-git tag -a v0.9.0 -m "deka runtime/cli v0.9.0"
-git push origin v0.9.0
+git tag -a v0.9.1 -m "deka runtime/cli v0.9.1"
+git push origin v0.9.1
 ```
 
 The `.github/workflows/release.yml` workflow will:
