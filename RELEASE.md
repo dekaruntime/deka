@@ -19,8 +19,9 @@ The `.github/workflows/release.yml` workflow will:
    - `darwin-arm64`
 2. Build the browser compiler WASM artifacts (`deka_compiler.wasm`, `deka_diagnostics.wasm`).
 3. Compute SHA-256 checksums and write `manifest.json`.
-4. Upload everything to the R2 bucket under `runtime/v<VERSION>/`.
-5. Copy the manifest to `runtime/latest.json` so `deka.gg` can point users at the current release.
+4. Upload CLI binaries and WASM to the `deka-releases` bucket under `runtime/v<VERSION>/`.
+5. Copy the manifest to `deka-releases/runtime/latest.json` so `deka.gg` can point users at the current release.
+6. Also copy the WASM files to the `deka-wasm` bucket under `v<VERSION>/` and to `deka-wasm/latest/`, giving the website a stable URL for the pinned browser compiler artifact.
 
 ## Required GitHub secrets
 
@@ -34,12 +35,13 @@ Set these in the `dekaruntime/deka` repository settings under **Settings → Sec
 
 ## Required R2 buckets
 
-Create one bucket per platform for sccache and one bucket for releases:
+Create one bucket per platform for sccache and buckets for releases and WASM artifacts:
 
 - `deka-sccache-linux-x64`
 - `deka-sccache-darwin-x64`
 - `deka-sccache-darwin-arm64`
 - `deka-releases`
+- `deka-wasm`
 
 The sccache buckets can be empty initially; sccache will populate them on first build.
 
@@ -47,7 +49,7 @@ The sccache buckets can be empty initially; sccache will populate them on first 
 
 The token used by GitHub Actions needs these permissions:
 
-- **Object Storage: Read/Write** on all four buckets.
+- **Object Storage: Read/Write** on all five buckets.
 
 If you want a narrower token, scope it to the buckets above.
 
