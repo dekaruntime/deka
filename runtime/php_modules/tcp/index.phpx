@@ -537,9 +537,39 @@ export function acceptSync($handle) {
     return result_ok((int) $res->value['handle'])
 }
 
+/// docid: phpx/tcp/readUntilSync()
+/// <Function name="readUntilSync">
+///   <Description>Read bytes from a connection until a delimiter is found.</Description>
+///   <Parameter name="$handle" type="int" required="true">Connection handle.</Parameter>
+///   <Parameter name="$delimiter" type="bytes" required="true">Delimiter bytes.</Parameter>
+///   <Parameter name="$max_bytes" type="int" required="false">Maximum bytes to read.</Parameter>
+///   <ReturnType type="Result<Object<{ data: bytes, found: bool, eof: bool }>, string>" />
+/// </Function>
+export function readUntilSync($handle, $delimiter, $max_bytes = 65536) {
+    $res = normalize_result(bridge('net', 'read_until', {
+        handle: (int) $handle,
+        delimiter: bytes_to_array(__tcp_ensure_bytes($delimiter)),
+        max_bytes: (int) $max_bytes
+    }))
+    if (!result_is_ok($res)) {
+        return result_err($res->error)
+    }
+    if (!is_array($res->value) || !array_key_exists('data', $res->value)) {
+        return result_err('read_until succeeded without data')
+    }
+    return result_ok({
+        data: bytes_from_array($res->value['data']),
+        found: (bool) $res->value['found'],
+        eof: (bool) $res->value['eof']
+    })
+}
+
 // Async wrappers.
 export function startTls($handle, $server_name) {
     return startTlsSync($handle, $server_name)
+}
+export function readUntil($handle, $delimiter, $max_bytes = 65536) {
+    return readUntilSync($handle, $delimiter, $max_bytes)
 }
 export function connectTls($host, $port, $server_name = null, $options = {}) {
     return connectTlsSync($host, $port, $server_name, $options)
