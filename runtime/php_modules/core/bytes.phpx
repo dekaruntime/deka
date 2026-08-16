@@ -1,122 +1,95 @@
-import { strlen } from 'string/strlen'
-import { substr } from 'string/substr'
-import { ord } from 'string/ord'
-import { chr } from 'string/chr'
-
 /// docid: phpx/core/bytes_from_string()
 /// <Function name="bytes_from_string">
-///   <Description>PHPX standard module function `bytes_from_string` from `core`.</Description>
-///   <ReturnType type="mixed" />
+///   <Description>Encode a UTF-8 string into a byte buffer.</Description>
+///   <Param name="str" type="string" />
+///   <ReturnType type="bytes" />
 /// </Function>
 export function bytes_from_string($str) {
-    return $str;
+    return \__deka_bytes_from_string('' . $str);
 }
 
 /// docid: phpx/core/bytes_to_string()
 /// <Function name="bytes_to_string">
-///   <Description>PHPX standard module function `bytes_to_string` from `core`.</Description>
-///   <ReturnType type="mixed" />
+///   <Description>Decode a byte buffer into a UTF-8 string.</Description>
+///   <Param name="bytes" type="bytes" />
+///   <ReturnType type="string" />
 /// </Function>
 export function bytes_to_string($bytes) {
-    return $bytes;
+    return \__deka_bytes_to_string($bytes);
 }
 
 /// docid: phpx/core/bytes_len()
 /// <Function name="bytes_len">
-///   <Description>PHPX standard module function `bytes_len` from `core`.</Description>
-///   <ReturnType type="mixed" />
+///   <Description>Return the number of bytes in a buffer.</Description>
+///   <Param name="bytes" type="bytes" />
+///   <ReturnType type="int" />
 /// </Function>
 export function bytes_len($bytes) {
-    return strlen($bytes);
+    return \__deka_bytes_len($bytes);
 }
 
 /// docid: phpx/core/bytes_get()
 /// <Function name="bytes_get">
-///   <Description>PHPX standard module function `bytes_get` from `core`.</Description>
-///   <ReturnType type="mixed" />
+///   <Description>Return the byte at an index, or null if out of bounds.</Description>
+///   <Param name="bytes" type="bytes" />
+///   <Param name="index" type="int" />
+///   <ReturnType type="int|null" />
 /// </Function>
 export function bytes_get($bytes, $index) {
-    if ($index < 0 || $index >= strlen($bytes)) {
-        return null;
-    }
-    return ord($bytes[$index]);
+    return \__deka_bytes_get($bytes, $index);
 }
 
 /// docid: phpx/core/bytes_set()
 /// <Function name="bytes_set">
-///   <Description>PHPX standard module function `bytes_set` from `core`.</Description>
-///   <ReturnType type="mixed" />
+///   <Description>Return a new buffer with the byte at an index replaced.</Description>
+///   <Param name="bytes" type="bytes" />
+///   <Param name="index" type="int" />
+///   <Param name="byte" type="int" />
+///   <ReturnType type="bytes" />
 /// </Function>
 export function bytes_set($bytes, $index, $byte) {
-    if ($index < 0 || $index >= strlen($bytes)) {
-        return $bytes
-    }
-    $prefix = ''
-    if ($index > 0) {
-        $prefix = substr($bytes, 0, $index)
-    }
-    $suffix = ''
-    if ($index + 1 < strlen($bytes)) {
-        $suffix = substr($bytes, $index + 1)
-    }
-    return $prefix . chr($byte) . $suffix
+    return \__deka_bytes_set($bytes, $index, $byte);
 }
 
 /// docid: phpx/core/bytes_slice()
 /// <Function name="bytes_slice">
-///   <Description>PHPX standard module function `bytes_slice` from `core`.</Description>
-///   <ReturnType type="mixed" />
+///   <Description>Return a slice of a byte buffer.</Description>
+///   <Param name="bytes" type="bytes" />
+///   <Param name="start" type="int" />
+///   <Param name="length" type="int|null" />
+///   <ReturnType type="bytes" />
 /// </Function>
 export function bytes_slice($bytes, $start, $length = null) {
-    if ($length === null) {
-        return substr($bytes, $start);
-    }
-    return substr($bytes, $start, $length);
+    return \__deka_bytes_slice($bytes, $start, $length);
 }
 
 /// docid: phpx/core/bytes_concat()
 /// <Function name="bytes_concat">
-///   <Description>PHPX standard module function `bytes_concat` from `core`.</Description>
-///   <ReturnType type="mixed" />
+///   <Description>Concatenate two byte buffers.</Description>
+///   <Param name="a" type="bytes" />
+///   <Param name="b" type="bytes" />
+///   <ReturnType type="bytes" />
 /// </Function>
 export function bytes_concat($a, $b) {
-    return $a . $b;
+    return \__deka_bytes_concat($a, $b);
 }
 
 /// docid: phpx/core/bytes_to_array()
 /// <Function name="bytes_to_array">
-///   <Description>PHPX standard module function `bytes_to_array` from `core`.</Description>
-///   <ReturnType type="mixed" />
+///   <Description>Copy a byte buffer into an array of integers.</Description>
+///   <Param name="bytes" type="bytes" />
+///   <ReturnType type="array<int>" />
 /// </Function>
 export function bytes_to_array($bytes) {
-    $out = []
-    $n = strlen($bytes)
-    for ($i = 0; $i < $n; $i++) {
-        $out[] = ord($bytes[$i])
-    }
-    return $out
+    return \__deka_bytes_to_array($bytes);
 }
 
 /// docid: phpx/core/bytes_from_array()
 /// <Function name="bytes_from_array">
-///   <Description>PHPX standard module function `bytes_from_array` from `core`.</Description>
-///   <ReturnType type="mixed" />
+///   <Description>Create a byte buffer from an array of integers.</Description>
+///   <Param name="arr" type="array<int>" />
+///   <ReturnType type="bytes" />
 /// </Function>
 export function bytes_from_array($arr) {
-    if (!is_array($arr)) {
-        return ''
-    }
-
-    $out = ''
-    foreach ($arr as $v) {
-        $b = (int) $v
-        if ($b < 0) {
-            $b = 0
-        }
-        if ($b > 255) {
-            $b = 255
-        }
-        $out .= chr($b)
-    }
-    return $out
+    return \__deka_bytes_from_array($arr);
 }

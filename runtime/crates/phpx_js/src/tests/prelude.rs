@@ -339,4 +339,21 @@ fn prelude_contains_panic() {
     );
 }
 
+#[test]
+fn prelude_contains_bytes_helpers() {
+    let js = phpx_to_js("$x = 1;").expect("should compile");
+    assert!(
+        js.contains("globalThis.__deka_bytes_from_string"),
+        "expected __deka_bytes_from_string in prelude"
+    );
+    assert!(
+        js.contains("globalThis.__deka_bytes_len"),
+        "expected __deka_bytes_len in prelude"
+    );
+    assert!(
+        js.contains("globalThis.__deka_bytes_concat"),
+        "expected __deka_bytes_concat in prelude"
+    );
+}
+
 // ---- Top-level vs function scope: globalThis mirroring ----

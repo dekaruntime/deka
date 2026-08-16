@@ -212,6 +212,17 @@ impl<'a> JsSubsetEmitter<'a> {
         out.push_str("globalThis.__deka_chr ??= (code) => String.fromCharCode((Number(code) || 0) & 0xff);\n");
         out.push_str("globalThis.__deka_ord ??= (s) => { const str = String(s ?? ''); return str.length > 0 ? str.charCodeAt(0) : 0; };\n");
         out.push_str("globalThis.__deka_object_set ??= (obj, key, value) => { if (obj && typeof obj === 'object') { obj[key] = value; } return obj; };\n");
+        // Bytes helpers (RFD 15). bytes values are Uint8Array instances; these helpers
+        // provide the canonical bridge between UTF-8 strings and raw byte buffers.
+        out.push_str("globalThis.__deka_bytes_from_string ??= (s) => new TextEncoder().encode(String(s ?? ''));\n");
+        out.push_str("globalThis.__deka_bytes_to_string ??= (b) => new TextDecoder().decode(b ?? new Uint8Array());\n");
+        out.push_str("globalThis.__deka_bytes_len ??= (b) => (b instanceof Uint8Array ? b.length : 0);\n");
+        out.push_str("globalThis.__deka_bytes_get ??= (b, i) => { const buf = b instanceof Uint8Array ? b : new Uint8Array(); const idx = Number(i) || 0; return (idx >= 0 && idx < buf.length) ? buf[idx] : null; };\n");
+        out.push_str("globalThis.__deka_bytes_set ??= (b, i, v) => { const src = b instanceof Uint8Array ? b : new Uint8Array(); const idx = Number(i) || 0; const val = Number(v) || 0; const out = new Uint8Array(src); if (idx >= 0 && idx < out.length) out[idx] = val & 0xff; return out; };\n");
+        out.push_str("globalThis.__deka_bytes_slice ??= (b, start, len) => { const buf = b instanceof Uint8Array ? b : new Uint8Array(); const s = Number(start) || 0; const e = len === null || len === undefined ? buf.length : s + (Number(len) || 0); return buf.slice(s, e); };\n");
+        out.push_str("globalThis.__deka_bytes_concat ??= (a, b) => { const aa = a instanceof Uint8Array ? a : new Uint8Array(); const bb = b instanceof Uint8Array ? b : new Uint8Array(); const out = new Uint8Array(aa.length + bb.length); out.set(aa, 0); out.set(bb, aa.length); return out; };\n");
+        out.push_str("globalThis.__deka_bytes_to_array ??= (b) => { const buf = b instanceof Uint8Array ? b : new Uint8Array(); return Array.from(buf); };\n");
+        out.push_str("globalThis.__deka_bytes_from_array ??= (a) => { if (!Array.isArray(a)) return new Uint8Array(); return Uint8Array.from(a.map((v) => { const n = Number(v) || 0; return n < 0 ? 0 : n > 255 ? 255 : n; })); };\n");
         // --- Tier B helpers: module-scoped function declarations (DCE-visible) ---
         // Emitted only when needed (self.needed_helpers tracks which ones were
         // referenced during AST traversal). Plain `function` declarations are in
