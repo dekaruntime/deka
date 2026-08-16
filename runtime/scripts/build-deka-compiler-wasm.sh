@@ -24,6 +24,9 @@ fi
 source_commit=$(git -C "$repo_dir" rev-parse HEAD)
 cargo_lock_sha256=$(shasum -a 256 "$runtime_dir/Cargo.lock" | awk '{print $1}')
 rustc_version=$(rustc -Vv | tr '\n' ';' | sed 's/;$/\n/')
+# Read the distribution version from the CLI crate, which is the canonical
+# runtime/CLI version. Avoids hardcoding the version in this script.
+deka_version=$(grep -E '^version\s*=' "$runtime_dir/crates/cli/Cargo.toml" | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
 
 mkdir -p "$out_dir"
 cd "$runtime_dir"
@@ -49,7 +52,7 @@ cat > "$out_dir/$artifact_name.metadata.json" <<EOF
   "artifact": "$artifact_name",
   "sha256": "$artifact_sha256",
   "source_commit": "$source_commit",
-  "compiler": {"name": "deka", "version": "0.9.0", "abi_version": 1},
+  "compiler": {"name": "deka", "version": "$deka_version", "abi_version": 1},
   "target": "wasm32-unknown-unknown",
   "cargo_lock_sha256": "$cargo_lock_sha256",
   "rustc": "$rustc_version",
