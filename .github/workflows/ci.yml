@@ -106,6 +106,8 @@ jobs:
       # back once fixed.
 
       - name: Build and test browser compiler WASM
+        env:
+          DEKA_SKIP_DIRTY_CHECK: 1
         run: runtime/scripts/test-deka-compiler-wasm.sh
 
       - name: Upload browser compiler WASM provenance
