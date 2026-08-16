@@ -32,13 +32,13 @@ CARGO_INCREMENTAL=0 DEKA_SOURCE_COMMIT="$source_commit" \
   --target wasm32-unknown-unknown -p phpx_compiler_wasm --no-default-features
 CARGO_INCREMENTAL=0 DEKA_SOURCE_COMMIT="$source_commit" \
   cargo build --locked --release \
-  --target wasm32-unknown-unknown -p dekascript_lsp --no-default-features
+  --target wasm32-unknown-unknown -p dekascript_lsp_wasm --no-default-features
 
 source_artifact="$target_dir/wasm32-unknown-unknown/release/phpx_compiler_wasm.wasm"
 test -f "$source_artifact"
 cp "$source_artifact" "$out_dir/$artifact_name"
 artifact_sha256=$(shasum -a 256 "$out_dir/$artifact_name" | awk '{print $1}')
-diagnostics_source_artifact="$target_dir/wasm32-unknown-unknown/release/dekascript_lsp.wasm"
+diagnostics_source_artifact="$target_dir/wasm32-unknown-unknown/release/dekascript_lsp_wasm.wasm"
 test -f "$diagnostics_source_artifact"
 cp "$diagnostics_source_artifact" "$out_dir/$diagnostics_artifact_name"
 diagnostics_artifact_sha256=$(shasum -a 256 "$out_dir/$diagnostics_artifact_name" | awk '{print $1}')
@@ -68,7 +68,7 @@ cat > "$out_dir/$diagnostics_artifact_name.metadata.json" <<EOF
   "target": "wasm32-unknown-unknown",
   "cargo_lock_sha256": "$cargo_lock_sha256",
   "rustc": "$rustc_version",
-  "build_command": "cd runtime && cargo build --locked --release --target wasm32-unknown-unknown -p dekascript_lsp --no-default-features"
+  "build_command": "cd runtime && cargo build --locked --release --target wasm32-unknown-unknown -p dekascript_lsp_wasm --no-default-features"
 }
 EOF
 printf '%s  %s\n' "$diagnostics_artifact_sha256" "$diagnostics_artifact_name" > "$out_dir/$diagnostics_artifact_name.sha256"

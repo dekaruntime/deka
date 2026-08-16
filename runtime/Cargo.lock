@@ -1385,6 +1385,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dekascript_lsp_wasm"
+version = "0.9.0"
+dependencies = [
+ "dekascript_lsp",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "delegate"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
