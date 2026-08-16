@@ -210,6 +210,23 @@ fn run_executes_two_traits_each_contributing_a_default_method() {
     );
 }
 
+#[test]
+fn run_executes_trait_default_method_for_enum_target_when_not_overridden() {
+    // Same default-method fix, verified on an ENUM target -- struct_methods
+    // is a shared map keyed by target name regardless of struct vs enum, so
+    // this was expected to already work without separate handling, but
+    // hadn't been directly verified until now.
+    run_dekascript(
+        "trait_default_enum_target",
+        "trait Namer {\n  label(self: Self): string\n  describe(self: Self): string { return \"an enum value\"; }\n}\n\
+         enum Color { case Red; case Green; }\n\
+         impl Namer for Color { label(self: Self): string { return \"a color\"; } }\n\
+         const c = Color::Red;\n\
+         print(c.label() + \" \" + c.describe());\n",
+        "a color an enum value",
+    );
+}
+
 // Same case, but with `impl` appearing BEFORE the `enum` it targets --
 // proves the fix is genuinely order-independent, not incidentally correct
 // for one source ordering.
