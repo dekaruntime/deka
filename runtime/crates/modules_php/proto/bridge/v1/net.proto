@@ -32,6 +32,34 @@ message NetTlsUpgradeRequest {
   string server_name = 2;
 }
 
+message NetConnectTlsRequest {
+  string host = 1;
+  uint32 port = 2;
+  string server_name = 3;
+  uint64 timeout_ms = 4;
+  // Optional additional trusted certificate (PEM). Allows callers to trust
+  // a self-signed or private-CA certificate without modifying system roots.
+  bytes ca_cert = 5;
+}
+
+message NetListenRequest {
+  string host = 1;
+  uint32 port = 2;
+  uint32 backlog = 3;
+}
+
+message NetListenTlsRequest {
+  string host = 1;
+  uint32 port = 2;
+  uint32 backlog = 3;
+  bytes cert = 4;
+  bytes key = 5;
+}
+
+message NetAcceptRequest {
+  uint64 handle = 1;
+}
+
 message NetRequest {
   uint32 schema_version = 1;
   oneof action {
@@ -41,12 +69,25 @@ message NetRequest {
     NetWriteRequest write = 13;
     NetTlsUpgradeRequest tls_upgrade = 14;
     NetHandleRequest close = 15;
+    NetConnectTlsRequest connect_tls = 16;
+    NetListenRequest listen = 17;
+    NetListenTlsRequest listen_tls = 18;
+    NetAcceptRequest accept = 19;
   }
 }
 
 message NetHandleResponse {
   uint64 handle = 1;
   bool reused = 2;
+}
+
+message NetListenResponse {
+  uint64 handle = 1;
+}
+
+message NetAcceptResponse {
+  uint64 handle = 1;
+  string peer_addr = 2;
 }
 
 message NetReadResponse {
@@ -73,5 +114,9 @@ message NetResponse {
     NetWriteResponse write = 13;
     NetHandleResponse tls_upgrade = 14;
     NetUnitResponse close = 15;
+    NetHandleResponse connect_tls = 16;
+    NetListenResponse listen = 17;
+    NetListenResponse listen_tls = 18;
+    NetAcceptResponse accept = 19;
   }
 }

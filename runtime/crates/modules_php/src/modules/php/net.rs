@@ -2,12 +2,21 @@ use super::bridge_metrics::record_bridge_proto_metric;
 use super::security::enforce_net;
 use super::*;
 use deno_core::OpState;
+use rustls::{Certificate, PrivateKey, ServerName};
 use std::cell::RefCell;
+use std::net::TcpListener;
 use std::rc::Rc;
+use std::sync::Arc;
 
 pub(super) enum NetConn {
     Tcp(TcpStream),
-    Tls(TlsStream<TcpStream>),
+    TlsClient(rustls::StreamOwned<rustls::ClientConnection, TcpStream>),
+    TlsServer(rustls::StreamOwned<rustls::ServerConnection, TcpStream>),
+}
+
+pub(super) enum NetListener {
+    Tcp(TcpListener),
+    Tls(TcpListener, Arc<rustls::ServerConfig>),
 }
 
 pub(super) struct NetHandle {
@@ -17,19 +26,33 @@ pub(super) struct NetHandle {
     target: String,
 }
 
+pub(super) struct NetListenerHandle {
+    listener: NetListener,
+    // Capability target derived from the bind address. Accept actions reuse
+    // this target so the listener grant covers inbound connections.
+    target: String,
+}
+
 /// Per-isolate socket ownership state.  This must live in Deno's `OpState`,
 /// never in a process-global static: a numeric handle is only meaningful in
 /// the isolate that created it.
+///
+/// Connections and listeners live in separate maps with separate counters to
+/// avoid handle collisions and keep the lookup logic simple.
 pub(super) struct NetState {
-    next_handle: u64,
+    next_conn_handle: u64,
+    next_listener_handle: u64,
     handles: HashMap<u64, NetHandle>,
+    listeners: HashMap<u64, NetListenerHandle>,
 }
 
 impl NetState {
     pub(super) fn new() -> Self {
         Self {
-            next_handle: 1,
+            next_conn_handle: 1,
+            next_listener_handle: 1,
             handles: HashMap::new(),
+            listeners: HashMap::new(),
         }
     }
 }
@@ -77,6 +100,82 @@ fn handle_target(state: &NetState, handle: u64) -> Result<String, deno_core::err
         .ok_or_else(|| core_err(format!("net: unknown handle {handle}")))
 }
 
+fn listener_target(state: &NetState, handle: u64) -> Result<String, deno_core::error::CoreError> {
+    state
+        .listeners
+        .get(&handle)
+        .map(|handle| handle.target.clone())
+        .ok_or_else(|| core_err(format!("net: unknown listener handle {handle}")))
+}
+
+fn client_tls_config(
+    ca_cert_pem: Option<&[u8]>,
+) -> Result<Arc<rustls::ClientConfig>, rustls::Error> {
+    let mut root_store = rustls::RootCertStore::empty();
+    root_store.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
+        rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
+            ta.subject,
+            ta.spki,
+            ta.name_constraints,
+        )
+    }));
+
+    if let Some(pem) = ca_cert_pem {
+        let certs = rustls_pemfile::certs(&mut &pem[..])
+            .map_err(|e| rustls::Error::General(format!("invalid ca_cert PEM: {e}")))?;
+        for cert in certs {
+            root_store
+                .add(&rustls::Certificate(cert))
+                .map_err(|e| rustls::Error::General(format!("invalid ca_cert: {e}")))?;
+        }
+    }
+
+    Ok(Arc::new(
+        rustls::ClientConfig::builder()
+            .with_safe_defaults()
+            .with_root_certificates(root_store)
+            .with_no_client_auth(),
+    ))
+}
+
+fn server_tls_config(
+    cert_pem: &[u8],
+    key_pem: &[u8],
+) -> Result<Arc<rustls::ServerConfig>, rustls::Error> {
+    let cert_chain: Vec<Certificate> = rustls_pemfile::certs(&mut &cert_pem[..])
+        .map_err(|e| rustls::Error::General(format!("invalid certificate PEM: {e}")))?
+        .into_iter()
+        .map(Certificate)
+        .collect();
+
+    let mut keys: Vec<Vec<u8>> = rustls_pemfile::pkcs8_private_keys(&mut &key_pem[..])
+        .map_err(|e| rustls::Error::General(format!("invalid PKCS8 key: {e}")))?
+        .into_iter()
+        .collect();
+    if keys.is_empty() {
+        keys = rustls_pemfile::rsa_private_keys(&mut &key_pem[..])
+            .map_err(|e| rustls::Error::General(format!("invalid RSA key: {e}")))?
+            .into_iter()
+            .collect();
+    }
+    let key = keys
+        .into_iter()
+        .next()
+        .map(PrivateKey)
+        .ok_or_else(|| rustls::Error::General("no private key found".into()))?;
+
+    Ok(Arc::new(
+        rustls::ServerConfig::builder()
+            .with_safe_defaults()
+            .with_no_client_auth()
+            .with_single_cert(cert_chain, key)?,
+    ))
+}
+
+fn parse_server_name(name: &str) -> Result<ServerName, deno_core::error::CoreError> {
+    ServerName::try_from(name).map_err(|e| core_err(format!("invalid server_name '{name}': {e}")))
+}
+
 pub(super) fn net_call_impl(
     state: &mut NetState,
     action: String,
@@ -115,8 +214,8 @@ pub(super) fn net_call_impl(
                 .ok_or_else(|| err("connect: no resolved address".to_string()))?;
             let stream = TcpStream::connect_timeout(&target, Duration::from_millis(timeout_ms))
                 .map_err(|e| err(format!("connect: {}", e)))?;
-            let handle = state.next_handle;
-            state.next_handle += 1;
+            let handle = state.next_conn_handle;
+            state.next_conn_handle += 1;
             state.handles.insert(
                 handle,
                 NetHandle {
@@ -125,6 +224,208 @@ pub(super) fn net_call_impl(
                 },
             );
             Ok(serde_json::json!({ "ok": true, "handle": handle }))
+        }
+        "connect_tls" => {
+            let host = args_obj
+                .get("host")
+                .and_then(|v| v.as_str())
+                .unwrap_or("127.0.0.1")
+                .trim_matches('\0')
+                .to_string();
+            let port = match tcp_connect_port(&args) {
+                Ok(port) => port,
+                Err(error) => {
+                    return Ok(serde_json::json!({ "ok": false, "error": error.to_string() }));
+                }
+            };
+            let server_name = args_obj
+                .get("server_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim_matches('\0')
+                .to_string();
+            if server_name.is_empty() {
+                return Ok(
+                    serde_json::json!({ "ok": false, "error": "connect_tls: missing server_name" }),
+                );
+            }
+            let timeout_ms = args_obj
+                .get("timeout_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(5000);
+            let capability_target = capability_target(&host, port);
+            let addr = capability_target.clone();
+            let mut addrs = addr
+                .to_socket_addrs()
+                .map_err(|e| err(format!("connect_tls: resolve failed: {}", e)))?;
+            let target = addrs
+                .next()
+                .ok_or_else(|| err("connect_tls: no resolved address".to_string()))?;
+            let tcp = TcpStream::connect_timeout(&target, Duration::from_millis(timeout_ms))
+                .map_err(|e| err(format!("connect_tls: {}", e)))?;
+            let server_name = parse_server_name(&server_name)?;
+            let ca_cert = json_value_to_bytes(args_obj.get("ca_cert"));
+            let ca_cert_pem = if ca_cert.is_empty() {
+                None
+            } else {
+                Some(ca_cert.as_slice())
+            };
+            let client_config = client_tls_config(ca_cert_pem)
+                .map_err(|e| err(format!("connect_tls: tls config failed: {e}")))?;
+            let conn = rustls::ClientConnection::new(client_config, server_name)
+                .map_err(|e| err(format!("connect_tls: tls init failed: {e}")))?;
+            let mut stream = rustls::StreamOwned::new(conn, tcp);
+            stream
+                .conn
+                .complete_io(&mut stream.sock)
+                .map(|_| ())
+                .map_err(|e| err(format!("connect_tls: handshake failed: {e}")))?;
+            let handle = state.next_conn_handle;
+            state.next_conn_handle += 1;
+            state.handles.insert(
+                handle,
+                NetHandle {
+                    conn: NetConn::TlsClient(stream),
+                    target: capability_target,
+                },
+            );
+            Ok(serde_json::json!({ "ok": true, "handle": handle }))
+        }
+        "listen" => {
+            let host = args_obj
+                .get("host")
+                .and_then(|v| v.as_str())
+                .unwrap_or("127.0.0.1")
+                .trim_matches('\0')
+                .to_string();
+            let port = match tcp_bind_port(&args) {
+                Ok(port) => port,
+                Err(error) => {
+                    return Ok(serde_json::json!({ "ok": false, "error": error.to_string() }));
+                }
+            };
+            let _backlog = args_obj
+                .get("backlog")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(128) as u32;
+            let capability_target = capability_target(&host, port);
+            let addr = capability_target.clone();
+            let listener = TcpListener::bind(&addr).map_err(|e| err(format!("listen: {}", e)))?;
+            listener
+                .set_nonblocking(false)
+                .map_err(|e| err(format!("listen: set blocking failed: {e}")))?;
+            let handle = state.next_listener_handle;
+            state.next_listener_handle += 1;
+            state.listeners.insert(
+                handle,
+                NetListenerHandle {
+                    listener: NetListener::Tcp(listener),
+                    target: capability_target,
+                },
+            );
+            Ok(serde_json::json!({ "ok": true, "handle": handle }))
+        }
+        "listen_tls" => {
+            let host = args_obj
+                .get("host")
+                .and_then(|v| v.as_str())
+                .unwrap_or("127.0.0.1")
+                .trim_matches('\0')
+                .to_string();
+            let port = match tcp_bind_port(&args) {
+                Ok(port) => port,
+                Err(error) => {
+                    return Ok(serde_json::json!({ "ok": false, "error": error.to_string() }));
+                }
+            };
+            let backlog = args_obj
+                .get("backlog")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(128) as u32;
+            let cert = json_value_to_bytes(args_obj.get("cert"));
+            let key = json_value_to_bytes(args_obj.get("key"));
+            let capability_target = capability_target(&host, port);
+            let addr = capability_target.clone();
+            let listener = TcpListener::bind(&addr)
+                .map_err(|e| err(format!("listen_tls: bind failed: {e}")))?;
+            listener
+                .set_nonblocking(false)
+                .map_err(|e| err(format!("listen_tls: set blocking failed: {e}")))?;
+            let config = server_tls_config(&cert, &key)
+                .map_err(|e| err(format!("listen_tls: tls config failed: {e}")))?;
+            // `backlog` is accepted for API parity but Rust's std::net::TcpListener
+            // does not expose a way to set the listen backlog after binding.
+            let _ = backlog;
+            let handle = state.next_listener_handle;
+            state.next_listener_handle += 1;
+            state.listeners.insert(
+                handle,
+                NetListenerHandle {
+                    listener: NetListener::Tls(listener, config),
+                    target: capability_target,
+                },
+            );
+            Ok(serde_json::json!({ "ok": true, "handle": handle }))
+        }
+        "accept" => {
+            let handle = args_obj
+                .get("handle")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| err("accept: missing handle".to_string()))?;
+            let Some(listener_handle) = state.listeners.get_mut(&handle) else {
+                return Ok(
+                    serde_json::json!({ "ok": false, "error": format!("accept: unknown listener handle {}", handle) }),
+                );
+            };
+            let target = listener_handle.target.clone();
+            match &mut listener_handle.listener {
+                NetListener::Tcp(listener) => {
+                    let (stream, peer_addr) = listener
+                        .accept()
+                        .map_err(|e| err(format!("accept: {}", e)))?;
+                    let conn_handle = state.next_conn_handle;
+                    state.next_conn_handle += 1;
+                    state.handles.insert(
+                        conn_handle,
+                        NetHandle {
+                            conn: NetConn::Tcp(stream),
+                            target,
+                        },
+                    );
+                    Ok(serde_json::json!({
+                        "ok": true,
+                        "handle": conn_handle,
+                        "peer_addr": peer_addr.to_string(),
+                    }))
+                }
+                NetListener::Tls(listener, config) => {
+                    let (tcp, peer_addr) = listener
+                        .accept()
+                        .map_err(|e| err(format!("accept: {}", e)))?;
+                    let conn = rustls::ServerConnection::new(config.clone())
+                        .map_err(|e| err(format!("accept: tls init failed: {e}")))?;
+                    let mut stream = rustls::StreamOwned::new(conn, tcp);
+                    stream
+                        .conn
+                        .complete_io(&mut stream.sock)
+                        .map(|_| ())
+                        .map_err(|e| err(format!("accept: handshake failed: {e}")))?;
+                    let conn_handle = state.next_conn_handle;
+                    state.next_conn_handle += 1;
+                    state.handles.insert(
+                        conn_handle,
+                        NetHandle {
+                            conn: NetConn::TlsServer(stream),
+                            target,
+                        },
+                    );
+                    Ok(serde_json::json!({
+                        "ok": true,
+                        "handle": conn_handle,
+                        "peer_addr": peer_addr.to_string(),
+                    }))
+                }
+            }
         }
         "set_deadline" => {
             let handle = args_obj
@@ -146,7 +447,11 @@ pub(super) fn net_call_impl(
                 NetConn::Tcp(stream) => stream
                     .set_read_timeout(timeout)
                     .and_then(|_| stream.set_write_timeout(timeout)),
-                NetConn::Tls(stream) => stream
+                NetConn::TlsClient(stream) => stream
+                    .get_ref()
+                    .set_read_timeout(timeout)
+                    .and_then(|_| stream.get_ref().set_write_timeout(timeout)),
+                NetConn::TlsServer(stream) => stream
                     .get_ref()
                     .set_read_timeout(timeout)
                     .and_then(|_| stream.get_ref().set_write_timeout(timeout)),
@@ -175,7 +480,8 @@ pub(super) fn net_call_impl(
             };
             let n = match &mut conn.conn {
                 NetConn::Tcp(stream) => stream.read(&mut buf),
-                NetConn::Tls(stream) => stream.read(&mut buf),
+                NetConn::TlsClient(stream) => stream.read(&mut buf),
+                NetConn::TlsServer(stream) => stream.read(&mut buf),
             };
             match n {
                 Ok(n) => {
@@ -198,7 +504,8 @@ pub(super) fn net_call_impl(
             };
             let result = match &mut conn.conn {
                 NetConn::Tcp(stream) => stream.write_all(&data),
-                NetConn::Tls(stream) => stream.write_all(&data),
+                NetConn::TlsClient(stream) => stream.write_all(&data),
+                NetConn::TlsServer(stream) => stream.write_all(&data),
             };
             match result {
                 Ok(()) => Ok(serde_json::json!({ "ok": true, "written": data.len() })),
@@ -229,13 +536,27 @@ pub(super) fn net_call_impl(
             let target = conn.target;
             let tcp = match conn.conn {
                 NetConn::Tcp(stream) => stream,
-                NetConn::Tls(stream) => {
-                    let new_handle = state.next_handle;
-                    state.next_handle += 1;
+                NetConn::TlsClient(stream) => {
+                    let new_handle = state.next_conn_handle;
+                    state.next_conn_handle += 1;
                     state.handles.insert(
                         new_handle,
                         NetHandle {
-                            conn: NetConn::Tls(stream),
+                            conn: NetConn::TlsClient(stream),
+                            target,
+                        },
+                    );
+                    return Ok(
+                        serde_json::json!({ "ok": true, "handle": new_handle, "reused": true }),
+                    );
+                }
+                NetConn::TlsServer(stream) => {
+                    let new_handle = state.next_conn_handle;
+                    state.next_conn_handle += 1;
+                    state.handles.insert(
+                        new_handle,
+                        NetHandle {
+                            conn: NetConn::TlsServer(stream),
                             target,
                         },
                     );
@@ -244,25 +565,27 @@ pub(super) fn net_call_impl(
                     );
                 }
             };
-            let connector = TlsConnector::new()
-                .map_err(|e| err(format!("tls_upgrade: connector init failed: {}", e)))?;
-            match connector.connect(&server_name, tcp) {
-                Ok(stream) => {
-                    let new_handle = state.next_handle;
-                    state.next_handle += 1;
-                    state.handles.insert(
-                        new_handle,
-                        NetHandle {
-                            conn: NetConn::Tls(stream),
-                            target,
-                        },
-                    );
-                    Ok(serde_json::json!({ "ok": true, "handle": new_handle }))
-                }
-                Err(e) => {
-                    Ok(serde_json::json!({ "ok": false, "error": format!("tls_upgrade: {}", e) }))
-                }
-            }
+            let server_name = parse_server_name(&server_name)?;
+            let client_config = client_tls_config(None)
+                .map_err(|e| err(format!("tls_upgrade: tls config failed: {e}")))?;
+            let conn = rustls::ClientConnection::new(client_config, server_name)
+                .map_err(|e| err(format!("tls_upgrade: tls init failed: {e}")))?;
+            let mut stream = rustls::StreamOwned::new(conn, tcp);
+            stream
+                .conn
+                .complete_io(&mut stream.sock)
+                .map(|_| ())
+                .map_err(|e| err(format!("connect_tls: handshake failed: {e}")))?;
+            let new_handle = state.next_conn_handle;
+            state.next_conn_handle += 1;
+            state.handles.insert(
+                new_handle,
+                NetHandle {
+                    conn: NetConn::TlsClient(stream),
+                    target,
+                },
+            );
+            Ok(serde_json::json!({ "ok": true, "handle": new_handle }))
         }
         "close" => {
             let handle = args_obj
@@ -291,6 +614,10 @@ pub(super) enum NetProtoActionKind {
     Write,
     TlsUpgrade,
     Close,
+    ConnectTls,
+    Listen,
+    ListenTls,
+    Accept,
 }
 
 pub(super) fn net_action_payload_to_proto_request(
@@ -311,6 +638,47 @@ pub(super) fn net_action_payload_to_proto_request(
                 .get("timeout_ms")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(5000),
+        }),
+        "connect_tls" => Action::ConnectTls(proto::bridge_v1::NetConnectTlsRequest {
+            host: args
+                .get("host")
+                .and_then(|v| v.as_str())
+                .unwrap_or("127.0.0.1")
+                .to_string(),
+            port: args.get("port").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+            server_name: args
+                .get("server_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            timeout_ms: args
+                .get("timeout_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(5000),
+            ca_cert: json_value_to_bytes(args.get("ca_cert")),
+        }),
+        "listen" => Action::Listen(proto::bridge_v1::NetListenRequest {
+            host: args
+                .get("host")
+                .and_then(|v| v.as_str())
+                .unwrap_or("127.0.0.1")
+                .to_string(),
+            port: args.get("port").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+            backlog: args.get("backlog").and_then(|v| v.as_u64()).unwrap_or(128) as u32,
+        }),
+        "listen_tls" => Action::ListenTls(proto::bridge_v1::NetListenTlsRequest {
+            host: args
+                .get("host")
+                .and_then(|v| v.as_str())
+                .unwrap_or("127.0.0.1")
+                .to_string(),
+            port: args.get("port").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+            backlog: args.get("backlog").and_then(|v| v.as_u64()).unwrap_or(128) as u32,
+            cert: json_value_to_bytes(args.get("cert")),
+            key: json_value_to_bytes(args.get("key")),
+        }),
+        "accept" => Action::Accept(proto::bridge_v1::NetAcceptRequest {
+            handle: args.get("handle").and_then(|v| v.as_u64()).unwrap_or(0),
         }),
         "set_deadline" => Action::SetDeadline(proto::bridge_v1::NetDeadlineRequest {
             handle: args.get("handle").and_then(|v| v.as_u64()).unwrap_or(0),
@@ -367,6 +735,44 @@ pub(super) fn net_proto_request_to_action_payload(
                 "timeout_ms": connect.timeout_ms,
             }),
             NetProtoActionKind::Connect,
+        )),
+        Action::ConnectTls(connect) => Ok((
+            "connect_tls".to_string(),
+            serde_json::json!({
+                "host": connect.host,
+                "port": connect.port,
+                "server_name": connect.server_name,
+                "timeout_ms": connect.timeout_ms,
+                "ca_cert": bytes_to_json_array(&connect.ca_cert),
+            }),
+            NetProtoActionKind::ConnectTls,
+        )),
+        Action::Listen(listen) => Ok((
+            "listen".to_string(),
+            serde_json::json!({
+                "host": listen.host,
+                "port": listen.port,
+                "backlog": listen.backlog,
+            }),
+            NetProtoActionKind::Listen,
+        )),
+        Action::ListenTls(listen) => Ok((
+            "listen_tls".to_string(),
+            serde_json::json!({
+                "host": listen.host,
+                "port": listen.port,
+                "backlog": listen.backlog,
+                "cert": bytes_to_json_array(&listen.cert),
+                "key": bytes_to_json_array(&listen.key),
+            }),
+            NetProtoActionKind::ListenTls,
+        )),
+        Action::Accept(accept) => Ok((
+            "accept".to_string(),
+            serde_json::json!({
+                "handle": accept.handle,
+            }),
+            NetProtoActionKind::Accept,
         )),
         Action::SetDeadline(deadline) => Ok((
             "set_deadline".to_string(),
@@ -428,6 +834,31 @@ pub(super) fn net_json_response_to_proto(
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false),
         })),
+        NetProtoActionKind::ConnectTls => {
+            Some(Action::ConnectTls(proto::bridge_v1::NetHandleResponse {
+                handle: resp.get("handle").and_then(|v| v.as_u64()).unwrap_or(0),
+                reused: resp
+                    .get("reused")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+            }))
+        }
+        NetProtoActionKind::Listen => Some(Action::Listen(proto::bridge_v1::NetListenResponse {
+            handle: resp.get("handle").and_then(|v| v.as_u64()).unwrap_or(0),
+        })),
+        NetProtoActionKind::ListenTls => {
+            Some(Action::ListenTls(proto::bridge_v1::NetListenResponse {
+                handle: resp.get("handle").and_then(|v| v.as_u64()).unwrap_or(0),
+            }))
+        }
+        NetProtoActionKind::Accept => Some(Action::Accept(proto::bridge_v1::NetAcceptResponse {
+            handle: resp.get("handle").and_then(|v| v.as_u64()).unwrap_or(0),
+            peer_addr: resp
+                .get("peer_addr")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        })),
         NetProtoActionKind::SetDeadline => {
             Some(Action::SetDeadline(proto::bridge_v1::NetUnitResponse {
                 ok,
@@ -475,12 +906,28 @@ pub(super) fn net_proto_response_to_json(
 
     if let Some(action) = resp.action.as_ref() {
         match action {
-            Action::Connect(handle) | Action::TlsUpgrade(handle) => {
+            Action::Connect(handle) | Action::ConnectTls(handle) | Action::TlsUpgrade(handle) => {
                 out.insert(
                     "handle".to_string(),
                     serde_json::Value::Number(handle.handle.into()),
                 );
                 out.insert("reused".to_string(), serde_json::Value::Bool(handle.reused));
+            }
+            Action::Listen(handle) | Action::ListenTls(handle) => {
+                out.insert(
+                    "handle".to_string(),
+                    serde_json::Value::Number(handle.handle.into()),
+                );
+            }
+            Action::Accept(accept) => {
+                out.insert(
+                    "handle".to_string(),
+                    serde_json::Value::Number(accept.handle.into()),
+                );
+                out.insert(
+                    "peer_addr".to_string(),
+                    serde_json::Value::String(accept.peer_addr.clone()),
+                );
             }
             Action::SetDeadline(unit) | Action::Close(unit) => {
                 out.insert("ok".to_string(), serde_json::Value::Bool(unit.ok));
@@ -513,6 +960,19 @@ pub(super) fn net_call_proto_impl(
     let net_target = match kind {
         NetProtoActionKind::Connect => net_policy_target(&payload)
             .ok_or_else(|| core_err("connect: missing capability target"))?,
+        NetProtoActionKind::ConnectTls => net_policy_target(&payload)
+            .ok_or_else(|| core_err("connect_tls: missing capability target"))?,
+        NetProtoActionKind::Listen | NetProtoActionKind::ListenTls => {
+            net_policy_target(&payload)
+                .ok_or_else(|| core_err("listen: missing capability target"))?
+        }
+        NetProtoActionKind::Accept => {
+            let handle = payload
+                .get("handle")
+                .and_then(|value| value.as_u64())
+                .ok_or_else(|| core_err(format!("{action}: missing handle")))?;
+            listener_target(state, handle)?
+        }
         NetProtoActionKind::SetDeadline
         | NetProtoActionKind::Read
         | NetProtoActionKind::Write
@@ -542,7 +1002,7 @@ fn validate_tcp_connect_port(
     action: &str,
     payload: &serde_json::Value,
 ) -> Result<(), deno_core::error::CoreError> {
-    if action == "connect" {
+    if action == "connect" || action == "connect_tls" {
         tcp_connect_port(payload)?;
     }
     Ok(())
@@ -557,6 +1017,16 @@ fn tcp_connect_port(payload: &serde_json::Value) -> Result<u16, deno_core::error
         .ok()
         .filter(|port| *port != 0)
         .ok_or_else(|| core_err("connect: port must be in range 1..=65535"))
+}
+
+fn tcp_bind_port(payload: &serde_json::Value) -> Result<u16, deno_core::error::CoreError> {
+    let port = payload
+        .get("port")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+    u16::try_from(port)
+        .ok()
+        .ok_or_else(|| core_err("listen: port must be in range 0..=65535"))
 }
 
 /// Preserve the requested port when a TCP connection is checked against the
@@ -607,7 +1077,7 @@ mod tests {
     use super::{NetState, net_call_proto_impl, net_policy_target, tcp_connect_port};
     use prost::Message;
     use serde_json::json;
-    use std::io::ErrorKind;
+    use std::io::{ErrorKind, Write};
     use std::net::TcpListener;
     use std::sync::{Mutex, OnceLock};
 
@@ -872,10 +1342,253 @@ mod tests {
         };
         assert_eq!(read_bytes, payload);
 
-        let close = super::net_action_payload_to_proto_request("close", &json!({ "handle": handle }))
-            .expect("encode close");
+        let close =
+            super::net_action_payload_to_proto_request("close", &json!({ "handle": handle }))
+                .expect("encode close");
         assert!(net_call_proto_impl(&mut state, &close.encode_to_vec()).is_ok());
         server.join().expect("server join");
+
+        unsafe {
+            match previous {
+                Some(value) => std::env::set_var("DEKA_SECURITY_POLICY", value),
+                None => std::env::remove_var("DEKA_SECURITY_POLICY"),
+            }
+        }
+    }
+
+    #[test]
+    fn tcp_listen_accept_roundtrip() {
+        let mut state = NetState::new();
+        let _lock = policy_lock().lock().expect("policy lock");
+        let previous = std::env::var_os("DEKA_SECURITY_POLICY");
+
+        let raw_listener = TcpListener::bind("127.0.0.1:0").expect("reserve listener");
+        let addr = raw_listener.local_addr().expect("listener address");
+        let allowed = format!("127.0.0.1:{}", addr.port());
+        drop(raw_listener);
+
+        unsafe {
+            std::env::set_var(
+                "DEKA_SECURITY_POLICY",
+                format!(r#"{{"security":{{"allow":{{"net":["{allowed}"]}}}}}}"#),
+            );
+        }
+
+        let listen = super::net_action_payload_to_proto_request(
+            "listen",
+            &json!({
+                "host": "127.0.0.1",
+                "port": addr.port(),
+                "backlog": 5,
+            }),
+        )
+        .expect("encode listen");
+        let listen_response =
+            net_call_proto_impl(&mut state, &listen.encode_to_vec()).expect("listen");
+        let listen_response = proto::bridge_v1::NetResponse::decode(listen_response.as_slice())
+            .expect("decode listen response");
+        let listen_handle = match listen_response.action.expect("listen action") {
+            proto::bridge_v1::net_response::Action::Listen(response) => response.handle,
+            other => panic!("unexpected listen response: {other:?}"),
+        };
+
+        let client = std::thread::spawn(move || {
+            let mut stream = std::net::TcpStream::connect(addr).expect("client connect");
+            stream.write_all(b"ping").expect("client write");
+            let mut buf = [0_u8; 4];
+            std::io::Read::read_exact(&mut stream, &mut buf).expect("client read");
+            assert_eq!(&buf, b"pong");
+        });
+
+        let accept = super::net_action_payload_to_proto_request(
+            "accept",
+            &json!({ "handle": listen_handle }),
+        )
+        .expect("encode accept");
+        let accept_response =
+            net_call_proto_impl(&mut state, &accept.encode_to_vec()).expect("accept");
+        let accept_response = proto::bridge_v1::NetResponse::decode(accept_response.as_slice())
+            .expect("decode accept response");
+        let conn_handle = match accept_response.action.expect("accept action") {
+            proto::bridge_v1::net_response::Action::Accept(response) => response.handle,
+            other => panic!("unexpected accept response: {other:?}"),
+        };
+
+        let read = super::net_action_payload_to_proto_request(
+            "read",
+            &json!({ "handle": conn_handle, "max_bytes": 4 }),
+        )
+        .expect("encode read");
+        let read_response = net_call_proto_impl(&mut state, &read.encode_to_vec()).expect("read");
+        let read_response = proto::bridge_v1::NetResponse::decode(read_response.as_slice())
+            .expect("decode read response");
+        let read_bytes = match read_response.action.expect("read action") {
+            proto::bridge_v1::net_response::Action::Read(r) => r.data,
+            other => panic!("unexpected read response: {other:?}"),
+        };
+        assert_eq!(read_bytes, b"ping");
+
+        let write = super::net_action_payload_to_proto_request(
+            "write",
+            &json!({
+                "handle": conn_handle,
+                "data": b"pong".iter().map(|b| *b as u64).collect::<Vec<_>>()
+            }),
+        )
+        .expect("encode write");
+        net_call_proto_impl(&mut state, &write.encode_to_vec()).expect("write");
+
+        client.join().expect("client join");
+
+        unsafe {
+            match previous {
+                Some(value) => std::env::set_var("DEKA_SECURITY_POLICY", value),
+                None => std::env::remove_var("DEKA_SECURITY_POLICY"),
+            }
+        }
+    }
+
+    #[test]
+    fn tls_listen_accept_and_connect_tls_roundtrip() {
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])
+            .expect("generate self-signed cert");
+        let cert_pem = cert.cert.pem().into_bytes();
+        let key_pem = cert.key_pair.serialize_pem().into_bytes();
+
+        let mut state = NetState::new();
+        let _lock = policy_lock().lock().expect("policy lock");
+        let previous = std::env::var_os("DEKA_SECURITY_POLICY");
+
+        let raw_listener = TcpListener::bind("127.0.0.1:0").expect("reserve listener");
+        let addr = raw_listener.local_addr().expect("listener address");
+        let allowed = format!("127.0.0.1:{}", addr.port());
+        drop(raw_listener);
+
+        unsafe {
+            std::env::set_var(
+                "DEKA_SECURITY_POLICY",
+                format!(r#"{{"security":{{"allow":{{"net":["{allowed}"]}}}}}}"#),
+            );
+        }
+
+        let listen = super::net_action_payload_to_proto_request(
+            "listen_tls",
+            &json!({
+                "host": "127.0.0.1",
+                "port": addr.port(),
+                "backlog": 5,
+                "cert": cert_pem.iter().map(|b| *b as u64).collect::<Vec<_>>(),
+                "key": key_pem.iter().map(|b| *b as u64).collect::<Vec<_>>(),
+            }),
+        )
+        .expect("encode listen_tls");
+        let listen_response =
+            net_call_proto_impl(&mut state, &listen.encode_to_vec()).expect("listen_tls");
+        let listen_response = proto::bridge_v1::NetResponse::decode(listen_response.as_slice())
+            .expect("decode listen response");
+        let listen_handle = match listen_response.action.expect("listen action") {
+            proto::bridge_v1::net_response::Action::ListenTls(response) => response.handle,
+            other => panic!("unexpected listen response: {other:?}"),
+        };
+
+        let client_ca_cert = cert_pem.clone();
+        let client = std::thread::spawn(move || {
+            let mut client_state = NetState::new();
+            let connect_tls = super::net_action_payload_to_proto_request(
+                "connect_tls",
+                &json!({
+                    "host": "127.0.0.1",
+                    "port": addr.port(),
+                    "server_name": "localhost",
+                    "timeout_ms": 5000,
+                    "ca_cert": client_ca_cert.iter().map(|b| *b as u64).collect::<Vec<_>>(),
+                }),
+            )
+            .expect("encode connect_tls");
+            let connect_response =
+                net_call_proto_impl(&mut client_state, &connect_tls.encode_to_vec())
+                    .expect("connect_tls");
+            let connect_response =
+                proto::bridge_v1::NetResponse::decode(connect_response.as_slice())
+                    .expect("decode connect response");
+            let handle = match connect_response.action.expect("connect action") {
+                proto::bridge_v1::net_response::Action::ConnectTls(response) => response.handle,
+                other => panic!("unexpected connect response: {other:?}"),
+            };
+
+            let write = super::net_action_payload_to_proto_request(
+                "write",
+                &json!({
+                    "handle": handle,
+                    "data": b"ping".iter().map(|b| *b as u64).collect::<Vec<_>>()
+                }),
+            )
+            .expect("encode write");
+            net_call_proto_impl(&mut client_state, &write.encode_to_vec()).expect("write");
+
+            let read = super::net_action_payload_to_proto_request(
+                "read",
+                &json!({ "handle": handle, "max_bytes": 4 }),
+            )
+            .expect("encode read");
+            let read_response =
+                net_call_proto_impl(&mut client_state, &read.encode_to_vec()).expect("read");
+            let read_response = proto::bridge_v1::NetResponse::decode(read_response.as_slice())
+                .expect("decode read response");
+            let read_bytes = match read_response.action.expect("read action") {
+                proto::bridge_v1::net_response::Action::Read(r) => r.data,
+                other => panic!("unexpected read response: {other:?}"),
+            };
+            assert_eq!(read_bytes, b"pong");
+
+            let close =
+                super::net_action_payload_to_proto_request("close", &json!({ "handle": handle }))
+                    .expect("encode close");
+            net_call_proto_impl(&mut client_state, &close.encode_to_vec()).expect("close");
+        });
+
+        let accept = super::net_action_payload_to_proto_request(
+            "accept",
+            &json!({ "handle": listen_handle }),
+        )
+        .expect("encode accept");
+        let accept_response =
+            net_call_proto_impl(&mut state, &accept.encode_to_vec()).expect("accept");
+        let accept_response = proto::bridge_v1::NetResponse::decode(accept_response.as_slice())
+            .expect("decode accept response");
+        let (conn_handle, peer_addr) = match accept_response.action.expect("accept action") {
+            proto::bridge_v1::net_response::Action::Accept(response) => {
+                (response.handle, response.peer_addr)
+            }
+            other => panic!("unexpected accept response: {other:?}"),
+        };
+        assert!(!peer_addr.is_empty());
+
+        let read = super::net_action_payload_to_proto_request(
+            "read",
+            &json!({ "handle": conn_handle, "max_bytes": 4 }),
+        )
+        .expect("encode read");
+        let read_response = net_call_proto_impl(&mut state, &read.encode_to_vec()).expect("read");
+        let read_response = proto::bridge_v1::NetResponse::decode(read_response.as_slice())
+            .expect("decode read response");
+        let read_bytes = match read_response.action.expect("read action") {
+            proto::bridge_v1::net_response::Action::Read(r) => r.data,
+            other => panic!("unexpected read response: {other:?}"),
+        };
+        assert_eq!(read_bytes, b"ping");
+
+        let write = super::net_action_payload_to_proto_request(
+            "write",
+            &json!({
+                "handle": conn_handle,
+                "data": b"pong".iter().map(|b| *b as u64).collect::<Vec<_>>()
+            }),
+        )
+        .expect("encode write");
+        net_call_proto_impl(&mut state, &write.encode_to_vec()).expect("write");
+
+        client.join().expect("client join");
 
         unsafe {
             match previous {
