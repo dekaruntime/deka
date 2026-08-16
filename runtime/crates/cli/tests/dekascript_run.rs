@@ -227,6 +227,28 @@ fn run_executes_trait_default_method_for_enum_target_when_not_overridden() {
     );
 }
 
+#[test]
+fn run_executes_template_method_pattern_default_calling_abstract() {
+    // The most common real-world trait idiom: a default method that calls
+    // an abstract method the impl is required to provide (the "template
+    // method" pattern). Exercises both fixes from tonight together -- the
+    // self.method() call fix (self.area() inside the DEFAULT body, not an
+    // impl-provided one) and the default-method emission fix (describe()
+    // itself must be attached even though Square never overrides it).
+    // JS method dispatch on `this.area()` resolves correctly because both
+    // the trait default and the impl's own methods end up merged onto the
+    // same struct_methods entry for Square.
+    run_dekascript(
+        "template_method_pattern",
+        "trait Shape {\n  area(self: Self): int\n  describe(self: Self): string { return \"area is \" + self.area(); }\n}\n\
+         struct Square { $side: int; }\n\
+         impl Shape for Square { area(self: Self): int { return self.side * self.side; } }\n\
+         const s = Square { $side: 5 };\n\
+         print(s.describe());\n",
+        "area is 25",
+    );
+}
+
 // Same case, but with `impl` appearing BEFORE the `enum` it targets --
 // proves the fix is genuinely order-independent, not incidentally correct
 // for one source ordering.
