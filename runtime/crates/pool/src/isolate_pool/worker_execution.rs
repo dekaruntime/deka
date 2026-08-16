@@ -498,6 +498,26 @@ impl WorkerThread {
                             const raw = ops.op_deka_http_call(act, req);
                             return Object.entries(raw || {});
                         }
+                        if (kind === 'concurrency') {
+                            const act = String(action || '');
+                            const req = payload || {};
+                            if (act === 'lock_acquire') {
+                                if (typeof ops.op_php_concurrency_lock_acquire !== 'function') {
+                                    return { ok: false, error: 'op_php_concurrency_lock_acquire unavailable' };
+                                }
+                                const name = String(req.name || '');
+                                const timeout_ms = Number(req.timeout_ms ?? 30000);
+                                return ops.op_php_concurrency_lock_acquire(name, timeout_ms);
+                            }
+                            if (act === 'lock_release') {
+                                if (typeof ops.op_php_concurrency_lock_release !== 'function') {
+                                    return { ok: false, error: 'op_php_concurrency_lock_release unavailable' };
+                                }
+                                const token = Number(req.token ?? 0);
+                                return ops.op_php_concurrency_lock_release(token);
+                            }
+                            return { ok: false, error: `unknown concurrency action '${act}'` };
+                        }
                         if (kind === 'json') {
                             const act = String(action || '');
                             const req = payload || {};
@@ -554,7 +574,7 @@ impl WorkerThread {
                     };
                     globalThis.__bridge_async = async (kind, action, payload) => {
                         try {
-                            return __dekaFixProto(routeHostCall(String(kind || ''), String(action || ''), payload || {}));
+                            return __dekaFixProto(await routeHostCall(String(kind || ''), String(action || ''), payload || {}));
                         } catch (err) {
                             return { ok: false, error: err && err.message ? String(err.message) : String(err) };
                         }

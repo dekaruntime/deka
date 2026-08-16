@@ -32,6 +32,7 @@ mod proto {
 
 mod bridge_metrics;
 mod compat;
+mod concurrency;
 mod crypto_env;
 mod db;
 mod db_pg;
@@ -82,6 +83,8 @@ deno_core::extension!(
         compat::op_redis_call,
         compat::op_shard_for,
         compat::op_deka_http_call,
+        concurrency::op_php_concurrency_lock_acquire,
+        concurrency::op_php_concurrency_lock_release,
     ],
     esm_entry_point = "ext:php_core/php.js",
     esm = [dir "src/modules/php", "php.js"],

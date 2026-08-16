@@ -1,0 +1,6 @@
+import { Result } from 'core/result'
+
+export namespace Lock {
+    export function acquire($name: string, $timeout_ms: int = 30000): Promise<Result<int, string>>
+    export function release($token: int): Promise<Result<void, string>>
+}
