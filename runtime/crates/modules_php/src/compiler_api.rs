@@ -96,7 +96,7 @@ fn compile_phpx_with_mode<'a>(
 
         errors.extend(validate_no_null(&program, source));
         errors.extend(validate_no_exceptions(&program, source));
-        errors.extend(validate_no_oop(&program, source));
+        errors.extend(validate_no_oop(&program, source, mode == ParserMode::Ds));
         errors.extend(validate_no_namespace(&program, source));
 
         errors.extend(validate_struct_definitions(&program, source));

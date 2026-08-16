@@ -201,8 +201,25 @@ impl<'a> JsSubsetEmitter<'a> {
                 self.emit_enum(name, members)?;
                 Ok(())
             }
-            Stmt::Class { .. } | Stmt::Trait { .. } => {
+            Stmt::Class { .. } => {
                 Err("class-like declarations are not supported in JS subset emitter".to_string())
+            }
+            Stmt::Trait { .. } => {
+                // DekaScript traits (RFD 19) are a compile-time contract only
+                // -- any Stmt::Trait reaching the emitter is the .ds meaning,
+                // since the legacy PHP meaning is already rejected earlier by
+                // validate_no_oop. Erased like an interface; `impl` blocks
+                // are what produce runtime methods.
+                Ok(())
+            }
+            Stmt::Impl { .. } => {
+                // TODO(RFD 19): impl-block codegen is not implemented yet.
+                // Parsing/typechecking traits and impls is the current slice;
+                // lowering methods onto the target's frozen-object shape
+                // (matching the struct/enum lowering, never globalThis) is
+                // the next piece of work. Fail loudly rather than silently
+                // emit nothing and produce a program missing its methods.
+                Err("impl blocks do not yet emit runtime methods (RFD 19, in progress)".to_string())
             }
             Stmt::Interface { .. } => {
                 // Interfaces have no runtime representation in the JS subset;
