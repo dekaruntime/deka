@@ -90,6 +90,25 @@ fn run_executes_inherent_impl_method_reading_self_field() {
 }
 
 #[test]
+fn run_executes_impl_method_calling_sibling_method_via_self() {
+    // Regression test for a real bug found and fixed live: self.method()
+    // calls inside an impl method body were misdiagnosed as unknown field
+    // accesses by the first cut of the self.field validator. Verifies the
+    // fix end-to-end, not just typechecked.
+    run_dekascript(
+        "impl_self_method_call",
+        "struct Point { $x: int; }\n\
+         impl Point {\n\
+           double(self: Self): int { return self.x * 2; }\n\
+           quad(self: Self): int { return self.double() * 2; }\n\
+         }\n\
+         const p = Point { $x: 3 };\n\
+         print(p.quad());\n",
+        "12",
+    );
+}
+
+#[test]
 fn run_executes_trait_impl_method_reading_self_field() {
     run_dekascript(
         "trait_impl_self",
