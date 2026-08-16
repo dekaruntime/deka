@@ -1,0 +1,33 @@
+import { createStore, Header, Hero, ProductGrid } from '@tana/store'
+
+function component_home($ctx) {
+    $shop = $ctx['shop']
+    return Header($ctx, {
+        logoText: $shop['name'],
+        logoUrl: $shop['logoUrl'],
+        badge: 'powered by tana',
+        nav: [
+            { label: 'Products', href: '#products' },
+            { label: 'Cart', href: '/cart' }
+        ]
+    }, {}) .
+    Hero($ctx, {
+        eyebrow: $shop['tagline'],
+        title: $shop['name'],
+        body: 'A schema-bound PHPX store composed from Header, Hero, and ProductGrid primitives.',
+        ctaLabel: 'Browse products',
+        ctaHref: '#products'
+    }, {}) .
+    ProductGrid($ctx, {
+        title: 'Featured products',
+        limit: 12,
+        emptyText: 'This shop is still adding products.'
+    }, {
+        after: '<p style="margin-top:1rem;color:#666;font-size:.9rem">ProductGrid is bound to the tenant Product graph.</p>'
+    })
+}
+
+$app = createStore({
+    theme: 'modern',
+    primaryColor: '#22c55e',
+})

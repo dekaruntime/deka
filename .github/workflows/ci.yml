@@ -64,7 +64,7 @@ jobs:
       # TLS relocation issues and is not needed for these test suites.
       - name: Build tested crates
         working-directory: runtime
-        run: cargo build -p deka_http -p pool -p engine
+        run: cargo build -p deka_http -p pool -p engine -p phpx_js -p php-rs -p bundler
 
       - name: Test deka_http
         working-directory: runtime
@@ -78,9 +78,32 @@ jobs:
         working-directory: runtime
         run: cargo test -p engine
 
-      - name: Test PHPX compiler
+      - name: Test PHPX compiler (incl. integration tests)
         working-directory: runtime
-        run: cargo test -p phpx_js --lib
+        run: cargo test -p phpx_js
+
+      - name: Test php-rs (parser + typechecker)
+        working-directory: runtime
+        run: cargo test -p php-rs
+
+      - name: Test bundler
+        working-directory: runtime
+        run: cargo test -p bundler
+
+      # `cli` is intentionally NOT run here yet. Investigated for #58:
+      # `cli::build::tests::emits_subset_ast_for_jsx_component` fails
+      # deterministically on main (the JSX emitter no longer emits
+      # `import { jsx, jsxs } from 'component/core'` -- assertion drift,
+      # not an environment issue). Separately, several other `cli` tests
+      # (self_cmd::update::tests::load_managed_units_from_env,
+      # load_managed_units_does_not_trust_cwd_deka_json,
+      # transpile::tests::concurrent_parent_swap_at_*) are flaky under the
+      # default parallel test runner because they mutate real
+      # process-global env vars / a shared test mutex with no
+      # serialization (confirmed deterministic and green under
+      # `--test-threads=1`, so still a real pre-existing bug, not noise).
+      # Both are tracked in a follow-up issue; add `cargo test -p cli`
+      # back once fixed.
 
       - name: Build and test browser compiler WASM
         run: runtime/scripts/test-deka-compiler-wasm.sh
