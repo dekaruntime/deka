@@ -1,25 +1,33 @@
 /// Issue #8 — Verify that the default storefront handler compiles to valid JS.
 ///
-/// Reads `tana/store/default/main.phpx` through the PHPX transpiler and asserts
-/// that the output is non-empty valid JavaScript (no compilation errors).
+/// Reads a vendored, self-contained storefront fixture at
+/// `tests/fixtures/storefront/main.phpx` through the PHPX transpiler and
+/// asserts that the output is non-empty valid JavaScript (no compilation
+/// errors).
 ///
-/// The storefront imports `@tana/store` and `@deka/*` stdlib modules. Both live in
-/// `tana/store/default/php_modules/`. We symlink that directory (and its deka.lock)
-/// into a temp project so module resolution finds them.
+/// This fixture is a copy of `tana/store/default/main.phpx`, kept small and
+/// vendored *inside this repository* (see #52) so the test has no dependency
+/// on a sibling `tana` checkout. `compile_phpx_source_to_js` only validates
+/// imports lexically (see `modules_php::validation::imports`) — it does not
+/// resolve them against `php_modules/` on disk — so a vendored copy of the
+/// storefront source is sufficient to exercise the real compilation path
+/// without needing the real `@tana/store` package installed.
 use phpx_js::{SourceModuleMeta, compile_phpx_source_to_js};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Path to the default storefront directory (contains main.phpx, php_modules/, deka.lock).
-const STOREFRONT_DIR: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../",
-    "../../tana/store/default"
-);
+/// Path to the vendored storefront fixture directory (contains main.phpx,
+/// php_modules/, deka.lock). Lives inside this crate — no sibling repo needed.
+const STOREFRONT_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/storefront");
 
 #[test]
 fn storefront_handler_compiles() {
-    let storefront_dir = std::fs::canonicalize(STOREFRONT_DIR)
-        .unwrap_or_else(|e| panic!("cannot find storefront dir at {}: {}", STOREFRONT_DIR, e));
+    let storefront_dir = std::fs::canonicalize(STOREFRONT_DIR).unwrap_or_else(|e| {
+        panic!(
+            "cannot find vendored storefront fixture at {}: {} (see issue #52 — this fixture \
+             should be vendored inside the repo, not resolved from a sibling checkout)",
+            STOREFRONT_DIR, e
+        )
+    });
 
     let storefront_phpx = storefront_dir.join("main.phpx");
     let source = std::fs::read_to_string(&storefront_phpx)
@@ -28,8 +36,9 @@ fn storefront_handler_compiles() {
     assert!(!source.is_empty(), "storefront handler is empty");
 
     // Create a temp project directory with the storefront source and symlinks
-    // to the storefront's own php_modules/ (which contains @tana/store and @deka/*)
-    // and deka.lock so module resolution can find all imported modules.
+    // to the fixture's own php_modules/ and deka.lock. compile_phpx_source_to_js
+    // does not actually read these (import resolution is lexical-only), but we
+    // keep the same on-disk shape as a real storefront checkout for realism.
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -37,8 +46,6 @@ fn storefront_handler_compiles() {
     let tmp = std::env::temp_dir().join(format!("deka_storefront_compile_test_{}", nanos));
     std::fs::create_dir_all(&tmp).expect("create temp dir");
 
-    // Symlink the storefront's php_modules and deka.lock (not the runtime root's)
-    // because the storefront ships its own @tana/store and @deka/* packages.
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(storefront_dir.join("php_modules"), tmp.join("php_modules"))
