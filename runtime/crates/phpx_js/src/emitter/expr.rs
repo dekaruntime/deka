@@ -697,6 +697,30 @@ impl<'a> JsSubsetEmitter<'a> {
             Expr::Match {
                 condition, arms, ..
             } => self.emit_match_expr(*condition, arms),
+            Expr::Unsafe {
+                body,
+                catch,
+                finally,
+                ..
+            } => {
+                let try_fn = format!("() => {}", self.emit_expr(*body)?);
+                let mut args = vec![try_fn];
+                if let Some(catch) = catch {
+                    let catch_var = self.token_name(catch.var);
+                    args.push(format!(
+                        "({}) => {}",
+                        catch_var,
+                        self.emit_expr(catch.body)?
+                    ));
+                }
+                if let Some(finally) = finally {
+                    if catch.is_none() {
+                        args.push("undefined".to_string());
+                    }
+                    args.push(format!("() => {}", self.emit_expr(*finally)?));
+                }
+                Ok(format!("deka.unsafe({})", args.join(", ")))
+            }
             other => Err(format!(
                 "unsupported expression in subset emitter: {:?}",
                 other
