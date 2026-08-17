@@ -219,3 +219,54 @@ fn snapshot_async_function_return_type_is_diagnosed_correctly() {
         "diagnostic text changed, update this snapshot: {err}"
     );
 }
+
+#[test]
+fn snapshot_option_enum_payload_match_compiles() {
+    // dekaruntime/deka#93: A generic enum with a payload must be constructible
+    // and pattern-matchable in DekaScript.
+    let js = ds_diagnostic(
+        r#"enum Option<T> {
+  Some(T),
+  None,
+}
+
+const found = Option.Some("DekaScript");
+
+const message = match (found) {
+  Option.Some(value) => value,
+  Option.None => "nothing",
+  _ => "unknown",
+};
+
+console.log(message);"#,
+    )
+    .expect("option enum payload match should compile");
+    assert!(
+        js.contains("__case"),
+        "expected enum case tag in emitted JS: {js}"
+    );
+}
+
+#[test]
+fn snapshot_jsx_component_with_separator_and_destructured_props_compiles() {
+    // dekaruntime/deka#93: A DekaScript component file may use an interface
+    // typed destructured parameter, define the function before a single '---'
+    // delimiter, and use the component in the JSX template after it.
+    let js = ds_diagnostic(
+        r#"interface GreetingProps {
+  name: string
+}
+
+function Greeting({ name }: GreetingProps): VNode {
+  return <h1>Hello {name}</h1>
+}
+
+---
+<Greeting name="DekaScript" />"#,
+    )
+    .expect("jsx component with separator and destructured props should compile");
+    assert!(
+        js.contains(r#"function Greeting(name)"#),
+        "expected component function in emitted JS: {js}"
+    );
+}
