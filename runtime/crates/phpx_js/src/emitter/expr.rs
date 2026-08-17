@@ -1,7 +1,146 @@
 use super::*;
 
+/// Precedence levels for JavaScript operators. Higher numeric values bind
+/// more tightly. Used by `emit_expr_with_prec` to decide when a binary
+/// expression must be parenthesized to preserve the source AST grouping.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Prec {
+    Min = 0,
+    Ternary = 1,
+    Or = 2,
+    And = 3,
+    Coalesce = 4,
+    BitOr = 5,
+    BitXor = 6,
+    BitAnd = 7,
+    Equality = 8,
+    Relational = 9,
+    Shift = 10,
+    Add = 11,
+    Mul = 12,
+    Pow = 13,
+    Unary = 14,
+    Postfix = 15,
+    Max = 16,
+}
+
+impl Prec {
+    fn next(self) -> Self {
+        match self {
+            Prec::Min => Prec::Ternary,
+            Prec::Ternary => Prec::Or,
+            Prec::Or => Prec::And,
+            Prec::And => Prec::Coalesce,
+            Prec::Coalesce => Prec::BitOr,
+            Prec::BitOr => Prec::BitXor,
+            Prec::BitXor => Prec::BitAnd,
+            Prec::BitAnd => Prec::Equality,
+            Prec::Equality => Prec::Relational,
+            Prec::Relational => Prec::Shift,
+            Prec::Shift => Prec::Add,
+            Prec::Add => Prec::Mul,
+            Prec::Mul => Prec::Pow,
+            Prec::Pow => Prec::Unary,
+            Prec::Unary => Prec::Postfix,
+            Prec::Postfix => Prec::Max,
+            Prec::Max => Prec::Max,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Assoc {
+    Left,
+    Right,
+    NonAssoc,
+}
+
+fn binary_op_info(op: &BinaryOp) -> (Prec, Assoc, &'static str) {
+    match op {
+        BinaryOp::Or | BinaryOp::LogicalOr => (Prec::Or, Assoc::Left, "||"),
+        BinaryOp::And | BinaryOp::LogicalAnd => (Prec::And, Assoc::Left, "&&"),
+        BinaryOp::Coalesce => (Prec::Coalesce, Assoc::Left, "??"),
+        BinaryOp::BitOr => (Prec::BitOr, Assoc::Left, "|"),
+        BinaryOp::BitXor => (Prec::BitXor, Assoc::Left, "^"),
+        BinaryOp::BitAnd => (Prec::BitAnd, Assoc::Left, "&"),
+        BinaryOp::Eq | BinaryOp::EqEq | BinaryOp::EqEqEq => (Prec::Equality, Assoc::NonAssoc, "==="),
+        BinaryOp::NotEq | BinaryOp::NotEqEq => (Prec::Equality, Assoc::NonAssoc, "!=="),
+        BinaryOp::Lt => (Prec::Relational, Assoc::NonAssoc, "<"),
+        BinaryOp::LtEq => (Prec::Relational, Assoc::NonAssoc, "<="),
+        BinaryOp::Gt => (Prec::Relational, Assoc::NonAssoc, ">"),
+        BinaryOp::GtEq => (Prec::Relational, Assoc::NonAssoc, ">="),
+        BinaryOp::ShiftLeft => (Prec::Shift, Assoc::Left, "<<"),
+        BinaryOp::ShiftRight => (Prec::Shift, Assoc::Left, ">>"),
+        BinaryOp::Plus => (Prec::Add, Assoc::Left, "+"),
+        BinaryOp::Minus => (Prec::Add, Assoc::Left, "-"),
+        BinaryOp::Mul => (Prec::Mul, Assoc::Left, "*"),
+        BinaryOp::Div => (Prec::Mul, Assoc::Left, "/"),
+        BinaryOp::Mod => (Prec::Mul, Assoc::Left, "%"),
+        BinaryOp::Pow => (Prec::Pow, Assoc::Right, "**"),
+        BinaryOp::Concat => (Prec::Add, Assoc::Left, "+"),
+        // `instanceof` is handled separately in the caller before this mapping.
+        _ => (Prec::Min, Assoc::Left, "?"),
+    }
+}
+
 impl<'a> JsSubsetEmitter<'a> {
     pub(super) fn emit_expr(&mut self, expr: ExprId<'_>) -> Result<String, String> {
+        self.emit_expr_with_prec(expr, Prec::Min)
+    }
+
+    fn emit_expr_with_prec(&mut self, expr: ExprId<'_>, min_prec: Prec) -> Result<String, String> {
+        if let Expr::Binary { left, op, right, .. } = expr {
+            // `instanceof` against a struct type is a special runtime helper,
+            // not a raw JS `instanceof` expression.
+            if matches!(op, BinaryOp::Instanceof) {
+                if let Expr::Variable { name, .. } = right {
+                    let ident = self.span_name(*name);
+                    if self.struct_names.contains(&ident) {
+                        let lhs = self.emit_expr_with_prec(*left, Prec::Min)?;
+                        if self.meta.is_ds {
+                            self.uses_deka_struct_helpers = true;
+                            return Ok(format!("deka.isStruct({}, {})", lhs, ident));
+                        }
+                        return Ok(format!(
+                            "globalThis.__phpx_is_struct({}, {})",
+                            lhs,
+                            json_string(&ident)
+                        ));
+                    }
+                }
+            }
+            // Pipeline operator is also a special form.
+            if matches!(op, BinaryOp::Pipe) {
+                let lhs = self.emit_expr_with_prec(*left, Prec::Min)?;
+                let rhs = self.emit_expr_with_prec(*right, Prec::Min)?;
+                let callable = match *right {
+                    Expr::Variable { .. } => rhs,
+                    _ => format!("({})", rhs),
+                };
+                return Ok(format!(
+                    "((__phpx_pipe_lhs) => {}(__phpx_pipe_lhs))({})",
+                    callable, lhs
+                ));
+            }
+
+            let (op_prec, assoc, js_op) = binary_op_info(op);
+            if op_prec < min_prec {
+                let inner = self.emit_expr_with_prec(expr, Prec::Min)?;
+                return Ok(format!("({})", inner));
+            }
+            let (left_min, right_min) = match assoc {
+                Assoc::Left => (op_prec, op_prec.next()),
+                Assoc::Right => (op_prec.next(), op_prec),
+                Assoc::NonAssoc => (op_prec.next(), op_prec.next()),
+            };
+            let lhs = self.emit_expr_with_prec(*left, left_min)?;
+            let rhs = self.emit_expr_with_prec(*right, right_min)?;
+            return Ok(format!("{} {} {}", lhs, js_op, rhs));
+        }
+        self.emit_expr_inner(expr)
+    }
+
+    fn emit_expr_inner(&mut self, expr: ExprId<'_>) -> Result<String, String> {
         match expr {
             Expr::Variable { name, .. } => {
                 let ident = self.span_name(*name);
@@ -46,7 +185,7 @@ impl<'a> JsSubsetEmitter<'a> {
             Expr::Null { .. } => Ok("null".to_string()),
             Expr::String { value, .. } => Ok(self.encode_php_string_literal(value)),
             Expr::Unary { op, expr, .. } => {
-                let value = self.emit_expr(*expr)?;
+                let value = self.emit_expr_with_prec(*expr, Prec::Unary)?;
                 let js_op = match op {
                     UnaryOp::Plus => "+",
                     UnaryOp::Minus => "-",
@@ -61,73 +200,7 @@ impl<'a> JsSubsetEmitter<'a> {
                         ));
                     }
                 };
-                Ok(format!("({}{})", js_op, value))
-            }
-            Expr::Binary {
-                left, op, right, ..
-            } => {
-                let lhs = self.emit_expr(*left)?;
-                if matches!(op, BinaryOp::Instanceof) {
-                    if let Expr::Variable { name, .. } = right {
-                        let ident = self.span_name(*name);
-                        if self.struct_names.contains(&ident) {
-                            if self.meta.is_ds {
-                                self.uses_deka_struct_helpers = true;
-                                return Ok(format!("(deka.isStruct({}, {}))", lhs, ident));
-                            }
-                            return Ok(format!(
-                                "(globalThis.__phpx_is_struct({}, {}))",
-                                lhs,
-                                json_string(&ident)
-                            ));
-                        }
-                    }
-                }
-                if matches!(op, BinaryOp::Pipe) {
-                    let rhs = self.emit_expr(*right)?;
-                    let callable = match *right {
-                        Expr::Variable { .. } => rhs,
-                        _ => format!("({})", rhs),
-                    };
-                    return Ok(format!(
-                        "((__phpx_pipe_lhs) => {}(__phpx_pipe_lhs))({})",
-                        callable, lhs
-                    ));
-                }
-                let rhs = self.emit_expr(*right)?;
-                let js_op = match op {
-                    BinaryOp::Plus => "+",
-                    BinaryOp::Minus => "-",
-                    BinaryOp::Mul => "*",
-                    BinaryOp::Div => "/",
-                    BinaryOp::Mod => "%",
-                    BinaryOp::Pow => "**",
-                    BinaryOp::ShiftLeft => "<<",
-                    BinaryOp::ShiftRight => ">>",
-                    BinaryOp::BitAnd => "&",
-                    BinaryOp::BitOr => "|",
-                    BinaryOp::BitXor => "^",
-                    BinaryOp::Concat => "+",
-                    BinaryOp::Instanceof => "instanceof",
-                    BinaryOp::Eq | BinaryOp::EqEq => "===",
-                    BinaryOp::EqEqEq => "===",
-                    BinaryOp::NotEq => "!==",
-                    BinaryOp::NotEqEq => "!==",
-                    BinaryOp::Lt => "<",
-                    BinaryOp::LtEq => "<=",
-                    BinaryOp::Gt => ">",
-                    BinaryOp::GtEq => ">=",
-                    BinaryOp::And | BinaryOp::LogicalAnd => "&&",
-                    BinaryOp::Or | BinaryOp::LogicalOr => "||",
-                    BinaryOp::Coalesce => "??",
-                    _ => {
-                        return Err(format!(
-                            "unsupported binary operator in subset emitter: {:?}",
-                            op
-                        ));
-                    }
-                };
-                Ok(format!("({} {} {})", lhs, js_op, rhs))
+                Ok(format!("{}{}", js_op, value))
             }
             Expr::ArrowFunction { params, expr, .. } => {
                 let mut names = Vec::with_capacity(params.len());
@@ -568,15 +641,15 @@ impl<'a> JsSubsetEmitter<'a> {
             }
             Expr::PostInc { var, .. } => {
                 let target = self.emit_assignable_expr(*var)?;
-                Ok(format!("({}++)", target))
+                Ok(format!("{}++", target))
             }
             Expr::PostDec { var, .. } => {
                 let target = self.emit_assignable_expr(*var)?;
-                Ok(format!("({}--)", target))
+                Ok(format!("{}--", target))
             }
             Expr::Empty { expr, .. } => {
-                let value = self.emit_expr(*expr)?;
-                Ok(format!("(!({}))", value))
+                let value = self.emit_expr_with_prec(*expr, Prec::Unary)?;
+                Ok(format!("!{}", value))
             }
             Expr::Print { expr, .. } => {
                 let value = self.emit_expr(*expr)?;
@@ -586,8 +659,8 @@ impl<'a> JsSubsetEmitter<'a> {
                 ))
             }
             Expr::Await { expr, .. } => {
-                let value = self.emit_expr(*expr)?;
-                Ok(format!("(await {})", value))
+                let value = self.emit_expr_with_prec(*expr, Prec::Unary)?;
+                Ok(format!("await {}", value))
             }
             Expr::Eval { expr, .. } => {
                 let value = self.emit_expr(*expr)?;
@@ -686,7 +759,7 @@ impl<'a> JsSubsetEmitter<'a> {
             Expr::InterpolatedString { parts, .. } => {
                 let mut pieces = Vec::new();
                 for part in *parts {
-                    pieces.push(self.emit_expr(*part)?);
+                    pieces.push(self.emit_expr_with_prec(*part, Prec::Add)?);
                 }
                 Ok(format!("({})", pieces.join(" + ")))
             }
@@ -696,13 +769,13 @@ impl<'a> JsSubsetEmitter<'a> {
                 if_false,
                 ..
             } => {
-                let cond = self.emit_expr(*condition)?;
+                let cond = self.emit_expr_with_prec(*condition, Prec::Ternary)?;
                 let when_true = if let Some(value) = if_true {
-                    self.emit_expr(*value)?
+                    self.emit_expr_with_prec(*value, Prec::Ternary)?
                 } else {
                     cond.clone()
                 };
-                let when_false = self.emit_expr(*if_false)?;
+                let when_false = self.emit_expr_with_prec(*if_false, Prec::Ternary)?;
                 Ok(format!("({} ? {} : {})", cond, when_true, when_false))
             }
             Expr::Match {

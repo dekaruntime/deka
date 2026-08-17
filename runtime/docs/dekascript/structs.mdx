@@ -67,7 +67,7 @@ At runtime, a struct is a factory created by `deka.Struct("Point")`. Instances c
 const Point = deka.Struct("Point");
 Point.impl({
   "magnitude": function() {
-    return Math.sqrt(((this.x * this.x) + (this.y * this.y)));
+    return Math.sqrt((this.x * this.x) + (this.y * this.y));
   }
 });
 

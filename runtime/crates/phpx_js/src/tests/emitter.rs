@@ -2168,3 +2168,62 @@ p.move(3, 4)
         js
     );
 }
+
+// ---- RAW output cleanup: precedence-aware parenthesization ----
+
+#[test]
+fn ds_binary_op_in_loose_context_has_no_extra_parens() {
+    let js = ds_to_js("console.log(1 + 2);").expect("should compile");
+    assert!(
+        js.contains("console.log(1 + 2)"),
+        "expected no extra parens around loose binary op, got:\n{}",
+        js
+    );
+}
+
+#[test]
+fn ds_nested_binary_op_preserves_grouping_with_parens() {
+    // (1 + 2) * 3 must keep parens around the lower-precedence addition.
+    let source = r#"const x = (1 + 2) * 3;"#;
+    let js = ds_to_js(source).expect("should compile");
+    assert!(
+        js.contains("(1 + 2) * 3"),
+        "expected parens around lower-precedence nested op, got:\n{}",
+        js
+    );
+}
+
+#[test]
+fn ds_unary_op_has_no_extra_parens() {
+    let js = ds_to_js("const x = !true;").expect("should compile");
+    assert!(
+        js.contains("!true"),
+        "expected no extra parens around unary op, got:\n{}",
+        js
+    );
+}
+
+#[test]
+fn ds_unary_op_parenthesizes_lower_precedence_operand() {
+    // !(a && b) must keep parens around the binary operand.
+    let source = r#"const x = !(true && false);"#;
+    let js = ds_to_js(source).expect("should compile");
+    assert!(
+        js.contains("!(true && false)"),
+        "expected parens around binary operand of unary op, got:\n{}",
+        js
+    );
+}
+
+#[test]
+fn ds_await_has_no_extra_parens() {
+    let source = r#"async function f(): Promise<int> { return 1 }
+const x = await f();
+"#;
+    let js = ds_to_js(source).expect("should compile");
+    assert!(
+        js.contains("await f()"),
+        "expected no extra parens around await, got:\n{}",
+        js
+    );
+}
