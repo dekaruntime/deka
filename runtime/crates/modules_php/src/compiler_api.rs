@@ -95,10 +95,11 @@ fn compile_phpx_with_mode<'a>(
         errors.extend(generic_errors);
         warnings.extend(generic_warnings);
 
-        errors.extend(validate_no_null(&program, source));
-        errors.extend(validate_no_exceptions(&program, source));
-        errors.extend(validate_no_oop(&program, source, mode == ParserMode::Ds));
-        errors.extend(validate_no_namespace(&program, source));
+        let is_ds = mode == ParserMode::Ds;
+        errors.extend(validate_no_null(&program, source, is_ds));
+        errors.extend(validate_no_exceptions(&program, source, is_ds));
+        errors.extend(validate_no_oop(&program, source, is_ds));
+        errors.extend(validate_no_namespace(&program, source, is_ds));
 
         errors.extend(validate_struct_definitions(&program, source));
         errors.extend(validate_struct_literals(&program, source));
