@@ -20,7 +20,7 @@ env:
 jobs:
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     env:
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: 0
@@ -90,7 +90,7 @@ jobs:
   build-wasm:
     name: Build browser compiler + diagnostics WASM
     needs: [test]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     env:
       SCCACHE_BUCKET: "deka-sccache-linux-x64"
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -131,7 +131,7 @@ jobs:
   build-cli-linux-x64:
     name: Build CLI (linux-x64)
     needs: [test]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     env:
       SCCACHE_BUCKET: "deka-sccache-linux-x64"
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -175,7 +175,7 @@ jobs:
   build-cli-darwin-x64:
     name: Build CLI (darwin-x64)
     needs: [test]
-    runs-on: macos-13
+    runs-on: [self-hosted, macos, x64]
     env:
       SCCACHE_BUCKET: "deka-sccache-darwin-x64"
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -219,7 +219,7 @@ jobs:
   build-cli-darwin-arm64:
     name: Build CLI (darwin-arm64)
     needs: [test]
-    runs-on: macos-latest
+    runs-on: [self-hosted, macos, arm64]
     env:
       SCCACHE_BUCKET: "deka-sccache-darwin-arm64"
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -263,7 +263,7 @@ jobs:
   publish:
     name: Publish to R2
     needs: [build-wasm, build-cli-linux-x64, build-cli-darwin-x64, build-cli-darwin-arm64]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
