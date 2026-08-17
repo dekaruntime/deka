@@ -68,7 +68,7 @@ jobs:
       - name: Build CLI
         env:
           RUSTC_WRAPPER: "sccache"
-        run: cd runtime && cargo build --locked --release -p cli
+        run: cd runtime && cargo build --release -p cli
 
       - name: Prepare binary
         run: |
@@ -103,7 +103,7 @@ jobs:
       - name: Build CLI
         env:
           RUSTC_WRAPPER: "sccache"
-        run: cd runtime && cargo build --locked --release -p cli
+        run: cd runtime && cargo build --release -p cli
 
       - name: Prepare binary
         run: |
@@ -138,7 +138,7 @@ jobs:
       - name: Build CLI
         env:
           RUSTC_WRAPPER: "sccache"
-        run: cd runtime && cargo build --locked --release -p cli
+        run: cd runtime && cargo build --release -p cli
 
       - name: Prepare binary
         run: |

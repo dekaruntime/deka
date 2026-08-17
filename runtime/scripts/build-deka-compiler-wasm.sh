@@ -31,10 +31,10 @@ deka_version=$(grep -E '^version\s*=' "$runtime_dir/crates/cli/Cargo.toml" | hea
 mkdir -p "$out_dir"
 cd "$runtime_dir"
 CARGO_INCREMENTAL=0 DEKA_SOURCE_COMMIT="$source_commit" \
-  cargo build --locked --release \
+  cargo build --release \
   --target wasm32-unknown-unknown -p phpx_compiler_wasm --no-default-features
 CARGO_INCREMENTAL=0 DEKA_SOURCE_COMMIT="$source_commit" \
-  cargo build --locked --release \
+  cargo build --release \
   --target wasm32-unknown-unknown -p dekascript_lsp_wasm --no-default-features
 
 source_artifact="$target_dir/wasm32-unknown-unknown/release/phpx_compiler_wasm.wasm"
