@@ -104,9 +104,34 @@ pub extern "C" fn deka_compiler_format_js(
     source_ptr: *const u8,
     source_len: u32,
 ) -> *mut WasmResult {
-    let source = read_utf8(source_ptr, source_len, "source");
-    let response = match source {
-        Ok(source) => match deka_fmt::format_js(source) {
+    box_result(&json(&format_request(
+        read_utf8(source_ptr, source_len, "source"),
+        deka_fmt::format_js,
+    )))
+}
+
+/// Format a DekaScript source string and return a JSON-encoded `WasmResult`.
+///
+/// # Safety
+/// Non-empty pointer/length pairs must point to valid, immutable UTF-8 buffers
+/// in WASM memory.
+#[unsafe(no_mangle)]
+pub extern "C" fn deka_compiler_format_ds(
+    source_ptr: *const u8,
+    source_len: u32,
+) -> *mut WasmResult {
+    box_result(&json(&format_request(
+        read_utf8(source_ptr, source_len, "source"),
+        deka_fmt::format_ds,
+    )))
+}
+
+fn format_request(
+    source: Result<&str, &str>,
+    formatter: fn(&str) -> Result<String, String>,
+) -> FormatResponse {
+    match source {
+        Ok(source) => match formatter(source) {
             Ok(code) => FormatResponse {
                 abi_version: ABI_VERSION,
                 ok: true,
@@ -126,8 +151,7 @@ pub extern "C" fn deka_compiler_format_js(
             output: None,
             diagnostics: vec![internal_diagnostic("<format>", message.to_string())],
         },
-    };
-    box_result(&json(&response))
+    }
 }
 
 #[derive(Serialize)]
