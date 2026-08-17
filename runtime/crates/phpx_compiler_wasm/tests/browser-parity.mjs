@@ -36,7 +36,7 @@ function compile(source, filename, mode) {
 }
 
 const success = compile("const answer = 42;", "lesson.ds", "auto");
-if (!success.ok || success.metadata.language !== "deka" || !success.output?.code?.includes("const answer = 42")) {
+if (!success.ok || success.metadata.language !== "deka" || !success.output?.code?.includes("const answer = deka.freeze(42)")) {
   throw new Error(`successful .ds compile did not match the ABI contract: ${JSON.stringify(success)}`);
 }
 
