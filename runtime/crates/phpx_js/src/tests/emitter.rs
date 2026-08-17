@@ -1901,3 +1901,101 @@ fn ds_enum_variant_dot_access_emits_same_js_as_static() {
         js
     );
 }
+
+// --- DekaScript trait/impl lowering (dekaruntime/deka#93) ------------------
+
+#[test]
+fn ds_trait_impl_emits_struct_methods() {
+    let source = r#"trait Named {
+  name(): string
+}
+
+struct User {
+  handle: string
+}
+
+impl Named for User {
+  name(): string {
+    return this.handle
+  }
+}
+
+const user = User { handle: "deka" }
+console.log(user.name())
+"#;
+    let js = ds_to_js(source).expect("trait impl should compile to JS");
+    assert!(
+        js.contains("name: function()"),
+        "expected emitted method function, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("return this.handle"),
+        "expected method body to access receiver field, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("user.name()"),
+        "expected method call expression, got:\n{}",
+        js
+    );
+}
+
+#[test]
+fn ds_trait_default_method_emits_fallback() {
+    // A default trait method body is emitted even when the impl block does
+    // not provide an override.
+    let source = r#"trait Greeter {
+  greet(): string { return "hello" }
+}
+
+struct Bot {}
+
+impl Greeter for Bot {}
+
+const bot = Bot {}
+console.log(bot.greet())
+"#;
+    let js = ds_to_js(source).expect("default method should compile to JS");
+    assert!(
+        js.contains(r#"return "hello""#) || js.contains("return 'hello'"),
+        "expected default method body, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("bot.greet()"),
+        "expected default method call, got:\n{}",
+        js
+    );
+}
+
+#[test]
+fn ds_inherent_impl_emits_struct_methods() {
+    // Structs with only an inherent impl (no trait) should still lower their
+    // methods and method calls.
+    let source = r#"struct Point {
+  x: int
+  y: int
+}
+
+impl Point {
+  norm(): int {
+    return this.x + this.y
+  }
+}
+
+const p = Point { x: 3, y: 4 }
+console.log(p.norm())
+"#;
+    let js = ds_to_js(source).expect("inherent impl should compile to JS");
+    assert!(
+        js.contains("norm: function()"),
+        "expected emitted method function, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("p.norm()"),
+        "expected method call expression, got:\n{}",
+        js
+    );
+}
