@@ -73,13 +73,10 @@ pub fn validate_frontmatter(source: &str, file_path: &str) -> Vec<ValidationErro
         if line == "---" {
             saw_frontmatter = true;
         } else if lines.iter().skip(idx + 1).any(|line| line.trim() == "---") {
-            errors.push(frontmatter_error(
-                idx + 1,
-                find_column(lines[idx], line),
-                line.len().max(1),
-                "Frontmatter must start at the beginning of the file.".to_string(),
-                "Move the '---' delimiter to the top of the file.",
-            ));
+            // Script/template separator mode: code precedes the first '---' and
+            // the template section follows it. This is valid for component files
+            // that define functions before the template block.
+            saw_frontmatter = true;
         }
     }
 
@@ -99,6 +96,8 @@ pub fn validate_frontmatter(source: &str, file_path: &str) -> Vec<ValidationErro
         return errors;
     }
     let (_start, end) = bounds.unwrap();
+    // In separator mode (start == end) there is no closing delimiter to check,
+    // so the post-frontmatter validation runs on the template section only.
 
     let mut in_block_comment = false;
     for (idx, line) in lines.iter().enumerate().skip(end + 1) {
@@ -138,12 +137,18 @@ pub fn validate_template_section(source: &str, file_path: &str) -> Vec<Validatio
     let Some((start, end)) = frontmatter_bounds(&lines) else {
         return Vec::new();
     };
-    let frontmatter_lines: Vec<&str> = lines
-        .iter()
-        .skip(start + 1)
-        .take(end.saturating_sub(start + 1))
-        .copied()
-        .collect();
+    // In separator mode the script comes before the single '---' delimiter, so
+    // use that as the frontmatter context when validating the template section.
+    let frontmatter_lines: Vec<&str> = if start == end {
+        lines.iter().take(start).copied().collect()
+    } else {
+        lines
+            .iter()
+            .skip(start + 1)
+            .take(end.saturating_sub(start + 1))
+            .copied()
+            .collect()
+    };
     let template_lines: Vec<&str> = lines.iter().skip(end + 1).copied().collect();
     if template_lines.iter().all(|line| line.trim().is_empty()) {
         return Vec::new();

@@ -140,14 +140,18 @@ fn preprocess_source(source: &str, mode: ParserMode) -> String {
     let mut line_index = 0usize;
 
     for segment in source.split_inclusive('\n') {
-        let in_frontmatter = if let Some((start, end)) = bounds {
-            line_index > start && line_index < end
+        let (in_frontmatter, is_delim) = if let Some((start, end)) = bounds {
+            if start == end {
+                // Script/template separator: keep code before the delimiter,
+                // mask the delimiter line and the template section after it.
+                (line_index < start, line_index == start)
+            } else {
+                (line_index > start && line_index < end,
+                 line_index == start || line_index == end)
+            }
         } else {
-            true
+            (true, false)
         };
-        let is_delim = bounds
-            .map(|(start, end)| line_index == start || line_index == end)
-            .unwrap_or(false);
 
         let clean = strip_php_tags_inline(segment);
         let trimmed = clean.trim();
