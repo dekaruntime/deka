@@ -737,7 +737,7 @@ dependencies = [
 
 [[package]]
 name = "cli"
-version = "0.9.1"
+version = "0.9.8"
 dependencies = [
  "anyhow",
  "bumpalo",
@@ -750,7 +750,6 @@ dependencies = [
  "glob",
  "introspect",
  "libc",
- "linkhash-client",
  "modules_php",
  "php-rs",
  "phpx_js",
@@ -2963,20 +2962,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "linkhash-client"
-version = "0.2.1"
-dependencies = [
- "anyhow",
- "axum",
- "reqwest 0.12.28",
- "semver",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
-]
-
-[[package]]
 name = "linux-raw-sys"
 version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4169,7 +4154,6 @@ dependencies = [
  "dirs",
  "json5",
  "libc",
- "linkhash-client",
  "modules_php",
  "reqwest 0.11.27",
  "runtime_core",
