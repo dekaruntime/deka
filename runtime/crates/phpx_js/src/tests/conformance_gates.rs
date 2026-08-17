@@ -138,6 +138,31 @@ fn snapshot_enum_js_style_body_is_accepted() {
 }
 
 #[test]
+fn snapshot_enum_payload_match_binds_pattern_variable() {
+    // dekaruntime/deka#94: matching an enum variant with a payload should
+    // extract the payload into the pattern variable.
+    let js = ds_diagnostic(
+        r#"enum Option<T> { Some(T), None }
+const found = Option.Some("DekaScript");
+const message = match (found) {
+  Option.Some(value) => value,
+  Option.None => "nothing",
+  _ => "unknown",
+};
+console.log(message);"#,
+    )
+    .expect("enum payload match should compile");
+    assert!(
+        js.contains(r#"found.__enum === "Option" && found.__case === "Some""#),
+        "expected tag-based guard for payload match: {js}"
+    );
+    assert!(
+        js.contains(r#"const value = found["T"];"#),
+        "expected payload binding for match pattern: {js}"
+    );
+}
+
+#[test]
 fn snapshot_async_function_return_type_is_diagnosed_correctly() {
     // Not a known-bad case: this diagnostic is accurate and names the real
     // cause (async functions must return `Promise<T>`). Recorded so a
