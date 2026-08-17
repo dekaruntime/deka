@@ -45,6 +45,14 @@ jobs:
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.9
 
+      - name: Verify sccache can reach R2
+        run: |
+          pip install awscli
+          echo "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
+          echo "SCCACHE_BUCKET=$SCCACHE_BUCKET"
+          sccache --show-stats
+          aws s3 ls "s3://${SCCACHE_BUCKET}/" --endpoint-url="${SCCACHE_ENDPOINT}"
+
       - name: Run utility-css checks
         run: |
           cd runtime/assets/utility-css
@@ -99,6 +107,14 @@ jobs:
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.9
 
+      - name: Verify sccache can reach R2
+        run: |
+          pip install awscli
+          echo "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
+          echo "SCCACHE_BUCKET=$SCCACHE_BUCKET"
+          sccache --show-stats
+          aws s3 ls "s3://${SCCACHE_BUCKET}/" --endpoint-url="${SCCACHE_ENDPOINT}"
+
       - name: Build WASM artifacts
         env:
           RUSTC_WRAPPER: "sccache"
@@ -129,6 +145,14 @@ jobs:
 
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Verify sccache can reach R2
+        run: |
+          pip install awscli
+          echo "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
+          echo "SCCACHE_BUCKET=$SCCACHE_BUCKET"
+          sccache --show-stats
+          aws s3 ls "s3://${SCCACHE_BUCKET}/" --endpoint-url="${SCCACHE_ENDPOINT}"
 
       - name: Build CLI
         env:
@@ -166,6 +190,14 @@ jobs:
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.9
 
+      - name: Verify sccache can reach R2
+        run: |
+          pip install awscli
+          echo "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
+          echo "SCCACHE_BUCKET=$SCCACHE_BUCKET"
+          sccache --show-stats
+          aws s3 ls "s3://${SCCACHE_BUCKET}/" --endpoint-url="${SCCACHE_ENDPOINT}"
+
       - name: Build CLI
         env:
           RUSTC_WRAPPER: "sccache"
@@ -201,6 +233,14 @@ jobs:
 
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Verify sccache can reach R2
+        run: |
+          pip install awscli
+          echo "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
+          echo "SCCACHE_BUCKET=$SCCACHE_BUCKET"
+          sccache --show-stats
+          aws s3 ls "s3://${SCCACHE_BUCKET}/" --endpoint-url="${SCCACHE_ENDPOINT}"
 
       - name: Build CLI
         env:
