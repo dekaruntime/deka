@@ -1752,3 +1752,68 @@ fn negative_number_literal() {
         js
     );
 }
+
+// ---- Unsafe block expression ----
+
+#[test]
+fn unsafe_block_emits_deka_unsafe_call() {
+    let source = r#"const val = unsafe { JSON.parse(text) } catch (e) { defaultValue } finally { cleanup() };"#;
+    let js = ds_to_js(source).expect("should compile");
+    assert!(
+        js.contains("deka.unsafe"),
+        "expected deka.unsafe call, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("() => JSON.parse(text)"),
+        "expected try arrow, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("(e) => defaultValue"),
+        "expected catch arrow, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("() => cleanup()"),
+        "expected finally arrow, got:\n{}",
+        js
+    );
+}
+
+#[test]
+fn unsafe_block_without_catch_finally_emits_deka_unsafe_call() {
+    let source = "const val = unsafe { JSON.parse(text) };";
+    let js = ds_to_js(source).expect("should compile");
+    assert!(
+        js.contains("deka.unsafe"),
+        "expected deka.unsafe call, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("() => JSON.parse(text)"),
+        "expected try arrow, got:\n{}",
+        js
+    );
+}
+
+#[test]
+fn unsafe_block_with_catch_only_emits_two_arrows() {
+    let source = "const val = unsafe { JSON.parse(text) } catch (e) { defaultValue };";
+    let js = ds_to_js(source).expect("should compile");
+    assert!(
+        js.contains("deka.unsafe"),
+        "expected deka.unsafe call, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("() => JSON.parse(text)"),
+        "expected try arrow, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("(e) => defaultValue"),
+        "expected catch arrow, got:\n{}",
+        js
+    );
+}
