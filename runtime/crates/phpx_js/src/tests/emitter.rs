@@ -1840,3 +1840,64 @@ fn unsafe_block_with_catch_only_emits_two_arrows() {
         js
     );
 }
+
+#[test]
+fn ds_enum_js_style_body_emits_frozen_tagged_objects() {
+    let source = r#"
+        enum Color { Red, Green, Blue }
+    "#;
+    let js = ds_to_js(source).expect("should compile");
+    assert!(
+        js.contains("const Color = Object.freeze"),
+        "expected frozen enum object, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains(r#"__enum: "Color""#),
+        "expected enum tag, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains(r#"__case: "Red""#),
+        "expected Red case tag, got:\n{}",
+        js
+    );
+}
+
+#[test]
+fn ds_enum_payload_emits_case_constructor() {
+    let source = r#"
+        enum Option<T> { Some(T), None }
+    "#;
+    let js = ds_to_js(source).expect("should compile");
+    assert!(
+        js.contains("Some:"),
+        "expected Some constructor entry, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("None:"),
+        "expected None case entry, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("=> Object.freeze"),
+        "expected payload constructor arrow, got:\n{}",
+        js
+    );
+}
+
+#[test]
+fn ds_enum_variant_dot_access_emits_same_js_as_static() {
+    // DekaScript accepts `Color.Red` as syntactic sugar for `Color::Red`.
+    let source = r#"
+        enum Color { Red, Green }
+        function pick(): Color { return Color.Red; }
+    "#;
+    let js = ds_to_js(source).expect("should compile");
+    assert!(
+        js.contains("return Color.Red"),
+        "expected Color.Red access in emitted JS, got:\n{}",
+        js
+    );
+}
