@@ -480,6 +480,18 @@ jobs:
           aws s3 cp "release/${VERSION}/deka_compiler.wasm" "s3://${R2_BUCKET_WASM}/latest/deka_compiler.wasm" --endpoint-url="${R2_ENDPOINT}"
           aws s3 cp "release/${VERSION}/deka_diagnostics.wasm" "s3://${R2_BUCKET_WASM}/latest/deka_diagnostics.wasm" --endpoint-url="${R2_ENDPOINT}"
 
+      - name: Trigger website compiler sync
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_WEBSITE_SYNC_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "DISPATCH_WEBSITE_SYNC_TOKEN not set; skipping cross-repo sync trigger."
+            echo "The website's hourly sync fallback will pick up this release."
+            exit 0
+          fi
+          gh workflow run sync-deka-compiler.yml -R dekaruntime/website
+
       - name: Summary
         run: |
           echo "Published deka ${{ github.ref_name }}"
