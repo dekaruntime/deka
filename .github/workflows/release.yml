@@ -93,9 +93,9 @@ jobs:
   build-wasm:
     name: Build browser compiler + diagnostics WASM
     needs: [test]
-    runs-on: [self-hosted, linux, x64]
+    runs-on: [self-hosted, macos, arm64]
     env:
-      SCCACHE_BUCKET: "deka-sccache-linux-x64"
+      SCCACHE_BUCKET: "deka-sccache-darwin-arm64"
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     steps:
