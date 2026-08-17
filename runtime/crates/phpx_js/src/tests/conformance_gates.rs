@@ -163,6 +163,26 @@ console.log(message);"#,
 }
 
 #[test]
+fn snapshot_destructured_object_parameter_compiles() {
+    // dekaruntime/deka#95: DekaScript should accept object-destructured
+    // function parameters like `{ name }: GreetingProps`.
+    let js = ds_diagnostic(
+        r#"interface GreetingProps {
+  name: string
+}
+function Greeting({ name }: GreetingProps): string {
+  return `Hello ${name}`
+}
+console.log(Greeting({ name: "DekaScript" }));"#,
+    )
+    .expect("destructured object parameter should compile");
+    assert!(
+        js.contains(r#"name = name["name"];"#),
+        "expected destructuring prologue in emitted JS: {js}"
+    );
+}
+
+#[test]
 fn snapshot_async_function_return_type_is_diagnosed_correctly() {
     // Not a known-bad case: this diagnostic is accurate and names the real
     // cause (async functions must return `Promise<T>`). Recorded so a
