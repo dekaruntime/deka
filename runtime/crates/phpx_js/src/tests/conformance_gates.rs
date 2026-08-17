@@ -9,14 +9,10 @@
 // assertion must be updated to the corrected text in the same PR that fixes
 // it — that diff is the proof the fix landed, and it is a welcome one.
 //
-// Two defects are already filed and are expected to still be present:
+// One defect is already filed and is expected to still be present:
 //   - #50: `(n) => n * 2` (JS/TS arrow syntax) is reported as "Missing
 //     semicolon" instead of naming the real cause (arrow functions/JS arrow
 //     syntax are not accepted; use `fn(...) => ...`).
-//   - #55: several `.ds` diagnostics say "PHPX" — a name DekaScript
-//     superseded per #17/#11 — instead of "DekaScript". Filed while
-//     building this gate; every message below containing the literal
-//     "PHPX" is one instance of that same defect.
 //
 // `enum Color { Red, Green }` is a third symptom of the "Missing semicolon"
 // misdirection class (RFD 9/RFD 10 syntax migration, referenced from #50):
@@ -47,22 +43,20 @@ fn snapshot_null_literal_is_currently_accepted_without_diagnostic() {
 }
 
 #[test]
-fn snapshot_null_comparison_names_isset_but_says_phpx() {
-    // KNOWN-BAD (#55): message says "PHPX", not "DekaScript".
+fn snapshot_null_comparison_rejected_in_dekascript() {
     let err = ds_diagnostic("export function f(a: int): bool { return a == null; }")
         .expect_err("null comparison must be rejected");
     assert!(
-        err.contains("Null comparisons are not allowed in PHPX; use isset() instead"),
+        err.contains("Null comparisons are not allowed; use isset() instead"),
         "diagnostic text changed, update this snapshot: {err}"
     );
 }
 
 #[test]
-fn snapshot_try_catch_rejected_but_says_phpx() {
-    // KNOWN-BAD (#55): message says "PHPX", not "DekaScript".
+fn snapshot_try_catch_rejected_in_dekascript() {
     let err = ds_diagnostic("try { } catch (e) { }").expect_err("try/catch must be rejected");
     assert!(
-        err.contains("try/catch is not allowed in PHPX."),
+        err.contains("try/catch is not allowed in DekaScript."),
         "diagnostic text changed, update this snapshot: {err}"
     );
     assert!(
@@ -72,21 +66,19 @@ fn snapshot_try_catch_rejected_but_says_phpx() {
 }
 
 #[test]
-fn snapshot_throw_rejected_but_says_phpx() {
-    // KNOWN-BAD (#55): message says "PHPX", not "DekaScript".
+fn snapshot_throw_rejected_in_dekascript() {
     let err = ds_diagnostic("throw \"boom\";").expect_err("throw must be rejected");
     assert!(
-        err.contains("throw is not allowed in PHPX."),
+        err.contains("throw is not allowed in DekaScript."),
         "diagnostic text changed, update this snapshot: {err}"
     );
 }
 
 #[test]
-fn snapshot_class_rejected_but_says_phpx() {
-    // KNOWN-BAD (#55): message says "PHPX", not "DekaScript".
+fn snapshot_class_rejected_in_dekascript() {
     let err = ds_diagnostic("class Foo { }").expect_err("class declarations must be rejected");
     assert!(
-        err.contains("Classes are not allowed in PHPX."),
+        err.contains("Classes are not allowed in DekaScript."),
         "diagnostic text changed, update this snapshot: {err}"
     );
     assert!(
