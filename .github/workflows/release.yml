@@ -25,6 +25,9 @@ jobs:
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
+      SCCACHE_BUCKET: "deka-sccache-linux-x64"
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,6 +42,9 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
       - name: Run utility-css checks
         run: |
           cd runtime/assets/utility-css
@@ -50,10 +56,14 @@ jobs:
           bun test.ts
 
       - name: Build tested crates
+        env:
+          RUSTC_WRAPPER: "sccache"
         working-directory: runtime
         run: cargo build -p deka_http -p pool -p engine -p phpx_js -p php-rs -p bundler
 
       - name: Run Rust tests
+        env:
+          RUSTC_WRAPPER: "sccache"
         working-directory: runtime
         run: |
           cargo test -p deka_http
@@ -65,6 +75,7 @@ jobs:
 
       - name: Build and test browser compiler WASM
         env:
+          RUSTC_WRAPPER: "sccache"
           DEKA_SKIP_DIRTY_CHECK: 1
         run: runtime/scripts/test-deka-compiler-wasm.sh
 
