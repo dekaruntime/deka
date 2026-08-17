@@ -18,8 +18,59 @@ env:
   R2_BUCKET_WASM: "deka-wasm"
 
 jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Run utility-css checks
+        run: |
+          cd runtime/assets/utility-css
+          bun build.ts
+          if [ -n "$(git status --porcelain bundle.js)" ]; then
+            echo "::error::runtime/assets/utility-css/bundle.js is out of date."
+            exit 1
+          fi
+          bun test.ts
+
+      - name: Build tested crates
+        working-directory: runtime
+        run: cargo build -p deka_http -p pool -p engine -p phpx_js -p php-rs -p bundler
+
+      - name: Run Rust tests
+        working-directory: runtime
+        run: |
+          cargo test -p deka_http
+          cargo test -p pool
+          cargo test -p engine
+          cargo test -p phpx_js
+          cargo test -p php-rs
+          cargo test -p bundler
+
+      - name: Build and test browser compiler WASM
+        env:
+          DEKA_SKIP_DIRTY_CHECK: 1
+        run: runtime/scripts/test-deka-compiler-wasm.sh
+
   build-wasm:
     name: Build browser compiler + diagnostics WASM
+    needs: [test]
     runs-on: ubuntu-latest
     env:
       SCCACHE_BUCKET: "deka-sccache-linux-x64"
@@ -52,6 +103,7 @@ jobs:
 
   build-cli-linux-x64:
     name: Build CLI (linux-x64)
+    needs: [test]
     runs-on: ubuntu-latest
     env:
       SCCACHE_BUCKET: "deka-sccache-linux-x64"
@@ -87,6 +139,7 @@ jobs:
 
   build-cli-darwin-x64:
     name: Build CLI (darwin-x64)
+    needs: [test]
     runs-on: macos-13
     env:
       SCCACHE_BUCKET: "deka-sccache-darwin-x64"
@@ -122,6 +175,7 @@ jobs:
 
   build-cli-darwin-arm64:
     name: Build CLI (darwin-arm64)
+    needs: [test]
     runs-on: macos-latest
     env:
       SCCACHE_BUCKET: "deka-sccache-darwin-arm64"
