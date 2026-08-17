@@ -809,6 +809,29 @@ $p = Point { x: 1, y: 2 };
 }
 
 #[test]
+fn ds_struct_bare_field_names_emit_correctly() {
+    // dekaruntime/deka#93: DekaScript structs use bare identifiers.
+    let source = r#"
+struct Point {
+x: int;
+y: int;
+}
+const p = Point { x: 3, y: 4 };
+"#;
+    let js = ds_to_js(source).expect("DekaScript struct with bare fields should compile");
+    assert!(
+        js.contains(r#""__struct": "Point""#),
+        "expected struct tag in output, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains(r#""x": 3"#) && js.contains(r#""y": 4"#),
+        "expected bare field keys in output, got:\n{}",
+        js
+    );
+}
+
+#[test]
 fn struct_field_access() {
     let source = r#"
 function f(): void {
