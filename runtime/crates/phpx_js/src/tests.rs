@@ -36,7 +36,9 @@ fn ds_to_js(source: &str) -> Result<String, String> {
         let msgs: Vec<&str> = program.errors.iter().map(|e| e.message).collect();
         return Err(format!("parse errors: {}", msgs.join("; ")));
     }
-    emit_js_from_ast(&program, source.as_bytes(), SourceModuleMeta::empty())
+    let mut meta = SourceModuleMeta::empty();
+    meta.is_ds = true;
+    emit_js_from_ast(&program, source.as_bytes(), meta)
 }
 
 #[test]
@@ -195,6 +197,7 @@ mod bytes;
 mod conformance_gates;
 mod emission_budget;
 mod emitter;
+mod globals;
 mod jsx;
 mod pipe;
 mod prelude;
