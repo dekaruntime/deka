@@ -386,6 +386,44 @@ jobs:
               }
             }' > "release/${VERSION}/deka-diagnostics-artifact.json"
 
+          # WASM metadata sidecars consumed by the website sync job
+          jq -n \
+            --arg artifact "deka_compiler.wasm" \
+            --arg sha256 "${COMPILER_SHA256}" \
+            --arg source_commit "${COMMIT}" \
+            --arg target "wasm32-unknown-unknown" \
+            --arg cargo_lock "${CARGO_LOCK_SHA256}" \
+            --arg name "deka-browser-compiler" \
+            --arg version "${VERSION}" \
+            --argjson abi_version 1 \
+            '{
+              schema_version: 1,
+              artifact: $artifact,
+              sha256: $sha256,
+              source_commit: $source_commit,
+              target: $target,
+              cargo_lock_sha256: $cargo_lock,
+              compiler: { name: $name, version: $version, abi_version: $abi_version }
+            }' > "release/${VERSION}/deka_compiler.wasm.metadata.json"
+
+          jq -n \
+            --arg artifact "deka_diagnostics.wasm" \
+            --arg sha256 "${DIAGNOSTICS_SHA256}" \
+            --arg source_commit "${COMMIT}" \
+            --arg target "wasm32-unknown-unknown" \
+            --arg cargo_lock "${CARGO_LOCK_SHA256}" \
+            --arg name "deka_diagnostics" \
+            --argjson abi_version 1 \
+            '{
+              schema_version: 1,
+              artifact: $artifact,
+              sha256: $sha256,
+              source_commit: $source_commit,
+              target: $target,
+              cargo_lock_sha256: $cargo_lock,
+              adapter: { name: $name, abi_version: $abi_version }
+            }' > "release/${VERSION}/deka_diagnostics.wasm.metadata.json"
+
           # Release manifest consumed by the website sync job
           jq -n \
             --arg version "${VERSION}" \
