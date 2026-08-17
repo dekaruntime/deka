@@ -2053,3 +2053,118 @@ console.log(p.norm())
         js
     );
 }
+
+#[test]
+fn ds_impl_mut_emits_impl_mut_call() {
+    let source = r#"struct Point {
+  x: int
+  y: int
+}
+
+impl mut Point {
+  translate(dx: int, dy: int): void {
+    this.x += dx
+    this.y += dy
+  }
+}
+
+let p = Point { x: 3, y: 4 }
+p.translate(1, 1)
+"#;
+    let js = ds_to_js(source).expect("impl mut should compile to JS");
+    assert!(
+        js.contains("Point.implMut({"),
+        "expected factory implMut call, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("\"translate\": function(dx, dy)"),
+        "expected emitted mutable method function, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("p.translate(1, 1)"),
+        "expected mutable method call expression, got:\n{}",
+        js
+    );
+}
+
+#[test]
+fn ds_mixed_impl_and_impl_mut_split_by_mutability() {
+    let source = r#"struct Point {
+  x: int
+  y: int
+}
+
+impl Point {
+  norm(): int {
+    return this.x + this.y
+  }
+}
+
+impl mut Point {
+  translate(dx: int, dy: int): void {
+    this.x += dx
+    this.y += dy
+  }
+}
+
+const p = Point { x: 3, y: 4 }
+console.log(p.norm())
+"#;
+    let js = ds_to_js(source).expect("mixed impl/impl mut should compile to JS");
+    assert!(
+        js.contains("Point.impl({"),
+        "expected immutable impl call, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("Point.implMut({"),
+        "expected mutable implMut call, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("\"norm\": function()"),
+        "expected immutable method, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("\"translate\": function(dx, dy)"),
+        "expected mutable method, got:\n{}",
+        js
+    );
+}
+
+#[test]
+fn ds_impl_mut_trait_for_type_emits_impl_mut_call() {
+    let source = r#"trait Movable {
+  move(dx: int, dy: int): void
+}
+
+struct Point {
+  x: int
+  y: int
+}
+
+impl mut Movable for Point {
+  move(dx: int, dy: int): void {
+    this.x += dx
+    this.y += dy
+  }
+}
+
+let p = Point { x: 1, y: 2 }
+p.move(3, 4)
+"#;
+    let js = ds_to_js(source).expect("impl mut trait for type should compile to JS");
+    assert!(
+        js.contains("Point.implMut({"),
+        "expected factory implMut call for trait impl, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("\"move\": function(dx, dy)"),
+        "expected emitted mutable trait method, got:\n{}",
+        js
+    );
+}

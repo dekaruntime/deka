@@ -52,7 +52,9 @@ pub(crate) struct JsSubsetEmitter<'a> {
     /// DekaScript impl-block methods keyed by target name. Separate from
     /// `struct_methods` (the PHPX/enum registry) so DS structs can emit
     /// `Point.impl({...})` instead of `globalThis.__phpxStructMethods`.
-    ds_impl_methods: HashMap<String, Vec<(String, String)>>,
+    /// The bool is `is_mut`: true methods are registered via `implMut`,
+    /// false methods via `impl`.
+    ds_impl_methods: HashMap<String, Vec<(String, String, bool)>>,
     /// Default method bodies declared directly on a `trait`, keyed by trait
     /// name (NOT by any impl target). RFD 19: an `impl Trait for X { }` that
     /// doesn't override a trait's default method still needs that default's

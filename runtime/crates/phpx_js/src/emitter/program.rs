@@ -90,6 +90,7 @@ impl<'a> JsSubsetEmitter<'a> {
                     trait_name,
                     target,
                     members,
+                    is_mut,
                     ..
                 } => {
                     // RFD 19 (deka#71): registering impl-provided methods
@@ -99,7 +100,11 @@ impl<'a> JsSubsetEmitter<'a> {
                     // AFTER the `enum`/`struct` it targets must still be
                     // visible when that declaration emits itself.
                     let target_name = self.token_name(&target.parts[0]);
-                    let mut methods = self.emit_struct_methods(*members)?;
+                    let methods = self.emit_struct_methods(*members)?;
+                    let mut tagged_methods: Vec<(String, String, bool)> = methods
+                        .into_iter()
+                        .map(|(name, body)| (name, body, *is_mut))
+                        .collect();
                     // RFD 19: a trait impl that doesn't override one of the
                     // trait's default methods still needs that default's
                     // body to actually be callable -- the typechecker
@@ -114,34 +119,37 @@ impl<'a> JsSubsetEmitter<'a> {
                         let trait_key = self.token_name(&trait_name.parts[0]);
                         if let Some(defaults) = self.trait_default_methods.get(&trait_key).cloned()
                         {
-                            let provided: std::collections::HashSet<String> =
-                                methods.iter().map(|(name, _)| name.clone()).collect();
+                            let provided: std::collections::HashSet<String> = tagged_methods
+                                .iter()
+                                .map(|(name, _, _)| name.clone())
+                                .collect();
                             for (name, body) in defaults {
                                 if !provided.contains(&name) {
-                                    methods.push((name, body));
+                                    tagged_methods.push((name, body, false));
                                 }
                             }
                         }
                     }
-                    if methods.is_empty() {
+                    if tagged_methods.is_empty() {
                         continue;
                     }
                     if self.meta.is_ds && !self.enum_names.contains(&target_name) {
                         // DekaScript structs register methods on the factory
-                        // via Point.impl({...}). Collect them here so the
-                        // struct factory emission can merge struct-defined
-                        // and impl-defined methods order-independently.
-                        // Impls targeting enums stay on the legacy registry.
+                        // via Point.impl({...}) / Point.implMut({...}). Collect
+                        // them here so the struct factory emission can merge
+                        // struct-defined and impl-defined methods
+                        // order-independently. Impls targeting enums stay on
+                        // the legacy registry.
                         self.ds_impl_methods
                             .entry(target_name)
                             .or_default()
-                            .extend(methods);
+                            .extend(tagged_methods);
                     } else {
                         // PHPX/enum path keeps the legacy globalThis registry.
                         self.struct_methods
                             .entry(target_name)
                             .or_default()
-                            .extend(methods);
+                            .extend(tagged_methods.into_iter().map(|(n, b, _)| (n, b)));
                     }
                 }
                 _ => {}
@@ -313,21 +321,25 @@ impl<'a> JsSubsetEmitter<'a> {
                     ));
                     self.declare_in_scope(&struct_name);
 
-                    let mut methods = self.emit_struct_methods(*members)?;
+                    // Struct-defined methods are immutable by default.
+                    let struct_methods = self.emit_struct_methods(*members)?;
+                    let mut methods: Vec<(String, String, bool)> = struct_methods
+                        .into_iter()
+                        .map(|(name, body)| (name, body, false))
+                        .collect();
                     if let Some(impl_methods) = self.ds_impl_methods.remove(&struct_name) {
                         let mut seen = std::collections::HashSet::new();
-                        for (name, body) in methods.iter().cloned() {
+                        for (name, body, _) in methods.iter().cloned() {
                             seen.insert(name.clone());
+                            let _ = body;
                         }
-                        for (name, body) in impl_methods {
+                        for (name, body, is_mut) in impl_methods {
                             if seen.insert(name.clone()) {
-                                methods.push((name, body));
+                                methods.push((name, body, is_mut));
                             }
                         }
                     }
-                    if !methods.is_empty() {
-                        self.emit_ds_impl_call(&struct_name, &methods)?;
-                    }
+                    self.emit_ds_impl_calls(&struct_name, &methods)?;
                 } else {
                     let methods = self.emit_struct_methods(*members)?;
                     if !methods.is_empty() {
@@ -369,7 +381,7 @@ impl<'a> JsSubsetEmitter<'a> {
                     if !self.struct_names.contains(&target_name) {
                         if let Some(methods) = self.ds_impl_methods.remove(&target_name) {
                             self.uses_deka_struct_helpers = true;
-                            self.emit_ds_impl_call(&target_name, &methods)?;
+                            self.emit_ds_impl_calls(&target_name, &methods)?;
                         }
                     }
                 }

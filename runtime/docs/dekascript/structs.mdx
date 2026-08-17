@@ -41,6 +41,22 @@ const p = Point { x: 3, y: 4 }
 console.log(p.magnitude())
 ```
 
+### Mutable methods
+
+Methods that mutate the receiver are declared in an `impl mut` block and may only be called on mutable values (`let` bindings).
+
+```ts
+impl mut Point {
+  function translate(dx: number, dy: number): void {
+    this.x += dx
+    this.y += dy
+  }
+}
+
+let p = Point { x: 1, y: 2 }
+p.translate(3, 4)
+```
+
 ## Runtime representation
 
 At runtime, a struct is a factory created by `deka.Struct("Point")`. Instances carry a hidden `__deka_struct` tag so `instanceof` and pattern matching can identify them. `const` values are deep-frozen via `deka.freeze`.
