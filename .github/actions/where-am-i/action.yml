@@ -1,0 +1,16 @@
+name: Where am I
+description: Print runner identity and installed tool versions
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        echo "runner hostname: $(hostname)"
+        echo "runner platform: $(uname -s)"
+        echo "runner arch: $(uname -m)"
+        echo "runner user: $(whoami)"
+        echo "---"
+        command -v cargo && cargo --version || echo "cargo not in PATH"
+        command -v bun && bun --version || echo "bun not in PATH"
+        command -v sccache && sccache --version || echo "sccache not in PATH"
+        command -v aws && aws --version || echo "aws not in PATH"
