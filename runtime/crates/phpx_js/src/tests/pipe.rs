@@ -33,7 +33,7 @@ fn pipe_chained() {
 fn pipe_into_arrow_function() {
     let js = phpx_to_js("$y = 5 |> fn($n: int): int => $n * 2;").expect("should compile");
     assert!(
-        js.contains("((__phpx_pipe_lhs) => ((n) => (n * 2))(__phpx_pipe_lhs))"),
+        js.contains("((__phpx_pipe_lhs) => ((n) => n * 2)(__phpx_pipe_lhs))"),
         "expected pipe into arrow function, got:\n{}",
         js
     );

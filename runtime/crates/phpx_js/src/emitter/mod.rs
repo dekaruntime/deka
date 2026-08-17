@@ -189,7 +189,8 @@ impl<'a> JsSubsetEmitter<'a> {
     //   is_promise       — PHPX async helper
     //   GLOBALS          — PHPX global variable bag
     //   JSON_ERROR_*     — PHPX JSON error constants (11 entries)
-    //   __phpxStructMethods — struct method registry
+    //   __phpxStructMethods — PHPX/enum struct method registry (DS structs use
+    //                         `deka.Struct` factories and `Type.impl`/`implMut`)
     // ======================================================================
     pub(crate) fn finish(self) -> String {
         let mut out = String::new();
@@ -590,10 +591,10 @@ impl<'a> JsSubsetEmitter<'a> {
             out.push_str("}\n\n");
         }
 
-        // __phpxStructMethods is read by struct-literal-with-methods codegen
-        // (see expr.rs's StructLiteral handling, `globalThis.__phpxStructMethods
-        // ? globalThis.__phpxStructMethods[...]`), so gate it on either this
-        // file registering methods itself or the emitted body reading it.
+        // PHPX/enum struct literals still look up methods from
+        // `globalThis.__phpxStructMethods` (see expr.rs's StructLiteral handling).
+        // DekaScript structs use `deka.Struct` factories and `Type.impl`/`implMut`,
+        // so this registry is only emitted for PHPX/enum paths.
         if !self.struct_methods.is_empty() || want("__phpxStructMethods") {
             out.push_str("globalThis.__phpxStructMethods ??= Object.create(null);\n");
         }
