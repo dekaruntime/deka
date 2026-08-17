@@ -189,7 +189,11 @@ fn compile_request(source: &str, filename: &str, requested_mode: &str) -> String
     );
     let output = if result.errors.is_empty() {
         result.ast.as_ref().map(|program| {
-            let meta = phpx_js::parse_source_module_meta(source);
+            let mut meta = phpx_js::parse_source_module_meta(source);
+            // The browser compiler only ever accepts .ds source, so the emitted
+            // JS should follow the DekaScript path (deka.Struct, deka.freeze,
+            // safe globals, etc.) rather than the legacy PHPX path.
+            meta.is_ds = true;
             match phpx_js::emit_js_from_ast_with_warnings(program, source.as_bytes(), meta) {
                 Ok((code, warnings)) => {
                     diagnostics.extend(warnings.into_iter().map(|message| Diagnostic {
@@ -362,7 +366,7 @@ mod tests {
         assert!(
             response["output"]["code"]
                 .as_str()
-                .is_some_and(|code| code.contains("const answer = 42"))
+                .is_some_and(|code| code.contains("const answer = deka.freeze(42)"))
         );
         assert_eq!(response["diagnostics"].as_array().map(Vec::len), Some(0));
     }
@@ -419,6 +423,36 @@ mod tests {
         assert_eq!(response["ok"], false);
         assert_eq!(response["diagnostics"][0]["code"], "emitter");
         assert_eq!(response["metadata"]["filename"], "lesson.txt");
+    }
+
+    #[test]
+    fn ds_structs_use_deka_struct_factory_not_phpx_legacy_registry() {
+        let source = r#"struct Point {
+  x: number
+  y: number
+}
+
+const origin = Point { x: 3, y: 4 };
+"#;
+        let response: Value =
+            serde_json::from_str(&compile_request(source, "struct.ds", "deka")).expect("response JSON");
+
+        assert_eq!(response["ok"], true, "{response}");
+        let code = response["output"]["code"]
+            .as_str()
+            .expect("compiled code should be present");
+        assert!(
+            code.contains("const Point = deka.Struct(\"Point\")"),
+            "expected deka.Struct factory, got:\n{code}"
+        );
+        assert!(
+            code.contains("const origin = deka.freeze(Point({\"x\": 3, \"y\": 4}))"),
+            "expected frozen struct literal, got:\n{code}"
+        );
+        assert!(
+            !code.contains("__phpxStructMethods"),
+            "DS structs should not reference legacy PHPX registry, got:\n{code}"
+        );
     }
 
     #[test]
