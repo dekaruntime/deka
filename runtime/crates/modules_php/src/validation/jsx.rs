@@ -197,7 +197,14 @@ pub fn validate_template_section(source: &str, file_path: &str) -> Vec<Validatio
 
     let arena = Bump::new();
     let lexer = Lexer::new(wrapped.as_bytes());
-    let mut parser = Parser::new_with_mode(lexer, &arena, ParserMode::Phpx);
+    // DekaScript component files use bare identifiers for interface fields and
+    // destructured params, so the template context must be parsed in DS mode.
+    let mode = if file_path.ends_with(".ds") {
+        ParserMode::Ds
+    } else {
+        ParserMode::Phpx
+    };
+    let mut parser = Parser::new_with_mode(lexer, &arena, mode);
     let program = parser.parse_program();
     let mut errors = Vec::new();
 

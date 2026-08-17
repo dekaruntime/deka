@@ -80,6 +80,20 @@ fn dekascript_string_subset_fixture_compiles() {
 }
 
 #[test]
+fn dekascript_jsx_component_destructured_props_recognized() {
+    // dekaruntime/deka#93: JSX component props must be validated against the
+    // interface type of a destructured object parameter in DekaScript mode.
+    let source = "interface GreetingProps { name: string }\nfunction Greeting({ name }: GreetingProps): VNode {\n  return <h1>Hello {name}</h1>\n}\n---\n<Greeting name=\"DekaScript\" />";
+    let arena = Box::leak(Box::new(Bump::new()));
+    let result = compile_deka(source, "lesson.ds", arena);
+    assert!(
+        result.errors.is_empty(),
+        "unexpected errors: {:?}",
+        result.errors
+    );
+}
+
+#[test]
 fn dekascript_fixture_rejects_php_surface() {
     let path = fixtures_root().join("dekascript/php_surface_rejected.ds");
     let result = compile_fixture(&path);
