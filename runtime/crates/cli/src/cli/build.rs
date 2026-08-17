@@ -822,13 +822,14 @@ struct JsBuildOutput {
 
 fn build_single_file_to_path(input_path: &Path, output_path: &Path) -> Result<(), String> {
     let output = build_single_file_to_string(input_path)?;
+    let js = deka_fmt::format_js(&output.js)?;
 
     if let Some(parent) = output_path.parent() {
         fs::create_dir_all(parent)
             .map_err(|err| format!("failed to create {}: {}", parent.display(), err))?;
     }
 
-    fs::write(output_path, output.js)
+    fs::write(output_path, js)
         .map_err(|err| format!("failed to write {}: {}", output_path.display(), err))?;
 
     let import_map_path = resolve_import_map_path(output_path);
@@ -865,6 +866,12 @@ fn build_single_file_bundle_to_path(
         fs::create_dir_all(parent)
             .map_err(|err| format!("failed to create {}: {}", parent.display(), err))?;
     }
+
+    let bundle = if minify {
+        bundle
+    } else {
+        deka_fmt::format_js(&bundle)?
+    };
 
     fs::write(output_path, bundle)
         .map_err(|err| format!("failed to write {}: {}", output_path.display(), err))?;

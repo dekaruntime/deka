@@ -24,6 +24,8 @@ pub mod db;
 pub mod db_wasm;
 #[cfg(feature = "native")]
 pub mod deploy;
+#[cfg(feature = "native")]
+pub mod fmt;
 pub mod init;
 #[cfg(feature = "native")]
 pub mod install;
