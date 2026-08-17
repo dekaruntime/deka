@@ -1,5 +1,13 @@
 use super::*;
 
+#[derive(Clone, Debug)]
+pub(super) struct EnumPattern {
+    pub enum_name: String,
+    pub case_name: String,
+    /// One entry per payload parameter. `None` means a wildcard `_`.
+    pub bindings: Vec<Option<String>>,
+}
+
 impl<'a> JsSubsetEmitter<'a> {
     pub(super) fn infer_expr_kind(&self, expr: ExprId<'_>) -> Option<JsValueKind> {
         match expr {
@@ -70,7 +78,50 @@ impl<'a> JsSubsetEmitter<'a> {
         let mut rendered = String::new();
 
         for arm in arms.iter().rev() {
-            let arm_expr = self.emit_expr(arm.body)?;
+            let mut arm_expr = self.emit_expr(arm.body)?;
+            // If the arm matches an enum payload pattern, bind the payload
+            // fields in an IIFE so the arm body can reference them. We only do
+            // this for a single-condition arm; multiple payload conditions
+            // would have inconsistent bindings, so we fall back to plain
+            // expression emission and let the guard handle the tag check.
+            if let Some(conditions) = arm.conditions {
+                if conditions.len() == 1 {
+                    if let Some(pattern) = self.enum_pattern_from_expr(conditions[0]) {
+                        if !pattern.bindings.is_empty() {
+                            let case_def = self
+                                .enum_cases
+                                .get(&pattern.enum_name)
+                                .and_then(|cases| {
+                                    cases.iter().find(|c| c.name == pattern.case_name)
+                                });
+                            if let Some(case_def) = case_def {
+                                let bindings = pattern
+                                    .bindings
+                                    .iter()
+                                    .zip(case_def.params.iter())
+                                    .filter_map(|(binding, field)| {
+                                        binding.as_ref().map(|name| {
+                                            format!(
+                                                "const {} = {}[{}];",
+                                                name,
+                                                condition_js,
+                                                json_string(field)
+                                            )
+                                        })
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                if !bindings.is_empty() {
+                                    arm_expr = format!(
+                                        "(() => {{\n{}\nreturn {};\n}})()",
+                                        bindings, arm_expr
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             if arm.conditions.is_none() {
                 rendered = arm_expr;
                 continue;
@@ -111,7 +162,7 @@ impl<'a> JsSubsetEmitter<'a> {
             if self.is_wildcard_pattern(*cond) {
                 return Ok("true".to_string());
             }
-            if let Some((enum_name, case_name)) = self.enum_case_from_expr(*cond) {
+            if let Some(pattern) = self.enum_pattern_from_expr(*cond) {
                 // Discriminate on the `__enum`/`__case` tags, never
                 // `instanceof` — enum values are frozen plain objects (no
                 // class, no prototype), so `__enum`/`__case` are the only
@@ -120,9 +171,9 @@ impl<'a> JsSubsetEmitter<'a> {
                 checks.push(format!(
                     "({}.__enum === {} && {}.__case === {})",
                     condition_js,
-                    json_string(&enum_name),
+                    json_string(&pattern.enum_name),
                     condition_js,
-                    json_string(&case_name)
+                    json_string(&pattern.case_name)
                 ));
                 continue;
             }
@@ -141,19 +192,91 @@ impl<'a> JsSubsetEmitter<'a> {
         matches!(expr, Expr::Variable { name, .. } if self.span_name(*name) == "_")
     }
 
-    pub(super) fn enum_case_from_expr(&self, expr: ExprId<'_>) -> Option<(String, String)> {
-        match expr {
-            Expr::ClassConstFetch {
-                class, constant, ..
-            } => {
-                let enum_name = self.extract_static_name(*class)?;
-                let case_name = self.extract_static_name(*constant)?;
-                let cases = self.enum_cases.get(&enum_name)?;
-                if cases.iter().any(|c| c.name == case_name) {
-                    Some((enum_name, case_name))
-                } else {
-                    None
+    pub(super) fn enum_pattern_from_expr(&self, expr: ExprId<'_>) -> Option<EnumPattern> {
+        // DekaScript enum access is `Option.Some` (DotAccess); PHPX uses
+        // `Option::Some` (ClassConstFetch). Payload patterns add a call:
+        // `Option.Some(value)`.
+        let (enum_name, case_name, args): (String, String, &[php_rs::parser::ast::Arg<'_>]) =
+            match expr {
+                Expr::DotAccess {
+                    target,
+                    property,
+                    ..
+                } => {
+                    let enum_name = self.enum_name_from_expr(*target)?;
+                    let case_name = self.token_name(property);
+                    (enum_name, case_name, &[][..])
                 }
+                Expr::Call { func, args, .. } => match func {
+                    Expr::DotAccess {
+                        target,
+                        property,
+                        ..
+                    } => {
+                        let enum_name = self.enum_name_from_expr(*target)?;
+                        let case_name = self.token_name(property);
+                        (enum_name, case_name, *args)
+                    }
+                    Expr::ClassConstFetch { class, constant, .. } => {
+                        let enum_name = self.extract_static_name(*class)?;
+                        let case_name = self.extract_static_name(*constant)?;
+                        (enum_name, case_name, *args)
+                    }
+                    _ => return None,
+                },
+                Expr::ClassConstFetch { class, constant, .. } => {
+                    let enum_name = self.extract_static_name(*class)?;
+                    let case_name = self.extract_static_name(*constant)?;
+                    (enum_name, case_name, &[][..])
+                }
+                _ => return None,
+            };
+        let case_def = self
+            .enum_cases
+            .get(&enum_name)?
+            .iter()
+            .find(|c| c.name == case_name)?;
+
+        let mut bindings = Vec::with_capacity(args.len());
+        for arg in args {
+            if self.is_wildcard_pattern(arg.value) {
+                bindings.push(None);
+            } else if let Expr::Variable { name, .. } = arg.value {
+                bindings.push(Some(self.span_name(*name)));
+            } else {
+                // Non-identifier payload patterns are not supported in the
+                // subset emitter; fall back to ordinary expression emission.
+                return None;
+            }
+        }
+
+        // A bare ClassConstFetch for a case that carries payload parameters is
+        // ambiguous: it could be the constructor function itself, not a pattern.
+        // Only treat it as a pattern when arguments are supplied (or when the
+        // case is a unit variant).
+        if args.is_empty() && !case_def.params.is_empty() {
+            return None;
+        }
+
+        Some(EnumPattern {
+            enum_name,
+            case_name,
+            bindings,
+        })
+    }
+
+    pub(super) fn enum_name_from_expr(&self, expr: ExprId<'_>) -> Option<String> {
+        match expr {
+            Expr::Variable { name, .. } => Some(self.span_name(*name)),
+            Expr::String { value, .. } => {
+                let mut bytes: &[u8] = value;
+                if bytes.len() >= 2
+                    && ((bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\'')
+                        || (bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"'))
+                {
+                    bytes = &bytes[1..bytes.len() - 1];
+                }
+                Some(String::from_utf8_lossy(bytes).to_string())
             }
             _ => None,
         }
