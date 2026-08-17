@@ -12,3 +12,4 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 phpx_js = { path = "../phpx_js", default-features = false }
 modules_php = { path = "../modules_php", default-features = false, features = ["compiler"] }
+deka-fmt = { path = "../deka-fmt" }

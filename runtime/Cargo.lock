@@ -1265,6 +1265,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "deka-fmt"
+version = "0.14.3"
+dependencies = [
+ "swc_common",
+ "swc_ecma_ast",
+ "swc_ecma_codegen",
+ "swc_ecma_parser 31.0.0",
+]
+
+[[package]]
 name = "deka-router"
 version = "0.14.3"
 dependencies = [
@@ -4044,6 +4054,7 @@ name = "phpx_compiler_wasm"
 version = "0.14.3"
 dependencies = [
  "bumpalo",
+ "deka-fmt",
  "modules_php",
  "phpx_js",
  "serde",

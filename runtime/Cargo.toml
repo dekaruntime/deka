@@ -46,6 +46,7 @@ members = [
     "crates/deka-dns",
     "crates/deka-edge-publisher",
     "crates/deka-validation",
+    "crates/deka-fmt",
 ]
 
 [workspace.dependencies]

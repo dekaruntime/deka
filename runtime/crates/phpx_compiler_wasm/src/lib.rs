@@ -94,6 +94,56 @@ pub extern "C" fn deka_compiler_metadata() -> *mut WasmResult {
     box_result(&json(&CompilerMetadata::current()))
 }
 
+/// Format a JavaScript source string and return a JSON-encoded `WasmResult`.
+///
+/// # Safety
+/// Non-empty pointer/length pairs must point to valid, immutable UTF-8 buffers
+/// in WASM memory.
+#[unsafe(no_mangle)]
+pub extern "C" fn deka_compiler_format_js(
+    source_ptr: *const u8,
+    source_len: u32,
+) -> *mut WasmResult {
+    let source = read_utf8(source_ptr, source_len, "source");
+    let response = match source {
+        Ok(source) => match deka_fmt::format_js(source) {
+            Ok(code) => FormatResponse {
+                abi_version: ABI_VERSION,
+                ok: true,
+                output: Some(FormatOutput { code }),
+                diagnostics: Vec::new(),
+            },
+            Err(message) => FormatResponse {
+                abi_version: ABI_VERSION,
+                ok: false,
+                output: None,
+                diagnostics: vec![internal_diagnostic("<format>", message)],
+            },
+        },
+        Err(message) => FormatResponse {
+            abi_version: ABI_VERSION,
+            ok: false,
+            output: None,
+            diagnostics: vec![internal_diagnostic("<format>", message.to_string())],
+        },
+    };
+    box_result(&json(&response))
+}
+
+#[derive(Serialize)]
+struct FormatOutput {
+    code: String,
+}
+
+#[derive(Serialize)]
+struct FormatResponse {
+    abi_version: u32,
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output: Option<FormatOutput>,
+    diagnostics: Vec<Diagnostic>,
+}
+
 fn read_utf8<'a>(ptr: *const u8, len: u32, label: &'static str) -> Result<&'a str, &'static str> {
     if len == 0 {
         return Ok("");
