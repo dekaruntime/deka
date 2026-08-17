@@ -47,7 +47,12 @@ pub(crate) struct JsSubsetEmitter<'a> {
     meta: SourceModuleMeta,
     struct_schemas: Vec<(String, String)>,
     struct_names: HashSet<String>,
+    enum_names: HashSet<String>,
     struct_methods: HashMap<String, Vec<(String, String)>>,
+    /// DekaScript impl-block methods keyed by target name. Separate from
+    /// `struct_methods` (the PHPX/enum registry) so DS structs can emit
+    /// `Point.impl({...})` instead of `globalThis.__phpxStructMethods`.
+    ds_impl_methods: HashMap<String, Vec<(String, String)>>,
     /// Default method bodies declared directly on a `trait`, keyed by trait
     /// name (NOT by any impl target). RFD 19: an `impl Trait for X { }` that
     /// doesn't override a trait's default method still needs that default's
@@ -60,6 +65,10 @@ pub(crate) struct JsSubsetEmitter<'a> {
     trait_default_methods: HashMap<String, Vec<(String, String)>>,
     enum_cases: HashMap<String, Vec<EnumCaseDef>>,
     value_kinds: HashMap<String, JsValueKind>,
+    /// DekaScript struct/freeze helpers needed by this module. Populated during
+    /// AST traversal so the compact prelude only includes them when used.
+    uses_deka_struct_helpers: bool,
+    uses_deka_freeze: bool,
     /// Tier B helpers needed by this module. Populated during AST traversal
     /// (try_rewrite_builtin inserts keys here). finish() emits each needed helper
     /// as a module-scoped `function __phpx_X(...)` declaration — NOT globalThis.
@@ -94,10 +103,14 @@ impl<'a> JsSubsetEmitter<'a> {
             meta,
             struct_schemas: Vec::new(),
             struct_names: HashSet::new(),
+            enum_names: HashSet::new(),
             struct_methods: HashMap::new(),
+            ds_impl_methods: HashMap::new(),
             trait_default_methods: HashMap::new(),
             enum_cases: HashMap::new(),
             value_kinds: HashMap::new(),
+            uses_deka_struct_helpers: false,
+            uses_deka_freeze: false,
             needed_helpers: BTreeSet::new(),
         }
     }
@@ -198,7 +211,23 @@ impl<'a> JsSubsetEmitter<'a> {
             // while still capturing all unsafe-only platform APIs and
             // installing the deka host helper.
             out.push_str("const __DekaUnsafeGlobals=(()=>{const g=typeof globalThis!=='undefined'?globalThis:(typeof self!=='undefined'?self:this);return{fetch:g.fetch,JSON:g.JSON,URL:g.URL,URLSearchParams:g.URLSearchParams,TextEncoder:g.TextEncoder,TextDecoder:g.TextDecoder,Blob:g.Blob,FormData:g.FormData,Headers:g.Headers,Request:g.Request,Response:g.Response,WebSocket:g.WebSocket,crypto:g.crypto,atob:g.atob,btoa:g.btoa,structuredClone:g.structuredClone,queueMicrotask:g.queueMicrotask,setTimeout:g.setTimeout,setInterval:g.setInterval,clearTimeout:g.clearTimeout,clearInterval:g.clearInterval};})();\n");
-            out.push_str("const deka={unsafe:(tryFn,catchFn,finallyFn)=>{try{return tryFn();}catch(err){if(catchFn)return catchFn(err);return{__error:err};}finally{if(finallyFn)finallyFn();}},panic:(msg)=>{throw new Error(String(msg));}};\n");
+            let mut deka_entries: Vec<String> = vec![
+                "unsafe:(tryFn,catchFn,finallyFn)=>{try{return tryFn();}catch(err){if(catchFn)return catchFn(err);return{__error:err};}finally{if(finallyFn)finallyFn();}}".to_string(),
+                "panic:(msg)=>{throw new Error(String(msg));}".to_string(),
+            ];
+            if self.uses_deka_struct_helpers || self.uses_deka_freeze {
+                deka_entries.push("MutationError:class extends Error{constructor(m){super(m);this.name='MutationError';}}".to_string());
+            }
+            if self.uses_deka_struct_helpers {
+                deka_entries.push("Struct:(id)=>{function f(fields){const o=Object.create(f.prototype);Object.assign(o,fields);Object.defineProperty(o,'__deka_struct',{value:id,enumerable:false,writable:false,configurable:false});return o;}f.id=id;f.name=id;f.prototype=Object.create(null);f.prototype.constructor=f;f.impl=(m)=>{for(const k in m)f.prototype[k]=m[k];return f;};f.implMut=(m)=>{for(const k in m){const fn=m[k];f.prototype[k]=function(...a){if(Object.isFrozen(this))throw new deka.MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return fn.apply(this,a);};}return f;};return f;}".to_string());
+                deka_entries.push("isStruct:(v,f)=>Boolean(v&&typeof v==='object'&&v.__deka_struct&&(f?v.__deka_struct===f.id:true))".to_string());
+                deka_entries.push("getStructId:(v)=>v?.__deka_struct".to_string());
+                deka_entries.push("clone:(v)=>structuredClone(v)".to_string());
+            }
+            if self.uses_deka_freeze {
+                deka_entries.push("freeze:(v)=>{if(v===null||typeof v!=='object'||Object.isFrozen(v))return v;if(Array.isArray(v)){for(const x of v)deka.freeze(x);return Object.freeze(v);}for(const k of Object.keys(v))deka.freeze(v[k]);return Object.freeze(v);}".to_string());
+            }
+            out.push_str(&format!("const deka={{ {} }};\n", deka_entries.join(",")));
             out.push_str("globalThis.deka??=deka;globalThis.unsafe??=__DekaUnsafeGlobals;\n");
 
             // Safe global wrappers — installed only when the emitted body
@@ -802,9 +831,13 @@ fn body_uses_await(text: &str) -> bool {
     let mut start = 0;
     while let Some(pos) = text[start..].find("await") {
         let idx = start + pos;
-        let before_ok = idx == 0 || !(bytes[idx - 1].is_ascii_alphanumeric() || bytes[idx - 1] == b'_' || bytes[idx - 1] == b'.');
+        let before_ok = idx == 0
+            || !(bytes[idx - 1].is_ascii_alphanumeric()
+                || bytes[idx - 1] == b'_'
+                || bytes[idx - 1] == b'.');
         let after = idx + "await".len();
-        let after_ok = after >= bytes.len() || !(bytes[after].is_ascii_alphanumeric() || bytes[after] == b'_');
+        let after_ok =
+            after >= bytes.len() || !(bytes[after].is_ascii_alphanumeric() || bytes[after] == b'_');
         if before_ok && after_ok {
             return true;
         }
@@ -844,8 +877,8 @@ fn body_refs_global(text: &str, name: &str) -> bool {
                 || bytes[idx - 1] == b'_'
                 || bytes[idx - 1] == b'.');
         let after = idx + name_bytes.len();
-        let after_ok = after >= bytes.len()
-            || !(bytes[after].is_ascii_alphanumeric() || bytes[after] == b'_');
+        let after_ok =
+            after >= bytes.len() || !(bytes[after].is_ascii_alphanumeric() || bytes[after] == b'_');
         if before_ok && after_ok {
             return true;
         }

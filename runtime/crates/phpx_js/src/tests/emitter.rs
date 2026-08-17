@@ -820,13 +820,13 @@ const p = Point { x: 3, y: 4 };
 "#;
     let js = ds_to_js(source).expect("DekaScript struct with bare fields should compile");
     assert!(
-        js.contains(r#""__struct": "Point""#),
-        "expected struct tag in output, got:\n{}",
+        js.contains(r#"const Point = deka.Struct("Point")"#),
+        "expected struct factory in output, got:\n{}",
         js
     );
     assert!(
-        js.contains(r#""x": 3"#) && js.contains(r#""y": 4"#),
-        "expected bare field keys in output, got:\n{}",
+        js.contains(r#"const p = deka.freeze(Point({"x": 3, "y": 4}))"#),
+        "expected frozen struct literal in output, got:\n{}",
         js
     );
 }
@@ -1068,7 +1068,10 @@ return name("not-a-color");
     // prelude legitimately defines many globalThis.__phpx_* / globalThis.__deka_*
     // helpers, and a blanket "globalThis._" substring check would false-positive
     // on those (they also start with an underscore right after the dot).
-    let body = js.split("function name(").nth(1).expect("expected name() function in output");
+    let body = js
+        .split("function name(")
+        .nth(1)
+        .expect("expected name() function in output");
     assert!(
         !body.contains("globalThis._"),
         "the _ wildcard must never lower to a globalThis._ variable reference, got:\n{}",
@@ -1470,6 +1473,47 @@ return $p instanceof Point;
     assert!(
         js.contains("__phpx_is_struct"),
         "expected __phpx_is_struct for instanceof struct, got:\n{}",
+        js
+    );
+}
+
+#[test]
+fn ds_instanceof_struct_uses_deka_check() {
+    let source = r#"
+struct Point {
+  x: int
+  y: int
+}
+function f(p: Point): bool {
+  return p instanceof Point
+}
+"#;
+    let js = ds_to_js(source).expect("should compile");
+    assert!(
+        js.contains("deka.isStruct(p, Point)"),
+        "expected deka.isStruct for instanceof struct, got:\n{}",
+        js
+    );
+}
+
+#[test]
+fn ds_const_struct_is_frozen_let_struct_is_not() {
+    let source = r#"
+struct Point {
+  x: int
+}
+const frozen = Point { x: 1 }
+let mutable = Point { x: 2 }
+"#;
+    let js = ds_to_js(source).expect("should compile");
+    assert!(
+        js.contains("const frozen = deka.freeze(Point({\"x\": 1}))"),
+        "expected frozen const struct, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("let mutable = Point({\"x\": 2})"),
+        "expected mutable let struct, got:\n{}",
         js
     );
 }
@@ -1925,7 +1969,12 @@ console.log(user.name())
 "#;
     let js = ds_to_js(source).expect("trait impl should compile to JS");
     assert!(
-        js.contains("name: function()"),
+        js.contains("User.impl({"),
+        "expected factory impl call, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("\"name\": function()"),
         "expected emitted method function, got:\n{}",
         js
     );
@@ -1989,7 +2038,12 @@ console.log(p.norm())
 "#;
     let js = ds_to_js(source).expect("inherent impl should compile to JS");
     assert!(
-        js.contains("norm: function()"),
+        js.contains("Point.impl({"),
+        "expected factory impl call, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("\"norm\": function()"),
         "expected emitted method function, got:\n{}",
         js
     );

@@ -56,6 +56,23 @@ impl<'a> JsSubsetEmitter<'a> {
         Ok(methods)
     }
 
+    pub(super) fn emit_ds_impl_call(
+        &mut self,
+        struct_name: &str,
+        methods: &[(String, String)],
+    ) -> Result<(), String> {
+        let mut entries = Vec::new();
+        for (name, body) in methods {
+            entries.push(format!("{}: {}", json_string(name), body));
+        }
+        self.body.push_str(&format!(
+            "{}.impl({{ {} }});\n",
+            struct_name,
+            entries.join(", ")
+        ));
+        Ok(())
+    }
+
     pub(super) fn emit_type_schema(&self, ty: &AstType<'_>) -> (String, bool) {
         match ty {
             AstType::Simple(tok) => match self.token_name(tok).as_str() {
