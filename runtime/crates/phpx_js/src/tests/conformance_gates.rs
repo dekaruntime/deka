@@ -110,16 +110,17 @@ fn snapshot_js_arrow_function_reports_missing_semicolon() {
 }
 
 #[test]
-fn snapshot_struct_field_requires_dollar_sigil_but_says_phpx() {
-    // KNOWN-BAD (#55): message says "PHPX", not "DekaScript". Also notes a
-    // second, structural gap tracked alongside #55: DekaScript struct
-    // fields still require the PHP-style `$name: Type` form rather than the
-    // TypeScript-familiar `name: Type` form issue #11's target syntax sample shows.
-    let err = ds_diagnostic("struct Point { x: int }").expect_err("bare struct field name must be rejected");
+fn snapshot_struct_field_accepts_bare_identifier_in_dekascript() {
+    // dekaruntime/deka#93: DekaScript struct fields and literals use bare
+    // identifiers (`x: int` / `x: 3`) instead of the PHP-style `$x` sigil.
+    let js = ds_diagnostic("struct Point { x: int; y: int } const p = Point { x: 3, y: 4 };")
+        .expect("bare struct field names should be accepted in DekaScript");
     assert!(
-        err.contains("struct fields must use `$name: Type` syntax in PHPX"),
-        "diagnostic text changed, update this snapshot: {err}"
+        js.contains(r#""__struct": "Point""#),
+        "struct tag missing in emitted JS: {js}"
     );
+    assert!(js.contains(r#""x": 3"#), "field x missing in emitted JS: {js}");
+    assert!(js.contains(r#""y": 4"#), "field y missing in emitted JS: {js}");
 }
 
 #[test]
