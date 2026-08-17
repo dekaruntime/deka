@@ -56,6 +56,48 @@ impl<'a> JsSubsetEmitter<'a> {
         Ok(methods)
     }
 
+    fn emit_ds_method_registration(
+        &mut self,
+        struct_name: &str,
+        method_kind: &str,
+        methods: &[(String, String)],
+    ) -> Result<(), String> {
+        if methods.is_empty() {
+            return Ok(());
+        }
+        let mut entries = Vec::new();
+        for (name, body) in methods {
+            entries.push(format!("{}: {}", json_string(name), body));
+        }
+        self.body.push_str(&format!(
+            "{}.{}({{ {} }});\n",
+            struct_name,
+            method_kind,
+            entries.join(", ")
+        ));
+        Ok(())
+    }
+
+    pub(super) fn emit_ds_impl_calls(
+        &mut self,
+        struct_name: &str,
+        methods: &[(String, String, bool)],
+    ) -> Result<(), String> {
+        let immutable: Vec<(String, String)> = methods
+            .iter()
+            .filter(|(_, _, is_mut)| !is_mut)
+            .map(|(n, b, _)| (n.clone(), b.clone()))
+            .collect();
+        let mutable: Vec<(String, String)> = methods
+            .iter()
+            .filter(|(_, _, is_mut)| *is_mut)
+            .map(|(n, b, _)| (n.clone(), b.clone()))
+            .collect();
+        self.emit_ds_method_registration(struct_name, "impl", &immutable)?;
+        self.emit_ds_method_registration(struct_name, "implMut", &mutable)?;
+        Ok(())
+    }
+
     pub(super) fn emit_type_schema(&self, ty: &AstType<'_>) -> (String, bool) {
         match ty {
             AstType::Simple(tok) => match self.token_name(tok).as_str() {

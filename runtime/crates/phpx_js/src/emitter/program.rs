@@ -11,6 +11,26 @@ impl<'a> JsSubsetEmitter<'a> {
         for local in import_locals {
             self.declare_in_scope(&local);
         }
+        // First pass: collect struct and enum names so impl-block routing
+        // can decide whether a DekaScript impl targets a struct (factory)
+        // or an enum (legacy tagged-object registry).
+        for stmt in program.statements {
+            match stmt {
+                Stmt::Class {
+                    kind: ClassKind::Struct,
+                    name,
+                    ..
+                } => {
+                    let struct_name = self.token_name(name);
+                    self.struct_names.insert(struct_name);
+                }
+                Stmt::Enum { name, .. } => {
+                    let enum_name = self.token_name(name);
+                    self.enum_names.insert(enum_name);
+                }
+                _ => {}
+            }
+        }
         // RFD 19: collect each trait's default method bodies (non-empty
         // bodies only -- an abstract signature has nothing to fall back to
         // and must always be overridden, conformance-checked separately)
@@ -62,16 +82,15 @@ impl<'a> JsSubsetEmitter<'a> {
                 }
                 Stmt::Class {
                     kind: ClassKind::Struct,
-                    name,
                     ..
                 } => {
-                    let struct_name = self.token_name(name);
-                    self.struct_names.insert(struct_name);
+                    // Struct names are collected in the first pass above.
                 }
                 Stmt::Impl {
                     trait_name,
                     target,
                     members,
+                    is_mut,
                     ..
                 } => {
                     // RFD 19 (deka#71): registering impl-provided methods
@@ -79,13 +98,13 @@ impl<'a> JsSubsetEmitter<'a> {
                     // reached in the main emission loop below, is what
                     // makes this order-independent -- an `impl` appearing
                     // AFTER the `enum`/`struct` it targets must still be
-                    // visible when that declaration emits itself. Pragmatic
-                    // reuse of the struct-method registry, not the
-                    // destination (RFD 13 / #47 both argue against new
-                    // globalThis dispatch); chosen for speed given RFD
-                    // 15-18 are stacked waiting on impl actually running.
+                    // visible when that declaration emits itself.
                     let target_name = self.token_name(&target.parts[0]);
-                    let mut methods = self.emit_struct_methods(*members)?;
+                    let methods = self.emit_struct_methods(*members)?;
+                    let mut tagged_methods: Vec<(String, String, bool)> = methods
+                        .into_iter()
+                        .map(|(name, body)| (name, body, *is_mut))
+                        .collect();
                     // RFD 19: a trait impl that doesn't override one of the
                     // trait's default methods still needs that default's
                     // body to actually be callable -- the typechecker
@@ -98,21 +117,39 @@ impl<'a> JsSubsetEmitter<'a> {
                     // whose name isn't already provided by this impl.
                     if let Some(trait_name) = trait_name {
                         let trait_key = self.token_name(&trait_name.parts[0]);
-                        if let Some(defaults) = self.trait_default_methods.get(&trait_key).cloned() {
-                            let provided: std::collections::HashSet<String> =
-                                methods.iter().map(|(name, _)| name.clone()).collect();
+                        if let Some(defaults) = self.trait_default_methods.get(&trait_key).cloned()
+                        {
+                            let provided: std::collections::HashSet<String> = tagged_methods
+                                .iter()
+                                .map(|(name, _, _)| name.clone())
+                                .collect();
                             for (name, body) in defaults {
                                 if !provided.contains(&name) {
-                                    methods.push((name, body));
+                                    tagged_methods.push((name, body, false));
                                 }
                             }
                         }
                     }
-                    if !methods.is_empty() {
+                    if tagged_methods.is_empty() {
+                        continue;
+                    }
+                    if self.meta.is_ds && !self.enum_names.contains(&target_name) {
+                        // DekaScript structs register methods on the factory
+                        // via Point.impl({...}) / Point.implMut({...}). Collect
+                        // them here so the struct factory emission can merge
+                        // struct-defined and impl-defined methods
+                        // order-independently. Impls targeting enums stay on
+                        // the legacy registry.
+                        self.ds_impl_methods
+                            .entry(target_name)
+                            .or_default()
+                            .extend(tagged_methods);
+                    } else {
+                        // PHPX/enum path keeps the legacy globalThis registry.
                         self.struct_methods
                             .entry(target_name)
                             .or_default()
-                            .extend(methods);
+                            .extend(tagged_methods.into_iter().map(|(n, b, _)| (n, b)));
                     }
                 }
                 _ => {}
@@ -273,9 +310,41 @@ impl<'a> JsSubsetEmitter<'a> {
                 let schema = self.emit_struct_schema(*members);
                 let struct_name = self.token_name(name);
                 self.struct_schemas.push((struct_name.clone(), schema));
-                let methods = self.emit_struct_methods(*members)?;
-                if !methods.is_empty() {
-                    self.struct_methods.insert(struct_name, methods);
+                self.struct_names.insert(struct_name.clone());
+
+                if self.meta.is_ds {
+                    self.uses_deka_struct_helpers = true;
+                    self.body.push_str(&format!(
+                        "const {} = deka.Struct({});\n",
+                        struct_name,
+                        json_string(&struct_name)
+                    ));
+                    self.declare_in_scope(&struct_name);
+
+                    // Struct-defined methods are immutable by default.
+                    let struct_methods = self.emit_struct_methods(*members)?;
+                    let mut methods: Vec<(String, String, bool)> = struct_methods
+                        .into_iter()
+                        .map(|(name, body)| (name, body, false))
+                        .collect();
+                    if let Some(impl_methods) = self.ds_impl_methods.remove(&struct_name) {
+                        let mut seen = std::collections::HashSet::new();
+                        for (name, body, _) in methods.iter().cloned() {
+                            seen.insert(name.clone());
+                            let _ = body;
+                        }
+                        for (name, body, is_mut) in impl_methods {
+                            if seen.insert(name.clone()) {
+                                methods.push((name, body, is_mut));
+                            }
+                        }
+                    }
+                    self.emit_ds_impl_calls(&struct_name, &methods)?;
+                } else {
+                    let methods = self.emit_struct_methods(*members)?;
+                    if !methods.is_empty() {
+                        self.struct_methods.insert(struct_name, methods);
+                    }
                 }
                 Ok(())
             }
@@ -294,18 +363,28 @@ impl<'a> JsSubsetEmitter<'a> {
                 // are what produce runtime methods.
                 Ok(())
             }
-            Stmt::Impl { .. } => {
-                // RFD 19 codegen: registration into self.struct_methods
-                // happens in emit_program's pre-pass (below), not here --
-                // deka#71 found that doing it here (only when this
-                // statement is reached in source order) means an `impl`
-                // appearing AFTER the `enum`/`struct` it targets is too
-                // late for that declaration's own emission to see it.
-                // The pre-pass runs before ALL declaration emission,
-                // order-independent. This arm is now a pure erasure, same
-                // as Stmt::Trait/Stmt::Interface -- an impl block has no
-                // runtime representation of its own, only the side effect
-                // of registering methods, which already happened.
+            Stmt::Impl {
+                trait_name: _,
+                target,
+                members: _,
+                ..
+            } => {
+                // PHPX/enum path: registration into self.struct_methods
+                // already happened in the pre-pass. This arm is pure erasure.
+                //
+                // DekaScript path: local struct factories already consumed
+                // their impl methods at the declaration site. If the target
+                // is not declared in this module (e.g. an imported struct),
+                // emit the impl call here.
+                if self.meta.is_ds {
+                    let target_name = self.token_name(&target.parts[0]);
+                    if !self.struct_names.contains(&target_name) {
+                        if let Some(methods) = self.ds_impl_methods.remove(&target_name) {
+                            self.uses_deka_struct_helpers = true;
+                            self.emit_ds_impl_calls(&target_name, &methods)?;
+                        }
+                    }
+                }
                 Ok(())
             }
             Stmt::Interface { .. } => {
@@ -561,8 +640,14 @@ impl<'a> JsSubsetEmitter<'a> {
                 for item in *consts {
                     let name = self.token_name(item.name);
                     let value = self.emit_expr(item.value)?;
-                    self.body
-                        .push_str(&format!("const {} = {};\n", name, value));
+                    if self.meta.is_ds {
+                        self.uses_deka_freeze = true;
+                        self.body
+                            .push_str(&format!("const {} = deka.freeze({});\n", name, value));
+                    } else {
+                        self.body
+                            .push_str(&format!("const {} = {};\n", name, value));
+                    }
                     self.declare_immutable_in_scope(&name);
                 }
                 Ok(())

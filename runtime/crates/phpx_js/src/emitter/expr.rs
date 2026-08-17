@@ -71,6 +71,10 @@ impl<'a> JsSubsetEmitter<'a> {
                     if let Expr::Variable { name, .. } = right {
                         let ident = self.span_name(*name);
                         if self.struct_names.contains(&ident) {
+                            if self.meta.is_ds {
+                                self.uses_deka_struct_helpers = true;
+                                return Ok(format!("(deka.isStruct({}, {}))", lhs, ident));
+                            }
                             return Ok(format!(
                                 "(globalThis.__phpx_is_struct({}, {}))",
                                 lhs,
@@ -495,11 +499,6 @@ impl<'a> JsSubsetEmitter<'a> {
             Expr::StructLiteral { name, fields, .. } => {
                 let struct_name = self.name_last_segment(*name);
                 let mut entries = Vec::new();
-                entries.push(format!(
-                    "{}: {}",
-                    json_string("__struct"),
-                    json_string(&struct_name)
-                ));
                 for field in *fields {
                     let key = self
                         .token_text(field.name)
@@ -508,11 +507,23 @@ impl<'a> JsSubsetEmitter<'a> {
                     let value = self.emit_expr(field.value)?;
                     entries.push(format!("{}: {}", json_string(&key), value));
                 }
-                Ok(format!(
-                    "(() => {{ const __obj = {{{}}}; const __m = globalThis.__phpxStructMethods ? globalThis.__phpxStructMethods[{}] : null; if (__m) Object.assign(__obj, __m); return __obj; }})()",
-                    entries.join(", "),
-                    json_string(&struct_name)
-                ))
+                if self.meta.is_ds {
+                    self.uses_deka_struct_helpers = true;
+                    Ok(format!("{}({{{}}})", struct_name, entries.join(", ")))
+                } else {
+                    let mut tagged_entries = Vec::new();
+                    tagged_entries.push(format!(
+                        "{}: {}",
+                        json_string("__struct"),
+                        json_string(&struct_name)
+                    ));
+                    tagged_entries.extend(entries);
+                    Ok(format!(
+                        "(() => {{ const __obj = {{{}}}; const __m = globalThis.__phpxStructMethods ? globalThis.__phpxStructMethods[{}] : null; if (__m) Object.assign(__obj, __m); return __obj; }})()",
+                        tagged_entries.join(", "),
+                        json_string(&struct_name)
+                    ))
+                }
             }
             Expr::JsxElement {
                 name,

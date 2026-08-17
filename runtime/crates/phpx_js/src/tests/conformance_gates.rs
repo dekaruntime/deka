@@ -23,7 +23,11 @@
 /// and `run` commands use, and return the formatted diagnostic string on
 /// failure (this is exactly what a `.ds` author sees on screen today).
 fn ds_diagnostic(source: &str) -> Result<String, String> {
-    crate::compile_phpx_source_to_js(source, "conformance.ds", crate::parse_source_module_meta(source))
+    crate::compile_phpx_source_to_js(
+        source,
+        "conformance.ds",
+        crate::parse_source_module_meta(source),
+    )
 }
 
 #[test]
@@ -37,8 +41,8 @@ fn snapshot_null_literal_is_currently_accepted_without_diagnostic() {
     let result = ds_diagnostic("const a = null;");
     let js = result.expect("`const a = null;` currently compiles without a diagnostic");
     assert!(
-        js.contains("const a = null"),
-        "expected the null literal to pass through unchanged: {js}"
+        js.contains("const a = deka.freeze(null)"),
+        "expected the null const binding to be frozen: {js}"
     );
 }
 
@@ -108,11 +112,13 @@ fn snapshot_struct_field_accepts_bare_identifier_in_dekascript() {
     let js = ds_diagnostic("struct Point { x: int; y: int } const p = Point { x: 3, y: 4 };")
         .expect("bare struct field names should be accepted in DekaScript");
     assert!(
-        js.contains(r#""__struct": "Point""#),
-        "struct tag missing in emitted JS: {js}"
+        js.contains(r#"const Point = deka.Struct("Point")"#),
+        "struct factory missing in emitted JS: {js}"
     );
-    assert!(js.contains(r#""x": 3"#), "field x missing in emitted JS: {js}");
-    assert!(js.contains(r#""y": 4"#), "field y missing in emitted JS: {js}");
+    assert!(
+        js.contains(r#"const p = deka.freeze(Point({"x": 3, "y": 4}))"#),
+        "frozen struct literal missing in emitted JS: {js}"
+    );
 }
 
 #[test]
@@ -125,8 +131,14 @@ fn snapshot_enum_js_style_body_is_accepted() {
         js.contains(r#"__enum: "Color""#),
         "enum tag missing in emitted JS: {js}"
     );
-    assert!(js.contains(r#"__case: "Red""#), "Red case missing in emitted JS: {js}");
-    assert!(js.contains(r#"__case: "Green""#), "Green case missing in emitted JS: {js}");
+    assert!(
+        js.contains(r#"__case: "Red""#),
+        "Red case missing in emitted JS: {js}"
+    );
+    assert!(
+        js.contains(r#"__case: "Green""#),
+        "Green case missing in emitted JS: {js}"
+    );
 }
 
 #[test]

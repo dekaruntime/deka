@@ -63,7 +63,7 @@ fn ds_compiler_entry_selects_native_mode_from_extension() {
     )
     .expect(".ds source should compile through native mode");
     assert!(
-        js.contains("const answer = 42"),
+        js.contains("const answer = deka.freeze(42)"),
         "missing emitted const: {js}"
     );
     assert!(
@@ -105,8 +105,8 @@ fn ds_lowers_native_string_collection_and_for_of_primitives() {
     );
     assert!(js.contains("parts[0]"), "missing indexed list access: {js}");
     assert!(
-        js.contains("const meta = {"),
-        "missing object literal: {js}"
+        js.contains("const meta = deka.freeze({"),
+        "missing frozen object literal: {js}"
     );
 }
 
@@ -125,7 +125,10 @@ fn ds_allows_declared_array_function_calls() {
         crate::parse_source_module_meta(source),
     )
     .expect("a declared DekaScript array function should be callable");
-    assert!(js.contains("function array(value)"), "missing function: {js}");
+    assert!(
+        js.contains("function array(value)"),
+        "missing function: {js}"
+    );
     assert!(js.contains("array(41)"), "missing function call: {js}");
 }
 

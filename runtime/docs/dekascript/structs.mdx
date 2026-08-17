@@ -1,0 +1,76 @@
+---
+title: Structs
+description: Nominal record types, immutability, and methods in DekaScript.
+---
+
+Structs are nominal record types: two structs with the same fields but different names are not interchangeable.
+
+## Defining a struct
+
+```ts
+struct Point {
+  x: number
+  y: number
+}
+```
+
+## Creating values
+
+```ts
+const origin = Point { x: 0, y: 0 }
+let cursor = Point { x: 10, y: 20 }
+```
+
+`const` bindings are immutable; `let` bindings are mutable.
+
+```ts
+origin.x = 5 // compile error: cannot mutate immutable value
+cursor.x = 5 // ok
+```
+
+## Methods
+
+```ts
+impl Point {
+  function magnitude(): number {
+    return Math.sqrt((this.x * this.x) + (this.y * this.y))
+  }
+}
+
+const p = Point { x: 3, y: 4 }
+console.log(p.magnitude())
+```
+
+### Mutable methods
+
+Methods that mutate the receiver are declared in an `impl mut` block and may only be called on mutable values (`let` bindings).
+
+```ts
+impl mut Point {
+  function translate(dx: number, dy: number): void {
+    this.x += dx
+    this.y += dy
+  }
+}
+
+let p = Point { x: 1, y: 2 }
+p.translate(3, 4)
+```
+
+## Runtime representation
+
+At runtime, a struct is a factory created by `deka.Struct("Point")`. Instances carry a hidden `__deka_struct` tag so `instanceof` and pattern matching can identify them. `const` values are deep-frozen via `deka.freeze`.
+
+## JS output example
+
+```js
+const Point = deka.Struct("Point");
+Point.impl({
+  "magnitude": function() {
+    return Math.sqrt(((this.x * this.x) + (this.y * this.y)));
+  }
+});
+
+const p = deka.freeze(Point({"x": 3, "y": 4}));
+console.log(p.magnitude());
+```
