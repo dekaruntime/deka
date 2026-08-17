@@ -73,4 +73,36 @@ for (const testCase of tourCases) {
   }
 }
 
+const structSource = `struct Point {
+  x: number
+  y: number
+}
+
+const origin = Point { x: 3, y: 4 };
+console.log(origin.x + origin.y);`;
+const structResponse = compile(structSource, "structs.ds", "deka");
+if (!structResponse.ok || !structResponse.output?.code) {
+  throw new Error(`struct compile failed: ${JSON.stringify(structResponse)}`);
+}
+// The emitted JS is executed by the tour in a strict-mode function. Ensure the
+// deka.Struct factory does not assign to f.name (which is non-writable in strict
+// mode and throws "Attempted to assign to readonly property.").
+const structCode = structResponse.output.code
+  .replace(/^export const \w+ = [^;]+;\n?/gm, "")
+  .replace(/^export async function \w+[\s\S]*$/m, "");
+const stdout = [];
+try {
+  const run = new Function(
+    "console",
+    "stdout",
+    `"use strict";\n${structCode}\nreturn stdout;`,
+  );
+  run({ log: (...args) => stdout.push(args.join(" ")) }, stdout);
+} catch (error) {
+  throw new Error(`strict-mode struct execution failed: ${error.message}\n${structCode}`);
+}
+if (!stdout.some((line) => line.includes("7"))) {
+  throw new Error(`expected struct output to contain 7, got: ${JSON.stringify(stdout)}`);
+}
+
 console.log("browser WASM parity fixtures passed");
