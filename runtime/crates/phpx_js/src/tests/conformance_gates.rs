@@ -183,6 +183,31 @@ console.log(Greeting({ name: "DekaScript" }));"#,
 }
 
 #[test]
+fn snapshot_component_file_with_separator_compiles() {
+    // dekaruntime/deka#96: A DekaScript component file may define functions
+    // before a single '---' delimiter and put the JSX template after it.
+    let js = ds_diagnostic(
+        r#"interface GreetingProps {
+  name: string
+}
+function Greeting({ name }: GreetingProps): VNode {
+  return <h1>Hello {name}</h1>
+}
+---
+<Greeting name="DekaScript" />"#,
+    )
+    .expect("component file with script/template separator should compile");
+    assert!(
+        js.contains(r#"function Greeting(name)"#),
+        "expected component function in emitted JS: {js}"
+    );
+    assert!(
+        js.contains(r#"Hello "#),
+        "expected rendered greeting in emitted JS: {js}"
+    );
+}
+
+#[test]
 fn snapshot_async_function_return_type_is_diagnosed_correctly() {
     // Not a known-bad case: this diagnostic is accurate and names the real
     // cause (async functions must return `Promise<T>`). Recorded so a

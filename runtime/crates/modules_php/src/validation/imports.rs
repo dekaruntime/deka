@@ -495,14 +495,24 @@ pub(crate) fn frontmatter_bounds(lines: &[&str]) -> Option<(usize, usize)> {
     if let Some(stripped) = first.strip_prefix('\u{feff}') {
         first = stripped;
     }
-    if first.trim() != "---" {
+    if first.trim() == "---" {
+        // Explicit frontmatter block: --- ... ---
+        let start = i;
+        i += 1;
+        for idx in i..lines.len() {
+            if lines[idx].trim() == "---" {
+                return Some((start, idx));
+            }
+        }
         return None;
     }
-    let start = i;
-    i += 1;
+    // No leading frontmatter block. If a '---' separator appears later in the
+    // file, treat it as a script/template divider: everything before it is the
+    // script section and everything after it is the template section. Represent
+    // this as a zero-width frontmatter block at the separator line.
     for idx in i..lines.len() {
         if lines[idx].trim() == "---" {
-            return Some((start, idx));
+            return Some((idx, idx));
         }
     }
     None
