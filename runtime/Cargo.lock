@@ -745,6 +745,7 @@ dependencies = [
  "compile",
  "core",
  "ctrlc",
+ "deka-fmt",
  "dekascript_lsp",
  "deno_task_shell",
  "glob",
