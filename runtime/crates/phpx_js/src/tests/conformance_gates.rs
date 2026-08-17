@@ -124,17 +124,17 @@ fn snapshot_struct_field_accepts_bare_identifier_in_dekascript() {
 }
 
 #[test]
-fn snapshot_enum_js_style_body_reports_missing_semicolon() {
-    // Same misdirection class as #50 (see module doc comment): the JS-style
-    // enum body (`Red, Green`) isn't accepted — DekaScript still expects
-    // PHP-style `case Red;` members (RFD 10) — and the parser reports
-    // punctuation errors instead of naming the unsupported syntax.
-    let err = ds_diagnostic("enum Color { Red, Green }")
-        .expect_err("JS-style enum member list is not accepted yet");
+fn snapshot_enum_js_style_body_is_accepted() {
+    // dekaruntime/deka#93: DekaScript enum bodies use bare variant names
+    // with optional payloads and commas, instead of PHP-style `case Name;`.
+    let js = ds_diagnostic("enum Color { Red, Green }")
+        .expect("JS-style enum member list should be accepted in DekaScript");
     assert!(
-        err.contains("Missing semicolon"),
-        "diagnostic text changed, update this snapshot: {err}"
+        js.contains(r#"__enum: "Color""#),
+        "enum tag missing in emitted JS: {js}"
     );
+    assert!(js.contains(r#"__case: "Red""#), "Red case missing in emitted JS: {js}");
+    assert!(js.contains(r#"__case: "Green""#), "Green case missing in emitted JS: {js}");
 }
 
 #[test]
