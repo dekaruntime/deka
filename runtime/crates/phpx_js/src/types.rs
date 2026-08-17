@@ -23,6 +23,10 @@ pub struct SourceModuleMeta {
     pub frontmatter_start_line: Option<usize>,
     pub frontmatter_end_line: Option<usize>,
     pub template_start_line: Option<usize>,
+    /// True when the source is being compiled as DekaScript (.ds). The JS
+    /// emitter uses this to inject the DekaScript runtime prelude (safe
+    /// globals, deka.unsafe, etc.) as required by RFD 21.
+    pub is_ds: bool,
 }
 
 impl SourceModuleMeta {
@@ -34,6 +38,7 @@ impl SourceModuleMeta {
             frontmatter_start_line: None,
             frontmatter_end_line: None,
             template_start_line: None,
+            is_ds: false,
         }
     }
 }

@@ -183,6 +183,46 @@ impl<'a> JsSubsetEmitter<'a> {
         out.push_str("export const phpxBuildMode = \"subset-ast\";\n");
         out.push_str("export const phpxTargetSemantics = \"js\";\n\n");
 
+        // --- DekaScript runtime prelude (RFD 21) ---
+        //
+        // DS code runs in a hijacked realm: a curated set of safe globals are
+        // wrapped to return errors-as-values, and every other platform API must
+        // be reached through the explicit `unsafe` escape hatch. The prelude
+        // installs `globalThis.deka` (host helpers including `deka.unsafe`) and
+        // `globalThis.unsafe` (pristine host globals captured before any
+        // hijacks). Safe global wrappers are demand-driven like the PHPX
+        // prelude so unused ones do not bloat small programs.
+        let program_text = format!("{}\n{}", self.body, self.main_body);
+        if self.meta.is_ds {
+            // Compact prelude: keep generated output small (RFD 13 budget gate)
+            // while still capturing all unsafe-only platform APIs and
+            // installing the deka host helper.
+            out.push_str("const __DekaUnsafeGlobals=(()=>{const g=typeof globalThis!=='undefined'?globalThis:(typeof self!=='undefined'?self:this);return{fetch:g.fetch,JSON:g.JSON,URL:g.URL,URLSearchParams:g.URLSearchParams,TextEncoder:g.TextEncoder,TextDecoder:g.TextDecoder,Blob:g.Blob,FormData:g.FormData,Headers:g.Headers,Request:g.Request,Response:g.Response,WebSocket:g.WebSocket,crypto:g.crypto,atob:g.atob,btoa:g.btoa,structuredClone:g.structuredClone,queueMicrotask:g.queueMicrotask,setTimeout:g.setTimeout,setInterval:g.setInterval,clearTimeout:g.clearTimeout,clearInterval:g.clearInterval};})();\n");
+            out.push_str("const deka={unsafe:(tryFn,catchFn,finallyFn)=>{try{return tryFn();}catch(err){if(catchFn)return catchFn(err);return{__error:err};}finally{if(finallyFn)finallyFn();}},panic:(msg)=>{throw new Error(String(msg));}};\n");
+            out.push_str("globalThis.deka??=deka;globalThis.unsafe??=__DekaUnsafeGlobals;\n");
+
+            // Safe global wrappers — installed only when the emitted body
+            // references them. These replace throwing host APIs with versions
+            // that return error values, matching DekaScript's errors-as-values
+            // model. The originals remain available on `unsafe.<name>`.
+            if body_refs_global(&program_text, "fetch") {
+                out.push_str("globalThis.fetch??=(...args)=>__DekaUnsafeGlobals.fetch(...args).then((r)=>({__ok:r})).catch((e)=>({__error:e}));\n");
+            }
+            if body_refs_global(&program_text, "JSON") {
+                out.push_str("globalThis.JSON??=__DekaUnsafeGlobals.JSON;globalThis.JSON.parse=(text)=>{try{return __DekaUnsafeGlobals.JSON.parse(text);}catch(e){return{__error:e};}};globalThis.JSON.stringify=(value,replacer,space)=>{try{return __DekaUnsafeGlobals.JSON.stringify(value,replacer,space);}catch(e){return{__error:e};}};\n");
+            }
+            if body_refs_global(&program_text, "URL") {
+                out.push_str("globalThis.URL??=(url,base)=>{try{return new(__DekaUnsafeGlobals.URL)(url,base);}catch(e){return{__error:e};}};\n");
+            }
+            if body_refs_global(&program_text, "URLSearchParams") {
+                out.push_str("globalThis.URLSearchParams??=(init)=>{try{return new(__DekaUnsafeGlobals.URLSearchParams)(init);}catch(e){return{__error:e};}};\n");
+            }
+            if body_refs_global(&program_text, "console") {
+                out.push_str("globalThis.console??=__DekaUnsafeGlobals.console;globalThis.console.assert=(cond,...args)=>{if(!cond){throw new Error(args.length?args.join(' '):'Assertion failed');}};\n");
+            }
+            out.push('\n');
+        }
+
         // --- Demand-driven mission/runtime globalThis prelude (#47) ---
         //
         // Historically every entry below was emitted unconditionally on every

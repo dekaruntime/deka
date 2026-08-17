@@ -36,11 +36,13 @@ pub fn compile_phpx_source_to_js(
 pub fn compile_phpx_source_to_js_with_warnings(
     source: &str,
     input: &str,
-    meta: SourceModuleMeta,
+    mut meta: SourceModuleMeta,
 ) -> Result<CompileOutcome, String> {
     let arena = Bump::new();
     let path = Path::new(input);
-    let result = if path.extension().and_then(|ext| ext.to_str()) == Some("ds") {
+    let is_ds = path.extension().and_then(|ext| ext.to_str()) == Some("ds");
+    meta.is_ds = meta.is_ds || is_ds;
+    let result = if is_ds {
         compile_deka(source, input, &arena)
     } else if is_internal_phpx_path(path) {
         compile_phpx_internal(source, input, &arena)
