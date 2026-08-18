@@ -604,3 +604,61 @@ fn multiple_errors_collected() {
     assert_has_error(&result, ErrorKind::ModuleError);
     assert_has_error(&result, ErrorKind::TypeError);
 }
+
+#[test]
+fn ds_struct_without_dollar_prefix_ok() {
+    let source = "struct Point {\n  x: number\n  y: number\n}\n\nconst origin = Point { x: 3, y: 4 };\nconsole.log(origin.x + origin.y);";
+    let arena = Box::leak(Box::new(Bump::new()));
+    let result = compile_deka(source, "point.ds", arena);
+    assert!(result.errors.is_empty(), "unexpected errors: {:?}", result.errors);
+}
+
+#[test]
+fn ds_enum_with_payload_ok() {
+    let source = "enum Option<T> {\n  Some(T),\n  None,\n}\n\nconst answer = Some(42);";
+    let arena = Box::leak(Box::new(Bump::new()));
+    let result = compile_deka(source, "option.ds", arena);
+    assert!(result.errors.is_empty(), "unexpected errors: {:?}", result.errors);
+}
+
+#[test]
+fn ds_result_enum_ok() {
+    let source = "enum Result<T, E> {\n  Ok(T),\n  Err(E),\n}\n\nconst ok = Ok(42);\nconst err = Err(\"nope\");";
+    let arena = Box::leak(Box::new(Bump::new()));
+    let result = compile_deka(source, "result.ds", arena);
+    assert!(result.errors.is_empty(), "unexpected errors: {:?}", result.errors);
+}
+
+#[test]
+fn ds_trait_impl_ok() {
+    let source = r#"trait Show {
+  show(self: Self): string
+}
+
+struct Person {
+  name: string
+}
+
+impl Show for Person {
+  show(self: Self): string {
+    return self.name
+  }
+}
+
+const p = Person { name: "Sami" };
+console.log(Show.show(p));
+"#;
+    let arena = Box::leak(Box::new(Bump::new()));
+    let result = compile_deka(source, "trait.ds", arena);
+    assert!(result.errors.is_empty(), "unexpected errors: {:?}", result.errors);
+}
+
+#[test]
+fn ds_jsx_return_type_ok() {
+    // dekaruntime/deka#119: JSX should be nameable as a component return type,
+    // not only the legacy VNode spelling.
+    let source = "interface HeroProps {\n  title: string\n}\nfunction Hero({ title }: HeroProps): JSX {\n  return <h1>{title}</h1>\n}\n---\n<Hero title=\"Hello PHPX\" />";
+    let arena = Box::leak(Box::new(Bump::new()));
+    let result = compile_deka(source, "jsx.ds", arena);
+    assert!(result.errors.is_empty(), "unexpected errors: {:?}", result.errors);
+}

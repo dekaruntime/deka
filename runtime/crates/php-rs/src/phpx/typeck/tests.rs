@@ -345,6 +345,22 @@ fn jsx_vnode_inside_generic_return_type_ok() {
 }
 
 #[test]
+fn jsx_jsx_return_type_annotation_ok() {
+    // dekaruntime/deka#119: JSX should be nameable as a return type, same as
+    // the legacy VNode spelling.
+    let code = "interface HeroProps { name: string } function Hero({ name }: HeroProps): JSX { return <h1>Hello {name}</h1> }";
+    let res = check_ds(code);
+    assert!(res.is_ok(), "expected ok, got: {:?}", res);
+}
+
+#[test]
+fn jsx_jsx_inside_generic_return_type_ok() {
+    let code = "interface HeroProps { name: string } async function Hero({ name }: HeroProps): Promise<JSX> { return <h1>Hello {name}</h1> }";
+    let res = check_ds(code);
+    assert!(res.is_ok(), "expected ok, got: {:?}", res);
+}
+
+#[test]
 fn jsx_component_untyped_props_allowed_in_default_mode() {
     // Strict JSX type checking is gated by PHPX_STRICT_JSX_TYPES env var;
     // in default mode, untyped props parameters are allowed.
