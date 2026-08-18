@@ -1,0 +1,10 @@
+async fn fetch_value(): Promise<string> {
+  return "DekaScript";
+}
+
+async fn main(): Promise<void> {
+  const value = await fetch_value();
+  console.log(value);
+}
+
+main();

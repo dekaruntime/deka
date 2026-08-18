@@ -1,0 +1,16 @@
+enum Status {
+  Loading,
+  Ready,
+  Failed,
+}
+
+const current = Status.Ready;
+
+const label = match (current) {
+  Status.Loading => "Loading...",
+  Status.Ready => "Ready",
+  Status.Failed => "Failed",
+  _ => "Unknown",
+};
+
+console.log(label);
