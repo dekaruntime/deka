@@ -123,6 +123,7 @@ fn collect_struct_definitions(program: &Program, source: &str) -> HashMap<String
                         default: *default,
                         annotations: &[],
                         optional: false,
+                        is_mut: false,
                         span: *span,
                     };
                     handle_struct_field(&entry, &struct_name, &mut fields, source, &mut errors);

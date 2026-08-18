@@ -152,7 +152,7 @@ impl<'a> JsSubsetEmitter<'a> {
                 "{}function {}({}) {{\n{} }}",
                 async_kw, method_name, js_params, block
             );
-            self.ds_struct_methods
+            self.ds_receiver_methods
                 .entry(receiver_type_name)
                 .or_default()
                 .push(DsMethod {
@@ -170,6 +170,7 @@ impl<'a> JsSubsetEmitter<'a> {
         let struct_names: Vec<String> = self
             .ds_struct_methods
             .keys()
+            .chain(self.ds_receiver_methods.keys())
             .chain(self.struct_embeds.keys())
             .cloned()
             .collect::<std::collections::HashSet<_>>()
@@ -210,6 +211,22 @@ impl<'a> JsSubsetEmitter<'a> {
                 .collect();
             self.emit_ds_method_registration(&struct_name, "impl", &immutable)?;
             self.emit_ds_method_registration(&struct_name, "implMut", &mutable)?;
+
+            // Receiver methods are registered one at a time so the deka.Struct
+            // helper wraps them with the receiver binding.
+            if let Some(receiver_methods) = self.ds_receiver_methods.get(&struct_name).cloned() {
+                self.uses_deka_struct_helpers = true;
+                for method in receiver_methods {
+                    let reg_fn = if method.is_mut { "implMut" } else { "impl" };
+                    self.body.push_str(&format!(
+                        "{}.{}({}, {});\n",
+                        struct_name,
+                        reg_fn,
+                        json_string(&method.name),
+                        method.body
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -226,22 +243,28 @@ impl<'a> JsSubsetEmitter<'a> {
             return Ok(());
         }
         path.push(embed.to_string());
-        if let Some(methods) = self.ds_struct_methods.get(embed) {
-            let access = path.join(".");
-            for method in methods {
-                if !seen.insert(method.name.clone()) {
-                    continue;
-                }
-                let wrapper = format!(
-                    "function(...args) {{ return this.{}.{}{}; }}",
-                    access, method.name, "(...args)"
-                );
-                out.push(DsMethod {
-                    name: method.name.clone(),
-                    body: wrapper,
-                    is_mut: method.is_mut,
-                });
+        let access = path.join(".");
+        let embed_methods: Vec<DsMethod> = self
+            .ds_struct_methods
+            .get(embed)
+            .into_iter()
+            .flatten()
+            .chain(self.ds_receiver_methods.get(embed).into_iter().flatten())
+            .cloned()
+            .collect();
+        for method in embed_methods {
+            if !seen.insert(method.name.clone()) {
+                continue;
             }
+            let wrapper = format!(
+                "function(...args) {{ return this.{}.{}{}; }}",
+                access, method.name, "(...args)"
+            );
+            out.push(DsMethod {
+                name: method.name.clone(),
+                body: wrapper,
+                is_mut: method.is_mut,
+            });
         }
         if let Some(embeds) = self.struct_embeds.get(embed) {
             for next in embeds.clone() {

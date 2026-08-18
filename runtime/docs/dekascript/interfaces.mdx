@@ -3,7 +3,7 @@ title: Interfaces
 description: Structural interfaces and component props in DekaScript.
 ---
 
-Interfaces are structural: any value with the required fields and methods satisfies an interface. There is no explicit `implements` declaration.
+Interfaces are structural: any value with the required methods satisfies an interface. There is no explicit `implements` declaration.
 
 ## Defining an interface
 
@@ -16,7 +16,7 @@ interface Named {
 
 ## Satisfying an interface
 
-A struct satisfies an interface by having matching fields and methods.
+A struct satisfies an interface by having matching methods.
 
 ```ds
 struct Person {
@@ -63,7 +63,7 @@ interface CardProps {
   subtitle?: string
 }
 
-fn Card({ title, subtitle }: CardProps): JSX {
+fn Card({ title, subtitle }: CardProps): Component {
   return <div>
     <h2>{title}</h2>
     {subtitle != null ? <p>{subtitle}</p> : null}
@@ -79,7 +79,7 @@ fn Card({ title, subtitle }: CardProps): JSX {
 Spread compatible props into an object or JSX element.
 
 ```ds
-fn FancyButton(props: ButtonProps): JSX {
+fn FancyButton(props: ButtonProps): Component {
   return <Button {...props} class="fancy" />
 }
 ```
@@ -93,7 +93,7 @@ interface HeroProps {
   title: string
 }
 
-fn Hero({ title }: HeroProps): JSX {
+fn Hero({ title }: HeroProps): Component {
   return <h1>{title}</h1>
 }
 

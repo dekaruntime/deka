@@ -2146,16 +2146,21 @@ const e = Employee { Person: Person { name: "Charlie" }, employeeId: "E54321" }
 
 #[test]
 fn ds_object_literal_omitted_optional_field_has_no_undefined_key() {
-    let source = r#"const o = { a: 1 }
+    let source = r#"struct Person {
+  name: string
+  nickname?: string
+}
+
+const p = Person { name: "Ada" }
 "#;
-    let js = ds_to_js(source).expect("object literal should compile");
+    let js = ds_to_js(source).expect("struct literal should compile");
     let obj_line = js
         .lines()
-        .find(|l| l.contains("const o ="))
-        .expect("object literal declaration line");
+        .find(|l| l.contains("const p ="))
+        .expect("struct literal declaration line");
     assert!(
-        obj_line.contains(r#"const o = deka.freeze({"a": 1})"#),
-        "expected object literal without undefined optional keys, got:\n{}",
+        obj_line.contains(r#"const p = deka.freeze(Person({"name": "Ada"}))"#),
+        "expected struct literal without omitted optional keys, got:\n{}",
         obj_line
     );
     assert!(
@@ -2163,6 +2168,81 @@ fn ds_object_literal_omitted_optional_field_has_no_undefined_key() {
         "omitted optional fields must not emit undefined keys, got:\n{}",
         obj_line
     );
+    assert!(
+        !obj_line.contains("nickname"),
+        "omitted optional field must not appear in emitted literal, got:\n{}",
+        obj_line
+    );
+}
+
+#[test]
+fn ds_receiver_method_before_struct_emits_after_factory() {
+    let source = r#"fn (p Person) greet(): string {
+  return "hi, " + p.name
+}
+
+struct Person {
+  name: string
+}
+
+const p = Person { name: "Ada" }
+console.log(p.greet())
+"#;
+    let js = ds_to_js(source).expect("receiver method before struct should compile");
+    assert!(
+        js.contains("const Person = deka.Struct"),
+        "expected struct factory to be declared before method registration, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains(r#"Person.impl("greet", function greet(p)"#),
+        "expected receiver method registration, got:\n{}",
+        js
+    );
+    let script = format!("{js}\n");
+    match run_node(&script) {
+        Err(e) if e.contains("node not available") => return,
+        Err(e) => panic!("node error running receiver method before struct: {e}\n{script}"),
+        Ok(got) => assert_eq!(
+            got, "hi, Ada",
+            "receiver method must work when declared before its struct, got {got:?} from:\n{script}"
+        ),
+    }
+}
+
+#[test]
+fn ds_embedded_method_promotion_runs() {
+    let source = r#"struct Person {
+  name: string
+}
+
+fn (p Person) greet(): string {
+  return "hi, " + p.name
+}
+
+struct Employee {
+  Person
+  employeeId: string
+}
+
+const e = Employee { Person: Person { name: "Ada" }, employeeId: "E1" }
+console.log(e.greet())
+"#;
+    let js = ds_to_js(source).expect("embedded method promotion should compile");
+    assert!(
+        js.contains(r#"Employee.impl({ "greet": function(...args) { return this.Person.greet(...args); } })"#),
+        "expected promoted method wrapper on Employee, got:\n{}",
+        js
+    );
+    let script = format!("{js}\n");
+    match run_node(&script) {
+        Err(e) if e.contains("node not available") => return,
+        Err(e) => panic!("node error running promoted method: {e}\n{script}"),
+        Ok(got) => assert_eq!(
+            got, "hi, Ada",
+            "promoted embedded method must forward to embedded struct, got {got:?} from:\n{script}"
+        ),
+    }
 }
 
 #[test]

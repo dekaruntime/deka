@@ -58,9 +58,13 @@ pub(crate) struct JsSubsetEmitter<'a> {
     enum_names: HashSet<String>,
     struct_methods: HashMap<String, Vec<(String, String)>>,
     enum_cases: HashMap<String, Vec<EnumCaseDef>>,
-    /// DekaScript struct methods (own + receiver) keyed by struct name.
-    /// Emitted after all struct factories so receiver methods are order-independent.
+    /// DekaScript struct methods (own body methods + promoted embedded methods)
+    /// keyed by struct name. Emitted after all struct factories.
     ds_struct_methods: HashMap<String, Vec<DsMethod>>,
+    /// DekaScript receiver methods (`fn (p Person) ...`) keyed by struct name.
+    /// These are emitted one at a time so the `deka.Struct` helper wraps them
+    /// with the receiver binding.
+    ds_receiver_methods: HashMap<String, Vec<DsMethod>>,
     /// Direct embeds for each DekaScript struct, used to promote embedded methods.
     struct_embeds: HashMap<String, Vec<String>>,
     value_kinds: HashMap<String, JsValueKind>,
@@ -106,6 +110,7 @@ impl<'a> JsSubsetEmitter<'a> {
             struct_methods: HashMap::new(),
             enum_cases: HashMap::new(),
             ds_struct_methods: HashMap::new(),
+            ds_receiver_methods: HashMap::new(),
             struct_embeds: HashMap::new(),
             value_kinds: HashMap::new(),
             uses_deka_struct_helpers: false,
