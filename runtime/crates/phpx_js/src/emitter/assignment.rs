@@ -6,6 +6,8 @@ pub(super) struct EnumPattern {
     pub case_name: String,
     /// One entry per payload parameter. `None` means a wildcard `_`.
     pub bindings: Vec<Option<String>>,
+    /// Parameter names for the matched case, in declaration order.
+    pub params: Vec<String>,
 }
 
 impl<'a> JsSubsetEmitter<'a> {
@@ -87,36 +89,28 @@ impl<'a> JsSubsetEmitter<'a> {
             if let Some(conditions) = arm.conditions {
                 if conditions.len() == 1 {
                     if let Some(pattern) = self.enum_pattern_from_expr(conditions[0]) {
-                        if !pattern.bindings.is_empty() {
-                            let case_def = self
-                                .enum_cases
-                                .get(&pattern.enum_name)
-                                .and_then(|cases| {
-                                    cases.iter().find(|c| c.name == pattern.case_name)
-                                });
-                            if let Some(case_def) = case_def {
-                                let bindings = pattern
-                                    .bindings
-                                    .iter()
-                                    .zip(case_def.params.iter())
-                                    .filter_map(|(binding, field)| {
-                                        binding.as_ref().map(|name| {
-                                            format!(
-                                                "const {} = {}[{}];",
-                                                name,
-                                                condition_js,
-                                                json_string(field)
-                                            )
-                                        })
+                        if !pattern.bindings.is_empty() && !pattern.params.is_empty() {
+                            let bindings = pattern
+                                .bindings
+                                .iter()
+                                .zip(pattern.params.iter())
+                                .filter_map(|(binding, field)| {
+                                    binding.as_ref().map(|name| {
+                                        format!(
+                                            "const {} = {}[{}];",
+                                            name,
+                                            condition_js,
+                                            json_string(field)
+                                        )
                                     })
-                                    .collect::<Vec<_>>()
-                                    .join("\n");
-                                if !bindings.is_empty() {
-                                    arm_expr = format!(
-                                        "(() => {{\n{}\nreturn {};\n}})()",
-                                        bindings, arm_expr
-                                    );
-                                }
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            if !bindings.is_empty() {
+                                arm_expr = format!(
+                                    "(() => {{\n{}\nreturn {};\n}})()",
+                                    bindings, arm_expr
+                                );
                             }
                         }
                     }
@@ -251,24 +245,24 @@ impl<'a> JsSubsetEmitter<'a> {
                 }
                 _ => return None,
             };
-        let case_def = if enum_name.eq_ignore_ascii_case("Option")
-            && self.is_option_case_name(&case_name)
-        {
-            Some(EnumCaseDef {
-                name: case_name.clone(),
-                params: if case_name.eq_ignore_ascii_case("Some") {
-                    vec!["value".to_string()]
+        let case_def = self
+            .enum_cases
+            .get(&enum_name)
+            .and_then(|cases| cases.iter().find(|c| c.name == case_name).cloned())
+            .or_else(|| {
+                if enum_name.eq_ignore_ascii_case("Option") && self.is_option_case_name(&case_name) {
+                    Some(EnumCaseDef {
+                        name: case_name.clone(),
+                        params: if case_name.eq_ignore_ascii_case("Some") {
+                            vec!["value".to_string()]
+                        } else {
+                            Vec::new()
+                        },
+                    })
                 } else {
-                    Vec::new()
-                },
-            })
-        } else {
-            self.enum_cases
-                .get(&enum_name)?
-                .iter()
-                .find(|c| c.name == case_name)
-                .cloned()
-        }?;
+                    None
+                }
+            })?;
 
         let mut bindings = Vec::with_capacity(args.len());
         for arg in args {
@@ -295,6 +289,7 @@ impl<'a> JsSubsetEmitter<'a> {
             enum_name,
             case_name,
             bindings,
+            params: case_def.params.clone(),
         })
     }
 
