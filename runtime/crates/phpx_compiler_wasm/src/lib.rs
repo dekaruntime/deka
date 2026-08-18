@@ -534,7 +534,7 @@ const origin = Point { x: 3, y: 4 };
         let cases: Vec<TourCase> =
             serde_json::from_str(include_str!("../tests/fixtures/deka-tour-sources.json"))
                 .expect("website tour fixture JSON");
-        assert_eq!(cases.len(), 36, "all website tour sources must be covered");
+        assert_eq!(cases.len(), 37, "all website tour sources must be covered");
 
         for case in cases {
             let response: Value =

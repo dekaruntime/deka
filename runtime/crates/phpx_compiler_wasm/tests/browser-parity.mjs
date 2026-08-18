@@ -57,8 +57,8 @@ if (failure.ok || diagnostic?.severity !== "error" || diagnostic.filename !== "b
 }
 
 const tourCases = JSON.parse(await readFile(new URL("./fixtures/deka-tour-sources.json", import.meta.url)));
-if (tourCases.length !== 36) {
-  throw new Error(`expected 36 website tour sources, found ${tourCases.length}`);
+if (tourCases.length !== 37) {
+  throw new Error(`expected 37 website tour sources, found ${tourCases.length}`);
 }
 for (const testCase of tourCases) {
   const response = compile(testCase.source, "tour.ds", "deka");
