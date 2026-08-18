@@ -142,6 +142,13 @@ fn collect_struct_definitions(program: &Program, source: &str) -> HashMap<String
                                     "Ensure the composed type is a struct declared in this module.",
                                 ));
                             }
+                            fields.insert(
+                                name_str.clone(),
+                                StructFieldInfo {
+                                    has_default: false,
+                                    span: *span,
+                                },
+                            );
                         }
                     }
                 }
