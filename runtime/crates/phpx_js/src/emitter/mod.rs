@@ -1,7 +1,7 @@
 use crate::{ImportDecl, ImportSpec, SourceModuleMeta};
 use php_rs::parser::ast::{
-    BinaryOp, ClassKind, ClassMember, Expr, ExprId, JsxChild, ObjectKey, Program, Stmt, StmtId,
-    Type as AstType, UnaryOp,
+    BinaryOp, ClassKind, ClassMember, Expr, ExprId, JsxChild, ObjectKey, Program, Receiver, Stmt,
+    StmtId, Type as AstType, UnaryOp,
 };
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -9,6 +9,14 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 struct EnumCaseDef {
     name: String,
     params: Vec<String>,
+}
+
+/// A DekaScript method registered on a `deka.Struct` factory.
+#[derive(Clone, Debug)]
+struct DsMethod {
+    name: String,
+    body: String,
+    is_mut: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -49,23 +57,16 @@ pub(crate) struct JsSubsetEmitter<'a> {
     struct_names: HashSet<String>,
     enum_names: HashSet<String>,
     struct_methods: HashMap<String, Vec<(String, String)>>,
-    /// DekaScript impl-block methods keyed by target name. Separate from
-    /// `struct_methods` (the PHPX/enum registry) so DS structs can emit
-    /// `Point.impl({...})` instead of `globalThis.__phpxStructMethods`.
-    /// The bool is `is_mut`: true methods are registered via `implMut`,
-    /// false methods via `impl`.
-    ds_impl_methods: HashMap<String, Vec<(String, String, bool)>>,
-    /// Default method bodies declared directly on a `trait`, keyed by trait
-    /// name (NOT by any impl target). RFD 19: an `impl Trait for X { }` that
-    /// doesn't override a trait's default method still needs that default's
-    /// JS body to actually run at `x.method()` call sites -- the typechecker
-    /// already allows this (a non-overridden default satisfies conformance),
-    /// but codegen was only ever emitting what the impl block itself
-    /// provided. Collected in a pre-pass (mirrors the enum-impl
-    /// order-independence fix, deka#71) so trait declaration order relative
-    /// to its impls doesn't matter.
-    trait_default_methods: HashMap<String, Vec<(String, String)>>,
     enum_cases: HashMap<String, Vec<EnumCaseDef>>,
+    /// DekaScript struct methods (own body methods + promoted embedded methods)
+    /// keyed by struct name. Emitted after all struct factories.
+    ds_struct_methods: HashMap<String, Vec<DsMethod>>,
+    /// DekaScript receiver methods (`fn (p Person) ...`) keyed by struct name.
+    /// These are emitted one at a time so the `deka.Struct` helper wraps them
+    /// with the receiver binding.
+    ds_receiver_methods: HashMap<String, Vec<DsMethod>>,
+    /// Direct embeds for each DekaScript struct, used to promote embedded methods.
+    struct_embeds: HashMap<String, Vec<String>>,
     value_kinds: HashMap<String, JsValueKind>,
     /// DekaScript struct/freeze helpers needed by this module. Populated during
     /// AST traversal so the compact prelude only includes them when used.
@@ -107,9 +108,10 @@ impl<'a> JsSubsetEmitter<'a> {
             struct_names: HashSet::new(),
             enum_names: HashSet::new(),
             struct_methods: HashMap::new(),
-            ds_impl_methods: HashMap::new(),
-            trait_default_methods: HashMap::new(),
             enum_cases: HashMap::new(),
+            ds_struct_methods: HashMap::new(),
+            ds_receiver_methods: HashMap::new(),
+            struct_embeds: HashMap::new(),
             value_kinds: HashMap::new(),
             uses_deka_struct_helpers: false,
             uses_deka_freeze: false,
@@ -222,7 +224,7 @@ impl<'a> JsSubsetEmitter<'a> {
                 deka_entries.push("MutationError:class extends Error{constructor(m){super(m);this.name='MutationError';}}".to_string());
             }
             if self.uses_deka_struct_helpers {
-                deka_entries.push("Struct:(id)=>{function f(fields){const o=Object.create(f.prototype);Object.assign(o,fields);Object.defineProperty(o,'__deka_struct',{value:id,enumerable:false,writable:false,configurable:false});return o;}f.id=id;Object.defineProperty(f,'name',{value:id,configurable:true});f.prototype=Object.create(null);f.prototype.constructor=f;f.impl=(m)=>{for(const k in m)f.prototype[k]=m[k];return f;};f.implMut=(m)=>{for(const k in m){const fn=m[k];f.prototype[k]=function(...a){if(Object.isFrozen(this))throw new deka.MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return fn.apply(this,a);};}return f;};return f;}".to_string());
+                deka_entries.push("Struct:(id)=>{function f(fields){const o=Object.create(f.prototype);Object.assign(o,fields);Object.defineProperty(o,'__deka_struct',{value:id,enumerable:false,writable:false,configurable:false});return o;}f.id=id;Object.defineProperty(f,'name',{value:id,configurable:true});f.prototype=Object.create(null);f.prototype.constructor=f;f.impl=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){return b(this,...x);};}else{for(const k in a)f.prototype[k]=a[k];}return f;};f.implMut=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new deka.MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return b(this,...x);};}else{for(const k in a){const fn=a[k];f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new deka.MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return fn.apply(this,x);};}}return f;};return f;}".to_string());
                 deka_entries.push("isStruct:(v,f)=>Boolean(v&&typeof v==='object'&&v.__deka_struct&&(f?v.__deka_struct===f.id:true))".to_string());
                 deka_entries.push("getStructId:(v)=>v?.__deka_struct".to_string());
                 deka_entries.push("clone:(v)=>structuredClone(v)".to_string());

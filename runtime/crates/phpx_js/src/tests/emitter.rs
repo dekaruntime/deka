@@ -1484,7 +1484,7 @@ struct Point {
   x: int
   y: int
 }
-function f(p: Point): bool {
+fn f(p: Point): bool {
   return p instanceof Point
 }
 "#;
@@ -1936,235 +1936,12 @@ fn ds_enum_variant_dot_access_emits_same_js_as_static() {
     // DekaScript accepts `Color.Red` as syntactic sugar for `Color::Red`.
     let source = r#"
         enum Color { Red, Green }
-        function pick(): Color { return Color.Red; }
+        fn pick(): Color { return Color.Red; }
     "#;
     let js = ds_to_js(source).expect("should compile");
     assert!(
         js.contains("return Color.Red"),
         "expected Color.Red access in emitted JS, got:\n{}",
-        js
-    );
-}
-
-// --- DekaScript trait/impl lowering (dekaruntime/deka#93) ------------------
-
-#[test]
-fn ds_trait_impl_emits_struct_methods() {
-    let source = r#"trait Named {
-  name(): string
-}
-
-struct User {
-  handle: string
-}
-
-impl Named for User {
-  name(): string {
-    return this.handle
-  }
-}
-
-const user = User { handle: "deka" }
-console.log(user.name())
-"#;
-    let js = ds_to_js(source).expect("trait impl should compile to JS");
-    assert!(
-        js.contains("User.impl({"),
-        "expected factory impl call, got:\n{}",
-        js
-    );
-    assert!(
-        js.contains("\"name\": function()"),
-        "expected emitted method function, got:\n{}",
-        js
-    );
-    assert!(
-        js.contains("return this.handle"),
-        "expected method body to access receiver field, got:\n{}",
-        js
-    );
-    assert!(
-        js.contains("user.name()"),
-        "expected method call expression, got:\n{}",
-        js
-    );
-}
-
-#[test]
-fn ds_trait_default_method_emits_fallback() {
-    // A default trait method body is emitted even when the impl block does
-    // not provide an override.
-    let source = r#"trait Greeter {
-  greet(): string { return "hello" }
-}
-
-struct Bot {}
-
-impl Greeter for Bot {}
-
-const bot = Bot {}
-console.log(bot.greet())
-"#;
-    let js = ds_to_js(source).expect("default method should compile to JS");
-    assert!(
-        js.contains(r#"return "hello""#) || js.contains("return 'hello'"),
-        "expected default method body, got:\n{}",
-        js
-    );
-    assert!(
-        js.contains("bot.greet()"),
-        "expected default method call, got:\n{}",
-        js
-    );
-}
-
-#[test]
-fn ds_inherent_impl_emits_struct_methods() {
-    // Structs with only an inherent impl (no trait) should still lower their
-    // methods and method calls.
-    let source = r#"struct Point {
-  x: int
-  y: int
-}
-
-impl Point {
-  norm(): int {
-    return this.x + this.y
-  }
-}
-
-const p = Point { x: 3, y: 4 }
-console.log(p.norm())
-"#;
-    let js = ds_to_js(source).expect("inherent impl should compile to JS");
-    assert!(
-        js.contains("Point.impl({"),
-        "expected factory impl call, got:\n{}",
-        js
-    );
-    assert!(
-        js.contains("\"norm\": function()"),
-        "expected emitted method function, got:\n{}",
-        js
-    );
-    assert!(
-        js.contains("p.norm()"),
-        "expected method call expression, got:\n{}",
-        js
-    );
-}
-
-#[test]
-fn ds_impl_mut_emits_impl_mut_call() {
-    let source = r#"struct Point {
-  x: int
-  y: int
-}
-
-impl mut Point {
-  translate(dx: int, dy: int): void {
-    this.x += dx
-    this.y += dy
-  }
-}
-
-let p = Point { x: 3, y: 4 }
-p.translate(1, 1)
-"#;
-    let js = ds_to_js(source).expect("impl mut should compile to JS");
-    assert!(
-        js.contains("Point.implMut({"),
-        "expected factory implMut call, got:\n{}",
-        js
-    );
-    assert!(
-        js.contains("\"translate\": function(dx, dy)"),
-        "expected emitted mutable method function, got:\n{}",
-        js
-    );
-    assert!(
-        js.contains("p.translate(1, 1)"),
-        "expected mutable method call expression, got:\n{}",
-        js
-    );
-}
-
-#[test]
-fn ds_mixed_impl_and_impl_mut_split_by_mutability() {
-    let source = r#"struct Point {
-  x: int
-  y: int
-}
-
-impl Point {
-  norm(): int {
-    return this.x + this.y
-  }
-}
-
-impl mut Point {
-  translate(dx: int, dy: int): void {
-    this.x += dx
-    this.y += dy
-  }
-}
-
-const p = Point { x: 3, y: 4 }
-console.log(p.norm())
-"#;
-    let js = ds_to_js(source).expect("mixed impl/impl mut should compile to JS");
-    assert!(
-        js.contains("Point.impl({"),
-        "expected immutable impl call, got:\n{}",
-        js
-    );
-    assert!(
-        js.contains("Point.implMut({"),
-        "expected mutable implMut call, got:\n{}",
-        js
-    );
-    assert!(
-        js.contains("\"norm\": function()"),
-        "expected immutable method, got:\n{}",
-        js
-    );
-    assert!(
-        js.contains("\"translate\": function(dx, dy)"),
-        "expected mutable method, got:\n{}",
-        js
-    );
-}
-
-#[test]
-fn ds_impl_mut_trait_for_type_emits_impl_mut_call() {
-    let source = r#"trait Movable {
-  move(dx: int, dy: int): void
-}
-
-struct Point {
-  x: int
-  y: int
-}
-
-impl mut Movable for Point {
-  move(dx: int, dy: int): void {
-    this.x += dx
-    this.y += dy
-  }
-}
-
-let p = Point { x: 1, y: 2 }
-p.move(3, 4)
-"#;
-    let js = ds_to_js(source).expect("impl mut trait for type should compile to JS");
-    assert!(
-        js.contains("Point.implMut({"),
-        "expected factory implMut call for trait impl, got:\n{}",
-        js
-    );
-    assert!(
-        js.contains("\"move\": function(dx, dy)"),
-        "expected emitted mutable trait method, got:\n{}",
         js
     );
 }
@@ -2224,6 +2001,300 @@ const x = await f();
     assert!(
         js.contains("await f()"),
         "expected no extra parens around await, got:\n{}",
+        js
+    );
+}
+
+// --- RFD 19 Phase 4: receiver methods, embedding, optional fields, spread ----
+
+#[test]
+fn ds_receiver_method_emits_impl_call_with_receiver_param() {
+    let source = r#"struct Person {
+  name: string
+}
+
+fn (p Person) greet(): string {
+  return "hi, " + p.name
+}
+
+const p = Person { name: "Ada" }
+console.log(p.greet())
+"#;
+    let js = ds_to_js(source).expect("receiver method should compile to JS");
+    assert!(
+        js.contains(r#"Person.impl("greet", function greet(p)"#),
+        "expected per-method impl call with receiver parameter, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains(r#"return "hi, " + p.name"#),
+        "expected receiver parameter use in body, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("p.greet()"),
+        "expected method call expression, got:\n{}",
+        js
+    );
+}
+
+#[test]
+fn ds_mut_receiver_method_emits_impl_mut_call() {
+    let source = r#"struct Person {
+  name: string
+}
+
+fn (p mut Person) setName(n: string): void {
+  p.name = n
+}
+
+let p = Person { name: "Ada" }
+p.setName("Bob")
+"#;
+    let js = ds_to_js(source).expect("mutable receiver method should compile to JS");
+    assert!(
+        js.contains(r#"Person.implMut("setName", function setName(p, n)"#),
+        "expected per-method implMut call, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("p.name = n"),
+        "expected receiver mutation in body, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("p.setName(\"Bob\")") || js.contains("p.setName('Bob')"),
+        "expected mutable method call expression, got:\n{}",
+        js
+    );
+}
+
+#[test]
+fn ds_receiver_method_runs_with_receiver_bound() {
+    let source = r#"struct Person {
+  name: string
+}
+
+fn (p Person) greet(): string {
+  return "hi, " + p.name
+}
+
+const p = Person { name: "Ada" }
+"#;
+    let js = ds_to_js(source).expect("should compile");
+    let script = format!("{js}\nconsole.log(p.greet());");
+    match run_node(&script) {
+        Err(e) if e.contains("node not available") => return,
+        Err(e) => panic!("node error running receiver method: {e}\n{script}"),
+        Ok(got) => assert_eq!(
+            got, "hi, Ada",
+            "receiver method must use the bound receiver, got {got:?} from:\n{script}"
+        ),
+    }
+}
+
+#[test]
+fn ds_mut_receiver_method_runs_and_mutates_receiver() {
+    let source = r#"struct Person {
+  name: string
+}
+
+fn (p mut Person) rename(n: string): void {
+  p.name = n
+}
+
+let p = Person { name: "Ada" }
+p.rename("Grace")
+"#;
+    let js = ds_to_js(source).expect("should compile");
+    let script = format!("{js}\nconsole.log(p.name);");
+    match run_node(&script) {
+        Err(e) if e.contains("node not available") => return,
+        Err(e) => panic!("node error running mutable receiver method: {e}\n{script}"),
+        Ok(got) => assert_eq!(
+            got, "Grace",
+            "mutable receiver method must mutate the receiver, got {got:?} from:\n{script}"
+        ),
+    }
+}
+
+#[test]
+fn ds_struct_embed_literal_emits_embedded_field() {
+    let source = r#"struct Person {
+  name: string
+}
+
+struct Employee {
+  Person
+  employeeId: string
+}
+
+const e = Employee { Person: Person { name: "Charlie" }, employeeId: "E54321" }
+"#;
+    let js = ds_to_js(source).expect("embedded struct literal should compile");
+    assert!(
+        js.contains(r#""Person": Person({"name": "Charlie"})"#),
+        "expected embedded struct stored under its type name, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains(r#""employeeId": "E54321""#),
+        "expected own field in struct literal, got:\n{}",
+        js
+    );
+}
+
+#[test]
+fn ds_object_literal_omitted_optional_field_has_no_undefined_key() {
+    let source = r#"struct Person {
+  name: string
+  nickname?: string
+}
+
+const p = Person { name: "Ada" }
+"#;
+    let js = ds_to_js(source).expect("struct literal should compile");
+    let obj_line = js
+        .lines()
+        .find(|l| l.contains("const p ="))
+        .expect("struct literal declaration line");
+    assert!(
+        obj_line.contains(r#"const p = deka.freeze(Person({"name": "Ada"}))"#),
+        "expected struct literal without omitted optional keys, got:\n{}",
+        obj_line
+    );
+    assert!(
+        !obj_line.contains("undefined"),
+        "omitted optional fields must not emit undefined keys, got:\n{}",
+        obj_line
+    );
+    assert!(
+        !obj_line.contains("nickname"),
+        "omitted optional field must not appear in emitted literal, got:\n{}",
+        obj_line
+    );
+}
+
+#[test]
+fn ds_receiver_method_before_struct_emits_after_factory() {
+    let source = r#"fn (p Person) greet(): string {
+  return "hi, " + p.name
+}
+
+struct Person {
+  name: string
+}
+
+const p = Person { name: "Ada" }
+console.log(p.greet())
+"#;
+    let js = ds_to_js(source).expect("receiver method before struct should compile");
+    assert!(
+        js.contains("const Person = deka.Struct"),
+        "expected struct factory to be declared before method registration, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains(r#"Person.impl("greet", function greet(p)"#),
+        "expected receiver method registration, got:\n{}",
+        js
+    );
+    let script = format!("{js}\n");
+    match run_node(&script) {
+        Err(e) if e.contains("node not available") => return,
+        Err(e) => panic!("node error running receiver method before struct: {e}\n{script}"),
+        Ok(got) => assert_eq!(
+            got, "hi, Ada",
+            "receiver method must work when declared before its struct, got {got:?} from:\n{script}"
+        ),
+    }
+}
+
+#[test]
+fn ds_embedded_method_promotion_runs() {
+    let source = r#"struct Person {
+  name: string
+}
+
+fn (p Person) greet(): string {
+  return "hi, " + p.name
+}
+
+struct Employee {
+  Person
+  employeeId: string
+}
+
+const e = Employee { Person: Person { name: "Ada" }, employeeId: "E1" }
+console.log(e.greet())
+"#;
+    let js = ds_to_js(source).expect("embedded method promotion should compile");
+    assert!(
+        js.contains(r#"Employee.impl({ "greet": function(...args) { return this.Person.greet(...args); } })"#),
+        "expected promoted method wrapper on Employee, got:\n{}",
+        js
+    );
+    let script = format!("{js}\n");
+    match run_node(&script) {
+        Err(e) if e.contains("node not available") => return,
+        Err(e) => panic!("node error running promoted method: {e}\n{script}"),
+        Ok(got) => assert_eq!(
+            got, "hi, Ada",
+            "promoted embedded method must forward to embedded struct, got {got:?} from:\n{script}"
+        ),
+    }
+}
+
+#[test]
+fn ds_object_literal_spread_emits_spread_syntax() {
+    let source = r#"const base = { a: 1 }
+const copy = { ...base, b: 2 }
+"#;
+    let js = ds_to_js(source).expect("object literal spread should compile");
+    assert!(
+        js.contains("...base"),
+        "expected spread syntax in object literal, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains(r#""b": 2"#),
+        "expected own field after spread, got:\n{}",
+        js
+    );
+}
+
+#[test]
+fn ds_object_literal_spread_runs_correctly() {
+    let source = r#"const base = { a: 1 }
+const copy = { ...base, b: 2 }
+"#;
+    let js = ds_to_js(source).expect("should compile");
+    let script = format!("{js}\nconsole.log(JSON.stringify(copy));");
+    match run_node(&script) {
+        Err(e) if e.contains("node not available") => return,
+        Err(e) => panic!("node error running object spread: {e}\n{script}"),
+        Ok(got) => assert_eq!(
+            got, r#"{"a":1,"b":2}"#,
+            "object spread must merge properties, got {got:?} from:\n{script}"
+        ),
+    }
+}
+
+#[test]
+fn ds_jsx_spread_attribute_emits_spread_props() {
+    let source = r#"fn Card(props: object): Element {
+  return <div {...props} id="card" />
+}
+"#;
+    let js = ds_to_js(source).expect("JSX spread attribute should compile");
+    assert!(
+        js.contains("...props"),
+        "expected spread props in JSX, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains(r#""id": "card""#),
+        "expected explicit JSX attribute after spread, got:\n{}",
         js
     );
 }

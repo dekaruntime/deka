@@ -11,18 +11,30 @@ impl<'a> JsSubsetEmitter<'a> {
         for local in import_locals {
             self.declare_in_scope(&local);
         }
-        // First pass: collect struct and enum names so impl-block routing
-        // can decide whether a DekaScript impl targets a struct (factory)
-        // or an enum (legacy tagged-object registry).
+        // First pass: collect struct/enum names and struct embeds. Collecting
+        // embeds here lets the emitter promote embedded methods after all
+        // struct factories have been declared.
         for stmt in program.statements {
             match stmt {
                 Stmt::Class {
                     kind: ClassKind::Struct,
                     name,
+                    members,
                     ..
                 } => {
                     let struct_name = self.token_name(name);
-                    self.struct_names.insert(struct_name);
+                    self.struct_names.insert(struct_name.clone());
+                    let mut embeds = Vec::new();
+                    for member in *members {
+                        if let ClassMember::Embed { types, .. } = member {
+                            for ty in *types {
+                                embeds.push(self.name_last_segment(*ty));
+                            }
+                        }
+                    }
+                    if !embeds.is_empty() {
+                        self.struct_embeds.insert(struct_name, embeds);
+                    }
                 }
                 Stmt::Enum { name, .. } => {
                     let enum_name = self.token_name(name);
@@ -31,40 +43,11 @@ impl<'a> JsSubsetEmitter<'a> {
                 _ => {}
             }
         }
-        // RFD 19: collect each trait's default method bodies (non-empty
-        // bodies only -- an abstract signature has nothing to fall back to
-        // and must always be overridden, conformance-checked separately)
-        // BEFORE the main pre-pass below processes any `impl` block. This
-        // has to be a fully separate, earlier pass, not folded into the
-        // loop underneath: a trait declared AFTER its impl in source order
-        // must still be visible when that impl needs its defaults, the
-        // exact same order-independence reasoning as the enum-impl fix
-        // (deka#71) directly below.
-        for stmt in program.statements {
-            if let Stmt::Trait { name, members, .. } = stmt {
-                let trait_name = self.token_name(name);
-                // Only members with a non-empty body are real defaults --
-                // an abstract signature (empty body) has nothing to fall
-                // back to and must always be overridden by the impl
-                // (conformance-checked separately in the typechecker).
-                // Filter to a fresh owned Vec first rather than zipping
-                // emit_struct_methods' output against `members` positionally
-                // -- ClassMember has non-Method variants too (Property,
-                // PropertyHook, ...), so a zip would silently misalign the
-                // moment a trait ever mixes member kinds.
-                let default_members: Vec<ClassMember<'_>> = members
-                    .iter()
-                    .copied()
-                    .filter(|m| matches!(m, ClassMember::Method { body, .. } if !body.is_empty()))
-                    .collect();
-                if !default_members.is_empty() {
-                    let defaults = self.emit_struct_methods(&default_members)?;
-                    self.trait_default_methods
-                        .entry(trait_name)
-                        .or_default()
-                        .extend(defaults);
-                }
-            }
+        // Second pass: collect DekaScript receiver methods so they can be
+        // emitted after every struct factory is declared, regardless of source
+        // order.
+        if self.meta.is_ds {
+            self.collect_ds_receiver_methods(program)?;
         }
         for stmt in program.statements {
             match stmt {
@@ -86,72 +69,6 @@ impl<'a> JsSubsetEmitter<'a> {
                 } => {
                     // Struct names are collected in the first pass above.
                 }
-                Stmt::Impl {
-                    trait_name,
-                    target,
-                    members,
-                    is_mut,
-                    ..
-                } => {
-                    // RFD 19 (deka#71): registering impl-provided methods
-                    // here, in the pre-pass, rather than when Stmt::Impl is
-                    // reached in the main emission loop below, is what
-                    // makes this order-independent -- an `impl` appearing
-                    // AFTER the `enum`/`struct` it targets must still be
-                    // visible when that declaration emits itself.
-                    let target_name = self.token_name(&target.parts[0]);
-                    let methods = self.emit_struct_methods(*members)?;
-                    let mut tagged_methods: Vec<(String, String, bool)> = methods
-                        .into_iter()
-                        .map(|(name, body)| (name, body, *is_mut))
-                        .collect();
-                    // RFD 19: a trait impl that doesn't override one of the
-                    // trait's default methods still needs that default's
-                    // body to actually be callable -- the typechecker
-                    // already allows this (a non-overridden default
-                    // satisfies conformance, see check_trait_conflicts),
-                    // but codegen was only ever emitting what the impl
-                    // block's own members provided, so `x.defaultMethod()`
-                    // threw "is not a function" at runtime even though
-                    // `deka check` passed clean. Merge in any trait default
-                    // whose name isn't already provided by this impl.
-                    if let Some(trait_name) = trait_name {
-                        let trait_key = self.token_name(&trait_name.parts[0]);
-                        if let Some(defaults) = self.trait_default_methods.get(&trait_key).cloned()
-                        {
-                            let provided: std::collections::HashSet<String> = tagged_methods
-                                .iter()
-                                .map(|(name, _, _)| name.clone())
-                                .collect();
-                            for (name, body) in defaults {
-                                if !provided.contains(&name) {
-                                    tagged_methods.push((name, body, false));
-                                }
-                            }
-                        }
-                    }
-                    if tagged_methods.is_empty() {
-                        continue;
-                    }
-                    if self.meta.is_ds && !self.enum_names.contains(&target_name) {
-                        // DekaScript structs register methods on the factory
-                        // via Point.impl({...}) / Point.implMut({...}). Collect
-                        // them here so the struct factory emission can merge
-                        // struct-defined and impl-defined methods
-                        // order-independently. Impls targeting enums stay on
-                        // the legacy registry.
-                        self.ds_impl_methods
-                            .entry(target_name)
-                            .or_default()
-                            .extend(tagged_methods);
-                    } else {
-                        // PHPX/enum path keeps the legacy globalThis registry.
-                        self.struct_methods
-                            .entry(target_name)
-                            .or_default()
-                            .extend(tagged_methods.into_iter().map(|(n, b, _)| (n, b)));
-                    }
-                }
                 _ => {}
             }
         }
@@ -169,6 +86,9 @@ impl<'a> JsSubsetEmitter<'a> {
             } else {
                 self.emit_stmt_to_main(*stmt)?;
             }
+        }
+        if self.meta.is_ds {
+            self.emit_ds_method_registrations()?;
         }
         self.emit_template_to_main()?;
         Ok(())
@@ -322,24 +242,23 @@ impl<'a> JsSubsetEmitter<'a> {
                     self.declare_in_scope(&struct_name);
 
                     // Struct-defined methods are immutable by default.
+                    // They are registered after all struct factories are
+                    // declared so that promoted/receiver methods are order-independent.
                     let struct_methods = self.emit_struct_methods(*members)?;
-                    let mut methods: Vec<(String, String, bool)> = struct_methods
+                    let ds_methods: Vec<DsMethod> = struct_methods
                         .into_iter()
-                        .map(|(name, body)| (name, body, false))
+                        .map(|(name, body)| DsMethod {
+                            name,
+                            body,
+                            is_mut: false,
+                        })
                         .collect();
-                    if let Some(impl_methods) = self.ds_impl_methods.remove(&struct_name) {
-                        let mut seen = std::collections::HashSet::new();
-                        for (name, body, _) in methods.iter().cloned() {
-                            seen.insert(name.clone());
-                            let _ = body;
-                        }
-                        for (name, body, is_mut) in impl_methods {
-                            if seen.insert(name.clone()) {
-                                methods.push((name, body, is_mut));
-                            }
-                        }
+                    if !ds_methods.is_empty() {
+                        self.ds_struct_methods
+                            .entry(struct_name.clone())
+                            .or_default()
+                            .extend(ds_methods);
                     }
-                    self.emit_ds_impl_calls(&struct_name, &methods)?;
                 } else {
                     let methods = self.emit_struct_methods(*members)?;
                     if !methods.is_empty() {
@@ -356,35 +275,9 @@ impl<'a> JsSubsetEmitter<'a> {
                 Err("class-like declarations are not supported in JS subset emitter".to_string())
             }
             Stmt::Trait { .. } => {
-                // DekaScript traits (RFD 19) are a compile-time contract only
-                // -- any Stmt::Trait reaching the emitter is the .ds meaning,
-                // since the legacy PHP meaning is already rejected earlier by
-                // validate_no_oop. Erased like an interface; `impl` blocks
-                // are what produce runtime methods.
-                Ok(())
-            }
-            Stmt::Impl {
-                trait_name: _,
-                target,
-                members: _,
-                ..
-            } => {
-                // PHPX/enum path: registration into self.struct_methods
-                // already happened in the pre-pass. This arm is pure erasure.
-                //
-                // DekaScript path: local struct factories already consumed
-                // their impl methods at the declaration site. If the target
-                // is not declared in this module (e.g. an imported struct),
-                // emit the impl call here.
-                if self.meta.is_ds {
-                    let target_name = self.token_name(&target.parts[0]);
-                    if !self.struct_names.contains(&target_name) {
-                        if let Some(methods) = self.ds_impl_methods.remove(&target_name) {
-                            self.uses_deka_struct_helpers = true;
-                            self.emit_ds_impl_calls(&target_name, &methods)?;
-                        }
-                    }
-                }
+                // Traits are no longer part of DekaScript (RFD 19 Phase 5);
+                // any trait declaration reaching the emitter is erased like an
+                // interface. PHP legacy `trait` parsing is retained elsewhere.
                 Ok(())
             }
             Stmt::Interface { .. } => {
@@ -497,6 +390,52 @@ impl<'a> JsSubsetEmitter<'a> {
                 self.pop_scope();
 
                 self.body.push_str("}\n\n");
+                Ok(())
+            }
+            Stmt::ReceiverMethod {
+                name,
+                is_async,
+                receiver,
+                params,
+                body,
+                ..
+            } => {
+                // DekaScript receiver methods are collected in a pre-pass and
+                // emitted after all struct factories are declared, so they are
+                // order-independent.
+                if self.meta.is_ds {
+                    return Ok(());
+                }
+                let method_name = self.token_name(name);
+                let receiver_name = self.token_name(receiver.var);
+                let receiver_type_name = match receiver.ty {
+                    AstType::Name(name) => self.name_last_segment(*name),
+                    AstType::Simple(tok) => self.token_name(tok),
+                    _ => {
+                        return Err(
+                            "receiver type must be a struct name in JS subset emitter".to_string(),
+                        )
+                    }
+                };
+                let js_params = std::iter::once(receiver_name)
+                    .chain(params.iter().map(|p| self.token_name(p.name)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let block = self.emit_receiver_method_block(receiver, params, body)?;
+                let async_kw = if *is_async { "async " } else { "" };
+                self.uses_deka_struct_helpers = true;
+                let func_expr = format!(
+                    "{}function {}({}) {{\n{} }}",
+                    async_kw, method_name, js_params, block
+                );
+                let reg_fn = if receiver.is_mut { "implMut" } else { "impl" };
+                self.body.push_str(&format!(
+                    "{}.{}({}, {});\n",
+                    receiver_type_name,
+                    reg_fn,
+                    json_string(&method_name),
+                    func_expr
+                ));
                 Ok(())
             }
             Stmt::If {
@@ -945,14 +884,12 @@ impl<'a> JsSubsetEmitter<'a> {
             }
         }
 
-        // RFD 19 (deka#71): fold in methods from `impl Trait for Enum` /
-        // `impl Enum { }`, registered into self.struct_methods by
-        // emit_program's pre-pass (order-independent -- the impl block may
-        // appear before or after this enum in source). Stored there as full
-        // `function(...) { ... }` expressions, so these become `key: value`
-        // entries rather than shorthand-method syntax; JS object literals
-        // permit freely mixing both forms, same as `__enum`/`__case` above
-        // already do.
+        // Fold in methods registered for this enum by PHPX struct/class
+        // parsing (not DekaScript impl blocks, which were removed in RFD 19
+        // Phase 5). Stored as full `function(...) { ... }` expressions so
+        // they become `key: value` entries rather than shorthand-method
+        // syntax; JS object literals permit freely mixing both forms, same as
+        // `__enum`/`__case` above already do.
         if let Some(impl_methods) = self.struct_methods.get(&enum_name) {
             for (name, func_text) in impl_methods.clone() {
                 method_srcs.push(format!("{}: {}", name, func_text));

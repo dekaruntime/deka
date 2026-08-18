@@ -43,7 +43,7 @@ fn ds_to_js(source: &str) -> Result<String, String> {
 
 #[test]
 fn ds_compiles_typed_bare_identifiers_dot_access_and_templates() {
-    let source = "const prefix = `hello`; function greet(user: Object): string { user.name; return `${prefix}`; }";
+    let source = "const prefix = `hello`; fn greet(user: Object): string { user.name; return `${prefix}`; }";
     let js = ds_to_js(source).expect("DekaScript should compile");
     assert!(js.contains("const prefix ="), "missing const: {js}");
     assert!(
@@ -75,7 +75,7 @@ fn ds_compiler_entry_selects_native_mode_from_extension() {
 #[test]
 fn ds_lowers_native_string_collection_and_for_of_primitives() {
     let source = r#"
-        export function joinWords(parts: Array<string>): string {
+        fn joinWords(parts: Array<string>): string {
             let output = "";
             for (const part of parts) {
                 output += part.slice(0, 1);
@@ -84,6 +84,7 @@ fn ds_lowers_native_string_collection_and_for_of_primitives() {
             const meta = { first: first, count: parts.length };
             return `${first}:${output}`;
         }
+        export { joinWords };
     "#;
     let js = crate::compile_phpx_source_to_js(
         source,
@@ -111,33 +112,35 @@ fn ds_lowers_native_string_collection_and_for_of_primitives() {
 }
 
 #[test]
-fn ds_allows_declared_array_function_calls() {
+fn ds_allows_declared_function_calls() {
     let source = r#"
-        export function array(value: mixed): void {
+        fn show(value: mixed): void {
             print(value);
         }
 
-        array(41);
+        export { show };
+        show(41);
     "#;
     let js = crate::compile_phpx_source_to_js(
         source,
-        "array.ds",
+        "show.ds",
         crate::parse_source_module_meta(source),
     )
-    .expect("a declared DekaScript array function should be callable");
+    .expect("a declared DekaScript function should be callable");
     assert!(
-        js.contains("function array(value)"),
+        js.contains("function show(value)"),
         "missing function: {js}"
     );
-    assert!(js.contains("array(41)"), "missing function call: {js}");
+    assert!(js.contains("show(41)"), "missing function call: {js}");
 }
 
 #[test]
 fn ds_generic_variadic_identity_preserves_all_rest_values() {
     let source = r#"
-        export function collect(...values: Array<mixed>): Array<mixed> {
+        fn collect(...values: Array<mixed>): Array<mixed> {
             return values;
         }
+        export { collect };
     "#;
     let js = crate::compile_phpx_source_to_js(
         source,
