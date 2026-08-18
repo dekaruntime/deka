@@ -48,11 +48,11 @@
     "expectStdout": "no email\n"
   },
   {
-    "name": "option required field missing",
-    "file": "option-required-field.ds",
-    "expectCompile": false,
-    "expectError": "Missing required field 'email'",
-    "xfail": "Explicit Option<T> struct fields are currently treated as optional; should be required per RFD 19 design."
+    "name": "option explicit type omitted",
+    "file": "option-explicit-type-omitted.ds",
+    "expectCompile": true,
+    "expectStdout": "no email\n",
+    "xfail": "Explicit Option<T> struct fields compile when omitted but are left undefined at runtime instead of being initialized to Option.None."
   },
   {
     "name": "match expressions",
