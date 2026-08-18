@@ -830,7 +830,7 @@ mod tests {
             std::env::set_var("PHPX_STRICT_ASYNC_SUSPENSE", "1");
         }
         let source = r#"
-async function Card($props: Object<{ label: string }>): Promise<VNode> {
+async function Card($props: Object<{ label: string }>): Promise<Component> {
     return <div>{$props.label}</div>
 }
 <div><Card label="x" /></div>
@@ -855,7 +855,7 @@ async function Card($props: Object<{ label: string }>): Promise<VNode> {
     #[test]
     fn suspense_with_fallback_allows_async_component() {
         let source = r#"
-async function Card($props: Object<{ label: string }>): Promise<VNode> {
+async function Card($props: Object<{ label: string }>): Promise<Component> {
     return <div>{$props.label}</div>
 }
 <Suspense fallback={<div>Loading</div>}>
