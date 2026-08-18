@@ -254,7 +254,68 @@ function printResults(results) {
   return failed === 0 && xpassed === 0;
 }
 
+function parseArgs(argv) {
+  const args = { list: false, filter: null, help: false };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--list" || arg === "-l") {
+      args.list = true;
+    } else if (arg === "--filter" || arg === "-f") {
+      args.filter = argv[++i] || "";
+    } else if (arg === "--help" || arg === "-h") {
+      args.help = true;
+    }
+  }
+  return args;
+}
+
+function printUsage() {
+  console.log(`usage: bun run.mjs [options]
+
+options:
+  -l, --list           List all fixtures and exit
+  -f, --filter <glob>  Run only fixtures whose name matches the substring
+  -h, --help           Show this help
+
+examples:
+  bun tests/runtime-suite/run.mjs
+  bun tests/runtime-suite/run.mjs --list
+  bun tests/runtime-suite/run.mjs --filter structs`);
+}
+
+function listFixtures(fixtures) {
+  console.log("\nDekaScript runtime fixtures:");
+  for (const fixture of fixtures) {
+    const xfail = fixture.xfail ? " [xfail]" : "";
+    console.log(`  - ${fixture.name}${xfail}`);
+  }
+  console.log(`\nTotal: ${fixtures.length}`);
+}
+
 async function main() {
+  const args = parseArgs(process.argv.slice(2));
+
+  if (args.help) {
+    printUsage();
+    process.exit(0);
+  }
+
+  const fixtures = JSON.parse(await readFile(fixturesJsonPath, "utf-8"));
+
+  if (args.list) {
+    listFixtures(fixtures);
+    process.exit(0);
+  }
+
+  const filtered = args.filter
+    ? fixtures.filter((f) => f.name.toLowerCase().includes(args.filter.toLowerCase()))
+    : fixtures;
+
+  if (filtered.length === 0) {
+    console.error(`error: no fixtures match filter "${args.filter}"`);
+    process.exit(1);
+  }
+
   const cliBinary = findCliBinary();
   if (!cliBinary) {
     console.error("error: could not find deka CLI binary (build with: cd runtime && cargo build --release -p cli)");
@@ -267,7 +328,6 @@ async function main() {
     process.exit(1);
   }
 
-  const fixtures = JSON.parse(await readFile(fixturesJsonPath, "utf-8"));
   const wasmExports = await loadWasmArtifact(wasmArtifact);
 
   // Validate required ABI exports.
@@ -279,7 +339,7 @@ async function main() {
   }
 
   const results = [];
-  for (const fixture of fixtures) {
+  for (const fixture of filtered) {
     results.push(await runFixture(fixture, cliBinary, wasmExports));
   }
 

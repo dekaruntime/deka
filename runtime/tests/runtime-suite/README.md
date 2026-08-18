@@ -31,6 +31,17 @@ The harness picks the newest `deka_compiler.wasm` it can find between
 `target/wasm32-unknown-unknown/release/phpx_compiler_wasm.wasm` and
 `dist/deka-compiler-wasm/deka_compiler.wasm`.
 
+## Running a subset of fixtures
+
+```bash
+# List every fixture currently registered
+bun tests/runtime-suite/run.mjs --list
+
+# Run only fixtures matching a substring
+bun tests/runtime-suite/run.mjs --filter structs
+bun tests/runtime-suite/run.mjs --filter option
+```
+
 ## Adding a fixture
 
 1. Create a `.ds` file in `fixtures/`.
@@ -42,20 +53,27 @@ The harness picks the newest `deka_compiler.wasm` it can find between
    - `expectError` — substring expected in diagnostics when compilation fails
    - `xfail` — optional reason the test is currently expected to fail
 
+A good workflow when you find a weird tour example: copy the source from the
+website into a new `fixtures/<name>.ds` file, set `expectCompile: true` and the
+expected output, and run the suite. If it fails on `main`, you have a minimal
+reproduction before the bug ever reaches the website.
+
 ## Fixture coverage
 
-- `hello` — basic console output
-- `typed-functions` — `fn` declarations and type annotations
-- `structs` — struct definitions and literals
-- `struct-methods` — methods declared on structs
-- `embedding` — Go-style struct embedding with method promotion
-- `enums` — enum declarations and `match`
-- `option-and-result` — builtin `Option`/`Result` globals and unqualified `Some`/`None`
-- `optional-field-shorthand` — `T?` optional struct fields
-- `option-required-field-missing` — explicit `Option<T>` fields should be required (currently xfail)
-- `match-expressions` — literal pattern matching
-- `async-await` — async functions
-- `jsx` — component rendering
-- `interfaces` — structural interface satisfaction
-- `unsafe-runtime-helper` — `unsafe { ... }` blocks
-- `utility-classes` — class strings on JSX elements
+| Fixture | What it exercises | Status |
+|---|---|---|
+| `hello` | basic console output | ✓ |
+| `typed-functions` | `fn` declarations and type annotations | ✓ |
+| `structs` | struct definitions and literals | ✓ |
+| `struct-methods` | methods declared on structs | ✓ |
+| `embedding` | Go-style struct embedding with method promotion | ✓ |
+| `enums` | enum declarations and `match` | ✓ |
+| `option-and-result` | builtin `Option`/`Result` globals and unqualified `Some`/`None` | ✓ |
+| `optional-field-shorthand` | `T?` optional struct fields | ✓ |
+| `option-explicit-type-omitted` | explicit `Option<T>` field omitted defaults to `None` | xfail — left `undefined` at runtime |
+| `match-expressions` | literal pattern matching | ✓ |
+| `async-await` | async functions | ✓ |
+| `jsx` | component rendering | ✓ |
+| `interfaces` | structural interface satisfaction | ✓ |
+| `unsafe-runtime-helper` | `unsafe { ... }` blocks | ✓ |
+| `utility-classes` | class strings on JSX elements | ✓ |
