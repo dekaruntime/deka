@@ -601,6 +601,11 @@ impl<'a> JsSubsetEmitter<'a> {
                                     json_string(&field.name),
                                     field.name
                                 ));
+                            } else if field.optional {
+                                entries.push(format!(
+                                    "{}: Option.None",
+                                    json_string(&field.name)
+                                ));
                             }
                         }
                     }

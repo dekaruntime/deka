@@ -65,6 +65,20 @@ impl WorkerThread {
                     };
                 }
 
+                if (typeof globalThis.Option === 'undefined') {
+                    globalThis.Option = Object.freeze({
+                        Some: (value) => Object.freeze({ __enum: "Option", __case: "Some", value }),
+                        None: Object.freeze({ __enum: "Option", __case: "None" })
+                    });
+                }
+
+                if (typeof globalThis.Result === 'undefined') {
+                    globalThis.Result = Object.freeze({
+                        Ok: (value) => Object.freeze({ __enum: "Result", __case: "Ok", value }),
+                        Err: (error) => Object.freeze({ __enum: "Result", __case: "Err", error })
+                    });
+                }
+
                 if (!globalThis.TextEncoder) {
                     globalThis.TextEncoder = class TextEncoder {
                         encode(input) {

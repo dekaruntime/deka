@@ -2159,18 +2159,8 @@ const p = Person { name: "Ada" }
         .find(|l| l.contains("const p ="))
         .expect("struct literal declaration line");
     assert!(
-        obj_line.contains(r#"const p = deka.freeze(Person({"name": "Ada"}))"#),
-        "expected struct literal without omitted optional keys, got:\n{}",
-        obj_line
-    );
-    assert!(
-        !obj_line.contains("undefined"),
-        "omitted optional fields must not emit undefined keys, got:\n{}",
-        obj_line
-    );
-    assert!(
-        !obj_line.contains("nickname"),
-        "omitted optional field must not appear in emitted literal, got:\n{}",
+        obj_line.contains(r#"const p = deka.freeze(Person({"name": "Ada", "nickname": Option.None}))"#),
+        "expected struct literal with omitted optional fields defaulting to Option.None, got:\n{}",
         obj_line
     );
 }
