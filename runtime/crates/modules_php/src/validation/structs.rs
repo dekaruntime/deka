@@ -108,7 +108,7 @@ fn collect_struct_definitions(program: &Program, source: &str) -> HashMap<String
                         ));
                     }
                     for entry in *entries {
-                        handle_struct_field(entry, &struct_name, &mut fields, source, &mut errors);
+                        handle_struct_field(entry, *ty, &struct_name, &mut fields, source, &mut errors);
                     }
                 }
                 ClassMember::PropertyHook {
@@ -134,7 +134,7 @@ fn collect_struct_definitions(program: &Program, source: &str) -> HashMap<String
                         is_mut: false,
                         span: *span,
                     };
-                    handle_struct_field(&entry, &struct_name, &mut fields, source, &mut errors);
+                    handle_struct_field(&entry, *ty, &struct_name, &mut fields, source, &mut errors);
                 }
                 ClassMember::Embed { types, span, .. } => {
                     for ty in *types {
@@ -172,8 +172,27 @@ fn collect_struct_definitions(program: &Program, source: &str) -> HashMap<String
     defs
 }
 
+fn type_is_option(ty: Option<&php_rs::parser::ast::Type>, source: &str) -> bool {
+    let Some(ty) = ty else { return false };
+    match ty {
+        php_rs::parser::ast::Type::Option(_) => true,
+        php_rs::parser::ast::Type::Nullable(_) => true,
+        php_rs::parser::ast::Type::Applied { base, .. } => {
+            if let php_rs::parser::ast::Type::Name(name) = *base {
+                name_to_string(name, source)
+                    .map(|n| n.eq_ignore_ascii_case("Option"))
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
 fn handle_struct_field(
     entry: &PropertyEntry,
+    ty: Option<&php_rs::parser::ast::Type>,
     struct_name: &str,
     fields: &mut HashMap<String, StructFieldInfo>,
     source: &str,
@@ -214,7 +233,7 @@ fn handle_struct_field(
         StructFieldInfo {
             kind: FieldKind::Regular,
             has_default: entry.default.is_some(),
-            optional: entry.optional,
+            optional: entry.optional || type_is_option(ty, source),
             span: entry.span,
         },
     );
