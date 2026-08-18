@@ -504,7 +504,7 @@ dependencies = [
 
 [[package]]
 name = "bundler"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -737,7 +737,7 @@ dependencies = [
 
 [[package]]
 name = "cli"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "bumpalo",
@@ -808,7 +808,7 @@ dependencies = [
 
 [[package]]
 name = "compile"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "core",
@@ -899,7 +899,7 @@ dependencies = [
 
 [[package]]
 name = "core"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1119,7 +1119,7 @@ dependencies = [
 
 [[package]]
 name = "cypher"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "nom 7.1.3",
 ]
@@ -1237,7 +1237,7 @@ dependencies = [
 
 [[package]]
 name = "deka-dns"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -1257,7 +1257,7 @@ dependencies = [
 
 [[package]]
 name = "deka-edge-publisher"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1273,7 +1273,7 @@ dependencies = [
 
 [[package]]
 name = "deka-fmt"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "dprint-core",
  "dprint-plugin-typescript",
@@ -1281,7 +1281,7 @@ dependencies = [
 
 [[package]]
 name = "deka-router"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "axum",
  "bytes",
@@ -1295,7 +1295,7 @@ dependencies = [
 
 [[package]]
 name = "deka-shard"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1311,7 +1311,7 @@ dependencies = [
 
 [[package]]
 name = "deka-wasm-guest"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "deka-wasm-guest-macros",
  "serde",
@@ -1320,7 +1320,7 @@ dependencies = [
 
 [[package]]
 name = "deka-wasm-guest-macros"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1329,7 +1329,7 @@ dependencies = [
 
 [[package]]
 name = "deka_http"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -1355,7 +1355,7 @@ dependencies = [
 
 [[package]]
 name = "deka_wasm_hello"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "deka-wasm-guest",
  "serde_json",
@@ -1363,7 +1363,7 @@ dependencies = [
 
 [[package]]
 name = "dekascript_lsp"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "bumpalo",
@@ -1377,7 +1377,7 @@ dependencies = [
 
 [[package]]
 name = "dekascript_lsp_wasm"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "dekascript_lsp",
  "serde",
@@ -1866,7 +1866,7 @@ dependencies = [
 
 [[package]]
 name = "engine"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "deno_core",
  "pool",
@@ -2823,7 +2823,7 @@ dependencies = [
 
 [[package]]
 name = "introspect"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "core",
  "runtime",
@@ -3129,7 +3129,7 @@ checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 
 [[package]]
 name = "loop"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "chrono",
  "core",
@@ -3317,7 +3317,7 @@ dependencies = [
 
 [[package]]
 name = "modules_common"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "deno_core",
  "deno_permissions",
@@ -3326,7 +3326,7 @@ dependencies = [
 
 [[package]]
 name = "modules_php"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -4132,7 +4132,7 @@ dependencies = [
 
 [[package]]
 name = "php-rs"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "base64 0.21.7",
@@ -4168,7 +4168,7 @@ dependencies = [
 
 [[package]]
 name = "phpx_compiler_wasm"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "bumpalo",
  "deka-fmt",
@@ -4180,7 +4180,7 @@ dependencies = [
 
 [[package]]
 name = "phpx_js"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "bumpalo",
  "modules_php",
@@ -4243,14 +4243,14 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "platform"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
 ]
 
 [[package]]
 name = "platform_browser"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "platform",
@@ -4259,7 +4259,7 @@ dependencies = [
 
 [[package]]
 name = "platform_server"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "deno_core",
@@ -4274,7 +4274,7 @@ dependencies = [
 
 [[package]]
 name = "pm"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -4307,7 +4307,7 @@ dependencies = [
 
 [[package]]
 name = "pool"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "core_affinity",
  "deka-shard",
@@ -5074,7 +5074,7 @@ dependencies = [
 
 [[package]]
 name = "runtime"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "axum",
  "base64 0.21.7",
@@ -5106,7 +5106,7 @@ dependencies = [
 
 [[package]]
 name = "runtime_core"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "seam_ir",
  "serde",
@@ -5371,14 +5371,14 @@ checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
 
 [[package]]
 name = "seam_diff"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "seam_ir",
 ]
 
 [[package]]
 name = "seam_ir"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -5386,7 +5386,7 @@ dependencies = [
 
 [[package]]
 name = "seam_ts"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "seam_ir",
  "serde_json",
@@ -5792,7 +5792,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "stdio"
-version = "0.17.0"
+version = "0.18.0"
 
 [[package]]
 name = "strck"
@@ -6585,7 +6585,7 @@ dependencies = [
 
 [[package]]
 name = "tana-cli-core"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "reqwest 0.12.28",
  "serde",
@@ -7159,7 +7159,7 @@ dependencies = [
 
 [[package]]
 name = "transport"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "axum",
  "deka_http",
@@ -7570,7 +7570,7 @@ dependencies = [
 
 [[package]]
 name = "wasm_cli"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "core",
  "serde_json",
@@ -7982,7 +7982,7 @@ dependencies = [
 
 [[package]]
 name = "wit-phpx"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "wit-parser",
@@ -8043,7 +8043,7 @@ dependencies = [
 
 [[package]]
 name = "zega-core"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "base64 0.22.1",
  "bincode",
@@ -8065,7 +8065,7 @@ dependencies = [
 
 [[package]]
 name = "zega-graph"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "serde",
  "zega-parser",
@@ -8073,7 +8073,7 @@ dependencies = [
 
 [[package]]
 name = "zega-kv"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "dashmap 6.2.1",
  "serde",
@@ -8083,7 +8083,7 @@ dependencies = [
 
 [[package]]
 name = "zega-parser"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "serde",
  "thiserror 1.0.69",
@@ -8091,7 +8091,7 @@ dependencies = [
 
 [[package]]
 name = "zega-wal"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "bincode",
  "crc32fast",
@@ -8105,7 +8105,7 @@ dependencies = [
 
 [[package]]
 name = "zega_backend"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "deno_core",
  "serde_json",
