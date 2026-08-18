@@ -18,8 +18,9 @@ use deno_error::JsErrorBox;
 
 use phpx_js::SourceModuleMeta;
 use phpx_js::build_stdlib_prelude;
-use phpx_js::compile_phpx_source_to_js;
+use phpx_js::compile_phpx_source_to_js_with_warnings_detailed;
 use phpx_js::parse_source_module_meta;
+use phpx_js::{CompileError, DEKA_VALIDATION_ERROR_MARKER};
 use runtime_core::module_spec::{is_bare_module_specifier, module_spec_aliases};
 
 #[derive(Clone)]
@@ -104,9 +105,22 @@ impl PhpxEsmLoader {
             JsErrorBox::generic(format!("Failed to read {}: {}", path.display(), err))
         })?;
         let meta = parse_source_module_meta(&source);
+        // Validate the source before checking project layout so syntax/type
+        // errors surface immediately instead of being blocked by a missing
+        // deka.lock or php_modules/ directory (dekaruntime/deka#117).
+        let js = match compile_phpx_source_to_js_with_warnings_detailed(&source, input, meta.clone()) {
+            Ok(outcome) => outcome.js,
+            Err(CompileError::Validation { diagnostics }) => {
+                return Err(JsErrorBox::generic(format!(
+                    "{}{}",
+                    DEKA_VALIDATION_ERROR_MARKER, diagnostics
+                )));
+            }
+            Err(CompileError::Other(msg)) => {
+                return Err(JsErrorBox::generic(msg));
+            }
+        };
         ensure_project_layout(&self.project_root, &meta).map_err(|err| JsErrorBox::generic(err))?;
-        let js = compile_phpx_source_to_js(&source, input, meta)
-            .map_err(|err| JsErrorBox::generic(err))?;
 
         let cache_path = self.cache_path_for(path);
         if let Some(parent) = cache_path.parent() {

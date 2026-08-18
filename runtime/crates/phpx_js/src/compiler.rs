@@ -5,6 +5,50 @@ use modules_php::validation::{format_multiple_errors, format_validation_warning}
 use php_rs::parser::ast::Program;
 use std::path::Path;
 
+/// Marker that lets runtime callers distinguish a pre-rendered validation
+/// report from a low-level runtime error. The marker is stripped before the
+/// report is printed to stdout/stderr.
+pub const DEKA_VALIDATION_ERROR_MARKER: &str = "DEKA_VALIDATION_ERROR:";
+
+/// A compile failure that carries enough context for callers to decide how to
+/// present it. Validation errors are already rendered with file/line/column
+/// diagnostics; other errors are plain strings from IO, project-layout, or
+/// emitter failures.
+#[derive(Debug, Clone)]
+pub enum CompileError {
+    Validation { diagnostics: String },
+    Other(String),
+}
+
+impl std::fmt::Display for CompileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CompileError::Validation { diagnostics } => write!(f, "{}", diagnostics),
+            CompileError::Other(msg) => write!(f, "{}", msg),
+        }
+    }
+}
+
+impl std::error::Error for CompileError {}
+
+impl CompileError {
+    /// True if this error is a rendered validation diagnostic.
+    pub fn is_validation(&self) -> bool {
+        matches!(self, CompileError::Validation { .. })
+    }
+
+    /// True if the error text begins with the validation marker.
+    pub fn from_marked_string(s: String) -> Self {
+        if let Some(rest) = s.strip_prefix(DEKA_VALIDATION_ERROR_MARKER) {
+            CompileError::Validation {
+                diagnostics: rest.to_string(),
+            }
+        } else {
+            CompileError::Other(s)
+        }
+    }
+}
+
 /// Result of a successful compile that also carries warning-severity
 /// diagnostics (deka#59). `deka build`'s exit-code path does not use this --
 /// see `compile_phpx_source_to_js` below, which is untouched and still
@@ -36,8 +80,19 @@ pub fn compile_phpx_source_to_js(
 pub fn compile_phpx_source_to_js_with_warnings(
     source: &str,
     input: &str,
-    mut meta: SourceModuleMeta,
+    meta: SourceModuleMeta,
 ) -> Result<CompileOutcome, String> {
+    compile_phpx_source_to_js_with_warnings_detailed(source, input, meta)
+        .map_err(|err| err.to_string())
+}
+
+/// Detailed compile API that distinguishes validation diagnostics from other
+/// failures. Prefer this in new callers that need to present rich errors.
+pub fn compile_phpx_source_to_js_with_warnings_detailed(
+    source: &str,
+    input: &str,
+    mut meta: SourceModuleMeta,
+) -> Result<CompileOutcome, CompileError> {
     let arena = Bump::new();
     let path = Path::new(input);
     let is_ds = path.extension().and_then(|ext| ext.to_str()) == Some("ds");
@@ -51,7 +106,7 @@ pub fn compile_phpx_source_to_js_with_warnings(
     };
     if !result.errors.is_empty() {
         let formatted = format_multiple_errors(source, input, &result.errors, &result.warnings);
-        return Err(formatted);
+        return Err(CompileError::Validation { diagnostics: formatted });
     }
 
     let warnings: Vec<String> = result

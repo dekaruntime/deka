@@ -1,7 +1,9 @@
 use bundler::{BuildOptions, VirtualSource, bundle_virtual_entry};
 use core::{CommandSpec, Context, ParamSpec, Registry};
-use phpx_js::{SourceModuleMeta, compile_phpx_source_to_js, parse_source_module_meta};
+use phpx_js::{SourceModuleMeta, parse_source_module_meta};
 use runtime_core::module_spec::module_spec_aliases;
+
+use crate::compile_helper::compile_js_or_report;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -634,7 +636,7 @@ fn validate_app_dir_sources(app_dir: &Path) -> Result<(), String> {
         let source = fs::read_to_string(&path)
             .map_err(|err| format!("failed to read {}: {}", path.display(), err))?;
         let meta = parse_source_module_meta(&source);
-        compile_phpx_source_to_js(&source, input, meta)
+        compile_js_or_report(&source, input, meta)
             .map_err(|err| format!("{}: {}", path.display(), err))?;
     }
     Ok(())
@@ -888,10 +890,13 @@ fn build_single_file_to_string(input_path: &Path) -> Result<JsBuildOutput, Strin
         .map_err(|err| format!("failed to read {}: {}", input_path.display(), err))?;
     let meta = parse_source_module_meta(&source);
 
+    // Validate the source before checking project layout so that syntax/type
+    // errors are surfaced immediately instead of being blocked by a missing
+    // deka.lock or php_modules/ directory (dekaruntime/deka#117).
+    let js = compile_js_or_report(&source, input, meta.clone())?;
+
     let project_root = resolve_project_root(input_path)?;
     ensure_project_layout(&project_root, &meta)?;
-
-    let js = compile_phpx_source_to_js(&source, input, meta.clone())?;
 
     Ok(JsBuildOutput {
         js,
@@ -930,7 +935,7 @@ impl VirtualSource for PhpxProvider {
         let source =
             fs::read_to_string(path).map_err(|err| format!("failed to read {}: {}", input, err))?;
         let meta = parse_source_module_meta(&source);
-        let js = compile_phpx_source_to_js(&source, input, meta)?;
+        let js = compile_js_or_report(&source, input, meta)?;
         Ok(Some(js))
     }
 }

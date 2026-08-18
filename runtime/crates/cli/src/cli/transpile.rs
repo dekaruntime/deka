@@ -1,7 +1,9 @@
 use bundler::{BuildOptions, VirtualSource, bundle_virtual_entry, optimize_emitted_module};
 use core::{CommandSpec, Context, ParamSpec, Registry};
-use phpx_js::{compile_phpx_source_to_js, parse_source_module_meta};
+use phpx_js::parse_source_module_meta;
 use std::collections::BTreeSet;
+
+use crate::compile_helper::compile_js_or_report;
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
@@ -129,14 +131,16 @@ fn transpile_file(
     if output == input {
         return Err("output path must differ from the .ds input path".to_string());
     }
-    let mappings = vec![(input.to_path_buf(), output.clone())];
-    let root = SecureOutputRoot::open_or_create(output_root_parent(&output))?;
-    let mut destinations = preflight_outputs(&root, &mappings)?;
+    // Validate the source before checking output-directory security so that
+    // syntax/type errors are surfaced immediately (dekaruntime/deka#117).
     let js = if mode == TranspileMode::Bundle {
         build_bundle(input, treeshake)?
     } else {
         build_module(input, &output, treeshake)?
     };
+    let mappings = vec![(input.to_path_buf(), output.clone())];
+    let root = SecureOutputRoot::open_or_create(output_root_parent(&output))?;
+    let mut destinations = preflight_outputs(&root, &mappings)?;
     commit_outputs(
         &root,
         vec![OutputPlan {
@@ -172,10 +176,12 @@ fn transpile_directory(
                 return Err("directory --bundle --out must name a .js file".to_string());
             }
             let entry = directory_entry(input, &sources)?;
+            // Validate the entry before checking output-directory security so
+            // that syntax/type errors surface first (dekaruntime/deka#117).
+            let js = build_bundle(&entry, treeshake)?;
             let root = SecureOutputRoot::open_or_create(output_root_parent(output))?;
             let mut destinations =
                 preflight_outputs(&root, &[(entry.clone(), output.to_path_buf())])?;
-            let js = build_bundle(&entry, treeshake)?;
             commit_outputs(
                 &root,
                 vec![OutputPlan {
@@ -205,6 +211,11 @@ fn transpile_directory(
                         .map_err(|_| "failed to preserve source tree".to_string())
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            // Validate every source before checking output-directory security so
+            // that syntax/type errors surface first (dekaruntime/deka#117).
+            for source in &sources {
+                compile_source(source)?;
+            }
             let root = SecureOutputRoot::open_or_create(&output_root)?;
             let destinations = preflight_outputs(&root, &mappings)?;
             let plans = mappings
@@ -291,7 +302,7 @@ fn compile_source(input: &Path) -> Result<String, String> {
     // emitter metadata while excluding only those frontmatter declarations
     // from package validation; the bundler/runtime resolves them as files.
     let validation_source = mask_relative_frontmatter_imports(&source);
-    compile_phpx_source_to_js(&validation_source, input_name, meta)
+    compile_js_or_report(&validation_source, input_name, meta)
 }
 
 fn mask_relative_frontmatter_imports(source: &str) -> String {

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use wasm_cli as wasm_cmd;
 
 pub mod cli;
+pub mod compile_helper;
 
 pub fn build_registry() -> Registry {
     let mut registry = Registry::new();
