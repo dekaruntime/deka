@@ -4,7 +4,5 @@ version = "0.15.1"
 edition = "2021"
 
 [dependencies]
-swc_common = { workspace = true }
-swc_ecma_ast = { workspace = true }
-swc_ecma_parser = { workspace = true, features = ["typescript"] }
-swc_ecma_codegen = "21.0.0"
+dprint-core = "0.67.4"
+dprint-plugin-typescript = "0.96.1"
