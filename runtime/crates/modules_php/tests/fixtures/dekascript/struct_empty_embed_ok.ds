@@ -1,0 +1,13 @@
+struct Runner {
+}
+
+fn (r Runner) Move(): string {
+    return "running"
+}
+
+struct Thing {
+    Runner
+    name: string
+}
+
+const t = Thing { name: "x" }

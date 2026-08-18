@@ -37,6 +37,10 @@ impl TypeSyntaxValidator<'_> {
                     "Use Option<T> instead of ?T or T|null.",
                 );
             }
+            Type::Option(inner) => {
+                // DekaScript `T?` is sugar for `Option<T>`; recurse into the inner type.
+                self.check_type(inner);
+            }
             Type::Union(types) => {
                 if types.iter().any(is_null_type) {
                     self.push_error(
@@ -144,6 +148,7 @@ fn type_span(ty: &Type) -> Span {
             types.first().map(type_span).unwrap_or_default()
         }
         Type::Nullable(inner) => type_span(inner),
+        Type::Option(inner) => type_span(inner),
         Type::ObjectShape(fields) => fields.first().map(|field| field.span).unwrap_or_default(),
         Type::Applied { base, .. } => type_span(base),
     }

@@ -183,6 +183,7 @@ impl<'a> JsSubsetEmitter<'a> {
                 .cloned()
                 .unwrap_or_default();
             let mut seen: HashSet<String> = methods.iter().map(|m| m.name.clone()).collect();
+            let ambiguous = self.compute_ambiguous_promoted_methods(&struct_name);
             let mut visited = HashSet::new();
             if let Some(embeds) = self.struct_embeds.get(&struct_name).cloned() {
                 for embed in embeds {
@@ -193,6 +194,7 @@ impl<'a> JsSubsetEmitter<'a> {
                         &mut methods,
                         &mut seen,
                         &mut visited,
+                        &ambiguous,
                     )?;
                 }
             }
@@ -238,6 +240,7 @@ impl<'a> JsSubsetEmitter<'a> {
         out: &mut Vec<DsMethod>,
         seen: &mut HashSet<String>,
         visited: &mut HashSet<String>,
+        ambiguous: &HashSet<String>,
     ) -> Result<(), String> {
         if !visited.insert(embed.to_string()) {
             return Ok(());
@@ -253,6 +256,13 @@ impl<'a> JsSubsetEmitter<'a> {
             .cloned()
             .collect();
         for method in embed_methods {
+            if ambiguous.contains(&method.name) {
+                return Err(format!(
+                    "Ambiguous promoted method '{}' from embedded struct '{}'; \
+                     override it on the outer struct or qualify the call",
+                    method.name, embed
+                ));
+            }
             if !seen.insert(method.name.clone()) {
                 continue;
             }
@@ -268,11 +278,72 @@ impl<'a> JsSubsetEmitter<'a> {
         }
         if let Some(embeds) = self.struct_embeds.get(embed) {
             for next in embeds.clone() {
-                self.collect_promoted_ds_methods(&next, path, out, seen, visited)?;
+                self.collect_promoted_ds_methods(&next, path, out, seen, visited, ambiguous)?;
             }
         }
         path.pop();
         Ok(())
+    }
+
+    fn compute_ambiguous_promoted_methods(&self, struct_name: &str) -> HashSet<String> {
+        let mut origins: HashMap<String, Vec<String>> = HashMap::new();
+        if let Some(embeds) = self.struct_embeds.get(struct_name).cloned() {
+            for embed in embeds {
+                let mut visited = HashSet::new();
+                self.collect_promoted_method_origins(&embed, &embed, &mut origins, &mut visited);
+            }
+        }
+        let own: HashSet<String> = self
+            .ds_struct_methods
+            .get(struct_name)
+            .into_iter()
+            .flatten()
+            .map(|m| m.name.clone())
+            .chain(
+                self.ds_receiver_methods
+                    .get(struct_name)
+                    .into_iter()
+                    .flatten()
+                    .map(|m| m.name.clone()),
+            )
+            .collect();
+        origins
+            .iter()
+            .filter(|(_, sources)| sources.len() > 1)
+            .map(|(name, _)| name.clone())
+            .filter(|name| !own.contains(name))
+            .collect()
+    }
+
+    fn collect_promoted_method_origins(
+        &self,
+        top_embed: &str,
+        embed: &str,
+        origins: &mut HashMap<String, Vec<String>>,
+        visited: &mut HashSet<String>,
+    ) {
+        if !visited.insert(embed.to_string()) {
+            return;
+        }
+        let embed_methods: Vec<DsMethod> = self
+            .ds_struct_methods
+            .get(embed)
+            .into_iter()
+            .flatten()
+            .chain(self.ds_receiver_methods.get(embed).into_iter().flatten())
+            .cloned()
+            .collect();
+        for method in embed_methods {
+            origins
+                .entry(method.name.clone())
+                .or_default()
+                .push(top_embed.to_string());
+        }
+        if let Some(embeds) = self.struct_embeds.get(embed) {
+            for next in embeds.clone() {
+                self.collect_promoted_method_origins(top_embed, &next, origins, visited);
+            }
+        }
     }
 
     pub(super) fn emit_type_schema(&self, ty: &AstType<'_>) -> (String, bool) {
@@ -286,6 +357,13 @@ impl<'a> JsSubsetEmitter<'a> {
             },
             AstType::Name(_) => ("{ kind: 'object' }".to_string(), false),
             AstType::Nullable(inner) => {
+                let (inner_schema, _) = self.emit_type_schema(inner);
+                (
+                    format!("{{ kind: 'optional', inner: {} }}", inner_schema),
+                    true,
+                )
+            }
+            AstType::Option(inner) => {
                 let (inner_schema, _) = self.emit_type_schema(inner);
                 (
                     format!("{{ kind: 'optional', inner: {} }}", inner_schema),

@@ -1,0 +1,17 @@
+struct Runner {
+}
+
+fn (r Runner) Move(): string {
+    return "embed"
+}
+
+struct Thing {
+    Runner
+}
+
+fn (t Thing) Move(): string {
+    return "outer"
+}
+
+const t = Thing {}
+const out = t.Move()

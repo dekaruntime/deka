@@ -1073,6 +1073,7 @@ pub(crate) fn format_type(ty: &Type, source: &[u8]) -> String {
             out.push('>');
             out
         }
+        Type::Option(inner) => format!("Option<{}>", format_type(inner, source)),
     }
 }
 

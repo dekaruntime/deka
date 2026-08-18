@@ -1,0 +1,10 @@
+struct Runner {
+    speed: int
+}
+
+struct Thing {
+    Runner
+    name: string
+}
+
+const t = Thing { name: "x" }

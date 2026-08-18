@@ -1,6 +1,6 @@
 // Representative native DekaScript stdlib slice: bindings, strings, lists,
 // object literals, indexing, iteration, and explicit return values.
-export function initials(parts: Array<string>): string {
+export fn initials(parts: Array<string>): string {
     let output = "";
     for (const part of parts) {
         output += part.slice(0, 1);

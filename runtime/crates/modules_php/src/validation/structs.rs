@@ -32,9 +32,17 @@ pub fn validate_struct_literals(program: &Program, source: &str) -> Vec<Validati
     validator.errors
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FieldKind {
+    Regular,
+    Embed,
+}
+
 #[derive(Debug, Clone)]
 struct StructFieldInfo {
+    kind: FieldKind,
     has_default: bool,
+    optional: bool,
     span: Span,
 }
 
@@ -145,7 +153,9 @@ fn collect_struct_definitions(program: &Program, source: &str) -> HashMap<String
                             fields.insert(
                                 name_str.clone(),
                                 StructFieldInfo {
+                                    kind: FieldKind::Embed,
                                     has_default: false,
+                                    optional: false,
                                     span: *span,
                                 },
                             );
@@ -202,10 +212,36 @@ fn handle_struct_field(
     fields.insert(
         name_str.clone(),
         StructFieldInfo {
+            kind: FieldKind::Regular,
             has_default: entry.default.is_some(),
+            optional: entry.optional,
             span: entry.span,
         },
     );
+}
+
+fn is_empty_embed(
+    name: &str,
+    defs: &HashMap<String, StructDef>,
+    visiting: &mut HashSet<String>,
+) -> bool {
+    if !visiting.insert(name.to_string()) {
+        return true;
+    }
+    let Some(def) = defs.get(name) else {
+        return true;
+    };
+    for (field_name, info) in &def.fields {
+        match info.kind {
+            FieldKind::Regular => return false,
+            FieldKind::Embed => {
+                if !is_empty_embed(field_name, defs, visiting) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
 }
 
 struct StructLiteralValidator<'a> {
@@ -274,20 +310,24 @@ impl StructLiteralValidator<'_> {
         }
 
         for (name, info) in &def.fields {
-            if info.has_default {
+            if seen.contains(name) {
                 continue;
             }
-            if !seen.contains(name) {
-                self.errors.push(struct_error(
-                    info.span,
-                    self.source,
-                    format!(
-                        "Missing required field '{}' for struct '{}'.",
-                        name, struct_name
-                    ),
-                    "Provide a value for the missing field.",
-                ));
+            if info.has_default || info.optional {
+                continue;
             }
+            if info.kind == FieldKind::Embed && is_empty_embed(name, &self.struct_defs, &mut HashSet::new()) {
+                continue;
+            }
+            self.errors.push(struct_error(
+                info.span,
+                self.source,
+                format!(
+                    "Missing required field '{}' for struct '{}'.",
+                    name, struct_name
+                ),
+                "Provide a value for the missing field.",
+            ));
         }
     }
 }

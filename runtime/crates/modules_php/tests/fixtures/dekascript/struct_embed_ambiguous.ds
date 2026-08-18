@@ -1,0 +1,24 @@
+struct Runner {
+}
+
+fn (r Runner) Move(): string {
+    return "runner"
+}
+
+struct Walker {
+}
+
+fn (w Walker) Move(): string {
+    return "walker"
+}
+
+struct Thing {
+    Runner
+    Walker
+}
+
+fn callMove(t: Thing): string {
+    return t.Move()
+}
+
+const out = callMove(Thing {})

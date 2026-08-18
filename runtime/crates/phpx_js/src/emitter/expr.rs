@@ -577,17 +577,33 @@ impl<'a> JsSubsetEmitter<'a> {
             }
             Expr::StructLiteral { name, fields, .. } => {
                 let struct_name = self.name_last_segment(*name);
+                let mut seen = HashSet::new();
                 let mut entries = Vec::new();
                 for field in *fields {
                     let key = self
                         .token_text(field.name)
                         .trim_start_matches('$')
                         .to_string();
+                    seen.insert(key.clone());
                     let value = self.emit_expr(field.value)?;
                     entries.push(format!("{}: {}", json_string(&key), value));
                 }
                 if self.meta.is_ds {
                     self.uses_deka_struct_helpers = true;
+                    if let Some(meta_fields) = self.struct_fields.get(&struct_name).cloned() {
+                        for field in meta_fields {
+                            if seen.contains(&field.name) {
+                                continue;
+                            }
+                            if field.empty_embed {
+                                entries.push(format!(
+                                    "{}: {}({{}})",
+                                    json_string(&field.name),
+                                    field.name
+                                ));
+                            }
+                        }
+                    }
                     Ok(format!("{}({{{}}})", struct_name, entries.join(", ")))
                 } else {
                     let mut tagged_entries = Vec::new();

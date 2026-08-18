@@ -83,7 +83,7 @@ fn dekascript_string_subset_fixture_compiles() {
 fn dekascript_jsx_component_destructured_props_recognized() {
     // dekaruntime/deka#93 / #122: JSX component props must be validated against
     // the interface type of a destructured object parameter in DekaScript mode.
-    let source = "interface GreetingProps { name: string }\nfunction Greeting({ name }: GreetingProps): Component {\n  return <h1>Hello {name}</h1>\n}\n---\n<Greeting name=\"DekaScript\" />";
+    let source = "interface GreetingProps { name: string }\nfn Greeting({ name }: GreetingProps): Component {\n  return <h1>Hello {name}</h1>\n}\n---\n<Greeting name=\"DekaScript\" />";
     let arena = Box::leak(Box::new(Bump::new()));
     let result = compile_deka(source, "lesson.ds", arena);
     assert!(
@@ -603,4 +603,73 @@ fn multiple_errors_collected() {
     assert!(result.errors.len() >= 2, "expected multiple errors");
     assert_has_error(&result, ErrorKind::ModuleError);
     assert_has_error(&result, ErrorKind::TypeError);
+}
+
+#[test]
+fn dekascript_empty_embed_omitted_ok() {
+    let path = fixtures_root().join("dekascript/struct_empty_embed_ok.ds");
+    let result = compile_fixture(&path);
+    assert!(
+        result.errors.is_empty(),
+        "unexpected errors: {:?}",
+        result.errors
+    );
+}
+
+#[test]
+fn dekascript_nonempty_embed_required_errors() {
+    let path = fixtures_root().join("dekascript/struct_nonempty_embed_required.ds");
+    let result = compile_fixture(&path);
+    assert_has_error(&result, ErrorKind::StructError);
+}
+
+#[test]
+fn dekascript_embed_override_ok() {
+    let path = fixtures_root().join("dekascript/struct_embed_override_ok.ds");
+    let result = compile_fixture(&path);
+    assert!(
+        result.errors.is_empty(),
+        "unexpected errors: {:?}",
+        result.errors
+    );
+}
+
+#[test]
+fn dekascript_embed_ambiguous_errors() {
+    let path = fixtures_root().join("dekascript/struct_embed_ambiguous.ds");
+    let result = compile_fixture(&path);
+    assert_has_error(&result, ErrorKind::TypeError);
+}
+
+#[test]
+fn dekascript_optional_field_defaults_to_none_ok() {
+    let path = fixtures_root().join("dekascript/struct_optional_field_ok.ds");
+    let result = compile_fixture(&path);
+    assert!(
+        result.errors.is_empty(),
+        "unexpected errors: {:?}",
+        result.errors
+    );
+}
+
+#[test]
+fn dekascript_optional_explicit_option_ok() {
+    let path = fixtures_root().join("dekascript/struct_optional_explicit_ok.ds");
+    let result = compile_fixture(&path);
+    assert!(
+        result.errors.is_empty(),
+        "unexpected errors: {:?}",
+        result.errors
+    );
+}
+
+#[test]
+fn dekascript_match_option_unqualified_ok() {
+    let path = fixtures_root().join("dekascript/match_option_unqualified_ok.ds");
+    let result = compile_fixture(&path);
+    assert!(
+        result.errors.is_empty(),
+        "unexpected errors: {:?}",
+        result.errors
+    );
 }
