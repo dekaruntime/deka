@@ -33,8 +33,9 @@ impl<'a> JsSubsetEmitter<'a> {
                         }
                     }
                     if !embeds.is_empty() {
-                        self.struct_embeds.insert(struct_name, embeds);
+                        self.struct_embeds.insert(struct_name.clone(), embeds);
                     }
+                    self.collect_ds_struct_field_metadata(&struct_name, *members);
                 }
                 Stmt::Enum { name, .. } => {
                     let enum_name = self.token_name(name);
@@ -43,6 +44,7 @@ impl<'a> JsSubsetEmitter<'a> {
                 _ => {}
             }
         }
+        self.compute_empty_embeds();
         // Second pass: collect DekaScript receiver methods so they can be
         // emitted after every struct factory is declared, regardless of source
         // order.
@@ -926,5 +928,109 @@ impl<'a> JsSubsetEmitter<'a> {
         }
         self.body.push_str("});\n");
         Ok(())
+    }
+
+    fn collect_ds_struct_field_metadata(
+        &mut self,
+        struct_name: &str,
+        members: &[ClassMember<'_>],
+    ) {
+        let mut fields = Vec::new();
+        for member in members {
+            match member {
+                ClassMember::Property { ty, entries, .. } => {
+                    let optional_ty = ty.map(|t| self.type_is_optional(t)).unwrap_or(false);
+                    for entry in *entries {
+                        let name = self
+                            .token_name(entry.name)
+                            .trim_start_matches('$')
+                            .to_string();
+                        fields.push(DsStructField {
+                            name,
+                            optional: entry.optional || optional_ty,
+                            empty_embed: false,
+                        });
+                    }
+                }
+                ClassMember::PropertyHook { ty, name, .. } => {
+                    let optional_ty = ty.map(|t| self.type_is_optional(t)).unwrap_or(false);
+                    let name = self.token_name(name).trim_start_matches('$').to_string();
+                    fields.push(DsStructField {
+                        name,
+                        optional: optional_ty,
+                        empty_embed: false,
+                    });
+                }
+                ClassMember::Embed { types, .. } => {
+                    for ty in *types {
+                        let name = self.name_last_segment(*ty);
+                        fields.push(DsStructField {
+                            name,
+                            optional: false,
+                            empty_embed: false,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.struct_fields.insert(struct_name.to_string(), fields);
+    }
+
+    fn compute_empty_embeds(&mut self) {
+        let names: Vec<String> = self.struct_fields.keys().cloned().collect();
+        let mut emptiness: HashMap<String, bool> = HashMap::new();
+        for name in &names {
+            let empty = self.is_empty_embed_struct(name, &mut HashSet::new());
+            emptiness.insert(name.clone(), empty);
+        }
+        for name in names {
+            let embeds = self.struct_embeds.get(&name).cloned().unwrap_or_default();
+            if let Some(fields) = self.struct_fields.get_mut(&name) {
+                for field in fields.iter_mut() {
+                    if embeds.contains(&field.name) {
+                        field.empty_embed = *emptiness.get(&field.name).unwrap_or(&false);
+                    }
+                }
+            }
+        }
+    }
+
+    fn type_is_optional(&self, ty: &AstType<'_>) -> bool {
+        match ty {
+            AstType::Option(_) | AstType::Nullable(_) => true,
+            AstType::Applied { base, .. } => {
+                if let AstType::Simple(tok) = *base {
+                    self.token_name(tok).eq_ignore_ascii_case("Option")
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    fn is_empty_embed_struct(&self, name: &str, visiting: &mut HashSet<String>) -> bool {
+        if !visiting.insert(name.to_string()) {
+            return true;
+        }
+        let Some(fields) = self.struct_fields.get(name) else {
+            return false;
+        };
+        for field in fields {
+            if self
+                .struct_embeds
+                .get(name)
+                .map(|embeds| embeds.contains(&field.name))
+                .unwrap_or(false)
+            {
+                if !self.is_empty_embed_struct(&field.name, visiting) {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+        true
     }
 }

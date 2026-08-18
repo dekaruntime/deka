@@ -1,0 +1,10 @@
+struct User {
+    name: string
+    email: string?
+}
+
+const u = User { name: "A", email: Option.Some("a@b.com") }
+const x = match (u.email) {
+    Some(v) => v,
+    None => ""
+}

@@ -68,7 +68,7 @@ impl MatchValidator<'_> {
                     } else {
                         entry.insert(case_name.clone());
                     }
-                    if let Expr::StaticCall { args, .. } = *cond {
+                    if let Expr::StaticCall { args, .. } | Expr::Call { args, .. } = *cond {
                         self.validate_payload_binding(&enum_name, &case_name, args, cond.span());
                     }
                 } else {
@@ -216,6 +216,25 @@ fn collect_enums(program: &Program, source: &str) -> HashMap<String, EnumInfo> {
 
 fn enum_case_from_expr(expr: ExprId<'_>, source: &str) -> Option<(String, String)> {
     match *expr {
+        Expr::Variable { name, .. } => {
+            let raw = std::str::from_utf8(name.as_str(source.as_bytes())).ok()?;
+            let name = raw.trim().trim_start_matches('$');
+            if name.eq_ignore_ascii_case("Some") || name.eq_ignore_ascii_case("None") {
+                Some(("Option".to_string(), name.to_string()))
+            } else {
+                None
+            }
+        }
+        Expr::Call { func, .. } => {
+            if let Expr::Variable { name, .. } = *func {
+                let raw = std::str::from_utf8(name.as_str(source.as_bytes())).ok()?;
+                let name = raw.trim().trim_start_matches('$');
+                if name.eq_ignore_ascii_case("Some") || name.eq_ignore_ascii_case("None") {
+                    return Some(("Option".to_string(), name.to_string()));
+                }
+            }
+            None
+        }
         Expr::ClassConstFetch {
             class, constant, ..
         } => {
@@ -253,7 +272,16 @@ fn is_variable_binding(expr: ExprId<'_>, source: &str) -> bool {
     match *expr {
         Expr::Variable { name, .. } => {
             if let Ok(raw) = std::str::from_utf8(name.as_str(source.as_bytes())) {
-                raw.trim_start().starts_with('$')
+                let trimmed = raw.trim_start();
+                // DekaScript allows bare identifier bindings (e.g. `Some(v)`);
+                // PHPX uses `$v`. Accept either form as long as it names a variable.
+                let body = trimmed.strip_prefix('$').unwrap_or(trimmed);
+                !body.is_empty()
+                    && body
+                        .chars()
+                        .next()
+                        .map(|c| c.is_ascii_alphabetic() || c == '_')
+                        .unwrap_or(false)
             } else {
                 false
             }

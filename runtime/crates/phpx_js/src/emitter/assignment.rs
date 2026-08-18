@@ -192,12 +192,25 @@ impl<'a> JsSubsetEmitter<'a> {
         matches!(expr, Expr::Variable { name, .. } if self.span_name(*name) == "_")
     }
 
+    fn is_option_case_name(&self, name: &str) -> bool {
+        name == "Some" || name == "None"
+    }
+
     pub(super) fn enum_pattern_from_expr(&self, expr: ExprId<'_>) -> Option<EnumPattern> {
         // DekaScript enum access is `Option.Some` (DotAccess); PHPX uses
         // `Option::Some` (ClassConstFetch). Payload patterns add a call:
         // `Option.Some(value)`.
+        // For `Option<T>` subjects, DekaScript also accepts the unqualified
+        // shorthand `Some(value)` and `None` inside match arms.
         let (enum_name, case_name, args): (String, String, &[php_rs::parser::ast::Arg<'_>]) =
             match expr {
+                Expr::Variable { name, .. } => {
+                    let case_name = self.span_name(*name);
+                    if !self.is_option_case_name(&case_name) {
+                        return None;
+                    }
+                    ("Option".to_string(), case_name, &[][..])
+                }
                 Expr::DotAccess {
                     target,
                     property,
@@ -208,6 +221,13 @@ impl<'a> JsSubsetEmitter<'a> {
                     (enum_name, case_name, &[][..])
                 }
                 Expr::Call { func, args, .. } => match func {
+                    Expr::Variable { name, .. } => {
+                        let case_name = self.span_name(*name);
+                        if !self.is_option_case_name(&case_name) {
+                            return None;
+                        }
+                        ("Option".to_string(), case_name, *args)
+                    }
                     Expr::DotAccess {
                         target,
                         property,
@@ -231,11 +251,24 @@ impl<'a> JsSubsetEmitter<'a> {
                 }
                 _ => return None,
             };
-        let case_def = self
-            .enum_cases
-            .get(&enum_name)?
-            .iter()
-            .find(|c| c.name == case_name)?;
+        let case_def = if enum_name.eq_ignore_ascii_case("Option")
+            && self.is_option_case_name(&case_name)
+        {
+            Some(EnumCaseDef {
+                name: case_name.clone(),
+                params: if case_name.eq_ignore_ascii_case("Some") {
+                    vec!["value".to_string()]
+                } else {
+                    Vec::new()
+                },
+            })
+        } else {
+            self.enum_cases
+                .get(&enum_name)?
+                .iter()
+                .find(|c| c.name == case_name)
+                .cloned()
+        }?;
 
         let mut bindings = Vec::with_capacity(args.len());
         for arg in args {

@@ -313,6 +313,7 @@ fn render_ast_type(ty: &AstType<'_>, source: &[u8]) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        AstType::Option(inner) => format!("Option<{}>", render_ast_type(inner, source)),
     }
 }
 

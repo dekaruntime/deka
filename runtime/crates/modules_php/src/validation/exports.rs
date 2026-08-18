@@ -20,7 +20,7 @@ pub fn validate_exports(
     source: &str,
     file_path: &str,
     program: &Program,
-    allow_export_const: bool,
+    is_ds: bool,
 ) -> Vec<ValidationError> {
     let lines: Vec<&str> = source.lines().collect();
     let bounds = frontmatter_bounds(&lines);
@@ -56,7 +56,11 @@ pub fn validate_exports(
             continue;
         }
 
-        if trimmed.starts_with("export function") || trimmed.starts_with("export async function") {
+        if trimmed.starts_with("export function")
+            || trimmed.starts_with("export async function")
+            || (is_ds
+                && (trimmed.starts_with("export fn") || trimmed.starts_with("export async fn")))
+        {
             if is_template {
                 errors.push(export_error(
                     idx + 1,
@@ -75,7 +79,7 @@ pub fn validate_exports(
         }
 
         if trimmed.starts_with("export const ") {
-            if allow_export_const {
+            if is_ds {
                 match parse_export_const(trimmed, line, idx + 1, file_path) {
                     Ok(spec) => exports.push(spec),
                     Err(err) => errors.push(err),
@@ -209,27 +213,20 @@ pub(crate) fn parse_export_function(
     line_number: usize,
     file_path: &str,
 ) -> Result<ExportSpec, ValidationError> {
-    let rest = line
-        .trim_start()
-        .strip_prefix("export")
-        .unwrap_or(line)
-        .trim_start()
-        .strip_prefix("async")
-        .map(|tail| tail.trim_start())
-        .unwrap_or_else(|| {
-            line.trim_start()
-                .strip_prefix("export")
-                .unwrap_or(line)
-                .trim_start()
-        })
+    let mut rest = line.trim_start().strip_prefix("export").unwrap_or(line).trim_start();
+    if let Some(tail) = rest.strip_prefix("async") {
+        rest = tail.trim_start();
+    }
+    rest = rest
         .strip_prefix("function")
+        .or_else(|| rest.strip_prefix("fn"))
         .ok_or_else(|| {
             export_error_with_suggestion(
                 line_number,
                 find_column(raw_line, "export"),
                 line.trim().len(),
                 format!("Invalid export syntax in {}.", file_path),
-                "Use `export function name(...)` or `export async function name(...)`.",
+                "Use `export function name(...)` or `export async function name(...)`. In DekaScript, use `export fn name(...)`.",
                 Some("export function name() { }"),
             )
         })?

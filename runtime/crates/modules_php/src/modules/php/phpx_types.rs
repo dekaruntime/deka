@@ -141,6 +141,12 @@ impl<'a> TypeResolver<'a> {
                 }
                 BridgeType::Unknown
             }
+            AstType::Option(inner) => {
+                let inner = self.convert_type_internal(inner, alias_guard, subs);
+                BridgeType::Option {
+                    inner: Some(Box::new(inner)),
+                }
+            }
             AstType::Nullable(inner) => {
                 let inner = self.convert_type_internal(inner, alias_guard, subs);
                 BridgeType::Option {

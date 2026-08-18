@@ -1,0 +1,6 @@
+struct User {
+    name: string
+    email: Option<string>
+}
+
+const u = User { name: "A", email: Option.None }

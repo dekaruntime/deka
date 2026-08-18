@@ -19,6 +19,16 @@ struct DsMethod {
     is_mut: bool,
 }
 
+/// Metadata for a DekaScript struct field, used to supply automatic defaults
+/// for empty embedded structs. Optional fields are omitted from the emitted
+/// literal and treated as None by the runtime.
+#[derive(Clone, Debug)]
+struct DsStructField {
+    name: String,
+    optional: bool,
+    empty_embed: bool,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum JsValueKind {
     Array,
@@ -67,6 +77,9 @@ pub(crate) struct JsSubsetEmitter<'a> {
     ds_receiver_methods: HashMap<String, Vec<DsMethod>>,
     /// Direct embeds for each DekaScript struct, used to promote embedded methods.
     struct_embeds: HashMap<String, Vec<String>>,
+    /// DekaScript struct field metadata, used to emit automatic zero values for
+    /// empty embedded structs.
+    struct_fields: HashMap<String, Vec<DsStructField>>,
     value_kinds: HashMap<String, JsValueKind>,
     /// DekaScript struct/freeze helpers needed by this module. Populated during
     /// AST traversal so the compact prelude only includes them when used.
@@ -112,6 +125,7 @@ impl<'a> JsSubsetEmitter<'a> {
             ds_struct_methods: HashMap::new(),
             ds_receiver_methods: HashMap::new(),
             struct_embeds: HashMap::new(),
+            struct_fields: HashMap::new(),
             value_kinds: HashMap::new(),
             uses_deka_struct_helpers: false,
             uses_deka_freeze: false,
