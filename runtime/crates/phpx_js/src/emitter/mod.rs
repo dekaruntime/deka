@@ -49,22 +49,6 @@ pub(crate) struct JsSubsetEmitter<'a> {
     struct_names: HashSet<String>,
     enum_names: HashSet<String>,
     struct_methods: HashMap<String, Vec<(String, String)>>,
-    /// DekaScript impl-block methods keyed by target name. Separate from
-    /// `struct_methods` (the PHPX/enum registry) so DS structs can emit
-    /// `Point.impl({...})` instead of `globalThis.__phpxStructMethods`.
-    /// The bool is `is_mut`: true methods are registered via `implMut`,
-    /// false methods via `impl`.
-    ds_impl_methods: HashMap<String, Vec<(String, String, bool)>>,
-    /// Default method bodies declared directly on a `trait`, keyed by trait
-    /// name (NOT by any impl target). RFD 19: an `impl Trait for X { }` that
-    /// doesn't override a trait's default method still needs that default's
-    /// JS body to actually run at `x.method()` call sites -- the typechecker
-    /// already allows this (a non-overridden default satisfies conformance),
-    /// but codegen was only ever emitting what the impl block itself
-    /// provided. Collected in a pre-pass (mirrors the enum-impl
-    /// order-independence fix, deka#71) so trait declaration order relative
-    /// to its impls doesn't matter.
-    trait_default_methods: HashMap<String, Vec<(String, String)>>,
     enum_cases: HashMap<String, Vec<EnumCaseDef>>,
     value_kinds: HashMap<String, JsValueKind>,
     /// DekaScript struct/freeze helpers needed by this module. Populated during
@@ -107,8 +91,6 @@ impl<'a> JsSubsetEmitter<'a> {
             struct_names: HashSet::new(),
             enum_names: HashSet::new(),
             struct_methods: HashMap::new(),
-            ds_impl_methods: HashMap::new(),
-            trait_default_methods: HashMap::new(),
             enum_cases: HashMap::new(),
             value_kinds: HashMap::new(),
             uses_deka_struct_helpers: false,
