@@ -11,6 +11,14 @@ struct EnumCaseDef {
     params: Vec<String>,
 }
 
+/// A DekaScript method registered on a `deka.Struct` factory.
+#[derive(Clone, Debug)]
+struct DsMethod {
+    name: String,
+    body: String,
+    is_mut: bool,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum JsValueKind {
     Array,
@@ -50,6 +58,11 @@ pub(crate) struct JsSubsetEmitter<'a> {
     enum_names: HashSet<String>,
     struct_methods: HashMap<String, Vec<(String, String)>>,
     enum_cases: HashMap<String, Vec<EnumCaseDef>>,
+    /// DekaScript struct methods (own + receiver) keyed by struct name.
+    /// Emitted after all struct factories so receiver methods are order-independent.
+    ds_struct_methods: HashMap<String, Vec<DsMethod>>,
+    /// Direct embeds for each DekaScript struct, used to promote embedded methods.
+    struct_embeds: HashMap<String, Vec<String>>,
     value_kinds: HashMap<String, JsValueKind>,
     /// DekaScript struct/freeze helpers needed by this module. Populated during
     /// AST traversal so the compact prelude only includes them when used.
@@ -92,6 +105,8 @@ impl<'a> JsSubsetEmitter<'a> {
             enum_names: HashSet::new(),
             struct_methods: HashMap::new(),
             enum_cases: HashMap::new(),
+            ds_struct_methods: HashMap::new(),
+            struct_embeds: HashMap::new(),
             value_kinds: HashMap::new(),
             uses_deka_struct_helpers: false,
             uses_deka_freeze: false,

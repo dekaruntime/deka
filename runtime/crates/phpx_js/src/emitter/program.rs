@@ -11,18 +11,30 @@ impl<'a> JsSubsetEmitter<'a> {
         for local in import_locals {
             self.declare_in_scope(&local);
         }
-        // First pass: collect struct and enum names so impl-block routing
-        // can decide whether a DekaScript impl targets a struct (factory)
-        // or an enum (legacy tagged-object registry).
+        // First pass: collect struct/enum names and struct embeds. Collecting
+        // embeds here lets the emitter promote embedded methods after all
+        // struct factories have been declared.
         for stmt in program.statements {
             match stmt {
                 Stmt::Class {
                     kind: ClassKind::Struct,
                     name,
+                    members,
                     ..
                 } => {
                     let struct_name = self.token_name(name);
-                    self.struct_names.insert(struct_name);
+                    self.struct_names.insert(struct_name.clone());
+                    let mut embeds = Vec::new();
+                    for member in *members {
+                        if let ClassMember::Embed { types, .. } = member {
+                            for ty in *types {
+                                embeds.push(self.name_last_segment(*ty));
+                            }
+                        }
+                    }
+                    if !embeds.is_empty() {
+                        self.struct_embeds.insert(struct_name, embeds);
+                    }
                 }
                 Stmt::Enum { name, .. } => {
                     let enum_name = self.token_name(name);
@@ -30,6 +42,12 @@ impl<'a> JsSubsetEmitter<'a> {
                 }
                 _ => {}
             }
+        }
+        // Second pass: collect DekaScript receiver methods so they can be
+        // emitted after every struct factory is declared, regardless of source
+        // order.
+        if self.meta.is_ds {
+            self.collect_ds_receiver_methods(program)?;
         }
         for stmt in program.statements {
             match stmt {
@@ -68,6 +86,9 @@ impl<'a> JsSubsetEmitter<'a> {
             } else {
                 self.emit_stmt_to_main(*stmt)?;
             }
+        }
+        if self.meta.is_ds {
+            self.emit_ds_method_registrations()?;
         }
         self.emit_template_to_main()?;
         Ok(())
@@ -221,12 +242,23 @@ impl<'a> JsSubsetEmitter<'a> {
                     self.declare_in_scope(&struct_name);
 
                     // Struct-defined methods are immutable by default.
+                    // They are registered after all struct factories are
+                    // declared so that promoted/receiver methods are order-independent.
                     let struct_methods = self.emit_struct_methods(*members)?;
-                    let methods: Vec<(String, String, bool)> = struct_methods
+                    let ds_methods: Vec<DsMethod> = struct_methods
                         .into_iter()
-                        .map(|(name, body)| (name, body, false))
+                        .map(|(name, body)| DsMethod {
+                            name,
+                            body,
+                            is_mut: false,
+                        })
                         .collect();
-                    self.emit_ds_impl_calls(&struct_name, &methods)?;
+                    if !ds_methods.is_empty() {
+                        self.ds_struct_methods
+                            .entry(struct_name.clone())
+                            .or_default()
+                            .extend(ds_methods);
+                    }
                 } else {
                     let methods = self.emit_struct_methods(*members)?;
                     if !methods.is_empty() {
@@ -368,6 +400,12 @@ impl<'a> JsSubsetEmitter<'a> {
                 body,
                 ..
             } => {
+                // DekaScript receiver methods are collected in a pre-pass and
+                // emitted after all struct factories are declared, so they are
+                // order-independent.
+                if self.meta.is_ds {
+                    return Ok(());
+                }
                 let method_name = self.token_name(name);
                 let receiver_name = self.token_name(receiver.var);
                 let receiver_type_name = match receiver.ty {
