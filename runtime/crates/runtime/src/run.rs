@@ -166,6 +166,12 @@ async fn run_async(context: &Context) -> Result<(), String> {
             if let Some(code) = parse_exit_code(&error) {
                 std::process::exit(code);
             }
+            // If the runtime surfaced a validation report, print it directly
+            // without the generic "Run failed:" wrapper (dekaruntime/deka#117).
+            if let Some(marker_start) = error.find(phpx_js::DEKA_VALIDATION_ERROR_MARKER) {
+                let rest = &error[marker_start + phpx_js::DEKA_VALIDATION_ERROR_MARKER.len()..];
+                return Err(rest.to_string());
+            }
             return Err(format!("Run failed: {}", error));
         }
         return Err("Run failed: unknown error".to_string());
