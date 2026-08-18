@@ -975,7 +975,7 @@ pub(crate) fn infer_expr_type(expr: ExprId, source: &[u8]) -> Option<String> {
             }
         }
         Expr::StructLiteral { name, .. } => Some(name_text(source, name)),
-        Expr::JsxElement { .. } | Expr::JsxFragment { .. } => Some("VNode".to_string()),
+        Expr::JsxElement { .. } | Expr::JsxFragment { .. } => Some("Component".to_string()),
         Expr::Null { .. } => Some("null".to_string()),
         Expr::Binary {
             op: BinaryOp::Coalesce,

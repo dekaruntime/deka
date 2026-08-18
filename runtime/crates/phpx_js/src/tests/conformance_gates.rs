@@ -194,7 +194,7 @@ fn snapshot_component_file_with_separator_compiles() {
         r#"interface GreetingProps {
   name: string
 }
-function Greeting({ name }: GreetingProps): VNode {
+function Greeting({ name }: GreetingProps): Component {
   return <h1>Hello {name}</h1>
 }
 ---
@@ -261,7 +261,7 @@ fn snapshot_jsx_component_with_separator_and_destructured_props_compiles() {
   name: string
 }
 
-function Greeting({ name }: GreetingProps): VNode {
+function Greeting({ name }: GreetingProps): Component {
   return <h1>Hello {name}</h1>
 }
 
