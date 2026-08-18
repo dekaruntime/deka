@@ -555,6 +555,12 @@ impl<'a> JsSubsetEmitter<'a> {
             Expr::ObjectLiteral { items, .. } => {
                 let mut entries = Vec::new();
                 for item in *items {
+                    // DekaScript spread element: `{ ...expr }`
+                    if let Expr::Spread { expr, .. } = item.value {
+                        let spread_expr = self.emit_expr(expr)?;
+                        entries.push(format!("...{}", spread_expr));
+                        continue;
+                    }
                     let key = match item.key {
                         ObjectKey::Ident(tok) => self.token_text(tok),
                         // String-literal keys carry their quote delimiters in

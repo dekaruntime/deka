@@ -1,7 +1,7 @@
 use crate::{ImportDecl, ImportSpec, SourceModuleMeta};
 use php_rs::parser::ast::{
-    BinaryOp, ClassKind, ClassMember, Expr, ExprId, JsxChild, ObjectKey, Program, Stmt, StmtId,
-    Type as AstType, UnaryOp,
+    BinaryOp, ClassKind, ClassMember, Expr, ExprId, JsxChild, ObjectKey, Program, Receiver, Stmt,
+    StmtId, Type as AstType, UnaryOp,
 };
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -222,7 +222,7 @@ impl<'a> JsSubsetEmitter<'a> {
                 deka_entries.push("MutationError:class extends Error{constructor(m){super(m);this.name='MutationError';}}".to_string());
             }
             if self.uses_deka_struct_helpers {
-                deka_entries.push("Struct:(id)=>{function f(fields){const o=Object.create(f.prototype);Object.assign(o,fields);Object.defineProperty(o,'__deka_struct',{value:id,enumerable:false,writable:false,configurable:false});return o;}f.id=id;Object.defineProperty(f,'name',{value:id,configurable:true});f.prototype=Object.create(null);f.prototype.constructor=f;f.impl=(m)=>{for(const k in m)f.prototype[k]=m[k];return f;};f.implMut=(m)=>{for(const k in m){const fn=m[k];f.prototype[k]=function(...a){if(Object.isFrozen(this))throw new deka.MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return fn.apply(this,a);};}return f;};return f;}".to_string());
+                deka_entries.push("Struct:(id)=>{function f(fields){const o=Object.create(f.prototype);Object.assign(o,fields);Object.defineProperty(o,'__deka_struct',{value:id,enumerable:false,writable:false,configurable:false});return o;}f.id=id;Object.defineProperty(f,'name',{value:id,configurable:true});f.prototype=Object.create(null);f.prototype.constructor=f;f.impl=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){return b(this,...x);};}else{for(const k in a)f.prototype[k]=a[k];}return f;};f.implMut=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new deka.MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return b(this,...x);};}else{for(const k in a){const fn=a[k];f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new deka.MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return fn.apply(this,x);};}}return f;};return f;}".to_string());
                 deka_entries.push("isStruct:(v,f)=>Boolean(v&&typeof v==='object'&&v.__deka_struct&&(f?v.__deka_struct===f.id:true))".to_string());
                 deka_entries.push("getStructId:(v)=>v?.__deka_struct".to_string());
                 deka_entries.push("clone:(v)=>structuredClone(v)".to_string());

@@ -48,7 +48,7 @@ fn snapshot_null_literal_is_currently_accepted_without_diagnostic() {
 
 #[test]
 fn snapshot_null_comparison_rejected_in_dekascript() {
-    let err = ds_diagnostic("export function f(a: int): bool { return a == null; }")
+    let err = ds_diagnostic("export fn f(a: int): bool { return a == null; }")
         .expect_err("null comparison must be rejected");
     assert!(
         err.contains("Null comparisons are not allowed; use isset() instead"),
@@ -174,7 +174,7 @@ fn snapshot_destructured_object_parameter_compiles() {
         r#"interface GreetingProps {
   name: string
 }
-function Greeting({ name }: GreetingProps): string {
+fn Greeting({ name }: GreetingProps): string {
   return `Hello ${name}`
 }
 console.log(Greeting({ name: "DekaScript" }));"#,
@@ -194,7 +194,7 @@ fn snapshot_component_file_with_separator_compiles() {
         r#"interface GreetingProps {
   name: string
 }
-function Greeting({ name }: GreetingProps): Component {
+fn Greeting({ name }: GreetingProps): Component {
   return <h1>Hello {name}</h1>
 }
 ---
@@ -216,7 +216,7 @@ fn snapshot_async_function_return_type_is_diagnosed_correctly() {
     // Not a known-bad case: this diagnostic is accurate and names the real
     // cause (async functions must return `Promise<T>`). Recorded so a
     // regression here — e.g. if it started saying "PHPX" too — is caught.
-    let err = ds_diagnostic("export async function f(): int { return 1; }")
+    let err = ds_diagnostic("export async fn f(): int { return 1; }")
         .expect_err("async function must declare a Promise<T> return type");
     assert!(
         err.contains("Async function must declare Promise<T> return type, got int"),
@@ -261,7 +261,7 @@ fn snapshot_jsx_component_with_separator_and_destructured_props_compiles() {
   name: string
 }
 
-function Greeting({ name }: GreetingProps): Component {
+fn Greeting({ name }: GreetingProps): Component {
   return <h1>Hello {name}</h1>
 }
 

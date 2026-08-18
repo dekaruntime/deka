@@ -499,6 +499,46 @@ impl<'a> JsSubsetEmitter<'a> {
                 self.body.push_str("}\n\n");
                 Ok(())
             }
+            Stmt::ReceiverMethod {
+                name,
+                is_async,
+                receiver,
+                params,
+                body,
+                ..
+            } => {
+                let method_name = self.token_name(name);
+                let receiver_name = self.token_name(receiver.var);
+                let receiver_type_name = match receiver.ty {
+                    AstType::Name(name) => self.name_last_segment(*name),
+                    AstType::Simple(tok) => self.token_name(tok),
+                    _ => {
+                        return Err(
+                            "receiver type must be a struct name in JS subset emitter".to_string(),
+                        )
+                    }
+                };
+                let js_params = std::iter::once(receiver_name)
+                    .chain(params.iter().map(|p| self.token_name(p.name)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let block = self.emit_receiver_method_block(receiver, params, body)?;
+                let async_kw = if *is_async { "async " } else { "" };
+                self.uses_deka_struct_helpers = true;
+                let func_expr = format!(
+                    "{}function {}({}) {{\n{} }}",
+                    async_kw, method_name, js_params, block
+                );
+                let reg_fn = if receiver.is_mut { "implMut" } else { "impl" };
+                self.body.push_str(&format!(
+                    "{}.{}({}, {});\n",
+                    receiver_type_name,
+                    reg_fn,
+                    json_string(&method_name),
+                    func_expr
+                ));
+                Ok(())
+            }
             Stmt::If {
                 condition,
                 then_block,

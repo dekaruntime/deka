@@ -192,6 +192,12 @@ impl<'a> JsSubsetEmitter<'a> {
 
         let mut props = Vec::new();
         for attr in attributes {
+            // DekaScript JSX spread attribute: `{ ...props }`
+            if let Some(Expr::Spread { expr, .. }) = attr.value {
+                let spread_expr = self.emit_expr(expr)?;
+                props.push(format!("...{}", spread_expr));
+                continue;
+            }
             let key = self.token_text(attr.name);
             let value = if let Some(expr) = attr.value {
                 self.emit_expr(expr)?
@@ -274,6 +280,38 @@ impl<'a> JsSubsetEmitter<'a> {
         let saved = std::mem::take(&mut self.body);
         self.push_scope();
         self.function_scope_entry.push(self.scopes.len() - 1);
+        for param in params {
+            self.declare_in_scope(&self.token_name(param.name));
+        }
+        let defaults =
+            self.emit_param_default_guards_inline(params, &std::collections::HashMap::new())?;
+        if !defaults.is_empty() {
+            self.body.push_str(&defaults);
+        }
+        for stmt in stmts {
+            self.emit_stmt(*stmt)?;
+        }
+        self.function_scope_entry.pop();
+        self.pop_scope();
+        let block = std::mem::take(&mut self.body);
+        self.body = saved;
+        Ok(block)
+    }
+
+    /// Emit the body of a DekaScript receiver method (`fn (p Person) greet() { ... }`).
+    /// The receiver variable is declared as a real parameter so the method body can
+    /// reference it by name; this is distinct from `impl` block methods where `self`
+    /// is erased and bound to JS `this`.
+    pub(super) fn emit_receiver_method_block(
+        &mut self,
+        receiver: &Receiver<'_>,
+        params: &[php_rs::parser::ast::Param<'_>],
+        stmts: &[StmtId<'_>],
+    ) -> Result<String, String> {
+        let saved = std::mem::take(&mut self.body);
+        self.push_scope();
+        self.function_scope_entry.push(self.scopes.len() - 1);
+        self.declare_in_scope(&self.token_name(receiver.var));
         for param in params {
             self.declare_in_scope(&self.token_name(param.name));
         }

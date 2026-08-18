@@ -4,20 +4,34 @@ impl<'a> JsSubsetEmitter<'a> {
     pub(super) fn emit_struct_schema(&self, members: &[ClassMember<'_>]) -> String {
         let mut fields = Vec::new();
         for member in members {
-            if let ClassMember::Property { ty, entries, .. } = member {
-                for entry in *entries {
-                    let (schema, optional) = match ty {
-                        Some(ty) => self.emit_type_schema(ty),
-                        None => ("{ kind: 'unknown' }".to_string(), false),
-                    };
-                    let name = self.token_name(entry.name);
-                    fields.push(format!(
-                        "{}: {{ schema: {}, optional: {} }}",
-                        json_string(&name),
-                        schema,
-                        if optional { "true" } else { "false" }
-                    ));
+            match member {
+                ClassMember::Property { ty, entries, .. } => {
+                    for entry in *entries {
+                        let (schema, optional) = match ty {
+                            Some(ty) => self.emit_type_schema(ty),
+                            None => ("{ kind: 'unknown' }".to_string(), false),
+                        };
+                        let name = self.token_name(entry.name);
+                        fields.push(format!(
+                            "{}: {{ schema: {}, optional: {} }}",
+                            json_string(&name),
+                            schema,
+                            if optional { "true" } else { "false" }
+                        ));
+                    }
                 }
+                // RFD 19: embedded structs are stored as a field keyed by the
+                // embedded type's name (e.g. `Employee { Person: Person {...} }`).
+                ClassMember::Embed { types, .. } => {
+                    for ty_name in *types {
+                        let name = self.name_last_segment(*ty_name);
+                        fields.push(format!(
+                            "{}: {{ schema: {{ kind: 'object' }}, optional: false }}",
+                            json_string(&name)
+                        ));
+                    }
+                }
+                _ => {}
             }
         }
         format!("{{ kind: 'object', fields: {{ {} }} }}", fields.join(", "))

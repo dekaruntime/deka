@@ -21,9 +21,10 @@
 // back — e.g. a new unconditional `out.push_str("globalThis.Y ??= ...")`
 // added to `finish()` without a `want(...)` guard.
 
-const BUDGET_SOURCE: &str = r#"export function greet(name: string): string {
+const BUDGET_SOURCE: &str = r#"fn greet(name: string): string {
     return "hello " + name;
 }
+export { greet };
 print(greet("world"));
 "#;
 
@@ -92,8 +93,12 @@ fn emission_budget_program_code_is_present_despite_prelude() {
     // prelude ships with it.
     let js = compile_budget_source();
     assert!(
-        js.contains("export function greet(name)"),
+        js.contains("function greet(name)"),
         "expected the program's own function in emitted output: {js}"
+    );
+    assert!(
+        js.contains("export { greet }"),
+        "expected the program's own function to be exported: {js}"
     );
     assert!(
         js.contains("hello \" + name"),
