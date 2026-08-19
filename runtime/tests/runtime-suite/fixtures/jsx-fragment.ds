@@ -1,0 +1,5 @@
+fn Box({ children }: Object): Object {
+  return <div class="box">{children}</div>
+}
+
+console.log(<Box><><span>one</span><span>two</span></></Box>)

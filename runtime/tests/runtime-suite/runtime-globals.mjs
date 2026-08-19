@@ -100,6 +100,10 @@ function wrapMicrotask(task) {
 
 const Fragment = Symbol.for("deka.ui.Fragment");
 
+function isComponentNode(value) {
+  return value != null && typeof value === "object" && value.__componentNode === true;
+}
+
 function normalizeJsxChildren(children) {
   if (children == null) return [];
   if (Array.isArray(children)) {
@@ -121,11 +125,21 @@ function normalizeJsxChildren(children) {
 function createComponentNode(tag, props) {
   const { children, ...rest } = props ?? {};
   const normalizedChildren = normalizeJsxChildren(children);
-  return Object.freeze({
+  const node = {
     tag,
     props: Object.freeze(rest),
     children: Object.freeze(normalizedChildren),
+    toString() {
+      return renderComponentNodeToString(this);
+    },
+  };
+  Object.defineProperty(node, "__componentNode", {
+    value: true,
+    enumerable: false,
+    writable: false,
+    configurable: false,
   });
+  return Object.freeze(node);
 }
 
 function uiJsx(tag, props) {
@@ -134,6 +148,56 @@ function uiJsx(tag, props) {
 
 function uiJsxs(tag, props) {
   return createComponentNode(tag, props);
+}
+
+// ---------------------------------------------------------------------------
+// Server-side rendering helper (minimal implementation for test harness)
+// ---------------------------------------------------------------------------
+
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function renderJsxChildrenToString(children) {
+  if (children == null) return "";
+  if (typeof children === "string" || typeof children === "number") return escapeHtml(children);
+  if (typeof children === "boolean") return "";
+  if (isComponentNode(children)) return renderComponentNodeToString(children);
+  if (Array.isArray(children)) return children.map(renderJsxChildrenToString).join("");
+  return escapeHtml(children ?? "");
+}
+
+function renderComponentNodeToString(node) {
+  if (!isComponentNode(node)) {
+    return escapeHtml(node ?? "");
+  }
+
+  const { tag, props, children } = node;
+
+  if (tag === Fragment) {
+    return renderJsxChildrenToString(children);
+  }
+
+  if (typeof tag === "function") {
+    const result = tag({ ...props, children });
+    return renderJsxChildrenToString(result);
+  }
+
+  const attrs = Object.entries(props ?? {})
+    .map(([key, value]) => {
+      if (value === true) return ` ${key}`;
+      if (value === false || value == null) return "";
+      return ` ${key}="${escapeHtml(value)}"`;
+    })
+    .join("");
+
+  const childHtml = renderJsxChildrenToString(children);
+  return childHtml === "" ? `<${tag}${attrs} />` : `<${tag}${attrs}>${childHtml}</${tag}>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -261,6 +325,7 @@ const deka = {
     jsx: uiJsx,
     jsxs: uiJsxs,
     Fragment,
+    renderToString: renderComponentNodeToString,
     signal: createSignal,
     effect: createEffect,
     memo: createMemo,
@@ -319,13 +384,14 @@ function renderJsxChildren(children) {
   return String(children ?? "");
 }
 
-// Legacy test-harness JSX renderer (string-concat HTML). The current compiler
-// emits `jsx`/`jsxs` as globals imported from `component/core`; issue #146 moves
-// the compiler to the `deka.ui.*` namespace. These legacy shims keep the
-// existing runtime-suite fixtures rendering to stdout until the compiler switch
-// lands. They are NOT the public JSX runtime contract.
+// Legacy test-harness JSX renderer (string-concat HTML). These shims keep any
+// source that directly calls the old bare `jsx`/`jsxs` globals working. The
+// compiler now emits `deka.ui.*`, so new code should use that namespace.
 function legacyJsx(type, props) {
   const resolvedProps = props ?? {};
+  if (type === Fragment) {
+    return renderJsxChildren(resolvedProps.children);
+  }
   if (typeof type === "function") {
     return String(type(resolvedProps) ?? "");
   }

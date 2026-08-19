@@ -1071,9 +1071,10 @@ $view = <div><Hello name="world" /></div>
             .expect("subset emit");
         assert!(js.contains("phpxBuildMode = \"subset-ast\""));
         assert!(js.contains("phpxTargetSemantics = \"js\""));
-        assert!(js.contains("import { jsx, jsxs } from 'component/core'"));
+        assert!(!js.contains("import { jsx, jsxs } from 'component/core'"));
         assert!(js.contains("function Hello(props)"));
-        assert!(js.contains("let view = jsx"));
+        assert!(js.contains("let view = deka.ui.jsx"));
+        assert!(js.contains("deka.ui.jsx(\"div\", {\"children\": deka.ui.jsx(Hello"));
     }
 
     #[test]

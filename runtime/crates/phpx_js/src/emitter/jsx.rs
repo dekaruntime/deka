@@ -179,7 +179,7 @@ impl<'a> JsSubsetEmitter<'a> {
         };
         let props_expr = format!("{{{}}}", attrs.join(", "));
         let fn_name = if children.len() > 1 { "jsxs" } else { "jsx" };
-        Some(format!("{}({}, {})", fn_name, tag_expr, props_expr))
+        Some(format!("deka.ui.{}({}, {})", fn_name, tag_expr, props_expr))
     }
 
     pub(super) fn emit_jsx(
@@ -244,7 +244,7 @@ impl<'a> JsSubsetEmitter<'a> {
                     json_string(last)
                 }
             }
-            None => json_string("__fragment__"),
+            None => "deka.ui.Fragment".to_string(),
         };
 
         let props_expr = format!("{{{}}}", props.join(", "));
@@ -254,7 +254,7 @@ impl<'a> JsSubsetEmitter<'a> {
             "jsx"
         };
 
-        Ok(format!("{}({}, {})", fn_name, tag_expr, props_expr))
+        Ok(format!("deka.ui.{}({}, {})", fn_name, tag_expr, props_expr))
     }
 
     pub(super) fn emit_stmt_block_inline(

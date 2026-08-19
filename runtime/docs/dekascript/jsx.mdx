@@ -1,0 +1,74 @@
+# JSX
+
+DekaScript supports JSX for building UI components. JSX expressions compile to
+runtime calls against the `deka.ui` namespace.
+
+## Compilation output
+
+The compiler emits the following contract, matching RFD 24:
+
+- `deka.ui.jsx(tag, props)` for elements with a single child.
+- `deka.ui.jsxs(tag, props)` for elements with multiple static children.
+- `deka.ui.Fragment` as the tag for `<>...</>` fragments.
+
+HTML tags are passed as lowercase strings. Function components are passed by
+identifier.
+
+## Example
+
+```ts
+interface GreetingProps {
+  name: string
+}
+
+fn Greeting({ name }: GreetingProps): Component {
+  return <h1>Hello {name}</h1>
+}
+
+export function Page(): Component {
+  return (
+    <>
+      <Greeting name="DekaScript" />
+      <p>Welcome to the runtime.</p>
+    </>
+  )
+}
+```
+
+The `Page` component compiles roughly to:
+
+```js
+deke.ui.jsxs(deka.ui.Fragment, {
+  "children": [
+    deka.ui.jsx(Greeting, { "name": "DekaScript" }),
+    deka.ui.jsx("p", { "children": "Welcome to the runtime." })
+  ]
+});
+```
+
+## Props
+
+Props use standard JSX attribute syntax. Boolean props without a value default to
+`true`:
+
+```ts
+<button disabled>Save</button>
+// -> deka.ui.jsx("button", { "disabled": true, "children": "Save" })
+```
+
+Event handlers are emitted as-is:
+
+```ts
+<button onClick={() => print("clicked")}>Click</button>
+```
+
+Spread props are parsed and emitted by the compiler, but the current
+validator rejects them in DekaScript mode. They are listed here so the
+emitted contract is documented; full end-to-end support is tracked
+separately.
+
+## Runtime contract
+
+The host or runtime must provide `deka.ui.jsx`, `deka.ui.jsxs`, and
+`deka.ui.Fragment`. The compiler does not inject an import for these helpers;
+they are referenced as members of the global `deka.ui` namespace.

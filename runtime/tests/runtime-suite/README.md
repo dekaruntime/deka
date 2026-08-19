@@ -79,6 +79,7 @@ reproduction before the bug ever reaches the website.
 | `jsx-runtime-function-component` | `deka.ui.jsx` with function component tag | ✓ |
 | `jsx-runtime-static-children` | `deka.ui.jsxs` static multiple children | ✓ |
 | `jsx-runtime-nested-children` | nested children array normalization | ✓ |
+| `jsx-fragment` | JSX fragments (`<>...</>`) compiled through deka.ui.* | ✓ |
 | `interfaces` | structural interface satisfaction | ✓ |
 | `unsafe-runtime-helper` | `unsafe { ... }` blocks | ✓ |
 | `utility-classes` | class strings on JSX elements | ✓ |
