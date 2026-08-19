@@ -92,16 +92,14 @@ fn snapshot_class_rejected_in_dekascript() {
 }
 
 #[test]
-fn snapshot_js_arrow_function_reports_missing_semicolon() {
-    // KNOWN-BAD (#50): the real cause is that `(n) => ...` (JS/TS arrow
-    // syntax) is unsupported — DekaScript still only accepts `fn(n) => ...`.
-    // The parser instead reports a missing semicolon, sending the reader
-    // hunting for punctuation that isn't the problem.
-    let err = ds_diagnostic("const f = (n) => n * 2;")
-        .expect_err("JS-style arrow functions are not accepted yet");
+fn snapshot_js_arrow_function_is_accepted() {
+    // dekaruntime/deka#50: JS/TS-style parenthesised arrow functions are now
+    // accepted alongside the existing `fn(n) => ...` form.
+    let js = ds_diagnostic("const f = (n) => n * 2;")
+        .expect("JS-style arrow functions should be accepted in DekaScript");
     assert!(
-        err.contains("Missing semicolon"),
-        "diagnostic text changed — if this now names arrow functions, #50 is fixed: update this snapshot: {err}"
+        js.contains("(n) => n * 2"),
+        "arrow function body missing in emitted JS: {js}"
     );
 }
 
