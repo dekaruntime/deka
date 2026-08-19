@@ -1,0 +1,2 @@
+const node = globalThis.deka.ui.jsxs("div", { children: [["a", "b"], "c"] })
+console.log(JSON.stringify(node))

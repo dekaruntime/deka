@@ -72,6 +72,36 @@
     "expectStdout": "<h1>Hello DekaScript</h1>\n"
   },
   {
+    "name": "jsx runtime primitive",
+    "file": "jsx-runtime-primitive.ds",
+    "expectCompile": true,
+    "expectStdout": "{\"tag\":\"div\",\"props\":{\"class\":\"container\"},\"children\":[\"hello\"]}\n"
+  },
+  {
+    "name": "jsx runtime fragment",
+    "file": "jsx-runtime-fragment.ds",
+    "expectCompile": true,
+    "expectStdout": "{\"tag\":\"Fragment\",\"props\":{},\"children\":[\"a\",\"b\"]}\n"
+  },
+  {
+    "name": "jsx runtime function component",
+    "file": "jsx-runtime-function-component.ds",
+    "expectCompile": true,
+    "expectStdout": "{\"name\":\"Deka\"}\ntrue\n"
+  },
+  {
+    "name": "jsx runtime static children",
+    "file": "jsx-runtime-static-children.ds",
+    "expectCompile": true,
+    "expectStdout": "{\"tag\":\"ul\",\"props\":{},\"children\":[\"a\",\"b\",\"c\"]}\n"
+  },
+  {
+    "name": "jsx runtime nested children",
+    "file": "jsx-runtime-nested-children.ds",
+    "expectCompile": true,
+    "expectStdout": "{\"tag\":\"div\",\"props\":{},\"children\":[\"a\",\"b\",\"c\"]}\n"
+  },
+  {
     "name": "interfaces",
     "file": "interfaces.ds",
     "expectCompile": true,

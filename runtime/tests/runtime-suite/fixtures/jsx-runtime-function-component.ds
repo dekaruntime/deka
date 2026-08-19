@@ -1,0 +1,6 @@
+fn Greeting(props: object): object {
+  return globalThis.deka.ui.jsx("h1", { children: props.name })
+}
+const node = globalThis.deka.ui.jsx(Greeting, { name: "Deka" })
+console.log(JSON.stringify(node.props))
+console.log(node.tag === Greeting)

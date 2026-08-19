@@ -73,6 +73,69 @@ function wrapMicrotask(task) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Deka UI JSX runtime primitives
+// ---------------------------------------------------------------------------
+// These are the immutable node factories that the DekaScript compiler emits for
+// JSX (issue #141). The contract is intentionally small and platform-agnostic:
+// server and client renderers consume these nodes later; this module does not
+// perform rendering or DOM creation.
+//
+// Compiler contract (issue #146):
+//   deka.ui.jsx(tag, props)  -> ComponentNode   // dynamic children
+//   deka.ui.jsxs(tag, props) -> ComponentNode   // static children; same runtime behavior
+//   deka.ui.Fragment         -> symbol used as tag for <></>
+//
+// ComponentNode shape (immutable value):
+//   {
+//     tag:      string | function | symbol,  // primitive tag, function component, or Fragment
+//     props:    Object,                      // frozen plain object of props (children excluded)
+//     children: Array                        // frozen array of normalized children
+//   }
+//
+// Children normalization rules:
+//   - null / undefined are omitted
+//   - nested arrays are flattened one level
+//   - strings, numbers, booleans, and existing ComponentNodes are preserved
+
+const Fragment = Symbol.for("deka.ui.Fragment");
+
+function normalizeJsxChildren(children) {
+  if (children == null) return [];
+  if (Array.isArray(children)) {
+    const out = [];
+    for (const child of children) {
+      if (Array.isArray(child)) {
+        for (const inner of normalizeJsxChildren(child)) {
+          out.push(inner);
+        }
+      } else if (child != null) {
+        out.push(child);
+      }
+    }
+    return out;
+  }
+  return [children];
+}
+
+function createComponentNode(tag, props) {
+  const { children, ...rest } = props ?? {};
+  const normalizedChildren = normalizeJsxChildren(children);
+  return Object.freeze({
+    tag,
+    props: Object.freeze(rest),
+    children: Object.freeze(normalizedChildren),
+  });
+}
+
+function uiJsx(tag, props) {
+  return createComponentNode(tag, props);
+}
+
+function uiJsxs(tag, props) {
+  return createComponentNode(tag, props);
+}
+
 const deka = {
   unsafe: (tryFn, catchFn, finallyFn) => {
     try {
@@ -92,6 +155,12 @@ const deka = {
   panic: (message) => {
     throw new Error(String(message));
   },
+
+  ui: Object.freeze({
+    jsx: uiJsx,
+    jsxs: uiJsxs,
+    Fragment,
+  }),
 };
 
 const unsafeGlobals = {
@@ -143,7 +212,12 @@ function renderJsxChildren(children) {
   return String(children ?? "");
 }
 
-function jsx(type, props) {
+// Legacy test-harness JSX renderer (string-concat HTML). The current compiler
+// emits `jsx`/`jsxs` as globals imported from `component/core`; issue #146 moves
+// the compiler to the `deka.ui.*` namespace. These legacy shims keep the
+// existing runtime-suite fixtures rendering to stdout until the compiler switch
+// lands. They are NOT the public JSX runtime contract.
+function legacyJsx(type, props) {
   const resolvedProps = props ?? {};
   if (typeof type === "function") {
     return String(type(resolvedProps) ?? "");
@@ -161,8 +235,8 @@ function jsx(type, props) {
   return childHtml === "" ? `<${type}${attrs} />` : `<${type}${attrs}>${childHtml}</${type}>`;
 }
 
-function jsxs(type, props) {
-  return jsx(type, props);
+function legacyJsxs(type, props) {
+  return legacyJsx(type, props);
 }
 
 export function createRuntimeGlobals(stdout, stderr, cwd = "/", env = {}) {
@@ -281,8 +355,8 @@ export function createRuntimeGlobals(stdout, stderr, cwd = "/", env = {}) {
       Map,
       Set,
 
-      jsx,
-      jsxs,
+      jsx: legacyJsx,
+      jsxs: legacyJsxs,
     },
     output,
     errorOutput,
