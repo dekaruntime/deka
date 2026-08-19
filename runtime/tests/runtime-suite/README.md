@@ -82,3 +82,4 @@ reproduction before the bug ever reaches the website.
 | `interfaces` | structural interface satisfaction | ✓ |
 | `unsafe-runtime-helper` | `unsafe { ... }` blocks | ✓ |
 | `utility-classes` | class strings on JSX elements | ✓ |
+| `signals` | signal/effect/memo reactivity primitives | ✓ |
