@@ -1,0 +1,155 @@
+---
+title: Suspense and Error Boundaries
+description: Async component boundaries for server rendering and streaming.
+---
+
+DekaScript provides two boundary components for async rendering:
+
+- `Suspense` renders a fallback while an async child is pending.
+- `ErrorBoundary` catches render errors and renders a fallback.
+
+They are exposed on `deka.ui` alongside the JSX runtime and signal primitives.
+
+## API
+
+```ds
+const ui = globalThis.deka.ui
+
+<ui.Suspense fallback={<Spinner />}>
+  <Comments postId={id} />
+</ui.Suspense>
+
+<ui.ErrorBoundary fallback={(err) => <p>Error: {err.message}</p>}>
+  <Risky />
+</ui.ErrorBoundary>
+```
+
+Because the public module-resolution contract is still being finalized, the
+examples below reference the components through `globalThis.deka.ui`. Once the
+module lane lands, the intended import form is:
+
+```ds
+import { Suspense, ErrorBoundary } from "ui"
+```
+
+## Server rendering
+
+The server renderer walks immutable `ComponentNode` values produced by
+`deka.ui.jsx`/`deka.ui.jsxs`. It returns both the rendered HTML and an array of
+boundary metadata.
+
+```ds
+const ui = globalThis.deka.ui
+
+async fn Comments(): Promise<object> {
+  return ui.jsxs("ul", {
+    children: [
+      ui.jsx("li", { children: "First" }),
+      ui.jsx("li", { children: "Second" })
+    ]
+  })
+}
+
+const node = ui.jsx(ui.Suspense, {
+  fallback: ui.jsx("p", { children: "Loading comments..." }),
+  children: ui.jsx(Comments, {})
+})
+
+// Sync server pass: render fallback and record the boundary.
+const sync = ui.renderToString(node)
+console.log(sync.html)          // <p>Loading comments...</p>
+console.log(sync.boundaries)    // [{ id: "S:1", state: "pending", ... }]
+
+// Async server pass: await pending work and render the final HTML.
+async fn render(): Promise<void> {
+  const async = await ui.renderToStringAsync(node)
+  console.log(async.html)       // <ul><li>First</li><li>Second</li></ul>
+}
+
+render()
+```
+
+Boundary records are useful for streaming: the server can send the fallback
+HTML immediately, then send replacement payloads keyed by `boundary.id` when the
+async work resolves.
+
+## Error boundaries
+
+`ErrorBoundary` catches errors during render and calls `fallback` with the
+error. Async resources that return a `Result<T, E>` with `Result.Err` are also
+treated as errors.
+
+```ds
+const ui = globalThis.deka.ui
+
+struct LoadError {
+  message: string
+}
+
+async fn Comments(): Promise<object> {
+  return Result.Err(LoadError { message: "network down" })
+}
+
+const node = ui.jsx(ui.ErrorBoundary, {
+  fallback: (err) => ui.jsx("p", { children: err.message }),
+  children: ui.jsx(Comments, {})
+})
+
+async fn render(): Promise<void> {
+  const result = await ui.renderToStringAsync(node)
+  console.log(result.html)      // <p>network down</p>
+}
+
+render()
+```
+
+## Nested boundaries
+
+Suspense boundaries can be nested. A pending inner boundary renders its own
+fallback; an outer boundary only falls back if one of its direct children is
+still pending.
+
+```ds
+const ui = globalThis.deka.ui
+
+async fn Inner(): Promise<object> {
+  return ui.jsx("span", { children: "inner loaded" })
+}
+
+fn Outer(): object {
+  return ui.jsxs("div", {
+    children: [
+      ui.jsx("p", { children: "outer" }),
+      ui.jsx(ui.Suspense, {
+        fallback: ui.jsx("span", { children: "inner loading" }),
+        children: ui.jsx(Inner, {})
+      })
+    ]
+  })
+}
+
+const node = ui.jsx(ui.Suspense, {
+  fallback: ui.jsx("span", { children: "outer loading" }),
+  children: ui.jsx(Outer, {})
+})
+
+const result = ui.renderToString(node)
+console.log(result.html)
+// <div><p>outer</p><span>inner loading</span></div>
+console.log(result.boundaries.length)
+// 2  (outer boundary + pending inner boundary)
+```
+
+## Client behavior
+
+The current client runtime focuses on the server-side boundary contract. Client
+hydration that swaps fallback HTML for resolved content is stubbed for launch:
+`deka.ui.renderToStringAsync` can be used on the server, and the boundary IDs it
+records are the hook for future client replacement logic.
+
+## Runtime notes
+
+- There is no VDOM diffing. The renderer produces plain HTML strings.
+- `renderToString` runs synchronously and records pending boundaries.
+- `renderToStringAsync` awaits async work and returns the final resolved HTML.
+- `ErrorBoundary` only renders its own fallback; it does not re-throw.

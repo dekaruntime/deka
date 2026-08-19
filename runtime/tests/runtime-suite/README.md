@@ -84,3 +84,8 @@ reproduction before the bug ever reaches the website.
 | `unsafe-runtime-helper` | `unsafe { ... }` blocks | ✓ |
 | `utility-classes` | class strings on JSX elements | ✓ |
 | `signals` | signal/effect/memo reactivity primitives | ✓ |
+| `state-store` | Zustand-style state store on signals | ✓ |
+| `suspense-pending` | Suspense fallback on pending async boundary | ✓ |
+| `suspense-resolved` | Suspense resolved async boundary | ✓ |
+| `suspense-rejected` | ErrorBoundary catches rejected Result | ✓ |
+| `suspense-nested` | nested Suspense boundaries | ✓ |

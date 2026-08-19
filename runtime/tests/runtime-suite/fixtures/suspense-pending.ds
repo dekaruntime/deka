@@ -1,0 +1,14 @@
+const ui = globalThis.deka.ui;
+
+async fn Slow(): Promise<object> {
+  return ui.jsx("p", { children: "loaded" });
+}
+
+const node = ui.jsx(ui.Suspense, {
+  fallback: ui.jsx("span", { children: "loading" }),
+  children: ui.jsx(Slow, {})
+});
+
+const result = ui.renderToString(node);
+console.log(result.html);
+console.log(result.boundaries.length);

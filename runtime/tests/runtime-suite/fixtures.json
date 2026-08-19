@@ -148,5 +148,29 @@
     "file": "state.ds",
     "expectCompile": true,
     "expectStdout": "0\n1\n6\nA6\nB6\nA7\nB7\n"
+  },
+  {
+    "name": "suspense pending",
+    "file": "suspense-pending.ds",
+    "expectCompile": true,
+    "expectStdout": "<span>loading</span>\n1\n"
+  },
+  {
+    "name": "suspense resolved",
+    "file": "suspense-resolved.ds",
+    "expectCompile": true,
+    "expectStdout": "<p>loaded</p>\n"
+  },
+  {
+    "name": "suspense rejected",
+    "file": "suspense-rejected.ds",
+    "expectCompile": true,
+    "expectStdout": "<p>boom</p>\n"
+  },
+  {
+    "name": "suspense nested",
+    "file": "suspense-nested.ds",
+    "expectCompile": true,
+    "expectStdout": "<div><p>outer</p><span>inner loading</span></div>\n2\n"
   }
 ]
