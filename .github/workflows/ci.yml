@@ -120,7 +120,7 @@ jobs:
       - name: Test cli
         working-directory: runtime
         env:
-          RUSTY_V8_ARCHIVE: ${{ github.workspace }}/runtime/target/debug/gn_out/obj/librusty_v8.a.gz
+          RUSTY_V8_ARCHIVE: ${{ github.workspace }}/runtime/target/debug/gn_out/obj/librusty_v8.a
         run: cargo test --locked -p cli --lib -- --test-threads=1
 
       - name: Build and test browser compiler WASM
