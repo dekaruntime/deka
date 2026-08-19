@@ -101,6 +101,17 @@ jobs:
         working-directory: runtime
         run: cargo test -p bundler
 
+      # The v8 crate's internal downloader can flake on GitHub-hosted runners.
+      # Pre-fetch the matching static lib so the build script can use it directly.
+      - name: Pre-fetch V8 static lib
+        working-directory: runtime
+        env:
+          V8_URL: https://github.com/denoland/rusty_v8/releases/download/v147.4.0/librusty_v8_release_x86_64-unknown-linux-gnu.a.gz
+        run: |
+          mkdir -p target/debug/gn_out/obj
+          curl -fsSL -o target/debug/gn_out/obj/librusty_v8.a.gz "$V8_URL"
+          gunzip -f target/debug/gn_out/obj/librusty_v8.a.gz
+
       # `cli` tests are run single-threaded: the transpile phase-hook tests
       # and the self-update env-var tests mutate real process-global state
       # that cannot safely run in parallel. Assertion drift in
@@ -108,6 +119,8 @@ jobs:
       # fixed in dekaruntime/deka#61.
       - name: Test cli
         working-directory: runtime
+        env:
+          RUSTY_V8_ARCHIVE: ${{ github.workspace }}/runtime/target/debug/gn_out/obj/librusty_v8.a.gz
         run: cargo test --locked -p cli --lib -- --test-threads=1
 
       - name: Build and test browser compiler WASM
