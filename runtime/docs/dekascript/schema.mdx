@@ -1,0 +1,73 @@
+# Schema & Runtime Validation
+
+DekaScript includes a small runtime validation library inspired by Zod. It is
+designed to fit the language's error model: instead of throwing, every parser
+returns `Result<T, ValidationError[]>`.
+
+## Basic usage
+
+```ds
+import { schema } from "@pkg.deka.gg/schema";
+
+const User = schema.struct({
+  id: schema.string,
+  age: schema.number.min(0),
+  email: schema.string.optional(),
+});
+
+const result = User.parse(json);
+
+match (result) {
+  Ok(user) => console.log(user.id),
+  Err(errors) => console.log(errors[0].message),
+}
+```
+
+## Primitives
+
+| Schema | Validates |
+|---|---|
+| `schema.string` | strings |
+| `schema.number` | numbers (NaN rejected) |
+| `schema.boolean` | booleans |
+| `schema.literal(value)` | exact equality |
+| `schema.array(itemSchema)` | arrays of items |
+| `schema.struct(fields)` | objects with required fields |
+| `schema.union(...schemas)` | value matches any schema |
+
+## Modifiers
+
+```ds
+schema.string.optional()   // undefined or string
+schema.string.nullable()   // null or string
+schema.number.min(0).max(100)
+schema.string.email()
+```
+
+## Error shape
+
+```ds
+type ValidationError = {
+  path: Array<string | number>,
+  message: string,
+  received: unknown,
+}
+```
+
+Errors include the path so nested struct and array failures are easy to locate.
+
+## Integration with components
+
+A common pattern is to validate props or fetched data at the boundary:
+
+```ds
+fn UserCard(props: object): Component {
+  const result = UserSchema.parse(props.user);
+  const user = match (result) {
+    Ok(u) => u,
+    Err(_) => return <p>Invalid user data</p>,
+  };
+
+  return <div>{user.name}</div>;
+}
+```
