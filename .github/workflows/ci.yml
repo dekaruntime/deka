@@ -60,6 +60,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: runtime
+          # The v8 crate downloads/stores a large static lib under
+          # target/{debug,release}/gn_out, which rust-cache does not include by
+          # default. Without it, `cargo test -p cli` re-downloads/rebuilds V8 and
+          # can fail on a cold cache when the network download is flaky.
+          cache-directories: |
+            runtime/target/**/gn_out
 
       # Build only the crates we test. The full workspace includes
       # phpx_compiler_wasm, which fails to link on ubuntu-latest due to V8
