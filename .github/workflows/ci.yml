@@ -38,13 +38,22 @@ jobs:
 
   rust:
     name: Rust tests
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS, ARM64]
     env:
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
+
+      - name: Where am I?
+        run: |
+          echo "runner name: $(hostname)"
+          echo "runner os: ${{ runner.os }}"
+          echo "runner arch: ${{ runner.arch }}"
+          echo "uname -a: $(uname -a)"
+          (which cargo && cargo --version) || true
+          (which bun && bun --version) || true
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.96.0
@@ -60,6 +69,15 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: runtime
+          # The v8 crate downloads/stores a large static lib under
+          # target/{debug,release}/gn_out, which rust-cache does not include by
+          # default. Without it, `cargo test -p cli` re-downloads/rebuilds V8 and
+          # can fail on a cold cache when the network download is flaky.
+          cache-directories: |
+            runtime/target/**/gn_out
+          # Seed the cache even when V8 linking fails, so the next run can reuse
+          # the downloaded static lib instead of hitting the network again.
+          cache-on-failure: true
 
       # Build only the crates we test. The full workspace includes
       # phpx_compiler_wasm, which fails to link on ubuntu-latest due to V8
@@ -92,6 +110,18 @@ jobs:
         working-directory: runtime
         run: cargo test -p bundler
 
+      # The v8 crate's internal downloader can flake on GitHub-hosted runners.
+      # Pre-fetch the matching static lib so the build script can use it directly.
+      - name: Pre-fetch V8 static lib
+        working-directory: runtime
+        env:
+          V8_URL: https://github.com/denoland/rusty_v8/releases/download/v147.4.0/librusty_v8_simdutf_release_aarch64-apple-darwin.a.gz
+        run: |
+          mkdir -p target/debug/gn_out/obj
+          curl -fsSL -w "HTTP %{http_code} - %{size_download} bytes downloaded\n" \
+            -o target/debug/gn_out/obj/librusty_v8.a.gz "$V8_URL"
+          ls -lh target/debug/gn_out/obj/librusty_v8.a.gz
+
       # `cli` tests are run single-threaded: the transpile phase-hook tests
       # and the self-update env-var tests mutate real process-global state
       # that cannot safely run in parallel. Assertion drift in
@@ -99,6 +129,8 @@ jobs:
       # fixed in dekaruntime/deka#61.
       - name: Test cli
         working-directory: runtime
+        env:
+          RUSTY_V8_ARCHIVE: ${{ github.workspace }}/runtime/target/debug/gn_out/obj/librusty_v8.a.gz
         run: cargo test --locked -p cli --lib -- --test-threads=1
 
       - name: Build and test browser compiler WASM

@@ -252,7 +252,7 @@ export function createRuntimeGlobals(stdout, stderr, cwd = "/", env = {}) {
       unsafe: unsafeGlobals,
 
       fetch: safeFetch,
-      JSON: safeJSON,
+      JSON: hostJSON,
       URL: wrapConstructorResult(hostURL),
       URLSearchParams: wrapConstructorResult(hostURLSearchParams),
       TextEncoder: wrapConstructorResult(hostTextEncoder),
