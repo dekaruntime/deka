@@ -19,13 +19,27 @@ env:
 
 jobs:
   test:
-    name: Test
-    runs-on: [self-hosted, linux, x64]
+    name: Test (${{ matrix.platform }})
+    strategy:
+      fail-fast: true
+      matrix:
+        platform: [linux-x64, darwin-x64, darwin-arm64]
+        include:
+          - platform: linux-x64
+            runner: [self-hosted, linux, x64]
+            sccache_bucket: deka-sccache-linux-x64
+          - platform: darwin-x64
+            runner: [self-hosted, macos, x64]
+            sccache_bucket: deka-sccache-darwin-x64
+          - platform: darwin-arm64
+            runner: [self-hosted, macos, arm64]
+            sccache_bucket: deka-sccache-darwin-arm64
+    runs-on: ${{ matrix.runner }}
     env:
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
-      SCCACHE_BUCKET: "deka-sccache-linux-x64"
+      SCCACHE_BUCKET: "${{ matrix.sccache_bucket }}"
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     steps:
@@ -85,6 +99,7 @@ jobs:
           cargo test -p bundler
 
       - name: Build and test browser compiler WASM
+        if: matrix.platform == 'darwin-arm64'
         env:
           RUSTC_WRAPPER: "sccache"
           DEKA_SKIP_DIRTY_CHECK: 1
