@@ -79,6 +79,70 @@ impl WorkerThread {
                     });
                 }
 
+                // Signal-based reactivity primitives (deka#142)
+                if (typeof globalThis.deka === 'undefined') {
+                    globalThis.deka = {};
+                }
+                const __dekaSignalContextStack = [];
+                function __dekaGetSignalContext() {
+                    return __dekaSignalContextStack[__dekaSignalContextStack.length - 1] || null;
+                }
+                function __dekaCreateSignal(initialValue) {
+                    let value = initialValue;
+                    const subscribers = new Set();
+                    function read() {
+                        const ctx = __dekaGetSignalContext();
+                        if (ctx) {
+                            subscribers.add(ctx);
+                            ctx.onCleanup(() => { subscribers.delete(ctx); });
+                        }
+                        return value;
+                    }
+                    function write(nextValue) {
+                        if (Object.is(value, nextValue)) return;
+                        value = nextValue;
+                        for (const ctx of Array.from(subscribers)) ctx.execute();
+                    }
+                    return [read, write];
+                }
+                function __dekaCreateEffect(fn) {
+                    let userCleanup;
+                    const dependencyCleanups = new Set();
+                    function execute() {
+                        for (const c of dependencyCleanups) c();
+                        dependencyCleanups.clear();
+                        if (typeof userCleanup === 'function') { const c = userCleanup; userCleanup = undefined; try { c(); } catch (e) {} }
+                        __dekaSignalContextStack.push(context);
+                        try {
+                            const maybeCleanup = fn();
+                            if (typeof maybeCleanup === 'function') userCleanup = maybeCleanup;
+                        } finally { __dekaSignalContextStack.pop(); }
+                    }
+                    const context = { execute, onCleanup(c) { dependencyCleanups.add(c); } };
+                    execute();
+                    return function dispose() {
+                        for (const c of dependencyCleanups) c();
+                        dependencyCleanups.clear();
+                        if (typeof userCleanup === 'function') { const c = userCleanup; userCleanup = undefined; c(); }
+                    };
+                }
+                function __dekaCreateMemo(fn) {
+                    const [getValue, setValue] = __dekaCreateSignal(undefined);
+                    __dekaCreateEffect(() => { setValue(fn()); });
+                    return getValue;
+                }
+                globalThis.createSignal = __dekaCreateSignal;
+                globalThis.createEffect = __dekaCreateEffect;
+                globalThis.createMemo = __dekaCreateMemo;
+                globalThis.deka.ui = Object.freeze({
+                    signal: __dekaCreateSignal,
+                    effect: __dekaCreateEffect,
+                    memo: __dekaCreateMemo,
+                    createSignal: __dekaCreateSignal,
+                    createEffect: __dekaCreateEffect,
+                    createMemo: __dekaCreateMemo,
+                });
+
                 if (!globalThis.TextEncoder) {
                     globalThis.TextEncoder = class TextEncoder {
                         encode(input) {

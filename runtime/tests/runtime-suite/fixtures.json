@@ -130,5 +130,11 @@
     "file": "arrow-functions.ds",
     "expectCompile": true,
     "expectStdout": "42\n42\n42\n"
+  },
+  {
+    "name": "signals",
+    "file": "signals.ds",
+    "expectCompile": true,
+    "expectStdout": "computed\n0\n5\neffect\neffect\n2\n2\ncomputed\n6\nA0\nB0\nA1\nB1\n2\n"
   }
 ]

@@ -136,6 +136,107 @@ function uiJsxs(tag, props) {
   return createComponentNode(tag, props);
 }
 
+// ---------------------------------------------------------------------------
+// Signal-based reactivity primitives (deka#142)
+// ---------------------------------------------------------------------------
+
+const signalContextStack = [];
+
+function getCurrentSignalContext() {
+  return signalContextStack[signalContextStack.length - 1] || null;
+}
+
+function createSignal(initialValue) {
+  let value = initialValue;
+  const subscribers = new Set();
+
+  function read() {
+    const ctx = getCurrentSignalContext();
+    if (ctx) {
+      subscribers.add(ctx);
+      ctx.onCleanup(() => {
+        subscribers.delete(ctx);
+      });
+    }
+    return value;
+  }
+
+  function write(nextValue) {
+    if (Object.is(value, nextValue)) {
+      return;
+    }
+    value = nextValue;
+    const snapshot = Array.from(subscribers);
+    for (const ctx of snapshot) {
+      ctx.execute();
+    }
+  }
+
+  return [read, write];
+}
+
+function createEffect(fn) {
+  let userCleanup;
+  const dependencyCleanups = new Set();
+
+  const context = {
+    execute,
+    onCleanup(cleanup) {
+      dependencyCleanups.add(cleanup);
+    },
+  };
+
+  function execute() {
+    for (const cleanup of dependencyCleanups) {
+      cleanup();
+    }
+    dependencyCleanups.clear();
+
+    if (typeof userCleanup === "function") {
+      const previousCleanup = userCleanup;
+      userCleanup = undefined;
+      try {
+        previousCleanup();
+      } catch (error) {
+        // User cleanup errors are intentionally swallowed so a misbehaving
+        // cleanup does not prevent the effect from re-subscribing.
+      }
+    }
+
+    signalContextStack.push(context);
+    try {
+      const maybeCleanup = fn();
+      if (typeof maybeCleanup === "function") {
+        userCleanup = maybeCleanup;
+      }
+    } finally {
+      signalContextStack.pop();
+    }
+  }
+
+  execute();
+
+  return function dispose() {
+    for (const cleanup of dependencyCleanups) {
+      cleanup();
+    }
+    dependencyCleanups.clear();
+    if (typeof userCleanup === "function") {
+      const cleanup = userCleanup;
+      userCleanup = undefined;
+      cleanup();
+    }
+  };
+}
+
+function createMemo(fn) {
+  const [getValue, setValue] = createSignal(undefined);
+  createEffect(() => {
+    setValue(fn());
+  });
+  return getValue;
+}
+
 const deka = {
   unsafe: (tryFn, catchFn, finallyFn) => {
     try {
@@ -160,6 +261,12 @@ const deka = {
     jsx: uiJsx,
     jsxs: uiJsxs,
     Fragment,
+    signal: createSignal,
+    effect: createEffect,
+    memo: createMemo,
+    createSignal,
+    createEffect,
+    createMemo,
   }),
 };
 
@@ -357,6 +464,10 @@ export function createRuntimeGlobals(stdout, stderr, cwd = "/", env = {}) {
 
       jsx: legacyJsx,
       jsxs: legacyJsxs,
+
+      createSignal,
+      createEffect,
+      createMemo,
     },
     output,
     errorOutput,
