@@ -1,0 +1,5 @@
+const result = unsafe { JSON.parse('{"answer":42}') };
+console.log(result.answer);
+
+const encoded = unsafe { JSON.stringify({ value: 7 }) };
+console.log(encoded);

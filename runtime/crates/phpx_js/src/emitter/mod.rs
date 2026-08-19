@@ -257,7 +257,7 @@ impl<'a> JsSubsetEmitter<'a> {
                 out.push_str("globalThis.fetch??=(...args)=>__DekaUnsafeGlobals.fetch(...args).then((r)=>({__ok:r})).catch((e)=>({__error:e}));\n");
             }
             if body_refs_global(&program_text, "JSON") {
-                out.push_str("globalThis.JSON??=__DekaUnsafeGlobals.JSON;globalThis.JSON.parse=(text)=>{try{return __DekaUnsafeGlobals.JSON.parse(text);}catch(e){return{__error:e};}};globalThis.JSON.stringify=(value,replacer,space)=>{try{return __DekaUnsafeGlobals.JSON.stringify(value,replacer,space);}catch(e){return{__error:e};}};\n");
+                out.push_str("globalThis.JSON??=__DekaUnsafeGlobals.JSON;const __DekaJSONParse=__DekaUnsafeGlobals.JSON.parse;const __DekaJSONStringify=__DekaUnsafeGlobals.JSON.stringify;globalThis.JSON.parse=(text)=>{try{return __DekaJSONParse(text);}catch(e){return{__error:e};}};globalThis.JSON.stringify=(value,replacer,space)=>{try{return __DekaJSONStringify(value,replacer,space);}catch(e){return{__error:e};}};\n");
             }
             if body_refs_global(&program_text, "URL") {
                 out.push_str("globalThis.URL??=(url,base)=>{try{return new(__DekaUnsafeGlobals.URL)(url,base);}catch(e){return{__error:e};}};\n");

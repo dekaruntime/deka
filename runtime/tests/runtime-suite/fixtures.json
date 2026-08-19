@@ -89,5 +89,11 @@
     "file": "utility-classes.ds",
     "expectCompile": true,
     "expectStdout": "<div class=\"p-4 bg-blue-500 text-white rounded\">DekaScript</div>\n"
+  },
+  {
+    "name": "json parse and stringify",
+    "file": "json.ds",
+    "expectCompile": true,
+    "expectStdout": "42\n{\"value\":7}\n"
   }
 ]

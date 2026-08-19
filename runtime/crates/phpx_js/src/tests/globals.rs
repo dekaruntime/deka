@@ -97,6 +97,35 @@ fn ds_prelude_wraps_json_when_referenced() {
 }
 
 #[test]
+fn ds_prelude_json_wrapper_captures_original_functions() {
+    // Regression guard for dekaruntime/deka#130: the wrapper must snapshot
+    // the original parse/stringify functions before mutating globalThis.JSON,
+    // otherwise the wrapper calls itself recursively.
+    let source = "const val = JSON.parse(text);";
+    let js = ds_to_js(source).expect("should compile");
+    assert!(
+        js.contains("const __DekaJSONParse=__DekaUnsafeGlobals.JSON.parse"),
+        "expected original JSON.parse capture, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("const __DekaJSONStringify=__DekaUnsafeGlobals.JSON.stringify"),
+        "expected original JSON.stringify capture, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("return __DekaJSONParse(text)"),
+        "expected wrapper to call captured parse, got:\n{}",
+        js
+    );
+    assert!(
+        js.contains("return __DekaJSONStringify(value,replacer,space)"),
+        "expected wrapper to call captured stringify, got:\n{}",
+        js
+    );
+}
+
+#[test]
 fn ds_prelude_wraps_fetch_when_referenced() {
     let source = "const val = fetch(url);";
     let js = ds_to_js(source).expect("should compile");
