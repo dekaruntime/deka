@@ -52,8 +52,8 @@ jobs:
           echo "runner os: ${{ runner.os }}"
           echo "runner arch: ${{ runner.arch }}"
           echo "uname -a: $(uname -a)"
-          which cargo && cargo --version
-          which bun && bun --version
+          (which cargo && cargo --version) || true
+          (which bun && bun --version) || true
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.96.0
