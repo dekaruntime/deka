@@ -106,11 +106,14 @@ jobs:
       - name: Pre-fetch V8 static lib
         working-directory: runtime
         env:
-          V8_URL: https://github.com/denoland/rusty_v8/releases/download/v147.4.0/librusty_v8_release_x86_64-unknown-linux-gnu.a.gz
+          V8_URL: https://github.com/denoland/rusty_v8/releases/download/v147.4.0/librusty_v8_simdutf_release_x86_64-unknown-linux-gnu.a.gz
         run: |
           mkdir -p target/debug/gn_out/obj
-          curl -fsSL -o target/debug/gn_out/obj/librusty_v8.a.gz "$V8_URL"
+          curl -fsSL -w "HTTP %{http_code} - %{size_download} bytes downloaded\n" \
+            -o target/debug/gn_out/obj/librusty_v8.a.gz "$V8_URL"
+          ls -lh target/debug/gn_out/obj/
           gunzip -f target/debug/gn_out/obj/librusty_v8.a.gz
+          ls -lh target/debug/gn_out/obj/
 
       # `cli` tests are run single-threaded: the transpile phase-hook tests
       # and the self-update env-var tests mutate real process-global state
