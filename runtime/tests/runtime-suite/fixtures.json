@@ -94,5 +94,11 @@
     "file": "json.ds",
     "expectCompile": true,
     "expectStdout": "42\n{\"value\":7}\n"
+  },
+  {
+    "name": "js arrow functions",
+    "file": "arrow-functions.ds",
+    "expectCompile": true,
+    "expectStdout": "42\n42\n42\n"
   }
 ]

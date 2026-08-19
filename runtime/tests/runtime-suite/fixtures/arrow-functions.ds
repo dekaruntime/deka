@@ -1,0 +1,6 @@
+const typed = (n: int): int => n * 2;
+const untyped = (n) => n * 2;
+const add = (left: number, right: number): number => left + right;
+console.log(typed(21));
+console.log(untyped(21));
+console.log(add(20, 22));
