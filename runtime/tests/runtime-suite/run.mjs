@@ -51,18 +51,23 @@ function findWasmArtifact() {
   return newest;
 }
 
-function compileNative(sourcePath, cliBinary) {
-  const outPath = join(tmpdir(), `deka-runtime-test-${Date.now()}-${Math.random().toString(36).slice(2)}.js`);
+async function compileNative(sourcePath, cliBinary) {
+  // The CLI's transpile security check rejects world-writable parents such as
+  // /tmp in CI. Use a scratch directory under the repo instead.
+  const scratchDir = join(__dirname, ".runtime-suite-tmp");
+  await require("node:fs").promises.mkdir(scratchDir, { recursive: true });
+  const outPath = join(scratchDir, `deka-runtime-test-${Date.now()}-${Math.random().toString(36).slice(2)}.js`);
   const result = spawnSync(cliBinary, ["transpile", sourcePath, "--out", outPath], {
     encoding: "utf-8",
     timeout: 60_000,
   });
   if (result.status !== 0) {
+    try { await rm(outPath, { force: true }); } catch {}
     return { ok: false, error: result.stderr || result.stdout || "native transpile failed" };
   }
   try {
-    const code = require("node:fs").readFileSync(outPath, "utf-8");
-    require("node:fs").unlinkSync(outPath);
+    const code = await readFile(outPath, "utf-8");
+    await rm(outPath, { force: true });
     return { ok: true, code };
   } catch (error) {
     return { ok: false, error: String(error) };
@@ -142,7 +147,7 @@ async function runFixture(fixture, cliBinary, wasmExports) {
   };
 
   // Native path
-  const nativeCompile = compileNative(sourcePath, cliBinary);
+  const nativeCompile = await compileNative(sourcePath, cliBinary);
   if (!nativeCompile.ok) {
     results.native.error = nativeCompile.error;
     if (fixture.expectCompile) {
