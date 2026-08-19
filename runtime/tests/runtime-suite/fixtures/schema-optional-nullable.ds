@@ -1,0 +1,10 @@
+const User = globalThis.schema.struct({
+  name: globalThis.schema.string,
+  email: globalThis.schema.string.optional(),
+  nickname: globalThis.schema.string.nullable(),
+});
+
+const result = User.parse({ name: "Sami", nickname: null });
+console.log(result.ok);
+console.log(result.value.email);
+console.log(result.value.nickname);

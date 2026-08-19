@@ -94,3 +94,9 @@ reproduction before the bug ever reaches the website.
 | `server-render-fragment` | `renderToString` with Fragment | ✓ |
 | `server-render-boolean-attrs` | boolean HTML attributes | ✓ |
 | `server-render-island` | island directive markers + hydrate scan | ✓ |
+| `schema-struct-valid` | valid struct parse | ✓ |
+| `schema-struct-invalid` | invalid struct returns Result.Err | ✓ |
+| `schema-nested` | nested struct schemas | ✓ |
+| `schema-array` | array item validation | ✓ |
+| `schema-optional-nullable` | optional/nullable modifiers | ✓ |
+| `schema-email` | string email refinement | ✓ |

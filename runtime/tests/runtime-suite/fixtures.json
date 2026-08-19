@@ -202,5 +202,41 @@
     "file": "server-render-island.ds",
     "expectCompile": true,
     "expectStdout": "<!--deka-island start:Q291bnRlcg== directive:bG9hZA== props:eyJzdGFydCI6NX0=--><button type=\"button\">count: 5</button><!--deka-island end:Q291bnRlcg==-->\n{\"name\":\"Counter\",\"directive\":\"load\",\"props\":{\"start\":5}}\n"
+  },
+  {
+    "name": "schema struct valid",
+    "file": "schema-struct-valid.ds",
+    "expectCompile": true,
+    "expectStdout": "true\nabc\n30\n"
+  },
+  {
+    "name": "schema struct invalid",
+    "file": "schema-struct-invalid.ds",
+    "expectCompile": true,
+    "expectStdout": "false\n2\n"
+  },
+  {
+    "name": "schema nested",
+    "file": "schema-nested.ds",
+    "expectCompile": true,
+    "expectStdout": "true\nCalgary\n"
+  },
+  {
+    "name": "schema array",
+    "file": "schema-array.ds",
+    "expectCompile": true,
+    "expectStdout": "true\n3\nfalse\n1\n"
+  },
+  {
+    "name": "schema optional nullable",
+    "file": "schema-optional-nullable.ds",
+    "expectCompile": true,
+    "expectStdout": "true\nundefined\nnull\n"
+  },
+  {
+    "name": "schema email",
+    "file": "schema-email.ds",
+    "expectCompile": true,
+    "expectStdout": "true\nfalse\n"
   }
 ]

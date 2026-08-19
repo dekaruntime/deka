@@ -1,0 +1,8 @@
+const User = globalThis.schema.struct({
+  id: globalThis.schema.string,
+  age: globalThis.schema.number.min(0),
+});
+
+const result = User.parse({ id: 123, age: -5 });
+console.log(result.ok);
+console.log(result.error.length);

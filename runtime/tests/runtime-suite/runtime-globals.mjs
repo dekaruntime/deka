@@ -770,6 +770,254 @@ const State = Object.freeze({
   create: createState,
 });
 
+// ---------------------------------------------------------------------------
+// Schema / runtime validation library (deka#153)
+// ---------------------------------------------------------------------------
+// Zod-like validation that returns Result<T, ValidationError[]> instead of
+// throwing. Built on top of the existing Result globals.
+
+function makeError(message, received, path) {
+  return { message, received, path };
+}
+
+function mergeResults(results) {
+  const value = [];
+  const errors = [];
+  for (const result of results) {
+    if (result.ok) {
+      value.push(result.value);
+    } else {
+      for (const e of result.error) errors.push(e);
+    }
+  }
+  if (errors.length > 0) return err(errors);
+  return ok(value);
+}
+
+function createStringSchema() {
+  const self = {
+    parse(value, path = []) {
+      if (typeof value !== "string") {
+        return err([makeError("Expected string", value, path)]);
+      }
+      return ok(value);
+    },
+    optional() {
+      return optionalSchema(self);
+    },
+    nullable() {
+      return nullableSchema(self);
+    },
+    email() {
+      return emailSchema(self);
+    },
+  };
+  return Object.freeze(self);
+}
+
+function createNumberSchema() {
+  const self = {
+    _min: undefined,
+    _max: undefined,
+    parse(value, path = []) {
+      if (typeof value !== "number" || Number.isNaN(value)) {
+        return err([makeError("Expected number", value, path)]);
+      }
+      if (self._min !== undefined && value < self._min) {
+        return err([makeError(`Expected number >= ${self._min}`, value, path)]);
+      }
+      if (self._max !== undefined && value > self._max) {
+        return err([makeError(`Expected number <= ${self._max}`, value, path)]);
+      }
+      return ok(value);
+    },
+    min(n) {
+      const next = createNumberSchema();
+      next._min = n;
+      next._max = self._max;
+      return Object.freeze(next);
+    },
+    max(n) {
+      const next = createNumberSchema();
+      next._min = self._min;
+      next._max = n;
+      return Object.freeze(next);
+    },
+    optional() {
+      return optionalSchema(Object.freeze(self));
+    },
+    nullable() {
+      return nullableSchema(Object.freeze(self));
+    },
+  };
+  return self;
+}
+
+function createBooleanSchema() {
+  const self = {
+    parse(value, path = []) {
+      if (typeof value !== "boolean") {
+        return err([makeError("Expected boolean", value, path)]);
+      }
+      return ok(value);
+    },
+    optional() {
+      return optionalSchema(self);
+    },
+    nullable() {
+      return nullableSchema(self);
+    },
+  };
+  return Object.freeze(self);
+}
+
+function createLiteralSchema(expected) {
+  const self = {
+    parse(value, path = []) {
+      if (value !== expected) {
+        return err([makeError(`Expected literal ${JSON.stringify(expected)}`, value, path)]);
+      }
+      return ok(value);
+    },
+    optional() {
+      return optionalSchema(self);
+    },
+    nullable() {
+      return nullableSchema(self);
+    },
+  };
+  return Object.freeze(self);
+}
+
+function optionalSchema(inner) {
+  const self = {
+    parse(value, path = []) {
+      if (value === undefined) return ok(undefined);
+      return inner.parse(value, path);
+    },
+    nullable() {
+      return nullableSchema(self);
+    },
+  };
+  return Object.freeze(self);
+}
+
+function nullableSchema(inner) {
+  const self = {
+    parse(value, path = []) {
+      if (value === null) return ok(null);
+      return inner.parse(value, path);
+    },
+    optional() {
+      return optionalSchema(self);
+    },
+  };
+  return Object.freeze(self);
+}
+
+function emailSchema(inner) {
+  const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const self = {
+    parse(value, path = []) {
+      const base = inner.parse(value, path);
+      if (!base.ok) return base;
+      if (!emailRe.test(base.value)) {
+        return err([makeError("Expected valid email", value, path)]);
+      }
+      return ok(base.value);
+    },
+    optional() {
+      return optionalSchema(self);
+    },
+    nullable() {
+      return nullableSchema(self);
+    },
+  };
+  return Object.freeze(self);
+}
+
+function createArraySchema(itemSchema) {
+  const self = {
+    parse(value, path = []) {
+      if (!Array.isArray(value)) {
+        return err([makeError("Expected array", value, path)]);
+      }
+      const results = [];
+      for (let i = 0; i < value.length; i++) {
+        results.push(itemSchema.parse(value[i], [...path, i]));
+      }
+      return mergeResults(results);
+    },
+    optional() {
+      return optionalSchema(self);
+    },
+    nullable() {
+      return nullableSchema(self);
+    },
+  };
+  return Object.freeze(self);
+}
+
+function createStructSchema(fields) {
+  const self = {
+    parse(value, path = []) {
+      if (value == null || typeof value !== "object" || Array.isArray(value)) {
+        return err([makeError("Expected object", value, path)]);
+      }
+      const out = {};
+      const errors = [];
+      for (const [key, schema] of Object.entries(fields)) {
+        const result = schema.parse(value[key], [...path, key]);
+        if (result.ok) {
+          out[key] = result.value;
+        } else {
+          for (const e of result.error) errors.push(e);
+        }
+      }
+      if (errors.length > 0) return err(errors);
+      return ok(out);
+    },
+    optional() {
+      return optionalSchema(self);
+    },
+    nullable() {
+      return nullableSchema(self);
+    },
+  };
+  return Object.freeze(self);
+}
+
+function createUnionSchema(...schemas) {
+  const self = {
+    parse(value, path = []) {
+      const allErrors = [];
+      for (const schema of schemas) {
+        const result = schema.parse(value, path);
+        if (result.ok) return result;
+        for (const e of result.error) allErrors.push(e);
+      }
+      return err(allErrors);
+    },
+    optional() {
+      return optionalSchema(self);
+    },
+    nullable() {
+      return nullableSchema(self);
+    },
+  };
+  return Object.freeze(self);
+}
+
+const schema = Object.freeze({
+  string: createStringSchema(),
+  number: createNumberSchema(),
+  boolean: createBooleanSchema(),
+  literal: createLiteralSchema,
+  array: createArraySchema,
+  struct: createStructSchema,
+  union: createUnionSchema,
+});
+
 const deka = {
   unsafe: (tryFn, catchFn, finallyFn) => {
     try {
@@ -807,6 +1055,15 @@ const deka = {
     createEffect,
     createMemo,
     createState,
+  }),
+  schema: Object.freeze({
+    string: schema.string,
+    number: schema.number,
+    boolean: schema.boolean,
+    literal: schema.literal,
+    array: schema.array,
+    struct: schema.struct,
+    union: schema.union,
   }),
 };
 
@@ -1021,6 +1278,7 @@ export function createRuntimeGlobals(stdout, stderr, cwd = "/", env = {}) {
       createMemo,
 
       State,
+      schema,
     },
     output,
     errorOutput,
