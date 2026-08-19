@@ -122,6 +122,9 @@ async function runCompiledJs(code) {
   if (promise && typeof promise.then === "function") {
     await promise;
   }
+  // Give nested async DekaScript components (e.g. Suspense resolution) a chance
+  // to drain their microtasks before we snapshot stdout.
+  await new Promise((resolve) => setTimeout(resolve, 0));
   // JSX/PHPX templates write rendered output to __phpxCurrentResponse.body.
   const templateBody = context.__phpxCurrentResponse?.body;
   return {

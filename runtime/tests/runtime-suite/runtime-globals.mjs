@@ -130,7 +130,7 @@ function createComponentNode(tag, props) {
     props: Object.freeze(rest),
     children: Object.freeze(normalizedChildren),
     toString() {
-      return renderComponentNodeToString(this);
+      return renderNodeSync(this, createRendererContext("sync"));
     },
   };
   Object.defineProperty(node, "__componentNode", {
@@ -151,8 +151,40 @@ function uiJsxs(tag, props) {
 }
 
 // ---------------------------------------------------------------------------
-// Server-side rendering helper (minimal implementation for test harness)
+// Suspense / ErrorBoundary primitives
 // ---------------------------------------------------------------------------
+// These are special component tags consumed by the server renderer. They are
+// functions so they can be referenced directly in JSX, but the renderer treats
+// them as boundary markers rather than ordinary function components.
+
+function Suspense(props) {
+  return createComponentNode(Suspense, props);
+}
+Suspense.__dekaTag = "Suspense";
+
+function ErrorBoundary(props) {
+  return createComponentNode(ErrorBoundary, props);
+}
+ErrorBoundary.__dekaTag = "ErrorBoundary";
+
+// ---------------------------------------------------------------------------
+// Server renderer for immutable ComponentNodes
+// ---------------------------------------------------------------------------
+// No VDOM diffing: walk the tree, render to HTML strings, and record Suspense
+// boundary metadata so resolved content can be streamed or swapped in later.
+
+function isPromiseLike(value) {
+  return value != null && typeof value === "object" && typeof value.then === "function";
+}
+
+function isResultErr(value) {
+  return (
+    value != null &&
+    typeof value === "object" &&
+    value.__enum === "Result" &&
+    value.__case === "Err"
+  );
+}
 
 function escapeHtml(text) {
   return String(text)
@@ -163,41 +195,325 @@ function escapeHtml(text) {
     .replace(/'/g, "&#39;");
 }
 
-function renderJsxChildrenToString(children) {
-  if (children == null) return "";
-  if (typeof children === "string" || typeof children === "number") return escapeHtml(children);
-  if (typeof children === "boolean") return "";
-  if (isComponentNode(children)) return renderComponentNodeToString(children);
-  if (Array.isArray(children)) return children.map(renderJsxChildrenToString).join("");
-  return escapeHtml(children ?? "");
+function renderAttributes(props) {
+  const attrs = [];
+  for (const [key, value] of Object.entries(props ?? {})) {
+    if (value === true) {
+      attrs.push(` ${escapeHtml(key)}`);
+    } else if (value === false || value == null) {
+      // omitted boolean/falsy attribute
+    } else {
+      attrs.push(` ${escapeHtml(key)}="${escapeHtml(value)}"`);
+    }
+  }
+  return attrs.join("");
 }
 
-function renderComponentNodeToString(node) {
+function renderFallbackSync(fallback, error, ctx) {
+  let node = fallback;
+  if (typeof fallback === "function") {
+    try {
+      node = error === undefined ? fallback() : fallback(error);
+    } catch (_) {
+      return "";
+    }
+  }
+  if (node == null || typeof node === "boolean") return "";
+  if (isComponentNode(node)) return renderNodeSync(node, ctx);
+  if (typeof node === "string" || typeof node === "number") return escapeHtml(String(node));
+  return escapeHtml(String(node));
+}
+
+async function renderFallbackAsync(fallback, error, ctx) {
+  let node = fallback;
+  if (typeof fallback === "function") {
+    try {
+      node = error === undefined ? fallback() : fallback(error);
+    } catch (_) {
+      return "";
+    }
+  }
+  if (node == null || typeof node === "boolean") return "";
+  if (isComponentNode(node)) return await renderNodeAsync(node, ctx);
+  if (typeof node === "string" || typeof node === "number") return escapeHtml(String(node));
+  return escapeHtml(String(node));
+}
+
+function handleRenderErrorSync(error, ctx) {
+  const stack = ctx.errorStack || [];
+  if (stack.length === 0) {
+    throw error;
+  }
+  const boundary = stack[stack.length - 1];
+  return renderFallbackSync(boundary.fallback, error, ctx);
+}
+
+async function handleRenderErrorAsync(error, ctx) {
+  const stack = ctx.errorStack || [];
+  if (stack.length === 0) {
+    throw error;
+  }
+  const boundary = stack[stack.length - 1];
+  return await renderFallbackAsync(boundary.fallback, error, ctx);
+}
+
+function handlePendingSync(promise, ctx) {
+  const stack = ctx.suspenseStack || [];
+  if (stack.length === 0) {
+    // No Suspense ancestor: drop the async work for the sync server pass.
+    return "";
+  }
+  const boundary = stack[stack.length - 1];
+  const record = ctx.boundaries.find((b) => b.id === boundary.id);
+  if (record) {
+    record.promise = promise;
+    record.state = "pending";
+  }
+  return renderFallbackSync(boundary.fallback, undefined, ctx);
+}
+
+async function handlePendingAsync(promise, ctx) {
+  const stack = ctx.suspenseStack || [];
+  if (stack.length === 0) {
+    try {
+      return await promise;
+    } catch (error) {
+      return await handleRenderErrorAsync(error, ctx);
+    }
+  }
+  const boundary = stack[stack.length - 1];
+  const record = ctx.boundaries.find((b) => b.id === boundary.id);
+  if (record) {
+    record.promise = promise;
+    record.state = "pending";
+  }
+  try {
+    const value = await promise;
+    if (record) record.state = "resolved";
+    return value;
+  } catch (error) {
+    if (record) record.state = "rejected";
+    throw error;
+  }
+}
+
+function renderChildrenSync(children, ctx) {
+  if (children == null) return "";
+  if (Array.isArray(children)) {
+    let out = "";
+    for (const child of children) {
+      out += renderNodeSync(child, ctx);
+    }
+    return out;
+  }
+  return renderNodeSync(children, ctx);
+}
+
+async function renderChildrenAsync(children, ctx) {
+  if (children == null) return "";
+  if (Array.isArray(children)) {
+    let out = "";
+    for (const child of children) {
+      out += await renderNodeAsync(child, ctx);
+    }
+    return out;
+  }
+  return await renderNodeAsync(children, ctx);
+}
+
+const voidElements = new Set([
+  "area", "base", "br", "col", "embed", "hr", "img", "input",
+  "link", "meta", "param", "source", "track", "wbr",
+]);
+
+function renderNodeSync(node, ctx) {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") {
+    return escapeHtml(String(node));
+  }
+  if (Array.isArray(node)) {
+    let out = "";
+    for (const child of node) {
+      out += renderNodeSync(child, ctx);
+    }
+    return out;
+  }
   if (!isComponentNode(node)) {
-    return escapeHtml(node ?? "");
+    return escapeHtml(String(node));
   }
 
   const { tag, props, children } = node;
 
   if (tag === Fragment) {
-    return renderJsxChildrenToString(children);
+    return renderChildrenSync(children, ctx);
+  }
+
+  if (tag === Suspense) {
+    const id = `S:${++ctx.boundaryId}`;
+    const fallback = props?.fallback;
+    ctx.boundaries.push({ id, state: "resolved", fallback: null, promise: null });
+    ctx.suspenseStack = ctx.suspenseStack || [];
+    ctx.suspenseStack.push({ id, fallback });
+    try {
+      const html = renderChildrenSync(children, ctx);
+      ctx.suspenseStack.pop();
+      return html;
+    } catch (error) {
+      ctx.suspenseStack.pop();
+      return handleRenderErrorSync(error, ctx);
+    }
+  }
+
+  if (tag === ErrorBoundary) {
+    ctx.errorStack = ctx.errorStack || [];
+    ctx.errorStack.push({ fallback: props?.fallback });
+    try {
+      const html = renderChildrenSync(children, ctx);
+      ctx.errorStack.pop();
+      return html;
+    } catch (error) {
+      ctx.errorStack.pop();
+      return renderFallbackSync(props?.fallback, error, ctx);
+    }
   }
 
   if (typeof tag === "function") {
-    const result = tag({ ...props, children });
-    return renderJsxChildrenToString(result);
+    let result;
+    try {
+      result = tag({ ...props, children });
+    } catch (error) {
+      return handleRenderErrorSync(error, ctx);
+    }
+
+    if (isPromiseLike(result)) {
+      return handlePendingSync(result, ctx);
+    }
+
+    if (isResultErr(result)) {
+      return handleRenderErrorSync(result.error ?? new Error(String(result)), ctx);
+    }
+
+    return renderNodeSync(result, ctx);
   }
 
-  const attrs = Object.entries(props ?? {})
-    .map(([key, value]) => {
-      if (value === true) return ` ${key}`;
-      if (value === false || value == null) return "";
-      return ` ${key}="${escapeHtml(value)}"`;
-    })
-    .join("");
+  if (typeof tag === "string") {
+    const attrs = renderAttributes(props);
+    const childHtml = renderChildrenSync(children, ctx);
+    if (childHtml === "" && voidElements.has(tag)) {
+      return `<${tag}${attrs} />`;
+    }
+    return `<${tag}${attrs}>${childHtml}</${tag}>`;
+  }
 
-  const childHtml = renderJsxChildrenToString(children);
-  return childHtml === "" ? `<${tag}${attrs} />` : `<${tag}${attrs}>${childHtml}</${tag}>`;
+  return "";
+}
+
+async function renderNodeAsync(node, ctx) {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") {
+    return escapeHtml(String(node));
+  }
+  if (Array.isArray(node)) {
+    let out = "";
+    for (const child of node) {
+      out += await renderNodeAsync(child, ctx);
+    }
+    return out;
+  }
+  if (!isComponentNode(node)) {
+    return escapeHtml(String(node));
+  }
+
+  const { tag, props, children } = node;
+
+  if (tag === Fragment) {
+    return await renderChildrenAsync(children, ctx);
+  }
+
+  if (tag === Suspense) {
+    const id = `S:${++ctx.boundaryId}`;
+    const fallback = props?.fallback;
+    ctx.boundaries.push({ id, state: "resolved", fallback: null, promise: null });
+    ctx.suspenseStack = ctx.suspenseStack || [];
+    ctx.suspenseStack.push({ id, fallback });
+    try {
+      const html = await renderChildrenAsync(children, ctx);
+      ctx.suspenseStack.pop();
+      return html;
+    } catch (error) {
+      ctx.suspenseStack.pop();
+      return await handleRenderErrorAsync(error, ctx);
+    }
+  }
+
+  if (tag === ErrorBoundary) {
+    ctx.errorStack = ctx.errorStack || [];
+    ctx.errorStack.push({ fallback: props?.fallback });
+    try {
+      const html = await renderChildrenAsync(children, ctx);
+      ctx.errorStack.pop();
+      return html;
+    } catch (error) {
+      ctx.errorStack.pop();
+      return await renderFallbackAsync(props?.fallback, error, ctx);
+    }
+  }
+
+  if (typeof tag === "function") {
+    let result;
+    try {
+      result = tag({ ...props, children });
+    } catch (error) {
+      return await handleRenderErrorAsync(error, ctx);
+    }
+
+    if (isPromiseLike(result)) {
+      try {
+        result = await handlePendingAsync(result, ctx);
+      } catch (error) {
+        return await handleRenderErrorAsync(error, ctx);
+      }
+    }
+
+    if (isResultErr(result)) {
+      return await handleRenderErrorAsync(result.error ?? new Error(String(result)), ctx);
+    }
+
+    return await renderNodeAsync(result, ctx);
+  }
+
+  if (typeof tag === "string") {
+    const attrs = renderAttributes(props);
+    const childHtml = await renderChildrenAsync(children, ctx);
+    if (childHtml === "" && voidElements.has(tag)) {
+      return `<${tag}${attrs} />`;
+    }
+    return `<${tag}${attrs}>${childHtml}</${tag}>`;
+  }
+
+  return "";
+}
+
+function createRendererContext(mode) {
+  return {
+    mode,
+    boundaryId: 0,
+    boundaries: [],
+    suspenseStack: [],
+    errorStack: [],
+  };
+}
+
+function renderToString(node) {
+  const ctx = createRendererContext("sync");
+  const html = renderNodeSync(node, ctx);
+  return { html, boundaries: ctx.boundaries };
+}
+
+async function renderToStringAsync(node) {
+  const ctx = createRendererContext("async");
+  const html = await renderNodeAsync(node, ctx);
+  return { html, boundaries: ctx.boundaries };
 }
 
 // ---------------------------------------------------------------------------
@@ -361,7 +677,10 @@ const deka = {
     jsx: uiJsx,
     jsxs: uiJsxs,
     Fragment,
-    renderToString: renderComponentNodeToString,
+    Suspense,
+    ErrorBoundary,
+    renderToString,
+    renderToStringAsync,
     signal: createSignal,
     effect: createEffect,
     memo: createMemo,
@@ -431,7 +750,14 @@ function legacyJsx(type, props) {
     return renderJsxChildren(resolvedProps.children);
   }
   if (typeof type === "function") {
-    return String(type(resolvedProps) ?? "");
+    const result = type(resolvedProps);
+    if (isComponentNode(result)) {
+      // Boundary components (Suspense / ErrorBoundary) return immutable nodes
+      // that must be rendered by the server renderer, even through the legacy
+      // JSX shim that the current compiler slice emits.
+      return renderToString(result).html;
+    }
+    return String(result ?? "");
   }
   const { children, ...attributes } = resolvedProps;
   const attrs = Object.entries(attributes)
@@ -568,6 +894,9 @@ export function createRuntimeGlobals(stdout, stderr, cwd = "/", env = {}) {
 
       jsx: legacyJsx,
       jsxs: legacyJsxs,
+
+      Suspense,
+      ErrorBoundary,
 
       createSignal,
       createEffect,
