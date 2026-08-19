@@ -673,3 +673,52 @@ fn dekascript_match_option_unqualified_ok() {
         result.errors
     );
 }
+
+#[test]
+fn dekascript_enum_non_generic_payload_ok() {
+    // dekaruntime/deka#128: non-generic enum payloads such as `(string)`
+    // were lexed as a single PHP cast token and rejected by the parser.
+    let source = r#"
+        enum Msg { Text(string), Ping }
+        fn body(m: Msg): string {
+            return match (m) {
+                Msg::Text => m.string,
+                Msg::Ping => "ok",
+            }
+        }
+    "#;
+    let arena = Box::leak(Box::new(Bump::new()));
+    let result = compile_deka(source, "test.ds", arena);
+    assert!(
+        result.errors.is_empty(),
+        "unexpected errors: {:?}",
+        result.errors
+    );
+}
+
+#[test]
+fn dekascript_enum_non_generic_payload_mismatch_reports_error() {
+    let source = r#"
+        enum Msg { Text(string), Ping }
+        fn bad(): Msg { return Msg::Text(123); }
+    "#;
+    let arena = Box::leak(Box::new(Bump::new()));
+    let result = compile_deka(source, "test.ds", arena);
+    assert_has_error(&result, ErrorKind::TypeError);
+}
+
+#[test]
+fn dekascript_enum_non_generic_payload_field_outside_arm_errors() {
+    let source = r#"
+        enum Msg { Text(string), Ping }
+        fn body(m: Msg): string {
+            return match (m) {
+                Msg::Text => "ok",
+                Msg::Ping => m.string,
+            }
+        }
+    "#;
+    let arena = Box::leak(Box::new(Bump::new()));
+    let result = compile_deka(source, "test.ds", arena);
+    assert_has_error(&result, ErrorKind::TypeError);
+}
