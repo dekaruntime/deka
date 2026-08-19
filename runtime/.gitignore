@@ -1,4 +1,6 @@
 /target
 /php_modules/.cache
 /php_modules/.phpx-cache-*
+.cache/
+tests/runtime-suite/.runtime-suite-tmp/
 .DS_Store
