@@ -100,3 +100,10 @@ reproduction before the bug ever reaches the website.
 | `schema-array` | array item validation | ✓ |
 | `schema-optional-nullable` | optional/nullable modifiers | ✓ |
 | `schema-email` | string email refinement | ✓ |
+| `php-sigil-rejected` | `$` sigil in binding is rejected | ✓ |
+| `echo-rejected` | `echo` statement is rejected | ✓ |
+| `try-throw-rejected` | `try`/`catch` is rejected | ✓ |
+| `foreach-rejected` | `foreach` loop is rejected | ✓ |
+| `class-rejected` | `class` declaration is rejected | ✓ |
+| `missing-struct-field` | missing required struct field is rejected | ✓ |
+| `mut-method-on-const` | mutable method on `const` receiver is rejected | ✓ |
