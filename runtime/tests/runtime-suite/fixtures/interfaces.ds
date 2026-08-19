@@ -1,0 +1,14 @@
+interface Named {
+  name: string
+}
+
+fn greet(n: Named): string {
+  return "Hello, " + n.name;
+}
+
+struct User {
+  name: string
+}
+
+const u = User { name: "DekaScript" };
+console.log(greet(u));

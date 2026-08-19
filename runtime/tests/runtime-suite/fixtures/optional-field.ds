@@ -1,0 +1,14 @@
+struct User {
+  name: string
+  email: string?
+}
+
+const u = User { name: "DekaScript" };
+
+const contact = match (u.email) {
+  Some(value) => value,
+  None => "no email",
+  _ => "unknown",
+};
+
+console.log(contact);

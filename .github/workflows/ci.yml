@@ -112,6 +112,13 @@ jobs:
           DEKA_SKIP_DIRTY_CHECK: 1
         run: runtime/scripts/test-deka-compiler-wasm.sh
 
+      - name: Build CLI for runtime execution tests
+        working-directory: runtime
+        run: cargo build --release -p cli
+
+      - name: Run DekaScript runtime execution suite
+        run: bun runtime/tests/runtime-suite/run.mjs
+
       - name: Upload browser compiler WASM provenance
         uses: actions/upload-artifact@v4
         with:

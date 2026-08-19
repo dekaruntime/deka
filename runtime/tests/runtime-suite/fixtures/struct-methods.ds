@@ -1,0 +1,10 @@
+struct Person {
+  name: string
+}
+
+fn (p Person) greet(): string {
+  return "Hello, " + p.name;
+}
+
+const person = Person { name: "DekaScript" };
+console.log(person.greet());

@@ -1,0 +1,93 @@
+[
+  {
+    "name": "hello",
+    "file": "hello.ds",
+    "expectCompile": true,
+    "expectStdout": "Hello, DekaScript!\n"
+  },
+  {
+    "name": "typed functions",
+    "file": "typed-functions.ds",
+    "expectCompile": true,
+    "expectStdout": "42\n"
+  },
+  {
+    "name": "structs",
+    "file": "structs.ds",
+    "expectCompile": true,
+    "expectStdout": "7\n"
+  },
+  {
+    "name": "struct methods",
+    "file": "struct-methods.ds",
+    "expectCompile": true,
+    "expectStdout": "Hello, DekaScript\n"
+  },
+  {
+    "name": "embedding",
+    "file": "embedding.ds",
+    "expectCompile": true,
+    "expectStdout": "Employee E54321\n"
+  },
+  {
+    "name": "enums",
+    "file": "enums.ds",
+    "expectCompile": true,
+    "expectStdout": "Ready\n"
+  },
+  {
+    "name": "option and result",
+    "file": "option-result.ds",
+    "expectCompile": true,
+    "expectStdout": "DekaScript\n"
+  },
+  {
+    "name": "optional field shorthand",
+    "file": "optional-field.ds",
+    "expectCompile": true,
+    "expectStdout": "no email\n"
+  },
+  {
+    "name": "option explicit type omitted",
+    "file": "option-explicit-type-omitted.ds",
+    "expectCompile": true,
+    "expectStdout": "no email\n",
+    "xfail": "Explicit Option<T> struct fields compile when omitted but are left undefined at runtime instead of being initialized to Option.None."
+  },
+  {
+    "name": "match expressions",
+    "file": "match.ds",
+    "expectCompile": true,
+    "expectStdout": "two\n"
+  },
+  {
+    "name": "async await",
+    "file": "async.ds",
+    "expectCompile": true,
+    "expectStdout": "DekaScript\n"
+  },
+  {
+    "name": "jsx",
+    "file": "jsx.ds",
+    "expectCompile": true,
+    "expectStdout": "<h1>Hello DekaScript</h1>\n"
+  },
+  {
+    "name": "interfaces",
+    "file": "interfaces.ds",
+    "expectCompile": true,
+    "expectStdout": "Hello, DekaScript\n"
+  },
+  {
+    "name": "unsafe runtime helper",
+    "file": "unsafe.ds",
+    "expectCompile": true,
+    "expectStdout": "42\n"
+  },
+  {
+    "name": "utility classes",
+    "file": "utility-classes.ds",
+    "expectCompile": true,
+    "expectStdout": "<div class=\"p-4 bg-blue-500 text-white rounded\">DekaScript</div>\n"
+  }
+]
