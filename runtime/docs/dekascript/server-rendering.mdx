@@ -1,0 +1,134 @@
+---
+title: Server Rendering and Hydration
+description: Synchronous SSR, safe escaping, and island hydration markers for the DekaScript UI runtime.
+---
+
+The DekaScript UI runtime includes a small, VDOM-free server renderer. Components are evaluated once, their output is escaped, and the resulting HTML string is returned synchronously. The client-side `hydrate` entry point is provided so islands can be reactivated in the browser; the full DOM wiring is currently stubbed and will be completed by the owning browser-platform lane.
+
+## API
+
+| Function | Purpose |
+|----------|---------|
+| `deka.ui.renderToString(component)` | Synchronously render a component tree to an HTML string. |
+| `deka.ui.hydrate(component, targetElement)` | Attach the client runtime to existing server-rendered HTML. |
+
+Both functions are exposed on the `deka.ui` namespace alongside `jsx`, `jsxs`, and `Fragment`.
+
+## renderToString
+
+`renderToString` accepts any value the JSX factories can produce:
+
+- primitive tags (`"div"`, `"span"`, ...)
+- function components
+- `deka.ui.Fragment`
+- strings, numbers, `null`, `undefined`, and nested arrays
+
+Text content and attribute values are HTML-escaped. Boolean attributes are emitted as HTML boolean attributes (`disabled`, `required`) when `true` and omitted when `false`, `null`, or `undefined`.
+
+```ds
+const html = globalThis.deka.ui.renderToString(
+  globalThis.deka.ui.jsx("div", { "class": "container", children: "hello" })
+)
+console.log(html) // <div class="container">hello</div>
+```
+
+### Function components
+
+Function components receive their props and children and return a node that is rendered recursively.
+
+```ds
+fn Greeting(props: object): object {
+  return globalThis.deka.ui.jsxs("h1", {
+    "class": "greet",
+    children: ["Hello ", props.name]
+  })
+}
+
+const html = globalThis.deka.ui.renderToString(
+  globalThis.deka.ui.jsx(Greeting, { name: "Deka" })
+)
+console.log(html) // <h1 class="greet">Hello Deka</h1>
+```
+
+### Fragments
+
+Fragments render their children without an outer wrapper.
+
+```ds
+const html = globalThis.deka.ui.renderToString(
+  globalThis.deka.ui.jsxs(globalThis.deka.ui.Fragment, { children: ["a", "b", "c"] })
+)
+console.log(html) // abc
+```
+
+### Escaping
+
+All text and attribute values are escaped. User-provided values cannot inject raw HTML.
+
+```ds
+const html = globalThis.deka.ui.renderToString(
+  globalThis.deka.ui.jsx("div", {
+    title: "<script>alert('x')</script>",
+    children: "1 < 2 & 3 > 0"
+  })
+)
+// <div title="&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;">1 &lt; 2 &amp; 3 &gt; 0</div>
+```
+
+### Boolean attributes
+
+`true` emits the attribute name with no value; `false`, `null`, and `undefined` omit it.
+
+```ds
+const html = globalThis.deka.ui.renderToString(
+  globalThis.deka.ui.jsxs("input", {
+    disabled: true,
+    readonly: false,
+    checked: null,
+    required: true
+  })
+)
+// <input disabled required>
+```
+
+## Island directives
+
+Island directives mark interactive components that should be hydrated on the client. The renderer recognizes `client:load`, `client:idle`, and `client:visible`.
+
+When a function component carries one of these directives, the renderer wraps its output in HTML comments that record the component name, the directive, and the serialized props. Primitive tags with directives receive `data-client-*` attributes instead.
+
+```ds
+fn Counter(props: object): object {
+  return globalThis.deka.ui.jsxs("button", {
+    type: "button",
+    children: ["count: ", props.start]
+  })
+}
+
+const html = globalThis.deka.ui.renderToString(
+  globalThis.deka.ui.jsx(Counter, { start: 5, "client:load": true })
+)
+// <!--deka-island start:... directive:... props:...-->
+//   <button type="button">count: 5</button>
+// <!--deka-island end:...-->
+```
+
+The comment contents are base64-encoded JSON so serialized props can safely contain spaces or punctuation.
+
+## hydrate
+
+`deka.ui.hydrate(component, targetElement)` is the client entry point for attaching interactivity to server-rendered markup. In this slice the full DOM activation is stubbed: the function validates the target element, scans the rendered HTML for island markers, parses each island's name, directive, and props, and returns them along with a no-op `dispose()` callback.
+
+```ds
+const hydrated = globalThis.deka.ui.hydrate(Counter, html)
+console.log(hydrated.islands[0])
+// { name: "Counter", directive: "load", props: { start: 5 } }
+```
+
+In a browser environment `targetElement` is a DOM element; in headless tests a string of HTML or an object with an `innerHTML` string is also accepted. The owning browser-platform lane will replace the stub with real DOM wiring and reactive island mounting.
+
+## Runtime notes
+
+- There is no virtual DOM diffing. Server rendering is a single synchronous walk over the component tree.
+- Components are evaluated once during SSR; signals and effects are not active on the server.
+- Void tags such as `<img>`, `<input>`, and `<br>` are emitted without closing tags.

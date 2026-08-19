@@ -1,0 +1,13 @@
+fn Counter(props: object): object {
+  return globalThis.deka.ui.jsxs("button", {
+    type: "button",
+    children: ["count: ", props.start]
+  })
+}
+
+const result = globalThis.deka.ui.renderToString(
+  globalThis.deka.ui.jsx(Counter, { start: 5, "client:load": true })
+)
+console.log(result.html)
+const hydrated = globalThis.deka.ui.hydrate(Counter, result.html)
+console.log(JSON.stringify(hydrated.islands[0]))

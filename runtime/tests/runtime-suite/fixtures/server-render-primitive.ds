@@ -1,0 +1,4 @@
+const result = globalThis.deka.ui.renderToString(
+  globalThis.deka.ui.jsx("div", { "class": "container", children: "hello" })
+)
+console.log(result.html)

@@ -172,5 +172,35 @@
     "file": "suspense-nested.ds",
     "expectCompile": true,
     "expectStdout": "<div><p>outer</p><span>inner loading</span></div>\n2\n"
+  },
+  {
+    "name": "server render primitive",
+    "file": "server-render-primitive.ds",
+    "expectCompile": true,
+    "expectStdout": "<div class=\"container\">hello</div>\n"
+  },
+  {
+    "name": "server render function component",
+    "file": "server-render-function-component.ds",
+    "expectCompile": true,
+    "expectStdout": "<h1 class=\"greet\">Hello &lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;</h1>\n"
+  },
+  {
+    "name": "server render fragment",
+    "file": "server-render-fragment.ds",
+    "expectCompile": true,
+    "expectStdout": "abc\n"
+  },
+  {
+    "name": "server render boolean attrs",
+    "file": "server-render-boolean-attrs.ds",
+    "expectCompile": true,
+    "expectStdout": "<input disabled required />\n"
+  },
+  {
+    "name": "server render island",
+    "file": "server-render-island.ds",
+    "expectCompile": true,
+    "expectStdout": "<!--deka-island start:Q291bnRlcg== directive:bG9hZA== props:eyJzdGFydCI6NX0=--><button type=\"button\">count: 5</button><!--deka-island end:Q291bnRlcg==-->\n{\"name\":\"Counter\",\"directive\":\"load\",\"props\":{\"start\":5}}\n"
   }
 ]
