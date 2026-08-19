@@ -7,13 +7,13 @@ fn ds_prelude_emits_deka_global() {
     let source = "const answer = 42;";
     let js = ds_to_js(source).expect("should compile");
     assert!(
-        js.contains("globalThis.deka??=deka"),
-        "expected deka global install, got:\n{}",
+        js.contains("const deka=globalThis.deka={...globalThis.deka,...__deka,ui:"),
+        "expected deka global merge, got:\n{}",
         js
     );
     assert!(
-        js.contains("const deka={"),
-        "expected deka object literal, got:\n{}",
+        js.contains("const __deka={"),
+        "expected __deka object literal, got:\n{}",
         js
     );
     assert!(
@@ -172,7 +172,7 @@ fn ds_unsafe_block_has_runtime_helper() {
         js
     );
     assert!(
-        js.contains("globalThis.deka??=deka"),
+        js.contains("const deka=globalThis.deka={...globalThis.deka,...__deka,ui:"),
         "expected deka prelude for unsafe block, got:\n{}",
         js
     );
