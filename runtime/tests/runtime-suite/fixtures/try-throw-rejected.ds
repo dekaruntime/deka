@@ -1,0 +1,5 @@
+try {
+  console.log("ok");
+} catch (e) {
+  console.log(e);
+}

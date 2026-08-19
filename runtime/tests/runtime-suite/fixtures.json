@@ -238,5 +238,47 @@
     "file": "schema-email.ds",
     "expectCompile": true,
     "expectStdout": "true\nfalse\n"
+  },
+  {
+    "name": "php sigil rejected",
+    "file": "php-sigil-rejected.ds",
+    "expectCompile": false,
+    "expectError": "DekaScript const declarations require bare identifiers"
+  },
+  {
+    "name": "echo rejected",
+    "file": "echo-rejected.ds",
+    "expectCompile": false,
+    "expectError": "echo is not part of DekaScript"
+  },
+  {
+    "name": "try throw rejected",
+    "file": "try-throw-rejected.ds",
+    "expectCompile": false,
+    "expectError": "try/catch is not allowed in DekaScript"
+  },
+  {
+    "name": "foreach rejected",
+    "file": "foreach-rejected.ds",
+    "expectCompile": false,
+    "expectError": "foreach is not part of DekaScript"
+  },
+  {
+    "name": "class rejected",
+    "file": "class-rejected.ds",
+    "expectCompile": false,
+    "expectError": "Classes are not allowed in DekaScript"
+  },
+  {
+    "name": "missing struct field",
+    "file": "missing-struct-field.ds",
+    "expectCompile": false,
+    "expectError": "Missing required field 'y' for struct 'Point'"
+  },
+  {
+    "name": "mut method on const",
+    "file": "mut-method-on-const.ds",
+    "expectCompile": false,
+    "expectError": "Cannot call mutable method 'increment' on an immutable receiver"
   }
 ]
