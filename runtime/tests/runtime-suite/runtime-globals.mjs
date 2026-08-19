@@ -237,6 +237,42 @@ function createMemo(fn) {
   return getValue;
 }
 
+// ---------------------------------------------------------------------------
+// Zustand-style state store primitive (deka#143)
+// ---------------------------------------------------------------------------
+// Built on top of createSignal so multiple components / effects share the same
+// reactive backing value. Actions are plain functions that receive the current
+// state and optional arguments and return the next state.
+//
+//   const useCounter = State.create({ count: 0 }, {
+//     increment: (s) => ({ count: s.count + 1 }),
+//     add: (s, n) => ({ count: s.count + n }),
+//   });
+//
+//   const state = useCounter();   // read current state
+//   useCounter.increment();       // dispatch action
+
+function createState(initialState, actions = {}) {
+  const [getState, setState] = createSignal(initialState);
+
+  function useStore() {
+    return getState();
+  }
+
+  for (const key of Object.keys(actions)) {
+    const action = actions[key];
+    useStore[key] = function storeAction(...args) {
+      setState(action(getState(), ...args));
+    };
+  }
+
+  return useStore;
+}
+
+const State = Object.freeze({
+  create: createState,
+});
+
 const deka = {
   unsafe: (tryFn, catchFn, finallyFn) => {
     try {
@@ -264,9 +300,11 @@ const deka = {
     signal: createSignal,
     effect: createEffect,
     memo: createMemo,
+    State,
     createSignal,
     createEffect,
     createMemo,
+    createState,
   }),
 };
 
@@ -468,6 +506,8 @@ export function createRuntimeGlobals(stdout, stderr, cwd = "/", env = {}) {
       createSignal,
       createEffect,
       createMemo,
+
+      State,
     },
     output,
     errorOutput,
