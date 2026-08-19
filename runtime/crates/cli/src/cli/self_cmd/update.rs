@@ -744,6 +744,11 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
+    // Several tests mutate the real process environment variable
+    // DEKA_SELF_MANAGED_UNITS. Serialize them so parallel runs do not see
+    // each other's values.
+    static ENV_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn dummy_context(cwd: PathBuf) -> Context {
         Context {
             args: core::Args {
@@ -814,9 +819,14 @@ mod tests {
 
     #[test]
     fn load_managed_units_from_env() {
+        let _guard = ENV_TEST_GUARD.lock().expect("env test guard");
+
         let dir = std::env::temp_dir().join(format!("deka-env-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let ctx = dummy_context(dir.clone());
+
+        // Clear any stale value from a previously interrupted run.
+        unsafe { std::env::remove_var("DEKA_SELF_MANAGED_UNITS"); }
 
         // no deka.json, no env -> empty
         assert!(load_managed_units(&ctx).unwrap().is_empty());
@@ -838,11 +848,16 @@ mod tests {
 
     #[test]
     fn load_managed_units_does_not_trust_cwd_deka_json() {
+        let _guard = ENV_TEST_GUARD.lock().expect("env test guard");
+
         let dir = std::env::temp_dir().join(format!("deka-json-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let deka_json = dir.join("deka.json");
         let content = r#"{"self":{"update":{"managed_units":["ssh.service"]}}}"#;
         std::fs::write(&deka_json, content).unwrap();
+
+        // Ensure the env variable is not set from another test.
+        unsafe { std::env::remove_var("DEKA_SELF_MANAGED_UNITS"); }
 
         let ctx = dummy_context(dir.clone());
         let units = load_managed_units(&ctx).unwrap();
@@ -915,6 +930,8 @@ mod tests {
 
     #[test]
     fn env_rejects_non_tana_managed_unit() {
+        let _guard = ENV_TEST_GUARD.lock().expect("env test guard");
+
         let dir = std::env::temp_dir().join(format!("deka-env-bad-unit-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let ctx = dummy_context(dir.clone());

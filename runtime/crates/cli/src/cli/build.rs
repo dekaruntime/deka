@@ -1092,7 +1092,7 @@ function Flag($props: object) {
         let program = parser.parse_program();
         let js = emit_js_from_ast(&program, source.as_bytes(), SourceModuleMeta::empty())
             .expect("subset emit");
-        assert!(js.contains("if ((!props.on))"));
+        assert!(js.contains("if (!props.on)"));
         assert!(js.contains("return \"off\""));
     }
     #[test]
@@ -1163,10 +1163,11 @@ $nick = $user?->getNick()
         let program = parser.parse_program();
         let js = emit_js_from_ast(&program, source.as_bytes(), SourceModuleMeta::empty())
             .expect("subset emit");
-        // Variables not previously declared emit as globalThis.X
-        assert!(js.contains("globalThis.user.getName()"));
-        assert!(js.contains("(globalThis.user)?.profile"));
-        assert!(js.contains("(globalThis.user)?.getNick()"));
+        // Variables not previously declared emit as bare identifiers in the
+        // subset-ast emitter.
+        assert!(js.contains("user.getName()"));
+        assert!(js.contains("((user)?.profile)?.title"));
+        assert!(js.contains("(user)?.getNick()"));
     }
 
     #[test]
@@ -1189,10 +1190,10 @@ foreach ($items as $idx => $item) {
         let program = parser.parse_program();
         let js = emit_js_from_ast(&program, source.as_bytes(), SourceModuleMeta::empty())
             .expect("subset emit");
-        // i and j are locally declared by prior assignment; items is undeclared (globalThis)
-        assert!(js.contains("while ((i < 2))"));
-        assert!(js.contains("for (let j = 0; (j < 2); (j = (j + 1)))"));
-        assert!(js.contains("for (const [idx , item] of Object.entries(globalThis.items))"));
+        // i and j are locally declared by prior assignment; items is undeclared
+        assert!(js.contains("while (i < 2)"));
+        assert!(js.contains("for (let j = 0; j < 2; (j = j + 1))"));
+        assert!(js.contains("for (const [idx , item] of Object.entries(items))"));
     }
 
     #[test]
@@ -1217,10 +1218,10 @@ $num = (int)"42"
         let js = emit_js_from_ast(&program, source.as_bytes(), SourceModuleMeta::empty())
             .expect("subset emit");
         assert!(js.contains("continue;"));
-        assert!(js.contains("if ((i === 2))"));
-        assert!(js.contains("if ((i === 8))"));
+        assert!(js.contains("if (i === 2)"));
+        assert!(js.contains("if (i === 8)"));
         assert!(js.contains("break;"));
-        assert!(js.contains("!== undefined"));
+        assert!(js.contains("!== undefined && user.name !== null"));
         assert!(js.contains("Number.parseInt(\"42\", 10)"));
     }
 
@@ -1246,7 +1247,7 @@ switch ($i) {
         let js = emit_js_from_ast(&program, source.as_bytes(), SourceModuleMeta::empty())
             .expect("subset emit");
         assert!(js.contains("do {"));
-        assert!(js.contains("while ((i < 2));"));
+        assert!(js.contains("while (i < 2);"));
         assert!(js.contains("switch (i)"));
         assert!(js.contains("case 1:"));
         assert!(js.contains("default:"));
@@ -1263,7 +1264,7 @@ $fn = fn ($x: int) => $x + 1
         let program = parser.parse_program();
         let js = emit_js_from_ast(&program, source.as_bytes(), SourceModuleMeta::empty())
             .expect("subset emit");
-        assert!(js.contains("let fn = (x) => (x + 1);"));
+        assert!(js.contains("let fn = (x) => x + 1;"));
     }
 
     #[test]
@@ -1294,7 +1295,7 @@ $fn = function ($x: int) {
         let js = emit_js_from_ast(&program, source.as_bytes(), SourceModuleMeta::empty())
             .expect("subset emit");
         assert!(js.contains("function(x)"));
-        assert!(js.contains("return (x + 1);"));
+        assert!(js.contains("return x + 1;"));
     }
 
     #[test]
@@ -1311,8 +1312,8 @@ $counter--;
         let js = emit_js_from_ast(&program, source.as_bytes(), SourceModuleMeta::empty())
             .expect("subset emit");
         assert!(js.contains("let counter = 1;"));
-        assert!(js.contains("counter += 2"));
-        assert!(js.contains("counter--)"));
+        assert!(js.contains("(counter += 2)"));
+        assert!(js.contains("counter--;"));
     }
 
     #[test]
@@ -1514,10 +1515,10 @@ $three = clone $obj;
         let program = parser.parse_program();
         let js = emit_js_from_ast(&program, source.as_bytes(), SourceModuleMeta::empty())
             .expect("subset emit");
-        // Undeclared variables get globalThis prefix
-        assert!(js.contains("await globalThis.promise"));
+        // Undeclared variables emit as bare identifiers in the subset-ast emitter.
+        assert!(js.contains("await promise"));
         assert!(js.contains("eval(\"40 + 2\")"));
-        assert!(js.contains("structuredClone(globalThis.obj)"));
+        assert!(js.contains("structuredClone(obj)"));
     }
 
     #[test]
