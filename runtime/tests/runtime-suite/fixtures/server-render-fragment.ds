@@ -1,0 +1,4 @@
+const result = globalThis.deka.ui.renderToString(
+  globalThis.deka.ui.jsxs(globalThis.deka.ui.Fragment, { children: ["a", "b", "c"] })
+)
+console.log(result.html)

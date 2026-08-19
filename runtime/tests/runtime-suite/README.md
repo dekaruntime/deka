@@ -89,3 +89,8 @@ reproduction before the bug ever reaches the website.
 | `suspense-resolved` | Suspense resolved async boundary | ✓ |
 | `suspense-rejected` | ErrorBoundary catches rejected Result | ✓ |
 | `suspense-nested` | nested Suspense boundaries | ✓ |
+| `server-render-primitive` | `renderToString` with primitive tag | ✓ |
+| `server-render-function-component` | `renderToString` escapes component output | ✓ |
+| `server-render-fragment` | `renderToString` with Fragment | ✓ |
+| `server-render-boolean-attrs` | boolean HTML attributes | ✓ |
+| `server-render-island` | island directive markers + hydrate scan | ✓ |

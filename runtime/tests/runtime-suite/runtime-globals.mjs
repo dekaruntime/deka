@@ -195,6 +195,56 @@ function escapeHtml(text) {
     .replace(/'/g, "&#39;");
 }
 
+function base64Encode(str) {
+  if (typeof hostBtoa === "function") return hostBtoa(str);
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let output = "";
+  for (let i = 0; i < str.length; i += 3) {
+    const a = str.charCodeAt(i);
+    const b = i + 1 < str.length ? str.charCodeAt(i + 1) : 0;
+    const c = i + 2 < str.length ? str.charCodeAt(i + 2) : 0;
+    const triple = (a << 16) | (b << 8) | c;
+    output += alphabet[(triple >> 18) & 63];
+    output += alphabet[(triple >> 12) & 63];
+    output += i + 1 < str.length ? alphabet[(triple >> 6) & 63] : "=";
+    output += i + 2 < str.length ? alphabet[triple & 63] : "=";
+  }
+  return output;
+}
+
+function base64Decode(str) {
+  if (typeof hostAtob === "function") return hostAtob(str);
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const map = {};
+  for (let i = 0; i < alphabet.length; i++) map[alphabet[i]] = i;
+  const cleaned = str.replace(/=+$/, "");
+  let output = "";
+  for (let i = 0; i < cleaned.length; i += 4) {
+    const a = map[cleaned[i]] || 0;
+    const b = cleaned[i + 1] in map ? map[cleaned[i + 1]] : 0;
+    const c = cleaned[i + 2] in map ? map[cleaned[i + 2]] : 0;
+    const d = cleaned[i + 3] in map ? map[cleaned[i + 3]] : 0;
+    const triple = (a << 18) | (b << 12) | (c << 6) | d;
+    output += String.fromCharCode((triple >> 16) & 255);
+    if (i + 2 < cleaned.length) output += String.fromCharCode((triple >> 8) & 255);
+    if (i + 3 < cleaned.length) output += String.fromCharCode(triple & 255);
+  }
+  return output;
+}
+
+function extractDirectives(props) {
+  const rest = {};
+  const directives = [];
+  for (const [key, value] of Object.entries(props ?? {})) {
+    if (key.startsWith("client:") && value !== false && value != null) {
+      directives.push(key.slice(7));
+    } else {
+      rest[key] = value;
+    }
+  }
+  return { rest, directives };
+}
+
 function renderAttributes(props) {
   const attrs = [];
   for (const [key, value] of Object.entries(props ?? {})) {
@@ -378,9 +428,10 @@ function renderNodeSync(node, ctx) {
   }
 
   if (typeof tag === "function") {
+    const { rest, directives } = extractDirectives(props);
     let result;
     try {
-      result = tag({ ...props, children });
+      result = tag({ ...rest, children });
     } catch (error) {
       return handleRenderErrorSync(error, ctx);
     }
@@ -393,16 +444,27 @@ function renderNodeSync(node, ctx) {
       return handleRenderErrorSync(result.error ?? new Error(String(result)), ctx);
     }
 
-    return renderNodeSync(result, ctx);
+    const html = renderNodeSync(result, ctx);
+    if (directives.length === 0) return html;
+
+    const islandName = tag.name || "Anonymous";
+    const directive = directives[0];
+    const serializedProps = JSON.stringify(rest);
+    return `<!--deka-island start:${base64Encode(islandName)} directive:${base64Encode(directive)} props:${base64Encode(serializedProps)}-->${html}<!--deka-island end:${base64Encode(islandName)}-->`;
   }
 
   if (typeof tag === "string") {
-    const attrs = renderAttributes(props);
+    const { rest, directives } = extractDirectives(props);
+    const attrs = renderAttributes(rest);
     const childHtml = renderChildrenSync(children, ctx);
-    if (childHtml === "" && voidElements.has(tag)) {
-      return `<${tag}${attrs} />`;
+    let markerAttrs = "";
+    for (const directive of directives) {
+      markerAttrs += ` data-client-${escapeHtml(directive)}`;
     }
-    return `<${tag}${attrs}>${childHtml}</${tag}>`;
+    if (childHtml === "" && voidElements.has(tag)) {
+      return `<${tag}${attrs}${markerAttrs} />`;
+    }
+    return `<${tag}${attrs}${markerAttrs}>${childHtml}</${tag}>`;
   }
 
   return "";
@@ -460,9 +522,10 @@ async function renderNodeAsync(node, ctx) {
   }
 
   if (typeof tag === "function") {
+    const { rest, directives } = extractDirectives(props);
     let result;
     try {
-      result = tag({ ...props, children });
+      result = tag({ ...rest, children });
     } catch (error) {
       return await handleRenderErrorAsync(error, ctx);
     }
@@ -479,16 +542,27 @@ async function renderNodeAsync(node, ctx) {
       return await handleRenderErrorAsync(result.error ?? new Error(String(result)), ctx);
     }
 
-    return await renderNodeAsync(result, ctx);
+    const html = await renderNodeAsync(result, ctx);
+    if (directives.length === 0) return html;
+
+    const islandName = tag.name || "Anonymous";
+    const directive = directives[0];
+    const serializedProps = JSON.stringify(rest);
+    return `<!--deka-island start:${base64Encode(islandName)} directive:${base64Encode(directive)} props:${base64Encode(serializedProps)}-->${html}<!--deka-island end:${base64Encode(islandName)}-->`;
   }
 
   if (typeof tag === "string") {
-    const attrs = renderAttributes(props);
+    const { rest, directives } = extractDirectives(props);
+    const attrs = renderAttributes(rest);
     const childHtml = await renderChildrenAsync(children, ctx);
-    if (childHtml === "" && voidElements.has(tag)) {
-      return `<${tag}${attrs} />`;
+    let markerAttrs = "";
+    for (const directive of directives) {
+      markerAttrs += ` data-client-${escapeHtml(directive)}`;
     }
-    return `<${tag}${attrs}>${childHtml}</${tag}>`;
+    if (childHtml === "" && voidElements.has(tag)) {
+      return `<${tag}${attrs}${markerAttrs} />`;
+    }
+    return `<${tag}${attrs}${markerAttrs}>${childHtml}</${tag}>`;
   }
 
   return "";
@@ -514,6 +588,49 @@ async function renderToStringAsync(node) {
   const ctx = createRendererContext("async");
   const html = await renderNodeAsync(node, ctx);
   return { html, boundaries: ctx.boundaries };
+}
+
+// ---------------------------------------------------------------------------
+// Client hydration stub (deka#144)
+// ---------------------------------------------------------------------------
+// hydrate is the client-side counterpart to renderToString. The full DOM
+// activation is intentionally stubbed in this slice so the SSR/hydration
+// contract can be validated in headless environments; see the docs for the
+// planned activation behavior.
+
+function hydrate(_component, targetElement) {
+  if (targetElement == null) {
+    throw new TypeError("deka.ui.hydrate requires a target element");
+  }
+
+  const html =
+    typeof targetElement === "string"
+      ? targetElement
+      : typeof targetElement.innerHTML === "string"
+        ? targetElement.innerHTML
+        : "";
+
+  const islands = [];
+  const markerRe = /<!--deka-island start:([A-Za-z0-9+/=]+) directive:([A-Za-z0-9+/=]+) props:([A-Za-z0-9+/=]+)-->/g;
+  let match;
+  while ((match = markerRe.exec(html)) !== null) {
+    try {
+      islands.push({
+        name: base64Decode(match[1]),
+        directive: base64Decode(match[2]),
+        props: JSON.parse(base64Decode(match[3])),
+      });
+    } catch {
+      // Ignore malformed markers.
+    }
+  }
+
+  return {
+    islands,
+    dispose() {
+      // No-op cleanup in the stub.
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -681,6 +798,7 @@ const deka = {
     ErrorBoundary,
     renderToString,
     renderToStringAsync,
+    hydrate,
     signal: createSignal,
     effect: createEffect,
     memo: createMemo,

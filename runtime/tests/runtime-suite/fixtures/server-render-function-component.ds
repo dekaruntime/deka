@@ -1,0 +1,11 @@
+fn Greeting(props: object): object {
+  return globalThis.deka.ui.jsxs("h1", {
+    "class": "greet",
+    children: ["Hello ", props.name]
+  })
+}
+
+const result = globalThis.deka.ui.renderToString(
+  globalThis.deka.ui.jsx(Greeting, { name: "<script>alert('x')</script>" })
+)
+console.log(result.html)
