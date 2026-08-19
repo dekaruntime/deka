@@ -246,6 +246,10 @@ impl<'a> JsSubsetEmitter<'a> {
             if self.uses_deka_freeze {
                 deka_entries.push("freeze:(v)=>{if(v===null||typeof v!=='object'||Object.isFrozen(v))return v;if(Array.isArray(v)){for(const x of v)deka.freeze(x);return Object.freeze(v);}for(const k of Object.keys(v))deka.freeze(v[k]);return Object.freeze(v);}".to_string());
             }
+            if self.uses_jsx_runtime {
+                out.push_str("function __DekaRenderJsxChildren(c){if(c==null)return\"\";if(typeof c===\"string\"||typeof c===\"number\")return String(c);if(Array.isArray(c))return c.map(__DekaRenderJsxChildren).join(\"\");return String(c??\"\");}\n");
+                deka_entries.push("ui:{Fragment:Symbol.for(\"deka.ui.Fragment\"),jsx:(t,p)=>{p=p??{};if(t===deka.ui.Fragment)return __DekaRenderJsxChildren(p.children);if(typeof t===\"function\")return String(t(p)??\"\");const{children,...a}=p;const attrs=Object.entries(a).map(([k,v])=>{if(v===true)return` ${k}`;if(v===false||v==null)return\"\";return` ${k}=\"${String(v).replace(/&/g,\"&amp;\").replace(/\"/g,\"&quot;\")}\"`;}).join(\"\");const ch=__DekaRenderJsxChildren(children);return ch===\"\"?`<${t}${attrs} />`:`<${t}${attrs}>${ch}</${t}>`;},jsxs:(t,p)=>deka.ui.jsx(t,p)}".to_string());
+            }
             out.push_str(&format!("const deka={{ {} }};\n", deka_entries.join(",")));
             out.push_str("globalThis.deka??=deka;globalThis.unsafe??=__DekaUnsafeGlobals;\n");
 
@@ -543,26 +547,9 @@ impl<'a> JsSubsetEmitter<'a> {
 
         let mut imports = self.meta.imports.clone();
 
-        // JSX runtime — converts JSX calls to HTML strings for both server and browser targets.
-        // `self.uses_jsx_runtime` is already set precisely (jsx.rs) whenever a
-        // JsxElement/JsxFragment was actually emitted, so this is gated on
-        // that flag directly rather than a body-text scan.
-        if self.uses_jsx_runtime {
-            add_or_merge_import(
-                &mut imports,
-                "component/core",
-                vec![
-                    ImportSpec {
-                        imported: "jsx".to_string(),
-                        local: "jsx".to_string(),
-                    },
-                    ImportSpec {
-                        imported: "jsxs".to_string(),
-                        local: "jsxs".to_string(),
-                    },
-                ],
-            );
-        }
+        // JSX runtime — emits `deka.ui.jsx`, `deka.ui.jsxs`, and `deka.ui.Fragment`
+        // calls directly. The host/runtime is responsible for providing the
+        // `deka.ui` namespace (see issue #146 / RFD 24). No import is injected here.
         let deka_i_locals = extract_deka_i_imports(&mut imports);
 
         for decl in &imports {

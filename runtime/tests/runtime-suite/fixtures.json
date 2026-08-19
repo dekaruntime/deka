@@ -102,6 +102,12 @@
     "expectStdout": "{\"tag\":\"div\",\"props\":{},\"children\":[\"a\",\"b\",\"c\"]}\n"
   },
   {
+    "name": "jsx fragment",
+    "file": "jsx-fragment.ds",
+    "expectCompile": true,
+    "expectStdout": "<div class=\"box\"><span>one</span><span>two</span></div>\n"
+  },
+  {
     "name": "interfaces",
     "file": "interfaces.ds",
     "expectCompile": true,
