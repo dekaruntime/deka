@@ -92,20 +92,14 @@ jobs:
         working-directory: runtime
         run: cargo test -p bundler
 
-      # `cli` is intentionally NOT run here yet. Investigated for #58:
-      # `cli::build::tests::emits_subset_ast_for_jsx_component` fails
-      # deterministically on main (the JSX emitter no longer emits
-      # `import { jsx, jsxs } from 'component/core'` -- assertion drift,
-      # not an environment issue). Separately, several other `cli` tests
-      # (self_cmd::update::tests::load_managed_units_from_env,
-      # load_managed_units_does_not_trust_cwd_deka_json,
-      # transpile::tests::concurrent_parent_swap_at_*) are flaky under the
-      # default parallel test runner because they mutate real
-      # process-global env vars / a shared test mutex with no
-      # serialization (confirmed deterministic and green under
-      # `--test-threads=1`, so still a real pre-existing bug, not noise).
-      # Both are tracked in a follow-up issue; add `cargo test -p cli`
-      # back once fixed.
+      # `cli` tests are run single-threaded: the transpile phase-hook tests
+      # and the self-update env-var tests mutate real process-global state
+      # that cannot safely run in parallel. Assertion drift in
+      # `emits_subset_ast_for_jsx_component` and related build tests was
+      # fixed in dekaruntime/deka#61.
+      - name: Test cli
+        working-directory: runtime
+        run: cargo test --locked -p cli --lib -- --test-threads=1
 
       - name: Build and test browser compiler WASM
         env:
