@@ -38,13 +38,22 @@ jobs:
 
   rust:
     name: Rust tests
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS, ARM64]
     env:
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
+
+      - name: Where am I?
+        run: |
+          echo "runner name: $(hostname)"
+          echo "runner os: ${{ runner.os }}"
+          echo "runner arch: ${{ runner.arch }}"
+          echo "uname -a: $(uname -a)"
+          which cargo && cargo --version
+          which bun && bun --version
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.96.0
@@ -106,7 +115,7 @@ jobs:
       - name: Pre-fetch V8 static lib
         working-directory: runtime
         env:
-          V8_URL: https://github.com/denoland/rusty_v8/releases/download/v147.4.0/librusty_v8_simdutf_release_x86_64-unknown-linux-gnu.a.gz
+          V8_URL: https://github.com/denoland/rusty_v8/releases/download/v147.4.0/librusty_v8_simdutf_release_aarch64-apple-darwin.a.gz
         run: |
           mkdir -p target/debug/gn_out/obj
           curl -fsSL -w "HTTP %{http_code} - %{size_download} bytes downloaded\n" \
