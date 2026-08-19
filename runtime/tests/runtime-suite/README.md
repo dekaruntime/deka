@@ -74,6 +74,11 @@ reproduction before the bug ever reaches the website.
 | `match-expressions` | literal pattern matching | ✓ |
 | `async-await` | async functions | ✓ |
 | `jsx` | component rendering | ✓ |
+| `jsx-runtime-primitive` | `deka.ui.jsx` primitive tag node factory | ✓ |
+| `jsx-runtime-fragment` | `deka.ui.Fragment` node factory | ✓ |
+| `jsx-runtime-function-component` | `deka.ui.jsx` with function component tag | ✓ |
+| `jsx-runtime-static-children` | `deka.ui.jsxs` static multiple children | ✓ |
+| `jsx-runtime-nested-children` | nested children array normalization | ✓ |
 | `interfaces` | structural interface satisfaction | ✓ |
 | `unsafe-runtime-helper` | `unsafe { ... }` blocks | ✓ |
 | `utility-classes` | class strings on JSX elements | ✓ |
