@@ -51,8 +51,7 @@
     "name": "option explicit type omitted",
     "file": "option-explicit-type-omitted.ds",
     "expectCompile": true,
-    "expectStdout": "no email\n",
-    "xfail": "Explicit Option<T> struct fields compile when omitted but are left undefined at runtime instead of being initialized to Option.None."
+    "expectStdout": "no email\n"
   },
   {
     "name": "match expressions",

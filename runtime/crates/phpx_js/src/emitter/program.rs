@@ -1000,11 +1000,12 @@ impl<'a> JsSubsetEmitter<'a> {
         match ty {
             AstType::Option(_) | AstType::Nullable(_) => true,
             AstType::Applied { base, .. } => {
-                if let AstType::Simple(tok) = *base {
-                    self.token_name(tok).eq_ignore_ascii_case("Option")
-                } else {
-                    false
-                }
+                let name = match *base {
+                    AstType::Simple(tok) => self.token_name(tok),
+                    AstType::Name(name) => self.name_last_segment(*name),
+                    _ => return false,
+                };
+                name.eq_ignore_ascii_case("Option")
             }
             _ => false,
         }

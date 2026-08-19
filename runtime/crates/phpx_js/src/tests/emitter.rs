@@ -2166,6 +2166,30 @@ const p = Person { name: "Ada" }
 }
 
 #[test]
+fn ds_object_literal_omitted_explicit_option_field_defaults_to_none() {
+    // Regression guard for dekaruntime/deka#131: explicit `Option<T>`
+    // struct fields must initialize to Option.None when omitted, just like
+    // the `T?` shorthand.
+    let source = r#"struct Person {
+  name: string
+  nickname: Option<string>
+}
+
+const p = Person { name: "Ada" }
+"#;
+    let js = ds_to_js(source).expect("struct literal should compile");
+    let obj_line = js
+        .lines()
+        .find(|l| l.contains("const p ="))
+        .expect("struct literal declaration line");
+    assert!(
+        obj_line.contains(r#"const p = deka.freeze(Person({"name": "Ada", "nickname": Option.None}))"#),
+        "expected explicit Option<T> field to default to Option.None, got:\n{}",
+        obj_line
+    );
+}
+
+#[test]
 fn ds_receiver_method_before_struct_emits_after_factory() {
     let source = r#"fn (p Person) greet(): string {
   return "hi, " + p.name
