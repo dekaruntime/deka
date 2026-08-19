@@ -66,6 +66,9 @@ jobs:
           # can fail on a cold cache when the network download is flaky.
           cache-directories: |
             runtime/target/**/gn_out
+          # Seed the cache even when V8 linking fails, so the next run can reuse
+          # the downloaded static lib instead of hitting the network again.
+          cache-on-failure: true
 
       # Build only the crates we test. The full workspace includes
       # phpx_compiler_wasm, which fails to link on ubuntu-latest due to V8
