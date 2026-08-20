@@ -400,7 +400,10 @@ impl<'src> Formatter<'src> {
                 self.write(" {");
                 if !members.is_empty() {
                     self.newline();
-                    self.indented(|this| this.fmt_class_members(members));
+                    self.indented(|this| {
+                        this.fmt_class_members(members);
+                        this.newline();
+                    });
                     self.write("}");
                 } else {
                     self.write("}");
@@ -414,7 +417,10 @@ impl<'src> Formatter<'src> {
                 self.write(" {");
                 if !members.is_empty() {
                     self.newline();
-                    self.indented(|this| this.fmt_class_members(members));
+                    self.indented(|this| {
+                        this.fmt_class_members(members);
+                        this.newline();
+                    });
                     self.write("}");
                 } else {
                     self.write("}");
@@ -441,7 +447,10 @@ impl<'src> Formatter<'src> {
                 self.write(" {");
                 if !members.is_empty() {
                     self.newline();
-                    self.indented(|this| this.fmt_class_members(members));
+                    self.indented(|this| {
+                        this.fmt_class_members(members);
+                        this.newline();
+                    });
                     self.write("}");
                 } else {
                     self.write("}");
@@ -817,7 +826,7 @@ impl<'src> Formatter<'src> {
                     self.write(" = ");
                     self.fmt_expr(value);
                 }
-                self.write(";");
+                self.write(",");
             }
         }
     }
@@ -846,7 +855,18 @@ impl<'src> Formatter<'src> {
         }
         if let Some(ty) = ty {
             s.push_str(": ");
-            s.push_str(&self.type_to_string(ty));
+            // If the entry already uses the `?` shorthand and the parser
+            // represented the type as `Option<T>`, render the inner type so
+            // we don't end up with `name?: T?`.
+            if entry.optional && matches!(ty, Type::Option(_)) {
+                if let Type::Option(inner) = ty {
+                    s.push_str(&self.type_to_string(inner));
+                } else {
+                    s.push_str(&self.type_to_string(ty));
+                }
+            } else {
+                s.push_str(&self.type_to_string(ty));
+            }
         }
         for ann in entry.annotations {
             s.push_str(" @");
@@ -1314,12 +1334,42 @@ impl<'src> Formatter<'src> {
                     .iter()
                     .map(|arm| self.match_arm_to_string(arm))
                     .collect();
-                if !arm_strs.is_empty() {
-                    s.push(' ');
-                    s.push_str(&arm_strs.join(", "));
-                    s.push(' ');
+                if arm_strs.is_empty() {
+                    s.push('}');
+                    return s;
                 }
-                s.push('}');
+
+                let source_has_newline = arms.windows(2).any(|w| {
+                    let prev_span = w[0].span;
+                    let next_span = w[1].span;
+                    if prev_span.end >= next_span.start {
+                        return false;
+                    }
+                    self.source.as_bytes()[prev_span.end..next_span.start]
+                        .iter()
+                        .any(|&b| b == b'\n')
+                });
+                let single_line = arm_strs.join(", ");
+                let use_multiline =
+                    arms.len() >= 2 || source_has_newline || single_line.len() > 80;
+
+                if !use_multiline {
+                    s.push(' ');
+                    s.push_str(&single_line);
+                    s.push(' ');
+                    s.push('}');
+                } else {
+                    let arm_indent = "  ".repeat(self.indent + 1);
+                    for arm in arm_strs {
+                        s.push('\n');
+                        s.push_str(&arm_indent);
+                        s.push_str(&arm);
+                        s.push(',');
+                    }
+                    s.push('\n');
+                    s.push_str(&"  ".repeat(self.indent));
+                    s.push('}');
+                }
                 s
             }
             Expr::AnonymousClass {
@@ -2011,8 +2061,8 @@ mod tests {
         let input = "enum Option<T> { Some(T), None }";
         let output = format_ds(input).unwrap();
         assert!(output.contains("enum Option<T> {"), "got: {}", output);
-        assert!(output.contains("  Some(T);"), "got: {}", output);
-        assert!(output.contains("  None;"), "got: {}", output);
+        assert!(output.contains("  Some(T),"), "got: {}", output);
+        assert!(output.contains("  None,"), "got: {}", output);
     }
 
     #[test]
@@ -2089,6 +2139,69 @@ const b = 2
 print(a + b)
 "#;
         let output = format_ds(input).unwrap();
+        parse_ds(&output);
+    }
+
+    #[test]
+    fn closing_brace_on_own_line_for_struct() {
+        let input = "struct User { name: string; email: string? }";
+        let output = format_ds(input).unwrap();
+        assert!(
+            output.contains("  email?: string;\n}\n"),
+            "expected struct closing brace on own line, got: {}",
+            output
+        );
+        parse_ds(&output);
+    }
+
+    #[test]
+    fn closing_brace_on_own_line_for_enum() {
+        let input = "enum Status { Loading, Ready, Failed }";
+        let output = format_ds(input).unwrap();
+        assert!(
+            output.contains("  Failed,\n}\n"),
+            "expected enum closing brace on own line, got: {}",
+            output
+        );
+        parse_ds(&output);
+    }
+
+    #[test]
+    fn optional_field_does_not_double_question_mark() {
+        let input = "struct User { name: string; email: string? }";
+        let output = format_ds(input).unwrap();
+        assert!(
+            output.contains("email?: string"),
+            "expected canonical optional field, got: {}",
+            output
+        );
+        assert!(
+            !output.contains("email?: string?"),
+            "double ? in optional field, got: {}",
+            output
+        );
+        parse_ds(&output);
+    }
+
+    #[test]
+    fn match_expression_breaks_arms_to_multiple_lines() {
+        let input = r#"const label = match (current) {
+  Status.Loading => "Loading...",
+  Status.Ready => "Ready",
+  Status.Failed => "Failed",
+  _ => "Unknown"
+}"#;
+        let output = format_ds(input).unwrap();
+        assert!(
+            output.contains("  Status.Loading => \"Loading...\","),
+            "expected multiline match arm, got: {}",
+            output
+        );
+        assert!(
+            output.contains("}\n"),
+            "expected closing brace on own line, got: {}",
+            output
+        );
         parse_ds(&output);
     }
 }
