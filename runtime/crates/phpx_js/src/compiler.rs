@@ -115,12 +115,23 @@ pub fn compile_phpx_source_to_js_with_warnings_detailed(
         .map(|warning| format_validation_warning(source, input, warning))
         .collect();
 
+    let is_ds = meta.is_ds;
     let js = if let Some(program) = result.ast {
         match emit_js_from_ast(&program, source.as_bytes(), meta) {
             Ok(emitted) => emitted,
-            Err(reason) => emit_js_scaffold_with_reason(source, input, &reason),
+            Err(reason) => {
+                if is_ds {
+                    return Err(CompileError::Other(reason));
+                }
+                emit_js_scaffold_with_reason(source, input, &reason)
+            }
         }
     } else {
+        if is_ds {
+            return Err(CompileError::Other(
+                "no AST available after validation".to_string(),
+            ));
+        }
         emit_js_scaffold_with_reason(source, input, "no AST available after validation")
     };
 
