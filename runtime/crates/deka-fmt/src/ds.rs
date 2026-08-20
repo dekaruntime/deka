@@ -799,7 +799,9 @@ impl<'src> Formatter<'src> {
                 self.write(";");
             }
             ClassMember::Embed { types, .. } => {
-                self.write("embed ");
+                // DekaScript struct embeddings are written as bare type names,
+                // e.g. `struct Person { Label }`. This keeps the formatter
+                // idempotent with the parser's bare-embed form.
                 self.write(
                     &types
                         .iter()
