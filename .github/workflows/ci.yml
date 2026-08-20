@@ -11,7 +11,7 @@ concurrency:
 jobs:
   utility-css:
     name: Utility CSS generator
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS, ARM64]
     steps:
       - uses: actions/checkout@v4
 
