@@ -616,6 +616,7 @@ impl<'a> JsSubsetEmitter<'a> {
             out.push('\n');
         }
 
+        out.push_str("// --- deka:user-code ---\n");
         out.push_str(&self.body);
 
         if !self.main_body.is_empty() {
