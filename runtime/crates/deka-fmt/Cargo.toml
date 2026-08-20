@@ -1,8 +1,10 @@
 [package]
 name = "deka-fmt"
-version = "0.22.0"
+version = "0.23.0"
 edition = "2021"
 
 [dependencies]
+bumpalo = "3.20"
 dprint-core = "0.67.4"
 dprint-plugin-typescript = "0.96.1"
+php-rs = { path = "../php-rs", default-features = false }
