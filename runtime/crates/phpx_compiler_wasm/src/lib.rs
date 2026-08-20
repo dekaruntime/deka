@@ -8,7 +8,10 @@ use std::{ptr, slice, str};
 use bumpalo::Bump;
 use modules_php::{
     compiler_api::compile_deka,
-    validation::{Severity, ValidationError, ValidationWarning},
+    validation::{
+        Severity, ValidationError, ValidationWarning, format_validation_error,
+        format_validation_warning,
+    },
 };
 use serde::Serialize;
 
@@ -142,14 +145,14 @@ fn format_request(
                 abi_version: ABI_VERSION,
                 ok: false,
                 output: None,
-                diagnostics: vec![internal_diagnostic("<format>", message)],
+                diagnostics: vec![internal_diagnostic("<format>", source, message)],
             },
         },
         Err(message) => FormatResponse {
             abi_version: ABI_VERSION,
             ok: false,
             output: None,
-            diagnostics: vec![internal_diagnostic("<format>", message.to_string())],
+            diagnostics: vec![internal_diagnostic("<format>", "", message.to_string())],
         },
     }
 }
@@ -240,6 +243,10 @@ struct Diagnostic {
     end_column: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     help: Option<String>,
+    /// Pre-formatted error string produced by the same `deka_validation` crate
+    /// used by the native runtime, so the browser can display diagnostics
+    /// without re-implementing the formatter.
+    rendered: String,
 }
 
 fn compile_request(source: &str, filename: &str, requested_mode: &str) -> String {
@@ -253,13 +260,13 @@ fn compile_request(source: &str, filename: &str, requested_mode: &str) -> String
     let mut diagnostics = result
         .errors
         .iter()
-        .map(|error| diagnostic_from_error(error, filename))
+        .map(|error| diagnostic_from_error(error, &source, filename))
         .collect::<Vec<_>>();
     diagnostics.extend(
         result
             .warnings
             .iter()
-            .map(|warning| diagnostic_from_warning(warning, filename)),
+            .map(|warning| diagnostic_from_warning(warning, &source, filename)),
     );
     let output = if result.errors.is_empty() {
         result.ast.as_ref().map(|program| {
@@ -270,21 +277,13 @@ fn compile_request(source: &str, filename: &str, requested_mode: &str) -> String
             meta.is_ds = true;
             match phpx_js::emit_js_from_ast_with_warnings(program, source.as_bytes(), meta) {
                 Ok((code, warnings)) => {
-                    diagnostics.extend(warnings.into_iter().map(|message| Diagnostic {
-                        severity: "warning",
-                        code: "emitter".to_string(),
-                        message,
-                        filename: filename.to_string(),
-                        start_line: 1,
-                        start_column: 1,
-                        end_line: 1,
-                        end_column: 1,
-                        help: None,
+                    diagnostics.extend(warnings.into_iter().map(|message| {
+                        internal_diagnostic(filename, source, message)
                     }));
                     code
                 }
                 Err(message) => {
-                    diagnostics.push(internal_diagnostic(filename, message));
+                    diagnostics.push(internal_diagnostic(filename, &source, message));
                     String::new()
                 }
             }
@@ -321,7 +320,7 @@ fn resolve_mode<'a>(filename: &str, mode: &'a str) -> Result<&'a str, &'static s
     }
 }
 
-fn diagnostic_from_error(error: &ValidationError, filename: &str) -> Diagnostic {
+fn diagnostic_from_error(error: &ValidationError, source: &str, filename: &str) -> Diagnostic {
     Diagnostic {
         severity: severity_label(error.severity),
         code: error.kind.as_str().to_string(),
@@ -332,10 +331,11 @@ fn diagnostic_from_error(error: &ValidationError, filename: &str) -> Diagnostic 
         end_line: error.line,
         end_column: error.column.saturating_add(error.underline_length.max(1)),
         help: (!error.help_text.trim().is_empty()).then(|| error.help_text.clone()),
+        rendered: strip_ansi_codes(&format_validation_error(source, filename, error)),
     }
 }
 
-fn diagnostic_from_warning(warning: &ValidationWarning, filename: &str) -> Diagnostic {
+fn diagnostic_from_warning(warning: &ValidationWarning, source: &str, filename: &str) -> Diagnostic {
     Diagnostic {
         severity: severity_label(warning.severity),
         code: warning.kind.as_str().to_string(),
@@ -348,6 +348,7 @@ fn diagnostic_from_warning(warning: &ValidationWarning, filename: &str) -> Diagn
             .column
             .saturating_add(warning.underline_length.max(1)),
         help: (!warning.help_text.trim().is_empty()).then(|| warning.help_text.clone()),
+        rendered: strip_ansi_codes(&format_validation_warning(source, filename, warning)),
     }
 }
 
@@ -359,17 +360,48 @@ fn severity_label(severity: Severity) -> &'static str {
     }
 }
 
-fn internal_diagnostic(filename: &str, message: String) -> Diagnostic {
+/// Remove ANSI escape sequences so the pre-rendered diagnostic is safe for
+/// HTML <pre> elements in the browser (where env-controlled color is unwanted).
+fn strip_ansi_codes(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' && chars.peek() == Some(&'[') {
+            chars.next();
+            while let Some(c) = chars.next() {
+                if c.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+fn internal_diagnostic(filename: &str, source: &str, message: String) -> Diagnostic {
+    let rendered = strip_ansi_codes(&deka_validation::format_validation_error(
+        source,
+        filename,
+        "Compiler Error",
+        1,
+        1,
+        &message,
+        "",
+        1,
+    ));
     Diagnostic {
         severity: "error",
         code: "emitter".to_string(),
-        message,
+        message: message.clone(),
         filename: filename.to_string(),
         start_line: 1,
         start_column: 1,
         end_line: 1,
         end_column: 1,
         help: None,
+        rendered,
     }
 }
 
@@ -378,7 +410,7 @@ fn request_error(filename: &str, message: &str) -> String {
         abi_version: ABI_VERSION,
         ok: false,
         output: None,
-        diagnostics: vec![internal_diagnostic(filename, message.to_string())],
+        diagnostics: vec![internal_diagnostic(filename, "", message.to_string())],
         metadata: CompileMetadata {
             filename,
             language: "unknown",
