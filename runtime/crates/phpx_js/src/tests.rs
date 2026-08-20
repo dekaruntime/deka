@@ -208,3 +208,32 @@ mod jsx;
 mod pipe;
 mod prelude;
 mod scope;
+
+#[test]
+fn ds_lowering_errors_are_propagated_as_compile_failures() {
+    for (source, expected) in [
+        (
+            "const x = 1; x++;",
+            "cannot assign to immutable DekaScript const `x`",
+        ),
+        (
+            "enum Color {\n  Red\n  Green\n  Blue\n}\nconst c = Color.Red\nconst result = match (c) {}\nconsole.log(result)",
+            "match requires at least one arm",
+        ),
+        (
+            "fn generator() {\n  yield 1\n}\nconsole.log(generator())",
+            "yield expressions are not supported in JS subset emitter",
+        ),
+    ] {
+        let err = crate::compile_phpx_source_to_js(
+            source,
+            "test.ds",
+            crate::parse_source_module_meta(source),
+        )
+        .expect_err("DekaScript lowering error must be propagated");
+        assert!(
+            err.contains(expected),
+            "expected {expected:?} in {err:?} for source: {source}"
+        );
+    }
+}
