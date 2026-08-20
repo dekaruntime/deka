@@ -19,7 +19,7 @@ const ui = globalThis.deka.ui
   <Comments postId={id} />
 </ui.Suspense>
 
-<ui.ErrorBoundary fallback={(err) => <p>Error: {err.message}</p>}>
+<ui.ErrorBoundary fallback={fn(err) { return <p>Error: {err.message}</p> }}>
   <Risky />
 </ui.ErrorBoundary>
 ```
@@ -41,7 +41,7 @@ boundary metadata.
 ```ds
 const ui = globalThis.deka.ui
 
-async fn Comments(): Promise<object> {
+async fn Comments() Promise<object> {
   return ui.jsxs("ul", {
     children: [
       ui.jsx("li", { children: "First" }),
@@ -61,7 +61,7 @@ console.log(sync.html)          // <p>Loading comments...</p>
 console.log(sync.boundaries)    // [{ id: "S:1", state: "pending", ... }]
 
 // Async server pass: await pending work and render the final HTML.
-async fn render(): Promise<void> {
+async fn render() Promise<void> {
   const async = await ui.renderToStringAsync(node)
   console.log(async.html)       // <ul><li>First</li><li>Second</li></ul>
 }
@@ -86,16 +86,16 @@ struct LoadError {
   message: string
 }
 
-async fn Comments(): Promise<object> {
+async fn Comments() Promise<object> {
   return Result.Err(LoadError { message: "network down" })
 }
 
 const node = ui.jsx(ui.ErrorBoundary, {
-  fallback: (err) => ui.jsx("p", { children: err.message }),
+  fallback: fn(err) { return ui.jsx("p", { children: err.message }) },
   children: ui.jsx(Comments, {})
 })
 
-async fn render(): Promise<void> {
+async fn render() Promise<void> {
   const result = await ui.renderToStringAsync(node)
   console.log(result.html)      // <p>network down</p>
 }
@@ -112,11 +112,11 @@ still pending.
 ```ds
 const ui = globalThis.deka.ui
 
-async fn Inner(): Promise<object> {
+async fn Inner() Promise<object> {
   return ui.jsx("span", { children: "inner loaded" })
 }
 
-fn Outer(): object {
+fn Outer() object {
   return ui.jsxs("div", {
     children: [
       ui.jsx("p", { children: "outer" }),

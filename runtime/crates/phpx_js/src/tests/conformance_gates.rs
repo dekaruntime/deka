@@ -92,14 +92,14 @@ fn snapshot_class_rejected_in_dekascript() {
 }
 
 #[test]
-fn snapshot_js_arrow_function_is_accepted() {
-    // dekaruntime/deka#50: JS/TS-style parenthesised arrow functions are now
-    // accepted alongside the existing `fn(n) => ...` form.
-    let js = ds_diagnostic("const f = (n) => n * 2;")
-        .expect("JS-style arrow functions should be accepted in DekaScript");
+fn snapshot_ds_function_literal_is_accepted() {
+    // dekaruntime/deka#160: DekaScript uses block-bodied function literals
+    // (`fn(n) int { return n * 2 }`) instead of arrow functions.
+    let js = ds_diagnostic("const f = fn(n: int) int { return n * 2 };")
+        .expect("DekaScript function literals should be accepted");
     assert!(
-        js.contains("(n) => n * 2"),
-        "arrow function body missing in emitted JS: {js}"
+        js.contains("function(n)"),
+        "function literal missing in emitted JS: {js}"
     );
 }
 

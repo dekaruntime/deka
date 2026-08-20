@@ -38,7 +38,7 @@ const pair = createSignal(0)
 const get = pair[0]
 const set = pair[1]
 
-fn onChange(): void {
+fn onChange() void {
   console.log(get())
 }
 
@@ -54,7 +54,7 @@ const pair = createSignal(1)
 const get = pair[0]
 const set = pair[1]
 
-fn double(): number {
+fn double() number {
   return get() * 2
 }
 
@@ -74,9 +74,9 @@ const pair = createSignal(0)
 const get = pair[0]
 const set = pair[1]
 
-fn withCleanup(): () => void {
+fn withCleanup() fn() void {
   const v = get()
-  return () => console.log("cleaning up " + v)
+  return fn() { console.log("cleaning up " + v) }
 }
 
 createEffect(withCleanup)

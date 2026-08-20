@@ -10,7 +10,7 @@ Interfaces are structural: any value with the required methods satisfies an inte
 ```ds
 interface Named {
   name: string
-  fn displayName(): string
+  fn displayName() string
 }
 ```
 
@@ -63,7 +63,7 @@ interface CardProps {
   subtitle?: string
 }
 
-fn Card({ title, subtitle }: CardProps): Component {
+fn Card({ title, subtitle }: CardProps) Component {
   return <div>
     <h2>{title}</h2>
     {subtitle != null ? <p>{subtitle}</p> : null}
@@ -79,7 +79,7 @@ fn Card({ title, subtitle }: CardProps): Component {
 Spread compatible props into an object or JSX element.
 
 ```ds
-fn FancyButton(props: ButtonProps): Component {
+fn FancyButton(props: ButtonProps) Component {
   return <Button {...props} class="fancy" />
 }
 ```
@@ -93,7 +93,7 @@ interface HeroProps {
   title: string
 }
 
-fn Hero({ title }: HeroProps): Component {
+fn Hero({ title }: HeroProps) Component {
   return <h1>{title}</h1>
 }
 

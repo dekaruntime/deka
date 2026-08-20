@@ -403,6 +403,7 @@ impl<'a> JsSubsetEmitter<'a> {
                     false,
                 )
             }
+            AstType::Function { .. } => ("{ kind: 'function' }".to_string(), false),
             AstType::Applied { base, args } => {
                 if let AstType::Simple(tok) = *base {
                     let base_name = self.token_name(tok);

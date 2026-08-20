@@ -9,7 +9,7 @@ async fn Bad(): Promise<object> {
 }
 
 const node = ui.jsx(ui.ErrorBoundary, {
-  fallback: (err) => ui.jsx("p", { children: err.message }),
+  fallback: fn(err: ErrorInfo) { return ui.jsx("p", { children: err.message }); },
   children: ui.jsx(Bad, {})
 });
 

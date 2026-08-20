@@ -1074,6 +1074,17 @@ pub(crate) fn format_type(ty: &Type, source: &[u8]) -> String {
             out
         }
         Type::Option(inner) => format!("Option<{}>", format_type(inner, source)),
+        Type::Function { params, return_type } => {
+            let rendered = params
+                .iter()
+                .map(|ty| format_type(ty, source))
+                .collect::<Vec<_>>();
+            format!(
+                "fn({}) {}",
+                rendered.join(", "),
+                format_type(return_type, source)
+            )
+        }
     }
 }
 

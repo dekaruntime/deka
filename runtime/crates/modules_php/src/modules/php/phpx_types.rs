@@ -195,6 +195,7 @@ impl<'a> TypeResolver<'a> {
                 }
                 BridgeType::ObjectShape { fields: out }
             }
+            AstType::Function { .. } => BridgeType::Mixed,
             AstType::Applied { base, args } => {
                 let base_name = self
                     .type_name(base)

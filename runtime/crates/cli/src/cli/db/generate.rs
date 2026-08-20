@@ -314,6 +314,18 @@ fn render_ast_type(ty: &AstType<'_>, source: &[u8]) -> String {
                 .join(", ")
         ),
         AstType::Option(inner) => format!("Option<{}>", render_ast_type(inner, source)),
+        AstType::Function { params, return_type } => {
+            let rendered = params
+                .iter()
+                .map(|ty| render_ast_type(ty, source))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "fn({}) {}",
+                rendered,
+                render_ast_type(return_type, source)
+            )
+        }
     }
 }
 

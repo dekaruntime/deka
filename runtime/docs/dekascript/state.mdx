@@ -23,7 +23,7 @@ Actions are plain functions that receive the current state and any arguments the
 ## Basic usage
 
 ```ds
-fn increment(s: object): object {
+fn increment(s: object) object {
   return { count: s.count + 1 };
 }
 
@@ -39,11 +39,11 @@ console.log(useCounter().count); // 1
 ## Actions with arguments
 
 ```ds
-fn increment(s: object): object {
+fn increment(s: object) object {
   return { count: s.count + 1 };
 }
 
-fn add(s: object, n: number): object {
+fn add(s: object, n: number) object {
   return { count: s.count + n };
 }
 
@@ -61,7 +61,7 @@ console.log(useCounter().count); // 5
 Stores share a single underlying signal. Multiple effects reading the same store all subscribe to the same value.
 
 ```ds
-fn increment(s: object): object {
+fn increment(s: object) object {
   return { count: s.count + 1 };
 }
 
@@ -69,7 +69,7 @@ const useCounter = State.create({ count: 0 }, {
   increment: increment,
 });
 
-fn logCount(): void {
+fn logCount() void {
   console.log("count: " + useCounter().count);
 }
 
