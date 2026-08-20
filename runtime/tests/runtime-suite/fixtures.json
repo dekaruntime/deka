@@ -210,6 +210,12 @@
     "expectStdout": "<h1 class=\"greet\">Hello &lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;</h1>\n"
   },
   {
+    "name": "server render function component class forwarding",
+    "file": "server-render-function-component-class-forwarding.ds",
+    "expectCompile": true,
+    "expectStdout": "<div class=\"bg-blue-300 w-[50%] p-4\">Hello</div>\n"
+  },
+  {
     "name": "server render fragment",
     "file": "server-render-fragment.ds",
     "expectCompile": true,
