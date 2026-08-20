@@ -5913,6 +5913,7 @@ version = "0.23.4"
 dependencies = [
  "bumpalo",
  "deka-fmt",
+ "deka-validation",
  "modules_php",
  "phpx_js",
  "serde",
