@@ -61,7 +61,7 @@ Errors include the path so nested struct and array failures are easy to locate.
 A common pattern is to validate props or fetched data at the boundary:
 
 ```ds
-fn UserCard(props: object): Component {
+fn UserCard(props: object) Component {
   const result = UserSchema.parse(props.user);
   const user = match (result) {
     Ok(u) => u,

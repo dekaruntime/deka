@@ -138,6 +138,30 @@
     "expectStdout": "42\n42\n42\n"
   },
   {
+    "name": "function literals",
+    "file": "function-literal.ds",
+    "expectCompile": true,
+    "expectStdout": "42\n"
+  },
+  {
+    "name": "function types",
+    "file": "function-type.ds",
+    "expectCompile": true,
+    "expectStdout": "42\n"
+  },
+  {
+    "name": "higher order functions",
+    "file": "higher-order.ds",
+    "expectCompile": true,
+    "expectStdout": "42\n"
+  },
+  {
+    "name": "pipe operator",
+    "file": "pipe.ds",
+    "expectCompile": true,
+    "expectStdout": "11\n"
+  },
+  {
     "name": "signals",
     "file": "signals.ds",
     "expectCompile": true,

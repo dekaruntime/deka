@@ -37,7 +37,7 @@ console.log(html) // <div class="container">hello</div>
 Function components receive their props and children and return a node that is rendered recursively.
 
 ```ds
-fn Greeting(props: object): object {
+fn Greeting(props: object) object {
   return globalThis.deka.ui.jsxs("h1", {
     "class": "greet",
     children: ["Hello ", props.name]
@@ -98,7 +98,7 @@ Island directives mark interactive components that should be hydrated on the cli
 When a function component carries one of these directives, the renderer wraps its output in HTML comments that record the component name, the directive, and the serialized props. Primitive tags with directives receive `data-client-*` attributes instead.
 
 ```ds
-fn Counter(props: object): object {
+fn Counter(props: object) object {
   return globalThis.deka.ui.jsxs("button", {
     type: "button",
     children: ["count: ", props.start]

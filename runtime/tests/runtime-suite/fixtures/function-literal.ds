@@ -1,0 +1,2 @@
+const double = fn(n: int) int { return n * 2 };
+console.log(double(21));

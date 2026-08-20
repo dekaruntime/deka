@@ -109,8 +109,13 @@ impl<'a> JsSubsetEmitter<'a> {
                     }
                 }
             }
-            // Pipeline operator is also a special form.
+            // Pipeline operator is also a special form. In DekaScript it
+            // desugars to a normal call (`a |> f(b)` => `f(a, b)`); in PHPX
+            // we keep the IIFE wrapper so existing code keeps working.
             if matches!(op, BinaryOp::Pipe) {
+                if self.meta.is_ds {
+                    return self.emit_ds_pipe(*left, *right);
+                }
                 let lhs = self.emit_expr_with_prec(*left, Prec::Min)?;
                 let rhs = self.emit_expr_with_prec(*right, Prec::Min)?;
                 let callable = match *right {
@@ -138,6 +143,28 @@ impl<'a> JsSubsetEmitter<'a> {
             return Ok(format!("{} {} {}", lhs, js_op, rhs));
         }
         self.emit_expr_inner(expr)
+    }
+
+    fn emit_ds_pipe(&mut self, left: ExprId<'_>, right: ExprId<'_>) -> Result<String, String> {
+        let lhs = self.emit_expr_with_prec(left, Prec::Min)?;
+        match right {
+            Expr::Call { func, args, .. } => {
+                let callee = self.emit_expr_with_prec(*func, Prec::Min)?;
+                let mut all_args = vec![lhs];
+                for arg in *args {
+                    all_args.push(self.emit_expr_with_prec(arg.value, Prec::Min)?);
+                }
+                Ok(format!("{}({})", callee, all_args.join(", ")))
+            }
+            Expr::Variable { name, .. } => {
+                let ident = self.span_name(*name);
+                Ok(format!("{}({})", ident, lhs))
+            }
+            _ => {
+                let rhs = self.emit_expr_with_prec(right, Prec::Min)?;
+                Ok(format!("{}({})", rhs, lhs))
+            }
+        }
     }
 
     fn emit_expr_inner(&mut self, expr: ExprId<'_>) -> Result<String, String> {

@@ -1,0 +1,6 @@
+fn apply(n: int, f: fn(int) int) int {
+  return f(n);
+}
+
+const double = fn(x: int) int { return x * 2 };
+console.log(apply(21, double));

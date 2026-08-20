@@ -152,13 +152,13 @@ fn View(): Object {
 fn jsx_event_handler_prop() {
     let source = r#"
 fn View(): Object {
-  return <button onClick={() => print("clicked")}>click me</button>;
+  return <button onClick={fn() { print("clicked") }}>click me</button>;
 }
 "#;
     let js = ds_to_js(source).expect("should compile");
     assert!(
-        js.contains("deka.ui.jsx(\"button\", {\"onClick\": () =>")
-            || js.contains("deka.ui.jsxs(\"button\", {\"onClick\": () =>"),
+        js.contains("deka.ui.jsx(\"button\", {\"onClick\": function()")
+            || js.contains("deka.ui.jsxs(\"button\", {\"onClick\": function()"),
         "expected event handler prop in deka.ui.jsx/jsxs output, got:\n{}",
         js
     );

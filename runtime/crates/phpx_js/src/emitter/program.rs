@@ -288,7 +288,9 @@ impl<'a> JsSubsetEmitter<'a> {
                 Ok(())
             }
             Stmt::TypeAlias { .. } => {
-                Err("type aliases are not supported in JS subset emitter".to_string())
+                // Type aliases have no runtime representation; they are erased
+                // like interfaces and other type-level declarations.
+                Ok(())
             }
             Stmt::Error { .. } => {
                 Err("parser error statement reached JS subset emitter".to_string())

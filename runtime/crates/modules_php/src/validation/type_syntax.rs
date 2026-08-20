@@ -151,6 +151,9 @@ fn type_span(ty: &Type) -> Span {
         Type::Option(inner) => type_span(inner),
         Type::ObjectShape(fields) => fields.first().map(|field| field.span).unwrap_or_default(),
         Type::Applied { base, .. } => type_span(base),
+        Type::Function { params, return_type } => {
+            params.first().map(type_span).unwrap_or_else(|| type_span(return_type))
+        }
     }
 }
 
