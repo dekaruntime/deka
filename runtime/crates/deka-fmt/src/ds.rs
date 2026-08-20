@@ -110,19 +110,134 @@ impl<'src> Formatter<'src> {
             .join("")
     }
 
+    fn stmt_span(&self, stmt: &Stmt<'_>) -> Span {
+        match stmt {
+            Stmt::Echo { span, .. } => *span,
+            Stmt::Return { span, .. } => *span,
+            Stmt::If { span, .. } => *span,
+            Stmt::While { span, .. } => *span,
+            Stmt::DoWhile { span, .. } => *span,
+            Stmt::For { span, .. } => *span,
+            Stmt::Foreach { span, .. } => *span,
+            Stmt::Block { span, .. } => *span,
+            Stmt::Function { span, .. } => *span,
+            Stmt::ReceiverMethod { span, .. } => *span,
+            Stmt::TypeAlias { span, .. } => *span,
+            Stmt::Class { span, .. } => *span,
+            Stmt::Interface { span, .. } => *span,
+            Stmt::Trait { span, .. } => *span,
+            Stmt::Enum { span, .. } => *span,
+            Stmt::Namespace { span, .. } => *span,
+            Stmt::Use { span, .. } => *span,
+            Stmt::Switch { span, .. } => *span,
+            Stmt::Try { span, .. } => *span,
+            Stmt::Throw { span, .. } => *span,
+            Stmt::Const { span, .. } => *span,
+            Stmt::Break { span, .. } => *span,
+            Stmt::Continue { span, .. } => *span,
+            Stmt::Global { span, .. } => *span,
+            Stmt::Static { span, .. } => *span,
+            Stmt::Unset { span, .. } => *span,
+            Stmt::Expression { span, .. } => *span,
+            Stmt::InlineHtml { span, .. } => *span,
+            Stmt::Nop { span, .. } => *span,
+            Stmt::Label { span, .. } => *span,
+            Stmt::Goto { span, .. } => *span,
+            Stmt::Error { span, .. } => *span,
+            Stmt::Declare { span, .. } => *span,
+            Stmt::HaltCompiler { span, .. } => *span,
+        }
+    }
+
+    fn expr_span(&self, expr: &Expr<'_>) -> Span {
+        match expr {
+            Expr::Assign { span, .. } => *span,
+            Expr::AssignRef { span, .. } => *span,
+            Expr::AssignOp { span, .. } => *span,
+            Expr::Binary { span, .. } => *span,
+            Expr::Unary { span, .. } => *span,
+            Expr::Call { span, .. } => *span,
+            Expr::Array { span, .. } => *span,
+            Expr::ObjectLiteral { span, .. } => *span,
+            Expr::JsxElement { span, .. } => *span,
+            Expr::JsxFragment { span, .. } => *span,
+            Expr::StructLiteral { span, .. } => *span,
+            Expr::ArrayDimFetch { span, .. } => *span,
+            Expr::DotAccess { span, .. } => *span,
+            Expr::PropertyFetch { span, .. } => *span,
+            Expr::MethodCall { span, .. } => *span,
+            Expr::StaticCall { span, .. } => *span,
+            Expr::ClassConstFetch { span, .. } => *span,
+            Expr::New { span, .. } => *span,
+            Expr::Variable { span, .. } => *span,
+            Expr::IndirectVariable { span, .. } => *span,
+            Expr::Integer { span, .. } => *span,
+            Expr::Float { span, .. } => *span,
+            Expr::Boolean { span, .. } => *span,
+            Expr::Null { span, .. } => *span,
+            Expr::String { span, .. } => *span,
+            Expr::InterpolatedString { span, .. } => *span,
+            Expr::ShellExec { span, .. } => *span,
+            Expr::Include { span, .. } => *span,
+            Expr::MagicConst { span, .. } => *span,
+            Expr::PostInc { span, .. } => *span,
+            Expr::PostDec { span, .. } => *span,
+            Expr::Ternary { span, .. } => *span,
+            Expr::Match { span, .. } => *span,
+            Expr::AnonymousClass { span, .. } => *span,
+            Expr::Print { span, .. } => *span,
+            Expr::Yield { span, .. } => *span,
+            Expr::Cast { span, .. } => *span,
+            Expr::Empty { span, .. } => *span,
+            Expr::Isset { span, .. } => *span,
+            Expr::Eval { span, .. } => *span,
+            Expr::Await { span, .. } => *span,
+            Expr::Die { span, .. } => *span,
+            Expr::Exit { span, .. } => *span,
+            Expr::Closure { span, .. } => *span,
+            Expr::ArrowFunction { span, .. } => *span,
+            Expr::Clone { span, .. } => *span,
+            Expr::NullsafePropertyFetch { span, .. } => *span,
+            Expr::NullsafeMethodCall { span, .. } => *span,
+            Expr::VariadicPlaceholder { span, .. } => *span,
+            Expr::Spread { span, .. } => *span,
+            Expr::Unsafe { span, .. } => *span,
+            Expr::Cql { span, .. } => *span,
+            Expr::Error { span, .. } => *span,
+        }
+    }
+
+    fn stmt_start_line(&self, stmt: &Stmt<'_>) -> usize {
+        self.stmt_span(stmt)
+            .line_info(self.source.as_bytes())
+            .map(|li| li.line)
+            .unwrap_or(0)
+    }
+
+    fn emit_stmt_separator(&mut self, prev_start_line: usize, next_start_line: usize) {
+        if next_start_line > prev_start_line + 1 {
+            self.write("\n\n");
+        } else {
+            self.newline();
+        }
+    }
+
     // --- program & statements ----------------------------------------------
 
     fn fmt_program(&mut self, program: &Program<'_>) {
         let mut first = true;
+        let mut prev_line: Option<usize> = None;
         for stmt in program.statements {
             if matches!(stmt, Stmt::Nop { .. }) {
                 continue;
             }
+            let next_line = self.stmt_start_line(stmt);
             if !first {
-                self.newline();
+                self.emit_stmt_separator(prev_line.unwrap_or(0), next_line);
             }
             first = false;
             self.fmt_stmt(stmt);
+            prev_line = Some(next_line);
         }
     }
 
@@ -131,13 +246,12 @@ impl<'src> Formatter<'src> {
             Stmt::Echo { exprs, .. } => {
                 self.write("print(");
                 self.fmt_expr_list(exprs, ", ");
-                self.write(");");
+                self.write(")");
             }
-            Stmt::Return { expr: None, .. } => self.write("return;"),
+            Stmt::Return { expr: None, .. } => self.write("return"),
             Stmt::Return { expr: Some(expr), .. } => {
                 self.write("return ");
                 self.fmt_expr(expr);
-                self.write(";");
             }
             Stmt::If {
                 condition,
@@ -255,7 +369,6 @@ impl<'src> Formatter<'src> {
                 }
                 self.write(" = ");
                 self.fmt_type(ty);
-                self.write(";");
             }
             Stmt::Class {
                 kind,
@@ -366,7 +479,6 @@ impl<'src> Formatter<'src> {
                     })
                     .collect();
                 self.write(&parts.join(", "));
-                self.write(";");
             }
             Stmt::Switch { condition, cases, .. } => {
                 self.write("switch (");
@@ -413,7 +525,6 @@ impl<'src> Formatter<'src> {
             Stmt::Throw { expr, .. } => {
                 self.write("throw ");
                 self.fmt_expr(expr);
-                self.write(";");
             }
             Stmt::Const { consts, .. } => {
                 self.write("const ");
@@ -427,7 +538,6 @@ impl<'src> Formatter<'src> {
                     })
                     .collect();
                 self.write(&parts.join(", "));
-                self.write(";");
             }
             Stmt::Static { vars, .. } => {
                 self.write("let ");
@@ -443,33 +553,28 @@ impl<'src> Formatter<'src> {
                     })
                     .collect();
                 self.write(&parts.join(", "));
-                self.write(";");
             }
-            Stmt::Break { level: None, .. } => self.write("break;"),
+            Stmt::Break { level: None, .. } => self.write("break"),
             Stmt::Break { level: Some(level), .. } => {
                 self.write("break ");
                 self.fmt_expr(level);
-                self.write(";");
             }
-            Stmt::Continue { level: None, .. } => self.write("continue;"),
+            Stmt::Continue { level: None, .. } => self.write("continue"),
             Stmt::Continue { level: Some(level), .. } => {
                 self.write("continue ");
                 self.fmt_expr(level);
-                self.write(";");
             }
             Stmt::Global { vars, .. } => {
                 self.write("global ");
                 self.fmt_expr_list(vars, ", ");
-                self.write(";");
             }
             Stmt::Unset { vars, .. } => {
                 self.write("unset(");
                 self.fmt_expr_list(vars, ", ");
-                self.write(");");
+                self.write(")");
             }
             Stmt::Expression { expr, .. } => {
                 self.fmt_expr(expr);
-                self.write(";");
             }
             Stmt::Label { name, .. } => {
                 self.write(&self.token_text(name));
@@ -478,7 +583,6 @@ impl<'src> Formatter<'src> {
             Stmt::Goto { label, .. } => {
                 self.write("goto ");
                 self.write(&self.token_text(label));
-                self.write(";");
             }
             Stmt::InlineHtml { value, .. } => {
                 self.write("<?=");
@@ -532,15 +636,18 @@ impl<'src> Formatter<'src> {
         self.newline();
         self.indented(|this| {
             let mut first = true;
+            let mut prev_line: Option<usize> = None;
             for stmt in stmts {
                 if matches!(stmt, Stmt::Nop { .. }) {
                     continue;
                 }
+                let next_line = this.stmt_start_line(stmt);
                 if !first {
-                    this.newline();
+                    this.emit_stmt_separator(prev_line.unwrap_or(0), next_line);
                 }
                 first = false;
                 this.fmt_stmt(stmt);
+                prev_line = Some(next_line);
             }
         });
         self.newline();
@@ -987,6 +1094,9 @@ impl<'src> Formatter<'src> {
                 )
             }
             Expr::Binary { left, op, right, .. } => {
+                if matches!(op, BinaryOp::Pipe) {
+                    return self.pipe_chain_to_string(expr);
+                }
                 let (op_prec, assoc, op_str) = binary_op_info(op);
                 let (left_min, right_min) = match assoc {
                     Assoc::Left => (op_prec, op_prec.next()),
@@ -1399,6 +1509,60 @@ impl<'src> Formatter<'src> {
         }
     }
 
+    fn pipe_chain_to_string(&self, expr: &Expr<'_>) -> String {
+        let mut chain: Vec<&Expr<'_>> = Vec::new();
+        let mut current = expr;
+        loop {
+            match current {
+                Expr::Binary {
+                    op: BinaryOp::Pipe,
+                    left,
+                    right,
+                    ..
+                } => {
+                    chain.push(*right);
+                    current = *left;
+                }
+                _ => {
+                    chain.push(current);
+                    break;
+                }
+            }
+        }
+        chain.reverse();
+
+        let source_has_newline = chain.windows(2).any(|w| {
+            let prev = self.expr_span(w[0]);
+            let next = self.expr_span(w[1]);
+            if prev.end >= next.start {
+                return false;
+            }
+            self.source.as_bytes()[prev.end..next.start]
+                .iter()
+                .any(|&b| b == b'\n')
+        });
+
+        let single_line = chain
+            .iter()
+            .map(|e| self.expr_to_string(e))
+            .collect::<Vec<_>>()
+            .join(" |> ");
+
+        if !source_has_newline && single_line.len() <= 80 {
+            return single_line;
+        }
+
+        let mut s = self.expr_to_string(chain[0]);
+        let indent = "  ".repeat(self.indent + 1);
+        for segment in &chain[1..] {
+            s.push('\n');
+            s.push_str(&indent);
+            s.push_str("|> ");
+            s.push_str(&self.expr_to_string(segment));
+        }
+        s
+    }
+
     fn expr_prec(&self, expr: &Expr<'_>) -> Prec {
         match expr {
             Expr::Ternary { .. } => Prec::Ternary,
@@ -1698,18 +1862,26 @@ fn magic_const_str(kind: &MagicConstKind) -> &'static str {
 mod tests {
     use super::*;
 
+    fn parse_ds(source: &str) {
+        let arena = bumpalo::Bump::new();
+        let mut parser =
+            Parser::new_with_mode(Lexer::new(source.as_bytes()), &arena, ParserMode::Ds);
+        let program = parser.parse_program();
+        assert!(program.errors.is_empty(), "parse errors: {:?}", program.errors);
+    }
+
     #[test]
     fn normalizes_trailing_whitespace_and_eof() {
         let input = "fn add(): int {\n  return 1;  \n}\n\n";
         let output = format_ds(input).unwrap();
-        assert_eq!(output, "fn add(): int {\n  return 1;\n}\n");
+        assert_eq!(output, "fn add(): int {\n  return 1\n}\n");
     }
 
     #[test]
     fn adds_trailing_newline_when_missing() {
         let input = "const x = 1;";
         let output = format_ds(input).unwrap();
-        assert_eq!(output, "const x = 1;\n");
+        assert_eq!(output, "const x = 1\n");
     }
 
     #[test]
@@ -1722,14 +1894,18 @@ mod tests {
         let input = "fn add(  a:int,b :  string   ):int{ return a+b; }";
         let output = format_ds(input).unwrap();
         assert!(output.contains("fn add(a: int, b: string): int {"), "got: {}", output);
-        assert!(output.contains("  return a + b;"), "got: {}", output);
+        assert!(output.contains("  return a + b"), "got: {}", output);
     }
 
     #[test]
     fn formats_function_literal() {
         let input = "const f=fn(x:int):int{return x*x;};";
         let output = format_ds(input).unwrap();
-        assert!(output.contains("const f = fn(x: int): int { return x * x };"), "got: {}", output);
+        assert!(
+            output.contains("const f = fn(x: int): int { return x * x }"),
+            "got: {}",
+            output
+        );
     }
 
     #[test]
@@ -1752,7 +1928,11 @@ mod tests {
     fn formats_receiver_method() {
         let input = "fn (p mut Person) setName(name: string) { p.name = name; }";
         let output = format_ds(input).unwrap();
-        assert!(output.contains("fn (p mut Person) setName(name: string) {"), "got: {}", output);
+        assert!(
+            output.contains("fn (p mut Person) setName(name: string) {"),
+            "got: {}",
+            output
+        );
     }
 
     #[test]
@@ -1792,15 +1972,15 @@ mod tests {
     fn formats_type_alias() {
         let input = "type UserId=string;";
         let output = format_ds(input).unwrap();
-        assert_eq!(output, "type UserId = string;\n");
+        assert_eq!(output, "type UserId = string\n");
     }
 
     #[test]
     fn formats_let_binding() {
         let input = "fn f(){let x=1; x+=2;}";
         let output = format_ds(input).unwrap();
-        assert!(output.contains("let x = 1;"), "got: {}", output);
-        assert!(output.contains("x += 2;"), "got: {}", output);
+        assert!(output.contains("let x = 1"), "got: {}", output);
+        assert!(output.contains("x += 2"), "got: {}", output);
     }
 
     #[test]
@@ -1815,7 +1995,7 @@ mod tests {
         let input = "async fn fetch(): Promise<int> { return await 1; }";
         let output = format_ds(input).unwrap();
         assert!(output.contains("async fn fetch(): Promise<int> {"), "got: {}", output);
-        assert!(output.contains("return await 1;"), "got: {}", output);
+        assert!(output.contains("return await 1"), "got: {}", output);
     }
 
     #[test]
@@ -1833,5 +2013,82 @@ mod tests {
         assert!(output.contains("enum Option<T> {"), "got: {}", output);
         assert!(output.contains("  Some(T);"), "got: {}", output);
         assert!(output.contains("  None;"), "got: {}", output);
+    }
+
+    #[test]
+    fn preserves_blank_line_between_top_level_statements() {
+        let input = "fn a() {}\n\nfn b() {}";
+        let output = format_ds(input).unwrap();
+        assert_eq!(output, "fn a() {}\n\nfn b() {}\n");
+    }
+
+    #[test]
+    fn preserves_blank_line_inside_block() {
+        let input = "fn f() {\n  let x = 1\n\n  let y = 2\n}";
+        let output = format_ds(input).unwrap();
+        assert_eq!(
+            output,
+            "fn f() {\n  let x = 1\n\n  let y = 2\n}\n"
+        );
+    }
+
+    #[test]
+    fn collapses_multiple_blank_lines_to_one() {
+        let input = "fn a() {}\n\n\n\nfn b() {}";
+        let output = format_ds(input).unwrap();
+        assert_eq!(output, "fn a() {}\n\nfn b() {}\n");
+    }
+
+    #[test]
+    fn keeps_pipe_chain_on_one_line_when_short() {
+        let input = "const y = 5 |> inc";
+        let output = format_ds(input).unwrap();
+        assert_eq!(output, "const y = 5 |> inc\n");
+    }
+
+    #[test]
+    fn keeps_pipe_chain_across_multiple_lines() {
+        let input = "const x = 5\n  |> add(1)\n  |> console.log";
+        let output = format_ds(input).unwrap();
+        assert_eq!(
+            output,
+            "const x = 5\n  |> add(1)\n  |> console.log\n"
+        );
+    }
+
+    #[test]
+    fn breaks_long_pipe_chain_to_multiple_lines() {
+        let input = "const result = initialValue |> transformWithLongName |> anotherVeryLongTransformationName |> finalTransform";
+        let output = format_ds(input).unwrap();
+        assert!(output.contains("\n  |> "), "expected multiline pipe, got: {}", output);
+    }
+
+    #[test]
+    fn does_not_add_semicolons_to_statements() {
+        let input = "const x = 1\nconst y = 2\nconsole.log(x + y)";
+        let output = format_ds(input).unwrap();
+        assert_eq!(
+            output,
+            "const x = 1\nconst y = 2\nconsole.log(x + y)\n"
+        );
+        parse_ds(&output);
+    }
+
+    #[test]
+    fn formatted_output_re_parses_without_errors() {
+        let input = r#"fn inc(x: int): int {
+  return x + 1
+}
+
+const y = 5
+  |> add(1)
+  |> console.log
+
+const a = 1
+const b = 2
+print(a + b)
+"#;
+        let output = format_ds(input).unwrap();
+        parse_ds(&output);
     }
 }
