@@ -1733,7 +1733,22 @@ impl<'src> Formatter<'src> {
         s.push_str(name);
         for attr in attributes {
             s.push(' ');
-            s.push_str(&self.token_text(attr.name));
+            let name_text = self.token_text(attr.name);
+            // JSX spread attributes are parsed with the ellipsis as the name
+            // and a Spread expression as the value. Render them as `{...expr}`.
+            if name_text == "..." {
+                if let Some(value) = attr.value {
+                    s.push_str("{...");
+                    if let Expr::Spread { expr, .. } = value {
+                        s.push_str(&self.expr_to_string(expr));
+                    } else {
+                        s.push_str(&self.expr_to_string(value));
+                    }
+                    s.push('}');
+                }
+                continue;
+            }
+            s.push_str(&name_text);
             if let Some(value) = attr.value {
                 s.push_str("={");
                 s.push_str(&self.expr_to_string(value));
@@ -2200,6 +2215,20 @@ print(a + b)
         assert!(
             output.contains("}\n"),
             "expected closing brace on own line, got: {}",
+            output
+        );
+        parse_ds(&output);
+    }
+
+    #[test]
+    fn jsx_spread_attribute_is_preserved() {
+        let input = r#"const props = { name: "Deka" }
+const el = <div {...props} />
+console.log(el)"#;
+        let output = format_ds(input).unwrap();
+        assert!(
+            output.contains("<div {...props} />"),
+            "expected JSX spread attribute to be preserved, got: {}",
             output
         );
         parse_ds(&output);
