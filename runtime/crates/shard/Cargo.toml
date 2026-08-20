@@ -1,6 +1,6 @@
 [package]
 name = "deka-shard"
-version = "0.23.3"
+version = "0.23.4"
 edition = "2021"
 
 [dependencies]
