@@ -4,7 +4,7 @@ const User = globalThis.schema.struct({
   nickname: globalThis.schema.string.nullable(),
 });
 
-const result = User.parse({ name: "Sami", nickname: null });
+const result = User.parse({ name: "Sami", nickname: Option.None });
 console.log(result.ok);
 console.log(result.value.email);
 console.log(result.value.nickname);

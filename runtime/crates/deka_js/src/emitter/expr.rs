@@ -841,23 +841,25 @@ impl<'a> JsSubsetEmitter<'a> {
                 finally,
                 ..
             } => {
-                let try_fn = format!("() => {}", self.emit_expr(*body)?);
-                let mut args = vec![try_fn];
-                if let Some(catch) = catch {
-                    let catch_var = self.token_name(catch.var);
-                    args.push(format!(
-                        "({}) => {}",
-                        catch_var,
-                        self.emit_expr(catch.body)?
-                    ));
+                if catch.is_some() {
+                    return Err(
+                        "unsafe { ... } catch { ... } is not supported; \
+                         unsafe returns Result<T, Error>".to_string(),
+                    );
                 }
+                let body_js = self.emit_expr(*body)?;
                 if let Some(finally) = finally {
-                    if catch.is_none() {
-                        args.push("undefined".to_string());
-                    }
-                    args.push(format!("() => {}", self.emit_expr(*finally)?));
+                    let finally_js = self.emit_expr(*finally)?;
+                    Ok(format!(
+                        "(function(){{try{{return Result.Ok({});}}catch(err){{return Result.Err(err);}}finally{{{}}}}})()",
+                        body_js, finally_js
+                    ))
+                } else {
+                    Ok(format!(
+                        "(function(){{try{{return Result.Ok({});}}catch(err){{return Result.Err(err);}}}})()",
+                        body_js
+                    ))
                 }
-                Ok(format!("deka.unsafe({})", args.join(", ")))
             }
             other => Err(format!(
                 "unsupported expression in subset emitter: {:?}",
