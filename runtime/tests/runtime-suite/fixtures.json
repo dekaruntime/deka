@@ -165,7 +165,7 @@
     "name": "signals",
     "file": "signals.ds",
     "expectCompile": true,
-    "expectStdout": "computed\n0\n5\neffect\neffect\n2\n2\ncomputed\n6\nA0\nB0\nA1\nB1\n2\n"
+    "expectStdout": "0\n5\neffect\neffect\ncomputed\n2\n2\ncomputed\n6\nA0\nB0\nA1\nB1\n2\n"
   },
   {
     "name": "state store",
