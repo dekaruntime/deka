@@ -88,6 +88,14 @@ impl<'a> JsSubsetEmitter<'a> {
             // and avoids TDZ-style errors (deka#184).
             let is_ds_runtime_const = self.meta.is_ds && matches!(stmt, Stmt::Const { .. });
             if is_decl && !is_ds_runtime_const {
+                // Defense-in-depth: if the parser ever allows a declaration
+                // inside a block, do not silently hoist it to module scope.
+                if self.meta.is_ds && self.scopes.len() != 1 {
+                    return Err(format!(
+                        "internal emitter error: DekaScript declaration {:?} was encountered inside a block and would be hoisted",
+                        std::mem::discriminant(*stmt)
+                    ));
+                }
                 self.emit_stmt(*stmt)?;
             } else {
                 self.emit_stmt_to_main(*stmt)?;
@@ -412,6 +420,12 @@ impl<'a> JsSubsetEmitter<'a> {
                 // emitted after all struct factories are declared, so they are
                 // order-independent.
                 if self.meta.is_ds {
+                    if self.scopes.len() != 1 {
+                        return Err(
+                            "receiver methods are only allowed at the top level in DekaScript"
+                                .to_string(),
+                        );
+                    }
                     return Ok(());
                 }
                 let method_name = self.token_name(name);

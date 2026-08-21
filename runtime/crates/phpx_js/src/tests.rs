@@ -184,6 +184,37 @@ fn ds_generic_variadic_identity_preserves_all_rest_values() {
 }
 
 #[test]
+fn ds_rejects_nested_declarations() {
+    // DekaScript declarations that the emitter hoists must not appear inside
+    // conditional/block scopes, otherwise they would silently be lifted to
+    // module scope (or, for receiver methods, silently dropped).
+    for (source, expected) in [
+        (
+            r#"if (true) { fn helper(): int { return 1 } }"#,
+            "only allowed at the top level",
+        ),
+        (
+            r#"if (true) { struct Point { x: int } }"#,
+            "only allowed at the top level",
+        ),
+        (
+            r#"if (true) { enum Color { Red } }"#,
+            "only allowed at the top level",
+        ),
+        (
+            r#"if (true) { fn (p Person) greet(): string { return p.name } }"#,
+            "only allowed at the top level",
+        ),
+    ] {
+        let err = ds_to_js(source).expect_err("nested declaration must be rejected");
+        assert!(
+            err.contains(expected),
+            "expected {expected:?} in {err:?} for source: {source}"
+        );
+    }
+}
+
+#[test]
 fn ds_rejects_php_surface_and_const_reassignment() {
     for (source, expected) in [
         ("$name;", "bare identifiers"),
