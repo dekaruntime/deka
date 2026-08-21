@@ -7,6 +7,7 @@ use php_rs::parser::parser::{Parser, ParserMode};
 use crate::validation::cypher::validate_cypher;
 use crate::validation::exports::validate_exports;
 use crate::validation::generics::validate_generics;
+use crate::validation::hoisting::validate_hoisting;
 use crate::validation::imports::validate_imports;
 use crate::validation::imports::{
     ImportKind, ImportSpec, consume_comment_line, frontmatter_bounds, strip_php_tags_inline,
@@ -69,6 +70,12 @@ fn compile_phpx_with_mode<'a>(
     let mut errors = validate_syntax(source, &program, file_path);
     let mut warnings = Vec::new();
     let has_parse_errors = !errors.is_empty();
+
+    if mode == ParserMode::Ds && !has_parse_errors {
+        let (hoist_errors, hoist_warnings) = validate_hoisting(&program, source, file_path);
+        errors.extend(hoist_errors);
+        warnings.extend(hoist_warnings);
+    }
 
     let (import_errors, import_warnings) = validate_imports(source, file_path);
     errors.extend(import_errors);
