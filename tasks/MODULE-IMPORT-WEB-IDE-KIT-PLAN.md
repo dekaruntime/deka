@@ -47,9 +47,14 @@ WASM compiler, and evaluate the resulting JS with our existing sandbox.
    export const version = "1.0.0";
    ```
 
-2. **Specifier kinds.**
-   - `@scope/name` and `@scope/name/subpath` — registry packages.
-   - `./foo.ds`, `../foo.ds` — relative imports inside a virtual project.
+2. **Specifier kinds and TS-like resolution.**
+   - `@scope/name` and `@scope/name/subpath` — registry packages; bare names like
+     `@deka/string` are remapped through an import map.
+   - `./foo` or `./foo.ds`, `../foo` or `../foo.ds` — relative imports inside a
+     virtual project. The extension may be omitted and resolves to:
+     `./foo.ds`, `./foo/index.ds`, `./foo.phpx` (in priority order).
+   - `ui`, `schema`, etc. — shorthand stdlib/package aliases defined in the
+     import map (e.g. `ui` → `@pkg.deka.gg/ui`).
    - Absolute `https://…` URLs — raw source files, compiled on demand.
 
 3. **Per-module ES-module output.** The compiler emits one JS string per
@@ -69,6 +74,13 @@ WASM compiler, and evaluate the resulting JS with our existing sandbox.
 6. **Caching is per-module and keyed by source SHA-256.** A module compiled
    from a registry URL or raw URL is cached in memory and optionally in
    IndexedDB so repeated tour runs do not re-compile unchanged dependencies.
+
+7. **Dynamic imports are supported with restrictions.** `await import("...")`
+   works, but the specifier must be a string literal resolvable at compile time
+   (e.g. `import("@deka/string")` or `import("./helper")`). Variable
+   specifiers are rejected until we have an explicit security model and
+   allow-list. Every dynamic import is routed through the same loader as static
+   imports so sandbox globals and caching stay intact.
 
 ## What needs to change
 
@@ -142,11 +154,15 @@ Responsibilities:
 
 1. **Build a module graph.** Given the entry source and optional extra files
    (e.g. from the tour's file tabs), scan imports recursively.
-2. **Resolve specifiers.**
+2. **Resolve specifiers via an import map.**
+   - Apply an import map (site-wide + per-project) before any other resolution.
+     This lets bare names like `ui` resolve to `@pkg.deka.gg/ui` and lets
+     `@deka/string` resolve to the pre-compiled bundle URL.
    - `@deka/*` → try the pre-compiled stdlib bundle first, otherwise fetch
      from the registry.
    - other `@scope/name` → fetch from registry tree/blob API.
-   - `./foo.ds` → read from the virtual project files supplied by the UI.
+   - `./foo` / `./foo.ds` → apply TS-like extension/index resolution, then read
+     from the virtual project files supplied by the UI.
    - `https://…` → fetch raw `.ds` source.
 3. **Fetch and compile.** Write every non-precompiled source into a compiler
    project, run `deka_compiler_project_compile`, and read back per-module JS.
@@ -162,7 +178,11 @@ The public API surface in web-ide-kit becomes:
 export async function compileDekaProject(
   entryPath: string,
   files: Record<string, string>,
-  options?: { stdlibBaseUrl?: string; registryUrl?: string }
+  options?: {
+    importMap?: Record<string, string>;
+    stdlibBaseUrl?: string;
+    registryUrl?: string;
+  }
 ): Promise<CompileProjectResult>;
 
 export async function runDekaProject(
@@ -203,6 +223,23 @@ For the browser we need:
   them like the current WASM artifacts) and serves them under
   `/tour/modules/@deka/string/index.mjs`.
 - web-ide-kit rewrites `@deka/string` to that URL and skips compilation.
+
+### 5b. Dynamic imports
+
+Dynamic imports (`await import("...")`) are supported but routed through the
+same loader as static imports. The compiler accepts them only when the
+specifier is a string literal it can resolve ahead of time. This keeps the
+module graph knowable for type checking, allows pre-fetching, and prevents a
+runtime-only import from fetching an arbitrary attacker-controlled URL.
+
+Emitted JS replaces `import(spec)` with `__dekaImport(spec)`, a helper that:
+
+1. Looks up the specifier in the import map.
+2. Checks the in-memory / IndexedDB cache.
+3. Fetches/compiles the dependency if needed.
+4. Returns a `Promise<{ default, ...namedExports }>`.
+
+Variable specifiers are a compile-time error in the first version.
 
 ### 6. Test suite expansion
 
@@ -252,7 +289,9 @@ Tests to add (target 30+):
 The same project-mode compiler API is exposed to the native CLI so local
 multi-file DekaScript projects work identically. The CLI already understands
 `php_modules` and `deka.lock`; project-mode compilation should use the same
-resolver for `@scope/name` imports.
+resolver for `@scope/name` imports rather than introducing a second resolution
+system. The CLI can also read an `importMap` field from `deka.json` so bare
+names like `ui` resolve consistently between browser and server.
 
 ## Implementation phases
 
@@ -303,15 +342,19 @@ console.log(add(1, 2));
 
 ## Open questions
 
-1. Do we allow dynamic imports (`const m = await import("./foo.ds")`) in the
-   first version, or only static top-level imports?
-2. Should relative imports require the `.ds` extension, or do we auto-resolve
-   `./math` → `./math.ds` / `./math/index.ds`?
+1. ~~Dynamic imports?~~ Yes, but only string-literal specifiers routed through
+   our loader; variable specifiers rejected for now.
+2. ~~Relative import extension?~~ Extension is optional; resolve like TS/Next.js
+   (`./math` → `./math.ds` → `./math/index.ds`).
 3. How do we version-lock stdlib imports in the tour? Always latest, or pin to
    the runtime version?
-4. Do we want a browser-side import map so users can write
-   `import { x } from "ui"` and have it resolve to `@pkg.deka.gg/ui`?
+4. ~~Import maps?~~ Yes. The browser loader implements import-map semantics;
+   the website may also emit a real `<script type="importmap">` if we later
+   choose to use native ESM evaluation for precompiled stdlib.
 5. Should arbitrary URL imports be allow-listed to `*.deka.gg` for security?
+6. How do dynamic imports translate to the native CLI? The CLI can use the same
+   `__dekaImport` runtime helper backed by the local `php_modules` resolver
+   instead of fetch/compile.
 
 ## Files that will change
 
