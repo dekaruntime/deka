@@ -83,6 +83,46 @@ fn binary_op_info(op: &BinaryOp) -> (Prec, Assoc, &'static str) {
     }
 }
 
+/// Heuristic to decide whether raw JavaScript inside an `unsafe { ... }` block
+/// should be treated as a statement block or a single expression.
+///
+/// A statement block is one that contains a semicolon, curly braces, or starts
+/// with a common JS statement keyword. Everything else is treated as an
+/// expression and wrapped with `return deka.Result.Ok((expr));`.
+fn raw_js_looks_like_statements(raw: &str) -> bool {
+    if raw.contains(';') {
+        return true;
+    }
+    let head = raw
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_matches(|c: char| c == '(' || c == '{' || c == '[');
+    matches!(
+        head,
+        "const"
+            | "let"
+            | "var"
+            | "function"
+            | "class"
+            | "if"
+            | "for"
+            | "while"
+            | "do"
+            | "try"
+            | "switch"
+            | "return"
+            | "throw"
+            | "break"
+            | "continue"
+            | "with"
+            | "debugger"
+            | "import"
+            | "export"
+            | "async"
+    )
+}
+
 impl<'a> JsSubsetEmitter<'a> {
     pub(super) fn emit_expr(&mut self, expr: ExprId<'_>) -> Result<String, String> {
         self.emit_expr_with_prec(expr, Prec::Min)
@@ -835,31 +875,52 @@ impl<'a> JsSubsetEmitter<'a> {
             Expr::Match {
                 condition, arms, ..
             } => self.emit_match_expr(*condition, arms),
-            Expr::Unsafe {
-                body,
-                catch,
-                finally,
-                ..
-            } => {
-                if catch.is_some() {
-                    return Err(
-                        "unsafe { ... } catch { ... } is not supported; \
-                         unsafe returns Result<T, Error>".to_string(),
-                    );
+            Expr::Unsafe { raw, .. } => {
+                let raw_str = String::from_utf8_lossy(raw);
+                let trimmed = raw_str.trim();
+                if trimmed.is_empty() {
+                    return Ok("(function(){try{return deka.Result.Ok(undefined);}catch(err){return deka.Result.Err(err);}})()".to_string());
                 }
-                let body_js = self.emit_expr(*body)?;
-                if let Some(finally) = finally {
-                    let finally_js = self.emit_expr(*finally)?;
-                    Ok(format!(
-                        "(function(){{try{{return deka.Result.Ok({});}}catch(err){{return deka.Result.Err(err);}}finally{{{}}}}})()",
-                        body_js, finally_js
-                    ))
+
+                // Decide whether the raw JS is a single expression or a statement
+                // block. Expressions are emitted as `return deka.Result.Ok(expr);`,
+                // while statement blocks are executed as the body of an inner IIFE
+                // so that any `return` inside them returns from that inner function
+                // and the completion value is wrapped in Ok.
+                let is_statement_block = raw_js_looks_like_statements(trimmed);
+
+                const UNSAFE_GLOBALS: &[&str] = &[
+                    "fetch", "JSON", "URL", "URLSearchParams", "TextEncoder", "TextDecoder",
+                    "Blob", "FormData", "Headers", "Request", "Response", "WebSocket", "crypto",
+                    "atob", "btoa", "structuredClone", "queueMicrotask", "setTimeout",
+                    "setInterval", "clearTimeout", "clearInterval",
+                ];
+                let restore_globals = if UNSAFE_GLOBALS.is_empty() {
+                    String::new()
                 } else {
-                    Ok(format!(
-                        "(function(){{try{{return deka.Result.Ok({});}}catch(err){{return deka.Result.Err(err);}}}})()",
-                        body_js
-                    ))
-                }
+                    format!(
+                        "const {{{}}}=unsafe;",
+                        UNSAFE_GLOBALS.join(",")
+                    )
+                };
+
+                let inner = if is_statement_block {
+                    format!(
+                        "(function(){{{restore}{raw}}})()",
+                        restore = restore_globals,
+                        raw = raw_str
+                    )
+                } else {
+                    format!(
+                        "(function(){{{restore}return ({raw});}})()",
+                        restore = restore_globals,
+                        raw = raw_str
+                    )
+                };
+
+                Ok(format!(
+                    "(function(){{try{{return deka.Result.Ok({inner});}}catch(err){{return deka.Result.Err(err);}}}})()",
+                ))
             }
             other => Err(format!(
                 "unsupported expression in subset emitter: {:?}",
