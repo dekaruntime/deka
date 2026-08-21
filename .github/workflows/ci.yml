@@ -170,13 +170,9 @@ jobs:
         working-directory: runtime
         run: cargo test -p engine
 
-      - name: Test PHPX compiler (incl. integration tests)
+      - name: Test deka_js compiler (incl. integration tests)
         working-directory: runtime
         run: cargo test -p deka_js
-
-      - name: Test php-rs (parser + typechecker)
-        working-directory: runtime
-        run: cargo test -p php-rs
 
       - name: Test bundler
         working-directory: runtime

@@ -95,7 +95,6 @@ jobs:
           cargo test -p pool
           cargo test -p engine
           cargo test -p deka_js
-          cargo test -p php-rs
           cargo test -p bundler
 
       - name: Build and test browser compiler WASM
