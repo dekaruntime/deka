@@ -54,6 +54,30 @@ fn ds_compiles_typed_bare_identifiers_dot_access_and_templates() {
 }
 
 #[test]
+fn ds_preserves_top_level_let_before_const_initializer() {
+    // Regression for deka#184: `const` declarations were emitted into the
+    // frontmatter buffer, so they jumped ahead of preceding `let` statements.
+    // That caused valid programs like `let a = 1; const b = a + 2` to throw a
+    // TDZ error at runtime because `a` was referenced before initialization.
+    let source = r#"
+        let a = 1
+        const b = a + 2
+        console.log(a + b)
+    "#;
+    let js = ds_to_js(source).expect("DekaScript should compile");
+    let let_pos = js
+        .find("let a = 1")
+        .expect("emitted JS should declare `let a = 1`");
+    let const_pos = js
+        .find("const b = deka.freeze(a + 2)")
+        .expect("emitted JS should freeze `const b = a + 2`");
+    assert!(
+        let_pos < const_pos,
+        "`let a` must appear before `const b` in emitted JS:\n{js}"
+    );
+}
+
+#[test]
 fn ds_compiler_entry_selects_native_mode_from_extension() {
     let source = "export const answer = 42;";
     let js = crate::compile_phpx_source_to_js(
