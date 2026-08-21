@@ -262,7 +262,7 @@ fn ds_unsafe_block_returns_result_iife() {
     let js = ds_to_js("const answer = unsafe { JSON.parse(\"{\\\"x\\\":1}\") }")
         .expect("unsafe block should compile");
     assert!(
-        js.contains("(function(){try{return Result.Ok(JSON.parse(\"{\\\"x\\\":1}\"));}catch(err){return Result.Err(err);}})()"),
+        js.contains("(function(){try{return deka.Result.Ok(JSON.parse(\"{\\\"x\\\":1}\"));}catch(err){return deka.Result.Err(err);}})()"),
         "unsafe should emit a Result-wrapping IIFE:\n{js}"
     );
 }

@@ -851,12 +851,12 @@ impl<'a> JsSubsetEmitter<'a> {
                 if let Some(finally) = finally {
                     let finally_js = self.emit_expr(*finally)?;
                     Ok(format!(
-                        "(function(){{try{{return Result.Ok({});}}catch(err){{return Result.Err(err);}}finally{{{}}}}})()",
+                        "(function(){{try{{return deka.Result.Ok({});}}catch(err){{return deka.Result.Err(err);}}finally{{{}}}}})()",
                         body_js, finally_js
                     ))
                 } else {
                     Ok(format!(
-                        "(function(){{try{{return Result.Ok({});}}catch(err){{return Result.Err(err);}}}})()",
+                        "(function(){{try{{return deka.Result.Ok({});}}catch(err){{return deka.Result.Err(err);}}}})()",
                         body_js
                     ))
                 }
