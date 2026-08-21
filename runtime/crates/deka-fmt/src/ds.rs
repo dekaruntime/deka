@@ -1544,20 +1544,11 @@ impl<'src> Formatter<'src> {
             Expr::Spread { expr, .. } => {
                 format!("...{}", self.expr_to_string(expr))
             }
-            Expr::Unsafe { body, catch, finally, .. } => {
-                let mut s = "unsafe ".to_string();
-                s.push_str(&self.expr_to_string(body));
-                if let Some(c) = catch {
-                    s.push_str(" catch (");
-                    s.push_str(&self.token_text(c.var));
-                    s.push_str(") ");
-                    s.push_str(&self.expr_to_string(c.body));
-                }
-                if let Some(finally) = finally {
-                    s.push_str(" finally ");
-                    s.push_str(&self.expr_to_string(finally));
-                }
-                s
+            Expr::Unsafe { raw, .. } => {
+                // Preserve raw JavaScript inside `unsafe { ... }` verbatim. We
+                // only normalize the surrounding whitespace, not the body.
+                let inner = String::from_utf8_lossy(raw);
+                format!("unsafe {{ {inner} }}")
             }
             Expr::Cql { name, cypher, .. } => {
                 let mut s = "cql ".to_string();
