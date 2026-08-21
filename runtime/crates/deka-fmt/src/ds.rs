@@ -2151,6 +2151,61 @@ mod tests {
     }
 
     #[test]
+    fn struct_embed_does_not_spam_embed() {
+        let input = r#"struct Person {}
+struct Employee {
+  Person
+  name: string
+}"#;
+        let output = format_ds(input).unwrap();
+        assert!(
+            output.matches("embed").count() <= 1,
+            "formatter spammed 'embed' tokens: {}",
+            output
+        );
+        assert!(
+            output.contains("struct Employee {"),
+            "expected Employee struct to be preserved: {}",
+            output
+        );
+        parse_ds(&output);
+    }
+
+    #[test]
+    fn import_span_does_not_leak_into_next_statement() {
+        let input = "import { add } from \"./missing.ds\";\nconsole.log(add(1, 2))";
+        let output = format_ds(input).unwrap();
+        assert!(
+            !output.contains("console\nconsole"),
+            "formatter duplicated the next statement due to an overlapping import span: {}",
+            output
+        );
+        assert!(
+            output.contains("console.log(add(1, 2))"),
+            "expected console.log statement to be preserved: {}",
+            output
+        );
+        parse_ds(&output);
+    }
+
+    #[test]
+    fn export_named_span_does_not_leak_into_next_statement() {
+        let input = "export { answer };\nconsole.log(answer)";
+        let output = format_ds(input).unwrap();
+        assert!(
+            !output.contains("console\nconsole"),
+            "formatter duplicated the next statement due to an overlapping export span: {}",
+            output
+        );
+        assert!(
+            output.contains("console.log(answer)"),
+            "expected console.log statement to be preserved: {}",
+            output
+        );
+        parse_ds(&output);
+    }
+
+    #[test]
     fn formatted_output_re_parses_without_errors() {
         let input = r#"fn inc(x: int): int {
   return x + 1
