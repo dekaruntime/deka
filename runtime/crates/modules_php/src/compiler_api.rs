@@ -183,27 +183,32 @@ fn preprocess_source(source: &str, mode: ParserMode) -> String {
         let mut masked = false;
         if !in_frontmatter || is_delim {
             masked = true;
-        } else if trimmed.starts_with("import ") {
-            masked = true;
-        } else if trimmed.starts_with("export {") {
-            masked = true;
-        } else if mode != ParserMode::Ds && trimmed.starts_with("export ")
-            && !trimmed.starts_with("export function")
-            && !trimmed.starts_with("export async function")
-        {
-            masked = true;
-        } else if mode == ParserMode::Ds && trimmed.starts_with("export ") {
-            output.push_str(&mask_export_keyword(segment));
-            line_index += 1;
-            continue;
+        }
+
+        // In plain PHP mode, import/export are not language features and are
+        // masked so they do not confuse the parser. In PHPX/DekaScript they are
+        // now parsed as first-class statements (deka module imports, Phase 1).
+        if mode == ParserMode::Php {
+            if trimmed.starts_with("import ") {
+                masked = true;
+            } else if trimmed.starts_with("export {") {
+                masked = true;
+            } else if trimmed.starts_with("export ")
+                && !trimmed.starts_with("export function")
+                && !trimmed.starts_with("export async function")
+            {
+                masked = true;
+            } else if trimmed.starts_with("export function")
+                || trimmed.starts_with("export async function")
+            {
+                output.push_str(&mask_export_keyword(segment));
+                line_index += 1;
+                continue;
+            }
         }
 
         if masked {
             output.push_str(&mask_segment(segment));
-        } else if trimmed.starts_with("export function")
-            || trimmed.starts_with("export async function")
-        {
-            output.push_str(&mask_export_keyword(segment));
         } else {
             output.push_str(segment);
         }

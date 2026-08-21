@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use php_rs::parser::ast::{ClassKind, Program, Stmt};
+use php_rs::parser::ast::{ClassKind, ExportItem, Program, Stmt};
 
 use super::{ErrorKind, Severity, ValidationError};
 use crate::validation::imports::{
@@ -437,6 +437,46 @@ fn collect_exportables(program: &Program, source: &str) -> HashSet<String> {
             Stmt::Enum { name, .. } => {
                 if let Ok(text) = std::str::from_utf8(name.text(source.as_bytes())) {
                     names.insert(text.to_string());
+                }
+            }
+            Stmt::Export { item, .. } => {
+                if let ExportItem::Decl(decl) = item {
+                    match decl {
+                        Stmt::Function { name, .. } => {
+                            if let Ok(text) = std::str::from_utf8(name.text(source.as_bytes())) {
+                                names.insert(text.to_string());
+                            }
+                        }
+                        Stmt::Const { consts, .. } => {
+                            for constant in *consts {
+                                if let Ok(text) =
+                                    std::str::from_utf8(constant.name.text(source.as_bytes()))
+                                {
+                                    names.insert(text.to_string());
+                                }
+                            }
+                        }
+                        Stmt::TypeAlias { name, .. } => {
+                            if let Ok(text) = std::str::from_utf8(name.text(source.as_bytes())) {
+                                names.insert(text.to_string());
+                            }
+                        }
+                        Stmt::Class { kind, name, .. } => {
+                            if matches!(kind, ClassKind::Struct) {
+                                if let Ok(text) =
+                                    std::str::from_utf8(name.text(source.as_bytes()))
+                                {
+                                    names.insert(text.to_string());
+                                }
+                            }
+                        }
+                        Stmt::Enum { name, .. } => {
+                            if let Ok(text) = std::str::from_utf8(name.text(source.as_bytes())) {
+                                names.insert(text.to_string());
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
             _ => {}
