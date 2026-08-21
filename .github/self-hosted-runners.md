@@ -87,7 +87,7 @@ A single runner processes exactly one job at a time. If you want concurrent jobs
 Before the first tagged release on self-hosted runners, warm the cache by running on each machine:
 
 ```bash
-R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... runtime/scripts/populate-sccache.sh
+R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... scripts/populate-sccache.sh
 ```
 
 This writes compiled artifacts to the matching R2 bucket so the first self-hosted Release workflow run is fast.

@@ -19,8 +19,8 @@ All jobs run on self-hosted runners and use a shared sccache backend on R2.
 
 ## Cutting a release
 
-1. Bump every crate version in `runtime/crates/*/Cargo.toml` and update
-   `runtime/Cargo.lock`.
+1. Bump every crate version in `crates/*/Cargo.toml` and update
+   `Cargo.lock`.
 2. Open a PR with the bump, merge it to `main`.
 3. Create and push an annotated tag from `main`:
    ```bash

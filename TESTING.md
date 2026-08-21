@@ -1,6 +1,6 @@
 # Testing Deka
 
-This repo has two test layers: Rust unit/integration tests in `runtime/`, and the
+This repo has two test layers: Rust unit/integration tests, and the
 DekaScript runtime execution suite that runs the same fixtures through both the
 native CLI and the browser WASM compiler.
 
@@ -12,11 +12,9 @@ native CLI and the browser WASM compiler.
 
 ## Rust tests (`cargo test`)
 
-Run from the `runtime/` directory:
+Run from the repo root:
 
 ```bash
-cd runtime
-
 # Build the crates exercised by the test suite
 cargo build -p deka_http -p pool -p engine -p deka_js -p php-rs -p bundler
 
@@ -36,7 +34,6 @@ To run everything the CI runs (excluding the WASM browser build and the runtime
 execution suite):
 
 ```bash
-cd runtime
 cargo build -p deka_http -p pool -p engine -p deka_js -p php-rs -p bundler
 cargo test -p deka_http
 cargo test -p pool
@@ -49,15 +46,13 @@ cargo test -p cli --lib -- --test-threads=1
 
 ## DekaScript runtime execution suite
 
-The execution suite lives in `runtime/tests/runtime-suite/`. It compiles each
+The execution suite lives in `tests/runtime-suite/`. It compiles each
 fixture through the native CLI and the browser WASM compiler, runs the emitted
 JS with the Deka runtime globals, and asserts on stdout or compile diagnostics.
 
 Build the native CLI and the browser WASM compiler, then run the suite:
 
 ```bash
-cd runtime
-
 # Native CLI (release build, as used by the harness)
 cargo build --release -p cli
 
@@ -86,8 +81,8 @@ bun tests/runtime-suite/run.mjs --filter option
 
 ### Adding a fixture
 
-1. Create a `.ds` file in `runtime/tests/runtime-suite/fixtures/`.
-2. Add an entry to `runtime/tests/runtime-suite/fixtures.json`:
+1. Create a `.ds` file in `tests/runtime-suite/fixtures/`.
+2. Add an entry to `tests/runtime-suite/fixtures.json`:
    - `name` — human-readable name
    - `file` — filename in `fixtures/`
    - `expectCompile` — `true` if the fixture should compile
@@ -104,7 +99,7 @@ reproduction before the bug reaches the website.
 CI also runs a dedicated WASM build/test script:
 
 ```bash
-DEKA_SKIP_DIRTY_CHECK=1 runtime/scripts/test-deka-compiler-wasm.sh
+DEKA_SKIP_DIRTY_CHECK=1 scripts/test-deka-compiler-wasm.sh
 ```
 
 This builds the browser compiler and runs its own in-WASM tests.

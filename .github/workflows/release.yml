@@ -72,10 +72,10 @@ jobs:
 
       - name: Run utility-css checks
         run: |
-          cd runtime/assets/utility-css
+          cd assets/utility-css
           bun build.ts
           if [ -n "$(git status --porcelain bundle.js)" ]; then
-            echo "::error::runtime/assets/utility-css/bundle.js is out of date."
+            echo "::error::assets/utility-css/bundle.js is out of date."
             exit 1
           fi
           bun test.ts
@@ -83,13 +83,11 @@ jobs:
       - name: Build tested crates
         env:
           RUSTC_WRAPPER: "sccache"
-        working-directory: runtime
         run: cargo build -p deka_http -p pool -p engine -p deka_js -p php-rs -p bundler
 
       - name: Run Rust tests
         env:
           RUSTC_WRAPPER: "sccache"
-        working-directory: runtime
         run: |
           cargo test -p deka_http
           cargo test -p pool
@@ -102,7 +100,7 @@ jobs:
         env:
           RUSTC_WRAPPER: "sccache"
           DEKA_SKIP_DIRTY_CHECK: 1
-        run: runtime/scripts/test-deka-compiler-wasm.sh
+        run: scripts/test-deka-compiler-wasm.sh
 
   build-wasm:
     name: Build browser compiler + diagnostics WASM
@@ -139,13 +137,13 @@ jobs:
         env:
           RUSTC_WRAPPER: "sccache"
           DEKA_SKIP_DIRTY_CHECK: "1"
-        run: runtime/scripts/build-deka-compiler-wasm.sh runtime/dist/deka-compiler-wasm
+        run: scripts/build-deka-compiler-wasm.sh dist/deka-compiler-wasm
 
       - name: Upload WASM artifacts
         uses: actions/upload-artifact@v4
         with:
           name: deka-wasm
-          path: runtime/dist/deka-compiler-wasm/*
+          path: dist/deka-compiler-wasm/*
           retention-days: 1
 
   build-cli-linux-x64:
@@ -180,12 +178,12 @@ jobs:
       - name: Build CLI
         env:
           RUSTC_WRAPPER: "sccache"
-        run: cd runtime && cargo build --release -p cli
+        run: cargo build --release -p cli
 
       - name: Prepare binary
         run: |
           mkdir -p dist
-          cp runtime/target/release/cli dist/deka-linux-x64
+          cp target/release/cli dist/deka-linux-x64
           chmod +x dist/deka-linux-x64
 
       - name: Upload binary
@@ -227,12 +225,12 @@ jobs:
       - name: Build CLI
         env:
           RUSTC_WRAPPER: "sccache"
-        run: cd runtime && cargo build --release -p cli
+        run: cargo build --release -p cli
 
       - name: Prepare binary
         run: |
           mkdir -p dist
-          cp runtime/target/release/cli dist/deka-darwin-x64
+          cp target/release/cli dist/deka-darwin-x64
           chmod +x dist/deka-darwin-x64
 
       - name: Upload binary
@@ -274,12 +272,12 @@ jobs:
       - name: Build CLI
         env:
           RUSTC_WRAPPER: "sccache"
-        run: cd runtime && cargo build --release -p cli
+        run: cargo build --release -p cli
 
       - name: Prepare binary
         run: |
           mkdir -p dist
-          cp runtime/target/release/cli dist/deka-darwin-arm64
+          cp target/release/cli dist/deka-darwin-arm64
           chmod +x dist/deka-darwin-arm64
 
       - name: Upload binary
@@ -344,7 +342,7 @@ jobs:
           COMPILER_SIZE="$(stat -c%s "release/${VERSION}/deka_compiler.wasm")"
           DIAGNOSTICS_SHA256="$(sha256 "release/${VERSION}/deka_diagnostics.wasm")"
           DIAGNOSTICS_SIZE="$(stat -c%s "release/${VERSION}/deka_diagnostics.wasm")"
-          CARGO_LOCK_SHA256="$(sha256sum runtime/Cargo.lock | awk '{print $1}')"
+          CARGO_LOCK_SHA256="$(sha256sum Cargo.lock | awk '{print $1}')"
 
           LINUX_X64_SHA256="$(sha256 "release/${VERSION}/deka-linux-x64")"
           DARWIN_X64_SHA256="$(sha256 "release/${VERSION}/deka-darwin-x64")"
