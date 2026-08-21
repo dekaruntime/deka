@@ -12,7 +12,7 @@ use serde_json::Value;
 use super::{ErrorKind, Severity, ValidationError};
 use crate::validation::exports::{parse_export_function, parse_export_list_line};
 use crate::validation::imports::{
-    ImportKind, ImportSpec, consume_comment_line, frontmatter_bounds, parse_import_line,
+    ImportKind, ImportSpec, consume_comment_line, frontmatter_bounds, is_ident, parse_import_line,
     strip_php_tags_inline,
 };
 
@@ -453,9 +453,22 @@ fn collect_exports(source: &str, file_path: &str) -> HashSet<String> {
         if consume_comment_line(trimmed, &mut in_block_comment) {
             continue;
         }
-        if trimmed.starts_with("export function") || trimmed.starts_with("export async function") {
+        if trimmed.starts_with("export function")
+            || trimmed.starts_with("export async function")
+            || trimmed.starts_with("export fn")
+            || trimmed.starts_with("export async fn")
+        {
             if let Ok(spec) = parse_export_function(trimmed, line, idx + 1, file_path) {
                 exports.insert(spec.name);
+            }
+            continue;
+        }
+        if trimmed.starts_with("export const ") {
+            let rest = trimmed.trim_start_matches("export const ").trim_start();
+            if let Some(name) = rest.split(|ch: char| ch == '=' || ch.is_whitespace()).next() {
+                if is_ident(name) {
+                    exports.insert(name.to_string());
+                }
             }
             continue;
         }
@@ -711,37 +724,63 @@ fn resolve_import_target(
             let base_path = base_dir.join(variant);
             if raw.ends_with(".phpx") {
                 candidates.push(base_path.clone());
+            } else if raw.ends_with(".ds") {
+                candidates.push(base_path.clone());
+                candidates.push(base_path.join("index.ds"));
             } else {
-                let file_candidate = base_path.with_extension("phpx");
-                let index_candidate = base_path.join("index.phpx");
-                if file_candidate.exists() && index_candidate.exists() {
+                // Extensionless relative/project specifiers: prefer .ds, then .phpx.
+                let ds_file_candidate = base_path.with_extension("ds");
+                let ds_index_candidate = base_path.join("index.ds");
+                let phpx_file_candidate = base_path.with_extension("phpx");
+                let phpx_index_candidate = base_path.join("index.phpx");
+                if ds_file_candidate.exists() && ds_index_candidate.exists() {
                     return Err(module_error(
                         1,
                         1,
                         raw.len().max(1),
                         format!(
-                            "Ambiguous phpx import '{}' (both '{}' and '{}' exist).",
+                            "Ambiguous import '{}' (both '{}' and '{}' exist).",
                             raw,
-                            file_candidate.display(),
-                            index_candidate.display()
+                            ds_file_candidate.display(),
+                            ds_index_candidate.display()
+                        ),
+                        "Disambiguate the import by using an explicit path ending in .ds.",
+                    ));
+                }
+                if phpx_file_candidate.exists() && phpx_index_candidate.exists() {
+                    return Err(module_error(
+                        1,
+                        1,
+                        raw.len().max(1),
+                        format!(
+                            "Ambiguous import '{}' (both '{}' and '{}' exist).",
+                            raw,
+                            phpx_file_candidate.display(),
+                            phpx_index_candidate.display()
                         ),
                         "Disambiguate the import by using an explicit path ending in .phpx.",
                     ));
                 }
-                candidates.push(file_candidate);
-                candidates.push(index_candidate);
+                candidates.push(ds_file_candidate);
+                candidates.push(ds_index_candidate);
+                candidates.push(phpx_file_candidate);
+                candidates.push(phpx_index_candidate);
             }
         }
     }
     if !is_relative && !is_project_alias {
         if let Some(root) = modules_root {
             for variant in &spec_variants {
+                candidates.push(root.join(format!("{variant}.ds")));
+                candidates.push(root.join(variant).join("index.ds"));
                 candidates.push(root.join(format!("{variant}.phpx")));
                 candidates.push(root.join(variant).join("index.phpx"));
             }
         }
         if let Some(stdlib) = stdlib_root {
             for variant in &spec_variants {
+                candidates.push(stdlib.join(format!("{variant}.ds")));
+                candidates.push(stdlib.join(variant).join("index.ds"));
                 candidates.push(stdlib.join(format!("{variant}.phpx")));
                 candidates.push(stdlib.join(variant).join("index.phpx"));
             }
@@ -788,12 +827,24 @@ fn resolve_import_target(
         .collect::<Vec<_>>()
         .join(", ");
     let lock_status = describe_lock_status(current_file_path);
+    let help = if is_relative {
+        format!(
+            "Ensure the module file exists relative to '{}'. Tried .ds and .phpx extensions.",
+            current_file_path
+        )
+    } else {
+        available_modules
+            .and_then(|modules| format_available_modules(modules, "Available modules: "))
+            .unwrap_or_else(|| {
+                "Ensure the module exists in php_modules and is listed in deka.lock.".to_string()
+            })
+    };
     Err(module_error(
         1,
         1,
         raw.len().max(1),
         format!(
-            "Missing phpx module '{}' (imported from {}). Attempted roots: {}. {}",
+            "Missing module '{}' (imported from {}). Attempted roots: {}. {}",
             raw,
             current_file_path,
             if attempted_roots.is_empty() {
@@ -803,10 +854,7 @@ fn resolve_import_target(
             },
             lock_status
         ),
-        available_modules
-            .and_then(|modules| format_available_modules(modules, "Available modules: "))
-            .as_deref()
-            .unwrap_or("Ensure the module exists in php_modules and is listed in deka.lock."),
+        help.as_str(),
     ))
 }
 
@@ -1610,7 +1658,7 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|err| err.message.contains("Missing phpx module 'does_not_exist'")),
+                .any(|err| err.message.contains("Missing module 'does_not_exist'")),
             "expected missing module error, got: {:?}",
             errors
         );
@@ -1620,6 +1668,49 @@ mod tests {
                 .contains("Ensure the module exists in php_modules")
                 || err.help_text.contains("Available modules:")),
             "expected actionable help text, got: {:?}",
+            errors
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_relative_ds_imports_in_same_directory() {
+        let root = make_temp_project("relative_ds_import");
+        let entry = root.join("main.ds");
+        fs::write(&entry, "import { PI } from \"./constants.ds\"\nconsole.log(PI)\n")
+            .expect("write entry");
+        fs::write(root.join("constants.ds"), "export const PI = 3.14159\n")
+            .expect("write constants");
+
+        let errors = validate_module_resolution(
+            &fs::read_to_string(&entry).expect("read entry"),
+            entry.to_string_lossy().as_ref(),
+        );
+        assert!(errors.is_empty(), "expected no errors, got: {:?}", errors);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reports_missing_relative_ds_module() {
+        let root = make_temp_project("missing_relative_ds");
+        let entry = root.join("main.ds");
+        fs::write(&entry, "import { PI } from \"./constants.ds\"\n")
+            .expect("write entry");
+
+        let errors = validate_module_resolution(
+            &fs::read_to_string(&entry).expect("read entry"),
+            entry.to_string_lossy().as_ref(),
+        );
+        assert!(
+            errors.iter().any(|err| err.message.contains("Missing module './constants.ds'")),
+            "expected missing module error, got: {:?}",
+            errors
+        );
+        assert!(
+            errors.iter().any(|err| err.help_text.contains("Tried .ds and .phpx extensions")),
+            "expected .ds/.phpx help text, got: {:?}",
             errors
         );
 
@@ -1738,7 +1829,7 @@ import { now_ms } from '@deka/time'
         assert!(
             errors
                 .iter()
-                .any(|err| err.message.contains("Ambiguous phpx import 'ui/card'")),
+                .any(|err| err.message.contains("Ambiguous import 'ui/card'")),
             "expected ambiguous import error, got: {:?}",
             errors
         );
