@@ -235,6 +235,15 @@ impl<'a> JsSubsetEmitter<'a> {
             Stmt::Use { .. } => {
                 Err("use declarations are not supported in JS subset emitter".to_string())
             }
+            // Import declarations are emitted by the module meta pass in finish();
+            // Phase 1 keeps the metadata scanner as the source of truth for JS
+            // imports. Export declarations wrap an underlying declaration which
+            // must still be emitted.
+            Stmt::Import { .. } => Ok(()),
+            Stmt::Export { item, .. } => match item {
+                ExportItem::Decl(decl) => self.emit_stmt(*decl),
+                ExportItem::Named { .. } => Ok(()),
+            },
             Stmt::Class {
                 kind: ClassKind::Struct,
                 name,

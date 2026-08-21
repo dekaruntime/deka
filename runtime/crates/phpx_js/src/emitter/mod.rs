@@ -1,7 +1,7 @@
 use crate::{ImportDecl, ImportSpec, SourceModuleMeta};
 use php_rs::parser::ast::{
-    BinaryOp, ClassKind, ClassMember, Expr, ExprId, JsxChild, ObjectKey, Program, Receiver, Stmt,
-    StmtId, Type as AstType, UnaryOp,
+    BinaryOp, ClassKind, ClassMember, ExportItem, Expr, ExprId, JsxChild, ObjectKey, Program,
+    Receiver, Stmt, StmtId, Type as AstType, UnaryOp,
 };
 use std::collections::{BTreeSet, HashMap, HashSet};
 

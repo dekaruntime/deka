@@ -129,6 +129,8 @@ impl<'src> Formatter<'src> {
             Stmt::Enum { span, .. } => *span,
             Stmt::Namespace { span, .. } => *span,
             Stmt::Use { span, .. } => *span,
+            Stmt::Import { span, .. } => *span,
+            Stmt::Export { span, .. } => *span,
             Stmt::Switch { span, .. } => *span,
             Stmt::Try { span, .. } => *span,
             Stmt::Throw { span, .. } => *span,
@@ -628,6 +630,13 @@ impl<'src> Formatter<'src> {
             Stmt::HaltCompiler { .. } => self.write("__halt_compiler();"),
             Stmt::Nop { .. } => {}
             Stmt::Error { .. } => {}
+            Stmt::Import { span, .. } | Stmt::Export { span, .. } => {
+                // Phase 1: preserve original source text for import/export statements.
+                // Full formatter support will follow once the AST-based module system
+                // stabilizes.
+                let text = std::str::from_utf8(span.as_str(self.source.as_bytes())).unwrap_or("");
+                self.write(text);
+            }
             Stmt::Trait { .. } => {
                 // DekaScript rejects traits, but we still emit a placeholder
                 // so the formatter does not panic on edge-case input.
