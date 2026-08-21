@@ -1,5 +1,0 @@
-port = 8508
-database_url = "postgres://postgres:postgres@127.0.0.1:55432/linkhash_registry"
-repos_path = "./repos"
-bootstrap_username = "deka"
-bootstrap_token = "deka-local-token"

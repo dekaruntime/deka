@@ -1,6 +1,0 @@
-if (function_exists('shell_exec')) {
-  $out = shell_exec('ls ../rust/gild-vcs/repos')
-  echo '' . $out
-} else {
-  echo 'no_shell_exec'
-}

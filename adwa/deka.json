@@ -1,6 +1,0 @@
-{
-  "scripts": {
-    "dev": "./scripts/dev.sh",
-    "test": "./scripts/test-playground-e2e.sh"
-  }
-}

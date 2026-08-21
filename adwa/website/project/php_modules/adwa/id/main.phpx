@@ -1,9 +1,0 @@
-import { env_all } from '../lib.phpx'
-import { stdout } from 'io'
-
-$env = env_all()
-$name = 'adwa'
-if (is_array($env) && array_key_exists('USER', $env) && $env['USER'] !== '') {
-    $name = '' . $env['USER']
-}
-stdout('uid=1000(' . $name . ') gid=1000(' . $name . ') groups=1000(' . $name . ")\n")

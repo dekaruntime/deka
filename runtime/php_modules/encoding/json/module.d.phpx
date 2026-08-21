@@ -1,6 +1,0 @@
-export function json_encode($value: mixed, $flags: int = 0, $depth: int = 512): string|false
-export function json_decode($json: string, $assoc: bool = false, $depth: int = 512, $flags: int = 0): mixed
-export function json_decode_result($json: string, $assoc: bool = false, $depth: int = 512, $flags: int = 0): array
-export function json_last_error(): int
-export function json_last_error_msg(): string
-export function json_validate($json: string, $depth: int = 512, $flags: int = 0): bool

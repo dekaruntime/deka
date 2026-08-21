@@ -1,3 +1,0 @@
-import { stdout } from 'io'
-
-stdout("commands: help, ls [path], cd [path], pwd, cat <file>, echo [text], mkdir [-p] <dir>, touch [-a] [-m] <file>, cp [-r] <src> <dst>, mv <src> <dst>, rm [-r|-rf] <path>, rmdir <dir>, head [-n N] <file>, tail [-n N] <file>, grep <pattern> <file>, find [path] [-name pattern], wc <file>, sort <file>, uniq <file>, cut -d <delim> -f <n> <file>, sed 's/a/b/' <file>, xargs [-n N] [...], env, export KEY=VALUE, unset KEY, which <cmd>, whoami, id, clear, chmod, ln -s <target> <link>, history, open <file>, run, deka run [file], deka serve [file] [--port N], deka stop\n")

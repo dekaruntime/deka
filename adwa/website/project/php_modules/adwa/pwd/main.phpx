@@ -1,4 +1,0 @@
-import { cmd_cwd } from '../lib.phpx'
-import { stdout } from 'io'
-
-stdout(cmd_cwd() . "\n")

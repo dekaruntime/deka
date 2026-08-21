@@ -1,5 +1,0 @@
-export function now_ms(): int
-export function sleep_ms($milliseconds: int = 0): bool
-export function sleep($seconds: float = 0): bool
-export async function sleep_async($milliseconds: int = 0): Promise<bool>
-export async function sleep_seconds_async($seconds: float = 0): Promise<bool>

@@ -1,2 +1,0 @@
-export { strlen as Text } from 'string';
-export { strtoupper as Text } from 'string';

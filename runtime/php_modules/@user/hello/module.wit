@@ -1,9 +1,0 @@
-package user:hello;
-
-interface greetings {
-  greet: func(name: string) -> string;
-}
-
-world hello {
-  export greetings;
-}

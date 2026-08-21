@@ -1,7 +1,0 @@
-{
-  "type": "serve",
-  "serve": {
-    "entry": "app/home.phpx",
-    "mode": "php"
-  }
-}

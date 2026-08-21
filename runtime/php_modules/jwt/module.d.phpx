@@ -1,4 +1,0 @@
-import { Result } from 'core/result'
-
-export function sign($payload: mixed, $secret: mixed, $options: mixed = []): Result<string, string>
-export function verify($token: string, $secret: mixed, $options: mixed = []): Result<mixed, string>

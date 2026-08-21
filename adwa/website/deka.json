@@ -1,7 +1,0 @@
-{
-  "type": "serve",
-  "serve": {
-    "entry": "index.html",
-    "mode": "static"
-  }
-}

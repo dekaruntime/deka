@@ -1,5 +1,0 @@
-import { cmd_args, cmd_join } from '../lib.phpx'
-import { stdout } from 'io'
-
-$args = cmd_args()
-stdout(cmd_join($args, ' ') . "\n")
