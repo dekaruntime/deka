@@ -117,7 +117,7 @@
     "name": "unsafe runtime helper",
     "file": "unsafe.ds",
     "expectCompile": true,
-    "expectStdout": "42\n"
+    "expectStdout": "Ok\n42\n"
   },
   {
     "name": "utility classes",

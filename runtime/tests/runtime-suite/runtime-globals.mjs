@@ -922,7 +922,7 @@ function optionalSchema(inner) {
 function nullableSchema(inner) {
   const self = {
     parse(value, path = []) {
-      if (value === null) return ok(null);
+      if (value === null || (value && value.__case === "None")) return ok(null);
       return inner.parse(value, path);
     },
     optional() {
