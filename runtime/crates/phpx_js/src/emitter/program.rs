@@ -80,10 +80,14 @@ impl<'a> JsSubsetEmitter<'a> {
                 Stmt::Function { .. }
                     | Stmt::Enum { .. }
                     | Stmt::Class { .. }
-                    | Stmt::Const { .. }
                     | Stmt::TypeAlias { .. }
             );
-            if is_decl {
+            // DekaScript `const` initializers are evaluated at the point of
+            // declaration and may reference preceding `let` bindings. Keeping
+            // them in the runtime execution order preserves source semantics
+            // and avoids TDZ-style errors (deka#184).
+            let is_ds_runtime_const = self.meta.is_ds && matches!(stmt, Stmt::Const { .. });
+            if is_decl && !is_ds_runtime_const {
                 self.emit_stmt(*stmt)?;
             } else {
                 self.emit_stmt_to_main(*stmt)?;
