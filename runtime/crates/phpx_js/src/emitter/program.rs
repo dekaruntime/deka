@@ -361,7 +361,7 @@ impl<'a> JsSubsetEmitter<'a> {
                 let exported =
                     self.scopes.len() == 1 && self.meta.exported_functions.contains(&fn_name);
                 let async_kw = if *is_async { "async " } else { "" };
-                if exported {
+                if exported && !self.meta.project_mode {
                     self.body.push_str(&format!(
                         "export {}function {}({}) {{\n",
                         async_kw, fn_name, js_params
@@ -406,6 +406,10 @@ impl<'a> JsSubsetEmitter<'a> {
                 self.pop_scope();
 
                 self.body.push_str("}\n\n");
+                if self.meta.project_mode && exported {
+                    self.body
+                        .push_str(&format!("exports.{} = {};\n\n", fn_name, fn_name));
+                }
                 Ok(())
             }
             Stmt::ReceiverMethod {
@@ -601,6 +605,9 @@ impl<'a> JsSubsetEmitter<'a> {
                 for item in *consts {
                     let name = self.token_name(item.name);
                     let value = self.emit_expr(item.value)?;
+                    let exported = self.meta.export_specs.iter().any(|spec| {
+                        spec.local == name
+                    });
                     if self.meta.is_ds {
                         self.uses_deka_freeze = true;
                         self.body
@@ -608,6 +615,10 @@ impl<'a> JsSubsetEmitter<'a> {
                     } else {
                         self.body
                             .push_str(&format!("const {} = {};\n", name, value));
+                    }
+                    if self.meta.project_mode && exported {
+                        self.body
+                            .push_str(&format!("exports.{} = {};\n", name, name));
                     }
                     self.declare_immutable_in_scope(&name);
                 }
