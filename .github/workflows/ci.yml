@@ -156,7 +156,7 @@ jobs:
 
       - name: Build tested crates
         working-directory: runtime
-        run: cargo build -p deka_http -p pool -p engine -p phpx_js -p php-rs -p bundler
+        run: cargo build -p deka_http -p pool -p engine -p deka_js -p php-rs -p bundler
 
       - name: Test deka_http
         working-directory: runtime
@@ -172,7 +172,7 @@ jobs:
 
       - name: Test PHPX compiler (incl. integration tests)
         working-directory: runtime
-        run: cargo test -p phpx_js
+        run: cargo test -p deka_js
 
       - name: Test php-rs (parser + typechecker)
         working-directory: runtime

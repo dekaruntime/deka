@@ -1,9 +1,0 @@
-[
-  "core/*",
-  "encoding/json",
-  "string/*",
-  "array/*",
-  "bytes",
-  "buffer",
-  "concurrency"
-]

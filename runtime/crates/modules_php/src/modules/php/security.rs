@@ -411,7 +411,7 @@ fn is_runtime_safe_env_key(key: &str) -> bool {
     let normalized = key.trim().to_ascii_uppercase();
     matches!(
         normalized.as_str(),
-        "PORT" | "PWD" | "TMPDIR" | "TEMP" | "TMP" | "HOME" | "PATH" | "PHPX_MODULE_ROOT"
+        "PORT" | "PWD" | "TMPDIR" | "TEMP" | "TMP" | "HOME" | "PATH" | "DEKA_MODULE_ROOT"
     ) || normalized.starts_with("DEKA_")
 }
 
@@ -578,7 +578,7 @@ fn suggest_write_rule(target: &str, project_kind: ProjectKind) -> Option<String>
 }
 
 fn project_root() -> Option<std::path::PathBuf> {
-    if let Ok(root) = std::env::var("PHPX_MODULE_ROOT") {
+    if let Ok(root) = std::env::var("DEKA_MODULE_ROOT") {
         if !root.trim().is_empty() {
             return Some(std::path::PathBuf::from(root));
         }
@@ -604,7 +604,7 @@ pub(super) enum ProjectKind {
 }
 
 fn project_kind() -> ProjectKind {
-    if std::env::var("PHPX_MODULE_ROOT").is_ok() {
+    if std::env::var("DEKA_MODULE_ROOT").is_ok() {
         return ProjectKind::Php;
     }
     if let Ok(handler) = std::env::var("HANDLER_PATH") {

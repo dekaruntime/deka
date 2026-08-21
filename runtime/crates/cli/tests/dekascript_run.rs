@@ -68,7 +68,7 @@ fn run_executes_dekascript_if_else_candidate() {
 fn run_executes_declared_array_function_call() {
     run_dekascript(
         "array_call",
-        "export function array(value: mixed): void { print(value); }\narray(41);\n",
+        "export fn array(value: mixed): void { print(value); }\narray(41);\n",
         "41",
     );
 }
@@ -81,9 +81,9 @@ fn run_executes_declared_array_function_call() {
 fn run_executes_inherent_impl_method_reading_self_field() {
     run_dekascript(
         "inherent_impl_self",
-        "struct Point { $x: int; }\n\
+        "struct Point { x: int; }\n\
          impl Point { doubled(self: Self): int { return self.x * 2; } }\n\
-         const p = Point { $x: 5 };\n\
+         const p = Point { x: 5 };\n\
          print(p.doubled());\n",
         "10",
     );
@@ -97,12 +97,12 @@ fn run_executes_impl_method_calling_sibling_method_via_self() {
     // fix end-to-end, not just typechecked.
     run_dekascript(
         "impl_self_method_call",
-        "struct Point { $x: int; }\n\
+        "struct Point { x: int; }\n\
          impl Point {\n\
            double(self: Self): int { return self.x * 2; }\n\
            quad(self: Self): int { return self.double() * 2; }\n\
          }\n\
-         const p = Point { $x: 3 };\n\
+         const p = Point { x: 3 };\n\
          print(p.quad());\n",
         "12",
     );
@@ -113,9 +113,9 @@ fn run_executes_trait_impl_method_reading_self_field() {
     run_dekascript(
         "trait_impl_self",
         "trait Greeter {\n  greet(self: Self): string\n}\n\
-         struct Bot { $name: string; }\n\
+         struct Bot { name: string; }\n\
          impl Greeter for Bot { greet(self: Self): string { return \"hi from \" + self.name; } }\n\
-         const b = Bot { $name: \"Rex\" };\n\
+         const b = Bot { name: \"Rex\" };\n\
          print(b.greet());\n",
         "hi from Rex",
     );
@@ -150,9 +150,9 @@ fn run_executes_trait_default_method_when_not_overridden() {
     run_dekascript(
         "trait_default_not_overridden",
         "trait Shape {\n  area(self: Self): int\n  describe(self: Self): string { return \"a shape\"; }\n}\n\
-         struct Square { $side: int; }\n\
+         struct Square { side: int; }\n\
          impl Shape for Square { area(self: Self): int { return self.side * self.side; } }\n\
-         const s = Square { $side: 4 };\n\
+         const s = Square { side: 4 };\n\
          print(s.describe());\n",
         "a shape",
     );
@@ -166,9 +166,9 @@ fn run_executes_impl_override_wins_over_trait_default() {
     run_dekascript(
         "trait_default_overridden",
         "trait Shape {\n  describe(self: Self): string { return \"a shape\"; }\n}\n\
-         struct Square { $side: int; }\n\
+         struct Square { side: int; }\n\
          impl Shape for Square { describe(self: Self): string { return \"a square override\"; } }\n\
-         const s = Square { $side: 4 };\n\
+         const s = Square { side: 4 };\n\
          print(s.describe());\n",
         "a square override",
     );
@@ -181,10 +181,10 @@ fn run_executes_trait_default_method_when_trait_declared_after_its_impl() {
     // impl block that relies on it.
     run_dekascript(
         "trait_default_declared_after_impl",
-        "struct Square { $side: int; }\n\
+        "struct Square { side: int; }\n\
          impl Shape for Square { area(self: Self): int { return self.side * self.side; } }\n\
          trait Shape {\n  area(self: Self): int\n  describe(self: Self): string { return \"declared after its impl\"; }\n}\n\
-         const s = Square { $side: 3 };\n\
+         const s = Square { side: 3 };\n\
          print(s.describe());\n",
         "declared after its impl",
     );
@@ -201,10 +201,10 @@ fn run_executes_two_traits_each_contributing_a_default_method() {
         "two_trait_defaults_merge",
         "trait Reader { readLabel(self: Self): string { return \"reading\"; } }\n\
          trait Writer { writeLabel(self: Self): string { return \"writing\"; } }\n\
-         struct Conn { $id: int; }\n\
+         struct Conn { id: int; }\n\
          impl Reader for Conn { }\n\
          impl Writer for Conn { }\n\
-         const c = Conn { $id: 1 };\n\
+         const c = Conn { id: 1 };\n\
          print(c.readLabel() + \" \" + c.writeLabel());\n",
         "reading writing",
     );
@@ -241,9 +241,9 @@ fn run_executes_template_method_pattern_default_calling_abstract() {
     run_dekascript(
         "template_method_pattern",
         "trait Shape {\n  area(self: Self): int\n  describe(self: Self): string { return \"area is \" + self.area(); }\n}\n\
-         struct Square { $side: int; }\n\
+         struct Square { side: int; }\n\
          impl Shape for Square { area(self: Self): int { return self.side * self.side; } }\n\
-         const s = Square { $side: 5 };\n\
+         const s = Square { side: 5 };\n\
          print(s.describe());\n",
         "area is 25",
     );
@@ -278,8 +278,8 @@ fn run_executes_impl_before_struct_declaration_method() {
     run_dekascript(
         "impl_before_struct",
         "impl Point { norm(self: Self): int { return self.x * 2; } }\n\
-         struct Point { $x: int; }\n\
-         const p = Point { $x: 5 };\n\
+         struct Point { x: int; }\n\
+         const p = Point { x: 5 };\n\
          print(p.norm());\n",
         "10",
     );
@@ -302,7 +302,7 @@ fn run_executes_impl_before_enum_declaration_method() {
 fn run_executes_dekascript_generic_variadic_collect_candidate() {
     run_dekascript(
         "collect",
-        "export function collect(...values: Array<mixed>): Array<mixed> {\n    return values;\n}\nconst result = collect(1, 2, 3);\nprint(result);\n",
+        "export fn collect(...values: Array<mixed>): Array<mixed> {\n    return values;\n}\nconst result = collect(1, 2, 3);\nprint(result);\n",
         "1,2,3",
     );
 }

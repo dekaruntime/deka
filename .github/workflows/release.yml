@@ -84,7 +84,7 @@ jobs:
         env:
           RUSTC_WRAPPER: "sccache"
         working-directory: runtime
-        run: cargo build -p deka_http -p pool -p engine -p phpx_js -p php-rs -p bundler
+        run: cargo build -p deka_http -p pool -p engine -p deka_js -p php-rs -p bundler
 
       - name: Run Rust tests
         env:
@@ -94,7 +94,7 @@ jobs:
           cargo test -p deka_http
           cargo test -p pool
           cargo test -p engine
-          cargo test -p phpx_js
+          cargo test -p deka_js
           cargo test -p php-rs
           cargo test -p bundler
 
@@ -294,6 +294,8 @@ jobs:
     name: Publish to R2
     needs: [build-wasm, build-cli-linux-x64, build-cli-darwin-x64, build-cli-darwin-arm64]
     runs-on: [self-hosted, linux, x64]
+    permissions:
+      contents: write
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -494,6 +496,16 @@ jobs:
           aws s3 cp "release/${VERSION}/deka-diagnostics-artifact.json" "s3://${R2_BUCKET_WASM}/latest/deka-diagnostics-artifact.json" --endpoint-url="${R2_ENDPOINT}"
           aws s3 cp "release/${VERSION}/deka_compiler.wasm" "s3://${R2_BUCKET_WASM}/latest/deka_compiler.wasm" --endpoint-url="${R2_ENDPOINT}"
           aws s3 cp "release/${VERSION}/deka_diagnostics.wasm" "s3://${R2_BUCKET_WASM}/latest/deka_diagnostics.wasm" --endpoint-url="${R2_ENDPOINT}"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.prepare.outputs.version }}"
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "deka ${VERSION}" \
+            --notes "deka ${VERSION} release binaries and WASM artifacts." \
+            release/${VERSION}/*
 
       - name: Trigger website compiler sync
         if: success()

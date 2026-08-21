@@ -1,1 +1,0 @@
-re:^(SKIP|OK 9|ERR (connect|query|type))\n?$

@@ -1,8 +1,0 @@
-/*
-TEST: Module cyclic import handling
-Covers: module resolution with cycles, import of symbols across cycle.
-*/
-
-import { fromA } from '_test/cycle_a';
-
-echo fromA() . "\n";

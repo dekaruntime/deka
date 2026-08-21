@@ -1,8 +1,0 @@
-/// docid: phpx/modules/greet()
-/// <Function name="greet">
-///   <Description>PHPX standard module function `greet` from `modules`.</Description>
-///   <ReturnType type="mixed" />
-/// </Function>
-export function greet($name) {
-    return 'hi ' . $name;
-}

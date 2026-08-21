@@ -17,7 +17,7 @@ bytes = { workspace = true }
 deka_http = { path = "../http" }
 stdio = { path = "../stdio" }
 modules_php = { path = "../modules_php" }
-phpx_js = { path = "../phpx_js" }
+deka_js = { path = "../deka_js" }
 bundler = { path = "../bundler" }
 compile = { path = "../compile" }
 axum = { workspace = true }

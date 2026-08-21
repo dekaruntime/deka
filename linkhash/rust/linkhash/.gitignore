@@ -1,7 +1,0 @@
-/target
-
-# Runtime data — not source
-data/
-*.db
-*.db-shm
-*.db-wal

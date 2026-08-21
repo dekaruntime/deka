@@ -21,14 +21,14 @@ cargo build --release -p cli
 
 # Build the browser WASM compiler
 CARGO_INCREMENTAL=0 cargo build --release \
-  --target wasm32-unknown-unknown -p phpx_compiler_wasm --no-default-features
+  --target wasm32-unknown-unknown -p deka_compiler_wasm --no-default-features
 
 # Run the suite
 bun tests/runtime-suite/run.mjs
 ```
 
 The harness picks the newest `deka_compiler.wasm` it can find between
-`target/wasm32-unknown-unknown/release/phpx_compiler_wasm.wasm` and
+`target/wasm32-unknown-unknown/release/deka_compiler_wasm.wasm` and
 `dist/deka-compiler-wasm/deka_compiler.wasm`.
 
 ## Running a subset of fixtures

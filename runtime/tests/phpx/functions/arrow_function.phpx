@@ -1,7 +1,0 @@
-/*
-TEST: Arrow function invocation
-Covers: fn(...) => expr syntax, call via variable, return value.
-*/
-
-$f = fn($v) => $v * 3;
-echo $f(3) . "\n";

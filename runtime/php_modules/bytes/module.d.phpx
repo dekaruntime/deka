@@ -1,7 +1,0 @@
-export function from_string($value: string): string
-export function to_string($value: string): string
-export function len($value: string): int
-export function get($value: string, $index: int): int|null
-export function set($value: string, $index: int, $byte: int): string
-export function slice($value: string, $start: int, $length: int|null = null): string
-export function concat($a: string, $b: string): string

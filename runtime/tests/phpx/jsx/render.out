@@ -1,5 +1,0 @@
-<div id="root" class="x"><span>Hello</span></div>
-<a href="/home" data-component-link>Home</a>
-<header><h1>Title</h1></header>
-<script>console.log('x<y');</script>
-<style>body{color:red;}</style>

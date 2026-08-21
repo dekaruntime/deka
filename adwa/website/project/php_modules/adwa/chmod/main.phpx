@@ -1,9 +1,0 @@
-import { cmd_args } from '../lib.phpx'
-import { stdout } from 'io'
-
-$args = cmd_args()
-if (count($args) < 2) {
-    stdout("chmod: mode and path required\n")
-    return
-}
-# Permission model is not implemented in WOSIX VFS yet.

@@ -1,8 +1,0 @@
-/*
-TEST: Loader runs dependencies before importer
-Covers: deterministic leaf->mid->root initialization order.
-*/
-
-import { initTrace } from '_test/loader_root'
-
-echo initTrace() . "\n"

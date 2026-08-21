@@ -18,13 +18,13 @@ Run from the `runtime/` directory:
 cd runtime
 
 # Build the crates exercised by the test suite
-cargo build -p deka_http -p pool -p engine -p phpx_js -p php-rs -p bundler
+cargo build -p deka_http -p pool -p engine -p deka_js -p php-rs -p bundler
 
 # Run individual crate tests
 cargo test -p deka_http
 cargo test -p pool
 cargo test -p engine
-cargo test -p phpx_js        # PHPX compiler, including integration tests
+cargo test -p deka_js        # PHPX compiler, including integration tests
 cargo test -p php-rs         # parser + typechecker
 cargo test -p bundler
 
@@ -37,11 +37,11 @@ execution suite):
 
 ```bash
 cd runtime
-cargo build -p deka_http -p pool -p engine -p phpx_js -p php-rs -p bundler
+cargo build -p deka_http -p pool -p engine -p deka_js -p php-rs -p bundler
 cargo test -p deka_http
 cargo test -p pool
 cargo test -p engine
-cargo test -p phpx_js
+cargo test -p deka_js
 cargo test -p php-rs
 cargo test -p bundler
 cargo test -p cli --lib -- --test-threads=1
@@ -63,14 +63,14 @@ cargo build --release -p cli
 
 # Browser WASM compiler
 CARGO_INCREMENTAL=0 cargo build --release \
-  --target wasm32-unknown-unknown -p phpx_compiler_wasm --no-default-features
+  --target wasm32-unknown-unknown -p deka_compiler_wasm --no-default-features
 
 # Run the full suite
 bun tests/runtime-suite/run.mjs
 ```
 
 The harness picks the newest `deka_compiler.wasm` it can find between
-`target/wasm32-unknown-unknown/release/phpx_compiler_wasm.wasm` and
+`target/wasm32-unknown-unknown/release/deka_compiler_wasm.wasm` and
 `dist/deka-compiler-wasm/deka_compiler.wasm`.
 
 ### Running a subset

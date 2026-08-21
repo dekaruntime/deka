@@ -6,7 +6,6 @@ use std::{io, net::TcpListener};
 
 use crate::env::init_env;
 use crate::extensions::extensions_for_mode;
-use crate::js_pipeline::build_phpx_handler_bundle;
 use crate::security::resolve_security_policy;
 use core::Context;
 use engine::{RuntimeEngine, RuntimeState, config as runtime_config, set_engine};
@@ -17,8 +16,8 @@ use platform_server::ServerPlatform;
 use pool::validation::{PoolWorkers, extract_pool_options};
 use pool::{HandlerKey, PoolConfig};
 use runtime_core::env::{flag_or_env_truthy_with, set_dev_flag_with, set_handler_path_with};
-use runtime_core::modules::ensure_phpx_module_root_env_with;
-use runtime_core::validation::validate_phpx_handler_with;
+use runtime_core::modules::ensure_deka_module_root_env_with;
+use runtime_core::validation::validate_deka_handler_with;
 use stdio as stdio_log;
 use transport::{
     DnsOptions, HttpOptions, RedisOptions, TcpOptions, UdpOptions, UnixOptions, WsOptions,
@@ -95,14 +94,14 @@ async fn serve_async(context: &Context) -> Result<(), String> {
             let _ = platform.env().set(key, value);
             unsafe { std::env::set_var(key, value) };
         };
-        ensure_phpx_module_root_env_with(
+        ensure_deka_module_root_env_with(
             &handler_path,
             &|path| platform.fs().exists(path),
             &|| platform.fs().current_exe().ok(),
             &env_get,
             &mut env_set,
         );
-        validate_phpx_modules(&handler_path)?;
+        validate_deka_modules(&handler_path)?;
     }
     let mut env_set = |key: &str, value: &str| {
         let _ = platform.env().set(key, value);
@@ -153,16 +152,9 @@ async fn serve_async(context: &Context) -> Result<(), String> {
     );
 
     let handler_path_is_file = FsPath::new(&handler_path).is_file();
-    let use_esm = matches!(resolved.mode, runtime_config::ServeMode::Php)
-        && handler_path_is_file
-        && std::env::var("DEKA_RUNTIME_ESM")
-            .map(|value| value != "0" && value != "false")
-            .unwrap_or(true);
-    let handler_code = if use_esm {
-        String::new()
-    } else {
-        build_handler_code(&handler_path, &resolved)?
-    };
+    // Serve mode always uses the ESM loader for DS handlers; the legacy
+    // bundled-PHPX path has been removed (deka#202).
+    let handler_code = String::new();
     let handler_entry = match resolved.mode {
         runtime_config::ServeMode::Php if handler_path_is_file => Some(handler_path.clone()),
         _ => None,
@@ -202,12 +194,12 @@ fn apply_cli_serve_overrides(
     }
 }
 
-fn validate_phpx_modules(handler_path: &str) -> Result<(), String> {
-    validate_phpx_handler_with(
+fn validate_deka_modules(handler_path: &str) -> Result<(), String> {
+    validate_deka_handler_with(
         handler_path,
         &|path| {
             std::fs::read_to_string(path)
-                .map_err(|err| format!("Failed to read PHPX handler {}: {}", path, err))
+                .map_err(|err| format!("Failed to read DekaScript handler {}: {}", path, err))
         },
         &|source, path| validate_module_resolution(source, path),
         &|source, path, error| format_validation_error(source, path, error),
@@ -319,19 +311,9 @@ fn build_handler_code(
 ) -> Result<String, String> {
     match resolved.mode {
         runtime_config::ServeMode::Php => {
-            let path = std::path::Path::new(handler_path);
-            if path.is_dir() {
-                let encoded = serde_json::to_string(handler_path)
-                    .map_err(|err| format!("failed to encode app root path: {}", err))?;
-                return Ok(format!(
-                    "if (!(globalThis.__dekaPhp && typeof globalThis.__dekaPhp.servePhp === 'function')) {{\n\
-  throw new Error('PHP serve adapter is not available');\n\
-}}\n\
-globalThis.app = globalThis.__dekaPhp.servePhp({});\n",
-                    encoded
-                ));
-            }
-            build_phpx_handler_bundle(handler_path)
+            // DS handlers are loaded via the ESM loader; no pre-generated bundle
+            // is needed anymore (deka#202).
+            Ok(String::new())
         }
         runtime_config::ServeMode::Static => {
             let listing = resolved.config.directory_listing.unwrap_or(true);
@@ -913,7 +895,7 @@ mod tests {
     // without serialization these tests race on the same env vars and
     // intermittently read each other's policy/values (tana#913 QA flake).
     // Mirrors the TEST_ENV_LOCK precedent in js_pipeline.rs for
-    // PHPX_MODULE_ROOT-mutating tests.
+    // DEKA_MODULE_ROOT-mutating tests.
     static SERVE_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     /// Verify the static handler template contains the __dekaFs confinement
@@ -991,295 +973,8 @@ mod tests {
         assert!(err.contains("already in use"), "unexpected error: {}", err);
     }
 
-    #[test]
-    fn real_topology_serve_phpx_deka_json_env_policy_handoff_fails_closed() {
-        let _env_lock = SERVE_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .build()
-            .expect("tokio runtime");
 
-        rt.block_on(async {
-            let temp = tempfile::tempdir().expect("temp project");
-            let root = temp.path();
-            let handler = root.join("main.phpx");
-            fs::write(
-                root.join("deka.json"),
-                r#"{
-  "type": "serve",
-  "serve": { "entry": "main.phpx", "mode": "php" },
-  "security": {
-    "allow": { "env": ["DEKA_ALLOWED_ENV", "DEKA_DENIED_ENV", "DEKA_MISSING_ENV"] },
-    "deny": { "env": ["DEKA_DENIED_ENV"] },
-    "prompt": false
-  }
-}"#,
-            )
-            .expect("deka.json");
-            fs::write(root.join("deka.lock"), "{}").expect("deka.lock");
-            fs::write(
-                &handler,
-                r#"export function handler($request, $context) {
-    $serverAllowed = isset($_SERVER['DEKA_ALLOWED_ENV']) ? $_SERVER['DEKA_ALLOWED_ENV'] : '';
-    $serverDenied = isset($_SERVER['DEKA_DENIED_ENV']) ? $_SERVER['DEKA_DENIED_ENV'] : '';
-    $serverMissing = isset($_SERVER['DEKA_MISSING_ENV']) ? $_SERVER['DEKA_MISSING_ENV'] : '';
-    $envAllowed = isset($_ENV['DEKA_ALLOWED_ENV']) ? $_ENV['DEKA_ALLOWED_ENV'] : '';
-    $envDenied = isset($_ENV['DEKA_DENIED_ENV']) ? $_ENV['DEKA_DENIED_ENV'] : '';
-    $processAllowed = process.env.DEKA_ALLOWED_ENV ?? '';
-    $processDenied = process.env.DEKA_DENIED_ENV ?? '';
-    return '{"serverAllowed":"' . $serverAllowed . '","serverDenied":"' . $serverDenied . '","serverMissing":"' . $serverMissing . '","envAllowed":"' . $envAllowed . '","envDenied":"' . $envDenied . '","processAllowed":"' . $processAllowed . '","processDenied":"' . $processDenied . '"}';
-}
-"#,
-            )
-            .expect("handler");
 
-            let port = rt_env_free_port();
-            let mut params = HashMap::new();
-            params.insert("--port".to_string(), port.to_string());
-            let resolved = core::resolve_handler_path(handler.to_str().expect("handler path"))
-                .expect("resolve handler");
-            let context = core::Context {
-                args: Args {
-                    flags: HashMap::new(),
-                    params,
-                    commands: vec!["serve".to_string()],
-                    positionals: vec![handler.to_string_lossy().to_string()],
-                },
-                env: EnvContext::load(),
-                handler: HandlerContext {
-                    input: handler.to_string_lossy().to_string(),
-                    static_config: core::StaticServeConfig::load(&resolved.directory),
-                    serve_config_path: None,
-                    resolved,
-                },
-            };
-
-            unsafe {
-                std::env::set_var("DEKA_ALLOWED_ENV", "allowed-value");
-                std::env::set_var("DEKA_DENIED_ENV", "denied-value");
-                std::env::remove_var("DEKA_MISSING_ENV");
-                std::env::set_var("ISOLATE_WORKERS", "1");
-                std::env::set_var("ISOLATES_PER_WORKER", "1");
-                std::env::set_var("ISOLATE_CODE_CACHE", "0");
-            }
-
-            let server = tokio::spawn(async move { serve_async(&context).await });
-            let body = rt_env_wait_for_body(port).await;
-            server.abort();
-
-            unsafe {
-                std::env::remove_var("DEKA_ALLOWED_ENV");
-                std::env::remove_var("DEKA_DENIED_ENV");
-                std::env::remove_var("DEKA_MISSING_ENV");
-                std::env::remove_var("ISOLATE_WORKERS");
-                std::env::remove_var("ISOLATES_PER_WORKER");
-                std::env::remove_var("ISOLATE_CODE_CACHE");
-            }
-
-            let body = body.expect("serve response");
-            let payload: serde_json::Value = serde_json::from_str(&body).expect(&body);
-            assert_eq!(payload["serverAllowed"], "allowed-value");
-            assert_eq!(payload["envAllowed"], "allowed-value");
-            assert_eq!(payload["processAllowed"], "allowed-value");
-            assert_eq!(payload["serverDenied"], "");
-            assert_eq!(payload["envDenied"], "");
-            assert_eq!(payload["processDenied"], "");
-            assert_eq!(payload["serverMissing"], "");
-        });
-    }
-
-    /// tana#913 regression: `getenv()` under standalone `deka serve` must
-    /// reflect the process environment, filtered through the resolved
-    /// `deka.json` security policy, for BOTH a blanket `"env": true` allow
-    /// and a named allowlist — this is the exact envprobe repro filed
-    /// against a deployed `deka-cli` that predated the env-policy fixes
-    /// (deka #618, "make deka manifest authoritative for runtime env and
-    /// net", "address env policy seam review"). getenv() is a thin prelude
-    /// wrapper over `process.env` (see crates/phpx_js/src/emitter/mod.rs),
-    /// so this exercises the same env_snapshot plumbing as the $_SERVER/
-    /// $_ENV/process.env test above through the PHP-surface builtin that
-    /// the real linkha.sh regression actually calls.
-    #[test]
-    fn real_topology_serve_getenv_reflects_process_env_under_security_policy() {
-        let _env_lock = SERVE_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .build()
-            .expect("tokio runtime");
-
-        rt.block_on(async {
-            let temp = tempfile::tempdir().expect("temp project");
-            let root = temp.path();
-            let handler = root.join("main.phpx");
-            fs::write(
-                root.join("deka.json"),
-                r#"{
-  "type": "serve",
-  "serve": { "entry": "main.phpx", "mode": "php" },
-  "security": {
-    "allow": { "env": true },
-    "prompt": false
-  }
-}"#,
-            )
-            .expect("deka.json");
-            fs::write(root.join("deka.lock"), "{}").expect("deka.lock");
-            fs::write(
-                &handler,
-                r#"export function handler($request, $context) {
-    $probe = getenv('DEKA_GETENV_PROBE');
-    $missing = getenv('DEKA_GETENV_MISSING');
-    $rawProbe = process.env.DEKA_GETENV_PROBE ?? '__unset__';
-    return '{"probe":"' . ($probe === false ? '(false)' : $probe) . '","missing":"' . ($missing === false ? '(false)' : $missing) . '","rawProbe":"' . $rawProbe . '"}';
-}
-"#,
-            )
-            .expect("handler");
-
-            let port = rt_env_free_port();
-            let mut params = HashMap::new();
-            params.insert("--port".to_string(), port.to_string());
-            let resolved = core::resolve_handler_path(handler.to_str().expect("handler path"))
-                .expect("resolve handler");
-            let context = core::Context {
-                args: Args {
-                    flags: HashMap::new(),
-                    params,
-                    commands: vec!["serve".to_string()],
-                    positionals: vec![handler.to_string_lossy().to_string()],
-                },
-                env: EnvContext::load(),
-                handler: HandlerContext {
-                    input: handler.to_string_lossy().to_string(),
-                    static_config: core::StaticServeConfig::load(&resolved.directory),
-                    serve_config_path: None,
-                    resolved,
-                },
-            };
-
-            unsafe {
-                std::env::set_var("DEKA_GETENV_PROBE", "probe-value");
-                std::env::remove_var("DEKA_GETENV_MISSING");
-                std::env::set_var("ISOLATE_WORKERS", "1");
-                std::env::set_var("ISOLATES_PER_WORKER", "1");
-                std::env::set_var("ISOLATE_CODE_CACHE", "0");
-            }
-
-            let server = tokio::spawn(async move { serve_async(&context).await });
-            let body = rt_env_wait_for_body(port).await;
-            server.abort();
-
-            unsafe {
-                std::env::remove_var("DEKA_GETENV_PROBE");
-                std::env::remove_var("DEKA_GETENV_MISSING");
-                std::env::remove_var("ISOLATE_WORKERS");
-                std::env::remove_var("ISOLATES_PER_WORKER");
-                std::env::remove_var("ISOLATE_CODE_CACHE");
-            }
-
-            let body = body.expect("serve response");
-            let payload: serde_json::Value = serde_json::from_str(&body).expect(&body);
-            assert_eq!(payload["rawProbe"], "probe-value");
-            assert_eq!(payload["probe"], "probe-value");
-            assert_eq!(payload["missing"], "(false)");
-        });
-    }
-
-    /// tana#913 companion: a NAMED allowlist (not blanket `true`) must still
-    /// let getenv() see the allowed name while continuing to fail closed for
-    /// anything not on the list — the second half of the envprobe repro.
-    #[test]
-    fn real_topology_serve_getenv_named_allowlist_fails_closed_for_unlisted_var() {
-        let _env_lock = SERVE_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .build()
-            .expect("tokio runtime");
-
-        rt.block_on(async {
-            let temp = tempfile::tempdir().expect("temp project");
-            let root = temp.path();
-            let handler = root.join("main.phpx");
-            fs::write(
-                root.join("deka.json"),
-                r#"{
-  "type": "serve",
-  "serve": { "entry": "main.phpx", "mode": "php" },
-  "security": {
-    "allow": { "env": ["DEKA_GETENV_PROBE"] },
-    "prompt": false
-  }
-}"#,
-            )
-            .expect("deka.json");
-            fs::write(root.join("deka.lock"), "{}").expect("deka.lock");
-            fs::write(
-                &handler,
-                r#"export function handler($request, $context) {
-    $probe = getenv('DEKA_GETENV_PROBE');
-    $secret = getenv('DEKA_GETENV_SECRET');
-    return '{"probe":"' . ($probe === false ? '(false)' : $probe) . '","secret":"' . ($secret === false ? '(false)' : $secret) . '"}';
-}
-"#,
-            )
-            .expect("handler");
-
-            let port = rt_env_free_port();
-            let mut params = HashMap::new();
-            params.insert("--port".to_string(), port.to_string());
-            let resolved = core::resolve_handler_path(handler.to_str().expect("handler path"))
-                .expect("resolve handler");
-            let context = core::Context {
-                args: Args {
-                    flags: HashMap::new(),
-                    params,
-                    commands: vec!["serve".to_string()],
-                    positionals: vec![handler.to_string_lossy().to_string()],
-                },
-                env: EnvContext::load(),
-                handler: HandlerContext {
-                    input: handler.to_string_lossy().to_string(),
-                    static_config: core::StaticServeConfig::load(&resolved.directory),
-                    serve_config_path: None,
-                    resolved,
-                },
-            };
-
-            unsafe {
-                std::env::set_var("DEKA_GETENV_PROBE", "probe-value");
-                std::env::set_var("DEKA_GETENV_SECRET", "should-not-leak");
-                std::env::set_var("ISOLATE_WORKERS", "1");
-                std::env::set_var("ISOLATES_PER_WORKER", "1");
-                std::env::set_var("ISOLATE_CODE_CACHE", "0");
-            }
-
-            let server = tokio::spawn(async move { serve_async(&context).await });
-            let body = rt_env_wait_for_body(port).await;
-            server.abort();
-
-            unsafe {
-                std::env::remove_var("DEKA_GETENV_PROBE");
-                std::env::remove_var("DEKA_GETENV_SECRET");
-                std::env::remove_var("ISOLATE_WORKERS");
-                std::env::remove_var("ISOLATES_PER_WORKER");
-                std::env::remove_var("ISOLATE_CODE_CACHE");
-            }
-
-            let body = body.expect("serve response");
-            let payload: serde_json::Value = serde_json::from_str(&body).expect(&body);
-            assert_eq!(payload["probe"], "probe-value");
-            assert_eq!(payload["secret"], "(false)");
-        });
-    }
 
     /// Blocker 1 regression: __dekaStat/__dekaReadFile/__dekaReadDir must NOT
     /// contain Deno.* fallback branches.  If a tenant can shadow globalThis.fs
@@ -1378,29 +1073,4 @@ mod tests {
         let _ = fs::remove_dir_all(&root_b);
     }
 
-    fn rt_env_free_port() -> u16 {
-        TcpListener::bind(("127.0.0.1", 0))
-            .expect("bind port")
-            .local_addr()
-            .expect("local addr")
-            .port()
-    }
-
-    async fn rt_env_wait_for_body(port: u16) -> Result<String, String> {
-        let client = reqwest::Client::new();
-        let url = format!("http://127.0.0.1:{port}/");
-        let deadline = Instant::now() + Duration::from_secs(20);
-        let mut last = String::new();
-        while Instant::now() < deadline {
-            match client.get(&url).send().await {
-                Ok(response) => match response.text().await {
-                    Ok(body) => return Ok(body),
-                    Err(err) => last = err.to_string(),
-                },
-                Err(err) => last = err.to_string(),
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-        Err(last)
-    }
 }

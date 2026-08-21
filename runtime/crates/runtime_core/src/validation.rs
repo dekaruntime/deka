@@ -1,4 +1,4 @@
-pub fn validate_phpx_handler_with<E, ReadSource, Validate, FormatError>(
+pub fn validate_deka_handler_with<E, ReadSource, Validate, FormatError>(
     handler_path: &str,
     read_source: &ReadSource,
     validate: &Validate,
@@ -42,11 +42,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::validate_phpx_handler_with;
+    use super::validate_deka_handler_with;
 
     #[test]
     fn skips_non_dekascript_paths() {
-        let result = validate_phpx_handler_with(
+        let result = validate_deka_handler_with(
             "index.php",
             &|_| Ok(String::new()),
             &|_, _| vec![1],
@@ -57,7 +57,7 @@ mod tests {
 
     #[test]
     fn returns_error_with_limited_output() {
-        let result = validate_phpx_handler_with(
+        let result = validate_deka_handler_with(
             "index.ds",
             &|_| Ok("source".to_string()),
             &|_, _| vec![1, 2, 3, 4],
@@ -72,7 +72,7 @@ mod tests {
 
     #[test]
     fn validates_dekascript_paths() {
-        let result = validate_phpx_handler_with(
+        let result = validate_deka_handler_with(
             "index.ds",
             &|_| Ok("source".to_string()),
             &|_, _| vec![1],

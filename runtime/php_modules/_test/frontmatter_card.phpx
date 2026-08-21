@@ -1,7 +1,0 @@
----
-$label = $props.title;
----
-<div class="card">
-  <h3>{$label}</h3>
-  <p>{$props.message}</p>
-</div>

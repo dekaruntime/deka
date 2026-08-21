@@ -1,6 +1,0 @@
-export function all(): array
-export function has($name: string): bool
-export function get($name: string, $fallback: mixed = null): mixed
-export function build_set_cookie($name: string, $value: mixed, $options: mixed = []): string
-export function set_header($name: string, $value: mixed, $options: mixed = []): string
-export function clear_header($name: string, $options: mixed = []): string

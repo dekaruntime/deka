@@ -62,13 +62,13 @@ sccache --show-stats
 cd "$RUNTIME_DIR"
 
 echo "=== Building tested crates ==="
-cargo build -p deka_http -p pool -p engine -p phpx_js -p php-rs -p bundler
+cargo build -p deka_http -p pool -p engine -p deka_js -p php-rs -p bundler
 
 echo "=== Running tests (also warms cache) ==="
 cargo test -p deka_http
 cargo test -p pool
 cargo test -p engine
-cargo test -p phpx_js
+cargo test -p deka_js
 cargo test -p php-rs
 cargo test -p bundler
 

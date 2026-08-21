@@ -26,7 +26,7 @@
 //!   enterprise    0.0%      —           0
 
 use bumpalo::Bump;
-use modules_php::compiler_api::compile_phpx;
+use modules_php::compiler_api::compile_deka;
 use modules_php::validation::Severity;
 use std::fs;
 use std::path::PathBuf;
@@ -42,7 +42,7 @@ fn compile_module_file(name: &str) -> Vec<String> {
     let path = payments_dir().join(name);
     let source = fs::read_to_string(&path).expect("module file read failed");
     let arena = Box::leak(Box::new(Bump::new()));
-    let result = compile_phpx(&source, path.to_string_lossy().as_ref(), arena);
+    let result = compile_deka(&source, path.to_string_lossy().as_ref(), arena);
     result
         .errors
         .iter()

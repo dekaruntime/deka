@@ -136,7 +136,7 @@ async fn deka_php_runtime_resolves_local_unscoped_before_global_scoped() {
 
     let script = format!(
         r#"
-        globalThis.process.env.PHPX_MODULE_ROOT = {global_root_js};
+        globalThis.process.env.DEKA_MODULE_ROOT = {global_root_js};
         const resolved = globalThis.__dekaTestResolveImportTarget(
           '@deka/http',
           {entry_path_js},

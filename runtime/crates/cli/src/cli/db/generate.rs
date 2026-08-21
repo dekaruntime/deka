@@ -188,7 +188,7 @@ pub(super) fn extract_struct_models(
     file_path: String,
 ) -> Result<Vec<ModelDef>, String> {
     let arena = Bump::new();
-    let mut parser = Parser::new_with_mode(Lexer::new(source.as_bytes()), &arena, ParserMode::Phpx);
+    let mut parser = Parser::new_with_mode(Lexer::new(source.as_bytes()), &arena, ParserMode::Ds);
     let program = parser.parse_program();
     if !program.errors.is_empty() {
         let rendered = program

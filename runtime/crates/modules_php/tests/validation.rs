@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use bumpalo::Bump;
 
-use modules_php::compiler_api::{compile_deka, compile_phpx};
+use modules_php::compiler_api::compile_deka;
 use modules_php::validation::imports::validate_imports;
 use modules_php::validation::{ErrorKind, ValidationResult};
 
@@ -21,13 +21,13 @@ fn compile_fixture(path: &Path) -> ValidationResult<'static> {
     if path.extension().is_some_and(|ext| ext == "ds") {
         compile_deka(&source, path.to_string_lossy().as_ref(), arena)
     } else {
-        compile_phpx(&source, path.to_string_lossy().as_ref(), arena)
+        compile_deka(&source, path.to_string_lossy().as_ref(), arena)
     }
 }
 
 fn compile_source(source: &str, file_path: &str) -> ValidationResult<'static> {
     let arena = Box::leak(Box::new(Bump::new()));
-    compile_phpx(source, file_path, arena)
+    compile_deka(source, file_path, arena)
 }
 
 fn assert_has_error(result: &ValidationResult<'_>, kind: ErrorKind) {
@@ -472,6 +472,22 @@ fn rule_class_reports_error() {
     let path = fixtures_root().join("rules/class.phpx");
     let result = compile_fixture(&path);
     assert_has_error(&result, ErrorKind::OopNotAllowed);
+}
+
+#[test]
+fn dekascript_null_literal_rejected() {
+    let source = "const x = null\n";
+    let arena = Box::leak(Box::new(Bump::new()));
+    let result = compile_deka(source, "test.ds", arena);
+    assert_has_error(&result, ErrorKind::NullNotAllowed);
+}
+
+#[test]
+fn dekascript_undefined_pseudo_literal_rejected() {
+    let source = "const x = undefined\n";
+    let arena = Box::leak(Box::new(Bump::new()));
+    let result = compile_deka(source, "test.ds", arena);
+    assert_has_error(&result, ErrorKind::UndefinedNotAllowed);
 }
 
 #[test]

@@ -17,7 +17,7 @@
       "write": [".cache", "php_modules/.cache"],
       "wasm": ["php_rs.wasm"],
       "env": [
-        "PHPX_DB_SMOKE",
+        "DEKA_DB_SMOKE",
         "DB_HOST",
         "DB_PORT",
         "DB_NAME",
@@ -29,7 +29,7 @@
         "MYSQL_USER",
         "MYSQL_PASSWORD",
         "SQLITE_PATH",
-        "PHPX_NET_SMOKE",
+        "DEKA_NET_SMOKE",
         "NET_HOST",
         "NET_PORT"
       ]

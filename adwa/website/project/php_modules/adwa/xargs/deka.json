@@ -1,9 +1,0 @@
-{
-  "name": "adwa-xargs",
-  "version": "0.1.0",
-  "type": "cli-adwa",
-  "main": "main.phpx",
-  "bin": {
-    "xargs": "main.phpx"
-  }
-}

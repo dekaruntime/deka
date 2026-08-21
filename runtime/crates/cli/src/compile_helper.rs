@@ -5,7 +5,7 @@
 //! formatter and never buried under generic wrappers like
 //! `Run failed: Failed to load module:`.
 
-use phpx_js::{
+use deka_js::{
     CompileError, CompileOutcome, SourceModuleMeta,
     compile_phpx_source_to_js_with_warnings_detailed,
 };

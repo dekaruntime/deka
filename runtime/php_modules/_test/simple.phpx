@@ -1,8 +1,0 @@
-/// docid: phpx/_test/ping()
-/// <Function name="ping">
-///   <Description>PHPX standard module function `ping` from `_test`.</Description>
-///   <ReturnType type="mixed" />
-/// </Function>
-export function ping() {
-    return 1;
-}

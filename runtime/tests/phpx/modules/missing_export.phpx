@@ -1,8 +1,0 @@
-/*
-TEST: Missing export error
-Covers: error reporting when importing a missing named export.
-*/
-
-import { secret } from '_test/hidden';
-
-echo secret() . "\n";

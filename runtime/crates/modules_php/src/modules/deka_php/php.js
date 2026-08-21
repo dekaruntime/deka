@@ -419,13 +419,13 @@ function buildResolutionState(entryPath) {
     const entryAbs = entryPath ? normalizeHostPath(entryPath) : '';
     const entryDir = entryAbs ? globalThis.path.dirname(entryAbs) : '';
     const localRoot = entryDir ? findLockRoot(entryDir) || findLockRoot(cwd) : findLockRoot(cwd);
-    const envRootRaw = globalThis.process?.env?.PHPX_MODULE_ROOT;
+    const envRootRaw = globalThis.process?.env?.DEKA_MODULE_ROOT;
     let globalRoot = '';
     if (envRootRaw && String(envRootRaw).trim()) {
         globalRoot = normalizeHostPath(envRootRaw);
         const globalLockPath = globalThis.path.resolve(globalRoot, 'deka.lock');
         if (!privilegedExistsSync(globalLockPath, 'lock:exists')) {
-            throw new Error(`PHPX_MODULE_ROOT is set but deka.lock was not found at ${globalLockPath}.`);
+            throw new Error(`DEKA_MODULE_ROOT is set but deka.lock was not found at ${globalLockPath}.`);
         }
     }
     const projectRoot = localRoot || globalRoot || '';
@@ -2694,7 +2694,7 @@ function resolveLockPath(entryPath) {
 function readDekaLock(entryPath) {
     const lockPath = resolveLockPath(entryPath);
     if (!lockPath || !globalThis.fs.existsSync(lockPath)) {
-        throw new Error("Missing deka.lock. Run `deka init` or set PHPX_MODULE_ROOT.");
+        throw new Error("Missing deka.lock. Run `deka init` or set DEKA_MODULE_ROOT.");
     }
     const parsed = parseLockFile(lockPath);
     return {
@@ -3285,7 +3285,7 @@ function buildPhpxBridgePrelude() {
 function buildModulePrelude(entryPath) {
     const projectRoot = resolveProjectRoot(entryPath);
     if (!projectRoot) {
-        throw new Error("Missing deka.lock. Run `deka init` or set PHPX_MODULE_ROOT.");
+        throw new Error("Missing deka.lock. Run `deka init` or set DEKA_MODULE_ROOT.");
     }
     const modulesRoot = resolvePhpModulesRoot(entryPath);
     if (!modulesRoot) {

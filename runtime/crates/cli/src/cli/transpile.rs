@@ -1,6 +1,6 @@
 use bundler::{BuildOptions, VirtualSource, bundle_virtual_entry, optimize_emitted_module};
 use core::{CommandSpec, Context, ParamSpec, Registry};
-use phpx_js::parse_source_module_meta;
+use deka_js::parse_source_module_meta;
 use std::collections::BTreeSet;
 
 use crate::compile_helper::compile_js_or_report;

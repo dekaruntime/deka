@@ -1,9 +1,0 @@
-{
-  "name": "adwa-mkdir",
-  "version": "0.1.0",
-  "type": "cli-adwa",
-  "main": "main.phpx",
-  "bin": {
-    "mkdir": "main.phpx"
-  }
-}

@@ -15,7 +15,7 @@ native = [
   "dep:php-rs",
   "dep:dekascript_lsp",
   "dep:modules_php",
-  "dep:phpx_js",
+  "dep:deka_js",
   "dep:bundler",
   "dep:seam_ts",
   "dep:rusqlite",
@@ -41,9 +41,9 @@ reqwest = { version = "0.11", features = ["blocking", "json"] }
 tokio = { version = "1.35", features = ["rt-multi-thread", "net", "io-util"], optional = true }
 postgres = { version = "0.19", optional = true }
 php-rs = { path = "../php-rs", optional = true }
-dekascript_lsp = { path = "../phpx_lsp", optional = true }
+dekascript_lsp = { path = "../deka_lsp", optional = true }
 modules_php = { path = "../modules_php", optional = true }
-phpx_js = { path = "../phpx_js", optional = true }
+deka_js = { path = "../deka_js", optional = true }
 bumpalo = "3.12"
 rusqlite = { version = "0.32", optional = true }
 sha2 = "0.10"

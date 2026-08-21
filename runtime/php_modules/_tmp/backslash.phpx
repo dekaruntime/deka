@@ -1,8 +1,0 @@
-/// docid: phpx/_tmp/backslash()
-/// <Function name="backslash">
-///   <Description>PHPX standard module function `backslash` from `_tmp`.</Description>
-///   <ReturnType type="mixed" />
-/// </Function>
-export function backslash() {
-    return '\\';
-}

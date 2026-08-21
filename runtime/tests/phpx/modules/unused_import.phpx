@@ -1,8 +1,0 @@
-/*
-TEST: Unused import detection
-Covers: import validation when a symbol is not referenced.
-*/
-
-import { expose } from '_test/hidden';
-
-echo "ok\n";
