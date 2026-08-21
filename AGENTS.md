@@ -85,19 +85,19 @@ the owning runtime/stdlib lanes define and validate one.
 
 ## Testing
 - Rust: `cargo test` (in `deka-runtime/` or `deka-rs/`).
-- Runtime compat suite: `deka-runtime/scripts/compat.sh` → `deka-runtime/test/compat/REPORT.md`.
+- Runtime compat suite: `scripts/compat.sh` → `tests/compat/REPORT.md`.
 - CLI: `bun test` if present; build via `bun run build`.
 - DekaScript compiler core: run the owning parser/emitter crate tests for the
   implemented syntax slice; do not claim a CLI conformance suite yet.
 
 ## Documentation Workflow (required)
-- Keep `runtime/docs/` user-facing only. Put internal plans/task lists under `tasks/` (or `tasks/archive/`).
+- Keep `docs/` user-facing only. Put internal plans/task lists under `tasks/` (or `tasks/archive/`).
 - After runtime/language/module changes, update docs in the same PR:
-  - Language behavior: `runtime/docs/dekascript/**`
+  - Language behavior: `docs/dekascript/**`
   - Keep examples current and include expected output for non-trivial features.
-- Publish docs from `runtime/` with:
+- Publish docs from the repo root with:
   ```sh
-  node runtime/scripts/publish-docs.js --scan . --out ../website/content/docs --force
+  node scripts/publish-docs.js --scan . --out ../website/content/docs --force
   ```
 - The publish script also runs website runtime-doc bundling automatically.
 - Treat documentation as part of feature completeness: if behavior changes, document it before closing the task.

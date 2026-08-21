@@ -12,7 +12,7 @@ We follow [Semantic Versioning 2.0](https://semver.org/) with one deliberate con
 
 Every pull request that changes runtime behavior, the CLI, or the browser compiler must bump the version before it merges. Do not wait for a "release branch" or batch multiple changes into a single version bump. Version bumps are part of the change that needs them.
 
-The version lives in each `runtime/crates/*/Cargo.toml`. Keep them in lockstep; the release workflow expects a single version for the entire runtime/CLI distribution.
+The version lives in each `crates/*/Cargo.toml`. Keep them in lockstep; the release workflow expects a single version for the entire runtime/CLI distribution.
 
 ## Triggering a release
 
@@ -31,8 +31,8 @@ The `.github/workflows/release.yml` workflow will:
    - `darwin-arm64`
 2. Build the browser compiler WASM artifacts (`deka_compiler.wasm`, `deka_diagnostics.wasm`).
 3. Compute SHA-256 checksums and write `manifest.json`.
-4. Upload CLI binaries and WASM to the `deka-releases` bucket under `runtime/v<VERSION>/`.
-5. Copy the manifest to `deka-releases/runtime/latest.json` so `deka.gg` can point users at the current release.
+4. Upload CLI binaries and WASM to the `deka-releases` bucket under `v<VERSION>/`.
+5. Copy the manifest to `deka-releases/latest.json` so `deka.gg` can point users at the current release.
 6. Also copy the WASM files to the `deka-wasm` bucket under `v<VERSION>/` and to `deka-wasm/latest/`, giving the website a stable URL for the pinned browser compiler artifact.
 
 ## Required GitHub secrets
@@ -67,7 +67,7 @@ If you want a narrower token, scope it to the buckets above.
 
 ## Manifest format
 
-`runtime/latest.json` (and `runtime/v<VERSION>/manifest.json`) has this shape:
+`latest.json` (and `v<VERSION>/manifest.json`) has this shape:
 
 ```json
 {

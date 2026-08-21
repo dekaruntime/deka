@@ -1,0 +1,8 @@
+[package]
+name = "runtime_core"
+version = "0.25.3"
+edition = "2024"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

@@ -1,7 +1,0 @@
-[package]
-name = "seam_diff"
-version = "0.25.3"
-edition = "2021"
-
-[dependencies]
-seam_ir = { path = "../seam_ir" }

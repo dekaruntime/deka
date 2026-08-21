@@ -6,4 +6,8 @@
 **/target/
 **/dist/
 linkhash/**/.cache/
-runtime/.cache/deka_js/
+.cache/
+.cache/deka_js/
+tests/runtime-suite/.runtime-suite-tmp/
+.php_modules/.cache
+.php_modules/.phpx-cache-*

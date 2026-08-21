@@ -1,8 +1,0 @@
-[package]
-name = "seam_ir"
-version = "0.25.3"
-edition = "2024"
-
-[dependencies]
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }

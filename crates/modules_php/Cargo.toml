@@ -1,0 +1,83 @@
+[package]
+name = "modules_php"
+version = "0.25.3"
+edition = "2024"
+build = "build.rs"
+
+[features]
+default = ["compiler", "runtime"]
+compiler = []
+runtime = [
+    "dep:deno_core",
+    "dep:tokio",
+    "dep:postgres",
+    "dep:mysql",
+    "dep:rusqlite",
+    "dep:neo4rs",
+    "dep:redis",
+    "dep:reqwest",
+    "dep:tokio-tungstenite",
+    "dep:tokio-stream",
+    "dep:futures-util",
+    "dep:rustls",
+    "dep:rustls-pemfile",
+    "dep:webpki-roots",
+    "dep:bcrypt",
+    "dep:aes-gcm",
+    "dep:getrandom",
+    "dep:runtime_core",
+    "dep:stdio",
+    "php-rs/pcre2",
+]
+
+[dependencies]
+deno_core = { workspace = true, optional = true }
+bumpalo = "3"
+bytes = "1"
+chrono = { version = "0.4", features = ["clock"] }
+php-rs = { path = "../php-rs", default-features = false }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+prost = "0.13"
+sha2 = "0.10"
+postgres = { version = "0.19", features = ["with-chrono-0_4"], optional = true }
+mysql = { version = "26", optional = true }
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }
+wit-parser = "0.219.2"
+deka-validation = { path = "../deka-validation", default-features = false }
+runtime_core = { path = "../runtime_core", optional = true }
+stdio = { path = "../stdio", optional = true }
+rustls = { version = "0.21", optional = true }
+rustls-pemfile = { version = "1.0", optional = true }
+webpki-roots = { version = "0.25", optional = true }
+getrandom = { version = "0.2", optional = true }
+aes-gcm = { version = "0.10", optional = true }
+bcrypt = { version = "0.15", optional = true }
+neo4rs = { workspace = true, optional = true }
+redis = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+
+# @deka/http — outbound HTTP/1.1, HTTP/2 (ALPN h2), streaming bodies,
+# opt-in cookie jars. rustls keeps the TLS stack pure-Rust (no OpenSSL
+# system dep surprise) and matches what `crates/runtime` already uses.
+reqwest = { version = "0.11", default-features = false, features = ["rustls-tls", "stream", "cookies", "gzip", "json"], optional = true }
+# @deka/http WebSocket client. tokio-tungstenite gives us the RFC 6455
+# implementation with TLS via rustls, fragmentation reassembly, and
+# ping/pong keepalive. Chosen over reqwest-websocket because it exposes
+# full frame control (text/binary, close codes, ping payloads) which
+# Stripe-style streaming APIs need.
+tokio-tungstenite = { version = "0.21", default-features = false, features = ["connect", "rustls-tls-webpki-roots"], optional = true }
+tokio-stream = { version = "0.1", optional = true }
+futures-util = { version = "0.3", optional = true }
+url = "2"
+
+[build-dependencies]
+prost-build = "0.13"
+protoc-bin-vendored = "3"
+
+[dev-dependencies]
+tempfile = "3.23.0"
+hmac = "0.12"
+hex = "0.4"
+base64 = "0.22"
+rcgen = "0.13"
