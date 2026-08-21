@@ -110,7 +110,7 @@ pub fn validate_wasm_imports(source: &str, file_path: &str) -> Vec<ValidationErr
 }
 
 pub fn validate_target_capabilities(source: &str, file_path: &str) -> Vec<ValidationError> {
-    let target = std::env::var("PHPX_TARGET")
+    let target = std::env::var("DEKA_TARGET")
         .ok()
         .or_else(|| std::env::var("DEKA_HOST_PROFILE").ok())
         .unwrap_or_else(|| "server".to_string())
@@ -396,7 +396,7 @@ fn has_top_level_await(source: &str) -> bool {
         .join("\n");
     let arena = Bump::new();
     let mut parser =
-        Parser::new_with_mode(Lexer::new(filtered.as_bytes()), &arena, ParserMode::Phpx);
+        Parser::new_with_mode(Lexer::new(filtered.as_bytes()), &arena, ParserMode::Ds);
     let program: Program<'_> = parser.parse_program();
     program
         .statements
@@ -496,7 +496,7 @@ fn is_template_module(source: &str) -> bool {
 }
 
 pub(crate) fn resolve_modules_root(file_path: &str) -> Option<PathBuf> {
-    let env_val = std::env::var("PHPX_MODULE_ROOT").ok();
+    let env_val = std::env::var("DEKA_MODULE_ROOT").ok();
     resolve_modules_root_with_env(file_path, env_val.as_deref())
 }
 
@@ -670,7 +670,7 @@ fn resolve_import_target(
         if let Some(project_root) = modules_root.and_then(|root| root.parent()) {
             base_dirs.push(project_root.to_path_buf());
         }
-        if let Ok(root) = std::env::var("PHPX_MODULE_ROOT") {
+        if let Ok(root) = std::env::var("DEKA_MODULE_ROOT") {
             let root = root.trim();
             if !root.is_empty() {
                 base_dirs.push(PathBuf::from(root));
@@ -699,7 +699,7 @@ fn resolve_import_target(
                 "Missing php_modules for import '{}' in {} ({lock_status}).",
                 raw, current_file_path
             ),
-            "Create php_modules/, ensure deka.lock is present, or set PHPX_MODULE_ROOT to a root that contains deka.lock.",
+            "Create php_modules/, ensure deka.lock is present, or set DEKA_MODULE_ROOT to a root that contains deka.lock.",
         ));
     }
 
@@ -979,7 +979,7 @@ fn resolve_wasm_target(
                 "Wasm import requires php_modules/ (missing for {}, {}).",
                 current_file_path, lock_status
             ),
-            "Create php_modules/, ensure deka.lock is present, or set PHPX_MODULE_ROOT to a root with deka.lock.",
+            "Create php_modules/, ensure deka.lock is present, or set DEKA_MODULE_ROOT to a root with deka.lock.",
         )
     })?;
 
@@ -1226,7 +1226,7 @@ fn describe_lock_status(current_file_path: &str) -> String {
     let local = find_project_root(&dir)
         .map(|root| format!("local lock: {}", root.join("deka.lock").display()))
         .unwrap_or_else(|| "local lock: not found".to_string());
-    let global = match std::env::var("PHPX_MODULE_ROOT") {
+    let global = match std::env::var("DEKA_MODULE_ROOT") {
         Ok(root) if !root.trim().is_empty() => {
             let lock = PathBuf::from(root.trim()).join("deka.lock");
             if lock.exists() {
@@ -1235,7 +1235,7 @@ fn describe_lock_status(current_file_path: &str) -> String {
                 format!("global lock: missing at {}", lock.display())
             }
         }
-        _ => "global lock: PHPX_MODULE_ROOT unset".to_string(),
+        _ => "global lock: DEKA_MODULE_ROOT unset".to_string(),
     };
     format!("{local}; {global}")
 }
@@ -1923,13 +1923,13 @@ import { now_ms } from '@deka/time'
     fn blocks_db_imports_for_adwa_target() {
         // SAFETY: test process controls env mutations in this isolated test.
         unsafe {
-            std::env::set_var("PHPX_TARGET", "adwa");
+            std::env::set_var("DEKA_TARGET", "adwa");
         }
         let source = "import { query } from 'db/postgres'\n";
         let errors = validate_target_capabilities(source, "main.phpx");
         // SAFETY: test process controls env mutations in this isolated test.
         unsafe {
-            std::env::remove_var("PHPX_TARGET");
+            std::env::remove_var("DEKA_TARGET");
         }
         assert_eq!(
             errors.len(),
@@ -1948,7 +1948,7 @@ import { now_ms } from '@deka/time'
     fn allows_db_imports_for_server_target() {
         // SAFETY: test process controls env mutations in this isolated test.
         unsafe {
-            std::env::remove_var("PHPX_TARGET");
+            std::env::remove_var("DEKA_TARGET");
             std::env::set_var("DEKA_HOST_PROFILE", "server");
         }
         let source = "import { query } from 'db/postgres'\n";

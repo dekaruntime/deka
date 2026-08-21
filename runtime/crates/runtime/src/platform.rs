@@ -21,7 +21,7 @@ use engine::config as runtime_config;
 use engine::{RuntimeEngine, set_engine};
 use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData, RequestParts};
 
-use crate::js_pipeline::build_phpx_handler_bundle;
+use crate::js_pipeline::build_deka_handler_bundle;
 use crate::security::install_platform_security_for_root;
 
 mod env;
@@ -73,7 +73,7 @@ const CLEANUP_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 impl PlatformState {
     /// Returns (HandlerKey, handler_code, handler_entry) for a tenant.
-    /// Uses the bundler to compile PHPX→JS with stdlib prelude baked in.
+    /// Uses the bundler to compile DekaScript→JS with stdlib prelude baked in.
     /// Caches the result so subsequent requests are fast.
     ///
     /// `cache_key` is `shop_id` for main builds, `shop_id:{hash}` for previews.
@@ -121,7 +121,7 @@ impl PlatformState {
         // If the tenant-specific bundle fails (e.g. missing stdlib.json),
         // fall back to the default handler so we never serve empty code.
         let handler_str = handler_path.to_string_lossy().to_string();
-        let code = match build_phpx_handler_bundle(&handler_str) {
+        let code = match build_deka_handler_bundle(&handler_str) {
             Ok(bundled) => {
                 stdio::log(
                     "platform",
@@ -137,7 +137,7 @@ impl PlatformState {
                 let default_path = self.root.join("default").join("main.ds");
                 let default_str = default_path.to_string_lossy().to_string();
                 if handler_path != default_path {
-                    match build_phpx_handler_bundle(&default_str) {
+                    match build_deka_handler_bundle(&default_str) {
                         Ok(bundled) => {
                             stdio::log(
                                 "platform",
@@ -253,7 +253,7 @@ async fn platform_async(context: &Context) {
         std::env::set_var("DEKA_SECURITY_ENFORCE", "1");
         std::env::set_var("DEKA_SECURITY_NO_PROMPT", "1");
         std::env::set_var(
-            "PHPX_MODULE_ROOT",
+            "DEKA_MODULE_ROOT",
             root.join("default").to_string_lossy().as_ref(),
         );
         std::env::set_var("DEKA_TENANTS_DIR", root.join("tenants"));
@@ -283,7 +283,7 @@ async fn platform_async(context: &Context) {
 
     // Pre-bundle the default handler to catch errors early
     let default_handler_str = default_handler.to_string_lossy().to_string();
-    match build_phpx_handler_bundle(&default_handler_str) {
+    match build_deka_handler_bundle(&default_handler_str) {
         Ok(bundled) => {
             stdio::log(
                 "platform",
@@ -854,8 +854,8 @@ mod cloudflare_header_tests {
 
     #[test]
     fn platform_non_dev_handler_failures_are_redacted() {
-        let detail = "Handler execution failed: Missing phpx module 'missing/mod' \
-(imported from /tmp/platform/main.phpx). Attempted roots: /tmp/platform/php_modules. \
+        let detail = "Handler execution failed: Missing deka module 'missing/mod' \
+(imported from /tmp/platform/main.ds). Attempted roots: /tmp/platform/php_modules. \
 Available modules: crypto, bytes";
         let body = handler_failure_body(detail, false);
 
@@ -867,12 +867,12 @@ Available modules: crypto, bytes";
 
     #[test]
     fn platform_dev_handler_failures_keep_detail() {
-        let detail = "Handler execution failed: Missing phpx module 'missing/mod' \
-(imported from /tmp/platform-dev/main.phpx). Attempted roots: /tmp/platform-dev/php_modules. \
+        let detail = "Handler execution failed: Missing deka module 'missing/mod' \
+(imported from /tmp/platform-dev/main.ds). Attempted roots: /tmp/platform-dev/php_modules. \
 Available modules: crypto";
         let body = handler_failure_body(detail, true);
 
-        assert!(body.contains("/tmp/platform-dev/main.phpx"));
+        assert!(body.contains("/tmp/platform-dev/main.ds"));
         assert!(body.contains("Available modules"));
         assert!(body.contains("Attempted roots"));
     }

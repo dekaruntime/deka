@@ -1,1 +1,0 @@
-re:^(SKIP|ERR connect|OK wire unsupported param type at index.*)\n?$

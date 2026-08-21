@@ -17,7 +17,9 @@ fn main() {
     println!("cargo:rerun-if-changed={}", stdlib_root.display());
 
     let mut files = Vec::new();
-    collect_files(&stdlib_root, &stdlib_root, &mut files).expect("collect stdlib files");
+    if stdlib_root.is_dir() {
+        collect_files(&stdlib_root, &stdlib_root, &mut files).expect("collect stdlib files");
+    }
     files.sort();
 
     let mut out = fs::File::create(&generated).expect("create stdlib snapshot");

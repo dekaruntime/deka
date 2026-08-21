@@ -224,7 +224,7 @@ fn example_for_warning(path: &str, project_kind: ProjectKind) -> Option<String> 
     };
 
     let label = match project_kind {
-        ProjectKind::Php => "Example (phpx):",
+        ProjectKind::Php => "Example:",
         ProjectKind::Js => "Example (js):",
         ProjectKind::Other => "Example:",
     };

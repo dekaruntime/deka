@@ -35,17 +35,13 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// Compile and validate a PHPX source file.
+/// Compile and validate a DekaScript source file.
 ///
 /// Returns a `ValidationResult` with errors, warnings, and the parsed AST
 /// (if no syntax errors were encountered). Callers should provide a bump
 /// arena for AST allocations.
-pub fn compile_phpx<'a>(source: &str, file_path: &str, arena: &'a Bump) -> ValidationResult<'a> {
-    compile_phpx_with_mode(source, file_path, arena, ParserMode::Phpx, true, false)
-}
-
 pub fn compile_deka<'a>(source: &str, file_path: &str, arena: &'a Bump) -> ValidationResult<'a> {
-    compile_phpx_with_mode(source, file_path, arena, ParserMode::Ds, true, false)
+    compile_deka_with_mode(source, file_path, arena, ParserMode::Ds, true, false)
 }
 
 /// Compile a single DekaScript module that is part of a virtual project.
@@ -58,18 +54,10 @@ pub fn compile_deka_project_module<'a>(
     file_path: &str,
     arena: &'a Bump,
 ) -> ValidationResult<'a> {
-    compile_phpx_with_mode(source, file_path, arena, ParserMode::Ds, true, true)
+    compile_deka_with_mode(source, file_path, arena, ParserMode::Ds, true, true)
 }
 
-pub fn compile_phpx_internal<'a>(
-    source: &str,
-    file_path: &str,
-    arena: &'a Bump,
-) -> ValidationResult<'a> {
-    compile_phpx_with_mode(source, file_path, arena, ParserMode::PhpxInternal, false, false)
-}
-
-fn compile_phpx_with_mode<'a>(
+fn compile_deka_with_mode<'a>(
     source: &str,
     file_path: &str,
     arena: &'a Bump,
@@ -440,7 +428,7 @@ fn resolve_wasm_stub_path(file_path: &str, spec: &ImportSpec) -> Option<PathBuf>
 
 fn parse_stub_program<'a>(source: &str, arena: &'a Bump) -> php_rs::parser::ast::Program<'a> {
     let lexer = Lexer::new(source.as_bytes());
-    let mut parser = Parser::new_with_mode(lexer, arena, ParserMode::Phpx);
+    let mut parser = Parser::new_with_mode(lexer, arena, ParserMode::Ds);
     parser.parse_program()
 }
 

@@ -168,7 +168,7 @@ impl<'ast> Visitor<'ast> for CypherValidator<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::compiler_api::compile_phpx;
+    use crate::compiler_api::compile_deka;
     use bumpalo::Bump;
 
     #[test]
@@ -179,7 +179,7 @@ $min_price = 10.00;
 cql products = MATCH (c:Customer {id: $customer_id})-[:BOUGHT]->(p:Product) WHERE p.price > $min_price RETURN p.name, p.price;
 "#;
         let arena = Bump::new();
-        let result = compile_phpx(source, "test.phpx", &arena);
+        let result = compile_deka(source, "test.phpx", &arena);
         let cypher_errors: Vec<_> = result
             .errors
             .iter()
@@ -199,7 +199,7 @@ $customer_id = 42;
 cql results = MATCH (c:Customer) WHERE c.id = $cusomer_id RETURN c;
 "#;
         let arena = Bump::new();
-        let result = compile_phpx(source, "test.phpx", &arena);
+        let result = compile_deka(source, "test.phpx", &arena);
         let cypher_errors: Vec<_> = result
             .errors
             .iter()
@@ -224,7 +224,7 @@ cql results = MATCH (c:Customer) WHERE c.id = $cusomer_id RETURN c;
 cql broken = MATCH (n:Person RETURN n;
 "#;
         let arena = Bump::new();
-        let result = compile_phpx(source, "test.phpx", &arena);
+        let result = compile_deka(source, "test.phpx", &arena);
         let cypher_errors: Vec<_> = result
             .errors
             .iter()
@@ -240,7 +240,7 @@ cql broken = MATCH (n:Person RETURN n;
     fn error_has_correct_line_and_column() {
         let source = "$x = 1\ncql q = MATCH (n) WHERE n.id = $typo RETURN n;\n";
         let arena = Bump::new();
-        let result = compile_phpx(source, "test.phpx", &arena);
+        let result = compile_deka(source, "test.phpx", &arena);
         let cypher_errors: Vec<_> = result
             .errors
             .iter()
@@ -256,7 +256,7 @@ cql broken = MATCH (n:Person RETURN n;
     fn formatted_error_output_is_readable() {
         let source = "$customer_id = 42\ncql q = MATCH (c) WHERE c.id = $cusomer_id RETURN c;\n";
         let arena = Bump::new();
-        let result = compile_phpx(source, "test.phpx", &arena);
+        let result = compile_deka(source, "test.phpx", &arena);
         let cypher_errors: Vec<_> = result
             .errors
             .iter()
@@ -291,7 +291,7 @@ function test() {
 }
 "#;
         let arena = Bump::new();
-        let result = compile_phpx(source, "test.phpx", &arena);
+        let result = compile_deka(source, "test.phpx", &arena);
         let type_errors: Vec<_> = result
             .errors
             .iter()

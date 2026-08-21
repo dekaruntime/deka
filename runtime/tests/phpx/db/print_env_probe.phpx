@@ -1,6 +1,0 @@
-$v = getenv('PHPX_DB_SMOKE')
-if ($v === false) {
-  echo "ENV none\n"
-} else {
-  echo "ENV " . $v . "\n"
-}

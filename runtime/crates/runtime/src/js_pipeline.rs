@@ -7,12 +7,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use bundler::{BundleOptions, VirtualSource, bundle_virtual_entry};
-use phpx_js::{
+use deka_js::{
     SourceModuleMeta, build_stdlib_prelude, compile_phpx_source_to_js, parse_source_module_meta,
 };
 use runtime_core::module_spec::{is_bare_module_specifier, module_spec_aliases};
 
-pub fn build_phpx_handler_bundle(handler_path: &str) -> Result<String, String> {
+pub fn build_deka_handler_bundle(handler_path: &str) -> Result<String, String> {
     let input_path = Path::new(handler_path);
     let input = input_path
         .to_str()
@@ -23,17 +23,17 @@ pub fn build_phpx_handler_bundle(handler_path: &str) -> Result<String, String> {
     let meta = parse_source_module_meta(&source);
 
     let project_root = resolve_project_root(input_path)?;
-    // `PHPX_MODULE_ROOT` is process-global because it is also consumed by the
-    // PHPX validator. A platform process has many project roots, however: the
+    // `DEKA_MODULE_ROOT` is process-global because it is also consumed by the
+    // module validator. A platform process has many project roots, however: the
     // store root and every tenant are separate projects. Keep the global
     // platform default from selecting the wrong lockfile while this handler
     // (and its virtual imports) are compiled.
     with_project_module_root(&project_root, || {
-        build_phpx_handler_bundle_in_project(input_path, input, source, meta, project_root.clone())
+        build_deka_handler_bundle_in_project(input_path, input, source, meta, project_root.clone())
     })
 }
 
-fn build_phpx_handler_bundle_in_project(
+fn build_deka_handler_bundle_in_project(
     input_path: &Path,
     input: &str,
     source: String,
@@ -83,7 +83,7 @@ fn build_phpx_handler_bundle_in_project(
     )
 }
 
-/// Serializes the short period in which PHPX's process-global module-root
+/// Serializes the short period in which the process-global module-root
 /// setting is pointed at one handler's project. This includes virtual module
 /// compilation performed by the bundler, so package integrity is checked
 /// against the same nearest `deka.lock` that `deka build <handler>` uses.
@@ -101,7 +101,7 @@ fn with_project_module_root<T>(
     action()
 }
 
-/// Restores PHPX's process-global module root when the tenant bundling scope
+/// Restores the process-global module root when the tenant bundling scope
 /// exits, including when compilation or the bundler unwinds through a panic.
 struct ModuleRootRestoreGuard {
     previous: Option<OsString>,
@@ -109,9 +109,9 @@ struct ModuleRootRestoreGuard {
 
 impl ModuleRootRestoreGuard {
     fn replace(module_root: &Path) -> Self {
-        let previous = std::env::var_os("PHPX_MODULE_ROOT");
+        let previous = std::env::var_os("DEKA_MODULE_ROOT");
         unsafe {
-            std::env::set_var("PHPX_MODULE_ROOT", module_root);
+            std::env::set_var("DEKA_MODULE_ROOT", module_root);
         }
         Self { previous }
     }
@@ -121,8 +121,8 @@ impl Drop for ModuleRootRestoreGuard {
     fn drop(&mut self) {
         unsafe {
             match self.previous.take() {
-                Some(value) => std::env::set_var("PHPX_MODULE_ROOT", value),
-                None => std::env::remove_var("PHPX_MODULE_ROOT"),
+                Some(value) => std::env::set_var("DEKA_MODULE_ROOT", value),
+                None => std::env::remove_var("DEKA_MODULE_ROOT"),
             }
         }
     }
@@ -153,10 +153,7 @@ impl VirtualSource for PhpxBundleProvider {
             return Ok(Some(self.entry_source.clone()));
         }
 
-        if !matches!(
-            path.extension().and_then(|ext| ext.to_str()),
-            Some("ds" | "phpx")
-        ) {
+        if path.extension().and_then(|ext| ext.to_str()) != Some("ds") {
             return Ok(None);
         }
 
@@ -207,11 +204,11 @@ pub fn resolve_project_root(input_path: &Path) -> Result<PathBuf, String> {
 }
 
 pub fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Result<(), String> {
-    // PHPX_MODULE_ROOT bypass (#220): when set, the tenant relies on the runtime stdlib at
+    // DEKA_MODULE_ROOT bypass (#220): when set, the tenant relies on the runtime stdlib at
     // that root and we trust the runtime-provided modules without requiring a local
     // deka.lock or php_modules/. Tenant-local packages would still need a lockfile, but
     // stdlib-only tenants (id.tana.gg) deploy without ceremony.
-    if std::env::var_os("PHPX_MODULE_ROOT").is_some() {
+    if std::env::var_os("DEKA_MODULE_ROOT").is_some() {
         return Ok(());
     }
 
@@ -313,12 +310,8 @@ fn resolve_module_file(modules_dir: &Path, spec: &str) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     for alias in aliases {
         candidates.push(modules_dir.join(format!("{}.ds", alias)));
-        candidates.push(modules_dir.join(format!("{}.phpx", alias)));
-        candidates.push(modules_dir.join(format!("{}.php", alias)));
         candidates.push(modules_dir.join(alias.as_str()).join("index.ds"));
-        candidates.push(modules_dir.join(alias.as_str()).join("index.phpx"));
-        candidates.push(modules_dir.join(alias.as_str()).join("index.php"));
-        if alias.ends_with(".ds") || alias.ends_with(".phpx") || alias.ends_with(".php") {
+        if alias.ends_with(".ds") {
             candidates.push(modules_dir.join(alias));
         }
     }
@@ -333,15 +326,15 @@ fn is_bare_specifier(spec: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        PANIC_DURING_VIRTUAL_LOAD, build_phpx_handler_bundle, ensure_project_layout,
+        PANIC_DURING_VIRTUAL_LOAD, build_deka_handler_bundle, ensure_project_layout,
         resolve_project_root,
     };
     use modules_php::integrity::compute_package_integrity;
-    use phpx_js::parse_source_module_meta;
+    use deka_js::parse_source_module_meta;
     use std::path::Path;
     use std::sync::Mutex;
 
-    // PHPX_MODULE_ROOT is process-global. Keep tests that replace it isolated
+    // DEKA_MODULE_ROOT is process-global. Keep tests that replace it isolated
     // from each other while preserving the runtime's concurrent bundle tests.
     static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -381,7 +374,7 @@ mod tests {
             .join("payments");
         std::fs::create_dir_all(&package_dir).expect("package dir");
         std::fs::write(package_dir.join("deka.json"), "{}").expect("package deka.json");
-        let input = package_dir.join("index.phpx");
+        let input = package_dir.join("index.ds");
         std::fs::write(&input, "<div />").expect("input");
 
         let root = resolve_project_root(&input).expect("project root");
@@ -400,7 +393,7 @@ mod tests {
             .join("payments");
         std::fs::create_dir_all(&package_dir).expect("package dir");
         std::fs::write(package_dir.join("deka.json"), "{}").expect("package deka.json");
-        let input = package_dir.join("index.phpx");
+        let input = package_dir.join("index.ds");
         std::fs::write(&input, "<div />").expect("input");
 
         let root = resolve_project_root(&input).expect("project root");
@@ -416,8 +409,8 @@ mod tests {
             let dir = tmp.path().join("php_modules").join(module);
             std::fs::create_dir_all(&dir).expect("module dir");
             std::fs::write(
-                dir.join("index.phpx"),
-                "export function marker() { return true }\n",
+                dir.join("index.ds"),
+                "export fn marker() { return true }\n",
             )
             .expect("module index");
         }
@@ -461,40 +454,40 @@ import { now_ms } from '@deka/time'
         )
         .expect("tenant lock");
         std::fs::write(
-            modules.join("@tana/store/index.phpx"),
-            "import { random_hex } from '@deka/crypto'\nexport function createStore(): string { return random_hex(); }\n",
+            modules.join("@tana/store/index.ds"),
+            "import { random_hex } from '@deka/crypto'\nexport fn createStore(): string { return random_hex(); }\n",
         )
         .expect("store module");
         std::fs::write(
-            modules.join("@deka/crypto/index.phpx"),
-            "export function random_hex(): string { return 'abc'; }\n",
+            modules.join("@deka/crypto/index.ds"),
+            "export fn random_hex(): string { return 'abc'; }\n",
         )
         .expect("crypto module");
         write_locked_package(&tenant_root, "@deka/crypto", "@deka/crypto");
         write_locked_package(&tenant_root, "@tana/store", "@tana/store");
-        let handler = tenant_root.join("main.phpx");
+        let handler = tenant_root.join("main.ds");
         std::fs::write(
             &handler,
-            "import { createStore } from '@tana/store'\nexport function App(): string { return createStore(); }\n",
+            "import { createStore } from '@tana/store'\nexport fn App(): string { return createStore(); }\n",
         )
         .expect("handler");
 
         // The platform process starts with its root selected globally. The
         // bundle must instead use default/deka.lock for @tana/store and its
         // transitive @deka/crypto import.
-        let previous_root = std::env::var_os("PHPX_MODULE_ROOT");
-        unsafe { std::env::set_var("PHPX_MODULE_ROOT", platform_root) };
-        let bundle = build_phpx_handler_bundle(handler.to_str().expect("utf-8 handler"));
+        let previous_root = std::env::var_os("DEKA_MODULE_ROOT");
+        unsafe { std::env::set_var("DEKA_MODULE_ROOT", platform_root) };
+        let bundle = build_deka_handler_bundle(handler.to_str().expect("utf-8 handler"));
         assert!(bundle.is_ok(), "tenant bundle failed: {bundle:?}");
         assert_eq!(
-            std::env::var_os("PHPX_MODULE_ROOT").as_deref(),
+            std::env::var_os("DEKA_MODULE_ROOT").as_deref(),
             Some(platform_root.as_os_str()),
             "tenant bundle must restore the platform module root"
         );
         unsafe {
             match previous_root {
-                Some(value) => std::env::set_var("PHPX_MODULE_ROOT", value),
-                None => std::env::remove_var("PHPX_MODULE_ROOT"),
+                Some(value) => std::env::set_var("DEKA_MODULE_ROOT", value),
+                None => std::env::remove_var("DEKA_MODULE_ROOT"),
             }
         }
     }
@@ -516,55 +509,55 @@ import { now_ms } from '@deka/time'
             std::fs::write(root.join("deka.json"), "{}").expect("tenant manifest");
         }
 
-        let tenant_a_handler = tenant_a_root.join("main.phpx");
+        let tenant_a_handler = tenant_a_root.join("main.ds");
         std::fs::write(
             &tenant_a_handler,
-            "import { marker } from './dependency.phpx'\nexport function App(): string { return marker(); }\n",
+            "import { marker } from './dependency.ds'\nexport fn App(): string { return marker(); }\n",
         )
         .expect("tenant A handler");
         std::fs::write(
-            tenant_a_root.join("dependency.phpx"),
-            "export function marker(): string { return 'a'; }\n",
+            tenant_a_root.join("dependency.ds"),
+            "export fn marker(): string { return 'a'; }\n",
         )
         .expect("tenant A dependency");
 
-        let tenant_b_handler = tenant_b_root.join("main.phpx");
+        let tenant_b_handler = tenant_b_root.join("main.ds");
         std::fs::write(
             &tenant_b_handler,
-            "export function App(): string { return 'b'; }\n",
+            "export fn App(): string { return 'b'; }\n",
         )
         .expect("tenant B handler");
 
-        let previous_root = std::env::var_os("PHPX_MODULE_ROOT");
-        unsafe { std::env::set_var("PHPX_MODULE_ROOT", &platform_root) };
+        let previous_root = std::env::var_os("DEKA_MODULE_ROOT");
+        unsafe { std::env::set_var("DEKA_MODULE_ROOT", &platform_root) };
 
         PANIC_DURING_VIRTUAL_LOAD.with(|panic_once| panic_once.set(true));
         let panic = std::panic::catch_unwind(|| {
-            build_phpx_handler_bundle(tenant_a_handler.to_str().expect("utf-8 handler"))
+            build_deka_handler_bundle(tenant_a_handler.to_str().expect("utf-8 handler"))
         });
         assert!(panic.is_err(), "tenant A bundle should panic mid-bundle");
         assert_eq!(
-            std::env::var_os("PHPX_MODULE_ROOT").as_deref(),
+            std::env::var_os("DEKA_MODULE_ROOT").as_deref(),
             Some(platform_root.as_os_str()),
             "a panicking tenant bundle must restore the platform module root"
         );
 
         let tenant_b_bundle =
-            build_phpx_handler_bundle(tenant_b_handler.to_str().expect("utf-8 handler"));
+            build_deka_handler_bundle(tenant_b_handler.to_str().expect("utf-8 handler"));
         assert!(
             tenant_b_bundle.is_ok(),
             "tenant B must still bundle after tenant A unwinds: {tenant_b_bundle:?}"
         );
         assert_eq!(
-            std::env::var_os("PHPX_MODULE_ROOT").as_deref(),
+            std::env::var_os("DEKA_MODULE_ROOT").as_deref(),
             Some(platform_root.as_os_str()),
             "tenant B bundle must not inherit tenant A's module root"
         );
 
         unsafe {
             match previous_root {
-                Some(value) => std::env::set_var("PHPX_MODULE_ROOT", value),
-                None => std::env::remove_var("PHPX_MODULE_ROOT"),
+                Some(value) => std::env::set_var("DEKA_MODULE_ROOT", value),
+                None => std::env::remove_var("DEKA_MODULE_ROOT"),
             }
         }
     }

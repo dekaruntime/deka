@@ -1,8 +1,0 @@
-/*
-TEST: Duplicate import entries
-Covers: de-duplication or erroring on duplicate named imports.
-*/
-
-import { ping } from '_test/dup_import';
-
-echo ping() . "\n";

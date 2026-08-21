@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use crate::env::init_env;
 use crate::extensions::extensions_for_mode;
-use crate::js_pipeline::build_phpx_handler_bundle;
 use crate::security::resolve_security_policy;
 use core::Context;
 use engine::{config as runtime_config, set_engine, RuntimeEngine};
@@ -15,9 +14,9 @@ use runtime_core::env::{set_default_log_level_with, set_handler_path_with, set_r
 use runtime_core::handler::{
     handler_input_with, is_deka_entry, is_html_entry, normalize_handler_path_with,
 };
-use runtime_core::modules::ensure_phpx_module_root_env_with;
+use runtime_core::modules::ensure_deka_module_root_env_with;
 use runtime_core::process::parse_exit_code;
-use runtime_core::validation::validate_phpx_handler_with;
+use runtime_core::validation::validate_deka_handler_with;
 
 pub fn run(context: &Context) {
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -86,27 +85,22 @@ async fn run_async(context: &Context) -> Result<(), String> {
         let _ = platform.env().set(key, value);
         unsafe { std::env::set_var(key, value) };
     };
-    ensure_phpx_module_root_env_with(
+    ensure_deka_module_root_env_with(
         &normalized,
         &|path| platform.fs().exists(path),
         &|| platform.fs().current_exe().ok(),
         &env_get,
         &mut env_set,
     );
-    validate_phpx_modules(&normalized)?;
+    validate_deka_modules(&normalized)?;
     let serve_mode = runtime_config::ServeMode::Php;
 
     let _ = std::fs::read_to_string(&normalized)
         .map_err(|err| format!("Failed to read handler from {}: {}", normalized, err))?;
 
-    let use_esm = std::env::var("DEKA_RUNTIME_ESM")
-        .map(|value| value != "0" && value != "false")
-        .unwrap_or(true);
-    let handler_code = if use_esm {
-        String::new()
-    } else {
-        build_phpx_handler_bundle(&normalized)?
-    };
+    // Run mode always uses the ESM loader; the legacy bundled-PHPX path has been
+    // removed (deka#202).
+    let handler_code = String::new();
 
     let runtime_cfg = runtime_config::RuntimeConfig::load();
     let mut pool_config = PoolConfig::from_env();
@@ -168,8 +162,8 @@ async fn run_async(context: &Context) -> Result<(), String> {
             }
             // If the runtime surfaced a validation report, print it directly
             // without the generic "Run failed:" wrapper (dekaruntime/deka#117).
-            if let Some(marker_start) = error.find(phpx_js::DEKA_VALIDATION_ERROR_MARKER) {
-                let rest = &error[marker_start + phpx_js::DEKA_VALIDATION_ERROR_MARKER.len()..];
+            if let Some(marker_start) = error.find(deka_js::DEKA_VALIDATION_ERROR_MARKER) {
+                let rest = &error[marker_start + deka_js::DEKA_VALIDATION_ERROR_MARKER.len()..];
                 return Err(rest.to_string());
             }
             return Err(format!("Run failed: {}", error));
@@ -187,12 +181,12 @@ async fn run_async(context: &Context) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_phpx_modules(handler_path: &str) -> Result<(), String> {
-    validate_phpx_handler_with(
+fn validate_deka_modules(handler_path: &str) -> Result<(), String> {
+    validate_deka_handler_with(
         handler_path,
         &|path| {
             std::fs::read_to_string(path)
-                .map_err(|err| format!("Failed to read PHPX handler {}: {}", path, err))
+                .map_err(|err| format!("Failed to read DekaScript handler {}: {}", path, err))
         },
         &|source, path| validate_module_resolution(source, path),
         &|source, path, error| format_validation_error(source, path, error),

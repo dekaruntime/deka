@@ -412,7 +412,7 @@ pub(super) fn op_php_parse_phpx_types(
         .replace('\\', "/")
         .contains("/php_modules/")
     {
-        mode = ParserMode::PhpxInternal;
+        mode = ParserMode::Ds;
     }
     let mut parser = Parser::new_with_mode(lexer, &arena, mode);
     let program = parser.parse_program();

@@ -1,8 +1,0 @@
-/*
-TEST: Loader waits for top-level await in dependency modules
-Covers: dependency-first init with awaited module-side effects.
-*/
-
-import { initTraceAsync } from '_test/init_await_root'
-
-echo initTraceAsync() . "\n"

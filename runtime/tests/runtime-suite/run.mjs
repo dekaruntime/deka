@@ -34,7 +34,7 @@ function findCliBinary() {
 
 function findWasmArtifact() {
   const candidates = [
-    join(__dirname, "..", "..", "target", "wasm32-unknown-unknown", "release", "phpx_compiler_wasm.wasm"),
+    join(__dirname, "..", "..", "target", "wasm32-unknown-unknown", "release", "deka_compiler_wasm.wasm"),
     join(__dirname, "..", "..", "dist", "deka-compiler-wasm", "deka_compiler.wasm"),
   ];
   let newest = null;

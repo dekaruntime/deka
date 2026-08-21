@@ -12,7 +12,7 @@ pub fn validate_no_null(program: &Program, source: &str, is_ds: bool) -> Vec<Val
     // DekaScript always rejects null literals and null comparisons.
     // Legacy PHPX mode only enables strict null checks via the opt-in env var.
     if !is_ds {
-        let strict = std::env::var("PHPX_STRICT_NULL")
+        let strict = std::env::var("DEKA_STRICT_NULL")
             .map(|value| {
                 let value = value.trim().to_ascii_lowercase();
                 value == "1" || value == "true" || value == "yes" || value == "on"

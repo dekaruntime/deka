@@ -202,7 +202,7 @@ pub fn validate_template_section(source: &str, file_path: &str) -> Vec<Validatio
     let mode = if file_path.ends_with(".ds") {
         ParserMode::Ds
     } else {
-        ParserMode::Phpx
+        ParserMode::Ds
     };
     let mut parser = Parser::new_with_mode(lexer, &arena, mode);
     let program = parser.parse_program();
@@ -837,7 +837,7 @@ async function Card($props: Object<{ label: string }>): Promise<Component> {
 "#;
         let arena = Bump::new();
         let mut parser =
-            Parser::new_with_mode(Lexer::new(source.as_bytes()), &arena, ParserMode::Phpx);
+            Parser::new_with_mode(Lexer::new(source.as_bytes()), &arena, ParserMode::Ds);
         let program = parser.parse_program();
         let errors = validate_components(&program, source);
         unsafe {
@@ -864,7 +864,7 @@ async function Card($props: Object<{ label: string }>): Promise<Component> {
 "#;
         let arena = Bump::new();
         let mut parser =
-            Parser::new_with_mode(Lexer::new(source.as_bytes()), &arena, ParserMode::Phpx);
+            Parser::new_with_mode(Lexer::new(source.as_bytes()), &arena, ParserMode::Ds);
         let program = parser.parse_program();
         let errors = validate_components(&program, source);
         assert!(

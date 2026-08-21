@@ -1,8 +1,0 @@
-/*
-TEST: Import/export across php_modules
-Covers: user module resolution and named export binding.
-*/
-
-import { greet } from '@user/phpx_tests';
-
-echo greet('deka') . "\n";

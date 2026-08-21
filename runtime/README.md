@@ -22,7 +22,7 @@ Minimum package:
 - `target/release/cli`
 
 Optional co-shipped utility (only if your distribution needs WIT->PHPX codegen):
-- `target/release/wit-phpx`
+- `target/release/wit-deka`
 
 Do not ship:
 - `target/release/deps/*`

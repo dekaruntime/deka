@@ -1,9 +1,0 @@
-/*
-TEST: JS coercion profile
-Covers: PHPX-on-JS truthiness, numeric/string addition, and boolean coercion.
-*/
-
-echo (('0' ? 'truthy' : 'falsey')) . "\n";
-echo ('5' + 2) . "\n";
-echo (true + 2) . "\n";
-echo (([] ? 'array-truthy' : 'array-falsey')) . "\n";

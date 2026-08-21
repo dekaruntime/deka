@@ -122,7 +122,7 @@ if (!globalThis.fs.existsSync) {
 //
 // The tenant root is baked into each tenant bundle as:
 //   globalThis.__dekaFsTenantRoot = "/absolute/project/root";
-// (injected by js_pipeline.rs / build_phpx_handler_bundle).
+// (injected by js_pipeline.rs / build_deka_handler_bundle).
 // This module reads it lazily (at call time) so the wrapper is safe to
 // install during extension init, before the bundle has run.
 //

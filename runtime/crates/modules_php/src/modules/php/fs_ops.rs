@@ -81,7 +81,7 @@ pub(super) fn op_php_path_resolve(#[string] base: String, #[string] path: String
     let _ = enforce_read(Some(&base));
     let _ = enforce_read(Some(&path));
     if let Some(stripped) = path.strip_prefix("@/") {
-        let root = std::env::var("PHPX_MODULE_ROOT")
+        let root = std::env::var("DEKA_MODULE_ROOT")
             .ok()
             .filter(|v| !v.trim().is_empty())
             .unwrap_or_else(|| {

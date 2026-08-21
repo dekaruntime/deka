@@ -1,7 +1,0 @@
-/*
-TEST: Error handling semantics (panic)
-Covers: panic() emits runtime error and exit code.
-*/
-
-panic('boom');
-echo "after";

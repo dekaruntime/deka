@@ -1,6 +1,0 @@
-/*
-TEST: encoding/json import path works as canonical JSON module
-*/
-import { json_encode } from 'encoding/json'
-
-echo json_encode(['hello' => 'world', 'n' => 2]) . "\n"

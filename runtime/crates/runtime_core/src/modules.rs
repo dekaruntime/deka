@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-pub fn detect_phpx_module_root_with<Exists, CurrentExe>(
+pub fn detect_deka_module_root_with<Exists, CurrentExe>(
     handler_path: &str,
     lock_exists: &Exists,
     current_exe: &CurrentExe,
@@ -45,7 +45,7 @@ where
     None
 }
 
-pub fn ensure_phpx_module_root_env_with<Exists, CurrentExe, Get, Set>(
+pub fn ensure_deka_module_root_env_with<Exists, CurrentExe, Get, Set>(
     handler_path: &str,
     lock_exists: &Exists,
     current_exe: &CurrentExe,
@@ -57,19 +57,19 @@ pub fn ensure_phpx_module_root_env_with<Exists, CurrentExe, Get, Set>(
     Get: Fn(&str) -> Option<String>,
     Set: FnMut(&str, &str),
 {
-    if env_get("PHPX_MODULE_ROOT").is_some() {
+    if env_get("DEKA_MODULE_ROOT").is_some() {
         return;
     }
-    if let Some(root) = detect_phpx_module_root_with(handler_path, lock_exists, current_exe)
+    if let Some(root) = detect_deka_module_root_with(handler_path, lock_exists, current_exe)
         && let Some(root_str) = root.to_str()
     {
-        env_set("PHPX_MODULE_ROOT", root_str);
+        env_set("DEKA_MODULE_ROOT", root_str);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{detect_phpx_module_root_with, ensure_phpx_module_root_env_with};
+    use super::{detect_deka_module_root_with, ensure_deka_module_root_env_with};
     use std::collections::{HashMap, HashSet};
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
@@ -83,7 +83,7 @@ mod tests {
         let locks = lockset(&["/repo/deka.lock", "/global/deka.lock"]);
         let exists = |path: &Path| locks.contains(path);
         let current_exe = || Some(PathBuf::from("/repo/target/release/cli"));
-        let resolved = detect_phpx_module_root_with("/repo/app/main.phpx", &exists, &current_exe)
+        let resolved = detect_deka_module_root_with("/repo/app/main.phpx", &exists, &current_exe)
             .expect("resolve root");
         assert_eq!(resolved, PathBuf::from("/repo"));
     }
@@ -94,21 +94,21 @@ mod tests {
         let exists = |path: &Path| locks.contains(path);
         let current_exe = || Some(PathBuf::from("/repo/target/release/cli"));
         let resolved =
-            detect_phpx_module_root_with("/tmp/outside/main.phpx", &exists, &current_exe)
+            detect_deka_module_root_with("/tmp/outside/main.phpx", &exists, &current_exe)
                 .expect("resolve fallback root");
         assert_eq!(resolved, PathBuf::from("/repo"));
     }
 
     #[test]
-    fn ensure_keeps_existing_phpx_module_root() {
+    fn ensure_keeps_existing_deka_module_root() {
         let locks = lockset(&["/repo/deka.lock"]);
         let exists = |path: &Path| locks.contains(path);
         let current_exe = || Some(PathBuf::from("/repo/target/release/cli"));
-        let env_map = HashMap::from([("PHPX_MODULE_ROOT".to_string(), "/already".to_string())]);
+        let env_map = HashMap::from([("DEKA_MODULE_ROOT".to_string(), "/already".to_string())]);
         let env_get = |key: &str| env_map.get(key).cloned();
         let mut captured: Vec<(String, String)> = Vec::new();
         let mut env_set = |k: &str, v: &str| captured.push((k.to_string(), v.to_string()));
-        ensure_phpx_module_root_env_with(
+        ensure_deka_module_root_env_with(
             "/tmp/outside/main.phpx",
             &exists,
             &current_exe,
@@ -139,7 +139,7 @@ mod tests {
                 }
             };
             let handler = format!("/tmp/adwa/{}.phpx", command.replace(' ', "_"));
-            ensure_phpx_module_root_env_with(
+            ensure_deka_module_root_env_with(
                 &handler,
                 &exists,
                 &current_exe,
@@ -149,7 +149,7 @@ mod tests {
             assert_eq!(
                 env.lock()
                     .ok()
-                    .and_then(|map| map.get("PHPX_MODULE_ROOT").cloned()),
+                    .and_then(|map| map.get("DEKA_MODULE_ROOT").cloned()),
                 Some("/repo".to_string()),
                 "command '{}' should inherit runtime root resolver",
                 command

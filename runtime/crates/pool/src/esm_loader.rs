@@ -16,11 +16,11 @@ use deno_core::ResolutionKind;
 use deno_core::resolve_import;
 use deno_error::JsErrorBox;
 
-use phpx_js::SourceModuleMeta;
-use phpx_js::build_stdlib_prelude;
-use phpx_js::compile_phpx_source_to_js_with_warnings_detailed;
-use phpx_js::parse_source_module_meta;
-use phpx_js::{CompileError, DEKA_VALIDATION_ERROR_MARKER};
+use deka_js::SourceModuleMeta;
+use deka_js::build_stdlib_prelude;
+use deka_js::compile_phpx_source_to_js_with_warnings_detailed;
+use deka_js::parse_source_module_meta;
+use deka_js::{CompileError, DEKA_VALIDATION_ERROR_MARKER};
 use runtime_core::module_spec::{is_bare_module_specifier, module_spec_aliases};
 
 #[derive(Clone)]
@@ -441,11 +441,11 @@ fn collect_deka_source_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Re
 }
 
 pub fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Result<(), String> {
-    // PHPX_MODULE_ROOT bypass (#220): when set, the tenant relies on the runtime stdlib at
+    // DEKA_MODULE_ROOT bypass (#220): when set, the tenant relies on the runtime stdlib at
     // that root and we trust the runtime-provided modules without requiring a local
     // deka.lock or php_modules/. Tenant-local packages would still need a lockfile, but
     // stdlib-only tenants (id.tana.gg) deploy without ceremony.
-    if std::env::var_os("PHPX_MODULE_ROOT").is_some() {
+    if std::env::var_os("DEKA_MODULE_ROOT").is_some() {
         return Ok(());
     }
 
@@ -610,10 +610,10 @@ fn resolve_phpx_module_spec(project_root: &Path, specifier: &str) -> Option<Path
         }
     }
 
-    // PHPX_MODULE_ROOT fallback (#220): if the tenant's php_modules/ doesn't
+    // DEKA_MODULE_ROOT fallback (#220): if the tenant's php_modules/ doesn't
     // contain the spec, try the runtime stdlib root. This lets stdlib-only
     // tenants (e.g. id.tana.gg) deploy without vendoring stdlib.
-    if let Some(root_os) = std::env::var_os("PHPX_MODULE_ROOT") {
+    if let Some(root_os) = std::env::var_os("DEKA_MODULE_ROOT") {
         let root = std::path::Path::new(&root_os);
         for alias in aliases.iter() {
             let base = if alias.starts_with("@user/") {

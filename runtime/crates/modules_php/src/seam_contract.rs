@@ -13,7 +13,7 @@ use seam_ir::{
     SeamRecord, SeamType,
 };
 
-use crate::compiler_api::compile_phpx;
+use crate::compiler_api::compile_deka;
 use crate::validation::format_validation_error;
 
 pub fn extract_contract_from_file(path: impl AsRef<Path>) -> Result<SeamContract, String> {
@@ -25,7 +25,7 @@ pub fn extract_contract_from_file(path: impl AsRef<Path>) -> Result<SeamContract
 
 pub fn extract_contract_from_source(source: &str, file_path: &str) -> Result<SeamContract, String> {
     let arena = Bump::new();
-    let result = compile_phpx(source, file_path, &arena);
+    let result = compile_deka(source, file_path, &arena);
     if !result.errors.is_empty() {
         let mut out = String::new();
         for error in &result.errors {

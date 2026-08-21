@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::compile_helper::compile_or_report;
-use phpx_js::parse_source_module_meta;
+use deka_js::parse_source_module_meta;
 
 const COMMAND: CommandSpec = CommandSpec {
     name: "check",

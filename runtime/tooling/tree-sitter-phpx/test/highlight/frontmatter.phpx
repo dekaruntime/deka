@@ -1,6 +1,0 @@
----
-// <- @tag
-import { Link } from 'component/dom';
----
-// <- @tag
-<div>Hi</div>
