@@ -3,14 +3,63 @@ name: CI
 on:
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/PULL_REQUEST_TEMPLATE.md'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect changed files
+    runs-on: [self-hosted, linux, x64]
+    outputs:
+      rust: ${{ steps.detect.outputs.rust }}
+      lockfile: ${{ steps.detect.outputs.lockfile }}
+      utility_css: ${{ steps.detect.outputs.utility_css }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect change categories
+        id: detect
+        run: |
+          git fetch origin main --quiet
+          files="$(git diff --name-only origin/main...HEAD | sort -u)"
+
+          echo "Changed files:"
+          echo "$files"
+
+          rust=false
+          lockfile=false
+          utility_css=false
+
+          if echo "$files" | grep -qE '^(runtime/.+\.rs|runtime/.+\.js|runtime/.+\.ts|runtime/.+/build\.rs|runtime/assets/.+|runtime/scripts/.+|runtime/tests/.+|\.github/workflows/(ci|release)\.yml)$'; then
+            rust=true
+          fi
+
+          if echo "$files" | grep -qE '^(runtime/.+/Cargo\.toml|runtime/Cargo\.lock)$'; then
+            lockfile=true
+          fi
+
+          if echo "$files" | grep -qE '^runtime/assets/utility-css/.+$'; then
+            utility_css=true
+          fi
+
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          echo "lockfile=$lockfile" >> "$GITHUB_OUTPUT"
+          echo "utility_css=$utility_css" >> "$GITHUB_OUTPUT"
+
   utility-css:
     name: Utility CSS generator
+    needs: [changes]
+    if: needs.changes.outputs.utility_css == 'true'
     runs-on: [self-hosted, macOS, ARM64]
     steps:
       - uses: actions/checkout@v4
@@ -36,8 +85,25 @@ jobs:
         working-directory: runtime/assets/utility-css
         run: bun test.ts
 
+  lockfile-check:
+    name: Lockfile consistency
+    needs: [changes]
+    if: needs.changes.outputs.lockfile == 'true' && needs.changes.outputs.rust != 'true'
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.96.0
+
+      - name: Verify lockfile matches workspace manifests
+        working-directory: runtime
+        run: cargo update --workspace --locked
+
   rust:
     name: Rust tests
+    needs: [changes]
+    if: needs.changes.outputs.rust == 'true'
     runs-on: [self-hosted, macOS, ARM64]
     env:
       CARGO_INCREMENTAL: 0
@@ -84,19 +150,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: runtime
-          # The v8 crate downloads/stores a large static lib under
-          # target/{debug,release}/gn_out, which rust-cache does not include by
-          # default. Without it, `cargo test -p cli` re-downloads/rebuilds V8 and
-          # can fail on a cold cache when the network download is flaky.
           cache-directories: |
             runtime/target/**/gn_out
-          # Seed the cache even when V8 linking fails, so the next run can reuse
-          # the downloaded static lib instead of hitting the network again.
           cache-on-failure: true
 
-      # Build only the crates we test. The full workspace includes
-      # phpx_compiler_wasm, which fails to link on ubuntu-latest due to V8
-      # TLS relocation issues and is not needed for these test suites.
       - name: Build tested crates
         working-directory: runtime
         run: cargo build -p deka_http -p pool -p engine -p phpx_js -p php-rs -p bundler
@@ -125,8 +182,6 @@ jobs:
         working-directory: runtime
         run: cargo test -p bundler
 
-      # The v8 crate's internal downloader can flake on GitHub-hosted runners.
-      # Pre-fetch the matching static lib so the build script can use it directly.
       - name: Pre-fetch V8 static lib
         working-directory: runtime
         env:
@@ -137,11 +192,6 @@ jobs:
             -o target/debug/gn_out/obj/librusty_v8.a.gz "$V8_URL"
           ls -lh target/debug/gn_out/obj/librusty_v8.a.gz
 
-      # `cli` tests are run single-threaded: the transpile phase-hook tests
-      # and the self-update env-var tests mutate real process-global state
-      # that cannot safely run in parallel. Assertion drift in
-      # `emits_subset_ast_for_jsx_component` and related build tests was
-      # fixed in dekaruntime/deka#61.
       - name: Test cli
         working-directory: runtime
         env:
