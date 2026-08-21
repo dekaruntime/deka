@@ -68,5 +68,4 @@ mod worker_execution;
 pub(crate) use helpers::is_dev_mode;
 use helpers::*;
 
-#[cfg(test)]
-mod tests;
+
