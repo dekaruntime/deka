@@ -13,7 +13,7 @@ use modules_php::{
         format_validation_warning,
     },
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Alignment used for all WASM-side allocations.  Must be large enough for
 /// `WasmResult` (two `u32`s, align 4) as well as arbitrary byte buffers.
@@ -25,6 +25,8 @@ const SOURCE_COMMIT: &str = match option_env!("DEKA_SOURCE_COMMIT") {
     Some(commit) => commit,
     None => "unknown",
 };
+
+mod project;
 
 /// Result descriptor returned by `deka_compiler_compile`. The browser shim
 /// reads UTF-8 JSON from `ptr`/`len`, then frees the whole allocation with
@@ -171,7 +173,7 @@ struct FormatResponse {
     diagnostics: Vec<Diagnostic>,
 }
 
-fn read_utf8<'a>(ptr: *const u8, len: u32, label: &'static str) -> Result<&'a str, &'static str> {
+pub(crate) fn read_utf8<'a>(ptr: *const u8, len: u32, label: &'static str) -> Result<&'a str, &'static str> {
     if len == 0 {
         return Ok("");
     }
@@ -231,8 +233,8 @@ impl CompilerMetadata {
     }
 }
 
-#[derive(Serialize)]
-struct Diagnostic {
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub(crate) struct Diagnostic {
     severity: &'static str,
     code: String,
     message: String,
@@ -380,7 +382,7 @@ fn strip_ansi_codes(value: &str) -> String {
     out
 }
 
-fn internal_diagnostic(filename: &str, source: &str, message: String) -> Diagnostic {
+pub(crate) fn internal_diagnostic(filename: &str, source: &str, message: String) -> Diagnostic {
     let rendered = strip_ansi_codes(&deka_validation::format_validation_error(
         source,
         filename,
@@ -419,13 +421,13 @@ fn request_error(filename: &str, message: &str) -> String {
     })
 }
 
-fn json<T: Serialize>(value: &T) -> String {
+pub(crate) fn json<T: Serialize>(value: &T) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "{\"abi_version\":1,\"ok\":false,\"diagnostics\":[{\"severity\":\"error\",\"code\":\"serialization\",\"message\":\"failed to serialize compiler response\",\"filename\":\"<unknown>\",\"start_line\":1,\"start_column\":1,\"end_line\":1,\"end_column\":1}],\"metadata\":{\"filename\":\"<unknown>\",\"language\":\"unknown\",\"compiler\":{\"name\":\"deka\",\"version\":\"unknown\",\"source_commit\":\"unknown\"}}}".to_string())
 }
 
 /// Allocate a single contiguous block containing a `WasmResult` header followed
 /// by the JSON payload, then return a pointer to the header.
-fn box_result(json: &str) -> *mut WasmResult {
+pub(crate) fn box_result(json: &str) -> *mut WasmResult {
     let header_size = std::mem::size_of::<WasmResult>();
     let total_size = header_size + json.len();
     let base = deka_compiler_alloc(total_size as u32);

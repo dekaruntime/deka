@@ -27,6 +27,12 @@ pub struct SourceModuleMeta {
     /// emitter uses this to inject the DekaScript runtime prelude (safe
     /// globals, deka.unsafe, etc.) as required by RFD 21.
     pub is_ds: bool,
+    /// True when the module is part of a multi-file project compiled through
+    /// the WASM project-mode ABI. In project mode the emitter lowers imports
+    /// and exports to a factory-function convention (`__dekaRequire` and
+    /// `exports.*`) so the browser loader can link modules inside the existing
+    /// sandbox without relying on native ES module evaluation.
+    pub project_mode: bool,
 }
 
 impl SourceModuleMeta {
@@ -39,6 +45,7 @@ impl SourceModuleMeta {
             frontmatter_end_line: None,
             template_start_line: None,
             is_ds: false,
+            project_mode: false,
         }
     }
 }

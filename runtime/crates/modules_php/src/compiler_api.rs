@@ -40,11 +40,24 @@ use std::path::{Path, PathBuf};
 /// (if no syntax errors were encountered). Callers should provide a bump
 /// arena for AST allocations.
 pub fn compile_phpx<'a>(source: &str, file_path: &str, arena: &'a Bump) -> ValidationResult<'a> {
-    compile_phpx_with_mode(source, file_path, arena, ParserMode::Phpx, true)
+    compile_phpx_with_mode(source, file_path, arena, ParserMode::Phpx, true, false)
 }
 
 pub fn compile_deka<'a>(source: &str, file_path: &str, arena: &'a Bump) -> ValidationResult<'a> {
-    compile_phpx_with_mode(source, file_path, arena, ParserMode::Ds, true)
+    compile_phpx_with_mode(source, file_path, arena, ParserMode::Ds, true, false)
+}
+
+/// Compile a single DekaScript module that is part of a virtual project.
+///
+/// This skips filesystem-based module resolution, target capability checks,
+/// and wasm import validation because the project compiler resolves imports
+/// against the virtual file system itself.
+pub fn compile_deka_project_module<'a>(
+    source: &str,
+    file_path: &str,
+    arena: &'a Bump,
+) -> ValidationResult<'a> {
+    compile_phpx_with_mode(source, file_path, arena, ParserMode::Ds, true, true)
 }
 
 pub fn compile_phpx_internal<'a>(
@@ -52,7 +65,7 @@ pub fn compile_phpx_internal<'a>(
     file_path: &str,
     arena: &'a Bump,
 ) -> ValidationResult<'a> {
-    compile_phpx_with_mode(source, file_path, arena, ParserMode::PhpxInternal, false)
+    compile_phpx_with_mode(source, file_path, arena, ParserMode::PhpxInternal, false, false)
 }
 
 fn compile_phpx_with_mode<'a>(
@@ -61,6 +74,7 @@ fn compile_phpx_with_mode<'a>(
     arena: &'a Bump,
     mode: ParserMode,
     strict: bool,
+    skip_module_resolution: bool,
 ) -> ValidationResult<'a> {
     let parser_source = preprocess_source(source, mode);
     let lexer = Lexer::new(parser_source.as_bytes());
@@ -118,9 +132,11 @@ fn compile_phpx_with_mode<'a>(
     errors.extend(validate_jsx_expressions(&program, source));
     errors.extend(validate_components(&program, source));
 
-    errors.extend(validate_module_resolution(source, file_path));
-    errors.extend(validate_target_capabilities(source, file_path));
-    errors.extend(validate_wasm_imports(source, file_path));
+    if !skip_module_resolution {
+        errors.extend(validate_module_resolution(source, file_path));
+        errors.extend(validate_target_capabilities(source, file_path));
+        errors.extend(validate_wasm_imports(source, file_path));
+    }
 
     errors.extend(validate_match_exhaustiveness(&program, source));
     errors.extend(validate_cypher(&program, source));

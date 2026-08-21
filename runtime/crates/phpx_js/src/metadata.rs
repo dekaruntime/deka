@@ -117,10 +117,14 @@ fn parse_export_function_line(line: &str) -> Option<String> {
         rest
     } else if let Some(rest) = trimmed.strip_prefix("export async function ") {
         rest
+    } else if let Some(rest) = trimmed.strip_prefix("export fn ") {
+        rest
+    } else if let Some(rest) = trimmed.strip_prefix("export async fn ") {
+        rest
     } else {
         return None;
     };
-    let name = rest.split('(').next()?.trim();
+    let name = rest.split(|ch: char| ch == '(' || ch.is_whitespace()).next()?.trim();
     if name.is_empty() {
         return None;
     }
