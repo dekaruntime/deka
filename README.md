@@ -16,7 +16,6 @@ It compiles to JavaScript and runs both natively and in the browser via WASM.
 - `crates/` — Rust workspace with the compiler, runtime, CLI, LSP, and WASM targets.
 - `assets/` — Shared assets such as the utility CSS bundle.
 - `docs/` — Design notes and RFCs.
-- `examples/` — Sample deka programs.
 - `scripts/` — Build and test helpers.
 - `tests/` — Integration tests and conformance fixtures.
 
