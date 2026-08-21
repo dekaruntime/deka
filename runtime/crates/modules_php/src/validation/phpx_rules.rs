@@ -9,14 +9,18 @@ fn language_name(is_ds: bool) -> &'static str {
 }
 
 pub fn validate_no_null(program: &Program, source: &str, is_ds: bool) -> Vec<ValidationError> {
-    let strict = std::env::var("PHPX_STRICT_NULL")
-        .map(|value| {
-            let value = value.trim().to_ascii_lowercase();
-            value == "1" || value == "true" || value == "yes" || value == "on"
-        })
-        .unwrap_or(false);
-    if !strict {
-        return Vec::new();
+    // DekaScript always rejects null literals and null comparisons.
+    // Legacy PHPX mode only enables strict null checks via the opt-in env var.
+    if !is_ds {
+        let strict = std::env::var("PHPX_STRICT_NULL")
+            .map(|value| {
+                let value = value.trim().to_ascii_lowercase();
+                value == "1" || value == "true" || value == "yes" || value == "on"
+            })
+            .unwrap_or(false);
+        if !strict {
+            return Vec::new();
+        }
     }
     let mut validator = NoNullValidator {
         source,
@@ -110,6 +114,57 @@ impl<'ast> Visitor<'ast> for NoNullValidator<'_> {
 }
 
 impl NoNullValidator<'_> {
+    fn push_error(&mut self, kind: ErrorKind, span: Span, message: String, help_text: &str) {
+        let (line, column, underline_length) = span_location(span, self.source);
+        self.errors.push(ValidationError {
+            kind,
+            line,
+            column,
+            message,
+            help_text: help_text.to_string(),
+            suggestion: None,
+            underline_length,
+            severity: Severity::Error,
+        });
+    }
+}
+
+pub fn validate_no_undefined(program: &Program, source: &str, is_ds: bool) -> Vec<ValidationError> {
+    // DekaScript rejects the `undefined` pseudo-literal; legacy PHPX mode allows
+    // it as a plain identifier.
+    if !is_ds {
+        return Vec::new();
+    }
+    let mut validator = NoUndefinedValidator {
+        source,
+        errors: Vec::new(),
+    };
+    validator.visit_program(program);
+    validator.errors
+}
+
+struct NoUndefinedValidator<'a> {
+    source: &'a str,
+    errors: Vec<ValidationError>,
+}
+
+impl<'ast> Visitor<'ast> for NoUndefinedValidator<'_> {
+    fn visit_expr(&mut self, expr: ExprId<'ast>) {
+        if let Expr::Variable { name, .. } = expr {
+            if self.source[name.start..name.end].eq_ignore_ascii_case("undefined") {
+                self.push_error(
+                    ErrorKind::UndefinedNotAllowed,
+                    *name,
+                    "The `undefined` pseudo-literal is not allowed in DekaScript.".to_string(),
+                    "Use Option<T> instead of undefined.",
+                );
+            }
+        }
+        walk_expr(self, expr);
+    }
+}
+
+impl NoUndefinedValidator<'_> {
     fn push_error(&mut self, kind: ErrorKind, span: Span, message: String, help_text: &str) {
         let (line, column, underline_length) = span_location(span, self.source);
         self.errors.push(ValidationError {

@@ -37,6 +37,7 @@ pub enum ErrorKind {
     ModuleError,
     WasmError,
     NullNotAllowed,
+    UndefinedNotAllowed,
     ExceptionNotAllowed,
     OopNotAllowed,
     NamespaceNotAllowed,
@@ -61,6 +62,7 @@ impl ErrorKind {
             ErrorKind::ModuleError => "Module Error",
             ErrorKind::WasmError => "WASM Error",
             ErrorKind::NullNotAllowed => "Null Not Allowed",
+            ErrorKind::UndefinedNotAllowed => "Undefined Not Allowed",
             ErrorKind::ExceptionNotAllowed => "Exceptions Not Allowed",
             ErrorKind::OopNotAllowed => "OOP Not Allowed",
             ErrorKind::NamespaceNotAllowed => "Namespace Not Allowed",
@@ -174,7 +176,9 @@ fn docs_link_for_kind(kind: ErrorKind) -> Option<String> {
             "docs/phpx/modules"
         }
         ErrorKind::WasmError => "docs/phpx/wasm",
-        ErrorKind::NullNotAllowed | ErrorKind::ExceptionNotAllowed => "docs/phpx/strict",
+        ErrorKind::NullNotAllowed
+        | ErrorKind::UndefinedNotAllowed
+        | ErrorKind::ExceptionNotAllowed => "docs/phpx/strict",
         ErrorKind::OopNotAllowed => "docs/phpx/oop",
         ErrorKind::NamespaceNotAllowed => "docs/phpx/modules",
         ErrorKind::JsxError => "docs/phpx/jsx",

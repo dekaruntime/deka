@@ -23,6 +23,7 @@ use crate::validation::modules::{
 use crate::validation::patterns::validate_match_exhaustiveness;
 use crate::validation::phpx_rules::{
     validate_no_exceptions, validate_no_namespace, validate_no_null, validate_no_oop,
+    validate_no_undefined,
 };
 use crate::validation::structs::{validate_struct_definitions, validate_struct_literals};
 use crate::validation::syntax::validate_syntax;
@@ -118,6 +119,7 @@ fn compile_phpx_with_mode<'a>(
 
         let is_ds = mode == ParserMode::Ds;
         errors.extend(validate_no_null(&program, source, is_ds));
+        errors.extend(validate_no_undefined(&program, source, is_ds));
         errors.extend(validate_no_exceptions(&program, source, is_ds));
         errors.extend(validate_no_oop(&program, source, is_ds));
         errors.extend(validate_no_namespace(&program, source, is_ds));

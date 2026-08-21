@@ -475,6 +475,22 @@ fn rule_class_reports_error() {
 }
 
 #[test]
+fn dekascript_null_literal_rejected() {
+    let source = "const x = null\n";
+    let arena = Box::leak(Box::new(Bump::new()));
+    let result = compile_deka(source, "test.ds", arena);
+    assert_has_error(&result, ErrorKind::NullNotAllowed);
+}
+
+#[test]
+fn dekascript_undefined_pseudo_literal_rejected() {
+    let source = "const x = undefined\n";
+    let arena = Box::leak(Box::new(Bump::new()));
+    let result = compile_deka(source, "test.ds", arena);
+    assert_has_error(&result, ErrorKind::UndefinedNotAllowed);
+}
+
+#[test]
 fn rule_namespace_reports_error() {
     let path = fixtures_root().join("rules/namespace.phpx");
     let result = compile_fixture(&path);
