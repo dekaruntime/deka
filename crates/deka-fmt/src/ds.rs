@@ -1547,8 +1547,18 @@ impl<'src> Formatter<'src> {
             Expr::Unsafe { raw, .. } => {
                 // Preserve raw JavaScript inside `unsafe { ... }` verbatim. We
                 // only normalize the surrounding whitespace, not the body.
+                // If the user already supplied whitespace (or newlines) inside
+                // the braces, do not inject extra spaces, otherwise each format
+                // pass would grow the padding.
                 let inner = String::from_utf8_lossy(raw);
-                format!("unsafe {{ {inner} }}")
+                let has_surrounding_ws = inner.starts_with(' ') || inner.starts_with('\t') || inner.starts_with('\n')
+                    || inner.ends_with(' ') || inner.ends_with('\t') || inner.ends_with('\n')
+                    || inner.is_empty();
+                if has_surrounding_ws {
+                    format!("unsafe {{{inner}}}")
+                } else {
+                    format!("unsafe {{ {inner} }}")
+                }
             }
             Expr::Cql { name, cypher, .. } => {
                 let mut s = "cql ".to_string();
@@ -2287,6 +2297,46 @@ console.log(el)"#;
             output.contains("<div {...props} />"),
             "expected JSX spread attribute to be preserved, got: {}",
             output
+        );
+        parse_ds(&output);
+    }
+
+    #[test]
+    fn unsafe_block_does_not_grow_whitespace_on_reformat() {
+        let input = r#"const r = unsafe { 1 + 2 }
+console.log(r)"#;
+        let once = format_ds(input).unwrap();
+        let twice = format_ds(&once).unwrap();
+        assert_eq!(
+            once, twice,
+            "formatter should be idempotent for unsafe blocks, got:\n{}",
+            twice
+        );
+        assert!(
+            once.contains("unsafe { 1 + 2 }"),
+            "expected single spaces inside unsafe block, got: {}",
+            once
+        );
+        parse_ds(&once);
+    }
+
+    #[test]
+    fn unsafe_block_preserves_multiline_body() {
+        let input = r#"const r = unsafe {
+  const x = 1
+  x + 2
+}
+console.log(r)"#;
+        let output = format_ds(input).unwrap();
+        assert!(
+            output.contains("unsafe {\n  const x = 1\n  x + 2\n}"),
+            "expected multiline unsafe body to be preserved, got: {}",
+            output
+        );
+        let reformatted = format_ds(&output).unwrap();
+        assert_eq!(
+            output, reformatted,
+            "formatter should be idempotent for multiline unsafe blocks"
         );
         parse_ds(&output);
     }
