@@ -1,6 +1,7 @@
 pub mod cypher;
 pub mod exports;
 pub mod generics;
+pub mod hoisting;
 pub mod imports;
 pub mod jsx;
 pub mod modules;
