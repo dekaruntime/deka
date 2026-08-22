@@ -89,7 +89,7 @@ mod tests {
     #[test]
     fn dekascript_entry_detection_rejects_phpx_and_html() {
         assert!(is_deka_entry("index.DS"));
-        assert!(!is_deka_entry("index.PHPX"));
+        assert!(!is_deka_entry("index.DekaScript"));
         assert!(!is_deka_entry("index.html"));
         assert!(is_html_entry("index.html"));
         assert!(is_html_entry("index.HTML"));

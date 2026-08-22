@@ -3,7 +3,7 @@ use core::{CommandSpec, Context, Registry};
 const COMMAND: CommandSpec = CommandSpec {
     name: "platform",
     category: "runtime",
-    summary: "multi-tenant platform server — serves per-tenant PHPX handlers from tenants/ directory",
+    summary: "multi-tenant platform server — serves per-tenant DekaScript handlers from tenants/ directory",
     aliases: &[],
     subcommands: &[],
     handler: cmd,

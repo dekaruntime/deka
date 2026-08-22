@@ -1107,7 +1107,7 @@ impl<'a> JsSubsetEmitter<'a> {
 
     fn type_is_optional(&self, ty: &AstType<'_>) -> bool {
         match ty {
-            AstType::Option(_) | AstType::Nullable(_) => true,
+            AstType::Option(_) => true,
             AstType::Applied { base, .. } => {
                 let name = match *base {
                     AstType::Simple(tok) => self.token_name(tok),

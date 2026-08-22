@@ -1043,7 +1043,6 @@ pub(crate) fn format_type(ty: &Type, source: &[u8]) -> String {
             .map(|ty| format_type(ty, source))
             .collect::<Vec<_>>()
             .join(" & "),
-        Type::Nullable(inner) => format!("?{}", format_type(inner, source)),
         Type::ObjectShape(fields) => {
             let mut out = String::from("Object<{");
             let mut first = true;

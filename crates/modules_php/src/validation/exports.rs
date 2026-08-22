@@ -90,7 +90,7 @@ pub fn validate_exports(
                     find_column(line, "export"),
                     trimmed.len(),
                     format!("Unsupported export syntax in {}.", file_path),
-                    "Use `export function name(...)` or `export { name }` in PHPX.",
+                    "Use `export function name(...)` or `export { name }` in DekaScript.",
                     Some("export { name };"),
                 ));
             }

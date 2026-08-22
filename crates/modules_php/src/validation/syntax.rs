@@ -25,7 +25,7 @@ fn improve_help_text(error: &mut ValidationError, is_phpx: bool) {
     if message.contains("Missing semicolon") || message.contains("Expected ';'") {
         if is_phpx {
             error.message =
-                "Statements must be separated by a newline or semicolon in PHPX.".to_string();
+                "Statements must be separated by a newline or semicolon in DekaScript.".to_string();
             error.help_text =
                 "Put each statement on its own line or add ';' between statements.".to_string();
         } else {
@@ -49,7 +49,7 @@ fn improve_help_text(error: &mut ValidationError, is_phpx: bool) {
         updated = true;
     } else if message.contains("Invalid token") {
         error.help_text =
-            "Remove the invalid token or replace it with valid PHPX syntax.".to_string();
+            "Remove the invalid token or replace it with valid DekaScript syntax.".to_string();
         updated = true;
     }
 

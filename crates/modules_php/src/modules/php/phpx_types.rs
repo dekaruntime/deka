@@ -147,12 +147,6 @@ impl<'a> TypeResolver<'a> {
                     inner: Some(Box::new(inner)),
                 }
             }
-            AstType::Nullable(inner) => {
-                let inner = self.convert_type_internal(inner, alias_guard, subs);
-                BridgeType::Option {
-                    inner: Some(Box::new(inner)),
-                }
-            }
             AstType::Union(types) => {
                 let mut parts = Vec::new();
                 let mut saw_null = false;
@@ -420,7 +414,7 @@ pub(super) fn op_php_parse_phpx_types(
         return Err(deno_core::error::CoreError::from(std::io::Error::new(
             std::io::ErrorKind::Other,
             format!(
-                "Failed to parse PHPX types for '{}': {:?}",
+                "Failed to parse DekaScript types for '{}': {:?}",
                 file_path, program.errors
             ),
         )));

@@ -5,7 +5,7 @@ use php_rs::parser::span::Span;
 use super::{ErrorKind, Severity, ValidationError};
 
 fn language_name(is_ds: bool) -> &'static str {
-    if is_ds { "DekaScript" } else { "PHPX" }
+    if is_ds { "DekaScript" } else { "DekaScript" }
 }
 
 pub fn validate_no_null(program: &Program, source: &str, is_ds: bool) -> Vec<ValidationError> {

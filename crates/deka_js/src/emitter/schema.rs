@@ -356,13 +356,6 @@ impl<'a> JsSubsetEmitter<'a> {
                 _ => ("{ kind: 'unknown' }".to_string(), false),
             },
             AstType::Name(_) => ("{ kind: 'object' }".to_string(), false),
-            AstType::Nullable(inner) => {
-                let (inner_schema, _) = self.emit_type_schema(inner);
-                (
-                    format!("{{ kind: 'optional', inner: {} }}", inner_schema),
-                    true,
-                )
-            }
             AstType::Option(inner) => {
                 let (inner_schema, _) = self.emit_type_schema(inner);
                 (

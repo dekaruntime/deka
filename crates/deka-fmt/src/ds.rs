@@ -1039,7 +1039,6 @@ impl<'src> Formatter<'src> {
                 .map(|t| self.type_to_string(t))
                 .collect::<Vec<_>>()
                 .join(" & "),
-            Type::Nullable(inner) => format!("?{}", self.type_to_string(inner)),
             Type::Option(inner) => format!("{}?", self.type_to_string(inner)),
             Type::ObjectShape(fields) => {
                 let parts: Vec<String> = fields
