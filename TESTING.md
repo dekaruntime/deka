@@ -1,8 +1,11 @@
 # Testing Deka
 
-This repo has two test layers: Rust unit/integration tests, and the
-DekaScript runtime execution suite that runs the same fixtures through both the
-native CLI and the browser WASM compiler.
+This repo has two in-tree test layers: Rust unit/integration tests, and
+`tests/runtime-suite/` (fixtures through the local CLI and WASM compiler).
+
+The **public diagnostic suite** is `dekaruntime/testsuite` (https://testsuite.deka.gg).
+It runs fixtures on the native isolate (`deka run`) and in a Chromium Worker.
+That is not Node. See [RFD 26](https://github.com/dekaruntime/rfd/issues/26).
 
 ## Prerequisites
 

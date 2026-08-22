@@ -11,7 +11,7 @@ Downstream repos you will touch regularly:
 | Repo | Purpose | When you change the runtime here |
 |---|---|---|
 | `dekaruntime/website` | `deka.gg` homepage + tour | Update WASM artifacts and redeploy |
-| `dekaruntime/testsuite` | `testsuite.deka.gg` conformance tests | Regenerate fixtures and redeploy |
+| `dekaruntime/testsuite` | `testsuite.deka.gg` diagnostic suite (`deka run` vs browser Worker) | Dump against this release; regen fixtures if emit/runtime output changed |
 | `dekaruntime/web-ide-kit` | Shared editor/runtime components used by both sites | Publish to npm, bump consumers |
 
 ## Quick start
@@ -122,7 +122,7 @@ cargo run --release -p deka-fmt -- path/to/file.ds
    ```
 4. **Bump crate versions** and open a PR if the change is user-facing.
 5. **After merge**, cut a release tag to push artifacts to R2 and trigger downstream site rebuilds (see `PUBLISH.md`).
-6. **Update downstream fixtures** in `dekaruntime/testsuite` with `scripts/regen-fixtures.mjs` if emit output changed.
+6. **Update downstream fixtures** in `dekaruntime/testsuite` with `scripts/regen-fixtures.mjs` if isolate or WASM output changed. Point regen at this build (`DEKA_NATIVE` + `DEKA_WASM`) so both hosts come from the same commit.
 
 ## How downstream sites consume the runtime
 
@@ -171,9 +171,12 @@ CLI tests mutate process-global state. Run them single-threaded:
 cargo test -p cli --lib -- --test-threads=1
 ```
 
-### Testsuite shows `nativeAvailable: false`
+### Testsuite shows `nativeAvailable: false` or `browserAvailable: false`
 
-The testsuite deploy could not download or execute the native CLI for the runner platform. Check the `Build site` logs for the download URL and any glibc/runtime errors. See `PUBLISH.md` → "Testsuite shows `nativeAvailable: false`".
+The public suite dumps two Deka hosts: `deka run` (isolate) and a Chromium
+Worker. If either flag is false, that column was skipped — not compared in
+Node. See `PUBLISH.md`. Branch dumps must set **both** `DEKA_NATIVE` and
+`DEKA_WASM` to the same build or type-name drift will look like host drift.
 
 ### WASM compiler tests fail with "dirty" check
 
