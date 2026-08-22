@@ -318,7 +318,7 @@ fn resolver_only_uses_project_local_php_modules() {
     )
     .unwrap();
 
-    let resolver = DekaResolver::new(project.clone(), Some(stdlib.clone())).unwrap();
+    let resolver = DekaResolver::new(project.clone()).unwrap();
     assert!(
         resolver.resolve_php_module("crypto").is_none(),
         "stdlib fallback is disabled: resolver must return None for missing packages"
@@ -333,7 +333,7 @@ fn resolver_only_uses_project_local_php_modules() {
     )
     .unwrap();
 
-    let resolver2 = DekaResolver::new(project.clone(), Some(stdlib.clone())).unwrap();
+    let resolver2 = DekaResolver::new(project.clone()).unwrap();
     let result2 = resolver2.resolve_php_module("crypto");
     assert!(result2.is_some(), "expected local resolution");
     assert!(
@@ -359,7 +359,7 @@ fn resolver_rejects_path_traversal() {
     // Also create a file outside php_modules to be the traversal target
     std::fs::write(project.join("secret.js"), "export const secret = 'oops';\n").unwrap();
 
-    let resolver = DekaResolver::new(project.clone(), None).unwrap();
+    let resolver = DekaResolver::new(project.clone()).unwrap();
 
     // Normal resolution should work
     let normal = resolver.resolve_php_module("component/button");
@@ -399,7 +399,7 @@ fn resolver_allows_parent_relative_import_within_project() {
     )
     .unwrap();
 
-    let resolver = DekaResolver::new(project.clone(), None).unwrap();
+    let resolver = DekaResolver::new(project.clone()).unwrap();
 
     // Resolve `../helpers` from `api/checkout.js`
     let base = FileName::Real(api_dir.join("checkout.js"));
@@ -453,7 +453,7 @@ fn resolver_parent_relative_import_stays_within_project() {
     // through (the only reason it returned Err was file-not-found).
     std::fs::write(workspace.join("outside.js"), "export const x = 'leaked';\n").unwrap();
 
-    let resolver = DekaResolver::new(project.clone(), None).unwrap();
+    let resolver = DekaResolver::new(project.clone()).unwrap();
     let base = FileName::Real(api_dir.join("checkout.js"));
 
     // `../../outside` from `project/api/checkout.js` resolves to
@@ -481,7 +481,7 @@ fn resolver_deep_traversal_to_system_path_is_rejected() {
     std::fs::create_dir_all(&src_dir).unwrap();
     std::fs::write(src_dir.join("index.js"), "// entry\n").unwrap();
 
-    let resolver = DekaResolver::new(project.clone(), None).unwrap();
+    let resolver = DekaResolver::new(project.clone()).unwrap();
     let base = FileName::Real(src_dir.join("index.js"));
 
     // This specifier attempts to climb to /etc/passwd (or an analogous
@@ -521,7 +521,7 @@ fn resolver_allows_parent_relative_import_two_levels_within_project() {
     )
     .unwrap();
 
-    let resolver = DekaResolver::new(project.clone(), None).unwrap();
+    let resolver = DekaResolver::new(project.clone()).unwrap();
     let base = FileName::Real(deep_dir.join("button.js"));
     let result = resolver.resolve(&base, "../../utils");
     assert!(
