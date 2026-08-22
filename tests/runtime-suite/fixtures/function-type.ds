@@ -1,8 +1,8 @@
-type Adder = fn(int, int) int;
+type Adder = fn(number, number) number;
 
-const add = fn(a: int, b: int) int { return a + b };
+const add = fn(a: number, b: number) number { return a + b };
 
-fn callAdder(f: Adder, a: int, b: int) int {
+fn callAdder(f: Adder, a: number, b: number) number {
   return f(a, b);
 }
 

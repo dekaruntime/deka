@@ -257,7 +257,7 @@ fn seam_type(
         Type::Primitive(PrimitiveType::String) => Ok(SeamType::Primitive {
             name: SeamPrimitive::String,
         }),
-        Type::Primitive(PrimitiveType::Int) => Ok(SeamType::Primitive {
+        Type::Primitive(PrimitiveType::Number) => Ok(SeamType::Primitive {
             name: SeamPrimitive::Int,
         }),
         Type::Primitive(PrimitiveType::Bool) => Ok(SeamType::Primitive {
