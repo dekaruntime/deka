@@ -113,7 +113,7 @@ fn ds_lowers_native_string_collection_and_for_of_primitives() {
 #[test]
 fn ds_allows_declared_function_calls() {
     let source = r#"
-        fn show(value: mixed): void {
+        fn show<T>(value: T): void {
             print(value);
         }
 
@@ -136,7 +136,7 @@ fn ds_allows_declared_function_calls() {
 #[test]
 fn ds_generic_variadic_identity_preserves_all_rest_values() {
     let source = r#"
-        fn collect(...values: Array<mixed>): Array<mixed> {
+        fn collect<T>(...values: Array<T>): Array<T> {
             return values;
         }
         export { collect };
