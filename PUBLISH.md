@@ -41,7 +41,7 @@ After a successful run the following are available on R2:
 
 | Artifact | URL pattern | Consumers |
 |---|---|---|
-| Release manifest | `https://releases.deka.gg/latest.json` | CLI installers, testsuite native drift checks |
+| Release manifest | `https://releases.deka.gg/latest.json` | CLI installers, testsuite native isolate runs |
 | Versioned release | `https://releases.deka.gg/<VERSION>/...` | Native CLI binaries, WASM files |
 | Compiler manifest | `https://wasm.deka.gg/latest/deka-compiler-artifact.json` | Website, testsuite |
 | Diagnostics manifest | `https://wasm.deka.gg/latest/deka-diagnostics-artifact.json` | Website, testsuite |
@@ -79,12 +79,25 @@ What it does:
 - Fetches the latest compiler manifest from `wasm.deka.gg/latest`.
 - Downloads the matching native CLI for the runner platform from
   `releases.deka.gg/<VERSION>`.
-- Runs every conformance test against both the WASM compiler and the native CLI.
+- Runs every public fixture on **two Deka hosts**: the native isolate
+  (`deka run`) and a Chromium Worker (WASM compile + tour sandbox). Node is
+  not an execution host. See [RFD 26](https://github.com/dekaruntime/rfd/issues/26).
 - Builds a static Next.js export and deploys it to Cloudflare Workers via
   Wrangler.
 
-The published site (`testsuite.deka.gg`) includes the native-vs-WASM drift
-status for every test.
+The published site (`testsuite.deka.gg`) is a diagnostic grid. Pink cells are
+host disagreement. Dump/CI exit 0 means the dump ran; it does not mean every
+cell is green.
+
+To dump an unreleased runtime against itself:
+
+```bash
+DEKA_NATIVE=./target/release/cli \
+DEKA_WASM=./target/wasm32-unknown-unknown/release/deka_compiler_wasm.wasm \
+  bun scripts/dump-results.mjs
+```
+
+(from a `dekaruntime/testsuite` checkout)
 
 ## Required secrets
 
@@ -146,6 +159,12 @@ still be granted to `GITHUB_TOKEN`.
 
 ### Testsuite shows `nativeAvailable: false`
 
-The native CLI download failed or the binary would not execute on the runner.
-Check the `Build site` step logs in the testsuite deploy run for the download
-URL and any glibc compatibility warnings.
+The native CLI download failed or `deka run` would not execute on the dump
+host. Check the `Build site` logs for the download URL and any glibc
+compatibility warnings.
+
+### Testsuite shows `browserAvailable: false`
+
+Chromium was missing or Playwright failed to launch. Install the browser on
+the dump host (`bunx playwright install chromium`) matching the `playwright`
+package version. Do not fall back to Node.
