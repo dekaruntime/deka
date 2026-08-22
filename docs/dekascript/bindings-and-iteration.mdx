@@ -27,10 +27,20 @@ export function initials(parts: Array<string>): string {
 
 Supported in this core slice are bare identifier references, `const` and `let`
 bindings, normal and compound assignment, string methods, list and object
-literals, indexed access, property access, and `for (const item of items)`.
-Use `Array<T>` for typed lists in this slice.
+literals, indexed access, property access, `for (const item of items)`, and the
+C-style `for` loop with three optional clauses:
+
+```ts
+for (let i = 0; i < parts.length; i = i + 1) {
+  output += parts[i];
+}
+```
+
+All three clauses are optional, so `for (;;) { ... }` is valid when paired with
+`break`/`continue`.
 
 The following PHP-derived syntax is deliberately rejected in `.ds`: `$` sigils,
 casts, `array()`, `echo`, `foreach`, `.` concatenation, built-ins, classes,
-namespaces, globals, statics, `try`/`throw`, and `include`/`require`. Use plain
-values, object/list syntax, and explicit imports once the module contract lands.
+namespaces, globals, statics, `try`/`throw`, `include`/`require`, `while`, and
+`do-while`. Use plain values, `for` loops, object/list syntax, and explicit
+imports once the module contract lands.

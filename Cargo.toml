@@ -25,7 +25,6 @@ members = [
     "crates/wit_deka",
     "crates/wasm_cli",
     "crates/pm",
-    "examples/wasm_hello_rust",
     "crates/deka_lsp",
     "crates/deka_lsp_wasm",
     "crates/deka_compiler_wasm",

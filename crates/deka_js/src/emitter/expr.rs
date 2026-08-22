@@ -879,7 +879,7 @@ impl<'a> JsSubsetEmitter<'a> {
                 let raw_str = String::from_utf8_lossy(raw);
                 let trimmed = raw_str.trim();
                 if trimmed.is_empty() {
-                    return Ok("(function(){try{return deka.Result.Ok(undefined);}catch(err){return deka.Result.Err(err);}})()".to_string());
+                    return Ok("(function(){try{return Ok(undefined);}catch(err){return Err(err);}})()".to_string());
                 }
 
                 // Decide whether the raw JS is a single expression or a statement
@@ -919,7 +919,7 @@ impl<'a> JsSubsetEmitter<'a> {
                 };
 
                 Ok(format!(
-                    "(function(){{try{{return deka.Result.Ok({inner});}}catch(err){{return deka.Result.Err(err);}}}})()",
+                    "(function(){{try{{return Ok({inner});}}catch(err){{return Err(err);}}}})()",
                 ))
             }
             other => Err(format!(
