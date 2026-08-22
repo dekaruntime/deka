@@ -137,15 +137,8 @@ impl<'a> JsSubsetEmitter<'a> {
                     let ident = self.span_name(*name);
                     if self.struct_names.contains(&ident) {
                         let lhs = self.emit_expr_with_prec(*left, Prec::Min)?;
-                        if self.meta.is_ds {
-                            self.uses_deka_struct_helpers = true;
-                            return Ok(format!("deka.isStruct({}, {})", lhs, ident));
-                        }
-                        return Ok(format!(
-                            "globalThis.__phpx_is_struct({}, {})",
-                            lhs,
-                            json_string(&ident)
-                        ));
+                        self.uses_deka_struct_helpers = true;
+                        return Ok(format!("deka.isStruct({}, {})", lhs, ident));
                     }
                 }
             }
@@ -153,19 +146,7 @@ impl<'a> JsSubsetEmitter<'a> {
             // desugars to a normal call (`a |> f(b)` => `f(a, b)`); in PHPX
             // we keep the IIFE wrapper so existing code keeps working.
             if matches!(op, BinaryOp::Pipe) {
-                if self.meta.is_ds {
-                    return self.emit_ds_pipe(*left, *right);
-                }
-                let lhs = self.emit_expr_with_prec(*left, Prec::Min)?;
-                let rhs = self.emit_expr_with_prec(*right, Prec::Min)?;
-                let callable = match *right {
-                    Expr::Variable { .. } => rhs,
-                    _ => format!("({})", rhs),
-                };
-                return Ok(format!(
-                    "((__phpx_pipe_lhs) => {}(__phpx_pipe_lhs))({})",
-                    callable, lhs
-                ));
+                return self.emit_ds_pipe(*left, *right);
             }
 
             let (op_prec, assoc, js_op) = binary_op_info(op);
