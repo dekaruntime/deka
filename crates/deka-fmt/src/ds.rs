@@ -175,6 +175,7 @@ impl<'src> Formatter<'src> {
             Expr::IndirectVariable { span, .. } => *span,
             Expr::Integer { span, .. } => *span,
             Expr::Float { span, .. } => *span,
+            Expr::BigInt { span, .. } => *span,
             Expr::Boolean { span, .. } => *span,
             Expr::Null { span, .. } => *span,
             Expr::String { span, .. } => *span,
@@ -1280,6 +1281,7 @@ impl<'src> Formatter<'src> {
             }
             Expr::Integer { value, .. } => std::str::from_utf8(value).unwrap_or("").to_string(),
             Expr::Float { value, .. } => std::str::from_utf8(value).unwrap_or("").to_string(),
+            Expr::BigInt { value, .. } => std::str::from_utf8(value).unwrap_or("").to_string(),
             Expr::Boolean { value, .. } => {
                 if *value {
                     "true".to_string()
