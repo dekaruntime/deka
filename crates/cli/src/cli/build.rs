@@ -850,7 +850,6 @@ fn build_single_file_bundle_to_path(
             project_root: output.project_root,
             minify,
             iife: false,
-            stdlib_path: None,
         },
         provider,
     )?;

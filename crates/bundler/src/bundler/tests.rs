@@ -73,7 +73,6 @@ fn bundle_produces_valid_js() {
             project_root: tmp.clone(),
             minify: false,
             iife: false,
-            stdlib_path: None,
         },
         provider,
     )
@@ -109,7 +108,6 @@ fn bundle_allows_parent_relative_phpx_import_from_subdirectory() {
             project_root: tmp.clone(),
             minify: false,
             iife: false,
-            stdlib_path: None,
         },
         provider,
     )
@@ -139,7 +137,6 @@ fn bundle_with_iife_wrapping() {
             project_root: tmp.clone(),
             minify: false,
             iife: true,
-            stdlib_path: None,
         },
         provider,
     )
@@ -177,7 +174,6 @@ await __phpx_main();
             project_root: tmp.clone(),
             minify: true,
             iife: true,
-            stdlib_path: None,
         },
         provider,
     )
@@ -213,7 +209,6 @@ fn bundle_minified_output_is_valid() {
             project_root: tmp.clone(),
             minify: true,
             iife: false,
-            stdlib_path: None,
         },
         provider,
     )
@@ -255,7 +250,6 @@ fn bundle_minified_preserves_if_assignment() {
             project_root: tmp.clone(),
             minify: true,
             iife: false,
-            stdlib_path: None,
         },
         provider,
     )
@@ -296,7 +290,6 @@ fn bundle_minified_preserves_for_of_head() {
             project_root: tmp.clone(),
             minify: true,
             iife: false,
-            stdlib_path: None,
         },
         provider,
     )

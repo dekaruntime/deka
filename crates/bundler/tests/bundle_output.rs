@@ -55,7 +55,6 @@ export const version = 1;
             project_root: tmp.clone(),
             minify: false,
             iife: false,
-            stdlib_path: None,
         },
         provider,
     )
@@ -119,7 +118,6 @@ fn bundle_minified_output_is_valid_js() {
             project_root: tmp.clone(),
             minify: true,
             iife: false,
-            stdlib_path: None,
         },
         provider,
     )
