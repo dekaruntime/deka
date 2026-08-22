@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use bundler::{BundleOptions, VirtualSource, bundle_virtual_entry};
 use deka_js::{
-    SourceModuleMeta, build_stdlib_prelude, compile_phpx_source_to_js, parse_source_module_meta,
+    SourceModuleMeta, compile_phpx_source_to_js, parse_source_module_meta,
 };
 use runtime_core::module_spec::{is_bare_module_specifier, module_spec_aliases};
 
@@ -44,18 +44,7 @@ fn build_deka_handler_bundle_in_project(
 
     let mut entry_js = compile_phpx_source_to_js(&source, input, meta)?;
 
-    // build_stdlib_prelude needs php_modules/stdlib.json under the project root.
-    // If the tenant has not provided one, skip prelude generation entirely —
-    // there is no system stdlib fallback.
-    let prelude = if project_root
-        .join("php_modules")
-        .join("stdlib.json")
-        .is_file()
-    {
-        build_stdlib_prelude(&project_root)?
-    } else {
-        String::new()
-    };
+    let prelude = String::new();
 
     // Inject the tenant root so that globalThis.__dekaFs (installed by
     // php/php.js at extension-init time) can enforce per-tenant path
