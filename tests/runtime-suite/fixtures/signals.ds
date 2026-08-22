@@ -56,7 +56,7 @@ fn runCleanup(): void {
   setCleanupRuns(getCleanupRuns() + 1);
 }
 
-fn withCleanup(): mixed {
+fn withCleanup(): fn() void {
   const v = getC();
   return runCleanup;
 }
