@@ -355,6 +355,25 @@ fn ds_named_enum_payload_and_match() {
 }
 
 #[test]
+fn ds_match_prelude_result_and_option_patterns() {
+    let source = r#"
+        const r = Result.Ok(42)
+        const o = Option.Some("hi")
+        console.log(match (r) { Ok(v) => v, Err(e) => -1 })
+        console.log(match (o) { Some(v) => v, None => "empty" })
+    "#;
+    let js = ds_to_js(source).expect("prelude enum match patterns should compile");
+    assert!(
+        js.contains("r.__case === \"Ok\"") && js.contains("o.__case === \"Some\""),
+        "match guards must discriminate on __case for prelude enums:\n{js}"
+    );
+    assert!(
+        js.contains("const v = r[\"value\"]") || js.contains("const v = r['value']"),
+        "Ok payload binding must read the value field:\n{js}"
+    );
+}
+
+#[test]
 fn ds_prelude_result_and_option_constructors() {
     let source = r#"
         const ok = Ok(42)

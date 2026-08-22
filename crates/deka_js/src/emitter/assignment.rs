@@ -186,24 +186,33 @@ impl<'a> JsSubsetEmitter<'a> {
         matches!(expr, Expr::Variable { name, .. } if self.span_name(*name) == "_")
     }
 
-    fn is_option_case_name(&self, name: &str) -> bool {
-        name == "Some" || name == "None"
+    fn is_prelude_case_name(&self, name: &str) -> bool {
+        name == "Ok" || name == "Err" || name == "Some" || name == "None"
+    }
+
+    fn prelude_enum_for_case(&self, case_name: &str) -> &'static str {
+        if case_name == "Ok" || case_name == "Err" {
+            "Result"
+        } else {
+            "Option"
+        }
     }
 
     pub(super) fn enum_pattern_from_expr(&self, expr: ExprId<'_>) -> Option<EnumPattern> {
         // DekaScript enum access is `Option.Some` (DotAccess); PHPX uses
         // `Option::Some` (ClassConstFetch). Payload patterns add a call:
         // `Option.Some(value)`.
-        // For `Option<T>` subjects, DekaScript also accepts the unqualified
-        // shorthand `Some(value)` and `None` inside match arms.
+        // For `Option<T>` and `Result<T, E>` subjects, DekaScript also accepts
+        // the unqualified shorthand `Ok(v)`, `Err(e)`, `Some(value)`, `None`
+        // inside match arms.
         let (enum_name, case_name, args): (String, String, &[php_rs::parser::ast::Arg<'_>]) =
             match expr {
                 Expr::Variable { name, .. } => {
                     let case_name = self.span_name(*name);
-                    if !self.is_option_case_name(&case_name) {
+                    if !self.is_prelude_case_name(&case_name) {
                         return None;
                     }
-                    ("Option".to_string(), case_name, &[][..])
+                    (self.prelude_enum_for_case(&case_name).to_string(), case_name, &[][..])
                 }
                 Expr::DotAccess {
                     target,
@@ -217,10 +226,10 @@ impl<'a> JsSubsetEmitter<'a> {
                 Expr::Call { func, args, .. } => match func {
                     Expr::Variable { name, .. } => {
                         let case_name = self.span_name(*name);
-                        if !self.is_option_case_name(&case_name) {
+                        if !self.is_prelude_case_name(&case_name) {
                             return None;
                         }
-                        ("Option".to_string(), case_name, *args)
+                        (self.prelude_enum_for_case(&case_name).to_string(), case_name, *args)
                     }
                     Expr::DotAccess {
                         target,
@@ -250,13 +259,22 @@ impl<'a> JsSubsetEmitter<'a> {
             .get(&enum_name)
             .and_then(|cases| cases.iter().find(|c| c.name == case_name).cloned())
             .or_else(|| {
-                if enum_name.eq_ignore_ascii_case("Option") && self.is_option_case_name(&case_name) {
+                if enum_name.eq_ignore_ascii_case("Option") && self.is_prelude_case_name(&case_name) && (case_name == "Some" || case_name == "None") {
                     Some(EnumCaseDef {
                         name: case_name.clone(),
                         params: if case_name.eq_ignore_ascii_case("Some") {
                             vec!["value".to_string()]
                         } else {
                             Vec::new()
+                        },
+                    })
+                } else if enum_name.eq_ignore_ascii_case("Result") && self.is_prelude_case_name(&case_name) && (case_name == "Ok" || case_name == "Err") {
+                    Some(EnumCaseDef {
+                        name: case_name.clone(),
+                        params: if case_name.eq_ignore_ascii_case("Ok") {
+                            vec!["value".to_string()]
+                        } else {
+                            vec!["error".to_string()]
                         },
                     })
                 } else {
