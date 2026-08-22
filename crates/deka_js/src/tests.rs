@@ -258,12 +258,118 @@ fn ds_lowering_errors_are_propagated_as_compile_failures() {
 }
 
 #[test]
+fn ds_c_style_for_loop_lowers_to_js_for() {
+    let source = r#"
+        let sum = 0
+        for (let i = 0; i < 3; i = i + 1) {
+            sum = sum + i
+        }
+        console.log(sum)
+    "#;
+    let js = ds_to_js(source).expect("C-style for loop should compile");
+    assert!(
+        js.contains("for (let i = 0; i < 3;"),
+        "C-style for loop must lower to JS for: {js}"
+    );
+}
+
+#[test]
+fn ds_for_infinite_loop_with_break_lowers() {
+    let source = r#"
+        let n = 0
+        for (;;) {
+            n = n + 1
+            if (n > 2) { break }
+        }
+        console.log(n)
+    "#;
+    let js = ds_to_js(source).expect("infinite for loop should compile");
+    assert!(
+        js.contains("for (; ; )"),
+        "empty-clause for loop must lower to JS for: {js}"
+    );
+}
+
+#[test]
+fn ds_rejects_while_and_do_while() {
+    for (source, expected) in [
+        (
+            "while (true) { break }",
+            "`while` is not part of DekaScript",
+        ),
+        (
+            "do { break } while (true)",
+            "`do-while` is not part of DekaScript",
+        ),
+    ] {
+        let err = ds_to_js(source).expect_err("while/do-while must be rejected in DS");
+        assert!(
+            err.contains(expected),
+            "expected {expected:?} in {err:?} for source: {source}"
+        );
+    }
+}
+
+#[test]
 fn ds_unsafe_block_returns_result_iife() {
     let js = ds_to_js("const answer = unsafe { JSON.parse(\"{\\\"x\\\":1}\") }")
         .expect("unsafe block should compile");
     assert!(
-        js.contains("deka.Result.Ok") && js.contains("JSON.parse") && js.contains("catch(err){return deka.Result.Err(err);}"),
-        "unsafe should emit a Result-wrapping IIFE:\n{js}"
+        js.contains("Ok(") && js.contains("JSON.parse") && js.contains("catch(err){return Err(err);}"),
+        "unsafe should emit a Result-wrapping IIFE using bare prelude constructors:\n{js}"
+    );
+    assert!(
+        js.contains("const Result = Object.freeze") && js.contains("const Option = Object.freeze"),
+        "Result and Option prelude enums must be emitted:\n{js}"
+    );
+    assert!(
+        js.contains("const Ok = Result.Ok") && js.contains("const Err = Result.Err"),
+        "bare Result constructors must be aliased:\n{js}"
+    );
+}
+
+#[test]
+fn ds_named_enum_payload_and_match() {
+    let source = r#"
+        enum Outcome<T, E> {
+            Win(value: T)
+            Fail(error: E)
+        }
+        const r = Outcome.Win(42)
+        const label = match (r) {
+            Outcome.Win(value) => value,
+            Outcome.Fail(error) => 0,
+            _ => -1
+        }
+        console.log(label)
+    "#;
+    let js = ds_to_js(source).expect("named enum payload should compile");
+    assert!(
+        js.contains("Win: (value) => Object.freeze"),
+        "named payload field must lower to a function with the given param name:\n{js}"
+    );
+    assert!(
+        js.contains("r.__case === \"Win\"") || js.contains("__case === \"Win\""),
+        "match guard must discriminate on __case:\n{js}"
+    );
+}
+
+#[test]
+fn ds_prelude_result_and_option_constructors() {
+    let source = r#"
+        const ok = Ok(42)
+        const err = Err("bad")
+        const some = Some(1)
+        const none = None
+        console.log(ok.__case)
+        console.log(err.__case)
+        console.log(some.__case)
+        console.log(none.__case)
+    "#;
+    let js = ds_to_js(source).expect("prelude constructors should compile");
+    assert!(
+        js.contains("const Ok = Result.Ok") && js.contains("const Some = Option.Some"),
+        "bare constructors must be aliased to prelude enum cases:\n{js}"
     );
 }
 

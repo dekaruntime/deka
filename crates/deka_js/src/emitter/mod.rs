@@ -238,8 +238,6 @@ impl<'a> JsSubsetEmitter<'a> {
             let mut deka_entries: Vec<String> = vec![
                 "unsafe:(tryFn,catchFn,finallyFn)=>{try{return tryFn();}catch(err){if(catchFn)return catchFn(err);return{__error:err};}finally{if(finallyFn)finallyFn();}}".to_string(),
                 "panic:(msg)=>{throw new Error(String(msg));}".to_string(),
-                "Result:{Ok:(value)=>({__enum:'Result',__case:'Ok',value}),Err:(error)=>({__enum:'Result',__case:'Err',error})}".to_string(),
-                "Option:{Some:(value)=>({__enum:'Option',__case:'Some',value}),None:{__enum:'Option',__case:'None'}}".to_string(),
             ];
             if self.uses_deka_struct_helpers || self.uses_deka_freeze {
                 deka_entries.push("MutationError:class extends Error{constructor(m){super(m);this.name='MutationError';}}".to_string());

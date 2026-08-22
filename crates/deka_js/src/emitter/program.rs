@@ -11,6 +11,9 @@ impl<'a> JsSubsetEmitter<'a> {
         for local in import_locals {
             self.declare_in_scope(&local);
         }
+        // DekaScript prelude: install `Result`, `Option` and their bare
+        // constructors as ordinary frozen enum objects before any user code.
+        self.emit_prelude_enums()?;
         // First pass: collect struct/enum names and struct embeds. Collecting
         // embeds here lets the emitter promote embedded methods after all
         // struct factories have been declared.
@@ -938,11 +941,22 @@ impl<'a> JsSubsetEmitter<'a> {
             }
         }
 
+        self.emit_enum_object(&enum_name, &cases, &method_srcs)
+    }
+
+    /// Emit the frozen tagged object for an enum. Shared by user-defined enums
+    /// and the DekaScript prelude enums (`Result`, `Option`).
+    pub(super) fn emit_enum_object(
+        &mut self,
+        enum_name: &str,
+        cases: &[EnumCaseDef],
+        method_srcs: &[String],
+    ) -> Result<(), String> {
         self.body
             .push_str(&format!("const {} = Object.freeze({{\n", enum_name));
         for (idx, case) in cases.iter().enumerate() {
             let mut entries = vec![
-                format!("__enum: {}", json_string(&enum_name)),
+                format!("__enum: {}", json_string(enum_name)),
                 format!("__case: {}", json_string(&case.name)),
             ];
             entries.extend(
@@ -967,6 +981,61 @@ impl<'a> JsSubsetEmitter<'a> {
             }
         }
         self.body.push_str("});\n");
+        Ok(())
+    }
+
+    /// Emit the DekaScript prelude enums (`Result`, `Option`) and expose their
+    /// constructors at module scope so `Ok(value)`, `Err(error)`, `Some(value)`
+    /// and `None` work without qualification.
+    pub(super) fn emit_prelude_enums(&mut self) -> Result<(), String> {
+        if !self.meta.is_ds {
+            return Ok(());
+        }
+
+        let result_cases = vec![
+            EnumCaseDef {
+                name: "Ok".to_string(),
+                params: vec!["value".to_string()],
+            },
+            EnumCaseDef {
+                name: "Err".to_string(),
+                params: vec!["error".to_string()],
+            },
+        ];
+        let option_cases = vec![
+            EnumCaseDef {
+                name: "Some".to_string(),
+                params: vec!["value".to_string()],
+            },
+            EnumCaseDef {
+                name: "None".to_string(),
+                params: Vec::new(),
+            },
+        ];
+
+        self.enum_names.insert("Result".to_string());
+        self.enum_names.insert("Option".to_string());
+        self.enum_cases
+            .insert("Result".to_string(), result_cases.clone());
+        self.enum_cases
+            .insert("Option".to_string(), option_cases.clone());
+
+        for name in ["Result", "Option", "Ok", "Err", "Some", "None"] {
+            if !self.is_declared(name) {
+                self.declare_in_scope(name);
+            }
+        }
+
+        self.emit_enum_object("Result", &result_cases, &[])?;
+        self.emit_enum_object("Option", &option_cases, &[])?;
+
+        // Expose bare constructors so `Ok(x)` lowers to `Ok(x)` and resolves
+        // to the same function object at runtime.
+        self.body.push_str("const Ok = Result.Ok;\n");
+        self.body.push_str("const Err = Result.Err;\n");
+        self.body.push_str("const Some = Option.Some;\n");
+        self.body.push_str("const None = Option.None;\n");
+
         Ok(())
     }
 
