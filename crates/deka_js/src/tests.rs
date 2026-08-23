@@ -330,6 +330,13 @@ fn ds_unsafe_block_returns_result_iife() {
         js.contains("__deka_host=void 0") && js.contains("__bridge=void 0"),
         "unsafe must hide the host dispatcher:\n{js}"
     );
+    assert!(
+        js.contains("__g.unsafe")
+            && js.contains("(function(__g){")
+            && js.contains("})(globalThis)")
+            && !js.contains("}=unsafe;"),
+        "unsafe must restore platform APIs from the real global, not a bare `unsafe` binding:\n{js}"
+    );
 }
 
 #[test]

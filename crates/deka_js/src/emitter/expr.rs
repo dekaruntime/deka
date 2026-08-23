@@ -899,25 +899,29 @@ impl<'a> JsSubsetEmitter<'a> {
                 let restore_globals = if UNSAFE_GLOBALS.is_empty() {
                     String::new()
                 } else {
+                    // Restore from the real global (`__g`), not a free
+                    // `unsafe` identifier — ES modules do not resolve
+                    // `globalThis.unsafe` as a bare binding.
                     format!(
-                        "const {{{}}}=unsafe;",
+                        "const {{{}}}=__g.unsafe||__DekaUnsafeGlobals;",
                         UNSAFE_GLOBALS.join(",")
                     )
                 };
-                // RFD 27: unsafe is JS-mode, not a host back door. Shadow the
-                // dispatcher names and hide them on a proxied globalThis.
-                let hide_host = "const __g=globalThis;const Deno=void 0,__bridge=void 0,__bridge_async=void 0,__deka_wasm_call=void 0,__deka_wasm_call_async=void 0,__deka_host=void 0;const globalThis=new Proxy(__g,{get(t,p){if(p==='Deno'||p==='__bridge'||p==='__bridge_async'||p==='__deka_wasm_call'||p==='__deka_wasm_call_async'||p==='__deka_host')return void 0;return Reflect.get(t,p);}});";
+                // RFD 27: unsafe is JS-mode, not a host back door. Pass the
+                // real globalThis in as `__g` so the inner `const globalThis`
+                // proxy does not TDZ the capture.
+                let hide_host = "const Deno=void 0,__bridge=void 0,__bridge_async=void 0,__deka_wasm_call=void 0,__deka_wasm_call_async=void 0,__deka_host=void 0;const globalThis=new Proxy(__g,{get(t,p){if(p==='Deno'||p==='__bridge'||p==='__bridge_async'||p==='__deka_wasm_call'||p==='__deka_wasm_call_async'||p==='__deka_host')return void 0;return Reflect.get(t,p);}});";
 
                 let inner = if is_statement_block {
                     format!(
-                        "(function(){{{hide}{restore}{raw}}})()",
+                        "(function(__g){{{hide}{restore}{raw}}})(globalThis)",
                         hide = hide_host,
                         restore = restore_globals,
                         raw = raw_str
                     )
                 } else {
                     format!(
-                        "(function(){{{hide}{restore}return ({raw});}})()",
+                        "(function(__g){{{hide}{restore}return ({raw});}})(globalThis)",
                         hide = hide_host,
                         restore = restore_globals,
                         raw = raw_str
