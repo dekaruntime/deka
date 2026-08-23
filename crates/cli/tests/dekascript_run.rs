@@ -18,14 +18,27 @@ fn run_dekascript(name: &str, source: &str, expected_output: &str) {
 }
 
 fn run_dekascript_with_manifest(name: &str, manifest: &str, source: &str, expected_output: &str) {
+    run_dekascript_with_manifest_args(name, manifest, source, expected_output, &[]);
+}
+
+fn run_dekascript_with_manifest_args(
+    name: &str,
+    manifest: &str,
+    source: &str,
+    expected_output: &str,
+    extra_args: &[&str],
+) {
     let project = tempfile::tempdir().expect("create DekaScript project");
     fs::write(project.path().join("deka.json"), manifest).expect("write project manifest");
     fs::write(project.path().join("deka.lock"), EMPTY_DEKA_LOCK).expect("write project lockfile");
     let entry = project.path().join(format!("{name}.ds"));
     fs::write(&entry, source).expect("write DekaScript entry");
 
+    let mut args = vec!["run"];
+    args.extend_from_slice(extra_args);
+    args.push(entry.to_str().expect("UTF-8 entry"));
     let output = Command::new(cli_bin())
-        .args(["run", entry.to_str().expect("UTF-8 entry")])
+        .args(&args)
         .current_dir(project.path())
         .output()
         .expect("run DekaScript entry through the CLI runtime");
@@ -395,6 +408,49 @@ fn run_rejects_absolute_ds_symlink_to_phpx_before_execution() {
     assert!(
         !combined.contains("must-not-execute"),
         "PHPX symlink target reached execution: {combined}"
+    );
+}
+
+#[test]
+fn run_executes_workspace_tcp_connect_refused() {
+    run_dekascript_with_manifest(
+        "tcp_connect_refused",
+        r#"{ "name": "@deka/tcp", "host": { "kinds": ["net"] }, "security": { "allow": { "net": ["127.0.0.1:1"] }, "prompt": false } }"#,
+        r#"
+export fn connect(host: string, port: number) {
+  return bridge net.connect(host, port)
+}
+fn go() {
+  print(match (connect("127.0.0.1", 1)) {
+    Ok(h) => "fail-ok",
+    Err(e) => "ok"
+  })
+}
+go()
+"#,
+        "ok",
+    );
+}
+
+#[test]
+fn run_executes_workspace_tls_upgrade_unknown_handle() {
+    run_dekascript_with_manifest_args(
+        "tls_upgrade_unknown",
+        r#"{ "name": "@deka/tls", "host": { "kinds": ["tls"] } }"#,
+        r#"
+export fn upgrade(handle: number, server_name: string) {
+  return bridge tls.upgrade(handle, server_name)
+}
+fn go() {
+  print(match (upgrade(0, "localhost")) {
+    Ok(h) => "fail-ok",
+    Err(e) => "ok"
+  })
+}
+go()
+"#,
+        "ok",
+        &["--no-prompt"],
     );
 }
 
