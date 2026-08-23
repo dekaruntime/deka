@@ -387,6 +387,31 @@ fn ds_bridge_async_fs_emits_await() {
 }
 
 #[test]
+fn ds_export_async_fn_stays_at_module_scope() {
+    let source =
+        "export async fn read_file(path: string) { return await bridge fs.read_file(path) }\n";
+    let arena = Bump::new();
+    let mut parser = Parser::new_with_mode(Lexer::new(source.as_bytes()), &arena, ParserMode::Ds);
+    let program = parser.parse_program();
+    assert!(
+        program.errors.is_empty(),
+        "parse errors: {:?}",
+        program.errors
+    );
+    let mut meta = parse_source_module_meta(source);
+    meta.is_ds = true;
+    let js = emit_js_from_ast(&program, source.as_bytes(), meta).expect("export async fn should emit");
+    assert!(
+        js.contains("export async function read_file"),
+        "expected module-level export async function, got:\n{js}"
+    );
+    assert!(
+        !js.contains("const __deka_main"),
+        "export async fn must not be wrapped in __deka_main:\n{js}"
+    );
+}
+
+#[test]
 fn ds_named_enum_payload_and_match() {
     let source = r#"
         enum Outcome<T, E> {
