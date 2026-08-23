@@ -513,12 +513,18 @@ fn resolve_module_file(modules_dir: &Path, spec: &str) -> Option<PathBuf> {
 
     let mut candidates = Vec::new();
     for alias in aliases {
+        candidates.push(modules_dir.join(format!("{}.ds", alias)));
         candidates.push(modules_dir.join(format!("{}.phpx", alias)));
         candidates.push(modules_dir.join(format!("{}.php", alias)));
+        candidates.push(modules_dir.join(alias.as_str()).join("index.ds"));
         candidates.push(modules_dir.join(alias.as_str()).join("index.phpx"));
         candidates.push(modules_dir.join(alias.as_str()).join("index.php"));
         candidates.push(modules_dir.join(alias.as_str()).join("index.js"));
-        if alias.ends_with(".phpx") || alias.ends_with(".php") || alias.ends_with(".js") {
+        if alias.ends_with(".ds")
+            || alias.ends_with(".phpx")
+            || alias.ends_with(".php")
+            || alias.ends_with(".js")
+        {
             candidates.push(modules_dir.join(alias));
         }
     }

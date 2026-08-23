@@ -203,7 +203,39 @@ impl<'a> JsSubsetEmitter<'a> {
             out.push('\n');
         }
 
-        let imports = self.meta.imports.clone();
+        let mut imports = self.meta.imports.clone();
+        let host_imports: Vec<ImportDecl> = imports
+            .iter()
+            .filter(|decl| decl.from.trim() == "host")
+            .cloned()
+            .collect();
+        imports.retain(|decl| decl.from.trim() != "host");
+        if !host_imports.is_empty() {
+            let case = if self.meta.host_is_browser {
+                "Browser"
+            } else {
+                "Native"
+            };
+            out.push_str("const HostRuntime=Object.freeze({Native:Object.freeze({__enum:\"HostRuntime\",__case:\"Native\"}),Browser:Object.freeze({__enum:\"HostRuntime\",__case:\"Browser\"})});\n");
+            out.push_str(&format!(
+                "const runtime=HostRuntime.{case};\n"
+            ));
+            out.push_str("function select(cases){const k=runtime.__case===\"Native\"?\"native\":\"browser\";if(cases&&Object.prototype.hasOwnProperty.call(cases,k))return cases[k];return undefined;}\n");
+            for decl in &host_imports {
+                for spec in &decl.specs {
+                    if spec.imported == "runtime" && spec.local != "runtime" {
+                        out.push_str(&format!("const {}=runtime;\n", spec.local));
+                    }
+                    if spec.imported == "select" && spec.local != "select" {
+                        out.push_str(&format!("const {}=select;\n", spec.local));
+                    }
+                    if spec.imported == "HostRuntime" && spec.local != "HostRuntime" {
+                        out.push_str(&format!("const {}=HostRuntime;\n", spec.local));
+                    }
+                }
+            }
+            out.push('\n');
+        }
 
         // JSX runtime — emits `deka.ui.jsx`, `deka.ui.jsxs`, and `deka.ui.Fragment`
         // calls directly. The host/runtime is responsible for providing the

@@ -1,5 +1,13 @@
 use super::*;
 
+/// Bind host dispatchers as locals so PHPX/DS emit can name `__bridge` /
+/// `__deka_host` without those identifiers living on user `globalThis`.
+fn wrap_with_host_bindings(body: &str) -> String {
+    format!(
+        "(function() {{\nconst __h = globalThis[Symbol.for('deka.host.internal')];\n(function(__deka_host, __bridge, __bridge_async, __deka_wasm_call, __deka_wasm_call_async) {{\n{body}\n}})(__h && __h.host, __h && __h.bridge, __h && __h.bridgeAsync, __h && __h.wasmCall, __h && __h.wasmCallAsync);\n}})();"
+    )
+}
+
 impl WorkerThread {
     /// Execute a request in the warm isolate
     pub(super) async fn execute_in_isolate(
@@ -47,21 +55,26 @@ impl WorkerThread {
 
             // Basic Web API polyfills
             const BOOTSTRAP: &str = r#"
+                const __print = (Deno && Deno.core && typeof Deno.core.print === 'function')
+                    ? Deno.core.print.bind(Deno.core)
+                    : function() {};
+                const __ops = (Deno && Deno.core && Deno.core.ops) ? Deno.core.ops : {};
+
                 // Basic console implementation
                 if (typeof globalThis.console === 'undefined') {
                     globalThis.console = {
-                        log(...args) { Deno.core.print(args.join(' ') + '\n'); },
-                        error(...args) { Deno.core.print('[ERROR] ' + args.join(' ') + '\n'); },
-                        warn(...args) { Deno.core.print('[WARN] ' + args.join(' ') + '\n'); },
-                        info(...args) { Deno.core.print('[INFO] ' + args.join(' ') + '\n'); },
-                        debug(...args) { Deno.core.print('[DEBUG] ' + args.join(' ') + '\n'); },
+                        log(...args) { __print(args.join(' ') + '\n'); },
+                        error(...args) { __print('[ERROR] ' + args.join(' ') + '\n'); },
+                        warn(...args) { __print('[WARN] ' + args.join(' ') + '\n'); },
+                        info(...args) { __print('[INFO] ' + args.join(' ') + '\n'); },
+                        debug(...args) { __print('[DEBUG] ' + args.join(' ') + '\n'); },
                     };
                 }
 
                 if (typeof globalThis.__dekaPrint !== 'function') {
                     globalThis.__dekaPrint = (value, isErr = false) => {
                         const text = value == null ? '' : String(value);
-                        Deno.core.print(text, !!isErr);
+                        __print(text, !!isErr);
                     };
                 }
 
@@ -259,7 +272,11 @@ impl WorkerThread {
                 // Runtime bridge helpers for PHPX stdlib (JS runtime path)
                 if (typeof globalThis.function_exists !== 'function') {
                     globalThis.function_exists = function(name) {
-                        return typeof globalThis[name] === 'function';
+                        const n = String(name || '');
+                        if (n === '__bridge' || n === '__bridge_async' || n === '__deka_wasm_call' || n === '__deka_wasm_call_async') {
+                            return true;
+                        }
+                        return typeof globalThis[n] === 'function';
                     };
                 }
 
@@ -325,8 +342,8 @@ impl WorkerThread {
                     };
                 }
 
-                if (typeof globalThis.__bridge !== 'function') {
-                    const ops = (Deno && Deno.core && Deno.core.ops) ? Deno.core.ops : {};
+                if (!globalThis[Symbol.for('deka.host.internal')]) {
+                    const ops = __ops;
                     const routeHostCall = (kind, action, payload) => {
                         if (kind === 'db') {
                             if (typeof ops.op_php_db_call_proto === 'function' && typeof ops.op_php_db_proto_encode === 'function' && typeof ops.op_php_db_proto_decode === 'function') {
@@ -494,6 +511,17 @@ impl WorkerThread {
                         }
                         if (kind === 'crypto') {
                             const act = String(action || '');
+                            const toBytes = (v) => {
+                                if (v instanceof Uint8Array) return v;
+                                if (typeof v === 'string') {
+                                    return (typeof TextEncoder !== 'undefined')
+                                        ? new TextEncoder().encode(v)
+                                        : Uint8Array.from(Array.from(v).map((ch) => ch.charCodeAt(0) & 0xff));
+                                }
+                                if (Array.isArray(v)) return new Uint8Array(v);
+                                if (v && typeof v.length === 'number') return new Uint8Array(Array.from(v));
+                                return null;
+                            };
                             if (act === 'random_bytes') {
                                 const req = payload || {};
                                 const n = Number(req.length ?? req.len ?? 0);
@@ -557,6 +585,65 @@ impl WorkerThread {
                                 }
                                 const raw = ops.op_php_bcrypt_verify(password, hash);
                                 return Object.entries(raw || { ok: false, error: 'bcrypt_verify_failed' });
+                            }
+                            if (act === 'digest') {
+                                const req = payload || {};
+                                const algorithm = String(req.algorithm ?? req.alg ?? '');
+                                const data = toBytes(req.data);
+                                if (data === null) {
+                                    return { ok: false, error: 'data must be bytes' };
+                                }
+                                if (typeof ops.op_php_digest !== 'function') {
+                                    return { ok: false, error: 'op_php_digest unavailable' };
+                                }
+                                const raw = ops.op_php_digest(algorithm, data);
+                                const okVal = raw && raw.ok === true;
+                                if (okVal) {
+                                    const arr = raw.data instanceof Uint8Array ? Array.from(raw.data) : (Array.isArray(raw.data) ? raw.data : Array.from(raw.data || []));
+                                    return Object.entries({ ok: true, data: arr });
+                                }
+                                return Object.entries({ ok: false, error: (raw && raw.error) || 'digest_failed' });
+                            }
+                            if (act === 'hmac') {
+                                const req = payload || {};
+                                const algorithm = String(req.algorithm ?? req.alg ?? '');
+                                const key = toBytes(req.key);
+                                const data = toBytes(req.data);
+                                if (key === null || data === null) {
+                                    return { ok: false, error: 'key and data must be bytes' };
+                                }
+                                if (typeof ops.op_php_hmac !== 'function') {
+                                    return { ok: false, error: 'op_php_hmac unavailable' };
+                                }
+                                const raw = ops.op_php_hmac(algorithm, key, data);
+                                const okVal = raw && raw.ok === true;
+                                if (okVal) {
+                                    const arr = raw.data instanceof Uint8Array ? Array.from(raw.data) : (Array.isArray(raw.data) ? raw.data : Array.from(raw.data || []));
+                                    return Object.entries({ ok: true, data: arr });
+                                }
+                                return Object.entries({ ok: false, error: (raw && raw.error) || 'hmac_failed' });
+                            }
+                            if (act === 'secure_compare') {
+                                const req = payload || {};
+                                const a = toBytes(req.a);
+                                const b = toBytes(req.b);
+                                if (a === null || b === null) {
+                                    return { ok: false, error: 'operands must be bytes' };
+                                }
+                                if (typeof ops.op_php_secure_compare === 'function') {
+                                    const raw = ops.op_php_secure_compare(a, b);
+                                    const okVal = raw && raw.ok === true;
+                                    if (okVal) {
+                                        return Object.entries({ ok: true, data: raw.data === true });
+                                    }
+                                    return Object.entries({ ok: false, error: (raw && raw.error) || 'secure_compare_failed' });
+                                }
+                                if (a.length !== b.length) {
+                                    return Object.entries({ ok: true, data: false });
+                                }
+                                let diff = 0;
+                                for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+                                return Object.entries({ ok: true, data: diff === 0 });
                             }
                             return { ok: false, error: `unknown crypto action '${act}'` };
                         }
@@ -643,21 +730,21 @@ impl WorkerThread {
                         return val;
                     };
 
-                    globalThis.__bridge = (kind, action, payload) => {
+                    const __bridge = (kind, action, payload) => {
                         try {
                             return __dekaFixProto(routeHostCall(String(kind || ''), String(action || ''), payload || {}));
                         } catch (err) {
                             return { ok: false, error: err && err.message ? String(err.message) : String(err) };
                         }
                     };
-                    globalThis.__bridge_async = async (kind, action, payload) => {
+                    const __bridge_async = async (kind, action, payload) => {
                         try {
                             return __dekaFixProto(await routeHostCall(String(kind || ''), String(action || ''), payload || {}));
                         } catch (err) {
                             return { ok: false, error: err && err.message ? String(err.message) : String(err) };
                         }
                     };
-                    globalThis.__deka_wasm_call = (moduleId, exportName, payload) => {
+                    const __deka_wasm_call = (moduleId, exportName, payload) => {
                         const name = String(moduleId || '');
                         if (name.startsWith('__deka_')) {
                             const kind = name.replace(/^__deka_/, '');
@@ -665,7 +752,7 @@ impl WorkerThread {
                         }
                         return { ok: false, error: `unknown host bridge module '${name}'` };
                     };
-                    globalThis.__deka_wasm_call_async = async (moduleId, exportName, payload) => {
+                    const __deka_wasm_call_async = async (moduleId, exportName, payload) => {
                         const name = String(moduleId || '');
                         if (name.startsWith('__deka_')) {
                             const kind = name.replace(/^__deka_/, '');
@@ -673,6 +760,71 @@ impl WorkerThread {
                         }
                         return { ok: false, error: `unknown host bridge module '${name}'` };
                     };
+                    // DS `bridge kind.action(args)` emit (RFD 27). Positional args;
+                    // PHPX __bridge still takes a payload object.
+                    // Catalog allowlist is the runtime gate: a leaked global cannot
+                    // reach PHPX-only kinds (db/redis/vault/json/...). Keep in sync
+                    // with `host_bridge.rs` CATALOG.
+                    const DS_HOST_CATALOG = {
+                        crypto: ['random_bytes', 'digest', 'hmac', 'secure_compare', 'aes_256_gcm_encrypt', 'aes_256_gcm_decrypt', 'bcrypt_verify'],
+                        fs: ['read_file'],
+                    };
+                    const __deka_host = (kind, action, args) => {
+                        try {
+                            const k = String(kind || '');
+                            const a = String(action || '');
+                            if (!DS_HOST_CATALOG[k] || DS_HOST_CATALOG[k].indexOf(a) < 0) {
+                                return { ok: false, error: `unknown bridge action '${k}.${a}'` };
+                            }
+                            const list = Array.isArray(args) ? args : [];
+                            const payload = (() => {
+                                if (k === 'crypto' && a === 'random_bytes') return { length: list[0] };
+                                if (k === 'crypto' && a === 'digest') return { algorithm: list[0], data: list[1] };
+                                if (k === 'crypto' && a === 'hmac') return { algorithm: list[0], key: list[1], data: list[2] };
+                                if (k === 'crypto' && a === 'secure_compare') return { a: list[0], b: list[1] };
+                                if (k === 'crypto' && a === 'aes_256_gcm_encrypt') return { key: list[0], nonce: list[1], plaintext: list[2], aad: list[3] };
+                                if (k === 'crypto' && a === 'aes_256_gcm_decrypt') return { key: list[0], nonce: list[1], ciphertext: list[2], aad: list[3] };
+                                if (k === 'crypto' && a === 'bcrypt_verify') return { password: list[0], hash: list[1] };
+                                if (k === 'fs' && a === 'read_file') return { path: list[0] };
+                                if (list.length === 1 && list[0] && typeof list[0] === 'object' && !Array.isArray(list[0])) {
+                                    return list[0];
+                                }
+                                return { args: list };
+                            })();
+                            const raw = __dekaFixProto(routeHostCall(k, a, payload));
+                            const assoc = (Array.isArray(raw) && raw.length && Array.isArray(raw[0]))
+                                ? Object.fromEntries(raw)
+                                : (raw || {});
+                            if (assoc && assoc.ok === true && typeof assoc.data === 'undefined' && typeof assoc.valid === 'boolean') {
+                                assoc.data = assoc.valid;
+                            }
+                            if (assoc && assoc.ok === true && Array.isArray(assoc.data) && typeof Uint8Array !== 'undefined') {
+                                assoc.data = new Uint8Array(assoc.data);
+                            }
+                            return assoc;
+                        } catch (err) {
+                            return { ok: false, error: err && err.message ? String(err.message) : String(err) };
+                        }
+                    };
+                    // RFD 27: these names are not user globals. Handlers get them
+                    // as IIFE parameters. unsafe hides the symbol key.
+                    globalThis[Symbol.for('deka.host.internal')] = Object.freeze({
+                        host: __deka_host,
+                        bridge: __bridge,
+                        bridgeAsync: __bridge_async,
+                        wasmCall: __deka_wasm_call,
+                        wasmCallAsync: __deka_wasm_call_async,
+                        ops: __ops,
+                    });
+                    try {
+                        Object.defineProperty(globalThis, 'Deno', {
+                            value: undefined,
+                            configurable: true,
+                            writable: true,
+                        });
+                    } catch (_err) {
+                        try { globalThis.Deno = undefined; } catch (_err2) {}
+                    }
                 }
 
                 if (typeof globalThis.__dekaRuntime !== 'object') {
@@ -687,8 +839,8 @@ impl WorkerThread {
                             if (!stderr && result && result.error) {
                                 stderr = String(result.error);
                             }
-                            if (stdout) Deno.core.print(stdout, false);
-                            if (stderr) Deno.core.print(stderr, true);
+                            if (stdout) __print(stdout, false);
+                            if (stderr) __print(stderr, true);
                             const ok = result && result.ok !== false;
                             let exitCode = result && typeof result.exit_code === 'number' ? result.exit_code : 0;
                             if (!ok && exitCode === 0) exitCode = 1;
@@ -949,10 +1101,12 @@ impl WorkerThread {
                     );
                 }
 
-                // Execute the pre-bundled handler directly
+                // Execute the pre-bundled handler with host dispatchers closed over.
                 let handler_result = isolate.runtime.execute_script(
                     "handler.js",
-                    ModuleCodeString::from(request.request_data.handler_code.clone()),
+                    ModuleCodeString::from(wrap_with_host_bindings(
+                        &request.request_data.handler_code,
+                    )),
                 );
                 match handler_result {
                     Ok(_value) => {
@@ -1062,10 +1216,10 @@ impl WorkerThread {
                     .replace("export default app", "// export default app")
                     .replace("export default ", "const __dekaDefault = ");
 
-                let wrapped = format!(
-                    "(function() {{\n{}\nif (typeof globalThis.app === 'undefined') {{ if (typeof __dekaDefault !== 'undefined') {{ if (typeof __dekaDefault === 'function' && typeof globalThis.__dekaNodeExpressAdapter === 'function' && (typeof __dekaDefault.handle === 'function' || typeof __dekaDefault.listen === 'function')) {{ globalThis.app = globalThis.__dekaNodeExpressAdapter(__dekaDefault); }} else if (__dekaDefault && typeof __dekaDefault === 'object' && !__dekaDefault.__dekaServer && (typeof __dekaDefault.fetch === 'function' || typeof __dekaDefault.routes === 'object')) {{ globalThis.app = globalThis.__deka.serve(__dekaDefault); }} else {{ globalThis.app = __dekaDefault; }} }} else if (typeof app !== 'undefined') {{ if (typeof app === 'function' && typeof globalThis.__dekaNodeExpressAdapter === 'function' && (typeof app.handle === 'function' || typeof app.listen === 'function')) {{ globalThis.app = globalThis.__dekaNodeExpressAdapter(app); }} else {{ globalThis.app = app; }} }} }}\n}})();",
+                let wrapped = wrap_with_host_bindings(&format!(
+                    "{}\nif (typeof globalThis.app === 'undefined') {{ if (typeof __dekaDefault !== 'undefined') {{ if (typeof __dekaDefault === 'function' && typeof globalThis.__dekaNodeExpressAdapter === 'function' && (typeof __dekaDefault.handle === 'function' || typeof __dekaDefault.listen === 'function')) {{ globalThis.app = globalThis.__dekaNodeExpressAdapter(__dekaDefault); }} else if (__dekaDefault && typeof __dekaDefault === 'object' && !__dekaDefault.__dekaServer && (typeof __dekaDefault.fetch === 'function' || typeof __dekaDefault.routes === 'object')) {{ globalThis.app = globalThis.__deka.serve(__dekaDefault); }} else {{ globalThis.app = __dekaDefault; }} }} else if (typeof app !== 'undefined') {{ if (typeof app === 'function' && typeof globalThis.__dekaNodeExpressAdapter === 'function' && (typeof app.handle === 'function' || typeof app.listen === 'function')) {{ globalThis.app = globalThis.__dekaNodeExpressAdapter(app); }} else {{ globalThis.app = app; }} }} }}",
                     handler_code
-                );
+                ));
 
                 let setup_code =
                     "globalThis.app = undefined; globalThis.Deka = globalThis.Deka || {};";

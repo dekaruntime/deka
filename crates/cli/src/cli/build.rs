@@ -445,8 +445,10 @@ fn is_stdlib_module_spec(spec: &str) -> bool {
 fn resolve_module_file(modules_dir: &Path, spec: &str) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     for alias in module_spec_aliases(spec) {
+        candidates.push(modules_dir.join(format!("{}.ds", alias)));
         candidates.push(modules_dir.join(format!("{}.phpx", alias)));
         candidates.push(modules_dir.join(format!("{}.php", alias)));
+        candidates.push(modules_dir.join(&alias).join("index.ds"));
         candidates.push(modules_dir.join(&alias).join("index.phpx"));
         candidates.push(modules_dir.join(&alias).join("index.php"));
     }
@@ -459,13 +461,15 @@ fn resolve_module_file(modules_dir: &Path, spec: &str) -> Option<PathBuf> {
         && !spec.starts_with("../")
     {
         let scoped = format!("@deka/{}", spec);
+        candidates.push(modules_dir.join(format!("{}.ds", scoped)));
         candidates.push(modules_dir.join(format!("{}.phpx", scoped)));
         candidates.push(modules_dir.join(format!("{}.php", scoped)));
+        candidates.push(modules_dir.join(&scoped).join("index.ds"));
         candidates.push(modules_dir.join(&scoped).join("index.phpx"));
         candidates.push(modules_dir.join(&scoped).join("index.php"));
     }
 
-    if spec.ends_with(".phpx") || spec.ends_with(".php") {
+    if spec.ends_with(".ds") || spec.ends_with(".phpx") || spec.ends_with(".php") {
         candidates.insert(0, modules_dir.join(spec));
     }
 

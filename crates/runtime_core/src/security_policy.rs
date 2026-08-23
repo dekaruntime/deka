@@ -109,10 +109,31 @@ pub struct SecurityCliOverrides {
     pub deny_dynamic: bool,
     pub deny_wasm: bool,
     pub no_prompt: bool,
+    pub allow_read_list: Vec<String>,
+    pub allow_write_list: Vec<String>,
+    pub allow_net_list: Vec<String>,
+    pub allow_env_list: Vec<String>,
+    pub allow_run_list: Vec<String>,
+    pub allow_db_list: Vec<String>,
+    pub allow_wasm_list: Vec<String>,
+    pub deny_read_list: Vec<String>,
+    pub deny_write_list: Vec<String>,
+    pub deny_net_list: Vec<String>,
+    pub deny_env_list: Vec<String>,
+    pub deny_run_list: Vec<String>,
+    pub deny_db_list: Vec<String>,
+    pub deny_wasm_list: Vec<String>,
 }
 
 impl SecurityCliOverrides {
     pub fn from_flags(flags: &HashMap<String, bool>) -> Self {
+        Self::from_flags_and_params(flags, &HashMap::new())
+    }
+
+    pub fn from_flags_and_params(
+        flags: &HashMap<String, bool>,
+        params: &HashMap<String, String>,
+    ) -> Self {
         Self {
             allow_all: flag_set(flags, "--allow-all"),
             allow_read: flag_set(flags, "--allow-read"),
@@ -132,7 +153,41 @@ impl SecurityCliOverrides {
             deny_dynamic: flag_set(flags, "--deny-dynamic"),
             deny_wasm: flag_set(flags, "--deny-wasm"),
             no_prompt: flag_set(flags, "--no-prompt"),
+            allow_read_list: csv_list(params, "--allow-read"),
+            allow_write_list: csv_list(params, "--allow-write"),
+            allow_net_list: csv_list(params, "--allow-net"),
+            allow_env_list: csv_list(params, "--allow-env"),
+            allow_run_list: csv_list(params, "--allow-run"),
+            allow_db_list: csv_list(params, "--allow-db"),
+            allow_wasm_list: csv_list(params, "--allow-wasm"),
+            deny_read_list: csv_list(params, "--deny-read"),
+            deny_write_list: csv_list(params, "--deny-write"),
+            deny_net_list: csv_list(params, "--deny-net"),
+            deny_env_list: csv_list(params, "--deny-env"),
+            deny_run_list: csv_list(params, "--deny-run"),
+            deny_db_list: csv_list(params, "--deny-db"),
+            deny_wasm_list: csv_list(params, "--deny-wasm"),
         }
+    }
+}
+
+fn csv_list(params: &HashMap<String, String>, key: &str) -> Vec<String> {
+    let Some(raw) = params.get(key) else {
+        return Vec::new();
+    };
+    raw.split(',')
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+fn apply_rule(current: RuleList, bare: bool, list: &[String]) -> RuleList {
+    if !list.is_empty() {
+        RuleList::List(list.to_vec())
+    } else if bare {
+        RuleList::All
+    } else {
+        current
     }
 }
 
@@ -151,52 +206,24 @@ pub fn merge_policy_with_cli(
         base.allow.dynamic = true;
     }
 
-    if cli.allow_read {
-        base.allow.read = RuleList::All;
-    }
-    if cli.allow_write {
-        base.allow.write = RuleList::All;
-    }
-    if cli.allow_net {
-        base.allow.net = RuleList::All;
-    }
-    if cli.allow_env {
-        base.allow.env = RuleList::All;
-    }
-    if cli.allow_run {
-        base.allow.run = RuleList::All;
-    }
-    if cli.allow_db {
-        base.allow.db = RuleList::All;
-    }
-    if cli.allow_wasm {
-        base.allow.wasm = RuleList::All;
-    }
+    base.allow.read = apply_rule(base.allow.read, cli.allow_read, &cli.allow_read_list);
+    base.allow.write = apply_rule(base.allow.write, cli.allow_write, &cli.allow_write_list);
+    base.allow.net = apply_rule(base.allow.net, cli.allow_net, &cli.allow_net_list);
+    base.allow.env = apply_rule(base.allow.env, cli.allow_env, &cli.allow_env_list);
+    base.allow.run = apply_rule(base.allow.run, cli.allow_run, &cli.allow_run_list);
+    base.allow.db = apply_rule(base.allow.db, cli.allow_db, &cli.allow_db_list);
+    base.allow.wasm = apply_rule(base.allow.wasm, cli.allow_wasm, &cli.allow_wasm_list);
     if cli.allow_dynamic {
         base.allow.dynamic = true;
     }
 
-    if cli.deny_read {
-        base.deny.read = RuleList::All;
-    }
-    if cli.deny_write {
-        base.deny.write = RuleList::All;
-    }
-    if cli.deny_net {
-        base.deny.net = RuleList::All;
-    }
-    if cli.deny_env {
-        base.deny.env = RuleList::All;
-    }
-    if cli.deny_run {
-        base.deny.run = RuleList::All;
-    }
-    if cli.deny_db {
-        base.deny.db = RuleList::All;
-    }
-    if cli.deny_wasm {
-        base.deny.wasm = RuleList::All;
-    }
+    base.deny.read = apply_rule(base.deny.read, cli.deny_read, &cli.deny_read_list);
+    base.deny.write = apply_rule(base.deny.write, cli.deny_write, &cli.deny_write_list);
+    base.deny.net = apply_rule(base.deny.net, cli.deny_net, &cli.deny_net_list);
+    base.deny.env = apply_rule(base.deny.env, cli.deny_env, &cli.deny_env_list);
+    base.deny.run = apply_rule(base.deny.run, cli.deny_run, &cli.deny_run_list);
+    base.deny.db = apply_rule(base.deny.db, cli.deny_db, &cli.deny_db_list);
+    base.deny.wasm = apply_rule(base.deny.wasm, cli.deny_wasm, &cli.deny_wasm_list);
     if cli.deny_dynamic {
         base.deny.dynamic = true;
     }
@@ -861,6 +888,50 @@ mod tests {
             out.pointer("/security/deny/dynamic")
                 .and_then(|v| v.as_bool()),
             Some(true)
+        );
+    }
+
+    #[test]
+    fn cli_allow_read_list_overrides_manifest() {
+        let parsed = parse_deka_security_policy(&serde_json::json!({
+            "security": { "allow": { "read": ["./old"] } }
+        }));
+        let merged = merge_policy_with_cli(
+            parsed.policy,
+            &SecurityCliOverrides {
+                allow_read: true,
+                allow_read_list: vec!["./src".to_string(), "./data".to_string()],
+                deny_read: true,
+                deny_read_list: vec!["/etc".to_string()],
+                ..SecurityCliOverrides::default()
+            },
+        );
+        assert_eq!(
+            merged.allow.read,
+            RuleList::List(vec!["./src".to_string(), "./data".to_string()])
+        );
+        assert_eq!(
+            merged.deny.read,
+            RuleList::List(vec!["/etc".to_string()])
+        );
+    }
+
+    #[test]
+    fn runtime_merge_applies_explicit_net_list_not_bare_allow_net() {
+        let parsed = parse_deka_security_policy(&serde_json::json!({
+            "security": { "allow": { "net": ["api.example.com"] } }
+        }));
+        let merged = merge_policy_with_cli_manifest_net_env(
+            parsed.policy,
+            &SecurityCliOverrides {
+                allow_net: true,
+                allow_net_list: vec!["api.other.com".to_string()],
+                ..SecurityCliOverrides::default()
+            },
+        );
+        assert_eq!(
+            merged.allow.net,
+            RuleList::List(vec!["api.other.com".to_string()])
         );
     }
 

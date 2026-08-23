@@ -858,6 +858,29 @@ impl<'a> JsSubsetEmitter<'a> {
             Expr::Match {
                 condition, arms, ..
             } => self.emit_match_expr(*condition, arms),
+            Expr::Bridge {
+                kind, action, args, ..
+            } => {
+                let args_js = self.emit_call_args(args)?;
+                let kind_js = String::from_utf8_lossy(kind).replace('"', "");
+                let action_js = String::from_utf8_lossy(action).replace('"', "");
+                // Keep in sync with `host_bridge.rs` CATALOG `is_async`.
+                // Look up the closed-over host via the well-known symbol, not
+                // a user global (`__deka_host` is not on globalThis).
+                let is_async = kind_js == "fs" && action_js == "read_file";
+                let call = format!(
+                    "(globalThis[Symbol.for(\"deka.host.internal\")]||{{}}).host(\"{kind_js}\", \"{action_js}\", [{args_js}])"
+                );
+                if is_async {
+                    Ok(format!(
+                        "(async function(){{var __r=await {call};return __r&&__r.ok===true?Ok(__r.data):Err((__r&&__r.error)||\"host call failed\");}})()"
+                    ))
+                } else {
+                    Ok(format!(
+                        "(function(){{var __r={call};return __r&&__r.ok===true?Ok(__r.data):Err((__r&&__r.error)||\"host call failed\");}})()"
+                    ))
+                }
+            }
             Expr::Unsafe { raw, .. } => {
                 let raw_str = String::from_utf8_lossy(raw);
                 let trimmed = raw_str.trim();
@@ -881,21 +904,30 @@ impl<'a> JsSubsetEmitter<'a> {
                 let restore_globals = if UNSAFE_GLOBALS.is_empty() {
                     String::new()
                 } else {
+                    // Restore from the real global (`__g`), not a free
+                    // `unsafe` identifier — ES modules do not resolve
+                    // `globalThis.unsafe` as a bare binding.
                     format!(
-                        "const {{{}}}=unsafe;",
+                        "const {{{}}}=__g.unsafe||__DekaUnsafeGlobals;",
                         UNSAFE_GLOBALS.join(",")
                     )
                 };
+                // RFD 27: unsafe is JS-mode, not a host back door. Pass the
+                // real globalThis in as `__g` so the inner `const globalThis`
+                // proxy does not TDZ the capture.
+                let hide_host = "const __hk=Symbol.for('deka.host.internal');const Deno=void 0,__bridge=void 0,__bridge_async=void 0,__deka_wasm_call=void 0,__deka_wasm_call_async=void 0,__deka_host=void 0;const __hide=(p)=>p===__hk||p==='Deno'||p==='__bridge'||p==='__bridge_async'||p==='__deka_wasm_call'||p==='__deka_wasm_call_async'||p==='__deka_host';const globalThis=new Proxy(__g,{get(t,p){if(__hide(p))return void 0;return Reflect.get(t,p);},has(t,p){if(__hide(p))return false;return Reflect.has(t,p);},ownKeys(t){return Reflect.ownKeys(t).filter((p)=>!__hide(p));},getOwnPropertyDescriptor(t,p){if(__hide(p))return undefined;return Reflect.getOwnPropertyDescriptor(t,p);}});";
 
                 let inner = if is_statement_block {
                     format!(
-                        "(function(){{{restore}{raw}}})()",
+                        "(function(__g){{{hide}{restore}{raw}}})(globalThis)",
+                        hide = hide_host,
                         restore = restore_globals,
                         raw = raw_str
                     )
                 } else {
                     format!(
-                        "(function(){{{restore}return ({raw});}})()",
+                        "(function(__g){{{hide}{restore}return ({raw});}})(globalThis)",
+                        hide = hide_host,
                         restore = restore_globals,
                         raw = raw_str
                     )

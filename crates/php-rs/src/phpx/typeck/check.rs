@@ -21,6 +21,7 @@ mod context;
 mod enums_match;
 mod expressions;
 mod helpers;
+mod host_bridge;
 mod jsx;
 mod methods;
 mod model;
@@ -38,9 +39,12 @@ pub use model::{
     TypeckParamInfo, TypeckProgramSummary,
 };
 
+#[cfg(test)]
+pub(crate) use host_bridge::package_fs_digest;
+
 pub(in crate::phpx::typeck::check) use context::CheckContext;
 pub(in crate::phpx::typeck::check) use helpers::*;
 pub(in crate::phpx::typeck::check) use model::{
-    FunctionSig, InterfaceInfo, JsxExprValidator, MethodSig, ParamSig,
-    StructFieldResolution, TypeAliasInfo, TypeParamSig,
+    FunctionSig, InterfaceInfo, JsxExprValidator, MethodSig, ParamSig, StructFieldResolution,
+    TypeAliasInfo, TypeParamSig,
 };

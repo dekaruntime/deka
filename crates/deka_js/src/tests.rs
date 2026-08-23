@@ -326,6 +326,64 @@ fn ds_unsafe_block_returns_result_iife() {
         js.contains("const Ok = Result.Ok") && js.contains("const Err = Result.Err"),
         "bare Result constructors must be aliased:\n{js}"
     );
+    assert!(
+        js.contains("__deka_host=void 0") && js.contains("__bridge=void 0"),
+        "unsafe must hide the host dispatcher:\n{js}"
+    );
+    assert!(
+        js.contains("__g.unsafe")
+            && js.contains("(function(__g){")
+            && js.contains("})(globalThis)")
+            && !js.contains("}=unsafe;"),
+        "unsafe must restore platform APIs from the real global, not a bare `unsafe` binding:\n{js}"
+    );
+}
+
+#[test]
+fn ds_host_import_emits_native_runtime() {
+    let source = r#"
+import { runtime, select } from "host"
+const label = select({ native: "cli", browser: "wasm" })
+console.log(runtime)
+"#;
+    let arena = Bump::new();
+    let mut parser = Parser::new_with_mode(Lexer::new(source.as_bytes()), &arena, ParserMode::Ds);
+    let program = parser.parse_program();
+    assert!(program.errors.is_empty(), "parse errors: {:?}", program.errors);
+    let mut meta = parse_source_module_meta(source);
+    meta.is_ds = true;
+    let js = emit_js_from_ast(&program, source.as_bytes(), meta).expect("from host should compile");
+    assert!(
+        js.contains("HostRuntime.Native") && js.contains("function select("),
+        "expected injected host module, got:\n{js}"
+    );
+    assert!(
+        !js.contains("from 'host'"),
+        "host must not emit a real import:\n{js}"
+    );
+}
+
+#[test]
+fn ds_bridge_crypto_digest_emits_host_call() {
+    let js = ds_to_js("const x = bridge crypto.digest(\"sha256\", data)")
+        .expect("bridge digest should emit");
+    assert!(
+        js.contains("Symbol.for(\"deka.host.internal\")")
+            && js.contains(".host(\"crypto\", \"digest\""),
+        "expected digest host call via internal symbol, got:\n{js}"
+    );
+}
+
+#[test]
+fn ds_bridge_async_fs_emits_await() {
+    let js = ds_to_js("const x = await bridge fs.read_file(\"/tmp/a\")")
+        .expect("async bridge should emit");
+    assert!(
+        js.contains("Symbol.for(\"deka.host.internal\")")
+            && js.contains(".host(\"fs\", \"read_file\"")
+            && js.contains("await "),
+        "expected awaited fs host call via internal symbol, got:\n{js}"
+    );
 }
 
 #[test]

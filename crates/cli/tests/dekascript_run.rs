@@ -14,8 +14,12 @@ fn cli_bin() -> &'static str {
 const EMPTY_DEKA_LOCK: &str = r#"{"lockfileVersion":1,"packages":{}}"#;
 
 fn run_dekascript(name: &str, source: &str, expected_output: &str) {
+    run_dekascript_with_manifest(name, "{}\n", source, expected_output);
+}
+
+fn run_dekascript_with_manifest(name: &str, manifest: &str, source: &str, expected_output: &str) {
     let project = tempfile::tempdir().expect("create DekaScript project");
-    fs::write(project.path().join("deka.json"), "{}\n").expect("write project manifest");
+    fs::write(project.path().join("deka.json"), manifest).expect("write project manifest");
     fs::write(project.path().join("deka.lock"), EMPTY_DEKA_LOCK).expect("write project lockfile");
     let entry = project.path().join(format!("{name}.ds"));
     fs::write(&entry, source).expect("write DekaScript entry");
@@ -373,5 +377,228 @@ fn run_rejects_absolute_ds_symlink_to_phpx_before_execution() {
     assert!(
         !combined.contains("must-not-execute"),
         "PHPX symlink target reached execution: {combined}"
+    );
+}
+
+#[test]
+fn run_executes_workspace_crypto_bridge() {
+    run_dekascript_with_manifest(
+        "crypto_bridge",
+        r#"{ "name": "@deka/crypto", "host": { "kinds": ["crypto"] } }"#,
+        r#"
+export fn random_bytes(len: number) {
+  return bridge crypto.random_bytes(len)
+}
+export fn digest(algorithm: string, data: bytes) {
+  return bridge crypto.digest(algorithm, data)
+}
+export fn hmac(algorithm: string, key: bytes, data: bytes) {
+  return bridge crypto.hmac(algorithm, key, data)
+}
+export fn secure_compare(a: bytes, b: bytes) {
+  return bridge crypto.secure_compare(a, b)
+}
+fn go() {
+  const r = random_bytes(16)
+  print(match (r) {
+    Ok(v) => match (digest("sha256", v)) {
+      Ok(h) => match (hmac("sha256", v, h)) {
+        Ok(mac) => match (secure_compare(mac, mac)) {
+          Ok(eq) => "ok",
+          Err(e) => "fail-compare"
+        },
+        Err(e) => "fail-hmac"
+      },
+      Err(e) => "fail-digest"
+    },
+    Err(e) => "fail-random"
+  })
+}
+go()
+"#,
+        "ok",
+    );
+}
+
+#[test]
+fn run_executes_jwt_hs256_on_crypto_host_ops() {
+    run_dekascript_with_manifest(
+        "jwt_hs256",
+        r#"{ "name": "@deka/crypto", "host": { "kinds": ["crypto"] } }"#,
+        r#"
+export fn hmac(algorithm: string, key: bytes, data: bytes) {
+  return bridge crypto.hmac(algorithm, key, data)
+}
+export fn secure_compare(a: bytes, b: bytes) {
+  return bridge crypto.secure_compare(a, b)
+}
+
+fn utf8(value: string): bytes {
+  let encoded = unsafe { new TextEncoder().encode(value) }
+  return match (encoded) {
+    Ok(buf) => buf,
+    Err(err) => utf8("")
+  }
+}
+
+fn from_utf8(value: bytes): string {
+  let decoded = unsafe { new TextDecoder("utf-8", { fatal: false }).decode(value) }
+  return match (decoded) {
+    Ok(text) => text,
+    Err(err) => ""
+  }
+}
+
+fn b64url_encode(data: bytes): string {
+  let r = unsafe {
+    var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    var s = "";
+    var i = 0;
+    var n = data.byteLength;
+    for (i = 0; i < n; i += 3) {
+      var b0 = data[i];
+      var b1 = i + 1 < n ? data[i + 1] : 0;
+      var b2 = i + 2 < n ? data[i + 2] : 0;
+      var triple = (b0 << 16) + (b1 << 8) + b2;
+      s += alphabet[(triple >> 18) & 63];
+      s += alphabet[(triple >> 12) & 63];
+      s += i + 1 < n ? alphabet[(triple >> 6) & 63] : "=";
+      s += i + 2 < n ? alphabet[triple & 63] : "=";
+    }
+    return s.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  }
+  return match (r) {
+    Ok(v) => v,
+    Err(e) => ""
+  }
+}
+
+fn b64url_decode(value: string): bytes {
+  let r = unsafe {
+    var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    var s = String(value).replace(/-/g, "+").replace(/_/g, "/");
+    while (s.length % 4 !== 0) s += "=";
+    var clean = s.replace(/=+$/, "");
+    var n = clean.length;
+    var out = [];
+    var i = 0;
+    for (i = 0; i < n; i += 4) {
+      var c0 = alphabet.indexOf(clean[i]);
+      var c1 = alphabet.indexOf(clean[i + 1]);
+      var c2 = i + 2 < n ? alphabet.indexOf(clean[i + 2]) : 0;
+      var c3 = i + 3 < n ? alphabet.indexOf(clean[i + 3]) : 0;
+      var triple = (c0 << 18) + (c1 << 12) + (c2 << 6) + c3;
+      out.push((triple >> 16) & 255);
+      if (i + 2 < n) out.push((triple >> 8) & 255);
+      if (i + 3 < n) out.push(triple & 255);
+    }
+    return new Uint8Array(out);
+  }
+  return match (r) {
+    Ok(buf) => buf,
+    Err(err) => utf8("")
+  }
+}
+
+export fn sign_hs256(payload_json: string, secret: bytes) {
+  const header_json = '{"alg":"HS256","typ":"JWT"}'
+  const input = b64url_encode(utf8(header_json)) + "." + b64url_encode(utf8(payload_json))
+  return match (hmac("sha256", secret, utf8(input))) {
+    Ok(sig) => Ok(input + "." + b64url_encode(sig)),
+    Err(e) => Err(e)
+  }
+}
+
+fn jwt_parts(token: string) {
+  return unsafe {
+    var p = String(token).split(".");
+    if (p.length !== 3) throw new Error("invalid jwt format");
+    return { header: p[0], payload: p[1], signature: p[2], input: p[0] + "." + p[1] };
+  }
+}
+
+fn header_alg(header_b64: string) {
+  const json = from_utf8(b64url_decode(header_b64))
+  return unsafe { String(JSON.parse(json).alg || "") }
+}
+
+fn require_hs256(alg: string) {
+  if (alg == "HS256") {
+    return Ok(true)
+  }
+  return Err("unsupported jwt alg")
+}
+
+fn require_signature(eq: boolean) {
+  if (eq) {
+    return Ok(true)
+  }
+  return Err("invalid jwt signature")
+}
+
+export fn verify_hs256(token: string, secret: bytes) {
+  return match (jwt_parts(token)) {
+    Err(e) => Err("invalid jwt format"),
+    Ok(p) => match (header_alg(p.header)) {
+      Err(e) => Err("invalid jwt header"),
+      Ok(alg) => match (require_hs256(alg)) {
+        Err(e) => Err(e),
+        Ok(_) => match (hmac("sha256", secret, utf8(p.input))) {
+          Err(e) => Err(e),
+          Ok(expected) => match (secure_compare(expected, b64url_decode(p.signature))) {
+            Err(e) => Err(e),
+            Ok(eq) => match (require_signature(eq)) {
+              Err(e) => Err(e),
+              Ok(_) => Ok(from_utf8(b64url_decode(p.payload)))
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+fn go() {
+  let secret = utf8("secret")
+  const payload = '{"sub":"1234567890","name":"John Doe","iat":1516239022}'
+  const expected = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.XbPfbIHMI6arZ3Y922BhjWgQzWXcXNrz0ogtVhfEd2o"
+  const signed = match (sign_hs256(payload, secret)) {
+    Ok(v) => v,
+    Err(e) => "fail-sign"
+  }
+  const verified = match (verify_hs256(signed, secret)) {
+    Ok(v) => v,
+    Err(e) => "fail-verify"
+  }
+  const none_header = b64url_encode(utf8('{"alg":"none"}'))
+  const none_payload = b64url_encode(utf8('{"sub":"1"}'))
+  const none_tok = none_header + "." + none_payload + "."
+  const none_rejected = match (verify_hs256(none_tok, secret)) {
+    Ok(v) => false,
+    Err(e) => true
+  }
+  const tampered = match (unsafe { signed.slice(0, -1) + (signed.slice(-1) === "o" ? "x" : "o") }) {
+    Ok(v) => v,
+    Err(e) => signed
+  }
+  const tamper_rejected = match (verify_hs256(tampered, secret)) {
+    Ok(v) => false,
+    Err(e) => true
+  }
+  if (signed != expected) {
+    print("fail-vector")
+  } else if (verified != payload) {
+    print("fail-verify")
+  } else if (!none_rejected) {
+    print("fail-none")
+  } else if (!tamper_rejected) {
+    print("fail-tamper")
+  } else {
+    print("ok")
+  }
+}
+go()
+"#,
+        "ok",
     );
 }

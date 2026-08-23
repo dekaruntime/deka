@@ -18,6 +18,7 @@ pub fn resolve_security_policy(context: &Context) -> Result<ResolvedSecurityPoli
     resolve_security_policy_for_root(
         &context.handler.resolved.directory,
         &context.args.flags,
+        &context.args.params,
         ProjectKind::from_mode(&context.handler.resolved.mode),
         context.args.flags.contains_key("--dev"),
     )
@@ -26,6 +27,7 @@ pub fn resolve_security_policy(context: &Context) -> Result<ResolvedSecurityPoli
 pub fn resolve_security_policy_for_root(
     root: &Path,
     flags: &std::collections::HashMap<String, bool>,
+    params: &std::collections::HashMap<String, String>,
     project_kind: ProjectKind,
     dev: bool,
 ) -> Result<ResolvedSecurityPolicy, String> {
@@ -65,7 +67,7 @@ pub fn resolve_security_policy_for_root(
         .map(|diag| format_warning(diag, project_kind))
         .collect::<Vec<_>>();
 
-    let overrides = SecurityCliOverrides::from_flags(flags);
+    let overrides = SecurityCliOverrides::from_flags_and_params(flags, params);
     let mut policy = parsed.policy;
     if dev {
         apply_dev_defaults(&mut policy, root);
@@ -95,8 +97,10 @@ pub fn resolve_security_policy_for_root(
 pub fn install_platform_security_for_root(
     root: &Path,
     flags: &std::collections::HashMap<String, bool>,
+    params: &std::collections::HashMap<String, String>,
 ) -> Result<(), String> {
-    let resolved_security = resolve_security_policy_for_root(root, flags, ProjectKind::Php, false)?;
+    let resolved_security =
+        resolve_security_policy_for_root(root, flags, params, ProjectKind::Php, false)?;
     for warning in resolved_security.warnings {
         stdio::log("security", &format!("warning: {}", warning));
     }

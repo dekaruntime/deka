@@ -8,6 +8,9 @@ use crate::phpx::typeck::{
     summarize_program_with_path,
 };
 use std::collections::HashMap;
+use std::sync::Mutex;
+
+static HOST_GRANT_ENV: Mutex<()> = Mutex::new(());
 
 fn normalize_phpx_snippet(code: &str) -> &str {
     let trimmed = code.trim_start();
@@ -1583,5 +1586,284 @@ fn ds_cross_module_import_rejects_missing_export() {
         errors.iter().any(|e| e.message.contains("is not exported by")),
         "expected 'not exported' error, got: {:?}",
         errors
+    );
+}
+
+#[test]
+fn bridge_rejected_without_host_grant() {
+    let code = "fn go() { bridge crypto.random_bytes(32); }";
+    let err = check_ds(code).expect_err("app code must not call bridge");
+    assert!(
+        err.contains("host-granted stdlib package"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn bridge_allowed_in_workspace_stdlib_package() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("deka.json"),
+        r#"{ "name": "crypto", "host": { "kinds": ["crypto"] } }"#,
+    )
+    .unwrap();
+    let src = dir.path().join("index.ds");
+    let code = "fn go() { bridge crypto.random_bytes(32); }\n";
+    std::fs::write(&src, code).unwrap();
+    assert!(
+        check_with_path(code, src.to_str().unwrap()).is_ok(),
+        "workspace crypto package should be allowed to bridge crypto.*"
+    );
+}
+
+#[test]
+fn bridge_rejects_kind_not_on_workspace_grant() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("deka.json"),
+        r#"{ "name": "crypto", "host": { "kinds": ["crypto"] } }"#,
+    )
+    .unwrap();
+    let src = dir.path().join("index.ds");
+    let code = "fn go() { bridge fs.read_file(\"a\"); }\n";
+    std::fs::write(&src, code).unwrap();
+    let err = check_with_path(code, src.to_str().unwrap()).expect_err("fs is not granted");
+    assert!(
+        err.contains("does not include kind fs"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn app_deka_json_cannot_declare_host_kinds() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("deka.json"),
+        r#"{ "name": "my-app", "host": { "kinds": ["crypto"] } }"#,
+    )
+    .unwrap();
+    let src = dir.path().join("main.ds");
+    let code = "fn go() { bridge crypto.random_bytes(32); }\n";
+    std::fs::write(&src, code).unwrap();
+    let err = check_with_path(code, src.to_str().unwrap()).expect_err("app grant is illegal");
+    assert!(
+        err.contains("official stdlib package"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn bridge_allowed_for_installed_package_with_digest_grant() {
+    let app = tempfile::tempdir().unwrap();
+    std::fs::write(app.path().join("deka.json"), r#"{ "name": "my-app" }"#).unwrap();
+    let pkg = app.path().join("ds_modules").join("crypto");
+    std::fs::create_dir_all(&pkg).unwrap();
+    std::fs::write(
+        pkg.join("deka.json"),
+        r#"{ "name": "crypto", "host": { "kinds": ["crypto"] } }"#,
+    )
+    .unwrap();
+    let src = pkg.join("index.ds");
+    let code = "fn go() { bridge crypto.random_bytes(32); }\n";
+    std::fs::write(&src, code).unwrap();
+
+    let digest = crate::phpx::typeck::check::package_fs_digest(&pkg).expect("digest");
+    let grants = format!(r#"[{{"digest":"{digest}","kinds":["crypto"]}}]"#);
+    let _guard = HOST_GRANT_ENV.lock().expect("grant env lock");
+    // SAFETY: test-only process env for grant lookup; restored below.
+    let prev = std::env::var("DEKA_HOST_GRANTS").ok();
+    unsafe {
+        std::env::set_var("DEKA_HOST_GRANTS", &grants);
+    }
+    let result = check_with_path(code, src.to_str().unwrap());
+    unsafe {
+        match prev {
+            Some(value) => std::env::set_var("DEKA_HOST_GRANTS", value),
+            None => std::env::remove_var("DEKA_HOST_GRANTS"),
+        }
+    }
+    assert!(
+        result.is_ok(),
+        "installed crypto with matching digest grant should typecheck: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn bridge_rejects_installed_package_without_digest_grant() {
+    let app = tempfile::tempdir().unwrap();
+    std::fs::write(app.path().join("deka.json"), r#"{ "name": "my-app" }"#).unwrap();
+    let pkg = app.path().join("ds_modules").join("crypto");
+    std::fs::create_dir_all(&pkg).unwrap();
+    std::fs::write(
+        pkg.join("deka.json"),
+        r#"{ "name": "crypto", "host": { "kinds": ["crypto"] } }"#,
+    )
+    .unwrap();
+    let src = pkg.join("index.ds");
+    let code = "fn go() { bridge crypto.random_bytes(32); }\n";
+    std::fs::write(&src, code).unwrap();
+    let _guard = HOST_GRANT_ENV.lock().expect("grant env lock");
+    let prev = std::env::var("DEKA_HOST_GRANTS").ok();
+    unsafe {
+        std::env::remove_var("DEKA_HOST_GRANTS");
+    }
+    let err = check_with_path(code, src.to_str().unwrap())
+        .expect_err("installed package without grant table entry");
+    unsafe {
+        match prev {
+            Some(value) => std::env::set_var("DEKA_HOST_GRANTS", value),
+            None => {}
+        }
+    }
+    assert!(
+        err.contains("digest does not match a host grant"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn bridge_allowed_for_installed_package_with_host_grants_file() {
+    let app = tempfile::tempdir().unwrap();
+    std::fs::write(app.path().join("deka.json"), r#"{ "name": "my-app" }"#).unwrap();
+    let pkg = app.path().join("ds_modules").join("crypto");
+    std::fs::create_dir_all(&pkg).unwrap();
+    std::fs::write(
+        pkg.join("deka.json"),
+        r#"{ "name": "crypto", "host": { "kinds": ["crypto"] } }"#,
+    )
+    .unwrap();
+    let src = pkg.join("index.ds");
+    let code = "fn go() { bridge crypto.random_bytes(32); }\n";
+    std::fs::write(&src, code).unwrap();
+
+    let digest = crate::phpx::typeck::check::package_fs_digest(&pkg).expect("digest");
+    std::fs::write(
+        app.path().join("host-grants.json"),
+        format!(r#"[{{"digest":"{digest}","kinds":["crypto"]}}]"#),
+    )
+    .unwrap();
+
+    let _guard = HOST_GRANT_ENV.lock().expect("grant env lock");
+    let prev = std::env::var("DEKA_HOST_GRANTS").ok();
+    unsafe {
+        std::env::remove_var("DEKA_HOST_GRANTS");
+    }
+    let result = check_with_path(code, src.to_str().unwrap());
+    unsafe {
+        match prev {
+            Some(value) => std::env::set_var("DEKA_HOST_GRANTS", value),
+            None => std::env::remove_var("DEKA_HOST_GRANTS"),
+        }
+    }
+    assert!(
+        result.is_ok(),
+        "host-grants.json next to the app should grant crypto: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn bridge_crypto_digest_hmac_secure_compare_typecheck() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("deka.json"),
+        r#"{ "name": "@deka/crypto", "host": { "kinds": ["crypto"] } }"#,
+    )
+    .unwrap();
+    let src = dir.path().join("index.ds");
+    let code = r#"
+fn go(data: bytes, key: bytes) {
+  bridge crypto.digest("sha256", data)
+  bridge crypto.hmac("sha256", key, data)
+  bridge crypto.secure_compare(data, key)
+}
+"#;
+    std::fs::write(&src, code).unwrap();
+    assert!(
+        check_with_path(code, src.to_str().unwrap()).is_ok(),
+        "workspace @deka/crypto should typecheck digest/hmac/secure_compare: {:?}",
+        check_with_path(code, src.to_str().unwrap()).err()
+    );
+}
+
+#[test]
+fn bridge_crypto_digest_rejects_string_data() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("deka.json"),
+        r#"{ "name": "crypto", "host": { "kinds": ["crypto"] } }"#,
+    )
+    .unwrap();
+    let src = dir.path().join("index.ds");
+    let code = "fn go() { bridge crypto.digest(\"sha256\", \"not-bytes\"); }\n";
+    std::fs::write(&src, code).unwrap();
+    let err = check_with_path(code, src.to_str().unwrap()).expect_err("string is not bytes");
+    assert!(
+        err.contains("expected bytes"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn bridge_unknown_crypto_action_is_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("deka.json"),
+        r#"{ "name": "crypto", "host": { "kinds": ["crypto"] } }"#,
+    )
+    .unwrap();
+    let src = dir.path().join("index.ds");
+    let code = "fn go() { bridge crypto.sign(\"x\"); }\n";
+    std::fs::write(&src, code).unwrap();
+    let err = check_with_path(code, src.to_str().unwrap()).expect_err("sign is not catalogued");
+    assert!(
+        err.contains("unknown bridge action"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn host_module_runtime_import_typechecks() {
+    let code = r#"
+import { runtime } from "host"
+fn go() {
+  runtime
+}
+"#;
+    assert!(
+        check_ds(code).is_ok(),
+        "from \"host\" import {{ runtime }} should typecheck: {:?}",
+        check_ds(code).err()
+    );
+}
+
+#[test]
+fn host_module_unknown_export_errors() {
+    let code = r#"
+import { not_a_thing } from "host"
+"#;
+    let err = check_ds(code).expect_err("unknown host export");
+    assert!(
+        err.contains("not exported by 'host'"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn host_module_runtime_match_typechecks() {
+    let code = r#"
+import { runtime } from "host"
+fn go() {
+  match (runtime) {
+    HostRuntime.Browser => 1,
+    HostRuntime.Native => 2,
+  }
+}
+"#;
+    assert!(
+        check_ds(code).is_ok(),
+        "match on host runtime should typecheck: {:?}",
+        check_ds(code).err()
     );
 }

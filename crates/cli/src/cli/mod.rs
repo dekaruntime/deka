@@ -81,7 +81,7 @@ pub fn register_global_flags(registry: &mut Registry) {
     registry.add_flag(FlagSpec {
         name: "--allow-read",
         aliases: &[],
-        description: "allow filesystem reads",
+        description: "allow filesystem reads (`--allow-read=./src,./data`)",
     });
     registry.add_flag(FlagSpec {
         name: "--allow-write",
@@ -126,7 +126,7 @@ pub fn register_global_flags(registry: &mut Registry) {
     registry.add_flag(FlagSpec {
         name: "--deny-read",
         aliases: &[],
-        description: "deny filesystem reads",
+        description: "deny filesystem reads (`--deny-read=/etc`)",
     });
     registry.add_flag(FlagSpec {
         name: "--deny-write",

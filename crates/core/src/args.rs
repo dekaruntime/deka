@@ -73,6 +73,13 @@ impl Args {
         let mut iter = args.iter().enumerate();
         while let Some((_i, arg)) = iter.next() {
             let arg_str = arg.as_str();
+            if let Some((name, value)) = arg_str.split_once('=') {
+                if flag_tokens.contains(name) {
+                    flags.insert(name.to_string(), true);
+                    params.insert(name.to_string(), value.to_string());
+                    continue;
+                }
+            }
             if flag_tokens.contains(arg_str) {
                 flags.insert(arg.clone(), true);
                 continue;
@@ -190,4 +197,73 @@ fn levenshtein(a: &str, b: &str) -> usize {
     }
 
     prev[b_len]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::registry::{FlagSpec, Registry};
+
+    fn security_registry() -> Registry {
+        let mut registry = Registry::new();
+        registry.add_flag(FlagSpec {
+            name: "--allow-read",
+            aliases: &[],
+            description: "allow filesystem reads",
+        });
+        registry.add_flag(FlagSpec {
+            name: "--deny-read",
+            aliases: &[],
+            description: "deny filesystem reads",
+        });
+        registry.add_flag(FlagSpec {
+            name: "--allow-net",
+            aliases: &[],
+            description: "allow network",
+        });
+        registry.add_flag(FlagSpec {
+            name: "--verbose",
+            aliases: &[],
+            description: "verbose",
+        });
+        registry
+    }
+
+    #[test]
+    fn parses_bare_allow_read_flag() {
+        let parsed = Args::collect(
+            vec!["--allow-read".to_string()],
+            &security_registry(),
+        );
+        assert!(parsed.errors.is_empty());
+        assert_eq!(parsed.args.flags.get("--allow-read"), Some(&true));
+        assert!(parsed.args.params.get("--allow-read").is_none());
+    }
+
+    #[test]
+    fn parses_allow_read_equals_list() {
+        let parsed = Args::collect(
+            vec!["--allow-read=./src,./data".to_string()],
+            &security_registry(),
+        );
+        assert!(parsed.errors.is_empty(), "{:?}", parsed.errors);
+        assert_eq!(parsed.args.flags.get("--allow-read"), Some(&true));
+        assert_eq!(
+            parsed.args.params.get("--allow-read").map(String::as_str),
+            Some("./src,./data")
+        );
+    }
+
+    #[test]
+    fn parses_deny_read_equals_path() {
+        let parsed = Args::collect(
+            vec!["--deny-read=/etc".to_string()],
+            &security_registry(),
+        );
+        assert!(parsed.errors.is_empty());
+        assert_eq!(
+            parsed.args.params.get("--deny-read").map(String::as_str),
+            Some("/etc")
+        );
+    }
 }
