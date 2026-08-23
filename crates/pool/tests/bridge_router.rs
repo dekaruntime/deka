@@ -145,7 +145,9 @@ globalThis.app = function(req) {
 
 #[tokio::test]
 async fn net_bridge_connects_through_isolate_as_entry_pairs() {
-    let _env_lock = NET_ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _env_lock = NET_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     const CONNECTS: usize = 24;
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind TCP listener");
     listener
@@ -227,7 +229,9 @@ globalThis.app = function(req) {{
 /// pool creates the two independent user isolates used in production.
 #[tokio::test]
 async fn net_bridge_rejects_foreign_handles_across_tenant_isolates() {
-    let _env_lock = NET_ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _env_lock = NET_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind TCP listener");
     let port = listener.local_addr().expect("listener address").port();
     let server = std::thread::spawn(move || {
@@ -518,16 +522,12 @@ globalThis.app = function(req) {
 }
 
 #[tokio::test]
-#[ignore = "blocked: source bug — pool bridge router missing crypto/bcrypt_verify branch in routeHostCall (isolate_pool.rs)"]
 async fn bridge_crypto_bcrypt_verify_resolves_to_op() {
-    // This test verifies that bridge('crypto', 'bcrypt_verify', ...) routes to
-    // op_php_bcrypt_verify. Currently the JS routeHostCall only handles
-    // random_bytes, aes_256_gcm_encrypt, and aes_256_gcm_decrypt; bcrypt_verify
-    // falls through to "unknown crypto action".
-    let pool = test_pool();
+    let pool = net_test_pool();
     let code = r#"
 globalThis.app = function(req) {
-  const result = globalThis.__bridge('crypto', 'bcrypt_verify', {password: 'pass', hash: 'hash'});
+  const hash = "$2b$10$DqpfeHg1RhyMilY/GTQvgeahRja6yf5aL8dYoH6EwABQY.CZ.pnNu";
+  const result = Object.fromEntries(globalThis.__bridge('crypto', 'bcrypt_verify', {password: 'password123', hash}));
   return { status: 200, headers: {}, body: JSON.stringify(result) };
 };
 "#;
@@ -535,10 +535,96 @@ globalThis.app = function(req) {
         .execute(HandlerKey::new("bridge_bcrypt"), test_request(code))
         .await;
     let response = res.expect("pool execution should succeed");
-    assert!(response.success);
+    assert!(response.success, "execution failed: {:?}", response.error);
     let result = response.result.expect("should have result");
     let body = result.get("body").and_then(|v| v.as_str()).expect("body");
     let parsed: serde_json::Value = serde_json::from_str(body).unwrap();
-    // Once the source bug is fixed, this should be ok:true with valid:true/false.
     assert_eq!(parsed.get("ok").and_then(|v| v.as_bool()), Some(true));
+    assert_eq!(parsed.get("valid").and_then(|v| v.as_bool()), Some(true));
+}
+
+#[tokio::test]
+async fn deka_host_digest_sha256_empty_known_vector() {
+    let pool = net_test_pool();
+    let code = r#"
+globalThis.app = function(req) {
+  const result = globalThis.__deka_host('crypto', 'digest', ['sha256', new Uint8Array()]);
+  const data = result && result.data ? Array.from(result.data) : [];
+  return { status: 200, headers: {}, body: JSON.stringify({ ok: result.ok, error: result.error, len: data.length, b0: data[0], b1: data[1] }) };
+};
+"#;
+    let res = pool
+        .execute(HandlerKey::new("deka_host_digest"), test_request(code))
+        .await;
+    let response = res.expect("pool execution should succeed");
+    assert!(response.success, "execution failed: {:?}", response.error);
+    let result = response.result.expect("should have result");
+    let body = result.get("body").and_then(|v| v.as_str()).expect("body");
+    let parsed: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(parsed["ok"], true, "body={body}");
+    assert_eq!(parsed["len"], 32);
+    assert_eq!(parsed["b0"], 0xe3);
+    assert_eq!(parsed["b1"], 0xb0);
+}
+
+#[tokio::test]
+async fn deka_host_catalog_denies_php_only_kinds() {
+    let pool = net_test_pool();
+    let code = r#"
+globalThis.app = function(req) {
+  const result = globalThis.__deka_host('db', 'query', []);
+  return { status: 200, headers: {}, body: JSON.stringify(result) };
+};
+"#;
+    let res = pool
+        .execute(HandlerKey::new("deka_host_deny_db"), test_request(code))
+        .await;
+    let response = res.expect("pool execution should succeed");
+    assert!(response.success, "execution failed: {:?}", response.error);
+    let result = response.result.expect("should have result");
+    let body = result.get("body").and_then(|v| v.as_str()).expect("body");
+    let parsed: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(parsed.get("ok").and_then(|v| v.as_bool()), Some(false));
+    assert!(
+        parsed
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .contains("unknown bridge action"),
+        "unexpected error: {body}"
+    );
+}
+
+#[tokio::test]
+async fn deka_host_secure_compare_and_hmac() {
+    let pool = net_test_pool();
+    let code = r#"
+globalThis.app = function(req) {
+  const a = new Uint8Array([1, 2, 3]);
+  const b = new Uint8Array([1, 2, 3]);
+  const c = new Uint8Array([1, 2, 4]);
+  const same = globalThis.__deka_host('crypto', 'secure_compare', [a, b]);
+  const diff = globalThis.__deka_host('crypto', 'secure_compare', [a, c]);
+  const mac = globalThis.__deka_host('crypto', 'hmac', ['sha256', a, b]);
+  return { status: 200, headers: {}, body: JSON.stringify({
+    same: same.data === true,
+    diff: diff.data === false,
+    macOk: mac.ok === true && mac.data && mac.data.length === 32
+  }) };
+};
+"#;
+    let res = pool
+        .execute(
+            HandlerKey::new("deka_host_hmac_compare"),
+            test_request(code),
+        )
+        .await;
+    let response = res.expect("pool execution should succeed");
+    assert!(response.success, "execution failed: {:?}", response.error);
+    let result = response.result.expect("should have result");
+    let body = result.get("body").and_then(|v| v.as_str()).expect("body");
+    let parsed: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(parsed["same"], true, "body={body}");
+    assert_eq!(parsed["diff"], true, "body={body}");
+    assert_eq!(parsed["macOk"], true, "body={body}");
 }

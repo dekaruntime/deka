@@ -53,6 +53,21 @@ pub const OPERATION_CAPABILITY_MATRIX: &[OperationCapability] = &[
         notes: "Entropy/crypto utility op",
     },
     OperationCapability {
+        op_id: "php.op_php_digest",
+        capability: Capability::Dynamic,
+        notes: "Pure hash (SHA-2/SHA-3/BLAKE3); not I/O",
+    },
+    OperationCapability {
+        op_id: "php.op_php_hmac",
+        capability: Capability::Dynamic,
+        notes: "HMAC-SHA-2; not I/O",
+    },
+    OperationCapability {
+        op_id: "php.op_php_secure_compare",
+        capability: Capability::Dynamic,
+        notes: "Constant-time equality; not I/O",
+    },
+    OperationCapability {
         op_id: "php.op_php_read_env",
         capability: Capability::Env,
         notes: "Read process environment map",
@@ -312,6 +327,9 @@ pub const KNOWN_RUNTIME_OPERATION_IDS: &[&str] = &[
     "php.op_php_mkdirs",
     "php.op_php_sha256",
     "php.op_php_random_bytes",
+    "php.op_php_digest",
+    "php.op_php_hmac",
+    "php.op_php_secure_compare",
     "php.op_php_read_env",
     "php.op_php_db_call_proto",
     "php.op_php_db_proto_encode",

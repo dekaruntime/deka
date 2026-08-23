@@ -357,6 +357,26 @@ console.log(runtime)
 }
 
 #[test]
+fn ds_bridge_crypto_digest_emits_host_call() {
+    let js = ds_to_js("const x = bridge crypto.digest(\"sha256\", data)")
+        .expect("bridge digest should emit");
+    assert!(
+        js.contains("__deka_host(\"crypto\", \"digest\""),
+        "expected digest host call, got:\n{js}"
+    );
+}
+
+#[test]
+fn ds_bridge_async_fs_emits_await() {
+    let js = ds_to_js("const x = await bridge fs.read_file(\"/tmp/a\")")
+        .expect("async bridge should emit");
+    assert!(
+        js.contains("await __deka_host(\"fs\", \"read_file\""),
+        "expected awaited fs host call, got:\n{js}"
+    );
+}
+
+#[test]
 fn ds_named_enum_payload_and_match() {
     let source = r#"
         enum Outcome<T, E> {

@@ -494,6 +494,17 @@ impl WorkerThread {
                         }
                         if (kind === 'crypto') {
                             const act = String(action || '');
+                            const toBytes = (v) => {
+                                if (v instanceof Uint8Array) return v;
+                                if (typeof v === 'string') {
+                                    return (typeof TextEncoder !== 'undefined')
+                                        ? new TextEncoder().encode(v)
+                                        : Uint8Array.from(Array.from(v).map((ch) => ch.charCodeAt(0) & 0xff));
+                                }
+                                if (Array.isArray(v)) return new Uint8Array(v);
+                                if (v && typeof v.length === 'number') return new Uint8Array(Array.from(v));
+                                return null;
+                            };
                             if (act === 'random_bytes') {
                                 const req = payload || {};
                                 const n = Number(req.length ?? req.len ?? 0);
@@ -557,6 +568,65 @@ impl WorkerThread {
                                 }
                                 const raw = ops.op_php_bcrypt_verify(password, hash);
                                 return Object.entries(raw || { ok: false, error: 'bcrypt_verify_failed' });
+                            }
+                            if (act === 'digest') {
+                                const req = payload || {};
+                                const algorithm = String(req.algorithm ?? req.alg ?? '');
+                                const data = toBytes(req.data);
+                                if (data === null) {
+                                    return { ok: false, error: 'data must be bytes' };
+                                }
+                                if (typeof ops.op_php_digest !== 'function') {
+                                    return { ok: false, error: 'op_php_digest unavailable' };
+                                }
+                                const raw = ops.op_php_digest(algorithm, data);
+                                const okVal = raw && raw.ok === true;
+                                if (okVal) {
+                                    const arr = raw.data instanceof Uint8Array ? Array.from(raw.data) : (Array.isArray(raw.data) ? raw.data : Array.from(raw.data || []));
+                                    return Object.entries({ ok: true, data: arr });
+                                }
+                                return Object.entries({ ok: false, error: (raw && raw.error) || 'digest_failed' });
+                            }
+                            if (act === 'hmac') {
+                                const req = payload || {};
+                                const algorithm = String(req.algorithm ?? req.alg ?? '');
+                                const key = toBytes(req.key);
+                                const data = toBytes(req.data);
+                                if (key === null || data === null) {
+                                    return { ok: false, error: 'key and data must be bytes' };
+                                }
+                                if (typeof ops.op_php_hmac !== 'function') {
+                                    return { ok: false, error: 'op_php_hmac unavailable' };
+                                }
+                                const raw = ops.op_php_hmac(algorithm, key, data);
+                                const okVal = raw && raw.ok === true;
+                                if (okVal) {
+                                    const arr = raw.data instanceof Uint8Array ? Array.from(raw.data) : (Array.isArray(raw.data) ? raw.data : Array.from(raw.data || []));
+                                    return Object.entries({ ok: true, data: arr });
+                                }
+                                return Object.entries({ ok: false, error: (raw && raw.error) || 'hmac_failed' });
+                            }
+                            if (act === 'secure_compare') {
+                                const req = payload || {};
+                                const a = toBytes(req.a);
+                                const b = toBytes(req.b);
+                                if (a === null || b === null) {
+                                    return { ok: false, error: 'operands must be bytes' };
+                                }
+                                if (typeof ops.op_php_secure_compare === 'function') {
+                                    const raw = ops.op_php_secure_compare(a, b);
+                                    const okVal = raw && raw.ok === true;
+                                    if (okVal) {
+                                        return Object.entries({ ok: true, data: raw.data === true });
+                                    }
+                                    return Object.entries({ ok: false, error: (raw && raw.error) || 'secure_compare_failed' });
+                                }
+                                if (a.length !== b.length) {
+                                    return Object.entries({ ok: true, data: false });
+                                }
+                                let diff = 0;
+                                for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+                                return Object.entries({ ok: true, data: diff === 0 });
                             }
                             return { ok: false, error: `unknown crypto action '${act}'` };
                         }
@@ -675,23 +745,42 @@ impl WorkerThread {
                     };
                     // DS `bridge kind.action(args)` emit (RFD 27). Positional args;
                     // PHPX __bridge still takes a payload object.
+                    // Catalog allowlist is the runtime gate: a leaked global cannot
+                    // reach PHPX-only kinds (db/redis/vault/json/...). Keep in sync
+                    // with `host_bridge.rs` CATALOG.
+                    const DS_HOST_CATALOG = {
+                        crypto: ['random_bytes', 'digest', 'hmac', 'secure_compare', 'aes_256_gcm_encrypt', 'aes_256_gcm_decrypt', 'bcrypt_verify'],
+                        fs: ['read_file'],
+                    };
                     globalThis.__deka_host = (kind, action, args) => {
                         try {
+                            const k = String(kind || '');
+                            const a = String(action || '');
+                            if (!DS_HOST_CATALOG[k] || DS_HOST_CATALOG[k].indexOf(a) < 0) {
+                                return { ok: false, error: `unknown bridge action '${k}.${a}'` };
+                            }
                             const list = Array.isArray(args) ? args : [];
                             const payload = (() => {
-                                const k = String(kind || '');
-                                const a = String(action || '');
                                 if (k === 'crypto' && a === 'random_bytes') return { length: list[0] };
+                                if (k === 'crypto' && a === 'digest') return { algorithm: list[0], data: list[1] };
+                                if (k === 'crypto' && a === 'hmac') return { algorithm: list[0], key: list[1], data: list[2] };
+                                if (k === 'crypto' && a === 'secure_compare') return { a: list[0], b: list[1] };
+                                if (k === 'crypto' && a === 'aes_256_gcm_encrypt') return { key: list[0], nonce: list[1], plaintext: list[2], aad: list[3] };
+                                if (k === 'crypto' && a === 'aes_256_gcm_decrypt') return { key: list[0], nonce: list[1], ciphertext: list[2], aad: list[3] };
+                                if (k === 'crypto' && a === 'bcrypt_verify') return { password: list[0], hash: list[1] };
                                 if (k === 'fs' && a === 'read_file') return { path: list[0] };
                                 if (list.length === 1 && list[0] && typeof list[0] === 'object' && !Array.isArray(list[0])) {
                                     return list[0];
                                 }
                                 return { args: list };
                             })();
-                            const raw = __dekaFixProto(routeHostCall(String(kind || ''), String(action || ''), payload));
+                            const raw = __dekaFixProto(routeHostCall(k, a, payload));
                             const assoc = (Array.isArray(raw) && raw.length && Array.isArray(raw[0]))
                                 ? Object.fromEntries(raw)
                                 : (raw || {});
+                            if (assoc && assoc.ok === true && typeof assoc.data === 'undefined' && typeof assoc.valid === 'boolean') {
+                                assoc.data = assoc.valid;
+                            }
                             if (assoc && assoc.ok === true && Array.isArray(assoc.data) && typeof Uint8Array !== 'undefined') {
                                 assoc.data = new Uint8Array(assoc.data);
                             }

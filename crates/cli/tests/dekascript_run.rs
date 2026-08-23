@@ -14,8 +14,12 @@ fn cli_bin() -> &'static str {
 const EMPTY_DEKA_LOCK: &str = r#"{"lockfileVersion":1,"packages":{}}"#;
 
 fn run_dekascript(name: &str, source: &str, expected_output: &str) {
+    run_dekascript_with_manifest(name, "{}\n", source, expected_output);
+}
+
+fn run_dekascript_with_manifest(name: &str, manifest: &str, source: &str, expected_output: &str) {
     let project = tempfile::tempdir().expect("create DekaScript project");
-    fs::write(project.path().join("deka.json"), "{}\n").expect("write project manifest");
+    fs::write(project.path().join("deka.json"), manifest).expect("write project manifest");
     fs::write(project.path().join("deka.lock"), EMPTY_DEKA_LOCK).expect("write project lockfile");
     let entry = project.path().join(format!("{name}.ds"));
     fs::write(&entry, source).expect("write DekaScript entry");
@@ -373,5 +377,27 @@ fn run_rejects_absolute_ds_symlink_to_phpx_before_execution() {
     assert!(
         !combined.contains("must-not-execute"),
         "PHPX symlink target reached execution: {combined}"
+    );
+}
+
+#[test]
+fn run_executes_workspace_crypto_bridge() {
+    run_dekascript_with_manifest(
+        "crypto_bridge",
+        r#"{ "name": "@deka/crypto", "host": { "kinds": ["crypto"] } }"#,
+        r#"
+fn go() {
+  const r = bridge crypto.random_bytes(16)
+  print(match (r) {
+    Ok(v) => match (bridge crypto.digest("sha256", v)) {
+      Ok(h) => "ok",
+      Err(e) => "fail-digest"
+    },
+    Err(e) => "fail-random"
+  })
+}
+go()
+"#,
+        "ok",
     );
 }
