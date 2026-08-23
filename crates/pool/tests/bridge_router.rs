@@ -65,11 +65,48 @@ fn tenant_request(handler_code: &str, shop_id: &str) -> RequestData {
 }
 
 #[tokio::test]
+async fn host_dispatchers_are_not_on_user_globalthis() {
+    let pool = test_pool();
+    let code = r#"
+globalThis.app = function(req) {
+  return {
+    status: 200,
+    headers: {},
+    body: JSON.stringify({
+      bridge: typeof globalThis.__bridge,
+      bridgeAsync: typeof globalThis.__bridge_async,
+      wasmCall: typeof globalThis.__deka_wasm_call,
+      wasmCallAsync: typeof globalThis.__deka_wasm_call_async,
+      host: typeof globalThis.__deka_host,
+      closedHost: typeof __deka_host,
+      closedBridge: typeof __bridge
+    })
+  };
+};
+"#;
+    let res = pool
+        .execute(HandlerKey::new("host_not_global"), test_request(code))
+        .await;
+    let response = res.expect("pool execution should succeed");
+    assert!(response.success, "execution failed: {:?}", response.error);
+    let result = response.result.expect("should have result");
+    let body = result.get("body").and_then(|v| v.as_str()).expect("body");
+    let parsed: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(parsed["bridge"], "undefined", "body={body}");
+    assert_eq!(parsed["bridgeAsync"], "undefined");
+    assert_eq!(parsed["wasmCall"], "undefined");
+    assert_eq!(parsed["wasmCallAsync"], "undefined");
+    assert_eq!(parsed["host"], "undefined");
+    assert_eq!(parsed["closedHost"], "function");
+    assert_eq!(parsed["closedBridge"], "function");
+}
+
+#[tokio::test]
 async fn bridge_unknown_kind_returns_error_envelope() {
     let pool = test_pool();
     let code = r#"
 globalThis.app = function(req) {
-  const result = globalThis.__bridge('unknown_kind', 'x', {});
+  const result = __bridge('unknown_kind', 'x', {});
   return { status: 200, headers: {}, body: JSON.stringify(result) };
 };
 "#;
@@ -96,7 +133,7 @@ async fn bridge_unknown_action_returns_error_envelope() {
     let pool = test_pool();
     let code = r#"
 globalThis.app = function(req) {
-  const result = globalThis.__bridge('crypto', 'unknown_action', {});
+  const result = __bridge('crypto', 'unknown_action', {});
   return { status: 200, headers: {}, body: JSON.stringify(result) };
 };
 "#;
@@ -123,7 +160,7 @@ async fn bridge_result_envelope_has_ok_shape() {
     let pool = test_pool();
     let code = r#"
 globalThis.app = function(req) {
-  const result = globalThis.__bridge('time', 'now_ms', {});
+  const result = __bridge('time', 'now_ms', {});
   return { status: 200, headers: {}, body: JSON.stringify(result) };
 };
 "#;
@@ -186,7 +223,7 @@ globalThis.app = function(req) {{
   // bridge being made to emit Object.entries pairs. Exercise the real shape.
   const connects = [];
   for (let i = 0; i < {CONNECTS}; i++) {{
-    const raw = globalThis.__bridge('net', 'connect', {{ host: '127.0.0.1', port: {port} }});
+    const raw = __bridge('net', 'connect', {{ host: '127.0.0.1', port: {port} }});
     // The raw __bridge op returns entry pairs ([[key,value],...]); PHPX's
     // stdlib (tcp/index.phpx's to_assoc()) converts this to an assoc array.
     // Exercise the real wire shape here rather than a plain object.
@@ -197,7 +234,7 @@ globalThis.app = function(req) {{
     }}
     connects.push(result.handle);
   }}
-  const closes = connects.map((handle) => Object.fromEntries(globalThis.__bridge('net', 'close', {{ handle }})));
+  const closes = connects.map((handle) => Object.fromEntries(__bridge('net', 'close', {{ handle }})));
   if (!closes.every((result) => result.ok === true)) throw new Error('net bridge close failed');
   return {{ status: 200, headers: {{}}, body: JSON.stringify({{ connects: connects.length }}) }};
 }};
@@ -256,12 +293,12 @@ async fn net_bridge_rejects_foreign_handles_across_tenant_isolates() {
         r#"
 globalThis.app = function(req) {{
   if (!globalThis.__tenantANetHandle) {{
-    const connect = Object.fromEntries(globalThis.__bridge('net', 'connect', {{ host: '127.0.0.1', port: {port} }}));
+    const connect = Object.fromEntries(__bridge('net', 'connect', {{ host: '127.0.0.1', port: {port} }}));
     if (connect.ok !== true) throw new Error(`tenant A connect failed: ${{JSON.stringify(connect)}}`);
     globalThis.__tenantANetHandle = connect.handle;
     return {{ status: 200, headers: {{}}, body: JSON.stringify(connect) }};
   }}
-  const close = Object.fromEntries(globalThis.__bridge('net', 'close', {{ handle: globalThis.__tenantANetHandle }}));
+  const close = Object.fromEntries(__bridge('net', 'close', {{ handle: globalThis.__tenantANetHandle }}));
   return {{ status: 200, headers: {{}}, body: JSON.stringify(close) }};
 }};
 "#
@@ -300,7 +337,7 @@ globalThis.app = function(req) {{
   }};
   const attempt = (action, payload) => {{
     try {{
-      return toAssoc(globalThis.__bridge('net', action, payload));
+      return toAssoc(__bridge('net', action, payload));
     }} catch (error) {{
       return {{ ok: false, error: String(error) }};
     }}
@@ -379,9 +416,9 @@ async fn bridge_redis_flush_is_blocked_before_native_dispatch() {
     let pool = test_pool();
     let code = r#"
 globalThis.app = function(req) {
-  const flush = globalThis.__bridge('redis', 'flush', { handle: 1 });
-  const flushdb = globalThis.__bridge('redis', 'FLUSHDB', { handle: 1 });
-  const flushall = globalThis.__bridge('redis', 'flushall', { handle: 1 });
+  const flush = __bridge('redis', 'flush', { handle: 1 });
+  const flushdb = __bridge('redis', 'FLUSHDB', { handle: 1 });
+  const flushall = __bridge('redis', 'flushall', { handle: 1 });
   return { status: 200, headers: {}, body: JSON.stringify({ flush, flushdb, flushall }) };
 };
 "#;
@@ -418,7 +455,7 @@ globalThis.app = function(req) {
   ops.op_redis_call = function(action, payload) {
     return { ok: true, action, payload: { ...payload } };
   };
-  const result = globalThis.__bridge('redis', 'keys', { handle: 1 });
+  const result = __bridge('redis', 'keys', { handle: 1 });
   return { status: 200, headers: {}, body: JSON.stringify(result) };
 };
 "#;
@@ -453,8 +490,8 @@ globalThis.app = function(req) {
   ops.op_redis_call = function(action, payload) {
     return { ok: true, action, payload: { ...payload } };
   };
-  const set = globalThis.__bridge('redis', 'set', { handle: 1, key: 'cart', value: 'sku-1' });
-  const keys = globalThis.__bridge('redis', 'keys', { handle: 1, pattern: 'cart:*' });
+  const set = __bridge('redis', 'set', { handle: 1, key: 'cart', value: 'sku-1' });
+  const keys = __bridge('redis', 'keys', { handle: 1, pattern: 'cart:*' });
   return { status: 200, headers: {}, body: JSON.stringify({ set, keys }) };
 };
 "#;
@@ -492,9 +529,9 @@ async fn bridge_redis_unscoped_enumeration_verbs_are_blocked() {
     let pool = test_pool();
     let code = r#"
 globalThis.app = function(req) {
-  const scan = globalThis.__bridge('redis', 'scan', { handle: 1 });
-  const config = globalThis.__bridge('redis', 'CONFIG', { handle: 1 });
-  const randomkey = globalThis.__bridge('redis', 'randomkey', { handle: 1 });
+  const scan = __bridge('redis', 'scan', { handle: 1 });
+  const config = __bridge('redis', 'CONFIG', { handle: 1 });
+  const randomkey = __bridge('redis', 'randomkey', { handle: 1 });
   return { status: 200, headers: {}, body: JSON.stringify({ scan, config, randomkey }) };
 };
 "#;
@@ -527,7 +564,7 @@ async fn bridge_crypto_bcrypt_verify_resolves_to_op() {
     let code = r#"
 globalThis.app = function(req) {
   const hash = "$2b$10$DqpfeHg1RhyMilY/GTQvgeahRja6yf5aL8dYoH6EwABQY.CZ.pnNu";
-  const result = Object.fromEntries(globalThis.__bridge('crypto', 'bcrypt_verify', {password: 'password123', hash}));
+  const result = Object.fromEntries(__bridge('crypto', 'bcrypt_verify', {password: 'password123', hash}));
   return { status: 200, headers: {}, body: JSON.stringify(result) };
 };
 "#;
@@ -548,7 +585,7 @@ async fn deka_host_digest_sha256_empty_known_vector() {
     let pool = net_test_pool();
     let code = r#"
 globalThis.app = function(req) {
-  const result = globalThis.__deka_host('crypto', 'digest', ['sha256', new Uint8Array()]);
+  const result = __deka_host('crypto', 'digest', ['sha256', new Uint8Array()]);
   const data = result && result.data ? Array.from(result.data) : [];
   return { status: 200, headers: {}, body: JSON.stringify({ ok: result.ok, error: result.error, len: data.length, b0: data[0], b1: data[1] }) };
 };
@@ -572,7 +609,7 @@ async fn deka_host_catalog_denies_php_only_kinds() {
     let pool = net_test_pool();
     let code = r#"
 globalThis.app = function(req) {
-  const result = globalThis.__deka_host('db', 'query', []);
+  const result = __deka_host('db', 'query', []);
   return { status: 200, headers: {}, body: JSON.stringify(result) };
 };
 "#;
@@ -603,9 +640,9 @@ globalThis.app = function(req) {
   const a = new Uint8Array([1, 2, 3]);
   const b = new Uint8Array([1, 2, 3]);
   const c = new Uint8Array([1, 2, 4]);
-  const same = globalThis.__deka_host('crypto', 'secure_compare', [a, b]);
-  const diff = globalThis.__deka_host('crypto', 'secure_compare', [a, c]);
-  const mac = globalThis.__deka_host('crypto', 'hmac', ['sha256', a, b]);
+  const same = __deka_host('crypto', 'secure_compare', [a, b]);
+  const diff = __deka_host('crypto', 'secure_compare', [a, c]);
+  const mac = __deka_host('crypto', 'hmac', ['sha256', a, b]);
   return { status: 200, headers: {}, body: JSON.stringify({
     same: same.data === true,
     diff: diff.data === false,

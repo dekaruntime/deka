@@ -865,14 +865,19 @@ impl<'a> JsSubsetEmitter<'a> {
                 let kind_js = String::from_utf8_lossy(kind).replace('"', "");
                 let action_js = String::from_utf8_lossy(action).replace('"', "");
                 // Keep in sync with `host_bridge.rs` CATALOG `is_async`.
+                // Look up the closed-over host via the well-known symbol, not
+                // a user global (`__deka_host` is not on globalThis).
                 let is_async = kind_js == "fs" && action_js == "read_file";
+                let call = format!(
+                    "(globalThis[Symbol.for(\"deka.host.internal\")]||{{}}).host(\"{kind_js}\", \"{action_js}\", [{args_js}])"
+                );
                 if is_async {
                     Ok(format!(
-                        "(async function(){{var __r=await __deka_host(\"{kind_js}\", \"{action_js}\", [{args_js}]);return __r&&__r.ok===true?Ok(__r.data):Err((__r&&__r.error)||\"host call failed\");}})()"
+                        "(async function(){{var __r=await {call};return __r&&__r.ok===true?Ok(__r.data):Err((__r&&__r.error)||\"host call failed\");}})()"
                     ))
                 } else {
                     Ok(format!(
-                        "(function(){{var __r=__deka_host(\"{kind_js}\", \"{action_js}\", [{args_js}]);return __r&&__r.ok===true?Ok(__r.data):Err((__r&&__r.error)||\"host call failed\");}})()"
+                        "(function(){{var __r={call};return __r&&__r.ok===true?Ok(__r.data):Err((__r&&__r.error)||\"host call failed\");}})()"
                     ))
                 }
             }
@@ -910,7 +915,7 @@ impl<'a> JsSubsetEmitter<'a> {
                 // RFD 27: unsafe is JS-mode, not a host back door. Pass the
                 // real globalThis in as `__g` so the inner `const globalThis`
                 // proxy does not TDZ the capture.
-                let hide_host = "const Deno=void 0,__bridge=void 0,__bridge_async=void 0,__deka_wasm_call=void 0,__deka_wasm_call_async=void 0,__deka_host=void 0;const globalThis=new Proxy(__g,{get(t,p){if(p==='Deno'||p==='__bridge'||p==='__bridge_async'||p==='__deka_wasm_call'||p==='__deka_wasm_call_async'||p==='__deka_host')return void 0;return Reflect.get(t,p);}});";
+                let hide_host = "const __hk=Symbol.for('deka.host.internal');const Deno=void 0,__bridge=void 0,__bridge_async=void 0,__deka_wasm_call=void 0,__deka_wasm_call_async=void 0,__deka_host=void 0;const __hide=(p)=>p===__hk||p==='Deno'||p==='__bridge'||p==='__bridge_async'||p==='__deka_wasm_call'||p==='__deka_wasm_call_async'||p==='__deka_host';const globalThis=new Proxy(__g,{get(t,p){if(__hide(p))return void 0;return Reflect.get(t,p);},has(t,p){if(__hide(p))return false;return Reflect.has(t,p);},ownKeys(t){return Reflect.ownKeys(t).filter((p)=>!__hide(p));},getOwnPropertyDescriptor(t,p){if(__hide(p))return undefined;return Reflect.getOwnPropertyDescriptor(t,p);}});";
 
                 let inner = if is_statement_block {
                     format!(

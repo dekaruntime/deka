@@ -1,5 +1,13 @@
 use super::*;
 
+/// Bind host dispatchers as locals so PHPX/DS emit can name `__bridge` /
+/// `__deka_host` without those identifiers living on user `globalThis`.
+fn wrap_with_host_bindings(body: &str) -> String {
+    format!(
+        "(function() {{\nconst __h = globalThis[Symbol.for('deka.host.internal')];\n(function(__deka_host, __bridge, __bridge_async, __deka_wasm_call, __deka_wasm_call_async) {{\n{body}\n}})(__h && __h.host, __h && __h.bridge, __h && __h.bridgeAsync, __h && __h.wasmCall, __h && __h.wasmCallAsync);\n}})();"
+    )
+}
+
 impl WorkerThread {
     /// Execute a request in the warm isolate
     pub(super) async fn execute_in_isolate(
@@ -47,21 +55,26 @@ impl WorkerThread {
 
             // Basic Web API polyfills
             const BOOTSTRAP: &str = r#"
+                const __print = (Deno && Deno.core && typeof Deno.core.print === 'function')
+                    ? Deno.core.print.bind(Deno.core)
+                    : function() {};
+                const __ops = (Deno && Deno.core && Deno.core.ops) ? Deno.core.ops : {};
+
                 // Basic console implementation
                 if (typeof globalThis.console === 'undefined') {
                     globalThis.console = {
-                        log(...args) { Deno.core.print(args.join(' ') + '\n'); },
-                        error(...args) { Deno.core.print('[ERROR] ' + args.join(' ') + '\n'); },
-                        warn(...args) { Deno.core.print('[WARN] ' + args.join(' ') + '\n'); },
-                        info(...args) { Deno.core.print('[INFO] ' + args.join(' ') + '\n'); },
-                        debug(...args) { Deno.core.print('[DEBUG] ' + args.join(' ') + '\n'); },
+                        log(...args) { __print(args.join(' ') + '\n'); },
+                        error(...args) { __print('[ERROR] ' + args.join(' ') + '\n'); },
+                        warn(...args) { __print('[WARN] ' + args.join(' ') + '\n'); },
+                        info(...args) { __print('[INFO] ' + args.join(' ') + '\n'); },
+                        debug(...args) { __print('[DEBUG] ' + args.join(' ') + '\n'); },
                     };
                 }
 
                 if (typeof globalThis.__dekaPrint !== 'function') {
                     globalThis.__dekaPrint = (value, isErr = false) => {
                         const text = value == null ? '' : String(value);
-                        Deno.core.print(text, !!isErr);
+                        __print(text, !!isErr);
                     };
                 }
 
@@ -259,7 +272,11 @@ impl WorkerThread {
                 // Runtime bridge helpers for PHPX stdlib (JS runtime path)
                 if (typeof globalThis.function_exists !== 'function') {
                     globalThis.function_exists = function(name) {
-                        return typeof globalThis[name] === 'function';
+                        const n = String(name || '');
+                        if (n === '__bridge' || n === '__bridge_async' || n === '__deka_wasm_call' || n === '__deka_wasm_call_async') {
+                            return true;
+                        }
+                        return typeof globalThis[n] === 'function';
                     };
                 }
 
@@ -325,8 +342,8 @@ impl WorkerThread {
                     };
                 }
 
-                if (typeof globalThis.__bridge !== 'function') {
-                    const ops = (Deno && Deno.core && Deno.core.ops) ? Deno.core.ops : {};
+                if (!globalThis[Symbol.for('deka.host.internal')]) {
+                    const ops = __ops;
                     const routeHostCall = (kind, action, payload) => {
                         if (kind === 'db') {
                             if (typeof ops.op_php_db_call_proto === 'function' && typeof ops.op_php_db_proto_encode === 'function' && typeof ops.op_php_db_proto_decode === 'function') {
@@ -713,21 +730,21 @@ impl WorkerThread {
                         return val;
                     };
 
-                    globalThis.__bridge = (kind, action, payload) => {
+                    const __bridge = (kind, action, payload) => {
                         try {
                             return __dekaFixProto(routeHostCall(String(kind || ''), String(action || ''), payload || {}));
                         } catch (err) {
                             return { ok: false, error: err && err.message ? String(err.message) : String(err) };
                         }
                     };
-                    globalThis.__bridge_async = async (kind, action, payload) => {
+                    const __bridge_async = async (kind, action, payload) => {
                         try {
                             return __dekaFixProto(await routeHostCall(String(kind || ''), String(action || ''), payload || {}));
                         } catch (err) {
                             return { ok: false, error: err && err.message ? String(err.message) : String(err) };
                         }
                     };
-                    globalThis.__deka_wasm_call = (moduleId, exportName, payload) => {
+                    const __deka_wasm_call = (moduleId, exportName, payload) => {
                         const name = String(moduleId || '');
                         if (name.startsWith('__deka_')) {
                             const kind = name.replace(/^__deka_/, '');
@@ -735,7 +752,7 @@ impl WorkerThread {
                         }
                         return { ok: false, error: `unknown host bridge module '${name}'` };
                     };
-                    globalThis.__deka_wasm_call_async = async (moduleId, exportName, payload) => {
+                    const __deka_wasm_call_async = async (moduleId, exportName, payload) => {
                         const name = String(moduleId || '');
                         if (name.startsWith('__deka_')) {
                             const kind = name.replace(/^__deka_/, '');
@@ -752,7 +769,7 @@ impl WorkerThread {
                         crypto: ['random_bytes', 'digest', 'hmac', 'secure_compare', 'aes_256_gcm_encrypt', 'aes_256_gcm_decrypt', 'bcrypt_verify'],
                         fs: ['read_file'],
                     };
-                    globalThis.__deka_host = (kind, action, args) => {
+                    const __deka_host = (kind, action, args) => {
                         try {
                             const k = String(kind || '');
                             const a = String(action || '');
@@ -789,6 +806,15 @@ impl WorkerThread {
                             return { ok: false, error: err && err.message ? String(err.message) : String(err) };
                         }
                     };
+                    // RFD 27: these names are not user globals. Handlers get them
+                    // as IIFE parameters. unsafe hides the symbol key.
+                    globalThis[Symbol.for('deka.host.internal')] = Object.freeze({
+                        host: __deka_host,
+                        bridge: __bridge,
+                        bridgeAsync: __bridge_async,
+                        wasmCall: __deka_wasm_call,
+                        wasmCallAsync: __deka_wasm_call_async,
+                    });
                 }
 
                 if (typeof globalThis.__dekaRuntime !== 'object') {
@@ -803,8 +829,8 @@ impl WorkerThread {
                             if (!stderr && result && result.error) {
                                 stderr = String(result.error);
                             }
-                            if (stdout) Deno.core.print(stdout, false);
-                            if (stderr) Deno.core.print(stderr, true);
+                            if (stdout) __print(stdout, false);
+                            if (stderr) __print(stderr, true);
                             const ok = result && result.ok !== false;
                             let exitCode = result && typeof result.exit_code === 'number' ? result.exit_code : 0;
                             if (!ok && exitCode === 0) exitCode = 1;
@@ -1065,10 +1091,12 @@ impl WorkerThread {
                     );
                 }
 
-                // Execute the pre-bundled handler directly
+                // Execute the pre-bundled handler with host dispatchers closed over.
                 let handler_result = isolate.runtime.execute_script(
                     "handler.js",
-                    ModuleCodeString::from(request.request_data.handler_code.clone()),
+                    ModuleCodeString::from(wrap_with_host_bindings(
+                        &request.request_data.handler_code,
+                    )),
                 );
                 match handler_result {
                     Ok(_value) => {
@@ -1178,10 +1206,10 @@ impl WorkerThread {
                     .replace("export default app", "// export default app")
                     .replace("export default ", "const __dekaDefault = ");
 
-                let wrapped = format!(
-                    "(function() {{\n{}\nif (typeof globalThis.app === 'undefined') {{ if (typeof __dekaDefault !== 'undefined') {{ if (typeof __dekaDefault === 'function' && typeof globalThis.__dekaNodeExpressAdapter === 'function' && (typeof __dekaDefault.handle === 'function' || typeof __dekaDefault.listen === 'function')) {{ globalThis.app = globalThis.__dekaNodeExpressAdapter(__dekaDefault); }} else if (__dekaDefault && typeof __dekaDefault === 'object' && !__dekaDefault.__dekaServer && (typeof __dekaDefault.fetch === 'function' || typeof __dekaDefault.routes === 'object')) {{ globalThis.app = globalThis.__deka.serve(__dekaDefault); }} else {{ globalThis.app = __dekaDefault; }} }} else if (typeof app !== 'undefined') {{ if (typeof app === 'function' && typeof globalThis.__dekaNodeExpressAdapter === 'function' && (typeof app.handle === 'function' || typeof app.listen === 'function')) {{ globalThis.app = globalThis.__dekaNodeExpressAdapter(app); }} else {{ globalThis.app = app; }} }} }}\n}})();",
+                let wrapped = wrap_with_host_bindings(&format!(
+                    "{}\nif (typeof globalThis.app === 'undefined') {{ if (typeof __dekaDefault !== 'undefined') {{ if (typeof __dekaDefault === 'function' && typeof globalThis.__dekaNodeExpressAdapter === 'function' && (typeof __dekaDefault.handle === 'function' || typeof __dekaDefault.listen === 'function')) {{ globalThis.app = globalThis.__dekaNodeExpressAdapter(__dekaDefault); }} else if (__dekaDefault && typeof __dekaDefault === 'object' && !__dekaDefault.__dekaServer && (typeof __dekaDefault.fetch === 'function' || typeof __dekaDefault.routes === 'object')) {{ globalThis.app = globalThis.__deka.serve(__dekaDefault); }} else {{ globalThis.app = __dekaDefault; }} }} else if (typeof app !== 'undefined') {{ if (typeof app === 'function' && typeof globalThis.__dekaNodeExpressAdapter === 'function' && (typeof app.handle === 'function' || typeof app.listen === 'function')) {{ globalThis.app = globalThis.__dekaNodeExpressAdapter(app); }} else {{ globalThis.app = app; }} }} }}",
                     handler_code
-                );
+                ));
 
                 let setup_code =
                     "globalThis.app = undefined; globalThis.Deka = globalThis.Deka || {};";

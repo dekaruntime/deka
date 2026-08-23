@@ -503,7 +503,7 @@ impl<'a> JsSubsetEmitter<'a> {
             "function_exists" if args.len() == 1 => {
                 let a = emit_args(self, args)?;
                 Ok(Some(format!(
-                    "(typeof globalThis[String({})] === \"function\")",
+                    "(((__n) => __n === \"__bridge\" || __n === \"__bridge_async\" || __n === \"__deka_wasm_call\" || __n === \"__deka_wasm_call_async\" || typeof globalThis[__n] === \"function\")(String({})))",
                     a[0]
                 )))
             }
