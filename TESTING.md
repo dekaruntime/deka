@@ -108,38 +108,34 @@ and the browser Worker running the same fixture. That is what
 Run it for any change to the compiler, the typechecker, diagnostics, or the
 emitted JS.
 
-### One-time setup
+### Running it
 
 ```bash
 git clone git@github.com:dekaruntime/testsuite.git
 cd testsuite
-bun install
-bunx playwright install chromium    # the browser host; without it you get a
-                                    # native-only run that still looks healthy
+./run.sh
 ```
 
-That Chromium step is not optional and is easy to miss — CI installs it
-explicitly in its deploy workflow, so a local checkout is the only place the
-browser host silently goes absent.
+That is the whole procedure. `run.sh` installs dependencies and Chromium if
+missing, finds your deka checkout, builds **both** compilers from it, runs the
+suite on both hosts, and writes a report to `.cache/gate-report.txt`.
 
-### Running it
-
-Build both hosts **from the same commit**, then run the gate:
+It defaults to grading your **local** code, because that is what you are testing
+before you merge.
 
 ```bash
-# in deka/
-cargo build --release -p cli
-CARGO_INCREMENTAL=0 cargo build --release \
-  --target wasm32-unknown-unknown -p deka_compiler_wasm --no-default-features
-
-# in testsuite/
-DEKA_NATIVE=../deka/target/release/cli \
-DEKA_WASM=../deka/target/wasm32-unknown-unknown/release/deka_compiler_wasm.wasm \
-  bun scripts/run-tests.mjs --gate
+./run.sh                     # grade the local deka checkout (default)
+./run.sh --published         # grade the released compilers instead
+./run.sh --deka ~/src/deka   # point at a specific checkout
+./run.sh --write-baseline    # accept current results as the known set
 ```
 
-The gate does four things: verifies the environment, runs the native host, runs
-the browser host, and writes a report to `.cache/gate-report.txt`.
+The setup is deliberately not left to the reader. Chromium in particular is a
+separate download from the npm package, and without it the browser host drops
+and the suite reports zero divergences no matter what the browser compiler does
+— a run that looks *healthier* than a correct one. Building both compilers on
+every run is likewise cheap (cargo is incremental) and is the only way to
+guarantee the two hosts came from the same source.
 
 Exit codes: `0` clean, `1` a new failure, `2` the environment is not fit to
 grade (fix it and re-run — a `2` is never a verdict on your change).
