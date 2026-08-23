@@ -22,6 +22,7 @@ It compiles to JavaScript and runs both natively and in the browser via WASM.
 ## Useful docs
 
 - [`PUBLISH.md`](./PUBLISH.md) — How to publish a new runtime release.
+- [`STDLIB.md`](./STDLIB.md) — How to version and publish `@deka/*` packages to the index.
 - [`TESTING.md`](./TESTING.md) — How the test suites are run.
 - [`RELEASE.md`](./RELEASE.md) — Release process checklist.
 
