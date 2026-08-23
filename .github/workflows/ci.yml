@@ -23,7 +23,7 @@ jobs:
       utility_css: ${{ steps.detect.outputs.utility_css }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -62,7 +62,7 @@ jobs:
     if: needs.changes.outputs.utility_css == 'true'
     runs-on: [self-hosted, macOS, ARM64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -91,7 +91,7 @@ jobs:
     if: needs.changes.outputs.lockfile == 'true' && needs.changes.outputs.rust != 'true'
     runs-on: [self-hosted, linux, x64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.96.0
@@ -115,7 +115,7 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Where am I?
         run: |
@@ -196,7 +196,7 @@ jobs:
         run: bun tests/runtime-suite/run.mjs
 
       - name: Upload browser compiler WASM provenance
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: deka-compiler-wasm
           path: dist/deka-compiler-wasm/

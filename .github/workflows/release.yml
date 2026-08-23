@@ -44,7 +44,7 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Where am I
         uses: ./.github/actions/where-am-i
@@ -112,7 +112,7 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Where am I
         uses: ./.github/actions/where-am-i
@@ -140,7 +140,7 @@ jobs:
         run: scripts/build-deka-compiler-wasm.sh dist/deka-compiler-wasm
 
       - name: Upload WASM artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: deka-wasm
           path: dist/deka-compiler-wasm/*
@@ -156,7 +156,7 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Where am I
         uses: ./.github/actions/where-am-i
@@ -187,7 +187,7 @@ jobs:
           chmod +x dist/deka-linux-x64
 
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: deka-cli-linux-x64
           path: dist/deka-linux-x64
@@ -203,7 +203,7 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Where am I
         uses: ./.github/actions/where-am-i
@@ -234,7 +234,7 @@ jobs:
           chmod +x dist/deka-darwin-x64
 
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: deka-cli-darwin-x64
           path: dist/deka-darwin-x64
@@ -250,7 +250,7 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Where am I
         uses: ./.github/actions/where-am-i
@@ -281,7 +281,7 @@ jobs:
           chmod +x dist/deka-darwin-arm64
 
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: deka-cli-darwin-arm64
           path: dist/deka-darwin-arm64
@@ -299,13 +299,13 @@ jobs:
       AWS_DEFAULT_REGION: auto
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Where am I
         uses: ./.github/actions/where-am-i
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: artifacts
           pattern: deka-*
