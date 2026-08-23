@@ -862,10 +862,10 @@ impl<'a> JsSubsetEmitter<'a> {
                 kind, action, args, ..
             } => {
                 let args_js = self.emit_call_args(args)?;
+                let kind_js = String::from_utf8_lossy(kind).replace('"', "");
+                let action_js = String::from_utf8_lossy(action).replace('"', "");
                 Ok(format!(
-                    "__deka_host(\"{}\", \"{}\", [{args_js}])",
-                    String::from_utf8_lossy(kind).replace('"', ""),
-                    String::from_utf8_lossy(action).replace('"', ""),
+                    "(function(){{var __r=__deka_host(\"{kind_js}\", \"{action_js}\", [{args_js}]);return __r&&__r.ok===true?Ok(__r.data):Err((__r&&__r.error)||\"host call failed\");}})()"
                 ))
             }
             Expr::Unsafe { raw, .. } => {

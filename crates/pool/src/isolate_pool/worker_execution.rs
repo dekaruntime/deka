@@ -673,6 +673,33 @@ impl WorkerThread {
                         }
                         return { ok: false, error: `unknown host bridge module '${name}'` };
                     };
+                    // DS `bridge kind.action(args)` emit (RFD 27). Positional args;
+                    // PHPX __bridge still takes a payload object.
+                    globalThis.__deka_host = (kind, action, args) => {
+                        try {
+                            const list = Array.isArray(args) ? args : [];
+                            const payload = (() => {
+                                const k = String(kind || '');
+                                const a = String(action || '');
+                                if (k === 'crypto' && a === 'random_bytes') return { length: list[0] };
+                                if (k === 'fs' && a === 'read_file') return { path: list[0] };
+                                if (list.length === 1 && list[0] && typeof list[0] === 'object' && !Array.isArray(list[0])) {
+                                    return list[0];
+                                }
+                                return { args: list };
+                            })();
+                            const raw = __dekaFixProto(routeHostCall(String(kind || ''), String(action || ''), payload));
+                            const assoc = (Array.isArray(raw) && raw.length && Array.isArray(raw[0]))
+                                ? Object.fromEntries(raw)
+                                : (raw || {});
+                            if (assoc && assoc.ok === true && Array.isArray(assoc.data) && typeof Uint8Array !== 'undefined') {
+                                assoc.data = new Uint8Array(assoc.data);
+                            }
+                            return assoc;
+                        } catch (err) {
+                            return { ok: false, error: err && err.message ? String(err.message) : String(err) };
+                        }
+                    };
                 }
 
                 if (typeof globalThis.__dekaRuntime !== 'object') {
