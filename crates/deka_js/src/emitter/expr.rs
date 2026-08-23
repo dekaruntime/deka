@@ -858,6 +858,16 @@ impl<'a> JsSubsetEmitter<'a> {
             Expr::Match {
                 condition, arms, ..
             } => self.emit_match_expr(*condition, arms),
+            Expr::Bridge {
+                kind, action, args, ..
+            } => {
+                let args_js = self.emit_call_args(args)?;
+                Ok(format!(
+                    "__deka_host(\"{}\", \"{}\", [{args_js}])",
+                    String::from_utf8_lossy(kind).replace('"', ""),
+                    String::from_utf8_lossy(action).replace('"', ""),
+                ))
+            }
             Expr::Unsafe { raw, .. } => {
                 let raw_str = String::from_utf8_lossy(raw);
                 let trimmed = raw_str.trim();

@@ -118,6 +118,11 @@ fn collect_expr_refs(source: &[u8], expr: ExprId<'_>, out: &mut Vec<(String, Spa
                 collect_expr_refs(source, arm.body, out);
             }
         }
+        Expr::Bridge { args, .. } => {
+            for arg in args.iter() {
+                collect_expr_refs(source, arg.value, out);
+            }
+        }
         Expr::InterpolatedString { parts, .. } | Expr::ShellExec { parts, .. } => {
             for part in parts.iter() {
                 collect_expr_refs(source, *part, out);

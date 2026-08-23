@@ -205,6 +205,7 @@ impl<'src> Formatter<'src> {
             Expr::VariadicPlaceholder { span, .. } => *span,
             Expr::Spread { span, .. } => *span,
             Expr::Unsafe { span, .. } => *span,
+            Expr::Bridge { span, .. } => *span,
             Expr::Cql { span, .. } => *span,
             Expr::Error { span, .. } => *span,
         }
@@ -1544,6 +1545,18 @@ impl<'src> Formatter<'src> {
             Expr::VariadicPlaceholder { .. } => "...".to_string(),
             Expr::Spread { expr, .. } => {
                 format!("...{}", self.expr_to_string(expr))
+            }
+            Expr::Bridge {
+                kind, action, args, ..
+            } => {
+                let mut s = format!(
+                    "bridge {}.{}(",
+                    String::from_utf8_lossy(kind),
+                    String::from_utf8_lossy(action)
+                );
+                s.push_str(&self.arg_list_to_string(args));
+                s.push(')');
+                s
             }
             Expr::Unsafe { raw, .. } => {
                 // Preserve raw JavaScript inside `unsafe { ... }` verbatim. We
