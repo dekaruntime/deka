@@ -360,7 +360,7 @@ mod tests {
         let mut project = ProjectState::new();
         project.write(
             "math.ds",
-            "export fn add(a: number, b: number): number {\n  return a + b;\n}\n",
+            "export fn add(a: number, b: number) number {\n  return a + b;\n}\n",
         );
         project.write(
             "main.ds",

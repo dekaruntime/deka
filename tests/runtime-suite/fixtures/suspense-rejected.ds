@@ -4,7 +4,7 @@ struct ErrorInfo {
   message: string
 }
 
-async fn Bad(): Promise<object> {
+async fn Bad() Promise<object> {
   return Result.Err(ErrorInfo { message: "boom" });
 }
 
@@ -13,7 +13,7 @@ const node = ui.jsx(ui.ErrorBoundary, {
   children: ui.jsx(Bad, {})
 });
 
-async fn main(): Promise<void> {
+async fn main() Promise<void> {
   const result = await ui.renderToStringAsync(node);
   console.log(result.html);
 }

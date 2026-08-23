@@ -1,8 +1,8 @@
-fn increment(s: object): object {
+fn increment(s: object) object {
   return { count: s.count + 1 };
 }
 
-fn add(s: object, n: number): object {
+fn add(s: object, n: number) object {
   return { count: s.count + n };
 }
 
@@ -17,11 +17,11 @@ console.log(useCounter().count);
 useCounter.add(5);
 console.log(useCounter().count);
 
-fn subscribeA(): void {
+fn subscribeA() void {
   console.log("A" + useCounter().count);
 }
 
-fn subscribeB(): void {
+fn subscribeB() void {
   console.log("B" + useCounter().count);
 }
 

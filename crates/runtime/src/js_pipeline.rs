@@ -444,12 +444,12 @@ import { now_ms } from '@deka/time'
         .expect("tenant lock");
         std::fs::write(
             modules.join("@tana/store/index.ds"),
-            "import { random_hex } from '@deka/crypto'\nexport fn createStore(): string { return random_hex(); }\n",
+            "import { random_hex } from '@deka/crypto'\nexport fn createStore() string { return random_hex(); }\n",
         )
         .expect("store module");
         std::fs::write(
             modules.join("@deka/crypto/index.ds"),
-            "export fn random_hex(): string { return 'abc'; }\n",
+            "export fn random_hex() string { return 'abc'; }\n",
         )
         .expect("crypto module");
         write_locked_package(&tenant_root, "@deka/crypto", "@deka/crypto");
@@ -457,7 +457,7 @@ import { now_ms } from '@deka/time'
         let handler = tenant_root.join("main.ds");
         std::fs::write(
             &handler,
-            "import { createStore } from '@tana/store'\nexport fn App(): string { return createStore(); }\n",
+            "import { createStore } from '@tana/store'\nexport fn App() string { return createStore(); }\n",
         )
         .expect("handler");
 
@@ -501,19 +501,19 @@ import { now_ms } from '@deka/time'
         let tenant_a_handler = tenant_a_root.join("main.ds");
         std::fs::write(
             &tenant_a_handler,
-            "import { marker } from './dependency.ds'\nexport fn App(): string { return marker(); }\n",
+            "import { marker } from './dependency.ds'\nexport fn App() string { return marker(); }\n",
         )
         .expect("tenant A handler");
         std::fs::write(
             tenant_a_root.join("dependency.ds"),
-            "export fn marker(): string { return 'a'; }\n",
+            "export fn marker() string { return 'a'; }\n",
         )
         .expect("tenant A dependency");
 
         let tenant_b_handler = tenant_b_root.join("main.ds");
         std::fs::write(
             &tenant_b_handler,
-            "export fn App(): string { return 'b'; }\n",
+            "export fn App() string { return 'b'; }\n",
         )
         .expect("tenant B handler");
 

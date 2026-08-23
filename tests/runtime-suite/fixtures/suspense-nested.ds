@@ -1,10 +1,10 @@
 const ui = globalThis.deka.ui;
 
-async fn Inner(): Promise<object> {
+async fn Inner() Promise<object> {
   return ui.jsx("span", { children: "inner loaded" });
 }
 
-fn Outer(): object {
+fn Outer() object {
   return ui.jsxs("div", {
     children: [
       ui.jsx("p", { children: "outer" }),

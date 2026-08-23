@@ -1,6 +1,6 @@
 const ui = globalThis.deka.ui;
 
-async fn Slow(): Promise<object> {
+async fn Slow() Promise<object> {
   return ui.jsx("p", { children: "loaded" });
 }
 

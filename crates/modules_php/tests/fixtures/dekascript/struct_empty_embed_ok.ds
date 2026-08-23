@@ -1,7 +1,7 @@
 struct Runner {
 }
 
-fn (r Runner) Move(): string {
+fn (r Runner) Move() string {
     return "running"
 }
 

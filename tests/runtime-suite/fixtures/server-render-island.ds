@@ -1,4 +1,4 @@
-fn Counter(props: object): object {
+fn Counter(props: object) object {
   return globalThis.deka.ui.jsxs("button", {
     type: "button",
     children: ["count: ", props.start]
