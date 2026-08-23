@@ -121,7 +121,7 @@ cargo run --release -p deka-fmt -- path/to/file.ds
    bun tests/runtime-suite/run.mjs
    ```
 4. **Bump crate versions** and open a PR if the change is user-facing.
-5. **After merge**, cut a release tag to push artifacts to R2 and trigger downstream site rebuilds (see `PUBLISH.md`).
+5. **After merge**, cut a release tag to push artifacts to R2 and trigger downstream site rebuilds (see `PUBLISH.md`). `@deka/*` packages are a different pipeline (`STDLIB.md`): merge does not publish them.
 6. **Update downstream fixtures** in `dekaruntime/testsuite` with `scripts/regen-fixtures.mjs` if isolate or WASM output changed. Point regen at this build (`DEKA_NATIVE` + `DEKA_WASM`) so both hosts come from the same commit.
 
 ## How downstream sites consume the runtime
