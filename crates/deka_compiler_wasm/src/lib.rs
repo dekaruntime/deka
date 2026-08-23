@@ -559,7 +559,7 @@ const origin = Point { x: 3, y: 4 };
         );
         assert!(
             !code.contains("__phpxStructMethods"),
-            "DS structs should not reference legacy PHPX registry, got:\n{code}"
+            "DS structs should not reference legacy DekaScript registry, got:\n{code}"
         );
     }
 

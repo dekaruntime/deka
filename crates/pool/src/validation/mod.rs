@@ -26,7 +26,7 @@ pub fn format_runtime_syntax_error(
         .filter(|s| !s.is_empty())
         .unwrap_or(error_msg);
 
-    let hint = "Fix the PHP/PHPX syntax error and try again.";
+    let hint = "Fix the DekaScript syntax error and try again.";
 
     Some(error_formatter::format_validation_error(
         source_code,

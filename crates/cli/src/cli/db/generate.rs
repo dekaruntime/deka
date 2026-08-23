@@ -287,7 +287,6 @@ fn render_ast_type(ty: &AstType<'_>, source: &[u8]) -> String {
             .map(|part| render_ast_type(part, source))
             .collect::<Vec<_>>()
             .join("&"),
-        AstType::Nullable(inner) => format!("?{}", render_ast_type(inner, source)),
         AstType::ObjectShape(fields) => {
             let rendered = fields
                 .iter()

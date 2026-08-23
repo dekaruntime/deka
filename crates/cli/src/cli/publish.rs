@@ -11,7 +11,7 @@ use crate::cli::auth_store;
 const COMMAND: CommandSpec = CommandSpec {
     name: "publish",
     category: "package",
-    summary: "publish a PHPX package release to Linkhash",
+    summary: "publish a DekaScript package release to Linkhash",
     aliases: &[],
     subcommands: &[],
     handler: cmd,

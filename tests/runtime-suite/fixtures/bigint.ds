@@ -1,0 +1,3 @@
+const big = 9007199254740993n
+const sum = big + 1n
+console.log(sum)

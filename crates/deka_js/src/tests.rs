@@ -113,7 +113,7 @@ fn ds_lowers_native_string_collection_and_for_of_primitives() {
 #[test]
 fn ds_allows_declared_function_calls() {
     let source = r#"
-        fn show(value: mixed): void {
+        fn show<T>(value: T): void {
             print(value);
         }
 
@@ -136,7 +136,7 @@ fn ds_allows_declared_function_calls() {
 #[test]
 fn ds_generic_variadic_identity_preserves_all_rest_values() {
     let source = r#"
-        fn collect(...values: Array<mixed>): Array<mixed> {
+        fn collect<T>(...values: Array<T>): Array<T> {
             return values;
         }
         export { collect };
@@ -199,12 +199,12 @@ fn ds_rejects_php_surface_and_const_reassignment() {
         ("foreach (items as item) {}", "foreach is not part"),
         ("left . right;", "concatenation is not part"),
         ("strlen(value);", "PHP built-ins are not part"),
-        ("class Legacy {}", "PHP/PHPX construct is not part"),
-        ("namespace Legacy;", "PHP/PHPX construct is not part"),
-        ("global value;", "PHP/PHPX construct is not part"),
-        ("static value;", "PHP/PHPX construct is not part"),
-        ("try {} catch (error) {}", "PHP/PHPX construct is not part"),
-        ("throw value;", "PHP/PHPX construct is not part"),
+        ("class Legacy {}", "PHP construct is not part"),
+        ("namespace Legacy;", "PHP construct is not part"),
+        ("global value;", "PHP construct is not part"),
+        ("static value;", "PHP construct is not part"),
+        ("try {} catch (error) {}", "PHP construct is not part"),
+        ("throw value;", "PHP construct is not part"),
         ("include 'legacy.ds';", "include and require are not part"),
         (
             "require_once 'legacy.ds';",

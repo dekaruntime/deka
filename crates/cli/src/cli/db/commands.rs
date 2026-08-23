@@ -8,7 +8,7 @@ use super::{
 
 const GENERATE: SubcommandSpec = SubcommandSpec {
     name: "generate",
-    summary: "generate db client and migration artifacts from PHPX struct models",
+    summary: "generate db client and migration artifacts from DekaScript struct models",
     aliases: &["gen"],
     handler: cmd_generate,
 };
@@ -39,7 +39,7 @@ const SUBCOMMANDS: &[SubcommandSpec] = &[GENERATE, MIGRATE, INFO, FLUSH];
 const COMMAND: CommandSpec = CommandSpec {
     name: "db",
     category: "database",
-    summary: "database tooling for PHPX ORM generation and migrations",
+    summary: "database tooling for DekaScript ORM generation and migrations",
     aliases: &[],
     subcommands: SUBCOMMANDS,
     handler: cmd,

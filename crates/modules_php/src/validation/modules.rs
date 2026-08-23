@@ -38,9 +38,6 @@ struct ImportEdge {
 pub fn validate_module_resolution(source: &str, file_path: &str) -> Vec<ValidationError> {
     let mut errors = Vec::new();
     let modules_root = resolve_modules_root(file_path);
-    // No system stdlib fallback — every module must be installed into the
-    // project-local ds_modules/ (or legacy php_modules/).
-    let stdlib_root: Option<PathBuf> = None;
     let imports = collect_import_specs(source, file_path);
     let available_modules = modules_root
         .as_deref()
@@ -50,7 +47,6 @@ pub fn validate_module_resolution(source: &str, file_path: &str) -> Vec<Validati
     let mut graph = ModuleGraph::new(
         modules_root.clone(),
         available_modules.clone(),
-        stdlib_root.clone(),
     );
     if !imports.is_empty() {
         graph.ensure_loaded("<entry>", Path::new(file_path), &mut errors);
@@ -147,8 +143,6 @@ pub fn validate_target_capabilities(source: &str, file_path: &str) -> Vec<Valida
 
 struct ModuleGraph {
     modules_root: Option<PathBuf>,
-    /// Fallback stdlib root for system modules not found locally.
-    stdlib_root: Option<PathBuf>,
     available_modules: HashSet<String>,
     package_integrity_targets: HashMap<String, PathBuf>,
     nodes: HashMap<String, ModuleNode>,
@@ -158,11 +152,9 @@ impl ModuleGraph {
     fn new(
         modules_root: Option<PathBuf>,
         available_modules: HashSet<String>,
-        stdlib_root: Option<PathBuf>,
     ) -> Self {
         Self {
             modules_root,
-            stdlib_root,
             available_modules,
             package_integrity_targets: HashMap::new(),
             nodes: HashMap::new(),
@@ -230,7 +222,6 @@ impl ModuleGraph {
                 file_path.to_string_lossy().as_ref(),
                 self.modules_root.as_deref(),
                 Some(&self.available_modules),
-                self.stdlib_root.as_deref(),
             ) {
                 Ok(resolved) => {
                     if let Some(target) = resolved.integrity_target {
@@ -654,7 +645,6 @@ fn resolve_import_target(
     current_file_path: &str,
     modules_root: Option<&Path>,
     available_modules: Option<&HashSet<String>>,
-    stdlib_root: Option<&Path>,
 ) -> Result<ResolvedImportTarget, ValidationError> {
     let raw = raw.trim();
     let is_relative = raw.starts_with('.');
@@ -681,10 +671,6 @@ fn resolve_import_target(
     } else {
         if let Some(root) = modules_root {
             base_dirs.push(root.to_path_buf());
-        }
-        // Fallback: system stdlib for bare module specifiers
-        if let Some(stdlib) = stdlib_root {
-            base_dirs.push(stdlib.to_path_buf());
         }
     }
 
@@ -721,17 +707,13 @@ fn resolve_import_target(
     for base_dir in &base_dirs {
         for variant in &spec_variants {
             let base_path = base_dir.join(variant);
-            if raw.ends_with(".phpx") {
-                candidates.push(base_path.clone());
-            } else if raw.ends_with(".ds") {
+            if raw.ends_with(".ds") {
                 candidates.push(base_path.clone());
                 candidates.push(base_path.join("index.ds"));
             } else {
-                // Extensionless relative/project specifiers: prefer .ds, then .phpx.
+                // Extensionless relative/project specifiers resolve to .ds only.
                 let ds_file_candidate = base_path.with_extension("ds");
                 let ds_index_candidate = base_path.join("index.ds");
-                let phpx_file_candidate = base_path.with_extension("phpx");
-                let phpx_index_candidate = base_path.join("index.phpx");
                 if ds_file_candidate.exists() && ds_index_candidate.exists() {
                     return Err(module_error(
                         1,
@@ -746,24 +728,8 @@ fn resolve_import_target(
                         "Disambiguate the import by using an explicit path ending in .ds.",
                     ));
                 }
-                if phpx_file_candidate.exists() && phpx_index_candidate.exists() {
-                    return Err(module_error(
-                        1,
-                        1,
-                        raw.len().max(1),
-                        format!(
-                            "Ambiguous import '{}' (both '{}' and '{}' exist).",
-                            raw,
-                            phpx_file_candidate.display(),
-                            phpx_index_candidate.display()
-                        ),
-                        "Disambiguate the import by using an explicit path ending in .phpx.",
-                    ));
-                }
                 candidates.push(ds_file_candidate);
                 candidates.push(ds_index_candidate);
-                candidates.push(phpx_file_candidate);
-                candidates.push(phpx_index_candidate);
             }
         }
     }
@@ -772,16 +738,6 @@ fn resolve_import_target(
             for variant in &spec_variants {
                 candidates.push(root.join(format!("{variant}.ds")));
                 candidates.push(root.join(variant).join("index.ds"));
-                candidates.push(root.join(format!("{variant}.phpx")));
-                candidates.push(root.join(variant).join("index.phpx"));
-            }
-        }
-        if let Some(stdlib) = stdlib_root {
-            for variant in &spec_variants {
-                candidates.push(stdlib.join(format!("{variant}.ds")));
-                candidates.push(stdlib.join(variant).join("index.ds"));
-                candidates.push(stdlib.join(format!("{variant}.phpx")));
-                candidates.push(stdlib.join(variant).join("index.phpx"));
             }
         }
     }
@@ -828,7 +784,7 @@ fn resolve_import_target(
     let lock_status = describe_lock_status(current_file_path);
     let help = if is_relative {
         format!(
-            "Ensure the module file exists relative to '{}'. Tried .ds and .phpx extensions.",
+            "Ensure the module file exists relative to '{}'. Tried .ds extensions.",
             current_file_path
         )
     } else {

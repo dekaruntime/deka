@@ -29,14 +29,6 @@ impl<'ast> Visitor<'ast> for TypeSyntaxValidator<'_> {
 impl TypeSyntaxValidator<'_> {
     fn check_type(&mut self, ty: &Type) {
         match ty {
-            Type::Nullable(inner) => {
-                self.push_error(
-                    ErrorKind::NullNotAllowed,
-                    type_span(inner),
-                    "Nullable types are not allowed in PHPX.".to_string(),
-                    "Use Option<T> instead of ?T or T|null.",
-                );
-            }
             Type::Option(inner) => {
                 // DekaScript `T?` is sugar for `Option<T>`; recurse into the inner type.
                 self.check_type(inner);
@@ -46,15 +38,19 @@ impl TypeSyntaxValidator<'_> {
                     self.push_error(
                         ErrorKind::NullNotAllowed,
                         type_span(ty),
-                        "Nullable union types are not allowed in PHPX.".to_string(),
+                        "Nullable union types are not allowed in DekaScript.".to_string(),
                         "Use Option<T> instead of T|null.",
                     );
-                } else if !is_supported_union(types, self.source) {
+                } else {
+                    // The only union DekaScript ever accepted was int|float,
+                    // to bridge the two numeric types. There is now exactly
+                    // one numeric type, so that carve-out cannot be spelled
+                    // and no union is supported.
                     self.push_error(
                         ErrorKind::TypeError,
                         type_span(ty),
-                        "Only int|float unions are supported in PHPX.".to_string(),
-                        "Use int|float or refactor to a struct/enum.",
+                        "Union types are not supported in DekaScript.".to_string(),
+                        "Refactor to a struct or an enum.",
                     );
                 }
             }
@@ -103,7 +99,7 @@ impl TypeSyntaxValidator<'_> {
                     self.push_error(
                         ErrorKind::NullNotAllowed,
                         token.span,
-                        "Null is not allowed in PHPX type annotations.".to_string(),
+                        "Null is not allowed in DekaScript type annotations.".to_string(),
                         "Use Option<T> instead of null.",
                     );
                 }
@@ -147,7 +143,6 @@ fn type_span(ty: &Type) -> Span {
         Type::Union(types) | Type::Intersection(types) => {
             types.first().map(type_span).unwrap_or_default()
         }
-        Type::Nullable(inner) => type_span(inner),
         Type::Option(inner) => type_span(inner),
         Type::ObjectShape(fields) => fields.first().map(|field| field.span).unwrap_or_default(),
         Type::Applied { base, .. } => type_span(base),
@@ -175,20 +170,8 @@ fn name_to_string(name: &Name, source: &str) -> Option<String> {
 
 fn is_null_type(ty: &Type) -> bool {
     match ty {
-        Type::Nullable(_) => true,
         Type::Simple(token) => token.kind == TokenKind::TypeNull,
         _ => false,
     }
 }
 
-fn is_supported_union(types: &[Type], source: &str) -> bool {
-    if types.len() != 2 {
-        return false;
-    }
-    let left = type_base_name(&types[0], source).unwrap_or_default();
-    let right = type_base_name(&types[1], source).unwrap_or_default();
-    let left = left.as_str();
-    let right = right.as_str();
-    (left.eq_ignore_ascii_case("int") && right.eq_ignore_ascii_case("float"))
-        || (left.eq_ignore_ascii_case("float") && right.eq_ignore_ascii_case("int"))
-}

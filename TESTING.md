@@ -28,6 +28,7 @@ cargo test -p engine
 cargo test -p deka_js        # PHPX compiler, including integration tests
 cargo test -p php-rs         # parser + typechecker
 cargo test -p bundler
+cargo test -p deka_compiler_wasm   # browser compiler; CI runs this via scripts/test-deka-compiler-wasm.sh
 
 # CLI tests must run single-threaded because some tests mutate process-global state
 cargo test -p cli --lib -- --test-threads=1

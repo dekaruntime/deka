@@ -841,8 +841,7 @@ fn build_single_file_bundle_to_path(
     minify: bool,
 ) -> Result<(), String> {
     let output = build_single_file_to_string(input_path)?;
-    let prelude = deka_js::build_stdlib_prelude(&output.project_root)?;
-    let entry_js = format!("{prelude}\n{}", output.js);
+    let entry_js = output.js.clone();
     let entry_path = fs::canonicalize(input_path)
         .map_err(|err| format!("failed to resolve {}: {}", input_path.display(), err))?;
     let provider = Arc::new(PhpxProvider::new(entry_path.clone(), entry_js));
@@ -852,7 +851,6 @@ fn build_single_file_bundle_to_path(
             project_root: output.project_root,
             minify,
             iife: false,
-            stdlib_path: None,
         },
         provider,
     )?;

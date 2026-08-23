@@ -18,11 +18,6 @@ use std::{
 
 const STAGED_MARKER: &str = ".deka-staged-package";
 
-mod bundled_stdlib {
-    include!(concat!(env!("OUT_DIR"), "/stdlib_snapshot.rs"));
-}
-
-const BUNDLED_STDLIB_VERSION: &str = "0.1.0";
 
 pub async fn run_install(payload: InstallPayload) -> Result<()> {
     if payload.rehash {
@@ -497,60 +492,6 @@ fn copy_github_package_files(source: &Path, target: &Path) -> Result<()> {
     Ok(())
 }
 
-fn install_from_bundled_stdlib(
-    name: &str,
-    locked: Option<&LockedPackage>,
-    destination: &Path,
-) -> Result<InstalledSource> {
-    if let Some(locked) = locked {
-        if locked.version != BUNDLED_STDLIB_VERSION {
-            bail!(
-                "bundled stdlib cannot satisfy locked {}@{} (bundle has {})",
-                name,
-                locked.version,
-                BUNDLED_STDLIB_VERSION
-            );
-        }
-    }
-    let source_prefix = bundled_stdlib_prefix(name)
-        .ok_or_else(|| anyhow!("no bundled stdlib package for {}", name))?;
-    let mut copied = 0usize;
-    for (relative, bytes) in bundled_stdlib::STDLIB_FILES {
-        let Some(package_relative) = relative.strip_prefix(&source_prefix) else {
-            continue;
-        };
-        let Some(package_relative) = package_relative.strip_prefix('/') else {
-            continue;
-        };
-        if package_relative.is_empty() {
-            continue;
-        }
-        let target = destination.join(package_relative);
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
-        }
-        fs::write(&target, bytes)
-            .with_context(|| format!("failed to write {}", target.display()))?;
-        copied += 1;
-    }
-
-    if copied == 0 {
-        bail!("bundled stdlib package {} is empty or missing", name);
-    }
-
-    write_bundled_package_manifest(name, destination)?;
-
-    Ok(InstalledSource {
-        version: locked
-            .map(|locked| locked.version.clone())
-            .unwrap_or_else(|| BUNDLED_STDLIB_VERSION.to_string()),
-        repo: None,
-        git_ref: None,
-        source: "linkhash",
-        requires_registry_digest: false,
-    })
-}
 
 fn install_staging_path(destination: &Path) -> Result<PathBuf> {
     let parent = destination
@@ -850,39 +791,6 @@ fn cleanup_install_staging(staging: &Path) {
     }
 }
 
-fn write_bundled_package_manifest(name: &str, destination: &Path) -> Result<()> {
-    let Some(package_name) = name.strip_prefix("@deka/") else {
-        return Ok(());
-    };
-    let main = if package_name == "encoding" {
-        "json/index.phpx"
-    } else {
-        "index.phpx"
-    };
-    let manifest = format!(
-        "{{\n  \"name\": \"{}\",\n  \"version\": \"{}\",\n  \"description\": \"PHPX stdlib: {}\",\n  \"main\": \"{}\",\n  \"security\": {{ \"allow\": {{ \"run\": true }} }}\n}}\n",
-        name, BUNDLED_STDLIB_VERSION, package_name, main
-    );
-    let target = destination.join("deka.json");
-    fs::write(&target, manifest).with_context(|| format!("failed to write {}", target.display()))
-}
-
-fn bundled_stdlib_prefix(name: &str) -> Option<String> {
-    let rest = name.strip_prefix("@deka/")?;
-    if rest == "encoding-json" {
-        return Some("encoding/json".to_string());
-    }
-    if rest == "encoding-binary" {
-        return Some("encoding/binary".to_string());
-    }
-    if rest == "vault" {
-        return Some("deka/vault".to_string());
-    }
-    if rest.contains('/') || rest.contains("..") || rest.is_empty() {
-        return None;
-    }
-    Some(rest.to_string())
-}
 
 fn collect_project_install_specs(project_dir: &Path) -> Result<Vec<String>> {
     let mut specs = BTreeMap::new();
@@ -1241,12 +1149,12 @@ fn manifest_dep_key(
 #[cfg(test)]
 mod tests {
     use super::{
-        bundled_stdlib_prefix, collect_project_install_specs, enqueue_package_spec,
-        install_from_bundled_stdlib, locked_package, package_dependencies, pause_for_kill_test,
-        php_modules_path_for, recover_install_transaction, rehash_php_packages_in,
-        record_root_dependencies, reject_vendored_php_modules, run_php_install_in,
-        select_registry_version, verify_locked_integrity, InstallTransaction, InstalledSource,
-        LockedPackage, RegistryPackage, MODULES_DIR,
+        collect_project_install_specs, enqueue_package_spec, locked_package,
+        package_dependencies, pause_for_kill_test, php_modules_path_for,
+        recover_install_transaction, rehash_php_packages_in, record_root_dependencies,
+        reject_vendored_php_modules, run_php_install_in, select_registry_version,
+        verify_locked_integrity, InstallTransaction, InstalledSource, LockedPackage,
+        RegistryPackage, MODULES_DIR,
     };
     use crate::{lock, payload::InstallPayload};
     use modules_php::integrity::{compute_package_integrity, PackageIntegrity};
@@ -1493,17 +1401,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn bundled_stdlib_prefix_maps_nested_encoding_packages() {
-        assert_eq!(
-            bundled_stdlib_prefix("@deka/encoding-json").as_deref(),
-            Some("encoding/json")
-        );
-        assert_eq!(
-            bundled_stdlib_prefix("@deka/encoding").as_deref(),
-            Some("encoding")
-        );
-    }
 
     #[test]
     fn deka_packages_always_install_to_canonical_scoped_paths() {
@@ -1518,34 +1415,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn bundled_stdlib_install_writes_resolver_compatible_shape() {
-        let tmp = tempfile::tempdir().expect("tmp");
-        let destination = tmp
-            .path()
-            .join(MODULES_DIR)
-            .join("@deka")
-            .join("encoding");
-        install_from_bundled_stdlib("@deka/encoding", None, &destination).expect("install bundled");
-
-        assert!(destination.join("json").join("index.phpx").is_file());
-        assert!(destination.join("binary").join("index.phpx").is_file());
-
-        let integrity = compute_package_integrity(&destination).expect("integrity");
-        assert!(!integrity.module_graph.is_empty());
-        assert!(!integrity.fs_graph.is_empty());
-    }
-
-    #[test]
-    fn bundled_stdlib_installs_canonical_scoped_shape() {
-        let tmp = tempfile::tempdir().expect("tmp");
-        let destination = tmp.path().join(MODULES_DIR).join("@deka").join("http");
-        install_from_bundled_stdlib("@deka/http", None, &destination).expect("install bundled");
-
-        assert!(destination.join("index.phpx").is_file());
-        let manifest = fs::read_to_string(destination.join("deka.json")).expect("manifest");
-        assert!(manifest.contains("\"name\": \"@deka/http\""));
-    }
 
     #[test]
     fn locked_package_accepts_legacy_version_descriptor() {
@@ -1603,81 +1472,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn bundled_stdlib_can_satisfy_locked_entry_without_bundled_rewrite() {
-        let tmp = tempfile::tempdir().expect("tmp");
-        let destination = tmp
-            .path()
-            .join(MODULES_DIR)
-            .join("@deka")
-            .join("encoding");
-        install_from_bundled_stdlib("@deka/encoding", None, &destination)
-            .expect("install first bundle copy");
-        let integrity = compute_package_integrity(&destination).expect("integrity");
-        fs::remove_dir_all(&destination).expect("remove first copy");
-
-        let lock_path = tmp.path().join("deka.lock");
-        let lock_json = json!({
-            "lockfileVersion": 1,
-            "packages": {
-                "@deka/encoding": [
-                    "@deka/encoding@0.1.0",
-                    "linkhash:@deka/encoding",
-                    {
-                        "moduleGraph": { "algo": "sha256", "hash": integrity.module_graph },
-                        "fsGraph": { "algo": "sha256", "hash": integrity.fs_graph }
-                    },
-                    ""
-                ]
-            }
-        });
-        let lock_bytes = format!(
-            "{}\n",
-            serde_json::to_string_pretty(&lock_json).expect("lock json")
-        );
-        fs::write(&lock_path, &lock_bytes).expect("write lock");
-        let lock = lock::read_lockfile_at(&lock_path);
-        let locked = locked_package(&lock, "@deka/encoding")
-            .expect("lock parse")
-            .expect("locked package");
-
-        let installed = install_from_bundled_stdlib("@deka/encoding", Some(&locked), &destination)
-            .expect("install locked bundle copy");
-        let installed_integrity = compute_package_integrity(&destination).expect("integrity");
-        verify_locked_integrity("@deka/encoding", &locked, &installed, &installed_integrity)
-            .expect("locked verification");
-
-        assert_eq!(installed.version, "0.1.0");
-        assert_eq!(installed.source, "linkhash");
-        let after = fs::read_to_string(&lock_path).expect("read lock");
-        assert_eq!(after, lock_bytes);
-    }
-
-    #[test]
-    fn bundled_stdlib_rejects_locked_version_not_in_bundle_manifest() {
-        let tmp = tempfile::tempdir().expect("tmp");
-        let locked = LockedPackage {
-            version: "9.9.9".to_string(),
-            resolved: "linkhash:@deka/encoding".to_string(),
-            module_graph: "unused".to_string(),
-            fs_graph: "unused".to_string(),
-        };
-
-        let err = install_from_bundled_stdlib(
-            "@deka/encoding",
-            Some(&locked),
-            &tmp.path()
-                .join(MODULES_DIR)
-                .join("@deka")
-                .join("encoding"),
-        )
-        .unwrap_err();
-
-        assert!(
-            err.to_string().contains("bundled stdlib cannot satisfy"),
-            "unexpected error: {err}"
-        );
-    }
 
     #[test]
     fn staged_install_preserves_existing_package_until_verified_replace() {

@@ -1,5 +1,5 @@
 struct Runner {
-    speed: int
+    speed: number
 }
 
 struct Thing {

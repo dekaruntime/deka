@@ -91,7 +91,7 @@ fn collect_struct_definitions(program: &Program, source: &str) -> HashMap<String
                         errors.push(struct_error(
                             *span,
                             source,
-                            "Struct constructors are not allowed in PHPX.".to_string(),
+                            "Struct constructors are not allowed in DekaScript.".to_string(),
                             "Use struct literals instead of __construct.",
                         ));
                     }
@@ -176,7 +176,6 @@ fn type_is_option(ty: Option<&php_rs::parser::ast::Type>, source: &str) -> bool 
     let Some(ty) = ty else { return false };
     match ty {
         php_rs::parser::ast::Type::Option(_) => true,
-        php_rs::parser::ast::Type::Nullable(_) => true,
         php_rs::parser::ast::Type::Applied { base, .. } => {
             if let php_rs::parser::ast::Type::Name(name) = *base {
                 name_to_string(name, source)

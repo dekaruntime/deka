@@ -1,6 +1,6 @@
 # Deka monorepo — developer guide
 
-This is the day-to-day guide for working in `dekaruntime/deka`. For release processes see `PUBLISH.md` and `RELEASE.md`; for test details see `TESTING.md`; for agent workspace rules see `AGENTS.md`.
+This is the day-to-day guide for working in `dekaruntime/deka`. For release processes see `PUBLISH.md` and `RELEASE.md`; for test details see `TESTING.md`; for CI and self-hosted runner debugging see `CI.md`; for agent workspace rules see `AGENTS.md`.
 
 ## What this repo is
 

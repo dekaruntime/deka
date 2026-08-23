@@ -283,7 +283,6 @@ fn build_bundle(input: &Path, treeshake: bool) -> Result<String, String> {
             project_root,
             minify: treeshake,
             iife: false,
-            stdlib_path: None,
         },
         provider,
     )
