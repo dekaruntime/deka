@@ -42,6 +42,24 @@ fn run_dekascript_with_manifest(name: &str, manifest: &str, source: &str, expect
 }
 
 #[test]
+fn run_executes_console_log_without_deno() {
+    run_dekascript(
+        "console_log",
+        "console.log(\"ok\")\n",
+        "ok",
+    );
+}
+
+#[test]
+fn run_executes_unsafe_json_then_console_log() {
+    run_dekascript(
+        "unsafe_json_console",
+        "const r = unsafe { JSON.parse('{\\\"x\\\":1}') }\nconsole.log(match (r) { Ok(v) => v.x, Err(e) => \"err\" })\n",
+        "1",
+    );
+}
+
+#[test]
 fn run_executes_dekascript_comparison_candidate() {
     run_dekascript(
         "comparison",
