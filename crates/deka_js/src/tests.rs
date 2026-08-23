@@ -18,7 +18,7 @@ fn ds_to_js(source: &str) -> Result<String, String> {
 
 #[test]
 fn ds_compiles_typed_bare_identifiers_dot_access_and_templates() {
-    let source = "const prefix = `hello`; fn greet(user: Object): string { user.name; return `${prefix}`; }";
+    let source = "const prefix = `hello`; fn greet(user: Object) string { user.name; return `${prefix}`; }";
     let js = ds_to_js(source).expect("DekaScript should compile");
     assert!(js.contains("const prefix ="), "missing const: {js}");
     assert!(
@@ -74,7 +74,7 @@ fn ds_compiler_entry_selects_native_mode_from_extension() {
 #[test]
 fn ds_lowers_native_string_collection_and_for_of_primitives() {
     let source = r#"
-        fn joinWords(parts: Array<string>): string {
+        fn joinWords(parts: Array<string>) string {
             let output = "";
             for (const part of parts) {
                 output += part.slice(0, 1);
@@ -113,7 +113,7 @@ fn ds_lowers_native_string_collection_and_for_of_primitives() {
 #[test]
 fn ds_allows_declared_function_calls() {
     let source = r#"
-        fn show<T>(value: T): void {
+        fn show<T>(value: T) void {
             print(value);
         }
 
@@ -136,7 +136,7 @@ fn ds_allows_declared_function_calls() {
 #[test]
 fn ds_generic_variadic_identity_preserves_all_rest_values() {
     let source = r#"
-        fn collect<T>(...values: Array<T>): Array<T> {
+        fn collect<T>(...values: Array<T>) Array<T> {
             return values;
         }
         export { collect };
@@ -165,7 +165,7 @@ fn ds_rejects_nested_declarations() {
     // module scope (or, for receiver methods, silently dropped).
     for (source, expected) in [
         (
-            r#"if (true) { fn helper(): int { return 1 } }"#,
+            r#"if (true) { fn helper() int { return 1 } }"#,
             "only allowed at the top level",
         ),
         (
@@ -177,7 +177,7 @@ fn ds_rejects_nested_declarations() {
             "only allowed at the top level",
         ),
         (
-            r#"if (true) { fn (p Person) greet(): string { return p.name } }"#,
+            r#"if (true) { fn (p Person) greet() string { return p.name } }"#,
             "only allowed at the top level",
         ),
     ] {

@@ -2,7 +2,7 @@ struct Person {
   name: string
 }
 
-fn (p Person) greet(): string {
+fn (p Person) greet() string {
   return "Hello, " + p.name;
 }
 
@@ -11,7 +11,7 @@ struct Employee {
   employeeId: string
 }
 
-fn (e Employee) greet(): string {
+fn (e Employee) greet() string {
   return "Employee " + e.employeeId;
 }
 

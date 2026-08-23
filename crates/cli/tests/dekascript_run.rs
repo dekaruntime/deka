@@ -103,7 +103,7 @@ fn run_executes_dekascript_if_else_candidate() {
 fn run_executes_declared_array_function_call() {
     run_dekascript(
         "array_call",
-        "export fn array(value: mixed): void { print(value); }\narray(41);\n",
+        "export fn array(value: mixed) void { print(value); }\narray(41);\n",
         "41",
     );
 }
@@ -337,7 +337,7 @@ fn run_executes_impl_before_enum_declaration_method() {
 fn run_executes_dekascript_generic_variadic_collect_candidate() {
     run_dekascript(
         "collect",
-        "export fn collect(...values: Array<mixed>): Array<mixed> {\n    return values;\n}\nconst result = collect(1, 2, 3);\nprint(result);\n",
+        "export fn collect(...values: Array<mixed>) Array<mixed> {\n    return values;\n}\nconst result = collect(1, 2, 3);\nprint(result);\n",
         "1,2,3",
     );
 }
@@ -429,14 +429,14 @@ export async fn mkdirs(path: string) {
 export async fn read_dir(path: string) {
   return await bridge fs.read_dir(path)
 }
-fn utf8(value: string): bytes {
+fn utf8(value: string) bytes {
   let encoded = unsafe { new TextEncoder().encode(value) }
   return match (encoded) {
     Ok(buf) => buf,
     Err(err) => utf8("")
   }
 }
-fn from_utf8(value: bytes): string {
+fn from_utf8(value: bytes) string {
   let decoded = unsafe { new TextDecoder("utf-8", { fatal: false }).decode(value) }
   return match (decoded) {
     Ok(text) => text,
@@ -605,7 +605,7 @@ export fn secure_compare(a: bytes, b: bytes) {
   return bridge crypto.secure_compare(a, b)
 }
 
-fn utf8(value: string): bytes {
+fn utf8(value: string) bytes {
   let encoded = unsafe { new TextEncoder().encode(value) }
   return match (encoded) {
     Ok(buf) => buf,
@@ -613,7 +613,7 @@ fn utf8(value: string): bytes {
   }
 }
 
-fn from_utf8(value: bytes): string {
+fn from_utf8(value: bytes) string {
   let decoded = unsafe { new TextDecoder("utf-8", { fatal: false }).decode(value) }
   return match (decoded) {
     Ok(text) => text,
@@ -621,7 +621,7 @@ fn from_utf8(value: bytes): string {
   }
 }
 
-fn b64url_encode(data: bytes): string {
+fn b64url_encode(data: bytes) string {
   let r = unsafe {
     var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     var s = "";
@@ -645,7 +645,7 @@ fn b64url_encode(data: bytes): string {
   }
 }
 
-fn b64url_decode(value: string): bytes {
+fn b64url_decode(value: string) bytes {
   let r = unsafe {
     var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     var s = String(value).replace(/-/g, "+").replace(/_/g, "/");

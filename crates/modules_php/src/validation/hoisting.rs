@@ -404,7 +404,7 @@ mod tests {
 
     #[test]
     fn const_component_used_before_definition_is_flagged() {
-        let errors = deka_errors("const app = <Card />\nconst Card = fn(): Component { return <div /> }\n");
+        let errors = deka_errors("const app = <Card />\nconst Card = fn() Component { return <div /> }\n");
         assert!(
             errors.iter().any(|e| e.message.contains("Card") && e.message.contains("not initialized")),
             "expected forward-reference error for Card, got: {:?}",

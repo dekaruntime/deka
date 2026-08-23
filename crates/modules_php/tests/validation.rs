@@ -696,7 +696,7 @@ fn dekascript_enum_non_generic_payload_ok() {
     // were lexed as a single PHP cast token and rejected by the parser.
     let source = r#"
         enum Msg { Text(string), Ping }
-        fn body(m: Msg): string {
+        fn body(m: Msg) string {
             return match (m) {
                 Msg::Text => m.string,
                 Msg::Ping => "ok",
@@ -716,7 +716,7 @@ fn dekascript_enum_non_generic_payload_ok() {
 fn dekascript_enum_non_generic_payload_mismatch_reports_error() {
     let source = r#"
         enum Msg { Text(string), Ping }
-        fn bad(): Msg { return Msg::Text(123); }
+        fn bad() Msg { return Msg::Text(123); }
     "#;
     let arena = Box::leak(Box::new(Bump::new()));
     let result = compile_deka(source, "test.ds", arena);
@@ -727,7 +727,7 @@ fn dekascript_enum_non_generic_payload_mismatch_reports_error() {
 fn dekascript_enum_non_generic_payload_field_outside_arm_errors() {
     let source = r#"
         enum Msg { Text(string), Ping }
-        fn body(m: Msg): string {
+        fn body(m: Msg) string {
             return match (m) {
                 Msg::Text => "ok",
                 Msg::Ping => m.string,

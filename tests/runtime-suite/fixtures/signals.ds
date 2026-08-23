@@ -5,7 +5,7 @@ console.log(get());
 set(5);
 console.log(get());
 
-fn trackEffect(): void {
+fn trackEffect() void {
   const v = get();
   console.log("effect");
 }
@@ -17,7 +17,7 @@ const pairA = createSignal(1);
 const getA = pairA[0];
 const setA = pairA[1];
 
-fn computeMemo(): number {
+fn computeMemo() number {
   console.log("computed");
   return getA() * 2;
 }
@@ -32,11 +32,11 @@ const pairMulti = createSignal(0);
 const getM = pairMulti[0];
 const setM = pairMulti[1];
 
-fn subA(): void {
+fn subA() void {
   console.log("A" + getM());
 }
 
-fn subB(): void {
+fn subB() void {
   console.log("B" + getM());
 }
 
@@ -52,11 +52,11 @@ const cleanupRunsPair = createSignal(0);
 const getCleanupRuns = cleanupRunsPair[0];
 const setCleanupRuns = cleanupRunsPair[1];
 
-fn runCleanup(): void {
+fn runCleanup() void {
   setCleanupRuns(getCleanupRuns() + 1);
 }
 
-fn withCleanup(): fn() void {
+fn withCleanup() fn() void {
   const v = getC();
   return runCleanup;
 }

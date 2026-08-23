@@ -1,6 +1,6 @@
 const ui = globalThis.deka.ui;
 
-async fn Slow(): Promise<object> {
+async fn Slow() Promise<object> {
   return ui.jsx("p", { children: "loaded" });
 }
 
@@ -9,7 +9,7 @@ const node = ui.jsx(ui.Suspense, {
   children: ui.jsx(Slow, {})
 });
 
-async fn main(): Promise<void> {
+async fn main() Promise<void> {
   const result = await ui.renderToStringAsync(node);
   console.log(result.html);
 }

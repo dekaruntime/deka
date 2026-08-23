@@ -768,7 +768,7 @@ impl<'src> Formatter<'src> {
                 self.fmt_param_list(params);
                 self.write(")");
                 if let Some(ty) = return_type {
-                    self.write(": ");
+                    self.write(" ");
                     self.fmt_type(ty);
                 }
                 self.write(" ");
@@ -943,7 +943,7 @@ impl<'src> Formatter<'src> {
         self.fmt_param_list(params);
         self.write(")");
         if let Some(ty) = return_type {
-            self.write(": ");
+            self.write(" ");
             self.fmt_type(ty);
         }
     }
@@ -972,7 +972,7 @@ impl<'src> Formatter<'src> {
         self.fmt_param_list(params);
         self.write(")");
         if let Some(ty) = return_type {
-            self.write(": ");
+            self.write(" ");
             self.fmt_type(ty);
         }
     }
@@ -1484,7 +1484,7 @@ impl<'src> Formatter<'src> {
                 s.push_str(&self.param_list_to_string(params));
                 s.push(')');
                 if let Some(ty) = return_type {
-                    s.push_str(": ");
+                    s.push_str(" ");
                     s.push_str(&self.type_to_string(ty));
                 }
                 s.push_str(" { ");
@@ -1511,7 +1511,7 @@ impl<'src> Formatter<'src> {
                 s.push_str(&self.param_list_to_string(params));
                 s.push(')');
                 if let Some(ty) = return_type {
-                    s.push_str(": ");
+                    s.push_str(" ");
                     s.push_str(&self.type_to_string(ty));
                 }
                 s.push_str(" => ");
@@ -1963,9 +1963,9 @@ mod tests {
 
     #[test]
     fn normalizes_trailing_whitespace_and_eof() {
-        let input = "fn add(): int {\n  return 1;  \n}\n\n";
+        let input = "fn add() int {\n  return 1;  \n}\n\n";
         let output = format_ds(input).unwrap();
-        assert_eq!(output, "fn add(): int {\n  return 1\n}\n");
+        assert_eq!(output, "fn add() int {\n  return 1\n}\n");
     }
 
     #[test]
@@ -1982,18 +1982,18 @@ mod tests {
 
     #[test]
     fn formats_function() {
-        let input = "fn add(  a:int,b :  string   ):int{ return a+b; }";
+        let input = "fn add(  a:int,b :  string   ) int{ return a+b; }";
         let output = format_ds(input).unwrap();
-        assert!(output.contains("fn add(a: int, b: string): int {"), "got: {}", output);
+        assert!(output.contains("fn add(a: int, b: string) int {"), "got: {}", output);
         assert!(output.contains("  return a + b"), "got: {}", output);
     }
 
     #[test]
     fn formats_function_literal() {
-        let input = "const f=fn(x:int):int{return x*x;};";
+        let input = "const f=fn(x:int) int{return x*x;};";
         let output = format_ds(input).unwrap();
         assert!(
-            output.contains("const f = fn(x: int): int { return x * x }"),
+            output.contains("const f = fn(x: int) int { return x * x }"),
             "got: {}",
             output
         );
@@ -2010,7 +2010,7 @@ mod tests {
 
     #[test]
     fn formats_struct_literal() {
-        let input = "fn origin(): Point { return Point { x: 0, y: 0 }; }";
+        let input = "fn origin() Point { return Point { x: 0, y: 0 }; }";
         let output = format_ds(input).unwrap();
         assert!(output.contains("Point { x: 0, y: 0 }"), "got: {}", output);
     }
@@ -2030,7 +2030,7 @@ mod tests {
     fn formats_match_expression() {
         let input = r#"
             enum Status { Loading, Ready, Failed }
-            fn f(s: Status): int {
+            fn f(s: Status) int {
                 return match (s) {
                     Status::Loading => 0,
                     Status::Ready => 1,
@@ -2045,7 +2045,7 @@ mod tests {
 
     #[test]
     fn formats_jsx_element() {
-        let input = "fn View(): Object { return <div class=\"test\">hello {name}</div>; }";
+        let input = "fn View() Object { return <div class=\"test\">hello {name}</div>; }";
         let output = format_ds(input).unwrap();
         assert!(output.contains("<div class={\"test\"}>"), "got: {}", output);
         assert!(output.contains("hello {name}"), "got: {}", output);
@@ -2054,7 +2054,7 @@ mod tests {
 
     #[test]
     fn formats_pipe_expression() {
-        let input = "fn inc(x: int): int { return x + 1; }\nconst y = 5 |> inc;";
+        let input = "fn inc(x: int) int { return x + 1; }\nconst y = 5 |> inc;";
         let output = format_ds(input).unwrap();
         assert!(output.contains("5 |> inc"), "got: {}", output);
     }
@@ -2083,9 +2083,9 @@ mod tests {
 
     #[test]
     fn formats_async_await() {
-        let input = "async fn fetch(): Promise<int> { return await 1; }";
+        let input = "async fn fetch() Promise<int> { return await 1; }";
         let output = format_ds(input).unwrap();
-        assert!(output.contains("async fn fetch(): Promise<int> {"), "got: {}", output);
+        assert!(output.contains("async fn fetch() Promise<int> {"), "got: {}", output);
         assert!(output.contains("return await 1"), "got: {}", output);
     }
 
@@ -2222,7 +2222,7 @@ struct Employee {
 
     #[test]
     fn formatted_output_re_parses_without_errors() {
-        let input = r#"fn inc(x: int): int {
+        let input = r#"fn inc(x: int) int {
   return x + 1
 }
 

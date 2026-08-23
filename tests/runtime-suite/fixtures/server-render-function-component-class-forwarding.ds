@@ -1,4 +1,4 @@
-fn Card(props: object): object {
+fn Card(props: object) object {
   return globalThis.deka.ui.jsx("div", { children: props.children })
 }
 

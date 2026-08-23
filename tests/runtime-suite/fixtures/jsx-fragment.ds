@@ -1,4 +1,4 @@
-fn Box({ children }: Object): Object {
+fn Box({ children }: Object) Object {
   return <div class="box">{children}</div>
 }
 

@@ -2,7 +2,7 @@ struct Counter {
   value: number
 }
 
-fn (c mut Counter) increment(): void {
+fn (c mut Counter) increment() void {
   c.value += 1;
 }
 

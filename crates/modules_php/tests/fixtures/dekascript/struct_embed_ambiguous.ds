@@ -1,14 +1,14 @@
 struct Runner {
 }
 
-fn (r Runner) Move(): string {
+fn (r Runner) Move() string {
     return "runner"
 }
 
 struct Walker {
 }
 
-fn (w Walker) Move(): string {
+fn (w Walker) Move() string {
     return "walker"
 }
 
@@ -17,7 +17,7 @@ struct Thing {
     Walker
 }
 
-fn callMove(t: Thing): string {
+fn callMove(t: Thing) string {
     return t.Move()
 }
 
