@@ -4754,6 +4754,7 @@ version = "0.26.0"
 dependencies = [
  "deno_core",
  "deno_permissions",
+ "serde_json",
  "sys_traits",
 ]
 

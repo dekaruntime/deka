@@ -236,7 +236,9 @@ async fn platform_async(context: &Context) {
     let tenants_dir = root.join("tenants");
     let default_handler = default_dir.join("main.ds");
 
-    if let Err(err) = install_platform_security_for_root(&default_dir, &context.args.flags) {
+    if let Err(err) =
+        install_platform_security_for_root(&default_dir, &context.args.flags, &context.args.params)
+    {
         stdio::error("platform", &err);
         std::process::exit(1);
     }

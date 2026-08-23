@@ -227,7 +227,8 @@ fn enforce_subprocess_policy(
         return Err(format!("invalid security policy:\n{}", lines.join("\n")));
     }
 
-    let overrides = SecurityCliOverrides::from_flags(&context.args.flags);
+    let overrides =
+        SecurityCliOverrides::from_flags_and_params(&context.args.flags, &context.args.params);
     let merged = merge_policy_with_cli_manifest_net_env(parsed.policy, &overrides);
     let program = extract_program_name(script);
 
