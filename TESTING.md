@@ -98,6 +98,84 @@ When you hit a weird tour example, copy the source into a new fixture, set the
 expected output, and run the suite. If it fails on `main`, you have a minimal
 reproduction before the bug reaches the website.
 
+## Before merging a runtime change: the conformance gate
+
+The in-tree suites above test this repo against itself. They cannot tell you
+whether a compiler change breaks the **published** surface — the native isolate
+and the browser Worker running the same fixture. That is what
+`dekaruntime/testsuite` is for, and it is runnable locally in one command.
+
+Run it for any change to the compiler, the typechecker, diagnostics, or the
+emitted JS.
+
+### One-time setup
+
+```bash
+git clone git@github.com:dekaruntime/testsuite.git
+cd testsuite
+bun install
+bunx playwright install chromium    # the browser host; without it you get a
+                                    # native-only run that still looks healthy
+```
+
+That Chromium step is not optional and is easy to miss — CI installs it
+explicitly in its deploy workflow, so a local checkout is the only place the
+browser host silently goes absent.
+
+### Running it
+
+Build both hosts **from the same commit**, then run the gate:
+
+```bash
+# in deka/
+cargo build --release -p cli
+CARGO_INCREMENTAL=0 cargo build --release \
+  --target wasm32-unknown-unknown -p deka_compiler_wasm --no-default-features
+
+# in testsuite/
+DEKA_NATIVE=../deka/target/release/cli \
+DEKA_WASM=../deka/target/wasm32-unknown-unknown/release/deka_compiler_wasm.wasm \
+  bun scripts/run-tests.mjs --gate
+```
+
+The gate does four things: verifies the environment, runs the native host, runs
+the browser host, and writes a report to `.cache/gate-report.txt`.
+
+Exit codes: `0` clean, `1` a new failure, `2` the environment is not fit to
+grade (fix it and re-run — a `2` is never a verdict on your change).
+
+### What preflight asserts, and why each one exists
+
+| Check | The failure it prevents |
+|---|---|
+| `DEKA_NATIVE`/`DEKA_WASM` both set or both unset | Pairing a local host against a published one renders type-name drift (`int` vs `number`) as native/browser disagreement |
+| native binary matches its own tree | A stale `target/release/cli` grades your change with an old compiler and invents divergences |
+| playwright resolvable | A missing dev dependency drops the browser host; the run then reports zero divergences no matter what the browser compiler does |
+| both hosts available | A host that did not run cannot be graded, so the gate refuses rather than half-grading |
+
+Every one of these has produced a confident wrong answer in practice. The point
+of preflight is that a broken environment does not look broken — it looks like a
+clean run with a number you would quote.
+
+Note `[hats build] wasm compiler version=` is read from the published CDN
+manifest, not from the compiler actually loaded. With `DEKA_WASM` set it does
+**not** describe your artifact. Trust preflight's version line instead.
+
+### The baseline
+
+The suite carries known failures, so a raw pass/fail count carries no signal.
+`tests/baseline.txt` holds the known-failing and known-divergent fixture ids,
+and the gate gates on **new names**, not on zero failures.
+
+```bash
+bun scripts/run-tests.mjs --write-baseline   # accept current state
+```
+
+Only regenerate after reading the diff. A fixture that starts failing is either
+a regression or an intended change, and only a human can tell those apart. A
+baseline recorded without both hosts is invalid — it bakes in a single-host view
+and masks every browser-side regression.
+
 ## Browser compiler WASM smoke test
 
 CI also runs a dedicated WASM build/test script:
