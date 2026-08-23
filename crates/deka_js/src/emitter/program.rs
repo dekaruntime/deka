@@ -78,13 +78,23 @@ impl<'a> JsSubsetEmitter<'a> {
             }
         }
         for stmt in program.statements {
-            let is_decl = matches!(
-                stmt,
+            let is_decl = match stmt {
                 Stmt::Function { .. }
-                    | Stmt::Enum { .. }
-                    | Stmt::Class { .. }
-                    | Stmt::TypeAlias { .. }
-            );
+                | Stmt::Enum { .. }
+                | Stmt::Class { .. }
+                | Stmt::TypeAlias { .. } => true,
+                Stmt::Export {
+                    item: ExportItem::Decl(inner),
+                    ..
+                } => matches!(
+                    inner,
+                    Stmt::Function { .. }
+                        | Stmt::Enum { .. }
+                        | Stmt::Class { .. }
+                        | Stmt::TypeAlias { .. }
+                ),
+                _ => false,
+            };
             // DekaScript `const` initializers are evaluated at the point of
             // declaration and may reference preceding `let` bindings. Keeping
             // them in the runtime execution order preserves source semantics
