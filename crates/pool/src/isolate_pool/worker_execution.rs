@@ -825,6 +825,20 @@ impl WorkerThread {
                     } catch (_err) {
                         try { globalThis.Deno = undefined; } catch (_err2) {}
                     }
+                    // php.js console methods close over the name `Deno` and
+                    // call Deno.core.print on every log. Rebind after hiding
+                    // Deno so `console.log` (testsuite fixtures) still prints.
+                    globalThis.console = {
+                        log(...args) { __print(args.map(String).join(' ') + '\n', false); },
+                        error(...args) { __print(args.map(String).join(' ') + '\n', true); },
+                        warn(...args) { __print('[WARN] ' + args.map(String).join(' ') + '\n', true); },
+                        info(...args) { __print('[INFO] ' + args.map(String).join(' ') + '\n', false); },
+                        debug(...args) { __print('[DEBUG] ' + args.map(String).join(' ') + '\n', false); },
+                    };
+                    globalThis.__dekaPrint = (value, isErr = false) => {
+                        const text = value == null ? '' : String(value);
+                        __print(text, !!isErr);
+                    };
                 }
 
                 if (typeof globalThis.__dekaRuntime !== 'object') {
