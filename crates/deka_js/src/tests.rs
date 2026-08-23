@@ -375,6 +375,28 @@ fn ds_bridge_crypto_digest_emits_host_call() {
 }
 
 #[test]
+fn ds_bridge_net_connect_emits_host_call() {
+    let js = ds_to_js("const x = bridge net.connect(\"127.0.0.1\", 80)")
+        .expect("bridge net.connect should emit");
+    assert!(
+        js.contains("Symbol.for(\"deka.host.internal\")")
+            && js.contains(".host(\"net\", \"connect\""),
+        "expected net connect host call via internal symbol, got:\n{js}"
+    );
+}
+
+#[test]
+fn ds_bridge_tls_upgrade_emits_host_call() {
+    let js = ds_to_js("const x = bridge tls.upgrade(1, \"localhost\")")
+        .expect("bridge tls.upgrade should emit");
+    assert!(
+        js.contains("Symbol.for(\"deka.host.internal\")")
+            && js.contains(".host(\"tls\", \"upgrade\""),
+        "expected tls upgrade host call via internal symbol, got:\n{js}"
+    );
+}
+
+#[test]
 fn ds_bridge_async_fs_emits_await() {
     let js = ds_to_js("const x = await bridge fs.read_file(\"/tmp/a\")")
         .expect("async bridge should emit");

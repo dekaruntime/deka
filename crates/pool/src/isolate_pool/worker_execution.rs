@@ -768,6 +768,8 @@ impl WorkerThread {
                     const DS_HOST_CATALOG = {
                         crypto: ['random_bytes', 'digest', 'hmac', 'secure_compare', 'aes_256_gcm_encrypt', 'aes_256_gcm_decrypt', 'bcrypt_verify'],
                         fs: ['read_file'],
+                        net: ['connect', 'listen', 'accept', 'read', 'write', 'close', 'set_deadline'],
+                        tls: ['upgrade'],
                     };
                     const __deka_host = (kind, action, args) => {
                         try {
@@ -777,6 +779,14 @@ impl WorkerThread {
                                 return { ok: false, error: `unknown bridge action '${k}.${a}'` };
                             }
                             const list = Array.isArray(args) ? args : [];
+                            const toByteArray = (v) => {
+                                if (v instanceof Uint8Array) return Array.from(v);
+                                if (Array.isArray(v)) return v;
+                                if (typeof v === 'string') {
+                                    return Array.from(new TextEncoder().encode(v));
+                                }
+                                return [];
+                            };
                             const payload = (() => {
                                 if (k === 'crypto' && a === 'random_bytes') return { length: list[0] };
                                 if (k === 'crypto' && a === 'digest') return { algorithm: list[0], data: list[1] };
@@ -786,17 +796,30 @@ impl WorkerThread {
                                 if (k === 'crypto' && a === 'aes_256_gcm_decrypt') return { key: list[0], nonce: list[1], ciphertext: list[2], aad: list[3] };
                                 if (k === 'crypto' && a === 'bcrypt_verify') return { password: list[0], hash: list[1] };
                                 if (k === 'fs' && a === 'read_file') return { path: list[0] };
+                                if (k === 'net' && a === 'connect') return { host: list[0], port: list[1] };
+                                if (k === 'net' && a === 'listen') return { host: list[0], port: list[1] };
+                                if (k === 'net' && a === 'accept') return { handle: list[0] };
+                                if (k === 'net' && a === 'read') return { handle: list[0], max_bytes: list[1] };
+                                if (k === 'net' && a === 'write') return { handle: list[0], data: toByteArray(list[1]) };
+                                if (k === 'net' && a === 'close') return { handle: list[0] };
+                                if (k === 'net' && a === 'set_deadline') return { handle: list[0], millis: list[1] };
+                                if (k === 'tls' && a === 'upgrade') return { handle: list[0], server_name: list[1] };
                                 if (list.length === 1 && list[0] && typeof list[0] === 'object' && !Array.isArray(list[0])) {
                                     return list[0];
                                 }
                                 return { args: list };
                             })();
-                            const raw = __dekaFixProto(routeHostCall(k, a, payload));
+                            const routeKind = (k === 'tls' && a === 'upgrade') ? 'net' : k;
+                            const routeAction = (k === 'tls' && a === 'upgrade') ? 'tls_upgrade' : a;
+                            const raw = __dekaFixProto(routeHostCall(routeKind, routeAction, payload));
                             const assoc = (Array.isArray(raw) && raw.length && Array.isArray(raw[0]))
                                 ? Object.fromEntries(raw)
                                 : (raw || {});
-                            if (assoc && assoc.ok === true && typeof assoc.data === 'undefined' && typeof assoc.valid === 'boolean') {
-                                assoc.data = assoc.valid;
+                            if (assoc && assoc.ok === true && typeof assoc.data === 'undefined') {
+                                if (typeof assoc.handle !== 'undefined') assoc.data = assoc.handle;
+                                else if (typeof assoc.written === 'number') assoc.data = assoc.written;
+                                else if (typeof assoc.valid === 'boolean') assoc.data = assoc.valid;
+                                else assoc.data = true;
                             }
                             if (assoc && assoc.ok === true && Array.isArray(assoc.data) && typeof Uint8Array !== 'undefined') {
                                 assoc.data = new Uint8Array(assoc.data);
