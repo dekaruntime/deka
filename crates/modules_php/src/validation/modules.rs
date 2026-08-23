@@ -9,6 +9,8 @@ use php_rs::parser::lexer::Lexer;
 use php_rs::parser::parser::{Parser, ParserMode};
 use serde_json::Value;
 
+use runtime_core::modules::{existing_modules_dirs, is_modules_dir_name, MODULES_DIR};
+
 use super::{ErrorKind, Severity, ValidationError};
 use crate::validation::exports::{parse_export_function, parse_export_list_line};
 use crate::validation::imports::{
@@ -37,7 +39,7 @@ pub fn validate_module_resolution(source: &str, file_path: &str) -> Vec<Validati
     let mut errors = Vec::new();
     let modules_root = resolve_modules_root(file_path);
     // No system stdlib fallback — every module must be installed into the
-    // project-local php_modules/.
+    // project-local ds_modules/ (or legacy php_modules/).
     let stdlib_root: Option<PathBuf> = None;
     let imports = collect_import_specs(source, file_path);
     let available_modules = modules_root
@@ -272,7 +274,7 @@ impl ModuleGraph {
                             "Unknown phpx module '{}' imported by '{}'.",
                             edge.raw_from, node.module_id
                         ),
-                        "Ensure the module exists in php_modules/.",
+                        "Ensure the module exists in ds_modules/.",
                     ));
                     continue;
                 };
@@ -511,8 +513,7 @@ fn resolve_modules_root_with_env(
         path.parent()?.to_path_buf()
     };
     if let Some(root) = find_project_root(&dir) {
-        let candidate = root.join("php_modules");
-        if candidate.exists() {
+        if let Some(candidate) = existing_modules_dirs(&root).into_iter().next() {
             return Some(candidate);
         }
     }
@@ -520,12 +521,13 @@ fn resolve_modules_root_with_env(
     if let Some(env_root) = env_module_root {
         let root = PathBuf::from(env_root);
         if root.join("deka.lock").exists() {
-            let candidate = root.join("php_modules");
-            if candidate.exists() {
+            if let Some(candidate) = existing_modules_dirs(&root).into_iter().next() {
                 return Some(candidate);
             }
         }
-        if root.file_name().is_some_and(|name| name == "php_modules")
+        if root
+            .file_name()
+            .is_some_and(|name| is_modules_dir_name(&name.to_string_lossy()))
             && root.exists()
             && root
                 .parent()
@@ -539,26 +541,23 @@ fn resolve_modules_root_with_env(
     for ancestor in dir.ancestors() {
         if ancestor
             .file_name()
-            .is_some_and(|name| name == "php_modules")
+            .is_some_and(|name| is_modules_dir_name(&name.to_string_lossy()))
         {
             return Some(ancestor.to_path_buf());
         }
-        let candidate = ancestor.join("php_modules");
-        if candidate.exists() {
+        if let Some(candidate) = existing_modules_dirs(ancestor).into_iter().next() {
             return Some(candidate);
         }
     }
 
     if let Ok(current_dir) = std::env::current_dir() {
         if let Some(root) = find_project_root(&current_dir) {
-            let candidate = root.join("php_modules");
-            if candidate.exists() {
+            if let Some(candidate) = existing_modules_dirs(&root).into_iter().next() {
                 return Some(candidate);
             }
         }
         for ancestor in current_dir.ancestors() {
-            let candidate = ancestor.join("php_modules");
-            if candidate.exists() {
+            if let Some(candidate) = existing_modules_dirs(ancestor).into_iter().next() {
                 return Some(candidate);
             }
         }
@@ -696,16 +695,16 @@ fn resolve_import_target(
             1,
             raw.len().max(1),
             format!(
-                "Missing php_modules for import '{}' in {} ({lock_status}).",
+                "Missing ds_modules for import '{}' in {} ({lock_status}).",
                 raw, current_file_path
             ),
-            "Create php_modules/, ensure deka.lock is present, or set DEKA_MODULE_ROOT to a root that contains deka.lock.",
+            "Create ds_modules/, ensure deka.lock is present, or set DEKA_MODULE_ROOT to a root that contains deka.lock.",
         ));
     }
 
     // Build the set of spec variants to try. For bare stdlib-style specifiers
     // we also try the @deka-scoped layout because stdlib packages installed
-    // via `deka install` live under php_modules/@deka/<pkg>/<subpath>.
+    // via `deka install` live under ds_modules/@deka/<pkg>/<subpath>.
     let mut spec_variants: Vec<String> = vec![spec_path.to_string()];
     if !is_relative && !is_project_alias && !raw.starts_with('@') && !raw.is_empty() {
         spec_variants.push(format!("@deka/{}", spec_path));
@@ -836,7 +835,7 @@ fn resolve_import_target(
         available_modules
             .and_then(|modules| format_available_modules(modules, "Available modules: "))
             .unwrap_or_else(|| {
-                "Ensure the module exists in php_modules and is listed in deka.lock.".to_string()
+                "Ensure the module exists in ds_modules and is listed in deka.lock.".to_string()
             })
     };
     Err(module_error(
@@ -976,10 +975,10 @@ fn resolve_wasm_target(
             1,
             raw.len().max(1),
             format!(
-                "Wasm import requires php_modules/ (missing for {}, {}).",
+                "Wasm import requires ds_modules/ (missing for {}, {}).",
                 current_file_path, lock_status
             ),
-            "Create php_modules/, ensure deka.lock is present, or set DEKA_MODULE_ROOT to a root with deka.lock.",
+            "Create ds_modules/, ensure deka.lock is present, or set DEKA_MODULE_ROOT to a root with deka.lock.",
         )
     })?;
 
@@ -1016,7 +1015,7 @@ fn resolve_wasm_target(
                 if is_project_alias {
                     "project root"
                 } else {
-                    "php_modules/"
+                    "ds_modules/"
                 },
                 current_file_path,
                 raw
@@ -1024,7 +1023,7 @@ fn resolve_wasm_target(
             if is_project_alias {
                 "Move the wasm module under the project root."
             } else {
-                "Move the wasm module under php_modules/."
+                "Move the wasm module under ds_modules/."
             },
         ));
     }
@@ -1492,7 +1491,7 @@ fn wasm_error(
 mod tests {
     use super::{
         resolve_modules_root_with_env, validate_module_resolution, validate_package_integrity,
-        validate_target_capabilities,
+        validate_target_capabilities, MODULES_DIR,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -1505,7 +1504,7 @@ mod tests {
             .expect("clock")
             .as_nanos();
         let root = std::env::temp_dir().join(format!("deka_modules_test_{name}_{nanos}"));
-        fs::create_dir_all(root.join("php_modules")).expect("create php_modules");
+        fs::create_dir_all(root.join(MODULES_DIR)).expect("create php_modules");
         fs::write(root.join("deka.lock"), "{}").expect("write lockfile");
         root
     }
@@ -1516,7 +1515,7 @@ mod tests {
             .expect("clock")
             .as_nanos();
         let root = std::env::temp_dir().join(format!("deka_modules_env_{name}_{nanos}"));
-        fs::create_dir_all(root.join("php_modules")).expect("create php_modules");
+        fs::create_dir_all(root.join(MODULES_DIR)).expect("create php_modules");
         if with_lock {
             fs::write(root.join("deka.lock"), "{}").expect("write lockfile");
         }
@@ -1526,7 +1525,7 @@ mod tests {
     fn write_lock_for_packages(root: &std::path::Path, packages: &[(&str, &str)]) {
         let mut entries = serde_json::Map::new();
         for (name, rel_root) in packages {
-            let package_root = root.join("php_modules").join(rel_root);
+            let package_root = root.join(MODULES_DIR).join(rel_root);
             let integrity =
                 crate::integrity::compute_package_integrity(&package_root).expect("integrity");
             entries.insert(
@@ -1567,7 +1566,7 @@ mod tests {
         )
         .expect("resolve modules root");
 
-        assert_eq!(resolved, local.join("php_modules"));
+        assert_eq!(resolved, local.join(MODULES_DIR));
         let _ = fs::remove_dir_all(local);
         let _ = fs::remove_dir_all(global);
     }
@@ -1587,7 +1586,7 @@ mod tests {
         )
         .expect("resolve modules root");
 
-        assert_eq!(resolved, global.join("php_modules"));
+        assert_eq!(resolved, global.join(MODULES_DIR));
         let _ = fs::remove_dir_all(global);
         let _ = fs::remove_file(outside);
     }
@@ -1620,12 +1619,12 @@ mod tests {
         let entry = root.join("main.phpx");
         fs::write(&entry, "import { foo } from 'a'\n").expect("write entry");
         fs::write(
-            root.join("php_modules/a.phpx"),
+            root.join(MODULES_DIR).join("a.phpx"),
             "import { bar } from 'b'\nexport function foo() { return 1 }\n",
         )
         .expect("write a");
         fs::write(
-            root.join("php_modules/b.phpx"),
+            root.join(MODULES_DIR).join("b.phpx"),
             "import { foo } from 'a'\nexport function bar() { return 1 }\n",
         )
         .expect("write b");
@@ -1665,7 +1664,7 @@ mod tests {
         assert!(
             errors.iter().any(|err| err
                 .help_text
-                .contains("Ensure the module exists in php_modules")
+                .contains("Ensure the module exists in ds_modules")
                 || err.help_text.contains("Available modules:")),
             "expected actionable help text, got: {:?}",
             errors
@@ -1741,10 +1740,10 @@ import { now_ms } from '@deka/time'
             ),
             ("time", "export function now_ms(): int { return 1 }\n"),
         ] {
-            fs::create_dir_all(root.join("php_modules").join(module))
+            fs::create_dir_all(root.join(MODULES_DIR).join(module))
                 .unwrap_or_else(|err| panic!("mkdir {module}: {err}"));
             fs::write(
-                root.join("php_modules").join(module).join("index.phpx"),
+                root.join(MODULES_DIR).join(module).join("index.phpx"),
                 source,
             )
             .unwrap_or_else(|err| panic!("write {module}: {err}"));
@@ -1776,7 +1775,7 @@ import { now_ms } from '@deka/time'
             "import { http_get } from '@deka/http'\nexport function run() { return http_get }\n",
         )
         .expect("write entry");
-        let package_root = root.join("php_modules/http");
+        let package_root = root.join(MODULES_DIR).join("http");
         fs::create_dir_all(&package_root).expect("mkdir http");
         fs::write(
             package_root.join("index.phpx"),
@@ -1810,14 +1809,14 @@ import { now_ms } from '@deka/time'
         let root = make_temp_project("ambiguous_module");
         let entry = root.join("main.phpx");
         fs::write(&entry, "import { foo } from 'ui/card'\n").expect("write entry");
-        fs::create_dir_all(root.join("php_modules/ui/card")).expect("mkdir ui/card");
+        fs::create_dir_all(root.join(MODULES_DIR).join("ui/card")).expect("mkdir ui/card");
         fs::write(
-            root.join("php_modules/ui/card.phpx"),
+            root.join(MODULES_DIR).join("ui/card.phpx"),
             "export function foo() { return 1 }\n",
         )
         .expect("write card.phpx");
         fs::write(
-            root.join("php_modules/ui/card/index.phpx"),
+            root.join(MODULES_DIR).join("ui/card/index.phpx"),
             "export function foo() { return 2 }\n",
         )
         .expect("write card/index.phpx");
@@ -1847,7 +1846,7 @@ import { now_ms } from '@deka/time'
     #[test]
     fn package_integrity_accepts_flat_lock_packages() {
         let root = make_temp_project("flat_lock_integrity");
-        let package_root = root.join("php_modules").join("@deka").join("core");
+        let package_root = root.join(MODULES_DIR).join("@deka").join("core");
         fs::create_dir_all(&package_root).expect("mkdir package");
         fs::write(
             package_root.join("index.phpx"),
@@ -1877,7 +1876,7 @@ import { now_ms } from '@deka/time'
         .expect("write lock");
 
         let package_roots = HashMap::from([("@deka/core".to_string(), package_root)]);
-        let errors = validate_package_integrity(&root.join("php_modules"), &package_roots);
+        let errors = validate_package_integrity(&root.join(MODULES_DIR), &package_roots);
         assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
 
         let _ = fs::remove_dir_all(root);
@@ -1889,12 +1888,12 @@ import { now_ms } from '@deka/time'
         let entry = root.join("main.phpx");
         fs::write(&entry, "import { foo } from 'a'\n").expect("write entry");
         fs::write(
-            root.join("php_modules/a.phpx"),
+            root.join(MODULES_DIR).join("a.phpx"),
             "import { bar } from 'b'\nexport function foo() { return 1 }\n",
         )
         .expect("write a");
         fs::write(
-            root.join("php_modules/b.phpx"),
+            root.join(MODULES_DIR).join("b.phpx"),
             "import { foo } from 'a'\n$v = await foo()\nexport function bar() { return 1 }\n",
         )
         .expect("write b");

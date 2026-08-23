@@ -6,6 +6,7 @@ use crate::{
 use anyhow::{anyhow, bail, Context, Result};
 use modules_php::integrity::compute_package_integrity;
 use runtime_core::module_spec::canonical_php_package_spec;
+use runtime_core::modules::{install_modules_dir, is_modules_dir_name, MODULES_DIR};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -61,6 +62,7 @@ fn run_php_install_in_transaction(
     quiet: bool,
     cwd: &Path,
 ) -> Result<()> {
+    let explicit_add = !specs.is_empty();
     let specs = if specs.is_empty() {
         collect_project_install_specs(cwd)?
     } else {
@@ -68,7 +70,7 @@ fn run_php_install_in_transaction(
     };
 
     if specs.is_empty() {
-        bail!("no PHP packages declared in deka.json or deka.lock");
+        bail!("no packages declared in deka.json or deka.lock");
     }
 
     let lock_path = cwd.join(lock::LOCKFILE_NAME);
@@ -77,14 +79,14 @@ fn run_php_install_in_transaction(
     let start = Instant::now();
     let mut pending = VecDeque::new();
     let mut requested = BTreeMap::new();
-    for spec in specs {
-        enqueue_package_spec(&mut pending, &mut requested, &spec, "root")?;
+    for spec in &specs {
+        enqueue_package_spec(&mut pending, &mut requested, spec, "root")?;
     }
     let mut installed = BTreeMap::new();
 
     // A release is source plus its declared dependencies, never a recursive
     // vendor tree. Resolve each declared dependency here so every package is a
-    // sibling under the consumer's php_modules directory.
+    // sibling under the consumer's ds_modules directory.
     while let Some(name) = pending.pop_front() {
         let requirements = requested.get(&name).expect("queued package requirement");
         let locked = locked_package(&existing_lock, &name)?;
@@ -92,10 +94,16 @@ fn run_php_install_in_transaction(
         let staging = install_staging_path(&destination)?;
         cleanup_install_staging(&staging);
 
+        let requested_version = requirements
+            .iter()
+            .find(|req| req.range != "latest" && req.range != "*")
+            .map(|req| req.range.as_str())
+            .unwrap_or("latest");
+
         // @deka stdlib packages are now served from deka.gg metadata + R2 tarballs.
         // Legacy linkhash/harar registry support has been removed.
         let install_source = if is_deka_package(&name) {
-            install_from_registry(&name, locked.as_ref(), &staging)
+            install_from_registry(&name, locked.as_ref(), requested_version, &staging)
                 .with_context(|| format!("failed to install {} from deka.gg", name))?
         } else {
             bail!(
@@ -180,6 +188,9 @@ fn run_php_install_in_transaction(
             packages: installed.clone(),
         },
     )?;
+    if explicit_add {
+        record_root_dependencies(cwd, &specs, &installed)?;
+    }
     pause_for_kill_test("after-lock");
 
     transaction.finish()?;
@@ -258,13 +269,11 @@ fn reject_vendored_php_modules(package_root: &Path, package_name: &str) -> Resul
             let entry = entry?;
             let file_type = entry.file_type()?;
             let entry_name = entry.file_name();
-            if entry_name
-                .to_string_lossy()
-                .eq_ignore_ascii_case("php_modules")
-            {
+            if is_modules_dir_name(&entry_name.to_string_lossy()) {
                 bail!(
-                    "package {} contains vendored php_modules at {}; packages must declare dependencies in deka.json",
+                    "package {} contains vendored {} at {}; packages must declare dependencies in deka.json",
                     package_name,
+                    entry_name.to_string_lossy(),
                     entry.path().display()
                 );
             }
@@ -313,9 +322,40 @@ struct LockedPackage {
 }
 
 const GITHUB_STDLIB_ORG: &str = "dekaruntime";
-const GITHUB_STDLIB_VERSION: &str = "0.1.0";
 const DEKA_REGISTRY_URL: &str = "https://deka.gg";
 const DEKA_STDLIB_CDN: &str = "https://pub-6d81db17678348abba85f93fde4b4400.r2.dev";
+
+#[derive(Debug, Deserialize)]
+struct RegistryPackage {
+    #[serde(default)]
+    versions: Vec<String>,
+}
+
+fn latest_registry_version(versions: &[String]) -> Result<String> {
+    let mut best: Option<(semver::Version, String)> = None;
+    for raw in versions {
+        let trimmed = raw.trim().trim_start_matches('v');
+        if trimmed.is_empty() {
+            continue;
+        }
+        let parsed = semver::Version::parse(trimmed)
+            .with_context(|| format!("registry version `{raw}` is not semver"))?;
+        match &best {
+            Some((current, _)) if parsed <= *current => {}
+            _ => best = Some((parsed, trimmed.to_string())),
+        }
+    }
+    best.map(|(_, version)| version)
+        .ok_or_else(|| anyhow!("registry listed no usable versions"))
+}
+
+fn select_registry_version(registry: &RegistryPackage, requested: &str) -> Result<String> {
+    let requested = requested.trim();
+    if requested != "latest" && requested != "*" && !requested.is_empty() {
+        return Ok(requested.trim_start_matches('v').to_string());
+    }
+    latest_registry_version(&registry.versions)
+}
 
 /// Install a @deka stdlib package from the deka.gg registry + R2 tarball CDN.
 ///
@@ -325,23 +365,32 @@ const DEKA_STDLIB_CDN: &str = "https://pub-6d81db17678348abba85f93fde4b4400.r2.d
 fn install_from_registry(
     name: &str,
     locked: Option<&LockedPackage>,
+    requested: &str,
     destination: &Path,
 ) -> Result<InstalledSource> {
     let package_name = name
         .strip_prefix("@deka/")
         .ok_or_else(|| anyhow!("install_from_registry called with non-@deka package: {}", name))?;
 
-    let version = locked
-        .map(|locked| locked.version.clone())
-        .unwrap_or_else(|| GITHUB_STDLIB_VERSION.to_string());
-
-    // Validate the package exists in the deka.gg registry.
     let registry_url = format!("{}/api/registry/{}.json", DEKA_REGISTRY_URL, package_name);
     let registry_resp = reqwest::blocking::get(&registry_url)
         .with_context(|| format!("failed to contact deka.gg registry for {}", name))?;
     if !registry_resp.status().is_success() {
-        bail!("package {} not found in deka.gg registry (status {})", name, registry_resp.status());
+        bail!(
+            "package {} not found in deka.gg registry (status {})",
+            name,
+            registry_resp.status()
+        );
     }
+    let registry: RegistryPackage = registry_resp
+        .json()
+        .with_context(|| format!("failed to parse deka.gg registry metadata for {}", name))?;
+
+    let version = match locked {
+        Some(locked) => locked.version.clone(),
+        None => select_registry_version(&registry, requested)
+            .with_context(|| format!("failed to select a version for {}", name))?,
+    };
 
     let repo_url = format!("https://github.com/{}/{}.git", GITHUB_STDLIB_ORG, package_name);
     let tag = format!("v{}", version);
@@ -418,9 +467,9 @@ fn copy_github_package_files(source: &Path, target: &Path) -> Result<()> {
         let dst_path = target.join(&name);
         let file_type = entry.file_type()?;
 
-        if name_str.eq_ignore_ascii_case("php_modules") {
+        if is_modules_dir_name(&name_str) {
             bail!(
-                "package artifact contains vendored php_modules at {}; packages must declare dependencies in deka.json",
+                "package artifact contains vendored {name_str} at {}; packages must declare dependencies in deka.json",
                 src_path.display()
             );
         }
@@ -1022,14 +1071,14 @@ async fn rehash_php_packages_in(payload: &InstallPayload, project_dir: &Path) ->
         specs = lock.packages.keys().cloned().collect();
     }
     if specs.is_empty() {
-        bail!("no PHP packages found to rehash");
+        bail!("no packages found to rehash");
     }
 
     for name in specs {
         let package_root = php_modules_path_for_in(project_dir, &name)?;
         if !package_root.is_dir() {
             bail!(
-                "package '{}' is missing from php_modules (expected {})",
+                "package '{}' is missing from {MODULES_DIR} (expected {})",
                 name,
                 package_root.display()
             );
@@ -1116,18 +1165,77 @@ fn php_modules_path_for(package_name: &str) -> Result<PathBuf> {
 }
 
 fn php_modules_path_for_in(project_dir: &Path, package_name: &str) -> Result<PathBuf> {
-    let mut path = project_dir.join("php_modules");
-    // Scoped packages (@scope/name) map to php_modules/@scope/name on disk.
-    // This matches the layout produced by the bundler's module resolver and
-    // the stdlib install layout. Unscoped names are still supported as-is.
+    let mut path = install_modules_dir(project_dir);
+    // Scoped packages (@scope/name) map to ds_modules/@scope/name on disk.
+    // Unscoped names are still supported as-is.
     let segments: Vec<&str> = package_name.split('/').collect();
     for segment in segments {
         if segment.is_empty() || segment == "." || segment == ".." {
-            bail!("invalid php package name segment");
+            bail!("invalid package name segment");
         }
         path = path.join(segment);
     }
     Ok(path)
+}
+
+fn record_root_dependencies(
+    project_dir: &Path,
+    root_specs: &[String],
+    installed: &BTreeMap<String, lock::LockEntry>,
+) -> Result<()> {
+    let path = project_dir.join("deka.json");
+    if !path.exists() {
+        return Ok(());
+    }
+    let raw = fs::read_to_string(&path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    let mut manifest: Value = serde_json::from_str(&raw)
+        .with_context(|| format!("failed to parse {}", path.display()))?;
+    let Some(obj) = manifest.as_object_mut() else {
+        bail!("{} must be a JSON object", path.display());
+    };
+    let deps_value = obj
+        .entry("dependencies")
+        .or_insert_with(|| json!({}));
+    let Some(deps) = deps_value.as_object_mut() else {
+        bail!("{} dependencies must be an object", path.display());
+    };
+
+    for spec in root_specs {
+        let (raw_name, _) = parse_package_spec(spec.trim());
+        let canonical = normalize_php_spec(&raw_name)?;
+        let Some((descriptor, _, _, _)) = installed.get(&canonical) else {
+            continue;
+        };
+        let Some(version) = locked_version(&canonical, descriptor) else {
+            continue;
+        };
+        let key = manifest_dep_key(deps, &raw_name, &canonical);
+        deps.insert(key, json!(version));
+    }
+
+    let serialized = serde_json::to_string_pretty(&manifest)? + "\n";
+    fs::write(&path, serialized)
+        .with_context(|| format!("failed to write {}", path.display()))?;
+    Ok(())
+}
+
+fn manifest_dep_key(
+    deps: &serde_json::Map<String, Value>,
+    raw_name: &str,
+    canonical: &str,
+) -> String {
+    if deps.contains_key(raw_name) {
+        return raw_name.to_string();
+    }
+    if deps.contains_key(canonical) {
+        return canonical.to_string();
+    }
+    if raw_name.starts_with('@') {
+        canonical.to_string()
+    } else {
+        raw_name.to_string()
+    }
 }
 
 #[cfg(test)]
@@ -1136,8 +1244,9 @@ mod tests {
         bundled_stdlib_prefix, collect_project_install_specs, enqueue_package_spec,
         install_from_bundled_stdlib, locked_package, package_dependencies, pause_for_kill_test,
         php_modules_path_for, recover_install_transaction, rehash_php_packages_in,
-        reject_vendored_php_modules, run_php_install_in, verify_locked_integrity,
-        InstallTransaction, InstalledSource, LockedPackage,
+        record_root_dependencies, reject_vendored_php_modules, run_php_install_in,
+        select_registry_version, verify_locked_integrity, InstallTransaction, InstalledSource,
+        LockedPackage, RegistryPackage, MODULES_DIR,
     };
     use crate::{lock, payload::InstallPayload};
     use modules_php::integrity::{compute_package_integrity, PackageIntegrity};
@@ -1145,12 +1254,63 @@ mod tests {
     use std::{collections::BTreeMap, fs};
 
     #[test]
+    fn unlocked_add_selects_latest_registry_version() {
+        let registry = RegistryPackage {
+            versions: vec!["0.1.0".into(), "0.1.1".into(), "0.2.0".into()],
+        };
+        assert_eq!(
+            select_registry_version(&registry, "latest").expect("latest"),
+            "0.2.0"
+        );
+        assert_eq!(
+            select_registry_version(&registry, "0.1.1").expect("exact"),
+            "0.1.1"
+        );
+        assert_ne!(
+            select_registry_version(
+                &RegistryPackage {
+                    versions: vec!["0.1.1".into()],
+                },
+                "latest"
+            )
+            .expect("catalog latest"),
+            "0.1.0"
+        );
+    }
+
+    #[test]
+    fn add_records_unscoped_dependency_in_deka_json() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        fs::write(
+            tmp.path().join("deka.json"),
+            "{\n  \"name\": \"probe\",\n  \"security\": { \"prompt\": false }\n}\n",
+        )
+        .expect("manifest");
+        let mut installed = BTreeMap::new();
+        installed.insert(
+            "@deka/bytes".to_string(),
+            (
+                "@deka/bytes@0.2.0".to_string(),
+                "deka.gg:@deka/bytes".to_string(),
+                json!({}),
+                String::new(),
+            ),
+        );
+        record_root_dependencies(tmp.path(), &["bytes".to_string()], &installed).expect("record");
+        let manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(tmp.path().join("deka.json")).unwrap())
+                .unwrap();
+        assert_eq!(manifest["dependencies"]["bytes"], json!("0.2.0"));
+        assert!(manifest["dependencies"].get("@deka/bytes").is_none());
+    }
+
+    #[test]
     fn scoped_package_installs_to_scoped_php_modules_path() {
         let cwd = std::env::current_dir().expect("cwd");
         let path = php_modules_path_for("@deka/component").expect("path");
         assert_eq!(
             path,
-            cwd.join("php_modules").join("@deka").join("component")
+            cwd.join(MODULES_DIR).join("@deka").join("component")
         );
     }
 
@@ -1158,14 +1318,14 @@ mod tests {
     fn non_deka_scoped_package_preserves_scope_in_path() {
         let cwd = std::env::current_dir().expect("cwd");
         let path = php_modules_path_for("@tana/store").expect("path");
-        assert_eq!(path, cwd.join("php_modules").join("@tana").join("store"));
+        assert_eq!(path, cwd.join(MODULES_DIR).join("@tana").join("store"));
     }
 
     #[test]
     fn unscoped_package_preserves_legacy_path() {
         let cwd = std::env::current_dir().expect("cwd");
         let path = php_modules_path_for("legacy").expect("path");
-        assert_eq!(path, cwd.join("php_modules").join("legacy"));
+        assert_eq!(path, cwd.join(MODULES_DIR).join("legacy"));
     }
 
     #[tokio::test]
@@ -1173,7 +1333,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tmp");
         let package_root = tmp
             .path()
-            .join("php_modules")
+            .join(MODULES_DIR)
             .join("@deka")
             .join("component");
         fs::create_dir_all(&package_root).expect("mkdir package");
@@ -1350,11 +1510,11 @@ mod tests {
         let cwd = std::env::current_dir().expect("cwd");
         assert_eq!(
             php_modules_path_for("@deka/array").expect("path"),
-            cwd.join("php_modules").join("@deka").join("array")
+            cwd.join(MODULES_DIR).join("@deka").join("array")
         );
         assert_eq!(
             php_modules_path_for("@deka/crypto").expect("path"),
-            cwd.join("php_modules").join("@deka").join("crypto")
+            cwd.join(MODULES_DIR).join("@deka").join("crypto")
         );
     }
 
@@ -1363,7 +1523,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tmp");
         let destination = tmp
             .path()
-            .join("php_modules")
+            .join(MODULES_DIR)
             .join("@deka")
             .join("encoding");
         install_from_bundled_stdlib("@deka/encoding", None, &destination).expect("install bundled");
@@ -1379,7 +1539,7 @@ mod tests {
     #[test]
     fn bundled_stdlib_installs_canonical_scoped_shape() {
         let tmp = tempfile::tempdir().expect("tmp");
-        let destination = tmp.path().join("php_modules").join("@deka").join("http");
+        let destination = tmp.path().join(MODULES_DIR).join("@deka").join("http");
         install_from_bundled_stdlib("@deka/http", None, &destination).expect("install bundled");
 
         assert!(destination.join("index.phpx").is_file());
@@ -1448,7 +1608,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tmp");
         let destination = tmp
             .path()
-            .join("php_modules")
+            .join(MODULES_DIR)
             .join("@deka")
             .join("encoding");
         install_from_bundled_stdlib("@deka/encoding", None, &destination)
@@ -1507,7 +1667,7 @@ mod tests {
             "@deka/encoding",
             Some(&locked),
             &tmp.path()
-                .join("php_modules")
+                .join(MODULES_DIR)
                 .join("@deka")
                 .join("encoding"),
         )
@@ -1522,7 +1682,7 @@ mod tests {
     #[test]
     fn staged_install_preserves_existing_package_until_verified_replace() {
         let tmp = tempfile::tempdir().expect("tmp");
-        let destination = tmp.path().join("php_modules").join("core");
+        let destination = tmp.path().join(MODULES_DIR).join("core");
         fs::create_dir_all(&destination).expect("mkdir destination");
         fs::write(
             destination.join("index.phpx"),
@@ -1531,7 +1691,7 @@ mod tests {
         .expect("write original");
         let staging = tmp
             .path()
-            .join("php_modules")
+            .join(MODULES_DIR)
             .join(".deka-install-test")
             .join("core");
         fs::create_dir_all(&staging).expect("mkdir staging");
@@ -1559,7 +1719,7 @@ mod tests {
         );
         assert!(!tmp
             .path()
-            .join("php_modules")
+            .join(MODULES_DIR)
             .join(".deka-install-test")
             .exists());
     }
@@ -1567,14 +1727,14 @@ mod tests {
     #[test]
     fn interrupted_transaction_restores_exact_package_and_lock_snapshot() {
         let tmp = tempfile::tempdir().expect("tmp");
-        let destination = tmp.path().join("php_modules").join("core");
+        let destination = tmp.path().join(MODULES_DIR).join("core");
         fs::create_dir_all(&destination).expect("mkdir destination");
         fs::write(destination.join("index.phpx"), "old\n").expect("old package");
         let lock_path = tmp.path().join("deka.lock");
         let old_lock = "{\"lockfileVersion\":1,\"packages\":{\"core\":[\"core@1.0.0\",\"linkhash:core\",{},\"\"]}}\n";
         fs::write(&lock_path, old_lock).expect("old lock");
 
-        let staging = tmp.path().join("php_modules").join(".stage").join("core");
+        let staging = tmp.path().join(MODULES_DIR).join(".stage").join("core");
         fs::create_dir_all(&staging).expect("mkdir staging");
         fs::write(staging.join("index.phpx"), "new\n").expect("new package");
 
@@ -1604,8 +1764,8 @@ mod tests {
     fn killed_transaction_recovers_at_every_commit_boundary() {
         if let Ok(project) = std::env::var("DEKA_PM_KILL_PROJECT") {
             let project = std::path::PathBuf::from(project);
-            let destination = project.join("php_modules/core");
-            let staging = project.join("php_modules/.stage/core");
+            let destination = project.join(format!("{MODULES_DIR}/core"));
+            let staging = project.join(format!("{MODULES_DIR}/.stage/core"));
             let mut transaction =
                 InstallTransaction::begin(&project, &project.join("deka.lock")).expect("begin");
             if let Ok(point) = std::env::var("DEKA_PM_KILL_POINT") {
@@ -1625,13 +1785,13 @@ mod tests {
 
         for point in ["before-swap", "after-swap", "after-journal", "after-lock"] {
             let tmp = tempfile::tempdir().expect("tmp");
-            let destination = tmp.path().join("php_modules/core");
+            let destination = tmp.path().join(format!("{MODULES_DIR}/core"));
             fs::create_dir_all(&destination).expect("mkdir destination");
             fs::write(destination.join("index.phpx"), "old\n").expect("old package");
             let lock_path = tmp.path().join("deka.lock");
             let old_lock = "{\"lockfileVersion\":1,\"packages\":{\"core\":[\"core@1.0.0\",\"linkhash:core\",{},\"\"]}}\n";
             fs::write(&lock_path, old_lock).expect("old lock");
-            let staging = tmp.path().join("php_modules/.stage/core");
+            let staging = tmp.path().join(format!("{MODULES_DIR}/.stage/core"));
             fs::create_dir_all(&staging).expect("mkdir staging");
             fs::write(staging.join("index.phpx"), "new\n").expect("new package");
 
@@ -1710,7 +1870,7 @@ mod tests {
                 .expect("run recovery install");
             assert!(status.success(), "recovery install failed at {point}");
 
-            let package = tmp.path().join("php_modules/@deka/core");
+            let package = tmp.path().join(format!("{MODULES_DIR}/@deka/core"));
             assert!(package.join("bridge.phpx").is_file(), "package at {point}");
             assert!(!tmp.path().join(".deka-install-transaction.json").exists());
             let lock = lock::read_lockfile_at(&tmp.path().join("deka.lock"));
@@ -1758,13 +1918,17 @@ mod tests {
             php_modules_path_for("@tana/b").expect("path"),
             std::env::current_dir()
                 .expect("cwd")
-                .join("php_modules/@tana/b")
+                .join(MODULES_DIR)
+                .join("@tana")
+                .join("b")
         );
         assert_eq!(
             php_modules_path_for("@deka/crypto").expect("path"),
             std::env::current_dir()
                 .expect("cwd")
-                .join("php_modules/@deka/crypto")
+                .join(MODULES_DIR)
+                .join("@deka")
+                .join("crypto")
         );
     }
 
@@ -1774,12 +1938,12 @@ mod tests {
         let nested = tmp
             .path()
             .join("src")
-            .join("php_modules")
+            .join(MODULES_DIR)
             .join("@tana")
             .join("b");
         fs::create_dir_all(&nested).expect("mkdir nested vendor tree");
         let err = reject_vendored_php_modules(tmp.path(), "@tana/a").expect_err("must reject");
-        assert!(err.to_string().contains("contains vendored php_modules"));
+        assert!(err.to_string().contains("contains vendored ds_modules"));
     }
 
     #[cfg(unix)]
@@ -1789,7 +1953,7 @@ mod tests {
         fs::create_dir_all(tmp.path().join("Php_Modules")).expect("case vendor");
         assert!(reject_vendored_php_modules(tmp.path(), "@tana/a").is_err());
         fs::remove_dir_all(tmp.path().join("Php_Modules")).expect("remove case vendor");
-        std::os::unix::fs::symlink("outside", tmp.path().join("php_modules"))
+        std::os::unix::fs::symlink("outside", tmp.path().join(MODULES_DIR))
             .expect("vendor symlink");
         assert!(reject_vendored_php_modules(tmp.path(), "@tana/a").is_err());
     }
@@ -1805,24 +1969,18 @@ mod tests {
         let tmp = tempfile::tempdir().expect("project");
         tokio::task::spawn_blocking({
             let root = tmp.path().to_path_buf();
-            let registry = registry.clone();
+            let _registry = registry.clone();
             move || {
-                run_php_install_in(
-                    vec!["@scope/a@^1.0.0".to_string()],
-                    true,
-                    &root,
-                    &registry,
-                    None,
-                )
+                run_php_install_in(vec!["@scope/a@^1.0.0".to_string()], true, &root)
             }
         })
         .await
         .expect("installer task")
         .expect("install graph");
-        let modules = tmp.path().join("php_modules").join("@scope");
+        let modules = tmp.path().join(MODULES_DIR).join("@scope");
         for package in ["a", "b", "c"] {
             assert!(modules.join(package).is_dir(), "missing flat {package}");
-            assert!(!modules.join(package).join("php_modules").exists());
+            assert!(!modules.join(package).join(MODULES_DIR).exists());
         }
         let lock = lock::read_lockfile_at(&tmp.path().join("deka.lock"));
         assert_eq!(lock.packages.len(), 3);
@@ -1837,7 +1995,7 @@ mod tests {
     #[test]
     fn install_preserves_tracked_unscoped_deka_alias_and_canonical_lock_integrity() {
         let tmp = tempfile::tempdir().expect("project");
-        let alias = tmp.path().join("php_modules/string");
+        let alias = tmp.path().join(format!("{MODULES_DIR}/string"));
         fs::create_dir_all(&alias).expect("tracked unscoped alias");
         fs::write(
             alias.join("index.phpx"),
@@ -1845,17 +2003,14 @@ mod tests {
         )
         .expect("write tracked alias");
 
-        run_php_install_in(
-            vec!["@deka/string".to_string()],
-            true,
-            tmp.path(),
-            "http://127.0.0.1:1",
-            None,
-        )
-        .expect("bundled deka install");
+        run_php_install_in(vec!["@deka/string".to_string()], true, tmp.path())
+            .expect("bundled deka install");
         assert!(tmp
             .path()
-            .join("php_modules/@deka/string/index.phpx")
+            .join(MODULES_DIR)
+            .join("@deka")
+            .join("string")
+            .join("index.phpx")
             .is_file());
         let lock_path = tmp.path().join("deka.lock");
         assert!(lock_path.is_file());
@@ -1870,14 +2025,8 @@ mod tests {
 
         // A second locked install must verify the canonical scoped package
         // without modifying the compatibility alias or relying on cache state.
-        run_php_install_in(
-            vec!["@deka/string".to_string()],
-            true,
-            tmp.path(),
-            "http://127.0.0.1:1",
-            None,
-        )
-        .expect("repeat bundled deka install");
+        run_php_install_in(vec!["@deka/string".to_string()], true, tmp.path())
+            .expect("repeat bundled deka install");
         assert_eq!(
             fs::read_to_string(alias.join("index.phpx")).expect("tracked alias still survives"),
             "export const compatibility = true;\n"
@@ -1900,14 +2049,12 @@ mod tests {
         let tmp = tempfile::tempdir().expect("project");
         let error = tokio::task::spawn_blocking({
             let root = tmp.path().to_path_buf();
-            let registry = registry.clone();
+            let _registry = registry.clone();
             move || {
                 run_php_install_in(
                     vec!["@scope/a".to_string(), "@scope/b".to_string()],
                     true,
                     &root,
-                    &registry,
-                    None,
                 )
             }
         })
@@ -1934,14 +2081,12 @@ mod tests {
         let tmp = tempfile::tempdir().expect("project");
         tokio::task::spawn_blocking({
             let root = tmp.path().to_path_buf();
-            let registry = registry.clone();
+            let _registry = registry.clone();
             move || {
                 run_php_install_in(
                     vec!["@scope/a".to_string(), "@scope/b".to_string()],
                     true,
                     &root,
-                    &registry,
-                    None,
                 )
             }
         })

@@ -1,4 +1,6 @@
 use super::*;
+
+const MODULES_DIR: &str = "ds_modules";
 use serde_json::json;
 use std::fs;
 use std::path::PathBuf;
@@ -189,7 +191,7 @@ fn provides_annotation_hover_docs() {
 #[test]
 fn resolves_project_alias_module_file() {
     let dir = temp_dir("dekascript_lsp_alias_resolve");
-    let php_modules = dir.join("php_modules");
+    let php_modules = dir.join(MODULES_DIR);
     let db = dir.join("db");
     fs::create_dir_all(&php_modules).expect("mkdir php_modules");
     fs::create_dir_all(&db).expect("mkdir db");
@@ -202,7 +204,7 @@ fn resolves_project_alias_module_file() {
 #[test]
 fn finds_php_modules_from_workspace_roots_fallback() {
     let workspace = temp_dir("dekascript_lsp_workspace_modules");
-    let php_modules = workspace.join("php_modules");
+    let php_modules = workspace.join(MODULES_DIR);
     let project = workspace.join("apps").join("sample");
     let file = project.join("main.ds");
     fs::create_dir_all(&php_modules).expect("mkdir php_modules");
@@ -217,7 +219,7 @@ fn finds_php_modules_from_workspace_roots_fallback() {
 #[test]
 fn completes_named_exports_for_import_clause() {
     let workspace = temp_dir("dekascript_lsp_import_exports");
-    let php_modules = workspace.join("php_modules");
+    let php_modules = workspace.join(MODULES_DIR);
     let db = php_modules.join("db");
     fs::create_dir_all(&db).expect("mkdir db");
     fs::write(
@@ -251,7 +253,7 @@ fn completes_named_exports_for_import_clause() {
 #[test]
 fn completes_named_exports_without_closing_brace() {
     let workspace = temp_dir("dekascript_lsp_import_partial");
-    let php_modules = workspace.join("php_modules");
+    let php_modules = workspace.join(MODULES_DIR);
     let db = php_modules.join("db");
     fs::create_dir_all(&db).expect("mkdir db");
     fs::write(db.join("index.ds"), "export function stats() {}\n").expect("write module");
@@ -379,7 +381,7 @@ fn jsx_props_completion_skips_already_used_props() {
 #[test]
 fn reports_missing_named_import_export() {
     let workspace = temp_dir("dekascript_lsp_missing_export");
-    let php_modules = workspace.join("php_modules");
+    let php_modules = workspace.join(MODULES_DIR);
     let db = php_modules.join("db");
     fs::create_dir_all(&db).expect("mkdir db");
     fs::write(db.join("index.ds"), "export function stats() {}\n").expect("write module");
@@ -405,7 +407,7 @@ fn reports_missing_named_import_export() {
 #[test]
 fn accepts_valid_named_import_alias() {
     let workspace = temp_dir("dekascript_lsp_import_alias_ok");
-    let php_modules = workspace.join("php_modules");
+    let php_modules = workspace.join(MODULES_DIR);
     let db = php_modules.join("db");
     fs::create_dir_all(&db).expect("mkdir db");
     fs::write(db.join("index.ds"), "export function stats() {}\n").expect("write module");

@@ -3,7 +3,7 @@
 ## Project Layout
 - `deka/`: Central monorepo with core implementation
   - `crates/`: 26+ Rust workspace crates (cli, runtime, php-rs compiler)
-  - `php_modules/`: legacy implementation substrate; do not document it as a public language surface
+  - `ds_modules/`: consumer package install directory (`deka add` / `deka install`). `php_modules/` is the legacy name and is still resolved if present.
   - `target/release/cli`: Main CLI binary (113MB ARM64)
   - `target/release/php`: PHP binary
 - `deka-runtime/`: Rust runtime binary (`deka-runtime`) + JS/TS bootstrap modules.

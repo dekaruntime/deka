@@ -1,4 +1,5 @@
 use deno_core::{JsRuntime, ModuleCodeString, ModuleSpecifier, RuntimeOptions};
+use runtime_core::modules::MODULES_DIR;
 
 struct EnvGuard {
     key: &'static str,
@@ -123,7 +124,7 @@ async fn deka_php_runtime_resolves_local_unscoped_before_global_scoped() {
 
     let entry_path_js =
         serde_json::to_string(&entry_path.to_string_lossy()).expect("entry path json");
-    let modules_root_js = serde_json::to_string(&local_root.join("php_modules").to_string_lossy())
+    let modules_root_js = serde_json::to_string(&local_root.join(MODULES_DIR).to_string_lossy())
         .expect("modules root json");
     let expected_path_js = serde_json::to_string(
         &local_root

@@ -2,6 +2,7 @@ use bundler::{BuildOptions, VirtualSource, bundle_virtual_entry};
 use core::{CommandSpec, Context, ParamSpec, Registry};
 use deka_js::{SourceModuleMeta, parse_source_module_meta};
 use runtime_core::module_spec::module_spec_aliases;
+use runtime_core::modules::{resolve_modules_dir, MODULES_DIR};
 
 use crate::compile_helper::compile_js_or_report;
 use std::collections::{BTreeMap, BTreeSet};
@@ -170,9 +171,9 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
 
     copy_dir_recursive(&app_dir, &dist_server.join("app"))?;
 
-    let modules_dir = project_root.join("php_modules");
+    let modules_dir = project_root.join(MODULES_DIR);
     if modules_dir.is_dir() {
-        copy_dir_recursive(&modules_dir, &dist_server.join("php_modules"))?;
+        copy_dir_recursive(&modules_dir, &dist_server.join(MODULES_DIR))?;
     }
     for file in ["deka.json", "deka.lock"] {
         let src = project_root.join(file);
@@ -267,14 +268,14 @@ fn default_import_map() -> BTreeMap<String, String> {
         ("@/".to_string(), "/".to_string()),
         (
             "component/".to_string(),
-            "/php_modules/component/".to_string(),
+            "/ds_modules/component/".to_string(),
         ),
-        ("deka/".to_string(), "/php_modules/deka/".to_string()),
+        ("deka/".to_string(), "/ds_modules/deka/".to_string()),
         (
             "encoding/".to_string(),
-            "/php_modules/encoding/".to_string(),
+            "/ds_modules/encoding/".to_string(),
         ),
-        ("db/".to_string(), "/php_modules/db/".to_string()),
+        ("db/".to_string(), "/ds_modules/db/".to_string()),
     ])
 }
 
@@ -302,7 +303,7 @@ fn default_import_target_for(spec: &str, output_path: &Path) -> String {
     for _ in 0..depth {
         rel.push_str("../");
     }
-    rel.push_str("php_modules/");
+    rel.push_str("ds_modules/");
     rel.push_str(spec.trim_start_matches('/'));
 
     if !rel.ends_with(".js") && !rel.ends_with('/') {
@@ -372,10 +373,10 @@ fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Result
         return Ok(());
     }
 
-    let modules_dir = project_root.join("php_modules");
+    let modules_dir = resolve_modules_dir(project_root);
     if !modules_dir.is_dir() {
         return Err(format!(
-            "deka build requires php_modules/ at project root when using stdlib imports ({}). Run `deka install`.",
+            "deka build requires ds_modules/ at project root when using stdlib imports ({}). Run `deka install`.",
             stdlib_imports.join(", ")
         ));
     }

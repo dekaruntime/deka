@@ -536,11 +536,19 @@ pub(crate) fn completion_for_import(
     }
     Some(items)
 }
+fn modules_dir_if_present(root: &Path) -> Option<PathBuf> {
+    for name in ["ds_modules", "php_modules"] {
+        let candidate = root.join(name);
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 pub(crate) fn find_php_modules_root(start: &Path, workspace_roots: &[PathBuf]) -> Option<PathBuf> {
     if let Ok(root) = std::env::var("DEKA_MODULE_ROOT") {
-        let root_path = PathBuf::from(root);
-        let candidate = root_path.join("php_modules");
-        if candidate.is_dir() {
+        if let Some(candidate) = modules_dir_if_present(Path::new(&root)) {
             return Some(candidate);
         }
     }
@@ -549,8 +557,7 @@ pub(crate) fn find_php_modules_root(start: &Path, workspace_roots: &[PathBuf]) -
         current.pop();
     }
     loop {
-        let candidate = current.join("php_modules");
-        if candidate.is_dir() {
+        if let Some(candidate) = modules_dir_if_present(&current) {
             return Some(candidate);
         }
         if !current.pop() {
@@ -558,14 +565,12 @@ pub(crate) fn find_php_modules_root(start: &Path, workspace_roots: &[PathBuf]) -
         }
     }
     for workspace_root in workspace_roots {
-        let candidate = workspace_root.join("php_modules");
-        if candidate.is_dir() {
+        if let Some(candidate) = modules_dir_if_present(workspace_root) {
             return Some(candidate);
         }
     }
     if let Ok(current_dir) = std::env::current_dir() {
-        let candidate = current_dir.join("php_modules");
-        if candidate.is_dir() {
+        if let Some(candidate) = modules_dir_if_present(&current_dir) {
             return Some(candidate);
         }
     }
@@ -610,6 +615,7 @@ pub(crate) fn list_project_modules(project_root: &Path) -> Vec<String> {
         let name = entry.file_name().to_string_lossy().to_string();
         if name.starts_with('.')
             || name == "php_modules"
+            || name == "ds_modules"
             || name == "target"
             || name == "node_modules"
         {

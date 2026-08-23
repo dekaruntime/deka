@@ -1,5 +1,6 @@
 use core::Context;
 use core::ServeMode;
+use runtime_core::modules::MODULES_DIR;
 use runtime_core::security_policy::{
     RuleList, SecurityCliOverrides, merge_policy_with_cli_manifest_net_env,
     parse_deka_security_policy, policy_to_json,
@@ -122,7 +123,7 @@ fn apply_dev_defaults(
         policy.allow.read = RuleList::List(vec![root.to_string_lossy().to_string()]);
     }
     if matches!(policy.allow.write, RuleList::None) {
-        let cache_dirs = vec![root.join(".cache"), root.join("php_modules").join(".cache")];
+        let cache_dirs = vec![root.join(".cache"), root.join(MODULES_DIR).join(".cache")];
         let entries = cache_dirs
             .into_iter()
             .map(|path| path.to_string_lossy().to_string())
@@ -206,8 +207,8 @@ fn example_for_warning(path: &str, project_kind: ProjectKind) -> Option<String> 
     };
 
     let example = match (project_kind, capability) {
-        (ProjectKind::Php, "read") => "security.allow.read = [\"./php_modules\"]",
-        (ProjectKind::Php, "write") => "security.allow.write = [\"./php_modules/.cache\"]",
+        (ProjectKind::Php, "read") => "security.allow.read = [\"./ds_modules\"]",
+        (ProjectKind::Php, "write") => "security.allow.write = [\"./ds_modules/.cache\"]",
         (ProjectKind::Php, "wasm") => "security.allow.wasm = [\"module.wasm\"]",
         (ProjectKind::Php, "net") => "security.allow.net = [\"localhost:5432\"]",
         (ProjectKind::Php, "env") => "security.allow.env = [\"DATABASE_URL\"]",
@@ -251,8 +252,8 @@ fn example_patch_for_warning(path: &str, project_kind: ProjectKind) -> Option<St
     };
 
     let entries = match (project_kind, capability) {
-        (ProjectKind::Php, "read") => vec!["./php_modules"],
-        (ProjectKind::Php, "write") => vec!["./php_modules/.cache"],
+        (ProjectKind::Php, "read") => vec!["./ds_modules"],
+        (ProjectKind::Php, "write") => vec!["./ds_modules/.cache"],
         (ProjectKind::Php, "wasm") => vec!["module.wasm"],
         (ProjectKind::Php, "net") => vec!["localhost:5432"],
         (ProjectKind::Php, "env") => vec!["DATABASE_URL"],
