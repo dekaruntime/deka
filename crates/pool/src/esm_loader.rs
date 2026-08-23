@@ -17,7 +17,6 @@ use deno_core::resolve_import;
 use deno_error::JsErrorBox;
 
 use deka_js::SourceModuleMeta;
-use deka_js::build_stdlib_prelude;
 use deka_js::compile_phpx_source_to_js_with_warnings_detailed;
 use deka_js::parse_source_module_meta;
 use deka_js::{CompileError, DEKA_VALIDATION_ERROR_MARKER};
@@ -31,8 +30,6 @@ pub struct PhpxEsmLoader {
     entry_is_app_directory: bool,
     app_directory_path: Option<PathBuf>,
     wrapper_specifier: ModuleSpecifier,
-    prelude_specifier: ModuleSpecifier,
-    prelude_source: String,
     sources: Rc<RefCell<HashMap<String, ModuleSourceCode>>>,
 }
 
@@ -57,15 +54,6 @@ impl PhpxEsmLoader {
             .map_err(|_| JsErrorBox::generic("invalid entry module path"))?;
         let wrapper_specifier = ModuleSpecifier::from_file_path(entry_wrapper_path(&project_root))
             .map_err(|_| JsErrorBox::generic("invalid entry wrapper path"))?;
-        let prelude_specifier = ModuleSpecifier::from_file_path(entry_prelude_path(&project_root))
-            .map_err(|_| JsErrorBox::generic("invalid prelude path"))?;
-        let prelude_source = build_stdlib_prelude(&project_root).unwrap_or_else(|err| {
-            format!(
-                "if (!globalThis.panic) {{ globalThis.panic = (msg) => {{ throw new Error(String(msg)); }}; }}\n\
-// stdlib prelude failed: {}\n",
-                err.replace('\n', " ")
-            )
-        });
         Ok(Self {
             project_root,
             cache_dir,
@@ -73,8 +61,6 @@ impl PhpxEsmLoader {
             entry_is_app_directory,
             app_directory_path,
             wrapper_specifier,
-            prelude_specifier,
-            prelude_source,
             sources: Rc::new(RefCell::new(HashMap::new())),
         })
     }
@@ -165,14 +151,6 @@ impl PhpxEsmLoader {
     }
 
     fn load_source(&self, specifier: &ModuleSpecifier) -> Result<ModuleSource, JsErrorBox> {
-        if specifier == &self.prelude_specifier {
-            return Ok(ModuleSource::new(
-                ModuleType::JavaScript,
-                ModuleSourceCode::String(self.prelude_source.clone().into()),
-                specifier,
-                None,
-            ));
-        }
         if specifier == &self.wrapper_specifier {
             let wrapper = self.wrapper_source();
             return Ok(ModuleSource::new(
@@ -239,8 +217,7 @@ impl PhpxEsmLoader {
 
     fn wrapper_source(&self) -> String {
         let entry = self.entry_specifier.to_string();
-        let template = "import \"__PRELUDE__\";\n\
-import * as __dekaMain from \"__ENTRY__\";\n\
+        let template = "import * as __dekaMain from \"__ENTRY__\";\n\
 const __candidate = typeof __dekaMain.default !== \"undefined\"\n\
   ? __dekaMain.default\n\
   : typeof __dekaMain.app !== \"undefined\"\n\
@@ -264,7 +241,6 @@ if (typeof globalThis.app === \"undefined\" && typeof __candidate !== \"undefine
   }\n\
 }\n";
         template
-            .replace("__PRELUDE__", &self.prelude_specifier.to_string())
             .replace("__ENTRY__", &entry)
     }
 }
@@ -349,13 +325,6 @@ pub fn app_directory_entry_path(project_root: &Path) -> PathBuf {
         .join(".cache")
         .join("dekascript")
         .join("__deka_app_entry.js")
-}
-
-pub fn entry_prelude_path(project_root: &Path) -> PathBuf {
-    project_root
-        .join(".cache")
-        .join("dekascript")
-        .join("__deka_prelude.js")
 }
 
 fn app_directory_entry_source(app_root_json: &str) -> String {

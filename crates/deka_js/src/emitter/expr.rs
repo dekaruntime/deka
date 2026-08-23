@@ -226,7 +226,9 @@ impl<'a> JsSubsetEmitter<'a> {
                     Ok(ident)
                 }
             }
-            Expr::Integer { value, .. } | Expr::Float { value, .. } => {
+            Expr::Integer { value, .. }
+            | Expr::Float { value, .. }
+            | Expr::BigInt { value, .. } => {
                 Ok(String::from_utf8_lossy(value).to_string())
             }
             Expr::Boolean { value, .. } => Ok(if *value { "true" } else { "false" }.to_string()),

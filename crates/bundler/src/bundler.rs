@@ -35,10 +35,6 @@ pub struct BundleOptions {
     pub project_root: PathBuf,
     pub minify: bool,
     pub iife: bool,
-    /// Deprecated. The resolver only reads the project-local `php_modules/`.
-    /// This field is retained for API compatibility and is ignored.
-    /// Install stdlib packages via `deka install` — no filesystem fallback.
-    pub stdlib_path: Option<PathBuf>,
 }
 
 pub type BuildOptions = BundleOptions;
@@ -136,7 +132,7 @@ pub fn bundle_virtual_entry(
         css_collector: Arc::new(Mutex::new(CssCollector::default())),
         provider,
     };
-    let resolver = DekaResolver::new(options.project_root, options.stdlib_path)?;
+    let resolver = DekaResolver::new(options.project_root)?;
 
     let mut bundler = Bundler::new(
         &globals,
@@ -875,7 +871,7 @@ struct DekaResolver {
 }
 
 impl DekaResolver {
-    fn new(project_root: PathBuf, _stdlib_path: Option<PathBuf>) -> Result<Self, String> {
+    fn new(project_root: PathBuf) -> Result<Self, String> {
         let php_modules = project_root.join("php_modules");
         Ok(Self {
             root: project_root,

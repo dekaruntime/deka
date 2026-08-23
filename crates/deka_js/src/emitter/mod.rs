@@ -203,7 +203,7 @@ impl<'a> JsSubsetEmitter<'a> {
             out.push('\n');
         }
 
-        let mut imports = self.meta.imports.clone();
+        let imports = self.meta.imports.clone();
 
         // JSX runtime — emits `deka.ui.jsx`, `deka.ui.jsxs`, and `deka.ui.Fragment`
         // calls directly. The host/runtime is responsible for providing the

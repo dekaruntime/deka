@@ -310,5 +310,11 @@
     "file": "mut-method-on-const.ds",
     "expectCompile": false,
     "expectError": "Cannot call mutable method 'increment' on an immutable receiver"
+  },
+  {
+    "name": "bigint literals and arithmetic",
+    "file": "bigint.ds",
+    "expectCompile": true,
+    "expectStdout": "9007199254740994\n"
   }
 ]

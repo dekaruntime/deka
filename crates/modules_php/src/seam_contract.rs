@@ -39,7 +39,7 @@ pub fn extract_contract_from_source(source: &str, file_path: &str) -> Result<Sea
 
     let program = result
         .ast
-        .ok_or_else(|| "PHPX source did not produce an AST".to_string())?;
+        .ok_or_else(|| "DekaScript source did not produce an AST".to_string())?;
     let summary =
         summarize_program_with_path(&program, source.as_bytes(), Some(Path::new(file_path)))
             .map_err(|errors| {
@@ -257,7 +257,7 @@ fn seam_type(
         Type::Primitive(PrimitiveType::String) => Ok(SeamType::Primitive {
             name: SeamPrimitive::String,
         }),
-        Type::Primitive(PrimitiveType::Int) => Ok(SeamType::Primitive {
+        Type::Primitive(PrimitiveType::Number) => Ok(SeamType::Primitive {
             name: SeamPrimitive::Int,
         }),
         Type::Primitive(PrimitiveType::Bool) => Ok(SeamType::Primitive {

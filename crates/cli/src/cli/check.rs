@@ -8,7 +8,7 @@ use deka_js::parse_source_module_meta;
 const COMMAND: CommandSpec = CommandSpec {
     name: "check",
     category: "project",
-    summary: "validate a DekaScript or legacy PHPX source file",
+    summary: "validate a DekaScript or legacy DekaScript source file",
     aliases: &[],
     subcommands: &[],
     handler: cmd,
