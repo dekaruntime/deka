@@ -172,6 +172,7 @@ impl ProjectState {
 
         let mut meta = deka_js::parse_source_module_meta(source);
         meta.is_ds = true;
+        meta.host_is_browser = true;
         meta.project_mode = true;
 
         match deka_js::emit_js_from_ast_with_warnings(&program, source.as_bytes(), meta) {

@@ -896,16 +896,21 @@ impl<'a> JsSubsetEmitter<'a> {
                         UNSAFE_GLOBALS.join(",")
                     )
                 };
+                // RFD 27: unsafe is JS-mode, not a host back door. Shadow the
+                // dispatcher names and hide them on a proxied globalThis.
+                let hide_host = "const __g=globalThis;const Deno=void 0,__bridge=void 0,__bridge_async=void 0,__deka_wasm_call=void 0,__deka_wasm_call_async=void 0,__deka_host=void 0;const globalThis=new Proxy(__g,{get(t,p){if(p==='Deno'||p==='__bridge'||p==='__bridge_async'||p==='__deka_wasm_call'||p==='__deka_wasm_call_async'||p==='__deka_host')return void 0;return Reflect.get(t,p);}});";
 
                 let inner = if is_statement_block {
                     format!(
-                        "(function(){{{restore}{raw}}})()",
+                        "(function(){{{hide}{restore}{raw}}})()",
+                        hide = hide_host,
                         restore = restore_globals,
                         raw = raw_str
                     )
                 } else {
                     format!(
-                        "(function(){{{restore}return ({raw});}})()",
+                        "(function(){{{hide}{restore}return ({raw});}})()",
+                        hide = hide_host,
                         restore = restore_globals,
                         raw = raw_str
                     )

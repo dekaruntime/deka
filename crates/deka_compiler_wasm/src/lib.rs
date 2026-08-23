@@ -277,6 +277,7 @@ fn compile_request(source: &str, filename: &str, requested_mode: &str) -> String
             // JS should follow the DekaScript path (deka.Struct, deka.freeze,
             // safe globals, etc.) rather than the legacy PHPX path.
             meta.is_ds = true;
+            meta.host_is_browser = true;
             match deka_js::emit_js_from_ast_with_warnings(program, source.as_bytes(), meta) {
                 Ok((code, warnings)) => {
                     diagnostics.extend(warnings.into_iter().map(|message| {
