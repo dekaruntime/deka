@@ -2,28 +2,30 @@
 // This provides only the essentials for PHP execution
 
 const { op_php_read_file_sync, op_php_cwd, op_php_canonicalize, op_php_file_exists, op_php_path_resolve, op_php_set_privileged } = Deno.core.ops;
+const __php_print = Deno.core.print.bind(Deno.core);
 
-// Basic console implementation
+// Basic console implementation. Close over print so logs still work after
+// RFD 27 hides `globalThis.Deno`.
 const console = {
   log: (...args) => {
     const message = args.map(a => String(a)).join(' ');
-    Deno.core.print(message + '\n', false);
+    __php_print(message + '\n', false);
   },
   error: (...args) => {
     const message = args.map(a => String(a)).join(' ');
-    Deno.core.print(message + '\n', true);
+    __php_print(message + '\n', true);
   },
   warn: (...args) => {
     const message = '[WARN] ' + args.map(a => String(a)).join(' ');
-    Deno.core.print(message + '\n', true);
+    __php_print(message + '\n', true);
   },
   info: (...args) => {
     const message = '[INFO] ' + args.map(a => String(a)).join(' ');
-    Deno.core.print(message + '\n', false);
+    __php_print(message + '\n', false);
   },
   debug: (...args) => {
     const message = '[DEBUG] ' + args.map(a => String(a)).join(' ');
-    Deno.core.print(message + '\n', false);
+    __php_print(message + '\n', false);
   },
 };
 
