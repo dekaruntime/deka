@@ -3,20 +3,13 @@ use std::fs;
 use std::path::Path;
 
 pub fn build_stdlib_prelude(project_root: &Path) -> Result<String, String> {
-    let modules_dir = {
-        let modern = project_root.join("ds_modules");
-        if modern.is_dir() {
-            modern
-        } else {
-            project_root.join("php_modules")
-        }
-    };
-    let stdlib_path = modules_dir.join("stdlib.json");
+    let stdlib_path = project_root.join("php_modules").join("stdlib.json");
     let raw = fs::read_to_string(&stdlib_path)
         .map_err(|err| format!("failed to read {}: {}", stdlib_path.display(), err))?;
     let entries: Vec<String> = serde_json::from_str(&raw)
         .map_err(|err| format!("failed to parse {}: {}", stdlib_path.display(), err))?;
 
+    let modules_dir = project_root.join("php_modules");
     let mut modules = BTreeSet::new();
     for entry in entries {
         if let Some(prefix) = entry.strip_suffix("/*") {
