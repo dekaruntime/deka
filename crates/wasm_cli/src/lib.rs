@@ -306,7 +306,7 @@ fn normalize_module_spec(spec: &str) -> Result<ModuleSpec, String> {
 }
 
 fn module_spec_path(root: &Path, spec: &ModuleSpec) -> PathBuf {
-    let mut out = root.join("php_modules");
+    let mut out = root.join("ds_modules");
     for segment in &spec.segments {
         out = out.join(segment);
     }
@@ -496,7 +496,7 @@ fn run_stub_generation(root: &Path, module_dir: Option<&Path>) -> Result<(), Str
         command.arg(module_dir);
     } else {
         command.arg("--root");
-        command.arg(root.join("php_modules"));
+        command.arg(root.join("ds_modules"));
     }
 
     let status = command.status().map_err(|err| err.to_string())?;

@@ -11,6 +11,7 @@ use deka_js::{
     SourceModuleMeta, compile_phpx_source_to_js, parse_source_module_meta,
 };
 use runtime_core::module_spec::{is_bare_module_specifier, module_spec_aliases};
+use runtime_core::modules::{resolve_modules_dir, MODULES_DIR};
 
 pub fn build_deka_handler_bundle(handler_path: &str) -> Result<String, String> {
     let input_path = Path::new(handler_path);
@@ -213,10 +214,10 @@ pub fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Re
         return Ok(());
     }
 
-    let modules_dir = project_root.join("php_modules");
+    let modules_dir = runtime_core::modules::resolve_modules_dir(project_root);
     if !modules_dir.is_dir() {
         return Err(format!(
-            "deka run requires php_modules/ at project root when using stdlib imports ({}). Run `deka install`.",
+            "deka run requires ds_modules/ at project root when using stdlib imports ({}). Run `deka install`.",
             stdlib_imports.join(", ")
         ));
     }
@@ -315,7 +316,7 @@ fn is_bare_specifier(spec: &str) -> bool {
 mod tests {
     use super::{
         PANIC_DURING_VIRTUAL_LOAD, build_deka_handler_bundle, ensure_project_layout,
-        resolve_project_root,
+        resolve_project_root, MODULES_DIR,
     };
     use modules_php::integrity::compute_package_integrity;
     use deka_js::parse_source_module_meta;
@@ -327,7 +328,7 @@ mod tests {
     static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn write_locked_package(root: &Path, name: &str, package_path: &str) {
-        let integrity = compute_package_integrity(&root.join("php_modules").join(package_path))
+        let integrity = compute_package_integrity(&root.join(MODULES_DIR).join(package_path))
             .expect("package integrity");
         let lock_path = root.join("deka.lock");
         let mut lock: serde_json::Value =
@@ -357,7 +358,7 @@ mod tests {
 
         let package_dir = tmp
             .path()
-            .join("php_modules")
+            .join(MODULES_DIR)
             .join("@deka")
             .join("payments");
         std::fs::create_dir_all(&package_dir).expect("package dir");
@@ -376,7 +377,7 @@ mod tests {
 
         let package_dir = tmp
             .path()
-            .join("php_modules")
+            .join(MODULES_DIR)
             .join("@deka")
             .join("payments");
         std::fs::create_dir_all(&package_dir).expect("package dir");
@@ -394,7 +395,7 @@ mod tests {
         std::fs::write(tmp.path().join("deka.json"), "{}").expect("deka.json");
         std::fs::write(tmp.path().join("deka.lock"), "{}").expect("deka.lock");
         for module in ["http", "crypto", "time"] {
-            let dir = tmp.path().join("php_modules").join(module);
+            let dir = tmp.path().join(MODULES_DIR).join(module);
             std::fs::create_dir_all(&dir).expect("module dir");
             std::fs::write(
                 dir.join("index.ds"),
@@ -425,7 +426,7 @@ import { now_ms } from '@deka/time'
         let tmp = tempfile::tempdir().expect("tmp");
         let platform_root = tmp.path();
         let tenant_root = platform_root.join("default");
-        let modules = tenant_root.join("php_modules");
+        let modules = tenant_root.join(MODULES_DIR);
 
         std::fs::write(platform_root.join("deka.json"), "{}").expect("platform manifest");
         std::fs::write(

@@ -1,3 +1,4 @@
+use runtime_core::modules::MODULES_DIR;
 use std::{
     fs,
     io::{Read, Write},
@@ -162,7 +163,7 @@ fn publish_command_rejects_artifact_with_vendored_php_modules() {
     let vendored_module = root
         .join("src")
         .join("generated")
-        .join("php_modules")
+        .join(MODULES_DIR)
         .join("nested")
         .join("index.phpx");
     fs::create_dir_all(vendored_module.parent().expect("module parent"))

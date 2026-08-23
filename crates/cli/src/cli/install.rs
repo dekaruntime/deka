@@ -5,6 +5,7 @@ use pm::{
     run_install,
 };
 use runtime_core::module_spec::canonical_php_package_spec;
+use runtime_core::modules::MODULES_DIR;
 use std::path::{Path, PathBuf};
 use stdio;
 
@@ -20,7 +21,7 @@ const INSTALL_COMMAND: CommandSpec = CommandSpec {
 const ADD_COMMAND: CommandSpec = CommandSpec {
     name: "add",
     category: "package",
-    summary: "install php package(s) (shorthand)",
+    summary: "install package(s) from the index",
     aliases: &[],
     subcommands: &[],
     handler: cmd,
@@ -29,7 +30,7 @@ const ADD_COMMAND: CommandSpec = CommandSpec {
 const I_COMMAND: CommandSpec = CommandSpec {
     name: "i",
     category: "package",
-    summary: "install php package(s) (short alias)",
+    summary: "install package(s) from the index",
     aliases: &[],
     subcommands: &[],
     handler: cmd,
@@ -633,17 +634,17 @@ fn rehash_phpx_packages(project_dir: &Path, specs: &[String]) -> Result<Vec<Stri
     };
 
     if packages.is_empty() {
-        return Err(anyhow::anyhow!("no php packages found to rehash"));
+        return Err(anyhow::anyhow!("no packages found to rehash"));
     }
 
     for name in &packages {
         let version = versions
             .get(name)
             .ok_or_else(|| anyhow::anyhow!("{} is missing from deka.lock", name))?;
-        let target = project_dir.join("php_modules").join(name);
+        let target = project_dir.join(MODULES_DIR).join(name);
         if !target.is_dir() {
             return Err(anyhow::anyhow!(
-                "{} is missing from php_modules at {}",
+                "{} is missing from ds_modules at {}",
                 name,
                 target.display()
             ));
@@ -901,7 +902,7 @@ mod shop_update_tests {
     #[test]
     fn rehash_phpx_packages_updates_lock_integrity_without_network() {
         let tmp = tempfile::tempdir().expect("tmp");
-        let package_dir = tmp.path().join("php_modules").join("@deka").join("core");
+        let package_dir = tmp.path().join(MODULES_DIR).join("@deka").join("core");
         std::fs::create_dir_all(&package_dir).expect("package dir");
         std::fs::write(
             package_dir.join("index.phpx"),

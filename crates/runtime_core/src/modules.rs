@@ -1,5 +1,55 @@
 use std::path::{Path, PathBuf};
 
+/// Consumer package install directory (`deka add` / `deka install`).
+pub const MODULES_DIR: &str = "ds_modules";
+/// Pre-cutover install directory. Resolution still accepts this if present.
+pub const LEGACY_MODULES_DIR: &str = "php_modules";
+
+pub fn is_modules_dir_name(name: &str) -> bool {
+    name.eq_ignore_ascii_case(MODULES_DIR) || name.eq_ignore_ascii_case(LEGACY_MODULES_DIR)
+}
+
+/// Directory new installs write into. Uses `ds_modules` unless this project
+/// already has only a legacy `php_modules/` tree.
+pub fn install_modules_dir(project: &Path) -> PathBuf {
+    let modern = project.join(MODULES_DIR);
+    if modern.is_dir() {
+        return modern;
+    }
+    let legacy = project.join(LEGACY_MODULES_DIR);
+    if legacy.is_dir() {
+        return legacy;
+    }
+    modern
+}
+
+/// Directory to resolve imports from. Prefers `ds_modules/`, then `php_modules/`.
+pub fn resolve_modules_dir(project: &Path) -> PathBuf {
+    let modern = project.join(MODULES_DIR);
+    if modern.is_dir() {
+        return modern;
+    }
+    let legacy = project.join(LEGACY_MODULES_DIR);
+    if legacy.is_dir() {
+        return legacy;
+    }
+    modern
+}
+
+/// Every consumer-modules directory that exists on disk, modern first.
+pub fn existing_modules_dirs(project: &Path) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let modern = project.join(MODULES_DIR);
+    if modern.is_dir() {
+        dirs.push(modern);
+    }
+    let legacy = project.join(LEGACY_MODULES_DIR);
+    if legacy.is_dir() {
+        dirs.push(legacy);
+    }
+    dirs
+}
+
 pub fn detect_deka_module_root_with<Exists, CurrentExe>(
     handler_path: &str,
     lock_exists: &Exists,
@@ -69,13 +119,23 @@ pub fn ensure_deka_module_root_env_with<Exists, CurrentExe, Get, Set>(
 
 #[cfg(test)]
 mod tests {
-    use super::{detect_deka_module_root_with, ensure_deka_module_root_env_with};
+    use super::{
+        detect_deka_module_root_with, ensure_deka_module_root_env_with, install_modules_dir,
+        resolve_modules_dir, MODULES_DIR,
+    };
     use std::collections::{HashMap, HashSet};
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
 
     fn lockset(paths: &[&str]) -> HashSet<PathBuf> {
         paths.iter().map(PathBuf::from).collect()
+    }
+
+    #[test]
+    fn new_project_installs_into_ds_modules() {
+        let root = PathBuf::from("/tmp/new-app");
+        assert_eq!(install_modules_dir(&root), root.join(MODULES_DIR));
+        assert_eq!(resolve_modules_dir(&root), root.join(MODULES_DIR));
     }
 
     #[test]

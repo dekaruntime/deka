@@ -21,6 +21,7 @@ use deka_js::compile_phpx_source_to_js_with_warnings_detailed;
 use deka_js::parse_source_module_meta;
 use deka_js::{CompileError, DEKA_VALIDATION_ERROR_MARKER};
 use runtime_core::module_spec::{is_bare_module_specifier, module_spec_aliases};
+use runtime_core::modules::{resolve_modules_dir, MODULES_DIR};
 
 #[derive(Clone)]
 pub struct PhpxEsmLoader {
@@ -431,10 +432,10 @@ pub fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Re
         return Ok(());
     }
 
-    let modules_dir = project_root.join("php_modules");
+    let modules_dir = resolve_modules_dir(project_root);
     if !modules_dir.is_dir() {
         return Err(format!(
-            "deka runtime requires php_modules/ at project root when using stdlib imports ({}). Run `deka install`.",
+            "deka runtime requires ds_modules/ at project root when using stdlib imports ({}). Run `deka install`.",
             stdlib_imports.join(", ")
         ));
     }
@@ -556,7 +557,7 @@ fn resolve_phpx_module_spec(project_root: &Path, specifier: &str) -> Option<Path
         }
     }
 
-    let modules_dir = project_root.join("php_modules");
+    let modules_dir = project_root.join(MODULES_DIR);
     let mut aliases = module_spec_aliases(specifier);
     // Map prefixed stdlib specifiers into the @deka scope: encoding/json -> @deka/encoding/json.
     if specifier.contains('/')

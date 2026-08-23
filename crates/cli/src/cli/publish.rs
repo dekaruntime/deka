@@ -1,4 +1,5 @@
 use anyhow::{bail, Context as AnyhowContext, Result};
+use runtime_core::modules::is_modules_dir_name;
 use core::{CommandSpec, Context, FlagSpec, ParamSpec, Registry};
 use serde_json::json;
 use std::io::{self, Write};
@@ -264,7 +265,7 @@ fn reject_publish_tree_php_modules_at(repo: Option<&std::path::Path>, git_ref: &
     }
     if let Some(path) = vendored_php_modules_path(&output.stdout) {
         bail!(
-            "publish rejected: git tree contains `{}`. Remove php_modules/ and declare dependencies in deka.json; releases never ship vendored dependencies",
+            "publish rejected: git tree contains `{}`. Remove ds_modules/ (or php_modules/) and declare dependencies in deka.json; releases never ship vendored dependencies",
             path
         );
     }
@@ -284,7 +285,7 @@ fn vendored_php_modules_path(entries: &[u8]) -> Option<String> {
         if is_symlink
             || path
                 .split('/')
-                .any(|segment| segment.eq_ignore_ascii_case("php_modules"))
+                .any(|segment| is_modules_dir_name(segment))
         {
             Some(path.to_string())
         } else {
@@ -731,6 +732,7 @@ fn prompt_yes_no(prompt: &str, default_yes: bool) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::reject_publish_tree_php_modules_at;
+    use runtime_core::modules::MODULES_DIR;
     use std::{fs, process::Command};
 
     #[test]
@@ -774,7 +776,7 @@ mod tests {
 
         fs::remove_dir_all(repo.join("Php_Modules")).expect("remove case directory");
         #[cfg(unix)]
-        std::os::unix::fs::symlink("outside", repo.join("php_modules")).expect("symlink");
+        std::os::unix::fs::symlink("outside", repo.join(MODULES_DIR)).expect("symlink");
         #[cfg(not(unix))]
         panic!("publish artifact symlink test requires unix");
         assert!(Command::new("git")

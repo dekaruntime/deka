@@ -1,4 +1,5 @@
 use super::*;
+use runtime_core::modules::MODULES_DIR;
 
 #[test]
 fn test_is_valid_identifier() {
@@ -309,7 +310,7 @@ fn resolver_only_uses_project_local_php_modules() {
     let project = make_tmp_dir("no_stdlib_fallback_project");
     let stdlib = make_tmp_dir("no_stdlib_fallback_stdlib");
 
-    std::fs::create_dir_all(project.join("php_modules")).unwrap();
+    std::fs::create_dir_all(project.join(MODULES_DIR)).unwrap();
     let crypto_dir = stdlib.join("crypto");
     std::fs::create_dir_all(&crypto_dir).unwrap();
     std::fs::write(
@@ -325,7 +326,7 @@ fn resolver_only_uses_project_local_php_modules() {
     );
 
     // If project-local has the module it resolves normally.
-    let local_crypto = project.join("php_modules").join("crypto");
+    let local_crypto = project.join(MODULES_DIR).join("crypto");
     std::fs::create_dir_all(&local_crypto).unwrap();
     std::fs::write(
         local_crypto.join("index.js"),
@@ -348,7 +349,7 @@ fn resolver_only_uses_project_local_php_modules() {
 #[test]
 fn resolver_rejects_path_traversal() {
     let project = make_tmp_dir("path_traversal");
-    let modules = project.join("php_modules");
+    let modules = project.join(MODULES_DIR);
     std::fs::create_dir_all(modules.join("component")).unwrap();
     std::fs::write(
         modules.join("component").join("button.js"),

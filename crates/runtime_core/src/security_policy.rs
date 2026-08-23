@@ -527,10 +527,10 @@ fn parse_rule_list(
 
 fn broad_allow_hint(path: &str) -> Option<String> {
     if path.ends_with(".read") {
-        return Some("Prefer explicit folders like \"./src\" or \"./php_modules\".".to_string());
+        return Some("Prefer explicit folders like \"./src\" or \"./ds_modules\".".to_string());
     }
     if path.ends_with(".write") {
-        return Some("Prefer explicit folders like \"./php_modules/.cache\".".to_string());
+        return Some("Prefer explicit folders like \"./ds_modules/.cache\".".to_string());
     }
     if path.ends_with(".net") {
         return Some("Prefer explicit hosts like \"localhost:5432\".".to_string());
@@ -556,8 +556,8 @@ fn weak_allow_warning(path: &str, item: &str) -> Option<String> {
         return None;
     }
     let hint = match capability {
-        "read" => "Prefer explicit folders like \"./src\" or \"./php_modules\".",
-        "write" => "Prefer explicit folders like \"./php_modules/.cache\".",
+        "read" => "Prefer explicit folders like \"./src\" or \"./ds_modules\".",
+        "write" => "Prefer explicit folders like \"./ds_modules/.cache\".",
         "net" => "Prefer explicit hosts like \"localhost:5432\".",
         "env" => "Prefer explicit vars like \"DATABASE_URL\".",
         "run" => "Prefer explicit binaries like \"git\" or \"deka\".",

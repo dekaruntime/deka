@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use runtime_core::module_spec::module_spec_aliases;
+use runtime_core::modules::{existing_modules_dirs, MODULES_DIR};
 use swc_bundler::{BundleKind, Bundler, Config, Hook, Load, ModuleData, ModuleType};
 use swc_common::{
     FileName, GLOBALS, Globals, Mark, SourceMap, comments::SingleThreadedComments, sync::Lrc,
@@ -867,16 +868,21 @@ fn guard_path_traversal(resolved: &Path, root: &Path) -> Option<PathBuf> {
 
 struct DekaResolver {
     root: PathBuf,
-    php_modules: PathBuf,
 }
 
 impl DekaResolver {
     fn new(project_root: PathBuf) -> Result<Self, String> {
-        let php_modules = project_root.join("php_modules");
         Ok(Self {
             root: project_root,
-            php_modules,
         })
+    }
+
+    fn module_roots(&self) -> Vec<PathBuf> {
+        let mut dirs = existing_modules_dirs(&self.root);
+        if dirs.is_empty() {
+            dirs.push(self.root.join(MODULES_DIR));
+        }
+        dirs
     }
 
     fn resolve_from_node_modules(&self, start_dir: &Path, specifier: &str) -> Option<PathBuf> {
@@ -891,21 +897,19 @@ impl DekaResolver {
     }
 
     fn resolve_php_module(&self, specifier: &str) -> Option<PathBuf> {
-        for alias in module_spec_aliases(specifier) {
-            // Only look in the project-local php_modules/. There is no system
-            // stdlib fallback — packages must be installed via `deka install`.
-            let base = if alias.starts_with("@user/") {
-                self.php_modules
-                    .join("@user")
-                    .join(alias.trim_start_matches("@user/"))
-            } else {
-                self.php_modules.join(&alias)
-            };
-            if let Some(path) = resolve_with_candidates(&base) {
-                // Guard against path traversal — resolved path must stay
-                // within the php_modules directory.
-                if guard_path_traversal(&path, &self.php_modules).is_some() {
-                    return Some(path);
+        for modules in self.module_roots() {
+            for alias in module_spec_aliases(specifier) {
+                let base = if alias.starts_with("@user/") {
+                    modules
+                        .join("@user")
+                        .join(alias.trim_start_matches("@user/"))
+                } else {
+                    modules.join(&alias)
+                };
+                if let Some(path) = resolve_with_candidates(&base) {
+                    if guard_path_traversal(&path, &modules).is_some() {
+                        return Some(path);
+                    }
                 }
             }
         }
@@ -965,26 +969,23 @@ impl Resolve for DekaResolver {
             || specifier.starts_with("db/")
             || specifier.starts_with("core/");
         if is_prefixed_module {
-            // Project-local php_modules/ only — no system stdlib fallback.
-            if let Some(candidate) = resolve_with_candidates(&self.php_modules.join(specifier)) {
-                // Guard: resolved path must stay within php_modules/
-                if guard_path_traversal(&candidate, &self.php_modules).is_some() {
-                    return Ok(Resolution {
-                        filename: FileName::Real(candidate),
-                        slug: None,
-                    });
+            for modules in self.module_roots() {
+                if let Some(candidate) = resolve_with_candidates(&modules.join(specifier)) {
+                    if guard_path_traversal(&candidate, &modules).is_some() {
+                        return Ok(Resolution {
+                            filename: FileName::Real(candidate),
+                            slug: None,
+                        });
+                    }
                 }
-            }
-            // Try the @deka/ scoped layout: encoding/json -> @deka/encoding/json
-            let scoped_specifier = format!("@deka/{}", specifier);
-            if let Some(candidate) =
-                resolve_with_candidates(&self.php_modules.join(&scoped_specifier))
-            {
-                if guard_path_traversal(&candidate, &self.php_modules).is_some() {
-                    return Ok(Resolution {
-                        filename: FileName::Real(candidate),
-                        slug: None,
-                    });
+                let scoped_specifier = format!("@deka/{}", specifier);
+                if let Some(candidate) = resolve_with_candidates(&modules.join(&scoped_specifier)) {
+                    if guard_path_traversal(&candidate, &modules).is_some() {
+                        return Ok(Resolution {
+                            filename: FileName::Real(candidate),
+                            slug: None,
+                        });
+                    }
                 }
             }
         }
