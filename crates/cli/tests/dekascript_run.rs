@@ -412,6 +412,104 @@ fn run_rejects_absolute_ds_symlink_to_phpx_before_execution() {
 }
 
 #[test]
+fn run_executes_workspace_fs_write_read_dir() {
+    run_dekascript_with_manifest(
+        "fs_write_read",
+        r#"{ "name": "@deka/fs", "host": { "kinds": ["fs"] }, "security": { "allow": { "read": ["./"], "write": ["./"] }, "prompt": false } }"#,
+        r#"
+export async fn read_file(path: string) {
+  return await bridge fs.read_file(path)
+}
+export async fn write_file(path: string, data: bytes) {
+  return await bridge fs.write_file(path, data)
+}
+export async fn mkdirs(path: string) {
+  return await bridge fs.mkdirs(path)
+}
+export async fn read_dir(path: string) {
+  return await bridge fs.read_dir(path)
+}
+fn utf8(value: string): bytes {
+  let encoded = unsafe { new TextEncoder().encode(value) }
+  return match (encoded) {
+    Ok(buf) => buf,
+    Err(err) => utf8("")
+  }
+}
+fn from_utf8(value: bytes): string {
+  let decoded = unsafe { new TextDecoder("utf-8", { fatal: false }).decode(value) }
+  return match (decoded) {
+    Ok(text) => text,
+    Err(err) => ""
+  }
+}
+async fn go() {
+  const mkdir_res = await mkdirs("out")
+  const made = match (mkdir_res) {
+    Ok(v) => true,
+    Err(e) => false
+  }
+  if (!made) {
+    print("fail-mkdirs")
+    return
+  }
+  const write_res = await write_file("out/a.txt", utf8("hi"))
+  const wrote = match (write_res) {
+    Ok(n) => n,
+    Err(e) => 0
+  }
+  const read_res = await read_file("out/a.txt")
+  const text = match (read_res) {
+    Ok(buf) => from_utf8(buf),
+    Err(e) => "fail-read"
+  }
+  const dir_res = await read_dir("out")
+  const names = match (dir_res) {
+    Ok(entries) => match (unsafe { entries.map((e) => e.name).join(",") }) {
+      Ok(v) => v,
+      Err(e) => "fail-dir"
+    },
+    Err(e) => "fail-dir"
+  }
+  const has = match (unsafe { String(names).indexOf("a.txt") >= 0 }) {
+    Ok(v) => v,
+    Err(e) => false
+  }
+  if (wrote > 0 && text == "hi" && has) {
+    print("ok")
+  } else {
+    print(text)
+    print(names)
+  }
+}
+go()
+"#,
+        "ok",
+    );
+}
+
+#[test]
+fn run_executes_workspace_time_sleep_ms() {
+    run_dekascript_with_manifest(
+        "time_sleep",
+        r#"{ "name": "@deka/time", "host": { "kinds": ["time"] } }"#,
+        r#"
+export fn sleep_ms(ms: number) {
+  return bridge time.sleep_ms(ms)
+}
+fn go() {
+  print(match (sleep_ms(1)) {
+    Ok(v) => "ok",
+    Err(e) => "fail"
+  })
+}
+go()
+"#,
+        "ok",
+    );
+}
+
+#[test]
 fn run_executes_workspace_tcp_connect_refused() {
     run_dekascript_with_manifest(
         "tcp_connect_refused",
