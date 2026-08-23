@@ -98,12 +98,12 @@ When you hit a weird tour example, copy the source into a new fixture, set the
 expected output, and run the suite. If it fails on `main`, you have a minimal
 reproduction before the bug reaches the website.
 
-## Before merging a runtime change: the conformance gate
+## Testing a runtime checkout against the public suite
 
-The in-tree suites above test this repo against itself. They cannot tell you
-whether a compiler change breaks the **published** surface — the native isolate
-and the browser Worker running the same fixture. That is what
-`dekaruntime/testsuite` is for, and it is runnable locally in one command.
+The in-tree suites above test this repo against itself. They cannot tell you how
+a compiler change behaves on the two real hosts — the native isolate and the
+browser Worker running the same fixture. That is what `dekaruntime/testsuite`
+is for, and it runs locally against whatever checkout you point it at.
 
 Run it for any change to the compiler, the typechecker, diagnostics, or the
 emitted JS.
@@ -113,64 +113,47 @@ emitted JS.
 ```bash
 git clone git@github.com:dekaruntime/testsuite.git
 cd testsuite
-./run.sh
+./run.sh /path/to/your/deka/checkout
 ```
 
 That is the whole procedure. `run.sh` installs dependencies and Chromium if
-missing, finds your deka checkout, builds **both** compilers from it, runs the
-suite on both hosts, and writes a report to `.cache/gate-report.txt`.
-
-It defaults to grading your **local** code, because that is what you are testing
-before you merge.
+missing, builds the native CLI and the wasm compiler from the checkout you name,
+runs every fixture against both hosts, and writes `.cache/report.txt`.
 
 ```bash
-./run.sh                     # grade the local deka checkout (default)
-./run.sh --published         # grade the released compilers instead
-./run.sh --deka ~/src/deka   # point at a specific checkout
-./run.sh --write-baseline    # accept current results as the known set
+./run.sh ~/Projects/deka   # test that checkout
+./run.sh                   # same, auto-detecting ($DEKA_REPO, ../deka, ...)
+./run.sh --published       # test the released compilers instead
 ```
+
+It reports on the runtime you point it at. Failures and native/browser
+divergences are findings to read, not a pass/fail verdict. Exit `0` means the
+suite ran; exit `2` means the environment could not support a run, which is
+never a statement about your runtime.
 
 The setup is deliberately not left to the reader. Chromium in particular is a
 separate download from the npm package, and without it the browser host drops
 and the suite reports zero divergences no matter what the browser compiler does
-— a run that looks *healthier* than a correct one. Building both compilers on
-every run is likewise cheap (cargo is incremental) and is the only way to
-guarantee the two hosts came from the same source.
-
-Exit codes: `0` clean, `1` a new failure, `2` the environment is not fit to
-grade (fix it and re-run — a `2` is never a verdict on your change).
+-- a run that looks *healthier* than a correct one. Both compilers are rebuilt
+every run because cargo is incremental and it is the only way to guarantee the
+two hosts came from one source.
 
 ### What preflight asserts, and why each one exists
 
 | Check | The failure it prevents |
 |---|---|
-| `DEKA_NATIVE`/`DEKA_WASM` both set or both unset | Pairing a local host against a published one renders type-name drift (`int` vs `number`) as native/browser disagreement |
-| native binary matches its own tree | A stale `target/release/cli` grades your change with an old compiler and invents divergences |
-| playwright resolvable | A missing dev dependency drops the browser host; the run then reports zero divergences no matter what the browser compiler does |
-| both hosts available | A host that did not run cannot be graded, so the gate refuses rather than half-grading |
+| `DEKA_NATIVE`/`DEKA_WASM` both set or both unset | Mixing a local host with a published one renders type-name drift (`int` vs `number`) as native/browser disagreement |
+| native binary matches its own tree | A stale `target/release/cli` tests your checkout with an old compiler and invents divergences |
+| playwright resolvable | Without it the browser host drops and every run reports zero divergences |
+| both hosts available | A host that did not run cannot be reported on, so the harness refuses rather than publishing half a result |
 
-Every one of these has produced a confident wrong answer in practice. The point
-of preflight is that a broken environment does not look broken — it looks like a
-clean run with a number you would quote.
+Every one of these has produced a confident wrong answer in practice. A broken
+environment does not look broken -- it looks like a clean run with a number you
+would quote.
 
-Note `[hats build] wasm compiler version=` is read from the published CDN
-manifest, not from the compiler actually loaded. With `DEKA_WASM` set it does
-**not** describe your artifact. Trust preflight's version line instead.
-
-### The baseline
-
-The suite carries known failures, so a raw pass/fail count carries no signal.
-`tests/baseline.txt` holds the known-failing and known-divergent fixture ids,
-and the gate gates on **new names**, not on zero failures.
-
-```bash
-bun scripts/run-tests.mjs --write-baseline   # accept current state
-```
-
-Only regenerate after reading the diff. A fixture that starts failing is either
-a regression or an intended change, and only a human can tell those apart. A
-baseline recorded without both hosts is invalid — it bakes in a single-host view
-and masks every browser-side regression.
+Note `[hats build] wasm compiler version=` comes from the published CDN
+manifest. When testing a local checkout it says so explicitly rather than
+implying the artifact under test carries that version.
 
 ## Browser compiler WASM smoke test
 
