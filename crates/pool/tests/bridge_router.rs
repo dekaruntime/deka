@@ -78,6 +78,7 @@ globalThis.app = function(req) {
       wasmCall: typeof globalThis.__deka_wasm_call,
       wasmCallAsync: typeof globalThis.__deka_wasm_call_async,
       host: typeof globalThis.__deka_host,
+      deno: typeof globalThis.Deno,
       closedHost: typeof __deka_host,
       closedBridge: typeof __bridge
     })
@@ -97,6 +98,7 @@ globalThis.app = function(req) {
     assert_eq!(parsed["wasmCall"], "undefined");
     assert_eq!(parsed["wasmCallAsync"], "undefined");
     assert_eq!(parsed["host"], "undefined");
+    assert_eq!(parsed["deno"], "undefined");
     assert_eq!(parsed["closedHost"], "function");
     assert_eq!(parsed["closedBridge"], "function");
 }
@@ -450,7 +452,7 @@ async fn bridge_redis_keys_missing_pattern_is_tenant_scoped_before_native_dispat
     let pool = test_pool();
     let code = r#"
 globalThis.app = function(req) {
-  const ops = Deno.core.ops;
+  const ops = globalThis[Symbol.for('deka.host.internal')].ops;
   ops.op_zega_backend = function(shopId) { return 'neo4j'; };
   ops.op_redis_call = function(action, payload) {
     return { ok: true, action, payload: { ...payload } };
@@ -485,7 +487,7 @@ async fn bridge_redis_prefixed_key_ops_still_dispatch() {
     let pool = test_pool();
     let code = r#"
 globalThis.app = function(req) {
-  const ops = Deno.core.ops;
+  const ops = globalThis[Symbol.for('deka.host.internal')].ops;
   ops.op_zega_backend = function(shopId) { return 'neo4j'; };
   ops.op_redis_call = function(action, payload) {
     return { ok: true, action, payload: { ...payload } };

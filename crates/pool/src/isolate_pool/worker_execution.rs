@@ -814,7 +814,17 @@ impl WorkerThread {
                         bridgeAsync: __bridge_async,
                         wasmCall: __deka_wasm_call,
                         wasmCallAsync: __deka_wasm_call_async,
+                        ops: __ops,
                     });
+                    try {
+                        Object.defineProperty(globalThis, 'Deno', {
+                            value: undefined,
+                            configurable: true,
+                            writable: true,
+                        });
+                    } catch (_err) {
+                        try { globalThis.Deno = undefined; } catch (_err2) {}
+                    }
                 }
 
                 if (typeof globalThis.__dekaRuntime !== 'object') {
