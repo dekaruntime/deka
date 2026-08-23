@@ -503,10 +503,21 @@ jobs:
           curl -fsSL -o "${TMPDIR}/gh.tar.gz" "https://github.com/cli/cli/releases/download/v2.98.0/gh_2.98.0_linux_amd64.tar.gz"
           tar -xzf "${TMPDIR}/gh.tar.gz" -C "${TMPDIR}"
           GH_BIN="${TMPDIR}/gh_2.98.0_linux_amd64/bin/gh"
-          "$GH_BIN" release create "${GITHUB_REF_NAME}" \
-            --title "deka ${VERSION}" \
-            --notes "deka ${VERSION} release binaries and WASM artifacts." \
-            release/${VERSION}/*
+
+          # The release may already exist if the workflow is retried or if a
+          # draft release was created ahead of the tag push. Make this step
+          # idempotent so downstream triggers still run.
+          if "$GH_BIN" release view "${GITHUB_REF_NAME}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release ${GITHUB_REF_NAME} already exists. Uploading/overwriting assets."
+            "$GH_BIN" release upload "${GITHUB_REF_NAME}" release/${VERSION}/* \
+              --repo "${{ github.repository }}" --clobber
+          else
+            "$GH_BIN" release create "${GITHUB_REF_NAME}" \
+              --repo "${{ github.repository }}" \
+              --title "deka ${VERSION}" \
+              --notes "deka ${VERSION} release binaries and WASM artifacts." \
+              release/${VERSION}/*
+          fi
 
       - name: Trigger website compiler sync
         if: success()
