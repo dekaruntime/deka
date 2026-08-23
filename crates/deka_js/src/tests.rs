@@ -375,6 +375,16 @@ fn ds_bridge_crypto_digest_emits_host_call() {
 }
 
 #[test]
+fn ds_bridge_fs_write_file_emits_async() {
+    let js = ds_to_js("const x = await bridge fs.write_file(\"a.txt\", data)")
+        .expect("bridge fs.write_file should emit");
+    assert!(
+        js.contains(".host(\"fs\", \"write_file\"") && js.contains("await "),
+        "expected awaited fs write_file host call, got:\n{js}"
+    );
+}
+
+#[test]
 fn ds_bridge_net_connect_emits_host_call() {
     let js = ds_to_js("const x = bridge net.connect(\"127.0.0.1\", 80)")
         .expect("bridge net.connect should emit");

@@ -767,9 +767,10 @@ impl WorkerThread {
                     // with `host_bridge.rs` CATALOG.
                     const DS_HOST_CATALOG = {
                         crypto: ['random_bytes', 'digest', 'hmac', 'secure_compare', 'aes_256_gcm_encrypt', 'aes_256_gcm_decrypt', 'bcrypt_verify'],
-                        fs: ['read_file'],
+                        fs: ['read_file', 'write_file', 'read_dir', 'mkdirs'],
                         net: ['connect', 'listen', 'accept', 'read', 'write', 'close', 'set_deadline'],
                         tls: ['upgrade'],
+                        time: ['sleep_ms'],
                     };
                     const __deka_host = (kind, action, args) => {
                         try {
@@ -796,6 +797,10 @@ impl WorkerThread {
                                 if (k === 'crypto' && a === 'aes_256_gcm_decrypt') return { key: list[0], nonce: list[1], ciphertext: list[2], aad: list[3] };
                                 if (k === 'crypto' && a === 'bcrypt_verify') return { password: list[0], hash: list[1] };
                                 if (k === 'fs' && a === 'read_file') return { path: list[0] };
+                                if (k === 'fs' && a === 'write_file') return { path: list[0], data: toByteArray(list[1]) };
+                                if (k === 'fs' && a === 'read_dir') return { path: list[0] };
+                                if (k === 'fs' && a === 'mkdirs') return { path: list[0] };
+                                if (k === 'time' && a === 'sleep_ms') return { milliseconds: list[0] };
                                 if (k === 'net' && a === 'connect') return { host: list[0], port: list[1] };
                                 if (k === 'net' && a === 'listen') return { host: list[0], port: list[1] };
                                 if (k === 'net' && a === 'accept') return { handle: list[0] };
@@ -819,9 +824,12 @@ impl WorkerThread {
                                 if (typeof assoc.handle !== 'undefined') assoc.data = assoc.handle;
                                 else if (typeof assoc.written === 'number') assoc.data = assoc.written;
                                 else if (typeof assoc.valid === 'boolean') assoc.data = assoc.valid;
+                                else if (a === 'read_dir' && Array.isArray(assoc.entries)) assoc.data = assoc.entries;
+                                else if (typeof assoc.slept_ms === 'number') assoc.data = assoc.slept_ms;
                                 else assoc.data = true;
                             }
-                            if (assoc && assoc.ok === true && Array.isArray(assoc.data) && typeof Uint8Array !== 'undefined') {
+                            if (assoc && assoc.ok === true && a !== 'read_dir' && Array.isArray(assoc.data)
+                                && typeof Uint8Array !== 'undefined') {
                                 assoc.data = new Uint8Array(assoc.data);
                             }
                             return assoc;

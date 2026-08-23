@@ -867,7 +867,7 @@ impl<'a> JsSubsetEmitter<'a> {
                 // Keep in sync with `host_bridge.rs` CATALOG `is_async`.
                 // Look up the closed-over host via the well-known symbol, not
                 // a user global (`__deka_host` is not on globalThis).
-                let is_async = kind_js == "fs" && action_js == "read_file";
+                let is_async = kind_js == "fs";
                 let call = format!(
                     "(globalThis[Symbol.for(\"deka.host.internal\")]||{{}}).host(\"{kind_js}\", \"{action_js}\", [{args_js}])"
                 );
