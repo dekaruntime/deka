@@ -386,11 +386,29 @@ fn run_executes_workspace_crypto_bridge() {
         "crypto_bridge",
         r#"{ "name": "@deka/crypto", "host": { "kinds": ["crypto"] } }"#,
         r#"
+export fn random_bytes(len: number) {
+  return bridge crypto.random_bytes(len)
+}
+export fn digest(algorithm: string, data: bytes) {
+  return bridge crypto.digest(algorithm, data)
+}
+export fn hmac(algorithm: string, key: bytes, data: bytes) {
+  return bridge crypto.hmac(algorithm, key, data)
+}
+export fn secure_compare(a: bytes, b: bytes) {
+  return bridge crypto.secure_compare(a, b)
+}
 fn go() {
-  const r = bridge crypto.random_bytes(16)
+  const r = random_bytes(16)
   print(match (r) {
-    Ok(v) => match (bridge crypto.digest("sha256", v)) {
-      Ok(h) => "ok",
+    Ok(v) => match (digest("sha256", v)) {
+      Ok(h) => match (hmac("sha256", v, h)) {
+        Ok(mac) => match (secure_compare(mac, mac)) {
+          Ok(eq) => "ok",
+          Err(e) => "fail-compare"
+        },
+        Err(e) => "fail-hmac"
+      },
       Err(e) => "fail-digest"
     },
     Err(e) => "fail-random"
