@@ -545,6 +545,14 @@ impl<'src> Formatter<'src> {
                     .iter()
                     .map(|c| {
                         let mut s = self.token_text(c.name).to_string();
+                        // A declared binding type is part of the source, not a
+                        // hint: dropping it here would silently delete what the
+                        // author wrote, and under "fmt is compile" that edit
+                        // becomes canonical.
+                        if let Some(ty) = c.ty {
+                            s.push_str(": ");
+                            s.push_str(&self.type_to_string(ty));
+                        }
                         s.push_str(" = ");
                         s.push_str(&self.expr_to_string(&c.value));
                         s
@@ -558,6 +566,10 @@ impl<'src> Formatter<'src> {
                     .iter()
                     .map(|v| {
                         let mut s = self.expr_to_string(v.var);
+                        if let Some(ty) = v.ty {
+                            s.push_str(": ");
+                            s.push_str(&self.type_to_string(ty));
+                        }
                         if let Some(default) = v.default {
                             s.push_str(" = ");
                             s.push_str(&self.expr_to_string(default));
