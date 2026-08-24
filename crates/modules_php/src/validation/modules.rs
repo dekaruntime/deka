@@ -9,6 +9,7 @@ use php_rs::parser::lexer::Lexer;
 use php_rs::parser::parser::{Parser, ParserMode};
 use serde_json::Value;
 
+use runtime_core::module_spec::ds_source_candidates;
 use runtime_core::modules::{existing_modules_dirs, is_modules_dir_name, MODULES_DIR};
 
 use super::{ErrorKind, Severity, ValidationError};
@@ -707,37 +708,31 @@ fn resolve_import_target(
     for base_dir in &base_dirs {
         for variant in &spec_variants {
             let base_path = base_dir.join(variant);
-            if raw.ends_with(".ds") {
-                candidates.push(base_path.clone());
-                candidates.push(base_path.join("index.ds"));
-            } else {
-                // Extensionless relative/project specifiers resolve to .ds only.
-                let ds_file_candidate = base_path.with_extension("ds");
-                let ds_index_candidate = base_path.join("index.ds");
-                if ds_file_candidate.exists() && ds_index_candidate.exists() {
-                    return Err(module_error(
-                        1,
-                        1,
-                        raw.len().max(1),
-                        format!(
-                            "Ambiguous import '{}' (both '{}' and '{}' exist).",
-                            raw,
-                            ds_file_candidate.display(),
-                            ds_index_candidate.display()
-                        ),
-                        "Disambiguate the import by using an explicit path ending in .ds.",
-                    ));
-                }
-                candidates.push(ds_file_candidate);
-                candidates.push(ds_index_candidate);
+            let ds_candidates = ds_source_candidates(&base_path);
+            if ds_candidates.len() == 2
+                && ds_candidates[0].exists()
+                && ds_candidates[1].exists()
+            {
+                return Err(module_error(
+                    1,
+                    1,
+                    raw.len().max(1),
+                    format!(
+                        "Ambiguous import '{}' (both '{}' and '{}' exist).",
+                        raw,
+                        ds_candidates[0].display(),
+                        ds_candidates[1].display()
+                    ),
+                    "Disambiguate the import by using an explicit path ending in .ds.",
+                ));
             }
+            candidates.extend(ds_candidates);
         }
     }
     if !is_relative && !is_project_alias {
         if let Some(root) = modules_root {
             for variant in &spec_variants {
-                candidates.push(root.join(format!("{variant}.ds")));
-                candidates.push(root.join(variant).join("index.ds"));
+                candidates.extend(ds_source_candidates(&root.join(variant)));
             }
         }
     }
@@ -1648,6 +1643,26 @@ mod tests {
     }
 
     #[test]
+    fn relative_import_does_not_resolve_phpx() {
+        let root = make_temp_project("relative_no_phpx");
+        let entry = root.join("main.ds");
+        fs::write(&entry, "import { PI } from \"./constants\"\n").expect("write entry");
+        fs::write(root.join("constants.phpx"), "export const PI = 3\n").expect("write phpx");
+
+        let errors = validate_module_resolution(
+            &fs::read_to_string(&entry).expect("read entry"),
+            entry.to_string_lossy().as_ref(),
+        );
+        assert!(
+            errors.iter().any(|err| err.message.contains("Missing module './constants'")),
+            "expected missing module when only .phpx exists, got: {:?}",
+            errors
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn reports_missing_relative_ds_module() {
         let root = make_temp_project("missing_relative_ds");
         let entry = root.join("main.ds");
@@ -1664,8 +1679,8 @@ mod tests {
             errors
         );
         assert!(
-            errors.iter().any(|err| err.help_text.contains("Tried .ds and .phpx extensions")),
-            "expected .ds/.phpx help text, got: {:?}",
+            errors.iter().any(|err| err.help_text.contains("Tried .ds extensions")),
+            "expected .ds help text, got: {:?}",
             errors
         );
 

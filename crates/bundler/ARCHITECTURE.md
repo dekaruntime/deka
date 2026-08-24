@@ -134,10 +134,12 @@ Our performance comes from:
 
 1. **Special modules**: react, react-dom/client, deka/* → skip (handled separately)
 2. **External check**: If `bundle_node_modules=false` and bare import → external
-3. **Relative imports**: ./foo or ../bar → resolve from parent directory
-4. **Extension search**: Try .ts, .tsx, .jsx, .js, index.*
-5. **Absolute imports**: /foo → resolve from root
-6. **node_modules**: Search up directory tree for node_modules/pkg
+3. **Relative imports**: `./foo` or `../bar` → resolve from the importing file's directory
+4. **Project alias**: `@/foo` → resolve from the project root
+5. **DekaScript sources** (deka#241): extensionless `foo` → `foo.ds`, then `foo/index.ds`. Explicit `foo.ds` is that file. Never `.phpx`.
+6. **JS/TS fallback** (mixed graphs only): `.ts`, `.tsx`, `.jsx`, `.js`, `.mjs`, and their `index.*` forms
+7. **Absolute imports**: `/foo` → resolve from root
+8. **node_modules**: search up the directory tree for `node_modules/pkg`
 
 ### External Modules
 

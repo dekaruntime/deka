@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use bumpalo::Bump;
 use modules_php::compiler_api::compile_deka_project_module;
+use runtime_core::module_spec::ds_source_candidates;
 use serde::Serialize;
 
 use crate::{Diagnostic, WasmResult, box_result, json};
@@ -220,17 +221,10 @@ fn resolve_relative_path(current_path: &str, specifier: &str) -> Result<PathBuf,
 }
 
 fn relative_candidates(resolved: &Path) -> Vec<String> {
-    let base = resolved.to_string_lossy().replace('\\', "/");
-    let mut candidates = Vec::new();
-    if base.ends_with(".ds") || base.ends_with(".phpx") {
-        candidates.push(base.clone());
-    } else {
-        candidates.push(format!("{}.ds", base));
-        candidates.push(format!("{}/index.ds", base));
-        candidates.push(format!("{}.phpx", base));
-        candidates.push(format!("{}/index.phpx", base));
-    }
-    candidates
+    ds_source_candidates(resolved)
+        .into_iter()
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
+        .collect()
 }
 
 /// Allocate a new project and return its opaque handle.
@@ -411,6 +405,17 @@ mod tests {
             messages.iter().any(|m| m.contains("Cannot resolve import")),
             "expected unresolved import diagnostic, got: {:?}",
             messages
+        );
+    }
+
+    #[test]
+    fn relative_candidates_are_ds_only() {
+        let paths = relative_candidates(Path::new("src/foo"));
+        assert_eq!(paths, vec!["src/foo.ds", "src/foo/index.ds"]);
+        assert!(relative_candidates(Path::new("src/foo.phpx")).is_empty());
+        assert_eq!(
+            relative_candidates(Path::new("src/foo.ds")),
+            vec!["src/foo.ds"]
         );
     }
 }

@@ -87,16 +87,16 @@ fn bundle_produces_valid_js() {
 }
 
 #[test]
-fn bundle_allows_parent_relative_phpx_import_from_subdirectory() {
-    let tmp = make_tmp_dir("parent_relative_phpx_bundle");
+fn bundle_allows_parent_relative_ds_import_from_subdirectory() {
+    let tmp = make_tmp_dir("parent_relative_ds_bundle");
     let api_dir = tmp.join("api");
     std::fs::create_dir_all(&api_dir).expect("create api dir");
 
-    let entry = api_dir.join("checkout.phpx");
+    let entry = api_dir.join("checkout.ds");
     let entry_source =
         "import { helperValue } from '../helpers';\nexport const result = helperValue + 1;\n";
     std::fs::write(&entry, entry_source).expect("write entry");
-    std::fs::write(tmp.join("helpers.phpx"), "export const helperValue = 41;\n")
+    std::fs::write(tmp.join("helpers.ds"), "export const helperValue = 41;\n")
         .expect("write helper");
 
     let provider = Arc::new(SimpleVirtualSource {
@@ -112,7 +112,7 @@ fn bundle_allows_parent_relative_phpx_import_from_subdirectory() {
         },
         provider,
     )
-    .expect("bundle should resolve ../helpers.phpx from api/checkout.phpx");
+    .expect("bundle should resolve ../helpers.ds from api/checkout.ds");
 
     assert!(
         result.contains("41") && result.contains("result"),
