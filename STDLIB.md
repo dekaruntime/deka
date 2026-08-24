@@ -32,9 +32,11 @@ Each stdlib repo has `.github/workflows/release.yml`. It runs on a pushed
 `v*` tag, or `workflow_dispatch` with a version input (not on merge to
 `main`).
 
-Jobs use GitHub-hosted `ubuntu-latest`. The runtime's self-hosted Mac
-runners are registered on `dekaruntime/deka` only; stdlib repos have
-none, so `runs-on: [self-hosted, macOS, ARM64]` queues forever.
+**Never `ubuntu-latest`. Never any GitHub-hosted runner.** Org self-hosted
+only: `runs-on: [self-hosted, macOS, ARM64]`. GitHub-hosted minutes are
+not used for stdlib (or runtime) CI. The runners must be assigned at org
+level so every `dekaruntime/<pkg>` repo can see them; a runner registered
+only on `dekaruntime/deka` will not pick up `bytes` jobs.
 
 1. Checkout the tagged (or dispatched) commit.
 2. `tar` the repo (`--exclude='.git'`).
