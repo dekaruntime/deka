@@ -444,6 +444,25 @@ fn ds_export_async_fn_stays_at_module_scope() {
 }
 
 #[test]
+fn ds_unnamed_enum_payload_binds_in_match() {
+    let source = r#"
+        enum Msg { Text(string), Ping }
+        fn body(m: Msg) string {
+          return match (m) {
+            Msg.Text(b) => b,
+            Msg.Ping => "ok",
+          }
+        }
+        console.log(body(Msg.Text("hi")))
+    "#;
+    let js = ds_to_js(source).expect("unnamed payload match should compile");
+    assert!(
+        js.contains("const b = ") && (js.contains(".__case === \"Text\"") || js.contains("__case === \"Text\"")),
+        "payload pattern must bind the user name and discriminate on __case:\n{js}"
+    );
+}
+
+#[test]
 fn ds_named_enum_payload_and_match() {
     let source = r#"
         enum Outcome<T, E> {

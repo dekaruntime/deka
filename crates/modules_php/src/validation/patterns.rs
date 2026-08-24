@@ -221,19 +221,20 @@ fn enum_case_from_expr(expr: ExprId<'_>, source: &str) -> Option<(String, String
             let name = raw.trim().trim_start_matches('$');
             if name.eq_ignore_ascii_case("Some") || name.eq_ignore_ascii_case("None") {
                 Some(("Option".to_string(), name.to_string()))
+            } else if name.eq_ignore_ascii_case("Ok") || name.eq_ignore_ascii_case("Err") {
+                Some(("Result".to_string(), name.to_string()))
             } else {
                 None
             }
         }
-        Expr::Call { func, .. } => {
-            if let Expr::Variable { name, .. } = *func {
-                let raw = std::str::from_utf8(name.as_str(source.as_bytes())).ok()?;
-                let name = raw.trim().trim_start_matches('$');
-                if name.eq_ignore_ascii_case("Some") || name.eq_ignore_ascii_case("None") {
-                    return Some(("Option".to_string(), name.to_string()));
-                }
-            }
-            None
+        Expr::Call { func, .. } => enum_case_from_expr(func, source),
+        Expr::DotAccess { target, property, .. } => {
+            let class_name = expr_name(target, source)?;
+            let case_name = std::str::from_utf8(property.span.as_str(source.as_bytes()))
+                .ok()?
+                .trim()
+                .to_string();
+            Some((class_name, case_name))
         }
         Expr::ClassConstFetch {
             class, constant, ..

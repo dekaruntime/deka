@@ -692,8 +692,26 @@ fn dekascript_match_option_unqualified_ok() {
 
 #[test]
 fn dekascript_enum_non_generic_payload_ok() {
-    // dekaruntime/deka#128: non-generic enum payloads such as `(string)`
-    // were lexed as a single PHP cast token and rejected by the parser.
+    let source = r#"
+        enum Msg { Text(string), Ping }
+        fn body(m: Msg) string {
+            return match (m) {
+                Msg::Text(b) => b,
+                Msg::Ping => "ok",
+            }
+        }
+    "#;
+    let arena = Box::leak(Box::new(Bump::new()));
+    let result = compile_deka(source, "test.ds", arena);
+    assert!(
+        result.errors.is_empty(),
+        "unexpected errors: {:?}",
+        result.errors
+    );
+}
+
+#[test]
+fn dekascript_enum_type_named_payload_field_is_rejected() {
     let source = r#"
         enum Msg { Text(string), Ping }
         fn body(m: Msg) string {
@@ -705,9 +723,37 @@ fn dekascript_enum_non_generic_payload_ok() {
     "#;
     let arena = Box::leak(Box::new(Bump::new()));
     let result = compile_deka(source, "test.ds", arena);
+    assert_has_error(&result, ErrorKind::TypeError);
     assert!(
-        result.errors.is_empty(),
-        "unexpected errors: {:?}",
+        result
+            .errors
+            .iter()
+            .any(|e| e.message.contains("bound in the match pattern")),
+        "expected pattern-binding diagnostic, got: {:?}",
+        result.errors
+    );
+}
+
+#[test]
+fn dekascript_enum_int_named_payload_field_is_rejected() {
+    let source = r#"
+        enum Msg { Count(int), Ping }
+        fn body(m: Msg) number {
+            return match (m) {
+                Msg::Count => m.int,
+                Msg::Ping => 0,
+            }
+        }
+    "#;
+    let arena = Box::leak(Box::new(Bump::new()));
+    let result = compile_deka(source, "test.ds", arena);
+    assert_has_error(&result, ErrorKind::TypeError);
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.message.contains("bound in the match pattern")),
+        "expected pattern-binding diagnostic, got: {:?}",
         result.errors
     );
 }
