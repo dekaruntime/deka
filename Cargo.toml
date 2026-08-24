@@ -33,6 +33,9 @@ members = [
     "crates/deka-fmt",
 ]
 
+[workspace.package]
+version = "0.29.0"
+
 [workspace.dependencies]
 # V8 Runtime (Deno Core)
 deno_core = "0.410.0"

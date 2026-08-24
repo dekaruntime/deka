@@ -49,6 +49,17 @@ jobs:
       - name: Where am I
         uses: ./.github/actions/where-am-i
 
+      - name: Tag matches workspace version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          TREE_VERSION="$(scripts/runtime-version.sh)"
+          if [ "$TREE_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::git tag ${GITHUB_REF_NAME} does not match workspace version ${TREE_VERSION}."
+            echo "Bump with scripts/bump-version.sh and merge that PR before tagging."
+            echo "This is how v0.26.1 shipped a 0.26.0 binary and v0.28.0 shipped 0.27.0."
+            exit 1
+          fi
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -321,6 +332,11 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           COMMIT="${GITHUB_SHA}"
           PUBLISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          TREE_VERSION="$(scripts/runtime-version.sh)"
+          if [ "$TREE_VERSION" != "$VERSION" ]; then
+            echo "::error::git tag ${TAG} does not match workspace version ${TREE_VERSION}."
+            exit 1
+          fi
 
           mkdir -p "release/${VERSION}" release/wasm-latest
 
