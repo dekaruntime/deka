@@ -18,16 +18,25 @@ For `@deka/<name>`:
 4. Extract into the consumer's `php_modules/` (legacy name; `ds_modules/`
    is equivalent) and record the digest in `deka.lock`.
 
-Those registry JSON files are **static** on `dekaruntime/website`
-(`data/registry.ts` → `public/api/registry/*.json`). They are not
-generated from GitHub tags.
+`deka.gg/api/registry/<name>.json` and `/packages` are built from **R2**.
+Website deploy runs `bun run probe:r2`, which HEADs candidate versions from
+`data/registry.ts` against the public bucket and writes
+`data/r2-artifacts.json`. Only objects that exist are listed. GitHub
+`main`, docs-lock dates, and download counters are not the source of
+truth. A version that is only a git tag does not appear until the tarball
+is on R2 **and** the site has been redeployed.
 
 ## Package release workflow
 
-Each stdlib repo has `.github/workflows/release.yml`. It runs only on a
-pushed `v*` tag (not on merge to `main`):
+Each stdlib repo has `.github/workflows/release.yml`. It runs on a pushed
+`v*` tag, or `workflow_dispatch` with a version input (not on merge to
+`main`).
 
-1. Checkout the tagged commit.
+Jobs use GitHub-hosted `ubuntu-latest`. The runtime's self-hosted Mac
+runners are registered on `dekaruntime/deka` only; stdlib repos have
+none, so `runs-on: [self-hosted, macOS, ARM64]` queues forever.
+
+1. Checkout the tagged (or dispatched) commit.
 2. `tar` the repo (`--exclude='.git'`).
 3. Upload to R2 key
    `deka-stdlib/<name>/<version>/<name>-<version>.tgz`
@@ -90,25 +99,29 @@ gh run list --repo dekaruntime/<name> --workflow=release.yml --limit 3
 gh run watch <RUN_ID> --repo dekaruntime/<name> --exit-status
 ```
 
-Confirm the object:
+Confirm the object with a ranged GET (plain `HEAD` on this bucket often
+hangs or 403s):
 
 ```bash
-curl -sSI https://pub-6d81db17678348abba85f93fde4b4400.r2.dev/<name>/0.2.0/<name>-0.2.0.tgz
+curl -sS -r 0-0 -D - -o /dev/null \
+  https://pub-6d81db17678348abba85f93fde4b4400.r2.dev/<name>/0.2.0/<name>-0.2.0.tgz
 ```
 
-A `200` means the tarball is up. That is **not** enough for `deka add`.
+`206` means the tarball is up. That is **not** enough for `deka add` until
+the website has probed R2 and redeployed.
 
-### 4. Point the registry at the new version
+### 4. Website deploy probes R2
 
-In `dekaruntime/website`:
+`data/registry.ts` is only a candidate list. After the tarball exists:
 
-1. Append the version to `data/registry.ts` for that package
-   (keep older versions in the array).
-2. Run `bun scripts/generate-registry-static.ts`.
-3. Merge and deploy `deka.gg`.
+1. If the version is not already in `registry.ts`, append it (keep older
+   versions).
+2. Deploy `dekaruntime/website`. The deploy job runs `bun run probe:r2`
+   then regenerates `public/api/registry/*.json` from objects that exist.
 
-Until this ships, `deka add <name>` still installs the previous latest
-(PHPX `0.1.1` / `0.1.2`). The tarball can sit on R2 unused.
+Until that deploy, `deka add <name>` still installs the previous latest
+that is actually on R2. Do not hand-edit `/packages` dates or download
+counts — they are not R2 metadata.
 
 ### 5. Host catalog vs package tarball
 
