@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use runtime_core::module_spec::module_spec_aliases;
+use runtime_core::module_spec::{ds_source_candidates, module_spec_aliases};
 use runtime_core::modules::{existing_modules_dirs, MODULES_DIR};
 use swc_bundler::{BundleKind, Bundler, Config, Hook, Load, ModuleData, ModuleType};
 use swc_common::{
@@ -757,24 +757,7 @@ impl Resolve for FsResolver {
             base_dir.join(specifier)
         };
 
-        let mut candidates = Vec::new();
-        if target.extension().is_none() {
-            candidates.push(target.with_extension("phpx"));
-            candidates.push(target.with_extension("ds"));
-            candidates.push(target.with_extension("ts"));
-            candidates.push(target.with_extension("tsx"));
-            candidates.push(target.with_extension("jsx"));
-            candidates.push(target.with_extension("js"));
-            candidates.push(target.with_extension("mjs"));
-            candidates.push(target.join("index.phpx"));
-            candidates.push(target.join("index.ds"));
-            candidates.push(target.join("index.ts"));
-            candidates.push(target.join("index.tsx"));
-            candidates.push(target.join("index.jsx"));
-            candidates.push(target.join("index.js"));
-            candidates.push(target.join("index.mjs"));
-        }
-        candidates.push(target.clone());
+        let candidates = ds_bundle_candidates(&target);
 
         for candidate in candidates {
             if candidate.is_file() {
@@ -1038,31 +1021,27 @@ impl Resolve for DekaResolver {
 }
 
 fn resolve_with_candidates(target: &Path) -> Option<PathBuf> {
-    let mut candidates = Vec::new();
-    if target.extension().is_none() {
-        candidates.push(target.with_extension("phpx"));
-        candidates.push(target.with_extension("ds"));
-        candidates.push(target.with_extension("ts"));
-        candidates.push(target.with_extension("tsx"));
-        candidates.push(target.with_extension("jsx"));
-        candidates.push(target.with_extension("js"));
-        candidates.push(target.with_extension("mjs"));
-        candidates.push(target.join("index.phpx"));
-        candidates.push(target.join("index.ds"));
-        candidates.push(target.join("index.ts"));
-        candidates.push(target.join("index.tsx"));
-        candidates.push(target.join("index.jsx"));
-        candidates.push(target.join("index.js"));
-        candidates.push(target.join("index.mjs"));
-    }
-    candidates.push(target.to_path_buf());
+    ds_bundle_candidates(target)
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+}
 
-    for candidate in candidates {
-        if candidate.is_file() {
-            return Some(candidate);
+/// DekaScript first (`ds_source_candidates`, deka#241), then JS/TS for mixed
+/// graphs. Never `.phpx` / `.php`.
+fn ds_bundle_candidates(target: &Path) -> Vec<PathBuf> {
+    let mut candidates = ds_source_candidates(target);
+    if target.extension().is_none() {
+        for ext in ["ts", "tsx", "jsx", "js", "mjs"] {
+            candidates.push(target.with_extension(ext));
+            candidates.push(target.join(format!("index.{ext}")));
         }
+    } else if !matches!(
+        target.extension().and_then(|ext| ext.to_str()),
+        Some("phpx" | "php")
+    ) {
+        candidates.push(target.to_path_buf());
     }
-    None
+    candidates
 }
 
 fn append_named_exports(lines: &mut Vec<String>, key: &str) -> Result<(), anyhow::Error> {

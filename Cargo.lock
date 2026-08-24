@@ -1577,6 +1577,7 @@ dependencies = [
  "deka-validation",
  "deka_js",
  "modules_php",
+ "runtime_core",
  "serde",
  "serde_json",
 ]

@@ -10,7 +10,9 @@ use bundler::{BundleOptions, VirtualSource, bundle_virtual_entry};
 use deka_js::{
     SourceModuleMeta, compile_phpx_source_to_js, parse_source_module_meta,
 };
-use runtime_core::module_spec::{is_bare_module_specifier, module_spec_aliases};
+use runtime_core::module_spec::{
+    ds_source_candidates, is_bare_module_specifier, module_spec_aliases,
+};
 use runtime_core::modules::{resolve_modules_dir, MODULES_DIR};
 
 pub fn build_deka_handler_bundle(handler_path: &str) -> Result<String, String> {
@@ -298,11 +300,7 @@ fn resolve_module_file(modules_dir: &Path, spec: &str) -> Option<PathBuf> {
     }
     let mut candidates = Vec::new();
     for alias in aliases {
-        candidates.push(modules_dir.join(format!("{}.ds", alias)));
-        candidates.push(modules_dir.join(alias.as_str()).join("index.ds"));
-        if alias.ends_with(".ds") {
-            candidates.push(modules_dir.join(alias));
-        }
+        candidates.extend(ds_source_candidates(&modules_dir.join(alias.as_str())));
     }
 
     candidates.into_iter().find(|path| path.is_file())

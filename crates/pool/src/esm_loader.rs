@@ -20,7 +20,9 @@ use deka_js::SourceModuleMeta;
 use deka_js::compile_phpx_source_to_js_with_warnings_detailed;
 use deka_js::parse_source_module_meta;
 use deka_js::{CompileError, DEKA_VALIDATION_ERROR_MARKER};
-use runtime_core::module_spec::{is_bare_module_specifier, module_spec_aliases};
+use runtime_core::module_spec::{
+    ds_source_candidates, is_bare_module_specifier, module_spec_aliases, resolve_ds_source_file,
+};
 use runtime_core::modules::{resolve_modules_dir, MODULES_DIR};
 
 #[derive(Clone)]
@@ -513,27 +515,14 @@ fn resolve_module_file(modules_dir: &Path, spec: &str) -> Option<PathBuf> {
 
     let mut candidates = Vec::new();
     for alias in aliases {
-        candidates.push(modules_dir.join(format!("{}.ds", alias)));
-        candidates.push(modules_dir.join(format!("{}.phpx", alias)));
-        candidates.push(modules_dir.join(format!("{}.php", alias)));
-        candidates.push(modules_dir.join(alias.as_str()).join("index.ds"));
-        candidates.push(modules_dir.join(alias.as_str()).join("index.phpx"));
-        candidates.push(modules_dir.join(alias.as_str()).join("index.php"));
-        candidates.push(modules_dir.join(alias.as_str()).join("index.js"));
-        if alias.ends_with(".ds")
-            || alias.ends_with(".phpx")
-            || alias.ends_with(".php")
-            || alias.ends_with(".js")
-        {
-            candidates.push(modules_dir.join(alias));
-        }
+        candidates.extend(ds_source_candidates(&modules_dir.join(alias.as_str())));
     }
 
     candidates.into_iter().find(|path| path.is_file())
 }
 
 fn resolve_phpx_module_spec(project_root: &Path, specifier: &str) -> Option<PathBuf> {
-    // @/ is a project-root alias: @/src/pages/foo -> {project_root}/src/pages/foo.phpx
+    // @/ is a project-root alias: @/src/pages/foo -> {project_root}/src/pages/foo.ds
     //
     // Path-traversal guard: a malicious specifier like `@/../../etc/passwd`
     // would escape the tenant's project_root via `Path::join` (which does NOT
@@ -624,38 +613,21 @@ fn resolve_import_path(project_root: &Path, referrer: &Path, specifier: &str) ->
 }
 
 fn resolve_public_source_candidates(target: &Path) -> Option<PathBuf> {
-    let mut candidates = Vec::new();
+    let mut candidates = ds_source_candidates(target);
     if target.extension().is_none() {
-        candidates.push(target.with_extension("ds"));
         candidates.push(target.with_extension("js"));
-        candidates.push(target.join("index.ds"));
         candidates.push(target.join("index.js"));
+    } else if matches!(
+        target.extension().and_then(|ext| ext.to_str()),
+        Some("ds" | "js")
+    ) {
+        candidates.push(target.to_path_buf());
     }
-    candidates.push(target.to_path_buf());
-
-    for candidate in candidates {
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
+    candidates.into_iter().find(|candidate| candidate.is_file())
 }
 
 fn resolve_internal_module_candidates(target: &Path) -> Option<PathBuf> {
-    let mut candidates = Vec::new();
-    if target.extension().is_none() {
-        candidates.push(target.with_extension("ds"));
-        candidates.push(target.with_extension("phpx"));
-        candidates.push(target.with_extension("php"));
-        candidates.push(target.with_extension("js"));
-        candidates.push(target.join("index.ds"));
-        candidates.push(target.join("index.phpx"));
-        candidates.push(target.join("index.php"));
-        candidates.push(target.join("index.js"));
-    }
-    candidates.push(target.to_path_buf());
-
-    candidates.into_iter().find(|candidate| candidate.is_file())
+    resolve_ds_source_file(target)
 }
 
 fn is_bare_specifier(spec: &str) -> bool {
@@ -731,6 +703,19 @@ mod tests {
             None
         );
         assert_eq!(resolve_phpx_module_spec(root.path(), "@/legacy"), None);
+        assert_eq!(
+            resolve_import_path(root.path(), &referrer, "./legacy.phpx"),
+            None
+        );
+    }
+
+    #[test]
+    fn internal_module_spec_does_not_resolve_phpx() {
+        let root = tempfile::tempdir().expect("temp project");
+        let modules = root.path().join("ds_modules").join("legacy");
+        fs::create_dir_all(&modules).expect("ds_modules");
+        fs::write(modules.join("index.phpx"), "export const value = 1;").expect("index phpx");
+        assert_eq!(resolve_phpx_module_spec(root.path(), "legacy"), None);
     }
 
     #[test]

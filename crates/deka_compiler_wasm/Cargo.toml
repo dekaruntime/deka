@@ -12,5 +12,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 deka_js = { path = "../deka_js", default-features = false }
 modules_php = { path = "../modules_php", default-features = false, features = ["compiler"] }
+runtime_core = { path = "../runtime_core" }
 deka-fmt = { path = "../deka-fmt" }
 deka-validation = { path = "../deka-validation", default-features = false }

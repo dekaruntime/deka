@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 pub fn is_bare_module_specifier(spec: &str) -> bool {
     !spec.is_empty()
         && !spec.starts_with("./")
@@ -48,9 +50,42 @@ pub fn canonical_php_package_spec(spec: &str) -> Option<String> {
     None
 }
 
+/// DekaScript source files for an import path (`foo` or `foo.ds`).
+///
+/// Resolution algorithm (deka#241; keep every resolver on this list):
+///
+/// 1. Relative (`./foo`, `../bar`) is joined to the importing file's directory.
+/// 2. `@/foo` is joined to the project root (parent of `ds_modules`).
+/// 3. Bare / `@deka/` specs are joined to `ds_modules` (plus the `@deka/` alias).
+/// 4. Then:
+///    - `foo.ds` → that file
+///    - extensionless `foo` → `foo.ds`, then `foo/index.ds`
+///    - any other extension (including `.phpx`) → no DekaScript source
+///
+/// Check-time (`validate_module_resolution`) and run-time (bundler, ESM
+/// loader, `deka build`, WASM project) must use this list so they cannot
+/// disagree.
+pub fn ds_source_candidates(base: &Path) -> Vec<PathBuf> {
+    match base.extension().and_then(|ext| ext.to_str()) {
+        Some("ds") => vec![base.to_path_buf()],
+        Some(_) => Vec::new(),
+        None => vec![base.with_extension("ds"), base.join("index.ds")],
+    }
+}
+
+/// First existing file from [`ds_source_candidates`].
+pub fn resolve_ds_source_file(base: &Path) -> Option<PathBuf> {
+    ds_source_candidates(base)
+        .into_iter()
+        .find(|path| path.is_file())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{canonical_php_package_spec, module_spec_aliases};
+    use super::{
+        canonical_php_package_spec, ds_source_candidates, module_spec_aliases,
+    };
+    use std::path::Path;
 
     #[test]
     fn bare_spec_includes_deka_alias() {
@@ -81,5 +116,29 @@ mod tests {
     #[test]
     fn does_not_map_nested_import_paths_to_package_specs() {
         assert_eq!(canonical_php_package_spec("component/router"), None);
+    }
+
+    #[test]
+    fn ds_candidates_are_file_then_index() {
+        let base = Path::new("src/foo");
+        assert_eq!(
+            ds_source_candidates(base),
+            vec![Path::new("src/foo.ds").to_path_buf(), Path::new("src/foo/index.ds").to_path_buf()]
+        );
+    }
+
+    #[test]
+    fn ds_candidates_keep_explicit_ds() {
+        let base = Path::new("src/foo.ds");
+        assert_eq!(
+            ds_source_candidates(base),
+            vec![Path::new("src/foo.ds").to_path_buf()]
+        );
+    }
+
+    #[test]
+    fn ds_candidates_reject_phpx() {
+        assert!(ds_source_candidates(Path::new("src/foo.phpx")).is_empty());
+        assert!(ds_source_candidates(Path::new("src/foo.php")).is_empty());
     }
 }

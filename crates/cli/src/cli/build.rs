@@ -1,7 +1,7 @@
 use bundler::{BuildOptions, VirtualSource, bundle_virtual_entry};
 use core::{CommandSpec, Context, ParamSpec, Registry};
 use deka_js::{SourceModuleMeta, parse_source_module_meta};
-use runtime_core::module_spec::module_spec_aliases;
+use runtime_core::module_spec::{ds_source_candidates, module_spec_aliases};
 use runtime_core::modules::{resolve_modules_dir, MODULES_DIR};
 
 use crate::compile_helper::compile_js_or_report;
@@ -445,12 +445,7 @@ fn is_stdlib_module_spec(spec: &str) -> bool {
 fn resolve_module_file(modules_dir: &Path, spec: &str) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     for alias in module_spec_aliases(spec) {
-        candidates.push(modules_dir.join(format!("{}.ds", alias)));
-        candidates.push(modules_dir.join(format!("{}.phpx", alias)));
-        candidates.push(modules_dir.join(format!("{}.php", alias)));
-        candidates.push(modules_dir.join(&alias).join("index.ds"));
-        candidates.push(modules_dir.join(&alias).join("index.phpx"));
-        candidates.push(modules_dir.join(&alias).join("index.php"));
+        candidates.extend(ds_source_candidates(&modules_dir.join(&alias)));
     }
 
     // For prefixed stdlib specifiers (e.g. encoding/json) also check the scoped
@@ -461,16 +456,7 @@ fn resolve_module_file(modules_dir: &Path, spec: &str) -> Option<PathBuf> {
         && !spec.starts_with("../")
     {
         let scoped = format!("@deka/{}", spec);
-        candidates.push(modules_dir.join(format!("{}.ds", scoped)));
-        candidates.push(modules_dir.join(format!("{}.phpx", scoped)));
-        candidates.push(modules_dir.join(format!("{}.php", scoped)));
-        candidates.push(modules_dir.join(&scoped).join("index.ds"));
-        candidates.push(modules_dir.join(&scoped).join("index.phpx"));
-        candidates.push(modules_dir.join(&scoped).join("index.php"));
-    }
-
-    if spec.ends_with(".ds") || spec.ends_with(".phpx") || spec.ends_with(".php") {
-        candidates.insert(0, modules_dir.join(spec));
+        candidates.extend(ds_source_candidates(&modules_dir.join(&scoped)));
     }
 
     candidates.into_iter().find(|path| path.is_file())
