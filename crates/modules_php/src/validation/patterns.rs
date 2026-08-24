@@ -16,6 +16,8 @@ struct EnumInfo {
     cases: HashMap<String, EnumCaseInfo>,
 }
 
+/// Pattern-shape checks for `match` (duplicate arms, payload arity).
+/// Exhaustiveness lives in typeck (`check_match_exhaustive`, deka#281).
 pub fn validate_match_exhaustiveness(program: &Program, source: &str) -> Vec<ValidationError> {
     let enums = collect_enums(program, source);
     let mut validator = MatchValidator {
@@ -45,61 +47,28 @@ impl<'ast> Visitor<'ast> for MatchValidator<'_> {
 impl MatchValidator<'_> {
     fn validate_match(&mut self, arms: &[MatchArm]) {
         let mut seen_cases: HashMap<String, HashSet<String>> = HashMap::new();
-        let mut enums_in_match = HashSet::new();
-        let mut mixed_conditions = false;
-        let mut has_default = false;
 
         for arm in arms {
             let Some(conds) = arm.conditions else {
-                has_default = true;
                 continue;
             };
             for cond in conds {
-                if let Some((enum_name, case_name)) = enum_case_from_expr(*cond, self.source) {
-                    enums_in_match.insert(enum_name.clone());
-                    let entry = seen_cases.entry(enum_name.clone()).or_default();
-                    if entry.contains(&case_name) {
-                        self.errors.push(pattern_error(
-                            cond.span(),
-                            self.source,
-                            format!("Unreachable match arm for {}::{}.", enum_name, case_name),
-                            "Remove the duplicate enum case.",
-                        ));
-                    } else {
-                        entry.insert(case_name.clone());
-                    }
-                    if let Expr::StaticCall { args, .. } | Expr::Call { args, .. } = *cond {
-                        self.validate_payload_binding(&enum_name, &case_name, args, cond.span());
-                    }
-                } else {
-                    mixed_conditions = true;
-                }
-            }
-        }
-
-        if mixed_conditions || has_default {
-            return;
-        }
-
-        for enum_name in enums_in_match {
-            let Some(info) = self.enums.get(&enum_name) else {
-                continue;
-            };
-            let Some(seen) = seen_cases.get(&enum_name) else {
-                continue;
-            };
-            for case_name in info.cases.keys() {
-                if !seen.contains(case_name) {
+                let Some((enum_name, case_name)) = enum_case_from_expr(*cond, self.source) else {
+                    continue;
+                };
+                let entry = seen_cases.entry(enum_name.clone()).or_default();
+                if entry.contains(&case_name) {
                     self.errors.push(pattern_error(
-                        arms.last().map(|arm| arm.span).unwrap_or_default(),
+                        cond.span(),
                         self.source,
-                        format!(
-                            "Match on {} is not exhaustive; missing case {}::{}.",
-                            enum_name, enum_name, case_name
-                        ),
-                        "Add the missing enum case to the match.",
+                        format!("Unreachable match arm for {}::{}.", enum_name, case_name),
+                        "Remove the duplicate enum case.",
                     ));
-                    break;
+                } else {
+                    entry.insert(case_name.clone());
+                }
+                if let Expr::StaticCall { args, .. } | Expr::Call { args, .. } = *cond {
+                    self.validate_payload_binding(&enum_name, &case_name, args, cond.span());
                 }
             }
         }

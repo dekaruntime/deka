@@ -1750,7 +1750,7 @@ impl<'src> Formatter<'src> {
                         .iter()
                         .map(|c| self.expr_to_string(c))
                         .collect::<Vec<_>>()
-                        .join(" | ")
+                        .join(", "),
                 );
             }
             None => s.push_str("default"),
@@ -2308,6 +2308,56 @@ print(a + b)
         assert!(
             output.contains("}\n"),
             "expected closing brace on own line, got: {}",
+            output
+        );
+        parse_ds(&output);
+        assert!(
+            output.contains("_ =>"),
+            "catch-all `_` must round-trip (deka#281), got: {}",
+            output
+        );
+        assert!(
+            !output.contains(" | "),
+            "match arm conditions must use commas, not `|` (deka#281), got: {}",
+            output
+        );
+    }
+
+    #[test]
+    fn match_preserves_default_catch_all() {
+        let input = r#"fn label(n: number) string {
+  return match (n) {
+    1 => "one",
+    default => "other",
+  }
+}"#;
+        let output = format_ds(input).unwrap();
+        assert!(
+            output.contains("default =>"),
+            "default catch-all must round-trip (deka#281), got: {}",
+            output
+        );
+        parse_ds(&output);
+    }
+
+    #[test]
+    fn match_multi_condition_arm_uses_commas() {
+        let input = r#"enum A { One }
+enum B { Two }
+fn f(x: A|B) number {
+  return match (x) {
+    A::One, B::Two => 1,
+  }
+}"#;
+        let output = format_ds(input).unwrap();
+        assert!(
+            output.contains("A::One, B::Two =>"),
+            "expected comma-separated match conditions (deka#281), got: {}",
+            output
+        );
+        assert!(
+            !output.contains("A::One | B::Two"),
+            "must not rewrite comma arms to `|` (deka#281), got: {}",
             output
         );
         parse_ds(&output);

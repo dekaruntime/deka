@@ -691,6 +691,29 @@ fn dekascript_match_option_unqualified_ok() {
 }
 
 #[test]
+fn dekascript_match_number_without_wildcard_is_rejected() {
+    let source = r#"
+        fn label(n: number) string {
+            return match (n) {
+                1 => "one",
+                2 => "two",
+            }
+        }
+    "#;
+    let arena = Box::leak(Box::new(Bump::new()));
+    let result = compile_deka(source, "test.ds", arena);
+    assert_has_error(&result, ErrorKind::TypeError);
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|e| e.message.contains("not exhaustive") && e.message.contains("`_`")),
+        "expected catch-all diagnostic, got: {:?}",
+        result.errors
+    );
+}
+
+#[test]
 fn dekascript_enum_non_generic_payload_ok() {
     let source = r#"
         enum Msg { Text(string), Ping }
