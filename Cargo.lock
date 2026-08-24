@@ -1544,7 +1544,7 @@ dependencies = [
 
 [[package]]
 name = "deka-validation"
-version = "0.14.3"
+version = "0.27.0"
 dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-test",
