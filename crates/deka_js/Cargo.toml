@@ -1,6 +1,6 @@
 [package]
 name = "deka_js"
-version = "0.27.0"
+version = "0.29.0"
 edition = "2024"
 
 [dependencies]
