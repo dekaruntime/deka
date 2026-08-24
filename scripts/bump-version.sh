@@ -180,7 +180,7 @@ for path in sorted((root / "crates").glob("*/Cargo.toml")):
 PY
 
 if command -v cargo >/dev/null 2>&1; then
-  cargo generate-lockfile --offline 2>/dev/null || cargo generate-lockfile
+  cargo update --workspace --offline 2>/dev/null || cargo update --workspace
 fi
 
 echo

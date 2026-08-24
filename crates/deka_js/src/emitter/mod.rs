@@ -187,7 +187,9 @@ impl<'a> JsSubsetEmitter<'a> {
                 out.push_str("globalThis.panic??=__deka.panic;\n");
             }
             if body_refs_global(&program_text, "crypto") {
-                out.push_str("if(!globalThis.crypto||typeof globalThis.crypto.randomUUID!==\"function\"){const fill=(b)=>{for(let i=0;i<b.length;i++)b[i]=(Math.random()*256)|0;};const rand=(b)=>{const g=globalThis.crypto;if(g&&typeof g.getRandomValues===\"function\")g.getRandomValues(b);else fill(b);};globalThis.crypto=Object.assign({},globalThis.crypto||{},{getRandomValues:(a)=>{rand(new Uint8Array(a.buffer,a.byteOffset,a.byteLength));return a;},randomUUID:()=>{const b=new Uint8Array(16);rand(b);b[6]=(b[6]&0x0f)|0x40;b[8]=(b[8]&0x3f)|0x80;const h=Array.from(b,x=>x.toString(16).padStart(2,\"0\")).join(\"\");return`${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;}});}\n");
+                // Workers expose `crypto` as a getter-only host object. Never
+                // replace it; add randomUUID on the existing object when missing.
+                out.push_str("(function(){const c=globalThis.crypto;const fill=(b)=>{for(let i=0;i<b.length;i++)b[i]=(Math.random()*256)|0;};const rand=(b)=>{if(c&&typeof c.getRandomValues===\"function\")c.getRandomValues(b);else fill(b);};const uuid=()=>{const b=new Uint8Array(16);rand(b);b[6]=(b[6]&0x0f)|0x40;b[8]=(b[8]&0x3f)|0x80;const h=Array.from(b,x=>x.toString(16).padStart(2,\"0\")).join(\"\");return`${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;};if(c&&typeof c.randomUUID===\"function\")return;if(c){try{Object.defineProperty(c,\"randomUUID\",{value:uuid,configurable:true});}catch(_){ }return;}globalThis.crypto={getRandomValues:(a)=>{rand(new Uint8Array(a.buffer,a.byteOffset,a.byteLength));return a;},randomUUID:uuid};})();\n");
             }
 
             // Safe global wrappers — installed only when the emitted body
