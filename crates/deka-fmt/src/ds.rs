@@ -2056,6 +2056,22 @@ mod tests {
     }
 
     #[test]
+    fn formats_nested_match_patterns() {
+        let input = r#"
+            fn f(r: Result<Option<number>, string>) number {
+                return match (r) {
+                    Err(e) => 0,
+                    Ok(None) => 1,
+                    Ok(Some(v)) => v,
+                }
+            }
+        "#;
+        let output = format_ds(input).unwrap();
+        assert!(output.contains("Ok(None) => 1"), "got: {}", output);
+        assert!(output.contains("Ok(Some(v)) => v"), "got: {}", output);
+    }
+
+    #[test]
     fn formats_jsx_element() {
         let input = "fn View() Object { return <div class=\"test\">hello {name}</div>; }";
         let output = format_ds(input).unwrap();
