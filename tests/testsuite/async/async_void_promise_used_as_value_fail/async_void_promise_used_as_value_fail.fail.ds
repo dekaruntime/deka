@@ -1,0 +1,13 @@
+async fn work() Promise<void> {
+  console.log("ok")
+}
+
+fn takesNumber(n: number) {
+  console.log(n)
+}
+
+async fn main() {
+  takesNumber(work())
+}
+
+await main()

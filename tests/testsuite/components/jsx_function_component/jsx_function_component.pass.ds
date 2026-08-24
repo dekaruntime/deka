@@ -1,0 +1,6 @@
+const ui = globalThis.deka.ui
+fn Greeting(props: object) object {
+  return ui.jsx("h1", { children: "Hello " + props.name })
+}
+const html = ui.renderToString(ui.jsx(Greeting, { name: "Deka" }))
+console.log(html.html)

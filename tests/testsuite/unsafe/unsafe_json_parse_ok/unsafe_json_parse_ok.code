@@ -1,0 +1,5 @@
+const r = unsafe { JSON.parse('{"x":1}') }
+console.log(match (r) {
+  Ok(v) => `ok: ${v.x}`,
+  Err(e) => `err: ${e.message}`,
+})

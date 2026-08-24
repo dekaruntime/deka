@@ -1,0 +1,2 @@
+import { add } from "./missing.ds";
+console.log(add(1, 2));

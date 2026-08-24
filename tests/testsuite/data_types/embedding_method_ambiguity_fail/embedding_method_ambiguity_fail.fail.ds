@@ -1,0 +1,14 @@
+struct Runner {}
+fn (r Runner) move() string {
+  return "running"
+}
+struct Swimmer {}
+fn (s Swimmer) move() string {
+  return "swimming"
+}
+struct Triathlete {
+  Runner
+  Swimmer
+}
+const t = Triathlete { Runner: Runner {}, Swimmer: Swimmer {} }
+console.log(t.move())

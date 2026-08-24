@@ -1,0 +1,6 @@
+{
+  "title": "TypeScript arrow function type is rejected",
+  "stage": "parse",
+  "expectedDiagnosticContains": "DekaScript parameters use bare identifiers",
+  "notes": "Pins the current diagnostic. `(n: number) => number` should be rewritten as `fn(number) number`."
+}

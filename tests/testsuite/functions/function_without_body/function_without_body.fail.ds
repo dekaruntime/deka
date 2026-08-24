@@ -1,0 +1,2 @@
+fn empty() number
+console.log(empty())

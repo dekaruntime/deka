@@ -1,0 +1,4 @@
+fn greet(fn: string) void {
+  console.log(fn)
+}
+greet("hi")

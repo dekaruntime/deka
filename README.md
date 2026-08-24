@@ -38,4 +38,7 @@ Run the test suite:
 
 ```bash
 cargo test
+cargo build --release -p cli
+bun tests/tour/run.mjs
+bun tests/testsuite/run.mjs
 ```

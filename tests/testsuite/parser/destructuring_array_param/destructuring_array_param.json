@@ -1,0 +1,5 @@
+{
+  "title": "Array destructuring in a parameter is rejected",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Destructuring parameters require at least one variable binding"
+}

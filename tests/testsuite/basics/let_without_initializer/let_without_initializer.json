@@ -1,0 +1,6 @@
+{
+  "title": "let without an initializer is rejected",
+  "stage": "parse",
+  "expectedDiagnosticContains": "DekaScript let declarations require an initializer",
+  "notes": ""
+}

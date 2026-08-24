@@ -1,0 +1,2 @@
+interface A extends B { fn f() string }
+console.log("ok")

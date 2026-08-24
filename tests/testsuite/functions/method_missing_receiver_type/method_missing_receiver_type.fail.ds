@@ -1,0 +1,8 @@
+struct Point {
+  x: number
+}
+fn (p) getX() number {
+  return p.x
+}
+const p = Point { x: 1 }
+console.log(p.getX())

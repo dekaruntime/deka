@@ -1,0 +1,6 @@
+{
+  "title": "Async method with wrong keyword order fails to parse",
+  "stage": "parse",
+  "expectedDiagnosticContains": "DekaScript parameters require a type annotation",
+  "notes": "The correct syntax is `async fn (s Store) load(): Promise<T>`."
+}

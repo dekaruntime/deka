@@ -1,0 +1,6 @@
+{
+  "title": "Continue level zero fails",
+  "stage": "parse",
+  "expectedDiagnosticContains": "break/continue level must be a positive integer",
+  "notes": "A numeric continue level must be a positive integer literal."
+}

@@ -1,0 +1,13 @@
+async fn truthy() Promise<boolean> {
+  return true
+}
+
+async fn main() {
+  if (await truthy()) {
+    console.log("yes")
+  } else {
+    console.log("no")
+  }
+}
+
+await main()

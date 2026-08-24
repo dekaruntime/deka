@@ -1,0 +1,10 @@
+const value = 1
+const result = match (value) {
+  1 => match (value) {
+  1 => "one",
+  _ => "not one",
+},
+  _ => "other",
+}
+
+console.log(result)

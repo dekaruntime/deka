@@ -1,0 +1,5 @@
+const parsed = unsafe { JSON.parse("{\"answer\":42}") }
+console.log(match (parsed) {
+  Ok(v) => v.answer,
+  Err(_) => "parse failed",
+})

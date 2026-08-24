@@ -1,0 +1,3 @@
+const ui = globalThis.deka.ui
+const html = ui.renderToString(<p>a < b</p>)
+console.log(html.html)

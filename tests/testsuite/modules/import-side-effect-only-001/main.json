@@ -1,0 +1,4 @@
+{
+  "title": "bare import executes the module for side effects",
+  "stage": "run"
+}

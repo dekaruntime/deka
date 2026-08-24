@@ -1,0 +1,9 @@
+async fn greet(name: string) Promise<void> {
+  console.log(name)
+}
+
+async fn main() {
+  await greet()
+}
+
+await main()

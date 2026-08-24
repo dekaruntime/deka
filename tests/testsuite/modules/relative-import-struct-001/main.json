@@ -1,0 +1,5 @@
+{
+  "title": "cross-module struct import fails until type checker supports imports",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Unknown struct"
+}

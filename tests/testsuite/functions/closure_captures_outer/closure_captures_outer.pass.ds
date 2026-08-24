@@ -1,0 +1,8 @@
+fn makeMultiplier(factor: number) {
+  const mul = fn(x: number) number {
+    return x * factor
+  }
+  return mul
+}
+const triple = makeMultiplier(3)
+console.log(triple(4))

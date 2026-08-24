@@ -1,0 +1,5 @@
+{
+  "title": "Calling a mutable interface method on an immutable receiver fails",
+  "stage": "run",
+  "notes": ""
+}

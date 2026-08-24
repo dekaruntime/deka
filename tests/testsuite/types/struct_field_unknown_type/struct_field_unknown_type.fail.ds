@@ -1,0 +1,4 @@
+struct S {
+  x: NotAType
+}
+console.log("ok")

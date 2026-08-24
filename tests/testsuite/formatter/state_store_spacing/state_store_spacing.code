@@ -1,0 +1,3 @@
+const store = deka.ui.State.create({count: 0}, {increment: fn(state: object) object { return {count: state.count + 1} }})
+store.increment()
+console.log(store().count)

@@ -1,0 +1,9 @@
+interface Named {
+  name: string;
+}
+
+fn greet(n: Named) {
+  console.log("Hello, " + n.name)
+}
+
+greet({name: "World"})

@@ -1,0 +1,2 @@
+const r = unsafe { new TextEncoder().encode("hi") }
+console.log(match (r) { Ok(v) => `${v.length}:${v[0]}:${v[1]}`, Err(e) => `err: ${e.message}` })

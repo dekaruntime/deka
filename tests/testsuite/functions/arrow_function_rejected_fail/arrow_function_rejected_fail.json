@@ -1,0 +1,6 @@
+{
+  "title": "Arrow functions are rejected",
+  "stage": "parse",
+  "notes": "",
+  "expectedDiagnosticContains": "Missing semicolon"
+}

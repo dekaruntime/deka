@@ -1,0 +1,6 @@
+{
+  "title": "Missing struct field in initializer fails",
+  "stage": "parse",
+  "notes": "",
+  "expectedDiagnosticContains": "Missing required field 'y' for struct 'Point'."
+}

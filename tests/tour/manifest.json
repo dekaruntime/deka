@@ -1,0 +1,239 @@
+[
+  {
+    "id": "hello-dekascript",
+    "title": "hello DekaScript",
+    "expectCompile": true
+  },
+  {
+    "id": "bindings",
+    "title": "bindings",
+    "expectCompile": true
+  },
+  {
+    "id": "immutable-const-diagnostic",
+    "title": "immutable const diagnostic",
+    "expectCompile": false,
+    "expectError": "cannot assign to immutable DekaScript const `answer`"
+  },
+  {
+    "id": "typed-functions",
+    "title": "typed functions",
+    "expectCompile": true
+  },
+  {
+    "id": "sigiled-parameter-diagnostic",
+    "title": "sigiled parameter diagnostic",
+    "expectCompile": false,
+    "expectError": "DekaScript parameters use bare identifiers"
+  },
+  {
+    "id": "strings-and-templates",
+    "title": "strings and templates",
+    "expectCompile": true
+  },
+  {
+    "id": "lists-objects-and-indexing",
+    "title": "lists objects and indexing",
+    "expectCompile": true
+  },
+  {
+    "id": "for-of",
+    "title": "for of",
+    "expectCompile": true
+  },
+  {
+    "id": "foreach-diagnostic",
+    "title": "foreach diagnostic",
+    "expectCompile": false,
+    "expectError": "foreach is not part of DekaScript"
+  },
+  {
+    "id": "errors-are-values",
+    "title": "errors are values",
+    "expectCompile": true
+  },
+  {
+    "id": "try-diagnostic",
+    "title": "try diagnostic",
+    "expectCompile": false,
+    "expectError": "PHP construct is not part of DekaScript"
+  },
+  {
+    "id": "throw-diagnostic",
+    "title": "throw diagnostic",
+    "expectCompile": false,
+    "expectError": "PHP construct is not part of DekaScript"
+  },
+  {
+    "id": "current-boundary",
+    "title": "current boundary",
+    "expectCompile": true
+  },
+  {
+    "id": "sigil-diagnostic",
+    "title": "sigil diagnostic",
+    "expectCompile": false,
+    "expectError": "bare identifiers"
+  },
+  {
+    "id": "echo-diagnostic",
+    "title": "echo diagnostic",
+    "expectCompile": false,
+    "expectError": "echo is not part"
+  },
+  {
+    "id": "array-diagnostic",
+    "title": "array diagnostic",
+    "expectCompile": false,
+    "expectError": "PHP array()"
+  },
+  {
+    "id": "cast-diagnostic",
+    "title": "cast diagnostic",
+    "expectCompile": false,
+    "expectError": "PHP casts"
+  },
+  {
+    "id": "concatenation-diagnostic",
+    "title": "concatenation diagnostic",
+    "expectCompile": false,
+    "expectError": "concatenation is not part"
+  },
+  {
+    "id": "php-builtin-diagnostic",
+    "title": "PHP builtin diagnostic",
+    "expectCompile": false,
+    "expectError": "PHP built-ins are not part"
+  },
+  {
+    "id": "class-diagnostic",
+    "title": "class diagnostic",
+    "expectCompile": false,
+    "expectError": "PHP construct is not part"
+  },
+  {
+    "id": "namespace-diagnostic",
+    "title": "namespace diagnostic",
+    "expectCompile": false,
+    "expectError": "PHP construct is not part"
+  },
+  {
+    "id": "global-diagnostic",
+    "title": "global diagnostic",
+    "expectCompile": false,
+    "expectError": "PHP construct is not part"
+  },
+  {
+    "id": "static-diagnostic",
+    "title": "static diagnostic",
+    "expectCompile": false,
+    "expectError": "PHP construct is not part"
+  },
+  {
+    "id": "include-diagnostic",
+    "title": "include diagnostic",
+    "expectCompile": false,
+    "expectError": "include and require are not part"
+  },
+  {
+    "id": "require-diagnostic",
+    "title": "require diagnostic",
+    "expectCompile": false,
+    "expectError": "include and require are not part"
+  },
+  {
+    "id": "match-expressions",
+    "title": "match expressions",
+    "expectCompile": true
+  },
+  {
+    "id": "structs",
+    "title": "structs",
+    "expectCompile": true
+  },
+  {
+    "id": "struct-methods",
+    "title": "struct methods",
+    "expectCompile": true
+  },
+  {
+    "id": "mutable-methods",
+    "title": "mutable methods",
+    "expectCompile": true
+  },
+  {
+    "id": "embedding",
+    "title": "embedding",
+    "expectCompile": true
+  },
+  {
+    "id": "optional-fields",
+    "title": "optional fields",
+    "expectCompile": true
+  },
+  {
+    "id": "enums",
+    "title": "enums",
+    "expectCompile": true
+  },
+  {
+    "id": "result-and-option",
+    "title": "result and option",
+    "expectCompile": true
+  },
+  {
+    "id": "async-functions",
+    "title": "async functions",
+    "expectCompile": true
+  },
+  {
+    "id": "jsx-components",
+    "title": "jsx components",
+    "expectCompile": true
+  },
+  {
+    "id": "utility-classes",
+    "title": "utility classes",
+    "expectCompile": true
+  },
+  {
+    "id": "structural-interfaces",
+    "title": "structural interfaces",
+    "expectCompile": true
+  },
+  {
+    "id": "comments",
+    "title": "comments",
+    "expectCompile": true
+  },
+  {
+    "id": "numbers",
+    "title": "numbers",
+    "expectCompile": true
+  },
+  {
+    "id": "booleans",
+    "title": "booleans",
+    "expectCompile": true
+  },
+  {
+    "id": "function-literals",
+    "title": "function literals",
+    "expectCompile": true
+  },
+  {
+    "id": "pipe-operator",
+    "title": "pipe operator",
+    "expectCompile": true
+  },
+  {
+    "id": "json-parse-and-result",
+    "title": "json parse and result",
+    "expectCompile": true
+  },
+  {
+    "id": "unsafe-blocks",
+    "title": "unsafe blocks",
+    "expectCompile": true
+  }
+]

@@ -1,0 +1,6 @@
+const ui = globalThis.deka.ui
+fn Outer(props: object) object {
+  return ui.jsxs("div", { children: [ui.jsx(Inner, { text: "a" })] })
+}
+const html = ui.renderToString(ui.jsx(Outer, {}))
+console.log(html.html)

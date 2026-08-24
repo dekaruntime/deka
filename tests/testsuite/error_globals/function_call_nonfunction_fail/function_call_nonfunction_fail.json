@@ -1,0 +1,6 @@
+{
+  "title": "Calling a number as a function fails",
+  "stage": "run",
+  "expectedDiagnosticContains": "is not a function",
+  "notes": "Only functions are callable."
+}

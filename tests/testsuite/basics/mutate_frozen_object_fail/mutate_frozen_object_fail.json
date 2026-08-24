@@ -1,0 +1,6 @@
+{
+  "title": "Mutating a frozen object fails",
+  "stage": "parse",
+  "notes": "",
+  "expectedDiagnosticContains": "field 'a' is read-only"
+}

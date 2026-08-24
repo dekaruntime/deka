@@ -1,0 +1,2 @@
+import { calc } from "./level1.ds";
+console.log(calc(10));

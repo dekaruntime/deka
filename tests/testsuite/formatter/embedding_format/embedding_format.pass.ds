@@ -1,0 +1,13 @@
+struct Person {}
+fn (p Person) greet() string {
+  return "Hello"
+}
+struct Employee {
+  Person
+  name: string
+}
+fn (e Employee) greet() string {
+  return "Hi, " + e.name
+}
+let e = Employee { name: "DekaScript" }
+console.log(e.greet())

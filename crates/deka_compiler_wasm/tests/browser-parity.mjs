@@ -1,4 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const artifact = process.argv[2];
 if (!artifact) throw new Error("usage: bun browser-parity.mjs <compiler.wasm>");
@@ -56,20 +58,31 @@ if (failure.ok || diagnostic?.severity !== "error" || diagnostic.filename !== "b
   throw new Error(`diagnostic compile did not match the ABI contract: ${JSON.stringify(failure)}`);
 }
 
-const tourCases = JSON.parse(await readFile(new URL("./fixtures/deka-tour-sources.json", import.meta.url)));
-if (tourCases.length !== 37) {
-  throw new Error(`expected 37 website tour sources, found ${tourCases.length}`);
+const tourDir = join(dirname(fileURLToPath(import.meta.url)), "../../../tests/tour");
+const tourManifest = JSON.parse(await readFile(join(tourDir, "manifest.json"), "utf-8"));
+const tourFiles = (await readdir(tourDir)).filter((name) => name.endsWith(".ds"));
+const manifestIds = new Set(tourManifest.map((lesson) => lesson.id));
+const fileIds = new Set(tourFiles.map((name) => name.replace(/\.ds$/, "")));
+for (const id of manifestIds) {
+  if (!fileIds.has(id)) throw new Error(`tests/tour/manifest.json lists ${id} but ${id}.ds is missing`);
 }
-for (const testCase of tourCases) {
-  const response = compile(testCase.source, "tour.ds", "deka");
-  if (response.ok !== testCase.expect_compile) {
-    throw new Error(`${testCase.name} browser WASM compile result drifted: ${JSON.stringify(response)}`);
+for (const id of fileIds) {
+  if (!manifestIds.has(id)) throw new Error(`tests/tour/${id}.ds is not listed in manifest.json`);
+}
+if (tourManifest.length === 0) {
+  throw new Error("tests/tour must contain at least one lesson");
+}
+for (const lesson of tourManifest) {
+  const source = await readFile(join(tourDir, `${lesson.id}.ds`), "utf-8");
+  const response = compile(source, `${lesson.id}.ds`, "deka");
+  if (response.ok !== lesson.expectCompile) {
+    throw new Error(`${lesson.id} browser WASM compile result drifted: ${JSON.stringify(response)}`);
   }
-  if (testCase.expect_compile && typeof response.output?.code !== "string") {
-    throw new Error(`${testCase.name} did not return browser WASM output: ${JSON.stringify(response)}`);
+  if (lesson.expectCompile && typeof response.output?.code !== "string") {
+    throw new Error(`${lesson.id} did not return browser WASM output: ${JSON.stringify(response)}`);
   }
-  if (!testCase.expect_compile && !response.diagnostics?.some((diagnostic) => diagnostic.message?.includes(testCase.expect_error))) {
-    throw new Error(`${testCase.name} browser WASM diagnostic drifted: ${JSON.stringify(response)}`);
+  if (!lesson.expectCompile && !response.diagnostics?.some((diagnostic) => diagnostic.message?.includes(lesson.expectError))) {
+    throw new Error(`${lesson.id} browser WASM diagnostic drifted: ${JSON.stringify(response)}`);
   }
 }
 

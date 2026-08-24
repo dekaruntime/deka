@@ -1,0 +1,6 @@
+{
+  "title": "Argument type mismatch fails",
+  "stage": "parse",
+  "notes": "",
+  "expectedDiagnosticContains": "Argument 1 type mismatch: expected string, got number"
+}

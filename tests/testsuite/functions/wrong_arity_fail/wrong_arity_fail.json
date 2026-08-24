@@ -1,0 +1,6 @@
+{
+  "title": "Calling a function with too few arguments fails",
+  "stage": "parse",
+  "notes": "",
+  "expectedDiagnosticContains": "Missing arguments for add(): expected at least 2, got 1"
+}

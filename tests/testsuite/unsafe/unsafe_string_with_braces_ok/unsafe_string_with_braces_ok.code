@@ -1,0 +1,9 @@
+const r = unsafe {
+  const s = "this } is not { a brace"
+  return s.length
+}
+
+console.log(match (r) {
+  Ok(v) => `ok: ${v}`,
+  Err(e) => `err: ${e.message}`,
+})

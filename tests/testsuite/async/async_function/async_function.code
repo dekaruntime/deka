@@ -1,0 +1,6 @@
+async fn fetch() Promise<string> {
+  return "data"
+}
+
+const result = fetch()
+console.log("ok")

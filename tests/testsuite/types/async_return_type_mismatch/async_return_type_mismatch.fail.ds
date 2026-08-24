@@ -1,0 +1,4 @@
+async fn fetch() Promise<string> {
+  return 123
+}
+console.log("ok")

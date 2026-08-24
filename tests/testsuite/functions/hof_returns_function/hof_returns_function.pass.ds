@@ -1,0 +1,7 @@
+fn makeAdder(n: number) fn(number) number {
+  return fn(x: number) number {
+    return x + n
+  }
+}
+const add10 = makeAdder(10)
+console.log(add10(5))

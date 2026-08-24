@@ -1,0 +1,2 @@
+const r = Result.Err("bad")
+console.log(match (r) { Ok(v) => `ok: ${v}`, Err(e) => `err: ${e}` })

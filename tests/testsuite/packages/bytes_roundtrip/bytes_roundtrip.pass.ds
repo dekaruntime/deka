@@ -1,0 +1,4 @@
+import { from_string, to_string } from "bytes"
+
+const encoded = from_string("hello")
+console.log(to_string(encoded))

@@ -1,0 +1,7 @@
+interface Named {
+  name: string
+}
+fn printName(n: Named) {
+  console.log(n.name)
+}
+printName({ name: 42 })

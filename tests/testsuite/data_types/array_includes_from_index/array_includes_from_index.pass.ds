@@ -1,0 +1,4 @@
+const arr = [1, 2, 3]
+console.log(arr.includes(2, 2))
+console.log(arr.includes(3, 2))
+console.log(arr.includes(1, 1))

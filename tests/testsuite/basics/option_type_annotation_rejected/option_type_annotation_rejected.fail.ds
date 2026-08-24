@@ -1,0 +1,2 @@
+const x: string? = "hi"
+console.log(x)

@@ -1,0 +1,15 @@
+interface Card {
+  title: string;
+  subtitle?: string;
+}
+
+fn show(c: Card) {
+  if (isset(c.subtitle)) {
+    console.log(c.subtitle)
+  } else {
+    console.log(c.title)
+  }
+}
+
+show({title: "Hello", subtitle: "World"})
+show({title: "Hello"})

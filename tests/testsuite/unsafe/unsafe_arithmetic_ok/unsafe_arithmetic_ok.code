@@ -1,0 +1,5 @@
+const r = unsafe { 2 + 3 }
+console.log(match (r) {
+  Ok(v) => `ok: ${v}`,
+  Err(e) => `err: ${e.message}`,
+})

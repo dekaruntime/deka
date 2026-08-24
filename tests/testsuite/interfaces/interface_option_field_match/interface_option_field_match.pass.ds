@@ -1,0 +1,8 @@
+interface Config {
+  label: Option<string>
+}
+fn show(c: Config) {
+  console.log(match (c.label) { Some(v) => v, None => "default", _ => "?" })
+}
+show({ label: Option.Some("hi") })
+show({ label: Option.None })

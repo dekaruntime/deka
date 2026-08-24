@@ -1,0 +1,13 @@
+interface Named {
+  name: string
+}
+struct Label {
+  name: number
+}
+struct Person {
+  Label
+}
+fn show(n: Named) {
+  console.log(n.name)
+}
+show(Person { Label: Label {} })

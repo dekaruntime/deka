@@ -1,0 +1,6 @@
+{
+  "title": "panic fails at runtime",
+  "stage": "run",
+  "notes": "",
+  "expectedDiagnosticContains": "oops"
+}

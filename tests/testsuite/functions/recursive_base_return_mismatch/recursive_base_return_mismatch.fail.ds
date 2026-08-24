@@ -1,0 +1,7 @@
+fn sum(n: number) number {
+  if (n <= 0) {
+    return "done"
+  }
+  return n + sum(n - 1)
+}
+console.log(sum(3))

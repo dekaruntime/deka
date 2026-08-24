@@ -1,0 +1,10 @@
+struct Box {
+  value: number;
+}
+
+fn makeBox(v: number) Box {
+  return Box { value: v }
+}
+
+const b = makeBox(7)
+console.log(b.value)

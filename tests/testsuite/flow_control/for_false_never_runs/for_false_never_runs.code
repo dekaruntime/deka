@@ -1,0 +1,7 @@
+let i = 0
+for (j = 0; false; j = j + 1) {
+  console.log("never")
+  i = i + 1
+}
+
+console.log(i)

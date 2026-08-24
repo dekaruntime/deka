@@ -1,0 +1,6 @@
+{
+  "title": "Computed object keys are rejected",
+  "stage": "parse",
+  "notes": "",
+  "expectedDiagnosticContains": "Expected identifier, string literal, or '...' in object literal"
+}

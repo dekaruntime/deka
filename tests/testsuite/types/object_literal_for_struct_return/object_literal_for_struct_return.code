@@ -1,0 +1,11 @@
+struct Box {
+  value: number;
+}
+
+fn identity(b: Box) Box {
+  return {value: 7}
+}
+
+const x = Box { value: 7 }
+const y = identity(x)
+console.log(y.value)

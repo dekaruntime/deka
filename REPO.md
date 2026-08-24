@@ -11,7 +11,7 @@ Downstream repos you will touch regularly:
 | Repo | Purpose | When you change the runtime here |
 |---|---|---|
 | `dekaruntime/website` | `deka.gg` homepage + tour | Update WASM artifacts and redeploy |
-| `dekaruntime/testsuite` | `testsuite.deka.gg` diagnostic suite (`deka run` vs browser Worker) | Dump against this release; regen fixtures if emit/runtime output changed |
+| `dekaruntime/testsuite` | `testsuite.deka.gg` diagnostic grid (live browser playground) | Fixtures live in `tests/testsuite/` here. Until deka#292 step 3, the site still dumps both hosts itself. |
 | `dekaruntime/web-ide-kit` | Shared editor/runtime components used by both sites | Publish to npm, bump consumers |
 
 ## Quick start
@@ -93,10 +93,15 @@ DEKA_SKIP_DIRTY_CHECK=1 scripts/test-deka-compiler-wasm.sh
 ### Runtime execution suite
 
 ```bash
-# Run the local fixture suite against native + WASM
-bun tests/runtime-suite/run.mjs
+# Public Hats fixtures (native isolate). This is the language gate.
+bun tests/testsuite/run.mjs
+bun tests/testsuite/run.mjs --filter structs
 
-# Filter fixtures
+# Tour lessons (compile every tests/tour id)
+bun tests/tour/run.mjs
+
+# Smaller native+WASM execution suite (to be merged into tests/testsuite)
+bun tests/runtime-suite/run.mjs
 bun tests/runtime-suite/run.mjs --filter structs
 ```
 
@@ -115,14 +120,16 @@ cargo run --release -p deka-fmt -- path/to/file.ds
    cargo test -p deka_js -p modules_php -p php-rs -p deka-fmt -p runtime
    cargo test -p cli --lib -- --test-threads=1
    ```
-3. **Build WASM compiler** and run the local runtime suite:
+3. **Build WASM compiler** and run the in-tree language suites:
    ```bash
    CARGO_INCREMENTAL=0 cargo build --release --target wasm32-unknown-unknown -p deka_compiler_wasm --no-default-features
+   bun tests/tour/run.mjs
+   bun tests/testsuite/run.mjs
    bun tests/runtime-suite/run.mjs
    ```
 4. **Bump crate versions** and open a PR if the change is user-facing.
 5. **After merge**, cut a release tag to push artifacts to R2 and trigger downstream site rebuilds (see `PUBLISH.md`). `@deka/*` packages are a different pipeline (`STDLIB.md`): merge does not publish them.
-6. **Update downstream fixtures** in `dekaruntime/testsuite` with `scripts/regen-fixtures.mjs` if isolate or WASM output changed. Point regen at this build (`DEKA_NATIVE` + `DEKA_WASM`) so both hosts come from the same commit.
+6. **Language fixtures** are in `tests/testsuite/` and `tests/tour/` in this repo. If a change makes a native-known-fail slug start passing, remove it from `tests/testsuite/native-known-fail.json`. Until deka#292 step 3, you may still regen the website dump in `dekaruntime/testsuite` with `scripts/regen-fixtures.mjs` pointed at this build (`DEKA_NATIVE` + `DEKA_WASM`).
 
 ## How downstream sites consume the runtime
 

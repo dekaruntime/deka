@@ -1,0 +1,4 @@
+fn size(b: bytes) number {
+  return 0
+}
+console.log("ok")

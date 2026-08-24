@@ -1,0 +1,2 @@
+const message = "Hello, DekaScript";
+console.log(message);

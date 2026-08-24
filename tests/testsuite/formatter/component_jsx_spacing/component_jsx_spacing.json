@@ -1,0 +1,6 @@
+{
+  "title": "Component and JSX-style spacing is normalized",
+  "stage": "run",
+  "notes": "Formatter should canonicalize component declarations and deka.ui.jsxs calls.",
+  "expectedDiagnosticContains": "file:///private/var/folders/ww/dcsjdgp14h129c1tvhpmmtlr0000gp/T/hats-node-run-CkSHnO/test.js:30\nconst html = deka.freeze(ui.renderToString(ui.jsxs(Card, {\"title\": \"Hello\"})));\n                                              ^\n\nTypeError: ui.jsxs is not a function\n    at file:///private/var/folders/ww/dcsjdgp14h129c1tvhpmmtlr0000gp/T/hats-node-run-CkSHnO/test.js:30:47\n    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:646:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)\n\nNode.js v26.3.1"
+}

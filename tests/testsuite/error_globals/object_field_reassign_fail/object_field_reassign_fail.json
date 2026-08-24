@@ -1,0 +1,6 @@
+{
+  "title": "Reassigning an object field fails",
+  "stage": "parse",
+  "expectedDiagnosticContains": "field 'a' is read-only",
+  "notes": "Object literals are frozen, so fields are immutable."
+}

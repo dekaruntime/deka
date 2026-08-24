@@ -1,0 +1,6 @@
+{
+  "title": "Signal and memo spacing is normalized",
+  "stage": "run",
+  "notes": "Formatter should preserve signal/memo API spacing while canonicalizing surrounding whitespace.",
+  "expectedDiagnosticContains": "file:///private/var/folders/ww/dcsjdgp14h129c1tvhpmmtlr0000gp/T/hats-node-run-ZrKvuh/test.js:25\nconst signalPair = deka.freeze(deka.ui.signal(0));\n                                       ^\n\nTypeError: deka.ui.signal is not a function\n    at file:///private/var/folders/ww/dcsjdgp14h129c1tvhpmmtlr0000gp/T/hats-node-run-ZrKvuh/test.js:25:40\n    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:646:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)\n\nNode.js v26.3.1"
+}

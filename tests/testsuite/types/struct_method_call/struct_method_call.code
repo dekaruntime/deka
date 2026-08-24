@@ -1,0 +1,10 @@
+struct Counter {
+  value: number;
+}
+
+fn (c Counter) get() number {
+  return c.value
+}
+
+const c = Counter { value: 5 }
+console.log(c.get())

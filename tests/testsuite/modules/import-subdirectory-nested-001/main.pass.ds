@@ -1,0 +1,2 @@
+import { greet } from "./lib/deep/greet.ds";
+console.log(greet());

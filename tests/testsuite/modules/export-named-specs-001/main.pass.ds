@@ -1,0 +1,2 @@
+import { answer } from "./values.ds";
+console.log(answer);

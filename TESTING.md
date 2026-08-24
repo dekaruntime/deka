@@ -1,11 +1,16 @@
 # Testing Deka
 
-This repo has two in-tree test layers: Rust unit/integration tests, and
-`tests/runtime-suite/` (fixtures through the local CLI and WASM compiler).
+This repo owns the language tests. Layout:
 
-The **public diagnostic suite** is `dekaruntime/testsuite` (https://testsuite.deka.gg).
-It runs fixtures on the native isolate (`deka run`) and in a Chromium Worker.
-That is not Node. See [RFD 26](https://github.com/dekaruntime/rfd/issues/26).
+- Rust unit/integration tests in `crates/`
+- `tests/testsuite/` — public Hats fixtures (the contract behind https://testsuite.deka.gg)
+- `tests/tour/` — canonical DekaScript samples for deka.gg, matched by `id`
+- `tests/runtime-suite/` — smaller native+WASM execution suite (merge into `tests/testsuite` or delete; deka#292)
+
+The **testsuite website** (`dekaruntime/testsuite`) displays these fixtures. It
+does not own them. Live browser edit/run stays on that site; native-only /
+packages / recorded-only cases show CACHED RESULTS from the last dump.
+See [RFD 26](https://github.com/dekaruntime/rfd/issues/26) and deka#292.
 
 ## Prerequisites
 
@@ -47,6 +52,46 @@ cargo test -p php-rs
 cargo test -p bundler
 cargo test -p cli --lib -- --test-threads=1
 ```
+
+## Public conformance suite (`tests/testsuite`)
+
+Hats folders. This is what a language PR must not break on the native isolate.
+
+```
+tests/testsuite/<category>/<name>/
+  <name>.pass.ds | <name>.fail.ds
+  <name>.stdout          # optional exact stdout
+  <name>.code            # formatter output (checked on the website dump, not here)
+  <name>.json            # title, stage, hosts, diagnostics, packages
+```
+
+```bash
+cargo build --release -p cli
+bun tests/testsuite/run.mjs
+bun tests/testsuite/run.mjs --filter json
+bun tests/testsuite/run.mjs --list
+```
+
+Uses `target/release/cli` or `DEKA_NATIVE`. Native isolate only (`deka run`).
+Display names are never keys; the runner matches by slug (`category-name`).
+
+Some fixtures still mismatch native on current main (JSX isolate, stale
+`JSON` / `deka.unsafe` samples, published package sources, …). Those slugs live
+in `tests/testsuite/native-known-fail.json`. CI fails on a **new** mismatch or
+an unexpected pass. When you fix a fixture or the runtime, remove its slug.
+
+## Tour lessons (`tests/tour`)
+
+Canonical DekaScript for deka.gg. The website owns prose; this directory owns
+the samples. Match by `id` in `manifest.json`, never by display name.
+
+```bash
+bun tests/tour/run.mjs
+bun tests/tour/run.mjs --filter structs
+```
+
+Compiles every lesson with the local CLI. A language PR that breaks a lesson
+fails here (and in `deka_compiler_wasm` tests, which load the same files).
 
 ## DekaScript runtime execution suite
 
@@ -94,19 +139,17 @@ bun tests/runtime-suite/run.mjs --filter option
    - `expectError` — substring expected in diagnostics when compilation fails
    - `xfail` — optional reason the test is currently expected to fail
 
-When you hit a weird tour example, copy the source into a new fixture, set the
-expected output, and run the suite. If it fails on `main`, you have a minimal
-reproduction before the bug reaches the website.
+New language tests belong in `tests/testsuite/` (Hats) or `tests/tour/`
+(website samples). Add a `runtime-suite` fixture only if you need native+WASM
+parity on a case that is not in the public suite yet.
 
-## Testing a runtime checkout against the public suite
+## Testing a runtime checkout against the public suite website
 
-The in-tree suites above test this repo against itself. They cannot tell you how
-a compiler change behaves on the two real hosts — the native isolate and the
-browser Worker running the same fixture. That is what `dekaruntime/testsuite`
-is for, and it runs locally against whatever checkout you point it at.
-
-Run it for any change to the compiler, the typechecker, diagnostics, or the
-emitted JS.
+`bun tests/testsuite/run.mjs` is the in-tree native gate. The website at
+https://testsuite.deka.gg still dumps **both** hosts (native isolate and
+Chromium Worker) until deka#292 steps 2–3 land (release uploads the dump;
+testsuite CI only fills in). To reproduce that dual-host dump from a
+`dekaruntime/testsuite` checkout:
 
 ### Running it
 

@@ -1,0 +1,9 @@
+const r = unsafe {
+  const obj = { a: { b: 3 } }
+  return obj.a.b
+}
+
+console.log(match (r) {
+  Ok(v) => `ok: ${v}`,
+  Err(e) => `err: ${e.message}`,
+})

@@ -1,0 +1,4 @@
+fn scale(x: number, factor: number = 2) number {
+  return x * factor
+}
+console.log(scale(3, "x"))

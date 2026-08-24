@@ -1,0 +1,10 @@
+interface A {
+  x: number
+}
+interface B {
+  y: string
+}
+fn getA() A {
+  return { y: "oops" }
+}
+console.log(getA().x)

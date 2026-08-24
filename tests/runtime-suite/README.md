@@ -4,6 +4,10 @@ Headless execution tests that compile DekaScript fixtures through **both** the
 native CLI and the browser WASM compiler, run the emitted JS against the Deka
 runtime globals, and assert on stdout / compile diagnostics.
 
+The **public** language suite is `tests/testsuite/` (Hats) and `tests/tour/`.
+This directory is the older native+WASM harness. It should merge into
+`tests/testsuite` or go away (deka#292).
+
 ## Why this exists
 
 The website tour tests catch drift, but only after a runtime release has been

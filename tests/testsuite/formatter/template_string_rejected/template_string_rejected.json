@@ -1,0 +1,6 @@
+{
+  "title": "Template String Rejected",
+  "stage": "parse",
+  "notes": "Formatter passthrough for invalid template string rejected source.",
+  "expectedDiagnosticContains": "Unexpected token"
+}

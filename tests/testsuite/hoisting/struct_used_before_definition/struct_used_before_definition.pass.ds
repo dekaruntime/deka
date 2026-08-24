@@ -1,0 +1,2 @@
+console.log(Person({ name: "Ada" }).name)
+struct Person { name: string }

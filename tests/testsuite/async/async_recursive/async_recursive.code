@@ -1,0 +1,8 @@
+async fn countdown(n: number) Promise<void> {
+  if (n > 0) {
+    console.log(n)
+    await countdown(n - 1)
+  }
+}
+
+await countdown(3)

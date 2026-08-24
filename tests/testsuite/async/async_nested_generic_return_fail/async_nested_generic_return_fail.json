@@ -1,0 +1,5 @@
+{
+  "title": "Nested generic Promise<Option<T>> return type fails to parse",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Syntax error"
+}

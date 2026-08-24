@@ -1,0 +1,6 @@
+{
+  "title": "Unknown type name in interface field fails",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Unknown type 'UnknownType' in DekaScript; classes are not allowed",
+  "notes": "Interface field types must refer to defined types."
+}

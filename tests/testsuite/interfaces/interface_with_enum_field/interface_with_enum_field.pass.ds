@@ -1,0 +1,12 @@
+enum Shape {
+  Circle(number)
+  Square(number)
+}
+interface HasShape {
+  shape: Shape
+}
+fn area(h: HasShape) number {
+  return match (h.shape) { Shape.Circle(r) => r * r, Shape.Square(s) => s * s, _ => 0 }
+}
+console.log(area({ shape: Shape.Circle(3) }))
+console.log(area({ shape: Shape.Square(2) }))

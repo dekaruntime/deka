@@ -1,0 +1,5 @@
+const yes = true
+const no = false
+console.log(yes && no)
+console.log(yes || no)
+console.log(!yes)

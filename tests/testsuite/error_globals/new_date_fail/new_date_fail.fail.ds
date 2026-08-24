@@ -1,0 +1,2 @@
+const d = new Date("2024-01-15")
+console.log(d.getFullYear())

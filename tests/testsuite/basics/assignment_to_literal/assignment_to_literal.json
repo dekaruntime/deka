@@ -1,0 +1,6 @@
+{
+  "title": "Assignment to a literal value is rejected",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Assignments can only happen to writable values",
+  "notes": ""
+}

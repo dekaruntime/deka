@@ -1,0 +1,5 @@
+fn isPositive(n: number) boolean {
+  return n > 0
+}
+
+console.log(isPositive(5))

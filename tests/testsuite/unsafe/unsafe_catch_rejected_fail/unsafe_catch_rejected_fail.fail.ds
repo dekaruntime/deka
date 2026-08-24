@@ -1,0 +1,2 @@
+const r = unsafe { 1 } catch (e) { 2 }
+console.log(r)

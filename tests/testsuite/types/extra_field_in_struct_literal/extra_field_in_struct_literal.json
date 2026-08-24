@@ -1,0 +1,6 @@
+{
+  "title": "Unknown field in struct literal fails",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Unknown field 'y' in struct literal 'Point'.",
+  "notes": "Struct literals reject fields not declared on the struct."
+}

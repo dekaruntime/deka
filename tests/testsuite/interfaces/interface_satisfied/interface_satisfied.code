@@ -1,0 +1,14 @@
+interface Named {
+  name: string;
+}
+
+struct Person {
+  name: string;
+}
+
+fn printName(n: Named) {
+  console.log(n.name)
+}
+
+const p = Person { name: "Charlie" }
+printName(p)

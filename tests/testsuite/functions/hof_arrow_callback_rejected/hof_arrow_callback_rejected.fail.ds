@@ -1,0 +1,4 @@
+fn apply(f: fn(number) number, x: number) number {
+  return f(x)
+}
+console.log(apply((n) => n + 1, 5))

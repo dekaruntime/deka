@@ -1,0 +1,6 @@
+fn double(x: number) number {
+  return x * 2
+}
+
+const result = double(3) + double(4)
+console.log(result)

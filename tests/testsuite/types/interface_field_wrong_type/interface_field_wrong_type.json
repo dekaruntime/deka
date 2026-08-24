@@ -1,0 +1,6 @@
+{
+  "title": "Object literal field with wrong type for interface fails",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Argument 1 type mismatch: expected interface Point, got Object<{x: string}>",
+  "notes": "Interface field types are checked against object literals."
+}

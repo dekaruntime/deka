@@ -1,0 +1,19 @@
+interface Named {
+  name: string;
+}
+
+interface Aged {
+  age: number;
+}
+
+struct Person {
+  name: string;
+  age: number;
+}
+
+fn describe(n: Named, a: Aged) {
+  console.log(n.name, a.age)
+}
+
+const p = Person { name: "A", age: 1 }
+describe(p, p)

@@ -1,0 +1,7 @@
+fn outer() number {
+  const inner = async fn() Promise<number> {
+    return 1
+  }
+  return inner()
+}
+console.log(outer())

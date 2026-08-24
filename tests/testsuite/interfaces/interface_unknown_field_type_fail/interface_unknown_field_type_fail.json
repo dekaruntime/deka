@@ -1,0 +1,6 @@
+{
+  "title": "Interface field with unknown type annotation fails",
+  "stage": "parse",
+  "notes": "",
+  "expectedDiagnosticContains": "Unknown type 'UnknownType' in DekaScript; classes are not allowed"
+}

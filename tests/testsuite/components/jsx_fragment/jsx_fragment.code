@@ -1,0 +1,3 @@
+const ui = globalThis.deka.ui
+const html = ui.renderToString(ui.jsxs(ui.Fragment, {children: ["a", "b"]}))
+console.log(html.html)

@@ -1,0 +1,5 @@
+{
+  "title": "Calling an async function with too few arguments fails",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Missing arguments for greet(): expected at least 1, got 0"
+}

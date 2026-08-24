@@ -1,0 +1,6 @@
+{
+  "title": "Int argument passed to boolean parameter fails",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Argument 1 type mismatch: expected bool, got number",
+  "notes": "Boolean parameters reject numeric arguments."
+}

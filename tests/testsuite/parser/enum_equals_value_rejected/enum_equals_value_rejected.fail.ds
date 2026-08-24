@@ -1,0 +1,4 @@
+enum Status {
+  Ready = 1
+}
+console.log(Status.Ready)

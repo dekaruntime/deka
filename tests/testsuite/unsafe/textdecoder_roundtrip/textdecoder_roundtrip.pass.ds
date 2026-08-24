@@ -1,0 +1,2 @@
+const r = unsafe { new TextDecoder().decode(new TextEncoder().encode("cafe")) }
+console.log(match (r) { Ok(v) => v, Err(e) => `err: ${e.message}` })

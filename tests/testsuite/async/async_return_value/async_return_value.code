@@ -1,0 +1,10 @@
+async fn value() Promise<number> {
+  return 7
+}
+
+async fn main() {
+  const v = await value()
+  console.log(v)
+}
+
+main()

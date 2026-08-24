@@ -1,0 +1,2 @@
+const x = await 1
+console.log(x)

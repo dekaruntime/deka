@@ -1,0 +1,6 @@
+{
+  "title": "Assigning to a string index fails",
+  "stage": "run",
+  "expectedDiagnosticContains": "readonly property",
+  "notes": "Strings are immutable."
+}

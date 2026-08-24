@@ -1,0 +1,4 @@
+fn Card(title: string) {
+  return <div class="card>{title}</div>
+}
+console.log(Card("hi"))

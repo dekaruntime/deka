@@ -1,0 +1,6 @@
+{
+  "title": "Result.Err has no unwrap method",
+  "stage": "run",
+  "expectedDiagnosticContains": "is not a function",
+  "notes": "Use pattern matching or the error field to access Result values."
+}

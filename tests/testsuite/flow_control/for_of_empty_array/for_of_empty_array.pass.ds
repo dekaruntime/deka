@@ -1,0 +1,4 @@
+for (const x of []) {
+  console.log(x)
+}
+console.log("done")

@@ -1,0 +1,3 @@
+const app = <Card />
+fn Card() Component { return <div>hi</div> }
+console.log(app)

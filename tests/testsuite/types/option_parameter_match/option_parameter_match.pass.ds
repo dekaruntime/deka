@@ -1,0 +1,8 @@
+fn greet(name: Option<string>) string {
+  return match (name) {
+    Some(n) => "Hello " + n,
+    None => "Hello stranger",
+  }
+}
+console.log(greet(Option.Some("Deka")))
+console.log(greet(Option.None))

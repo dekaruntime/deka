@@ -1,0 +1,6 @@
+{
+  "title": "Match without a covering arm fails",
+  "stage": "parse",
+  "notes": "",
+  "expectedDiagnosticContains": "Match on Color is not exhaustive; missing case Color::Blue"
+}

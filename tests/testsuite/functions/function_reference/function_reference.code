@@ -1,0 +1,6 @@
+fn add(x: number, y: number) number {
+  return x + y
+}
+
+const f = add
+console.log(f(1, 2))

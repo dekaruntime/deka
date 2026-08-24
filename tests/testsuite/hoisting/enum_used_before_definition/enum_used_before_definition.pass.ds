@@ -1,0 +1,2 @@
+console.log(Color.Red.name)
+enum Color { Red Green }

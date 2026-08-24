@@ -1,0 +1,15 @@
+struct Counter {
+  count: number;
+}
+
+async fn (c mut Counter) inc() Promise<void> {
+  c.count = c.count + 1
+}
+
+async fn main() {
+  const c = Counter { count: 0 }
+  await c.inc()
+  console.log(c.count)
+}
+
+await main()

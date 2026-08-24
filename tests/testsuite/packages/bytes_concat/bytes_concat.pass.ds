@@ -1,0 +1,5 @@
+import { from_string, concat, to_string } from "bytes"
+
+const a = from_string("hel")
+const b = from_string("lo")
+console.log(to_string(concat(a, b)))

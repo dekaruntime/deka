@@ -1,0 +1,7 @@
+interface Named {
+  name: string
+}
+fn getName() Named {
+  return { name: 42 }
+}
+console.log(getName().name)

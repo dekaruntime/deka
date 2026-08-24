@@ -1,0 +1,6 @@
+{
+  "title": "Interface method implementation with extra parameter fails",
+  "stage": "parse",
+  "notes": "",
+  "expectedDiagnosticContains": "Argument 1 type mismatch: expected interface Greeter, got struct Person"
+}

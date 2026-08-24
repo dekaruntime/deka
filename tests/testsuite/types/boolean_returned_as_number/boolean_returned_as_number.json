@@ -1,0 +1,6 @@
+{
+  "title": "Returning a number from a boolean-typed function fails",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Return type mismatch: expected bool, got number",
+  "notes": "Boolean return types reject numeric return values."
+}

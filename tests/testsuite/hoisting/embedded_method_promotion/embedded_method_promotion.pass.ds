@@ -1,0 +1,5 @@
+struct Person { name: string }
+fn (p Person) greet() string { return "hello" }
+struct Employee { Person }
+const e = Employee({ name: "Bob" })
+console.log(e.greet())

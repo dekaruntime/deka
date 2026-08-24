@@ -1,0 +1,10 @@
+enum Color {
+  Red
+  Green
+  Blue
+}
+const c = Color.Red
+match (c) {
+  Color.Red => "red",
+  Color.Green => "green"
+}

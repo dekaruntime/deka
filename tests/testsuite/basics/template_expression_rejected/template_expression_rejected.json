@@ -1,0 +1,6 @@
+{
+  "title": "Template string with an embedded expression is rejected",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Unexpected token",
+  "notes": "Simple variable interpolation passes, but ${expr} does not."
+}

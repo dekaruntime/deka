@@ -1,0 +1,6 @@
+{
+  "title": "Calling a nonexistent crypto method fails",
+  "stage": "run",
+  "expectedDiagnosticContains": "is not a function",
+  "notes": "crypto.nonexistent does not exist."
+}

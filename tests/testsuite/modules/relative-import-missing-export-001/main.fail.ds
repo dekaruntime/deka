@@ -1,0 +1,2 @@
+import { subtract } from "./math.ds";
+console.log(subtract(1, 2));

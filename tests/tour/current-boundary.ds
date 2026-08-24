@@ -1,0 +1,2 @@
+const status = "This is DekaScript";
+console.log(status);

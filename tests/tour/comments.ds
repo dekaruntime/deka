@@ -1,0 +1,6 @@
+// This is a line comment
+const a = 1
+/* This is a
+   block comment */
+const b = 2
+console.log(a + b)
