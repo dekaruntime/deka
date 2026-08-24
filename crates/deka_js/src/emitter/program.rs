@@ -968,6 +968,7 @@ impl<'a> JsSubsetEmitter<'a> {
             let mut entries = vec![
                 format!("__enum: {}", json_string(enum_name)),
                 format!("__case: {}", json_string(&case.name)),
+                format!("name: {}", json_string(&case.name)),
             ];
             entries.extend(
                 case.params

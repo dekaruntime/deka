@@ -83,6 +83,9 @@ pub fn validate_imports(
 
     let mut seen_locals: HashMap<String, (usize, usize)> = HashMap::new();
     for spec in &import_specs {
+        if spec.local.is_empty() {
+            continue;
+        }
         if let Some((line, column)) = seen_locals.get(&spec.local) {
             errors.push(import_error(
                 spec.line,
@@ -108,6 +111,9 @@ pub fn validate_imports(
 
     let searchable = strip_comments_and_strings(&strip_import_lines(source, &import_lines));
     for spec in &import_specs {
+        if spec.local.is_empty() {
+            continue;
+        }
         if !is_ident_used(&searchable, &spec.local) {
             warnings.push(import_warning(
                 spec.line,
@@ -137,7 +143,7 @@ pub(crate) fn parse_import_line(
                 find_column(raw_line, "import"),
                 line.trim().len(),
                 format!("Invalid import syntax in {}.", file_path),
-                "Use: import Name from 'module' or import { name } from 'module'.",
+                "Use: import { name } from 'module' or import './module'.",
                 Some("import { name } from 'module';"),
             )
         })?
@@ -146,6 +152,30 @@ pub(crate) fn parse_import_line(
     let mut default_local: Option<String> = None;
     let mut specifiers: Option<&str> = None;
     let mut after: &str;
+
+    // Side-effect import: `import "./mod.ds";`
+    if let Some((from, rest_after)) = parse_quoted_string(rest) {
+        let leftover = rest_after.trim_start().trim_start_matches(';').trim();
+        if !leftover.is_empty() {
+            return Err(import_error_with_suggestion(
+                line_number,
+                find_column(raw_line, leftover),
+                leftover.len().max(1),
+                format!("Invalid import syntax in {}.", file_path),
+                "Unexpected tokens after import statement.",
+                Some("import './module';"),
+            ));
+        }
+        return Ok(vec![ImportSpec {
+            imported: String::new(),
+            local: String::new(),
+            from,
+            kind: ImportKind::Phpx,
+            line: line_number,
+            column: find_column(raw_line, "import"),
+            line_text: raw_line.to_string(),
+        }]);
+    }
 
     if rest.starts_with('{') {
         let close_idx = rest.find('}').ok_or_else(|| {
@@ -687,6 +717,23 @@ $x = client_ip();"#;
             parent_errors.is_empty(),
             "expected no errors for ../helpers import, got: {:?}",
             parent_errors
+        );
+    }
+
+    #[test]
+    fn side_effect_import_is_allowed() {
+        let src = r#"import "./logger.ds";
+console.log("after");"#;
+        let (errors, warnings) = validate_imports(src, "main.ds");
+        assert!(
+            errors.is_empty(),
+            "side-effect import should parse, got: {:?}",
+            errors
+        );
+        assert!(
+            warnings.iter().all(|w| !w.message.contains("Unused import")),
+            "side-effect import must not warn as unused: {:?}",
+            warnings
         );
     }
 
