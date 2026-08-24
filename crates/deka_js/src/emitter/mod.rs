@@ -149,9 +149,8 @@ impl<'a> JsSubsetEmitter<'a> {
         // wrapped to return errors-as-values, and every other platform API must
         // be reached through the explicit `unsafe` escape hatch. The prelude
         // installs `globalThis.deka` (host helpers including `deka.unsafe`) and
-        // `globalThis.unsafe` (pristine host globals captured before any
-        // hijacks). Safe global wrappers are demand-driven like the PHPX
-        // prelude so unused ones do not bloat small programs.
+        // `globalThis.unsafe` (pristine host snapshot). RFD 21: no demand-driven
+        // wrappers on globalThis.fetch/JSON — those are modules.
         let program_text = format!("{}\n{}", self.body, self.main_body);
         if self.meta.is_ds {
             // Compact prelude: keep generated output small (RFD 13 budget gate)
@@ -192,25 +191,9 @@ impl<'a> JsSubsetEmitter<'a> {
                 out.push_str("(function(){const c=globalThis.crypto;const fill=(b)=>{for(let i=0;i<b.length;i++)b[i]=(Math.random()*256)|0;};const rand=(b)=>{if(c&&typeof c.getRandomValues===\"function\")c.getRandomValues(b);else fill(b);};const uuid=()=>{const b=new Uint8Array(16);rand(b);b[6]=(b[6]&0x0f)|0x40;b[8]=(b[8]&0x3f)|0x80;const h=Array.from(b,x=>x.toString(16).padStart(2,\"0\")).join(\"\");return`${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;};if(c&&typeof c.randomUUID===\"function\")return;if(c){try{Object.defineProperty(c,\"randomUUID\",{value:uuid,configurable:true});}catch(_){ }return;}globalThis.crypto={getRandomValues:(a)=>{rand(new Uint8Array(a.buffer,a.byteOffset,a.byteLength));return a;},randomUUID:uuid};})();\n");
             }
 
-            // Safe global wrappers — installed only when the emitted body
-            // references them. These replace throwing host APIs with versions
-            // that return error values, matching DekaScript's errors-as-values
-            // model. The originals remain available on `unsafe.<name>`.
-            if body_refs_global(&program_text, "fetch") {
-                out.push_str("globalThis.fetch??=(...args)=>__DekaUnsafeGlobals.fetch(...args).then((r)=>({__ok:r})).catch((e)=>({__error:e}));\n");
-            }
-            if body_refs_global(&program_text, "JSON") {
-                out.push_str("globalThis.JSON??=__DekaUnsafeGlobals.JSON;const __DekaJSONParse=__DekaUnsafeGlobals.JSON.parse;const __DekaJSONStringify=__DekaUnsafeGlobals.JSON.stringify;globalThis.JSON.parse=(text)=>{try{return __DekaJSONParse(text);}catch(e){return{__error:e};}};globalThis.JSON.stringify=(value,replacer,space)=>{try{return __DekaJSONStringify(value,replacer,space);}catch(e){return{__error:e};}};\n");
-            }
-            if body_refs_global(&program_text, "URL") {
-                out.push_str("globalThis.URL??=(url,base)=>{try{return new(__DekaUnsafeGlobals.URL)(url,base);}catch(e){return{__error:e};}};\n");
-            }
-            if body_refs_global(&program_text, "URLSearchParams") {
-                out.push_str("globalThis.URLSearchParams??=(init)=>{try{return new(__DekaUnsafeGlobals.URLSearchParams)(init);}catch(e){return{__error:e};}};\n");
-            }
-            if body_refs_global(&program_text, "console") {
-                out.push_str("globalThis.console??=__DekaUnsafeGlobals.console;globalThis.console.assert=(cond,...args)=>{if(!cond){throw new Error(args.length?args.join(' '):'Assertion failed');}};\n");
-            }
+            // RFD 21: do not wrap fetch/JSON/URL/console on globalThis.
+            // DS-safe APIs are modules (`@deka/json`). `unsafe { }` sees the
+            // real host via the Proxy; throws become Result at the IIFE.
             out.push('\n');
         }
 

@@ -889,52 +889,45 @@ impl<'a> JsSubsetEmitter<'a> {
                 }
 
                 // Decide whether the raw JS is a single expression or a statement
-                // block. Expressions are emitted as `return deka.Result.Ok(expr);`,
-                // while statement blocks are executed as the body of an inner IIFE
+                // block. Expressions are emitted as `return (expr);`,
+                // while statement blocks are the body of an inner IIFE
                 // so that any `return` inside them returns from that inner function
                 // and the completion value is wrapped in Ok.
                 let is_statement_block = raw_js_looks_like_statements(trimmed);
+                let is_async = php_rs::js_scan::js_has_top_level_await(trimmed);
+                let fn_kw = if is_async { "async function" } else { "function" };
 
-                const UNSAFE_GLOBALS: &[&str] = &[
-                    "fetch", "JSON", "URL", "URLSearchParams", "TextEncoder", "TextDecoder",
-                    "Blob", "FormData", "Headers", "Request", "Response", "WebSocket", "crypto",
-                    "atob", "btoa", "structuredClone", "queueMicrotask", "setTimeout",
-                    "setInterval", "clearTimeout", "clearInterval",
-                ];
-                let restore_globals = if UNSAFE_GLOBALS.is_empty() {
-                    String::new()
-                } else {
-                    // Restore from the real global (`__g`), not a free
-                    // `unsafe` identifier — ES modules do not resolve
-                    // `globalThis.unsafe` as a bare binding.
-                    format!(
-                        "const {{{}}}=__g.unsafe||__DekaUnsafeGlobals;",
-                        UNSAFE_GLOBALS.join(",")
-                    )
-                };
                 // RFD 27: unsafe is JS-mode, not a host back door. Pass the
                 // real globalThis in as `__g` so the inner `const globalThis`
-                // proxy does not TDZ the capture.
+                // proxy does not TDZ the capture. RFD 21: no whitelist
+                // restore — we never wrap JSON/fetch on the realm.
                 let hide_host = "const __hk=Symbol.for('deka.host.internal');const Deno=void 0,__bridge=void 0,__bridge_async=void 0,__deka_wasm_call=void 0,__deka_wasm_call_async=void 0,__deka_host=void 0;const __hide=(p)=>p===__hk||p==='Deno'||p==='__bridge'||p==='__bridge_async'||p==='__deka_wasm_call'||p==='__deka_wasm_call_async'||p==='__deka_host';const globalThis=new Proxy(__g,{get(t,p){if(__hide(p))return void 0;return Reflect.get(t,p);},has(t,p){if(__hide(p))return false;return Reflect.has(t,p);},ownKeys(t){return Reflect.ownKeys(t).filter((p)=>!__hide(p));},getOwnPropertyDescriptor(t,p){if(__hide(p))return undefined;return Reflect.getOwnPropertyDescriptor(t,p);}});";
 
                 let inner = if is_statement_block {
                     format!(
-                        "(function(__g){{{hide}{restore}{raw}}})(globalThis)",
+                        "({fn}(__g){{{hide}{raw}}})(globalThis)",
+                        fn = fn_kw,
                         hide = hide_host,
-                        restore = restore_globals,
                         raw = raw_str
                     )
                 } else {
                     format!(
-                        "(function(__g){{{hide}{restore}return ({raw});}})(globalThis)",
+                        "({fn}(__g){{{hide}return ({raw});}})(globalThis)",
+                        fn = fn_kw,
                         hide = hide_host,
-                        restore = restore_globals,
                         raw = raw_str
                     )
                 };
 
+                let awaited = if is_async {
+                    format!("await {inner}")
+                } else {
+                    inner
+                };
                 Ok(format!(
-                    "(function(){{try{{return Ok({inner});}}catch(err){{return Err(err);}}}})()",
+                    "({fn}(){{try{{return Ok({awaited});}}catch(err){{return Err(err);}}}})()",
+                    fn = fn_kw,
+                    awaited = awaited,
                 ))
             }
             other => Err(format!(
