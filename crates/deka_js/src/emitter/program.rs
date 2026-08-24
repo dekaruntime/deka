@@ -839,17 +839,17 @@ impl<'a> JsSubsetEmitter<'a> {
                         self.declare_in_scope(&name);
                         self.record_value_kind(&name, assigned_kind);
                         self.body.push_str(&format!("let {} = {};\n", name, rhs));
-                        if top_level {
-                            self.body
-                                .push_str(&format!("globalThis.{} = {};\n", name, name));
-                        }
                     } else {
                         self.record_value_kind(&name, assigned_kind);
                         self.body.push_str(&format!("{} = {};\n", name, rhs));
-                        if top_level {
-                            self.body
-                                .push_str(&format!("globalThis.{} = {};\n", name, name));
-                        }
+                    }
+                    // PHPX top-level `$x = 1` is a PHP global. DekaScript
+                    // modules must not leak bindings onto `globalThis`
+                    // (deka#228). Explicit `globalThis.x = 1` is a property
+                    // write, not this path.
+                    if top_level && !self.meta.is_ds {
+                        self.body
+                            .push_str(&format!("globalThis.{} = {};\n", name, name));
                     }
                 } else {
                     let value = self.emit_expr(*expr)?;

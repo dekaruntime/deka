@@ -575,6 +575,47 @@ fn ds_nested_match_patterns_emit_inner_tags() {
 }
 
 #[test]
+fn ds_top_level_assignment_is_not_mirrored_to_globalthis() {
+    let js = ds_to_js("x = 1").expect("top-level assignment should compile");
+    assert!(
+        js.contains("let x = 1"),
+        "undeclared assignment should emit a module-local let:\n{js}"
+    );
+    assert!(
+        !js.contains("globalThis.x"),
+        "deka#228: top-level `x = 1` must not write globalThis.x:\n{js}"
+    );
+}
+
+#[test]
+fn ds_top_level_reassignment_is_not_mirrored_to_globalthis() {
+    let js = ds_to_js("x = 1\nx = 2").expect("reassignment should compile");
+    assert!(
+        !js.contains("globalThis.x"),
+        "deka#228: reassignment must not write globalThis.x:\n{js}"
+    );
+}
+
+#[test]
+fn ds_let_reassignment_is_not_mirrored_to_globalthis() {
+    let js = ds_to_js("let x = 1\nx = 2").expect("let reassignment should compile");
+    assert!(js.contains("let x = 1"), "missing let:\n{js}");
+    assert!(
+        !js.contains("globalThis.x"),
+        "deka#228: `let x = 1; x = 2` must not write globalThis.x:\n{js}"
+    );
+}
+
+#[test]
+fn ds_explicit_globalthis_assignment_still_emits() {
+    let js = ds_to_js("globalThis.x = 1").expect("explicit globalThis write should compile");
+    assert!(
+        js.contains("globalThis.x = 1"),
+        "explicit globalThis.x = 1 must still emit:\n{js}"
+    );
+}
+
+#[test]
 fn ds_prelude_result_and_option_constructors() {
     let source = r#"
         const ok = Ok(42)
