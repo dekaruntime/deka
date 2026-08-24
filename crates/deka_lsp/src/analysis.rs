@@ -196,6 +196,25 @@ mod tests {
     }
 
     #[test]
+    fn match_number_without_wildcard_is_reported() {
+        let source = r#"
+            fn label(n: number) string {
+                return match (n) {
+                    1 => "one",
+                    2 => "two",
+                }
+            }
+        "#;
+        let diagnostics = analyze(source, &AnalysisContext::new("file:///workspace/main.ds"));
+        assert!(
+            diagnostics.iter().any(|d| {
+                d.message.contains("not exhaustive") && d.message.contains("`_`")
+            }),
+            "LSP must surface typeck exhaustiveness (deka#281), got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn ignores_legacy_source_contexts() {
         assert!(analyze("const = ;", &AnalysisContext::new("legacy.phpx")).is_empty());
         assert!(analyze("const = ;", &AnalysisContext::new("legacy.php")).is_empty());
