@@ -1,0 +1,10 @@
+fn logSum(left: number, right: number) void {
+  console.log(left + right)
+}
+
+fn sum(left: number, right: number) number {
+  return left + right
+}
+
+logSum(20, 22)
+console.log(sum(10, 5))

@@ -235,5 +235,130 @@
     "id": "unsafe-blocks",
     "title": "unsafe blocks",
     "expectCompile": true
+  },
+  {
+    "id": "arrays",
+    "title": "arrays",
+    "expectCompile": true
+  },
+  {
+    "id": "async-await",
+    "title": "async await",
+    "expectCompile": true
+  },
+  {
+    "id": "callbacks-with-function-types",
+    "title": "callbacks with function types",
+    "expectCompile": true
+  },
+  {
+    "id": "deka-globals",
+    "title": "deka globals",
+    "expectCompile": true
+  },
+  {
+    "id": "for-loop",
+    "title": "for loop",
+    "expectCompile": true
+  },
+  {
+    "id": "function-declarations",
+    "title": "function declarations",
+    "expectCompile": true
+  },
+  {
+    "id": "function-types",
+    "title": "function types",
+    "expectCompile": true
+  },
+  {
+    "id": "higher-order-functions",
+    "title": "higher order functions",
+    "expectCompile": true
+  },
+  {
+    "id": "if-else",
+    "title": "if else",
+    "expectCompile": true
+  },
+  {
+    "id": "interface-methods",
+    "title": "interface methods",
+    "expectCompile": true
+  },
+  {
+    "id": "islands",
+    "title": "islands",
+    "expectCompile": true
+  },
+  {
+    "id": "jsx",
+    "title": "jsx",
+    "expectCompile": true
+  },
+  {
+    "id": "match-basics",
+    "title": "match basics",
+    "expectCompile": true
+  },
+  {
+    "id": "match-enums",
+    "title": "match enums",
+    "expectCompile": true
+  },
+  {
+    "id": "multiple-awaits",
+    "title": "multiple awaits",
+    "expectCompile": true
+  },
+  {
+    "id": "objects",
+    "title": "objects",
+    "expectCompile": true
+  },
+  {
+    "id": "promise",
+    "title": "promise",
+    "expectCompile": true
+  },
+  {
+    "id": "props",
+    "title": "props",
+    "expectCompile": true
+  },
+  {
+    "id": "return-types",
+    "title": "return types",
+    "expectCompile": true
+  },
+  {
+    "id": "signals",
+    "title": "signals",
+    "expectCompile": true
+  },
+  {
+    "id": "state-stores",
+    "title": "state stores",
+    "expectCompile": true
+  },
+  {
+    "id": "strings",
+    "title": "strings",
+    "expectCompile": true
+  },
+  {
+    "id": "suspense",
+    "title": "suspense",
+    "expectCompile": true
+  },
+  {
+    "id": "type-aliases",
+    "title": "type aliases",
+    "expectCompile": true
+  },
+  {
+    "id": "using-interfaces",
+    "title": "using interfaces",
+    "expectCompile": true
   }
 ]

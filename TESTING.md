@@ -38,14 +38,13 @@ when the CLI is already built.
 
 1. **deka CI** — `tests/tour` + `tests/testsuite` (native). A language PR that
    breaks a fixture is red here.
-2. **deka release** *(not landed yet)* — upload the fixture tree + a results
-   dump next to the compiler. Compiler and tests are one version.
-3. **testsuite CI** *(still dumps both hosts today)* — after step 2: **fill in**
-   tree + dump, `next build`, deploy. No second `deka run` of 620 cases. No
-   Chromium for conformance.
-4. **website** *(still has in-repo copies today)* — after step 4: sync tour
-   sources **by id** with the compiler artifact. `curriculum.ts` has no `.ds`
-   text.
+2. **deka release** — dump native + browser (`tests/dump`), pack
+   `tests/tour` + `tests/testsuite` + `hats-results.json`, upload to
+   `wasm.deka.gg/v<VERSION>/conformance/` and `latest/conformance/`.
+3. **testsuite CI** — ingest that pack, `next build`, deploy. No second
+   `deka run` of 620 cases. No Chromium for conformance.
+4. **website** — sync tour sources **by id** next to the compiler artifact.
+   `curriculum.ts` has prose + `sourceId` only.
 
 Until steps 2–3 land, https://testsuite.deka.gg still dumps native + Chromium
 Worker itself. That dump is not the language gate. This tree is.

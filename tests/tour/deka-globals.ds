@@ -1,0 +1,5 @@
+const safe = unsafe { 42 }
+console.log(safe)
+
+const pair = deka.ui.createSignal(7)
+console.log(pair[0]())

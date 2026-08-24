@@ -1,0 +1,18 @@
+fn increment(s: object) object {
+  return { count: s.count + 1 }
+}
+
+fn add(s: object, n: number) object {
+  return { count: s.count + n }
+}
+
+const useCounter = deka.ui.State.create({ count: 0 }, {
+  increment: increment,
+  add: add,
+})
+
+console.log(useCounter().count)
+useCounter.increment()
+console.log(useCounter().count)
+useCounter.add(5)
+console.log(useCounter().count)

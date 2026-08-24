@@ -1,0 +1,11 @@
+async fn delayed() Promise<number> {
+  return 42
+}
+
+async fn main() Promise<void> {
+  const promise = delayed()
+  const value = await promise
+  console.log(value)
+}
+
+main()

@@ -152,6 +152,16 @@ jobs:
             target/**/gn_out
           cache-on-failure: true
 
+      - name: Pre-fetch V8 static lib
+        env:
+          V8_URL: https://github.com/denoland/rusty_v8/releases/download/v147.4.0/librusty_v8_simdutf_release_aarch64-apple-darwin.a.gz
+        run: |
+          mkdir -p target/debug/gn_out/obj
+          curl -fsSL -w "HTTP %{http_code} - %{size_download} bytes downloaded\n" \
+            -o target/debug/gn_out/obj/librusty_v8.a.gz "$V8_URL"
+          ls -lh target/debug/gn_out/obj/librusty_v8.a.gz
+          echo "RUSTY_V8_ARCHIVE=${{ github.workspace }}/target/debug/gn_out/obj/librusty_v8.a.gz" >> "$GITHUB_ENV"
+
       - name: Build tested crates
         run: cargo build -p deka_http -p pool -p engine -p deka_js -p php-rs -p bundler
 
@@ -170,18 +180,7 @@ jobs:
       - name: Test bundler
         run: cargo test -p bundler
 
-      - name: Pre-fetch V8 static lib
-        env:
-          V8_URL: https://github.com/denoland/rusty_v8/releases/download/v147.4.0/librusty_v8_simdutf_release_aarch64-apple-darwin.a.gz
-        run: |
-          mkdir -p target/debug/gn_out/obj
-          curl -fsSL -w "HTTP %{http_code} - %{size_download} bytes downloaded\n" \
-            -o target/debug/gn_out/obj/librusty_v8.a.gz "$V8_URL"
-          ls -lh target/debug/gn_out/obj/librusty_v8.a.gz
-
       - name: Test cli
-        env:
-          RUSTY_V8_ARCHIVE: ${{ github.workspace }}/target/debug/gn_out/obj/librusty_v8.a.gz
         run: cargo test --locked -p cli --lib -- --test-threads=1
 
       - name: Build and test browser compiler WASM

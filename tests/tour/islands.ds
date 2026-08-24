@@ -1,0 +1,7 @@
+---
+fn Counter(props: object) Component {
+  return <button>{props.start}</button>
+}
+---
+const result = deka.ui.renderToString(<Counter client:load start={5} />)
+console.log(result.html)
