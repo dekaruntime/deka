@@ -189,5 +189,4 @@ echo "  git tag -a v${NEW} -m \"deka v${NEW}\""
 echo "  git push origin v${NEW}"
 echo
 echo "Confirm before tagging:"
-echo "  grep -m1 '^version' Cargo.toml crates/cli/Cargo.toml"
 echo "  scripts/runtime-version.sh   # must print ${NEW}"
