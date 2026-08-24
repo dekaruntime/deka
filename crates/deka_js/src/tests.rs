@@ -237,7 +237,7 @@ fn ds_lowering_errors_are_propagated_as_compile_failures() {
         ),
         (
             "enum Color {\n  Red\n  Green\n  Blue\n}\nconst c = Color.Red\nconst result = match (c) {}\nconsole.log(result)",
-            "match requires at least one arm",
+            "not exhaustive",
         ),
         (
             "fn generator() {\n  yield 1\n}\nconsole.log(generator())",

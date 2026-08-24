@@ -10,4 +10,4 @@ const result = globalThis.deka.ui.renderToString(
 )
 console.log(result.html)
 const hydrated = globalThis.deka.ui.hydrate(Counter, result.html)
-console.log(JSON.stringify(hydrated.islands[0]))
+console.log(match (unsafe { JSON.stringify(hydrated.islands[0]) }) { Ok(v) => v, Err(e) => e })
