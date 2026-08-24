@@ -195,11 +195,8 @@ jobs:
       - name: Run DekaScript runtime execution suite
         run: bun tests/runtime-suite/run.mjs
 
-      - name: Run tour lessons
-        run: bun tests/tour/run.mjs
-
-      - name: Run public conformance suite (native)
-        run: bun tests/testsuite/run.mjs
+      - name: Run tour + public conformance suite (native)
+        run: ./run.sh --skip-build
 
       - name: Upload browser compiler WASM provenance
         uses: actions/upload-artifact@v7

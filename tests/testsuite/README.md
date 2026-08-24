@@ -16,10 +16,15 @@ The testsuite **website** repo does not own these files. It displays them
 ## Run locally
 
 ```sh
+./run.sh
+./run.sh --filter json
 cargo build --release -p cli
 bun tests/testsuite/run.mjs
 bun tests/testsuite/run.mjs --filter json
 ```
+
+`./run.sh` is the one-command gate (tour + Hats), same role as the old
+testsuite-repo `./run.sh`.
 
 Uses `target/release/cli` or `DEKA_NATIVE`. Native isolate only (`deka run`).
 Browser/WASM remains the live playground on the site; dump-time browser

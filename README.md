@@ -34,11 +34,11 @@ Build the CLI:
 cargo build --release -p cli
 ```
 
-Run the test suite:
+Run the language suite:
 
 ```bash
-cargo test
-cargo build --release -p cli
-bun tests/tour/run.mjs
-bun tests/testsuite/run.mjs
+./run.sh
 ```
+
+That builds the CLI, compiles every `tests/tour` lesson, and runs
+`tests/testsuite` on the native isolate. See [`TESTING.md`](./TESTING.md).

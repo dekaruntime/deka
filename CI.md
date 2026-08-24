@@ -182,8 +182,7 @@ cargo test --locked -p cli --lib -- --test-threads=1
 scripts/test-deka-compiler-wasm.sh
 cargo build --release -p cli
 bun tests/runtime-suite/run.mjs
-bun tests/tour/run.mjs
-bun tests/testsuite/run.mjs
+./run.sh --skip-build
 ```
 
 **`TESTING.md`'s crate list is not the same as CI's.** It omits

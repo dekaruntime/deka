@@ -93,12 +93,9 @@ DEKA_SKIP_DIRTY_CHECK=1 scripts/test-deka-compiler-wasm.sh
 ### Runtime execution suite
 
 ```bash
-# Public Hats fixtures (native isolate). This is the language gate.
-bun tests/testsuite/run.mjs
-bun tests/testsuite/run.mjs --filter structs
-
-# Tour lessons (compile every tests/tour id)
-bun tests/tour/run.mjs
+# Language gate: tour lessons + Hats (native isolate). Builds the CLI.
+./run.sh
+./run.sh --filter structs
 
 # Smaller native+WASM execution suite (to be merged into tests/testsuite)
 bun tests/runtime-suite/run.mjs
@@ -120,11 +117,10 @@ cargo run --release -p deka-fmt -- path/to/file.ds
    cargo test -p deka_js -p modules_php -p php-rs -p deka-fmt -p runtime
    cargo test -p cli --lib -- --test-threads=1
    ```
-3. **Build WASM compiler** and run the in-tree language suites:
+3. **Run the in-tree language suite**, then WASM parity if you touched emit:
    ```bash
+   ./run.sh
    CARGO_INCREMENTAL=0 cargo build --release --target wasm32-unknown-unknown -p deka_compiler_wasm --no-default-features
-   bun tests/tour/run.mjs
-   bun tests/testsuite/run.mjs
    bun tests/runtime-suite/run.mjs
    ```
 4. **Bump crate versions** and open a PR if the change is user-facing.

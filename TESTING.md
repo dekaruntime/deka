@@ -16,19 +16,23 @@ go away; do not add new language cases there.
 
 ## The loop
 
-After `cargo build --release -p cli`:
-
 ```bash
-bun tests/tour/run.mjs
-bun tests/testsuite/run.mjs
+./run.sh
+./run.sh --filter json
+./run.sh --list
 ```
 
-Same files CI runs. Fail locally. Do not discover a language break on a Hats
-deploy.
+That is the testsuite-repo `./run.sh` equivalent for this tree. It finds bun,
+builds `target/release/cli` (or uses `DEKA_NATIVE`), compiles every tour
+lesson, then runs Hats natively. Same files CI runs. Fail locally. Do not
+discover a language break on a Hats deploy.
 
-Native isolate only (`deka run`, `target/release/cli` or `DEKA_NATIVE`). Browser
-WASM stays the live playground on the site; dump-time browser results are a
-website concern until this repo publishes a dump (#292 step 2).
+Native isolate only (`deka run`). Browser WASM stays the live playground on the
+site; dump-time browser results are a website concern until this repo publishes
+a dump (#292 step 2). The full log lands in `.cache/report.txt`.
+
+The bun commands below are what `./run.sh` invokes, for a subset or a rerun
+when the CLI is already built.
 
 ## Pipelines
 
