@@ -2,5 +2,5 @@ fn Greeting(props: object) object {
   return globalThis.deka.ui.jsx("h1", { children: props.name })
 }
 const node = globalThis.deka.ui.jsx(Greeting, { name: "Deka" })
-console.log(JSON.stringify(node.props))
+console.log(match (unsafe { JSON.stringify(node.props) }) { Ok(v) => v, Err(e) => e })
 console.log(node.tag === Greeting)
