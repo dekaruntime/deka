@@ -331,11 +331,51 @@ fn ds_unsafe_block_returns_result_iife() {
         "unsafe must hide the host dispatcher:\n{js}"
     );
     assert!(
-        js.contains("__g.unsafe")
-            && js.contains("(function(__g){")
+        js.contains("(function(__g){")
             && js.contains("})(globalThis)")
-            && !js.contains("}=unsafe;"),
-        "unsafe must restore platform APIs from the real global, not a bare `unsafe` binding:\n{js}"
+            && !js.contains("}=unsafe;")
+            && !js.contains("JSON.parse=(text)")
+            && !js.contains("globalThis.fetch??="),
+        "unsafe must use the host Proxy and must not wrap JSON/fetch on globalThis:\n{js}"
+    );
+}
+
+#[test]
+fn ds_unsafe_does_not_hijack_json_or_fetch() {
+    let js = ds_to_js("const r = unsafe { JSON.parse(\"{}\") }\nconst f = unsafe { fetch(\"/x\") }\n")
+        .expect("unsafe JSON/fetch should compile");
+    assert!(
+        !js.contains("globalThis.JSON.parse=")
+            && !js.contains("__DekaJSONParse")
+            && !js.contains("globalThis.fetch??="),
+        "RFD 21: no ambient JSON/fetch wrappers:\n{js}"
+    );
+}
+
+#[test]
+fn ds_unsafe_await_emits_async_iife() {
+    let js = ds_to_js("const r = unsafe { await fetch(url) }")
+        .expect("unsafe await should compile");
+    assert!(
+        js.contains("async function") && js.contains("await fetch(url)"),
+        "top-level await in unsafe must emit an async IIFE:\n{js}"
+    );
+}
+
+#[test]
+fn ds_unsafe_nested_async_fn_stays_sync_wrapper() {
+    let js = ds_to_js(
+        "const r = unsafe { async function load() { return await fetch(url) } return load() }",
+    )
+    .expect("nested async in unsafe should compile");
+    assert!(
+        js.contains("catch(err){return Err(err);}"),
+        "expected Result IIFE:\n{js}"
+    );
+    // Wrapper is sync; inner function is async.
+    assert!(
+        js.contains("(function(){try{return Ok("),
+        "wrapper without top-level await stays sync:\n{js}"
     );
 }
 
