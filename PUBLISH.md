@@ -19,15 +19,18 @@ All jobs run on self-hosted runners and use a shared sccache backend on R2.
 
 ## Cutting a release
 
-1. Bump every crate version in `crates/*/Cargo.toml` and update
-   `Cargo.lock`.
+1. Bump the lockstep version and refresh `Cargo.lock`:
+   ```bash
+   ./scripts/bump-version.sh patch    # or minor, or an explicit X.Y.Z
+   ```
 2. Open a PR with the bump, merge it to `main`.
 3. Create and push an annotated tag from `main`:
    ```bash
    git checkout main
    git pull origin main
-   git tag -a v0.23.5 -m "release v0.23.5"
-   git push origin v0.23.5
+   scripts/runtime-version.sh          # must match the version you are tagging
+   git tag -a "v$(scripts/runtime-version.sh)" -m "deka v$(scripts/runtime-version.sh)"
+   git push origin "v$(scripts/runtime-version.sh)"
    ```
 4. Watch the run:
    ```bash

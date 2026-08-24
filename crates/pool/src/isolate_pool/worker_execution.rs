@@ -80,21 +80,53 @@ impl WorkerThread {
 
                 if (typeof globalThis.Option === 'undefined') {
                     globalThis.Option = Object.freeze({
-                        Some: (value) => Object.freeze({ __enum: "Option", __case: "Some", value }),
-                        None: Object.freeze({ __enum: "Option", __case: "None" })
+                        Some: (value) => Object.freeze({ __enum: "Option", __case: "Some", name: "Some", value }),
+                        None: Object.freeze({ __enum: "Option", __case: "None", name: "None" })
                     });
                 }
 
                 if (typeof globalThis.Result === 'undefined') {
                     globalThis.Result = Object.freeze({
-                        Ok: (value) => Object.freeze({ __enum: "Result", __case: "Ok", value }),
-                        Err: (error) => Object.freeze({ __enum: "Result", __case: "Err", error })
+                        Ok: (value) => Object.freeze({ __enum: "Result", __case: "Ok", name: "Ok", value }),
+                        Err: (error) => Object.freeze({ __enum: "Result", __case: "Err", name: "Err", error })
                     });
                 }
 
                 // Signal-based reactivity primitives (deka#142)
                 if (typeof globalThis.deka === 'undefined') {
                     globalThis.deka = {};
+                }
+
+                if (typeof globalThis.panic !== 'function') {
+                    globalThis.panic = (msg) => { throw new Error(String(msg)); };
+                    globalThis.deka.panic = globalThis.panic;
+                }
+
+                if (typeof globalThis.crypto === 'undefined' || typeof globalThis.crypto.randomUUID !== 'function') {
+                    const fill = (bytes) => {
+                        if (typeof __ops.op_php_random_bytes === 'function') {
+                            const raw = __ops.op_php_random_bytes(bytes.length);
+                            if (raw && typeof raw.length === 'number') {
+                                bytes.set(raw);
+                                return;
+                            }
+                        }
+                        for (let i = 0; i < bytes.length; i++) bytes[i] = (Math.random() * 256) | 0;
+                    };
+                    globalThis.crypto = Object.assign({}, globalThis.crypto || {}, {
+                        getRandomValues: (arr) => {
+                            fill(new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength));
+                            return arr;
+                        },
+                        randomUUID: () => {
+                            const b = new Uint8Array(16);
+                            fill(b);
+                            b[6] = (b[6] & 0x0f) | 0x40;
+                            b[8] = (b[8] & 0x3f) | 0x80;
+                            const h = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+                            return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+                        }
+                    });
                 }
                 const __dekaSignalContextStack = [];
                 function __dekaGetSignalContext() {

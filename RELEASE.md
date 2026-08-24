@@ -12,16 +12,33 @@ We follow [Semantic Versioning 2.0](https://semver.org/) with one deliberate con
 
 Every pull request that changes runtime behavior, the CLI, or the browser compiler must bump the version before it merges. Do not wait for a "release branch" or batch multiple changes into a single version bump. Version bumps are part of the change that needs them.
 
-The version lives in each `crates/*/Cargo.toml`. Keep them in lockstep; the release workflow expects a single version for the entire runtime/CLI distribution.
+The version lives in `[workspace.package]` in the root `Cargo.toml`. Every crate uses `version.workspace = true` so they cannot drift. Do not hand-edit thirty crate files.
+
+## Bumping
+
+Run this **before** opening the bump PR (and before tagging):
+
+```sh
+./scripts/bump-version.sh patch    # or minor, or an explicit 0.30.0
+```
+
+That updates `[workspace.package]`, any crate that still inlines a version, and `Cargo.lock`. It refuses to go backwards, to reuse a version that already has a `v*` tag, or to land at or below the latest published tag — the failure mode behind `v0.26.1` (tagged on a 0.26.0 tree) and `v0.28.0` (tagged on a 0.27.0 tree).
+
+It does not commit or tag. Open a PR with the bump, merge it, then tag from `main`.
 
 ## Triggering a release
 
-Push a git tag matching `v*` after the version has been bumped on `main`. For example:
+Confirm the tree carries the version, then push an annotated tag matching `v*`:
 
 ```sh
-git tag -a v0.9.1 -m "deka runtime/cli v0.9.1"
-git push origin v0.9.1
+git checkout main
+git pull origin main
+scripts/runtime-version.sh          # must print the version you are about to tag
+git tag -a "v$(scripts/runtime-version.sh)" -m "deka v$(scripts/runtime-version.sh)"
+git push origin "v$(scripts/runtime-version.sh)"
 ```
+
+The release workflow aborts if the tag and `[workspace.package]` disagree, so a tag on an unbumped tree no longer publishes a lying binary.
 
 The `.github/workflows/release.yml` workflow will:
 

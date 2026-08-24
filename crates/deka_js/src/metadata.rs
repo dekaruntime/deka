@@ -70,6 +70,15 @@ fn parse_import_line(line: &str) -> Option<ImportDecl> {
     if !trimmed.starts_with("import ") {
         return None;
     }
+    let rest = trimmed["import ".len()..].trim_start();
+    // Side-effect import: `import "./mod.ds"`
+    if rest.starts_with('\'') || rest.starts_with('"') {
+        let module = unquote(rest)?;
+        return Some(ImportDecl {
+            from: module.to_string(),
+            specs: Vec::new(),
+        });
+    }
     let open = trimmed.find('{')?;
     let close = trimmed[open..].find('}')? + open;
     let from_pos = trimmed[close + 1..].find("from")? + close + 1;
@@ -99,10 +108,6 @@ fn parse_import_line(line: &str) -> Option<ImportDecl> {
                 local: part.to_string(),
             });
         }
-    }
-
-    if specs.is_empty() {
-        return None;
     }
 
     Some(ImportDecl {

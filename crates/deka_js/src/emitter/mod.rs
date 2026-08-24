@@ -180,6 +180,15 @@ impl<'a> JsSubsetEmitter<'a> {
             }
             out.push_str(&format!("const __deka={{ {} }};\n", deka_entries.join(",")));
             out.push_str("const deka=globalThis.deka={...globalThis.deka,...__deka,ui:{...globalThis.deka?.ui,...__deka.ui}};globalThis.unsafe??=__DekaUnsafeGlobals;\n");
+            // Language globals — not host dispatchers. `panic` is the DS
+            // builtin; `crypto` is WebCrypto, polyfilled only when the isolate
+            // did not already provide it.
+            if body_refs_global(&program_text, "panic") {
+                out.push_str("globalThis.panic??=__deka.panic;\n");
+            }
+            if body_refs_global(&program_text, "crypto") {
+                out.push_str("if(!globalThis.crypto||typeof globalThis.crypto.randomUUID!==\"function\"){const fill=(b)=>{for(let i=0;i<b.length;i++)b[i]=(Math.random()*256)|0;};const rand=(b)=>{const g=globalThis.crypto;if(g&&typeof g.getRandomValues===\"function\")g.getRandomValues(b);else fill(b);};globalThis.crypto=Object.assign({},globalThis.crypto||{},{getRandomValues:(a)=>{rand(new Uint8Array(a.buffer,a.byteOffset,a.byteLength));return a;},randomUUID:()=>{const b=new Uint8Array(16);rand(b);b[6]=(b[6]&0x0f)|0x40;b[8]=(b[8]&0x3f)|0x80;const h=Array.from(b,x=>x.toString(16).padStart(2,\"0\")).join(\"\");return`${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;}});}\n");
+            }
 
             // Safe global wrappers — installed only when the emitted body
             // references them. These replace throwing host APIs with versions
@@ -216,7 +225,7 @@ impl<'a> JsSubsetEmitter<'a> {
             } else {
                 "Native"
             };
-            out.push_str("const HostRuntime=Object.freeze({Native:Object.freeze({__enum:\"HostRuntime\",__case:\"Native\"}),Browser:Object.freeze({__enum:\"HostRuntime\",__case:\"Browser\"})});\n");
+            out.push_str("const HostRuntime=Object.freeze({Native:Object.freeze({__enum:\"HostRuntime\",__case:\"Native\",name:\"Native\"}),Browser:Object.freeze({__enum:\"HostRuntime\",__case:\"Browser\",name:\"Browser\"})});\n");
             out.push_str(&format!(
                 "const runtime=HostRuntime.{case};\n"
             ));
@@ -243,6 +252,10 @@ impl<'a> JsSubsetEmitter<'a> {
 
         if self.meta.project_mode {
             for decl in &imports {
+                if decl.specs.is_empty() {
+                    out.push_str(&format!("__dekaRequire({});\n", json_string(&decl.from)));
+                    continue;
+                }
                 out.push_str("const { ");
                 for (idx, spec) in decl.specs.iter().enumerate() {
                     if idx > 0 {
@@ -258,6 +271,10 @@ impl<'a> JsSubsetEmitter<'a> {
             }
         } else {
             for decl in &imports {
+                if decl.specs.is_empty() {
+                    out.push_str(&format!("import '{}';\n", decl.from));
+                    continue;
+                }
                 out.push_str("import { ");
                 for (idx, spec) in decl.specs.iter().enumerate() {
                     if idx > 0 {

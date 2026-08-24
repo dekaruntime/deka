@@ -516,3 +516,140 @@ fn ds_unsafe_catch_is_rejected() {
         "unexpected error: {err}"
     );
 }
+
+#[test]
+fn ds_enum_case_exposes_public_name() {
+    let source = r#"
+        enum Color { Red Green }
+        console.log(Color.Red.name)
+    "#;
+    let js = ds_to_js(source).expect("enum name field should compile");
+    assert!(
+        js.contains("name: \"Red\"") && js.contains("__case: \"Red\""),
+        "enum cases must carry a public name alongside the internal tag:\n{js}"
+    );
+}
+
+#[test]
+fn ds_panic_is_installed_as_a_language_global() {
+    let js = ds_to_js(r#"panic("oops")"#).expect("panic() should compile");
+    assert!(
+        js.contains("globalThis.panic??=__deka.panic"),
+        "bare panic() must bind the language global:\n{js}"
+    );
+}
+
+#[test]
+fn ds_js_ts_function_spellings_are_rejected() {
+    let cases = [
+        (
+            r#"fn apply(f: fn(number) number, x: number) number { return f(x) }
+console.log(apply((n) => n + 1, 5))"#,
+            "Missing semicolon",
+        ),
+        (
+            r#"fn apply(f: (n: number) => number, x: number) number { return f(x) }
+fn inc(n: number) number { return n + 1 }
+console.log(apply(inc, 5))"#,
+            "DekaScript parameters use bare identifiers",
+        ),
+        (
+            r#"function increment(n: number) number { return n + 1 }
+console.log(increment(5))"#,
+            "DekaScript uses `fn` for function declarations, not `function`",
+        ),
+        (
+            r#"fn apply(f, x: number) number { return f(x) }
+fn inc(n: number) number { return n + 1 }
+console.log(apply(inc, 5))"#,
+            "DekaScript parameters require a type annotation",
+        ),
+    ];
+    for (source, needle) in cases {
+        let err = ds_to_js(source).expect_err(source);
+        assert!(
+            err.contains(needle),
+            "expected {needle:?} in {err:?} for {source}"
+        );
+    }
+
+    for (source, needle) in [
+        (
+            r#"fn apply(f: Function, x: number) number { return f(x) }
+fn inc(n: number) number { return n + 1 }
+console.log(apply(inc, 5))"#,
+            "Unknown type 'Function'",
+        ),
+        (
+            r#"fn apply(f: any, x: number) number { return f(x) }
+fn inc(n: number) number { return n + 1 }
+console.log(apply(inc, 5))"#,
+            "'any' and 'unknown' are not DekaScript types",
+        ),
+    ] {
+        let err = crate::compile_phpx_source_to_js(
+            source,
+            "lesson.ds",
+            crate::parse_source_module_meta(source),
+        )
+        .expect_err(source);
+        assert!(
+            err.contains(needle),
+            "expected {needle:?} in {err:?} for {source}"
+        );
+    }
+}
+
+#[test]
+fn ds_first_class_function_types_compile() {
+    for source in [
+        r#"fn applyTwice(f: fn(number) number, x: number) number { return f(f(x)) }
+fn increment(n: number) number { return n + 1 }
+console.log(applyTwice(increment, 5))"#,
+        r#"type ProcessFunc = fn(string) string
+fn shout(s: string) string { return s + "!" }
+const f: ProcessFunc = shout
+console.log(f("hi"))"#,
+        r#"fn makeAdder(n: number) fn(number) number {
+  return fn(x: number) number { return x + n }
+}
+const add10 = makeAdder(10)
+console.log(add10(5))"#,
+        r#"fn apply(f: fn(number) number, x: number) number { return f(x) }
+console.log(apply(fn(n: number) number { return n + 7 }, 5))"#,
+        r#"fn compose(f: fn(number) number, g: fn(number) number) fn(number) number {
+  return fn(x: number) number { return f(g(x)) }
+}
+fn double(n: number) number { return n * 2 }
+fn inc(n: number) number { return n + 1 }
+console.log(compose(inc, double)(5))"#,
+        r#"fn add1(n: number) number { return n + 1 }
+fn mul2(n: number) number { return n * 2 }
+const ops = [mul2, add1]
+let n = 15
+n = ops[0](n)
+n = ops[1](n)
+console.log(n)"#,
+    ] {
+        ds_to_js(source).unwrap_or_else(|err| panic!("expected compile, got {err} for {source}"));
+    }
+}
+
+#[test]
+fn ds_side_effect_import_emits_bare_import() {
+    let source = "import \"./logger.ds\";\nconsole.log(1);\n";
+    let mut meta = parse_source_module_meta(source);
+    assert_eq!(meta.imports.len(), 1);
+    assert!(meta.imports[0].specs.is_empty());
+    assert_eq!(meta.imports[0].from, "./logger.ds");
+    meta.is_ds = true;
+    let arena = Bump::new();
+    let mut parser = Parser::new_with_mode(Lexer::new(source.as_bytes()), &arena, ParserMode::Ds);
+    let program = parser.parse_program();
+    assert!(program.errors.is_empty(), "parse errors: {:?}", program.errors);
+    let js = emit_js_from_ast(&program, source.as_bytes(), meta).expect("side-effect import should emit");
+    assert!(
+        js.contains("import './logger.ds';"),
+        "side-effect import must emit a bare import:\n{js}"
+    );
+}
