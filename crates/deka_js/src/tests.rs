@@ -548,6 +548,33 @@ fn ds_match_prelude_result_and_option_patterns() {
 }
 
 #[test]
+fn ds_nested_match_patterns_emit_inner_tags() {
+    let source = r#"
+        fn f(r: Result<Option<number>, string>) number {
+            return match (r) {
+                Err(e) => 0,
+                Ok(None) => 1,
+                Ok(Some(v)) => v,
+            }
+        }
+        console.log(f(Ok(Some(3))))
+    "#;
+    let js = ds_to_js(source).expect("nested match patterns should compile");
+    assert!(
+        js.contains("r.__case === \"Ok\"")
+            && js.contains("__case === \"Some\"")
+            && js.contains("__case === \"None\""),
+        "nested match must discriminate inner Option tags:\n{js}"
+    );
+    assert!(
+        js.contains("const v = r[\"value\"][\"value\"]")
+            || js.contains("const v = r['value']['value']")
+            || js.contains("r[\"value\"][\"value\"]"),
+        "Ok(Some(v)) must bind through both payload fields:\n{js}"
+    );
+}
+
+#[test]
 fn ds_prelude_result_and_option_constructors() {
     let source = r#"
         const ok = Ok(42)
