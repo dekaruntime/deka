@@ -46,30 +46,41 @@ impl<'ast> Visitor<'ast> for MatchValidator<'_> {
 
 impl MatchValidator<'_> {
     fn validate_match(&mut self, arms: &[MatchArm]) {
-        let mut seen_cases: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut seen_paths: HashSet<String> = HashSet::new();
 
         for arm in arms {
             let Some(conds) = arm.conditions else {
                 continue;
             };
             for cond in conds {
-                let Some((enum_name, case_name)) = enum_case_from_expr(*cond, self.source) else {
+                let Some(path) = constructor_path(*cond, self.source) else {
                     continue;
                 };
-                let entry = seen_cases.entry(enum_name.clone()).or_default();
-                if entry.contains(&case_name) {
+                if seen_paths.contains(&path) || seen_paths.iter().any(|seen| is_prefix_path(seen, &path)) {
+                    let display = path.rsplit_once('/').map(|(_, last)| last).unwrap_or(&path);
                     self.errors.push(pattern_error(
                         cond.span(),
                         self.source,
-                        format!("Unreachable match arm for {}::{}.", enum_name, case_name),
+                        format!("Unreachable match arm for {}.", display),
                         "Remove the duplicate enum case.",
                     ));
                 } else {
-                    entry.insert(case_name.clone());
+                    seen_paths.insert(path);
                 }
-                if let Expr::StaticCall { args, .. } | Expr::Call { args, .. } = *cond {
-                    self.validate_payload_binding(&enum_name, &case_name, args, cond.span());
-                }
+                self.validate_pattern(*cond);
+            }
+        }
+    }
+
+    fn validate_pattern(&mut self, expr: ExprId<'_>) {
+        let Some((enum_name, case_name)) = enum_case_from_expr(expr, self.source) else {
+            return;
+        };
+        let args = ctor_args(expr);
+        self.validate_payload_binding(&enum_name, &case_name, args, expr.span());
+        for arg in args {
+            if enum_case_from_expr(arg.value, self.source).is_some() {
+                self.validate_pattern(arg.value);
             }
         }
     }
@@ -103,18 +114,19 @@ impl MatchValidator<'_> {
             return;
         }
         for arg in args {
-            if !is_variable_binding(arg.value, self.source) {
-                self.errors.push(pattern_error(
-                    arg.span,
-                    self.source,
-                    format!(
-                        "Enum case {}::{} payload bindings must be variables.",
-                        enum_name, case_name
-                    ),
-                    "Use variable bindings like $value.",
-                ));
-                break;
+            if is_valid_payload(arg.value, self.source) {
+                continue;
             }
+            self.errors.push(pattern_error(
+                arg.span,
+                self.source,
+                format!(
+                    "Enum case {}::{} payload bindings must be variables or nested constructors.",
+                    enum_name, case_name
+                ),
+                "Use a variable, `_`, or a nested constructor like `Ok(Some(v))`.",
+            ));
+            break;
         }
     }
 }
@@ -181,6 +193,58 @@ fn collect_enums(program: &Program, source: &str) -> HashMap<String, EnumInfo> {
         });
 
     enums
+}
+
+fn ctor_args<'a>(expr: ExprId<'a>) -> &'a [php_rs::parser::ast::Arg<'a>] {
+    match *expr {
+        Expr::Call { args, .. } | Expr::StaticCall { args, .. } => args,
+        _ => &[],
+    }
+}
+
+/// Full constructor path so `Ok(None)` and `Ok(Some(v))` are distinct.
+/// Bindings and `_` stop the walk: `Ok(v)` is just `Result::Ok`.
+fn constructor_path(expr: ExprId<'_>, source: &str) -> Option<String> {
+    let mut parts = Vec::new();
+    push_constructor_path(expr, source, &mut parts);
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("/"))
+    }
+}
+
+fn push_constructor_path(expr: ExprId<'_>, source: &str, parts: &mut Vec<String>) {
+    let Some((enum_name, case_name)) = enum_case_from_expr(expr, source) else {
+        return;
+    };
+    parts.push(format!("{}::{}", enum_name, case_name));
+    let args = ctor_args(expr);
+    if args.len() == 1 {
+        if enum_case_from_expr(args[0].value, source).is_some() {
+            push_constructor_path(args[0].value, source, parts);
+        }
+        return;
+    }
+    for arg in args {
+        if enum_case_from_expr(arg.value, source).is_some() {
+            let mut inner = Vec::new();
+            push_constructor_path(arg.value, source, &mut inner);
+            if !inner.is_empty() {
+                parts.push(inner.join("/"));
+            }
+        }
+    }
+}
+
+fn is_prefix_path(general: &str, specific: &str) -> bool {
+    specific.len() > general.len()
+        && specific.starts_with(general)
+        && specific.as_bytes().get(general.len()) == Some(&b'/')
+}
+
+fn is_valid_payload(expr: ExprId<'_>, source: &str) -> bool {
+    enum_case_from_expr(expr, source).is_some() || is_variable_binding(expr, source)
 }
 
 fn enum_case_from_expr(expr: ExprId<'_>, source: &str) -> Option<(String, String)> {

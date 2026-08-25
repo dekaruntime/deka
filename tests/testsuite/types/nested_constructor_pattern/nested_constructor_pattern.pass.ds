@@ -1,0 +1,8 @@
+fn f(r: Result<Option<number>, string>) number {
+  return match (r) {
+    Err(_) => 0,
+    Ok(None) => 1,
+    Ok(Some(v)) => v,
+  }
+}
+console.log(f(Ok(Some(7))))
