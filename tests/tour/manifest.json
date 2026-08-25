@@ -227,6 +227,16 @@
     "expectCompile": true
   },
   {
+    "id": "pipe-arguments",
+    "title": "pipe arguments",
+    "expectCompile": true
+  },
+  {
+    "id": "function-captures",
+    "title": "function captures",
+    "expectCompile": true
+  },
+  {
     "id": "json-parse-and-result",
     "title": "json parse and result",
     "expectCompile": true

@@ -63,7 +63,9 @@ fn binary_op_info(op: &BinaryOp) -> (Prec, Assoc, &'static str) {
         BinaryOp::BitOr => (Prec::BitOr, Assoc::Left, "|"),
         BinaryOp::BitXor => (Prec::BitXor, Assoc::Left, "^"),
         BinaryOp::BitAnd => (Prec::BitAnd, Assoc::Left, "&"),
-        BinaryOp::Eq | BinaryOp::EqEq | BinaryOp::EqEqEq => (Prec::Equality, Assoc::NonAssoc, "==="),
+        BinaryOp::Eq | BinaryOp::EqEq | BinaryOp::EqEqEq => {
+            (Prec::Equality, Assoc::NonAssoc, "===")
+        }
         BinaryOp::NotEq | BinaryOp::NotEqEq => (Prec::Equality, Assoc::NonAssoc, "!=="),
         BinaryOp::Lt => (Prec::Relational, Assoc::NonAssoc, "<"),
         BinaryOp::LtEq => (Prec::Relational, Assoc::NonAssoc, "<="),
@@ -129,7 +131,10 @@ impl<'a> JsSubsetEmitter<'a> {
     }
 
     fn emit_expr_with_prec(&mut self, expr: ExprId<'_>, min_prec: Prec) -> Result<String, String> {
-        if let Expr::Binary { left, op, right, .. } = expr {
+        if let Expr::Binary {
+            left, op, right, ..
+        } = expr
+        {
             // `instanceof` against a struct type is a special runtime helper,
             // not a raw JS `instanceof` expression.
             if matches!(op, BinaryOp::Instanceof) {
@@ -170,6 +175,11 @@ impl<'a> JsSubsetEmitter<'a> {
         let lhs = self.emit_expr_with_prec(left, Prec::Min)?;
         match right {
             Expr::Call { func, args, .. } => {
+                let holes = self.call_direct_holes(args);
+                if holes.len() == 1 {
+                    // `x |> f(a, _)` → `f(a, x)` (RFD 30)
+                    return self.emit_call_with_hole_filled(*func, args, holes[0], lhs);
+                }
                 let callee = self.emit_expr_with_prec(*func, Prec::Min)?;
                 let mut all_args = vec![lhs];
                 for arg in *args {
@@ -186,6 +196,59 @@ impl<'a> JsSubsetEmitter<'a> {
                 Ok(format!("{}({})", rhs, lhs))
             }
         }
+    }
+
+    fn is_hole_expr(&self, expr: ExprId<'_>) -> bool {
+        matches!(expr, Expr::Variable { name, .. } if self.span_name(*name) == "_")
+    }
+
+    fn call_direct_holes(&self, args: &[php_rs::parser::ast::Arg<'_>]) -> Vec<usize> {
+        args.iter()
+            .enumerate()
+            .filter(|(_, arg)| self.is_hole_expr(arg.value))
+            .map(|(idx, _)| idx)
+            .collect()
+    }
+
+    fn emit_call_with_hole_filled(
+        &mut self,
+        func: ExprId<'_>,
+        args: &[php_rs::parser::ast::Arg<'_>],
+        hole_idx: usize,
+        filler: String,
+    ) -> Result<String, String> {
+        let callee = self.emit_expr_with_prec(func, Prec::Min)?;
+        let mut parts = Vec::with_capacity(args.len());
+        for (idx, arg) in args.iter().enumerate() {
+            if idx == hole_idx {
+                parts.push(filler.clone());
+            } else {
+                parts.push(self.emit_expr_with_prec(arg.value, Prec::Min)?);
+            }
+        }
+        Ok(format!("{}({})", callee, parts.join(", ")))
+    }
+
+    fn emit_function_capture(
+        &mut self,
+        func: ExprId<'_>,
+        args: &[php_rs::parser::ast::Arg<'_>],
+        hole_idx: usize,
+    ) -> Result<String, String> {
+        let callee = self.emit_expr_with_prec(func, Prec::Min)?;
+        let mut parts = Vec::with_capacity(args.len());
+        for (idx, arg) in args.iter().enumerate() {
+            if idx == hole_idx {
+                parts.push("__pipe".to_string());
+            } else {
+                parts.push(self.emit_expr_with_prec(arg.value, Prec::Min)?);
+            }
+        }
+        Ok(format!(
+            "(function(__pipe) {{ return {}({}); }})",
+            callee,
+            parts.join(", ")
+        ))
     }
 
     fn emit_expr_inner(&mut self, expr: ExprId<'_>) -> Result<String, String> {
@@ -228,9 +291,7 @@ impl<'a> JsSubsetEmitter<'a> {
             }
             Expr::Integer { value, .. }
             | Expr::Float { value, .. }
-            | Expr::BigInt { value, .. } => {
-                Ok(String::from_utf8_lossy(value).to_string())
-            }
+            | Expr::BigInt { value, .. } => Ok(String::from_utf8_lossy(value).to_string()),
             Expr::Boolean { value, .. } => Ok(if *value { "true" } else { "false" }.to_string()),
             Expr::Null { .. } => Ok("null".to_string()),
             Expr::String { value, .. } => Ok(self.encode_php_string_literal(value)),
@@ -315,6 +376,10 @@ impl<'a> JsSubsetEmitter<'a> {
                 ))
             }
             Expr::Call { func, args, .. } => {
+                let holes = self.call_direct_holes(args);
+                if holes.len() == 1 {
+                    return self.emit_function_capture(*func, args, holes[0]);
+                }
                 if let Expr::Variable { name, .. } = func {
                     let ident = self.span_name(*name);
                     if ident == "func_num_args" {
@@ -652,10 +717,7 @@ impl<'a> JsSubsetEmitter<'a> {
                                     field.name
                                 ));
                             } else if field.optional {
-                                entries.push(format!(
-                                    "{}: Option.None",
-                                    json_string(&field.name)
-                                ));
+                                entries.push(format!("{}: Option.None", json_string(&field.name)));
                             }
                         }
                     }
@@ -885,7 +947,10 @@ impl<'a> JsSubsetEmitter<'a> {
                 let raw_str = String::from_utf8_lossy(raw);
                 let trimmed = raw_str.trim();
                 if trimmed.is_empty() {
-                    return Ok("(function(){try{return Ok(undefined);}catch(err){return Err(err);}})()".to_string());
+                    return Ok(
+                        "(function(){try{return Ok(undefined);}catch(err){return Err(err);}})()"
+                            .to_string(),
+                    );
                 }
 
                 // Decide whether the raw JS is a single expression or a statement
@@ -895,7 +960,11 @@ impl<'a> JsSubsetEmitter<'a> {
                 // and the completion value is wrapped in Ok.
                 let is_statement_block = raw_js_looks_like_statements(trimmed);
                 let is_async = php_rs::js_scan::js_has_top_level_await(trimmed);
-                let fn_kw = if is_async { "async function" } else { "function" };
+                let fn_kw = if is_async {
+                    "async function"
+                } else {
+                    "function"
+                };
 
                 // RFD 27: unsafe is JS-mode, not a host back door. Pass the
                 // real globalThis in as `__g` so the inner `const globalThis`

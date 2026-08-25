@@ -780,3 +780,45 @@ fn ds_side_effect_import_emits_bare_import() {
         "side-effect import must emit a bare import:\n{js}"
     );
 }
+
+#[test]
+fn ds_pipe_with_args_prepends_lhs() {
+    let source = r#"
+        fn add(a: number, b: number) number { return a + b }
+        const n = 5 |> add(1)
+        console.log(n)
+    "#;
+    let js = ds_to_js(source).expect("pipe with args should compile");
+    assert!(
+        js.contains("add(5, 1)"),
+        "5 |> add(1) should emit add(5, 1):\n{js}"
+    );
+}
+
+#[test]
+fn ds_pipe_capture_fills_the_hole() {
+    let source = r#"
+        fn append(s: string, suffix: string) string { return s + suffix }
+        const n = "1" |> append("3", _)
+        console.log(n)
+    "#;
+    let js = ds_to_js(source).expect("pipe capture should compile");
+    assert!(
+        js.contains("append(\"3\", \"1\")"),
+        "\"1\" |> append(\"3\", _) should emit append(\"3\", \"1\"):\n{js}"
+    );
+}
+
+#[test]
+fn ds_function_capture_emits_unary_function() {
+    let source = r#"
+        fn add(a: number, b: number) number { return a + b }
+        const add1 = add(1, _)
+        console.log(add1(2))
+    "#;
+    let js = ds_to_js(source).expect("function capture should compile");
+    assert!(
+        js.contains("(function(__pipe)") && js.contains("add(1, __pipe)"),
+        "add(1, _) should emit a one-arg function:\n{js}"
+    );
+}
