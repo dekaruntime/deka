@@ -454,6 +454,65 @@ fn match_duplicate_case_reports_error() {
 }
 
 #[test]
+fn ds_nested_constructor_patterns_compile() {
+    let source = r#"
+fn f(r: Result<Option<number>, string>) number {
+  return match (r) {
+    Err(_) => 0,
+    Ok(None) => 1,
+    Ok(Some(v)) => v,
+  }
+}
+console.log(f(Ok(Some(7))))
+"#;
+    let result = compile_source(source, "nested.ds");
+    assert!(
+        result.errors.is_empty(),
+        "Ok(Some(v)) must compile, got: {:?}",
+        result.errors
+    );
+}
+
+#[test]
+fn ds_nested_constructor_without_none_arm_compiles() {
+    let source = r#"
+fn f(r: Result<Option<number>, string>) number {
+  return match (r) {
+    Err(_) => 0,
+    Ok(Some(v)) => v,
+    _ => 9,
+  }
+}
+console.log(f(Ok(Some(7))))
+"#;
+    let result = compile_source(source, "nested_wildcard.ds");
+    assert!(
+        result.errors.is_empty(),
+        "Ok(Some(v)) with a catch-all must compile, got: {:?}",
+        result.errors
+    );
+}
+
+#[test]
+fn ds_duplicate_nested_constructor_is_unreachable() {
+    let source = r#"
+fn f(r: Result<Option<number>, string>) number {
+  return match (r) {
+    Ok(Some(a)) => a,
+    Ok(Some(b)) => b,
+    _ => 0,
+  }
+}
+"#;
+    let result = compile_source(source, "nested_dup.ds");
+    assert!(
+        result.errors.iter().any(|err| err.message.contains("Unreachable")),
+        "duplicate Ok(Some(_)) must be unreachable, got: {:?}",
+        result.errors
+    );
+}
+
+#[test]
 fn rule_null_reports_error() {
     let path = fixtures_root().join("rules/null_value.phpx");
     let result = compile_fixture(&path);
