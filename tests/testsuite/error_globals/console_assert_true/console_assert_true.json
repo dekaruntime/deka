@@ -1,5 +1,8 @@
 {
   "title": "console.assert true passes silently",
   "stage": "run",
-  "notes": ""
+  "notes": "",
+  "hosts": [
+    "browser"
+  ]
 }

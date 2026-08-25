@@ -3,8 +3,10 @@ enum Color {
   Green
   Blue
 }
-const c = Color.Red
-match (c) {
-  Color.Red => "red",
-  Color.Green => "green"
+fn name(c: Color) string {
+  return match (c) {
+    Color.Red => "red",
+    Color.Green => "green"
+  }
 }
+console.log(name(Color.Red))

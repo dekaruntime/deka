@@ -181,7 +181,6 @@ cargo test -p bundler
 cargo test --locked -p cli --lib -- --test-threads=1
 scripts/test-deka-compiler-wasm.sh
 cargo build --release -p cli
-bun tests/runtime-suite/run.mjs
 ./run.sh --skip-build
 ```
 

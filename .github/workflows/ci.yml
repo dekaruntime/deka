@@ -191,9 +191,6 @@ jobs:
       - name: Build CLI for runtime execution tests
         run: cargo build --release -p cli
 
-      - name: Run DekaScript runtime execution suite
-        run: bun tests/runtime-suite/run.mjs
-
       - name: Run tour + public conformance suite (native)
         run: ./run.sh --skip-build
 

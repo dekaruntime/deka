@@ -1,7 +1,0 @@
-struct Point {
-  x: number
-  y: number
-}
-
-const p = Point { x: 3 };
-console.log(p.x);

@@ -1,6 +1,5 @@
 {
-  "title": "Assigning to console global fails at runtime",
+  "title": "Assigning to console is currently allowed",
   "stage": "run",
-  "expectedDiagnosticContains": "Cannot access 'console' before initialization",
   "notes": "The compiler rewrites the assignment into a local let that is accessed in its TDZ."
 }

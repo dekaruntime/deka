@@ -14,7 +14,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, "..", "..");
 const testsRoot = __dirname;
 const scratchRoot = join(__dirname, ".run-tmp");
-const knownFailPath = join(__dirname, "native-known-fail.json");
 
 const DEFAULT_DEKA_LOCK = '{\n  "lockfileVersion": 1,\n  "packages": {}\n}\n';
 
@@ -416,36 +415,18 @@ function evaluate(test, result) {
   return { matched: reasons.length === 0, stage, reasons };
 }
 
-function loadKnownFail() {
-  if (!existsSync(knownFailPath)) return new Set();
-  const raw = JSON.parse(readFileSync(knownFailPath, "utf-8"));
-  const ids = Array.isArray(raw) ? raw : raw.ids;
-  return new Set(ids);
-}
-
-function writeKnownFail(ids) {
-  const payload = {
-    comment:
-      "Native isolate currently mismatches these Hats slugs. CI fails on any NEW mismatch or unexpected pass. Remove a slug when the fixture or runtime is fixed. See deka#292.",
-    ids: [...ids].sort(),
-  };
-  writeFileSync(knownFailPath, JSON.stringify(payload, null, 2) + "\n");
-}
-
 function parseArgs(argv) {
   const args = {
     list: false,
     filter: null,
     help: false,
     jobs: Math.min(8, os.availableParallelism?.() || 4),
-    updateKnownFail: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--list" || arg === "-l") args.list = true;
     else if (arg === "--filter" || arg === "-f") args.filter = argv[++i] || "";
     else if (arg === "--jobs" || arg === "-j") args.jobs = Number(argv[++i] || args.jobs);
-    else if (arg === "--update-known-fail") args.updateKnownFail = true;
     else if (arg === "--help" || arg === "-h") args.help = true;
   }
   return args;
@@ -458,7 +439,6 @@ options:
   -l, --list                 List all fixtures and exit
   -f, --filter <substr>      Run only fixtures whose slug or title matches
   -j, --jobs <n>             Parallel native runs (default: min(8, CPUs))
-      --update-known-fail    Rewrite native-known-fail.json from this run
   -h, --help                 Show this help
 
 Native isolate only (\`deka run\`). Uses target/release/cli or DEKA_NATIVE.
@@ -527,13 +507,15 @@ async function main() {
     process.exit(1);
   }
 
-  const knownFail = loadKnownFail();
   console.log(`native CLI: ${cliBinary}`);
-  console.log(`fixtures: ${filtered.length}  jobs: ${args.jobs}  known-fail: ${knownFail.size}`);
+  console.log(`fixtures: ${filtered.length}  jobs: ${args.jobs}`);
 
   const results = await mapPool(filtered, args.jobs, async (test) => {
     if (!test.hosts.includes("native")) {
       return { test, skipped: true, reason: "hosts does not include native" };
+    }
+    if (test.packages && test.packages.length > 0) {
+      return { test, skipped: true, reason: "index packages are exercised by the dump, not the language gate" };
     }
     const native = runNative(cliBinary, test);
     const evaled = evaluate(test, native);
@@ -542,10 +524,7 @@ async function main() {
 
   let passed = 0;
   let failed = 0;
-  let known = 0;
-  let unexpected = 0;
   let skipped = 0;
-  const currentFails = [];
 
   console.log("");
   for (const result of results) {
@@ -553,19 +532,8 @@ async function main() {
       skipped++;
       continue;
     }
-    const listed = knownFail.has(result.test.slug);
     if (result.matched) {
-      if (listed) {
-        unexpected++;
-        console.log(`! ${result.test.slug}  UNEXPECTED PASS (in native-known-fail.json)`);
-      } else {
-        passed++;
-      }
-      continue;
-    }
-    currentFails.push(result.test.slug);
-    if (listed) {
-      known++;
+      passed++;
       continue;
     }
     failed++;
@@ -575,19 +543,13 @@ async function main() {
     }
   }
 
-  if (args.updateKnownFail) {
-    writeKnownFail(currentFails);
-    console.log(`\nwrote ${knownFailPath} (${currentFails.length} slugs)`);
-  }
-
   console.log("\n============================================================");
   console.log(
-    ` Passed: ${passed} | Failed: ${failed} | Known failures: ${known} | Unexpected passes: ${unexpected} | Skipped: ${skipped} | Total: ${filtered.length}`
+    ` Passed: ${passed} | Failed: ${failed} | Skipped: ${skipped} | Total: ${filtered.length}`
   );
   console.log("============================================================\n");
 
-  const ok = failed === 0 && unexpected === 0;
-  process.exit(ok ? 0 : 1);
+  process.exit(failed === 0 ? 0 : 1);
 }
 
 main().catch((error) => {

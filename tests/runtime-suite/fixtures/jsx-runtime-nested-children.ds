@@ -1,2 +1,0 @@
-const node = globalThis.deka.ui.jsxs("div", { children: [["a", "b"], "c"] })
-console.log(match (unsafe { JSON.stringify(node) }) { Ok(v) => v, Err(e) => e })

@@ -1,9 +1,0 @@
-const found = Option.Some("DekaScript");
-
-const message = match (found) {
-  Some(value) => value,
-  None => "nothing",
-  _ => "unknown",
-};
-
-console.log(message);

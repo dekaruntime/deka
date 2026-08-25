@@ -1,3 +1,0 @@
-const node = globalThis.deka.ui.jsxs(globalThis.deka.ui.Fragment, { children: ["a", "b"] })
-const serializable = { tag: "Fragment", props: node.props, children: node.children }
-console.log(match (unsafe { JSON.stringify(serializable) }) { Ok(v) => v, Err(e) => e })

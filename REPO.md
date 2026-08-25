@@ -96,10 +96,6 @@ DEKA_SKIP_DIRTY_CHECK=1 scripts/test-deka-compiler-wasm.sh
 # Language gate: tour lessons + Hats (native isolate). Builds the CLI.
 ./run.sh
 ./run.sh --filter structs
-
-# Smaller native+WASM execution suite (to be merged into tests/testsuite)
-bun tests/runtime-suite/run.mjs
-bun tests/runtime-suite/run.mjs --filter structs
 ```
 
 ### Formatter
@@ -121,11 +117,11 @@ cargo run --release -p deka-fmt -- path/to/file.ds
    ```bash
    ./run.sh
    CARGO_INCREMENTAL=0 cargo build --release --target wasm32-unknown-unknown -p deka_compiler_wasm --no-default-features
-   bun tests/runtime-suite/run.mjs
+   DEKA_SKIP_DIRTY_CHECK=1 scripts/test-deka-compiler-wasm.sh
    ```
 4. **Bump crate versions** and open a PR if the change is user-facing.
 5. **After merge**, cut a release tag to push artifacts to R2 and trigger downstream site rebuilds (see `PUBLISH.md`). `@deka/*` packages are a different pipeline (`STDLIB.md`): merge does not publish them.
-6. **Language fixtures** are in `tests/testsuite/` and `tests/tour/` in this repo. If a change makes a native-known-fail slug start passing, remove it from `tests/testsuite/native-known-fail.json`. Until deka#292 step 3, you may still regen the website dump in `dekaruntime/testsuite` with `scripts/regen-fixtures.mjs` pointed at this build (`DEKA_NATIVE` + `DEKA_WASM`).
+6. **Language fixtures** are in `tests/testsuite/` and `tests/tour/` in this repo. The dual-host dump is `tests/dump`; a release uploads it. Testsuite and website ingest that pack.
 
 ## How downstream sites consume the runtime
 

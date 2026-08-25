@@ -1,9 +1,0 @@
-const result = globalThis.deka.ui.renderToString(
-  globalThis.deka.ui.jsxs("input", {
-    disabled: true,
-    readonly: false,
-    checked: false,
-    required: true
-  })
-)
-console.log(result.html)

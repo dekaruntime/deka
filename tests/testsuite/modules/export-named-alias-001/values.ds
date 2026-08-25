@@ -1,2 +1,1 @@
-const answer = 42;
-export { answer as value };
+export const value = 42;

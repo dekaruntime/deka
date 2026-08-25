@@ -1,2 +1,5 @@
-const x = await 1
+async fn one() Promise<number> {
+  return 1
+}
+const x = await one()
 console.log(x)

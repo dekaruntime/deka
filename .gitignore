@@ -8,7 +8,6 @@
 linkhash/**/.cache/
 .cache/
 .cache/deka_js/
-tests/runtime-suite/.runtime-suite-tmp/
 tests/testsuite/.run-tmp/
 tests/tour/.run-tmp/
 tests/dump/.cache/

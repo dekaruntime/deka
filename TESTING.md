@@ -6,13 +6,12 @@ vehicles. See [deka#292](https://github.com/dekaruntime/deka/issues/292) and
 
 | Repo | Owns | Does not own |
 |---|---|---|
-| **deka** (this repo) | Every language test. `tests/testsuite/` (Hats folders: the public contract), `tests/tour/` (samples deka.gg displays), plus Rust / WASM / `tests/runtime-suite`. | The testsuite.deka.gg UI, tour markdown |
+| **deka** (this repo) | Every language test. `tests/testsuite/` (Hats folders: the public contract), `tests/tour/` (samples deka.gg displays), plus Rust / WASM. | The testsuite.deka.gg UI, tour markdown |
 | **testsuite** | The website: grid, live browser playground, **CACHED RESULTS** for native-only / packages / recorded-only. | Fixture sources. After #292 steps 2–3, CI does **not** re-run the suite. |
 | **website** | Lesson prose, titles, section order. CI: pinned WASM + tour sources compile, pages are not garbage. | The language. No second runtime suite. |
 
 `tests/testsuite` **is** the suite. Display names are never keys — match by
-stable id / slug. `tests/runtime-suite` should merge into `tests/testsuite` or
-go away; do not add new language cases there.
+stable id / slug.
 
 ## The loop
 
@@ -82,8 +81,7 @@ diffing failure **names** against a clean `origin/main` worktree.
 
 To reproduce CI's exact sequence, use the list in [`CI.md`](./CI.md), not the
 crate list above. CI covers `deka_compiler_wasm` via
-`scripts/test-deka-compiler-wasm.sh`, then builds the CLI and runs
-`tests/runtime-suite`, `tests/tour`, and `tests/testsuite`.
+`scripts/test-deka-compiler-wasm.sh`, then builds the CLI and runs `./run.sh`.
 
 ## Public conformance suite (`tests/testsuite`)
 
@@ -107,20 +105,9 @@ bun tests/testsuite/run.mjs --jobs 4
 
 Uses `target/release/cli` or `DEKA_NATIVE`. Native isolate only. The runner
 matches by slug (`category-name`), never by title. Fixtures with `hosts` that
-do not include `native` are skipped (today: the browser-only Worker case).
-
-### Known native mismatches
-
-Hats is a diagnostic grid. Pink cells on the site are host disagreement at dump
-time, not a CI verdict. On this tree some fixtures still mismatch native (JSX
-isolate `ui.jsx`, stale `JSON` / `deka.unsafe` samples, published packages
-still using `): T`, diagnostic-text drift, a few Node traces that leaked into
-`.json`). Those slugs live in `tests/testsuite/native-known-fail.json`.
-
-- CI fails on a **new** mismatch or an **unexpected pass**.
-- When you fix a fixture or the runtime, remove its slug.
-- Rewrite the file with `--update-known-fail` only when the baseline itself
-  should change.
+do not include `native` are skipped (JSX that needs `deka.ui` in the Worker,
+`console.assert`, and similar). Index `packages` fixtures run in the dump, not
+this language gate.
 
 ### Adding a Hats fixture
 
@@ -163,30 +150,6 @@ same files.
 4. Run `bun tests/tour/run.mjs --filter <id>`.
 
 An `.ds` file without a manifest row (or the reverse) is a hard error.
-
-## DekaScript runtime execution suite (`tests/runtime-suite`)
-
-Older native+WASM harness. Compiles each fixture through the native CLI **and**
-the browser WASM compiler, runs the emitted JS against Deka runtime globals, and
-asserts on stdout / compile diagnostics.
-
-Do not add new language coverage here. Put it in `tests/testsuite` or
-`tests/tour`. Keep this suite green until it is folded in or deleted.
-
-```bash
-cargo build --release -p cli
-
-CARGO_INCREMENTAL=0 cargo build --release \
-  --target wasm32-unknown-unknown -p deka_compiler_wasm --no-default-features
-
-bun tests/runtime-suite/run.mjs
-bun tests/runtime-suite/run.mjs --list
-bun tests/runtime-suite/run.mjs --filter structs
-```
-
-The harness picks the newest `deka_compiler.wasm` it can find between
-`target/wasm32-unknown-unknown/release/deka_compiler_wasm.wasm` and
-`dist/deka-compiler-wasm/deka_compiler.wasm`.
 
 ## Browser compiler WASM smoke test
 

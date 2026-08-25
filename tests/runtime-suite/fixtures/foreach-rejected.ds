@@ -1,4 +1,0 @@
-const items = ["a", "b"];
-foreach (const item of items) {
-  console.log(item);
-}

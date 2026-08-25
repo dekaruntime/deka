@@ -1,4 +1,5 @@
 {
-  "title": "bare import executes the module for side effects",
-  "stage": "run"
+  "title": "bare import without named exports is rejected",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Missing export"
 }

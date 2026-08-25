@@ -30,10 +30,6 @@ Uses `target/release/cli` or `DEKA_NATIVE`. Native isolate only (`deka run`).
 Browser/WASM remains the live playground on the site; dump-time browser
 results are produced in runtime CI when we publish the results JSON.
 
-Slugs in `native-known-fail.json` are current native mismatches. CI fails on a
-new mismatch or an unexpected pass. Rewrite that file with
-`--update-known-fail` only when the baseline itself should change.
-
 ```
 bun tests/testsuite/run.mjs --list
 bun tests/testsuite/run.mjs --filter json

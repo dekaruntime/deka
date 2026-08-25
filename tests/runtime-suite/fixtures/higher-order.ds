@@ -1,6 +1,0 @@
-fn apply(n: number, f: fn(number) number) number {
-  return f(n);
-}
-
-const double = fn(x: number) number { return x * 2 };
-console.log(apply(21, double));

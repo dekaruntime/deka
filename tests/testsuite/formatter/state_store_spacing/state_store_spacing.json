@@ -2,5 +2,7 @@
   "title": "State store spacing is normalized",
   "stage": "run",
   "notes": "Formatter should canonicalize State.create calls with nested object literals and fn expressions.",
-  "expectedDiagnosticContains": "file:///private/var/folders/ww/dcsjdgp14h129c1tvhpmmtlr0000gp/T/hats-node-run-Vd9lY7/test.js:25\nconst store = deka.freeze(deka.ui.State.create({\"count\": 0}, {\"increment\": function(state) {\n                                        ^\n\nTypeError: Cannot read properties of undefined (reading 'create')\n    at file:///private/var/folders/ww/dcsjdgp14h129c1tvhpmmtlr0000gp/T/hats-node-run-Vd9lY7/test.js:25:41\n    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:646:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)\n\nNode.js v26.3.1"
+  "hosts": [
+    "browser"
+  ]
 }

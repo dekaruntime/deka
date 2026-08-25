@@ -1,6 +1,0 @@
-class Foo {
-  bar: number
-}
-
-const f = new Foo();
-console.log(f);

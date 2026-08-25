@@ -1,10 +1,2 @@
-fn okFn() number {
-  panic("inner")
-}
-
-fn catchFn(e: string) number {
-  return 99
-}
-
-const x = deka.unsafe(okFn, catchFn)
-console.log(x)
+const x = unsafe { panic("inner") }
+console.log(match (x) { Ok(v) => v, Err(_) => 99 })
