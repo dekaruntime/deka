@@ -1,0 +1,7 @@
+struct Node {
+  value: number;
+  next?: Node;
+}
+
+const head = Node { value: 1, next: Node { value: 2 } }
+console.log(head.next.value)

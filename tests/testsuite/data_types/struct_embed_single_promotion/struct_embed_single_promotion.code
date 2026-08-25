@@ -1,0 +1,11 @@
+struct Mover {}
+fn (m Mover) move() string {
+  return "moving"
+}
+
+struct Robot {
+  Mover;
+}
+
+const r = Robot { Mover: Mover {  } }
+console.log(r.move())

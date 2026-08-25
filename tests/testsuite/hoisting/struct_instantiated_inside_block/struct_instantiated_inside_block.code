@@ -1,0 +1,6 @@
+struct Point {
+  x: number;
+}
+if (true) {
+  console.log(Point({x: 5}).x)
+}

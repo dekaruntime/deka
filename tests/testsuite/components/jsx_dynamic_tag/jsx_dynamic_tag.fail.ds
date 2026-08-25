@@ -1,0 +1,3 @@
+const ui = globalThis.deka.ui
+const html = ui.renderToString(ui.jsx(MissingTag, { children: "x" }))
+console.log(html.html)

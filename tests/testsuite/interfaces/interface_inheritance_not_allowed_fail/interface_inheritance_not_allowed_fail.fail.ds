@@ -1,0 +1,16 @@
+interface Named {
+  name: string
+}
+interface Greetable extends Named {
+  fn greet() string
+}
+struct Person {
+  name: string
+}
+fn (p Person) greet() string {
+  return "Hi " + p.name
+}
+fn meet(g: Greetable) {
+  console.log(g.greet())
+}
+meet(Person { name: "Ada" })

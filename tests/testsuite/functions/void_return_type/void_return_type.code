@@ -1,0 +1,5 @@
+fn log(x: number) void {
+  console.log(x)
+}
+
+log(5)

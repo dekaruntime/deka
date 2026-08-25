@@ -1,0 +1,6 @@
+{
+  "title": "Missing required function arguments fails",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Missing arguments for add(): expected at least 2, got 1",
+  "notes": "Calls must provide every required parameter."
+}

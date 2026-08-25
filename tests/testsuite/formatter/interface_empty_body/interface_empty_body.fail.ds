@@ -1,0 +1,2 @@
+interface Logger fn log(msg: string)
+console.log("ok")

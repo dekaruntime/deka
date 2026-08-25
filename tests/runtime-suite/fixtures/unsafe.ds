@@ -1,4 +1,0 @@
-const result = unsafe { 21 + 21 };
-
-console.log(result.__case);
-console.log(result.value);

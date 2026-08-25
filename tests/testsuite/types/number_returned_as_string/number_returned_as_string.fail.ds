@@ -1,0 +1,4 @@
+fn f(x: number) string {
+  return x
+}
+console.log(f(1))

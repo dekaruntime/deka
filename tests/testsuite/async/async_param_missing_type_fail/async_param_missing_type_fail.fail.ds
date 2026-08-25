@@ -1,0 +1,4 @@
+async fn greet(name) Promise<void> {
+  console.log(name)
+}
+await greet("hi")

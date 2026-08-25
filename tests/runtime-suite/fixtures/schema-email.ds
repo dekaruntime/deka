@@ -1,3 +1,0 @@
-const Email = globalThis.schema.string.email();
-console.log(Email.parse("test@example.com").ok);
-console.log(Email.parse("not-an-email").ok);

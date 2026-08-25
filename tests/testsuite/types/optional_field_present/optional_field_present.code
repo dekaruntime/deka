@@ -1,0 +1,7 @@
+struct User {
+  name: string;
+  email?: string;
+}
+
+const u = User { name: "A", email: "a@b.com" }
+console.log(u.email)

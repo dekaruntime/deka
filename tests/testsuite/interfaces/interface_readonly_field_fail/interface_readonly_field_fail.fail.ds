@@ -1,0 +1,7 @@
+interface Config {
+  readonly port: number
+}
+fn show(c: Config) {
+  console.log(c.port)
+}
+show({ port: 8080 })

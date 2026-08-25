@@ -1,0 +1,6 @@
+{
+  "title": "Direct null comparison is rejected",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Null comparisons are not allowed; use isset() instead",
+  "notes": "The compiler suggests using isset() instead."
+}

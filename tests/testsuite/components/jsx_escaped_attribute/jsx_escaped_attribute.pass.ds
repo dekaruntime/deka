@@ -1,0 +1,3 @@
+const ui = globalThis.deka.ui
+const html = ui.renderToString(ui.jsx("div", { "data-chars": "a<b&c", children: "x" }))
+console.log(html.html)

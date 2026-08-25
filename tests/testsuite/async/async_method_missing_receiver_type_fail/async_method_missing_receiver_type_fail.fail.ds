@@ -1,0 +1,9 @@
+struct Box {
+  value: number
+}
+
+async fn (b) read() Promise<number> {
+  return b.value
+}
+
+console.log(await Box { value: 1 }.read())

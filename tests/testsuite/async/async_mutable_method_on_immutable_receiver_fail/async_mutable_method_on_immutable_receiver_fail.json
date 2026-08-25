@@ -1,0 +1,5 @@
+{
+  "title": "Calling an async mutable method on an immutable receiver fails",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Cannot call mutable method 'inc' on an immutable receiver"
+}

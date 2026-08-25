@@ -1,0 +1,2 @@
+import { add as plus } from "./math.ds";
+console.log(plus(2, 3));

@@ -1,0 +1,2 @@
+import { localValue } from "./values.ds";
+console.log(localValue);

@@ -1,0 +1,6 @@
+{
+  "title": "Labeled break fails",
+  "stage": "parse",
+  "expectedDiagnosticContains": "break/continue level must be a positive integer literal",
+  "notes": "DekaScript only supports numeric break/continue levels, not labels."
+}

@@ -1,0 +1,6 @@
+{
+  "title": "Object.assign on frozen objects fails",
+  "stage": "run",
+  "expectedDiagnosticContains": "not extensible",
+  "notes": "DekaScript freezes literals, so Object.assign mutates a frozen target."
+}

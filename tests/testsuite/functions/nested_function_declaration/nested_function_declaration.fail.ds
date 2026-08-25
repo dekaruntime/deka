@@ -1,0 +1,11 @@
+fn outer(flag: boolean) number {
+  if (flag) {
+    fn inner() number {
+      return 1
+    }
+    return inner()
+  }
+  return 0
+}
+console.log(outer(true))
+console.log(outer(false))

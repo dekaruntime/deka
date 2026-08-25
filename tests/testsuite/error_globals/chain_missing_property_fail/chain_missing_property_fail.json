@@ -1,0 +1,6 @@
+{
+  "title": "Chaining from a missing property fails",
+  "stage": "run",
+  "expectedDiagnosticContains": "Cannot read properties of undefined",
+  "notes": "x.b is undefined, so accessing .c throws."
+}

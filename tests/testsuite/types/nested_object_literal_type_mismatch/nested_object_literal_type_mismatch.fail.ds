@@ -1,0 +1,12 @@
+interface Point {
+  x: number
+  y: number
+}
+interface Line {
+  start: Point
+  end: Point
+}
+fn draw(l: Line) {
+  console.log(l.start.x)
+}
+draw({ start: { x: 0, y: "bad" }, end: { x: 1, y: 1 } })

@@ -1,5 +1,0 @@
-fn inc(n: number) number { return n + 1 }
-fn dbl(n: number) number { return n * 2 }
-
-const result = 5 |> dbl |> inc;
-console.log(result);

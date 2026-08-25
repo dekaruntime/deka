@@ -1,0 +1,6 @@
+{
+  "title": "Calling null as a function fails",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Null literals are not allowed in DekaScript.",
+  "notes": "Only functions are callable."
+}

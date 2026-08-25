@@ -1,0 +1,9 @@
+for (const outer of ["a"]) {
+  for (const inner of [1, 2, 3]) {
+    if (inner === 2) {
+      break
+    }
+
+    console.log(outer + inner)
+  }
+}

@@ -1,0 +1,8 @@
+struct Counter {
+  value: number
+}
+fn (c Counter) value() number {
+  return c.value
+}
+const c = Counter { value: 5 }
+console.log(c.value())

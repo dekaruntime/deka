@@ -1,0 +1,5 @@
+const r = unsafe { JSON.parse("invalid json") }
+console.log(match (r) {
+  Ok(v) => `ok: ${v}`,
+  Err(e) => `err: ${e.message}`,
+})

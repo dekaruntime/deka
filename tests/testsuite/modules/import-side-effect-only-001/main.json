@@ -1,0 +1,5 @@
+{
+  "title": "bare import without named exports is rejected",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Missing export"
+}

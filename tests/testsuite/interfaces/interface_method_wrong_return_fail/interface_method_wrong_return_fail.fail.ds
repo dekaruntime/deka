@@ -1,0 +1,13 @@
+interface Greeter {
+  fn greet() string
+}
+struct Person {
+  name: string
+}
+fn (p Person) greet() number {
+  return 1
+}
+fn welcome(g: Greeter) {
+  console.log(g.greet())
+}
+welcome(Person { name: "Deka" })

@@ -1,0 +1,8 @@
+struct Inner {
+  value: number
+}
+struct Outer {
+  Inner
+}
+const o = Outer {}
+console.log(o)

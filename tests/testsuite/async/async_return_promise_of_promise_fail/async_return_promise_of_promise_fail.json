@@ -1,0 +1,5 @@
+{
+  "title": "Returning Promise<Promise<T>> from async function fails",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Syntax error"
+}

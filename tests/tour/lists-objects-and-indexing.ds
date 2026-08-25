@@ -1,0 +1,4 @@
+const parts = ["north", "star"];
+const first = parts[0];
+const label = { first: first, count: parts.length };
+console.log(`${label.first}:${label.count}`);

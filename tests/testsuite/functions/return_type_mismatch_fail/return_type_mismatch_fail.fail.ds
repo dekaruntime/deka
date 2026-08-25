@@ -1,0 +1,4 @@
+fn answer() number {
+  return "forty-two"
+}
+console.log(answer())

@@ -1,0 +1,6 @@
+{
+  "title": "Enum duplicate payload type fails",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Duplicate payload field 'number' on enum case Shape::Rectangle",
+  "notes": ""
+}

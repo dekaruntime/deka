@@ -1,0 +1,7 @@
+interface Logger {
+  fn log(msg: string) void
+}
+fn makeLogger() Logger {
+  return { log: fn (msg: string) { console.log(msg) } }
+}
+makeLogger().log("hi")

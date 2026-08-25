@@ -1,0 +1,3 @@
+const x = match (1) {
+  1 => "one"
+console.log(x)

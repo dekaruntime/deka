@@ -1,0 +1,6 @@
+{
+  "title": "await inside a synchronous while loop fails",
+  "stage": "parse",
+  "expectedDiagnosticContains": "await is only allowed in async functions",
+  "notes": "await may only appear inside async functions."
+}

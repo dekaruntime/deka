@@ -1,0 +1,5 @@
+async fn greet() {
+  console.log("hi")
+}
+
+await greet()

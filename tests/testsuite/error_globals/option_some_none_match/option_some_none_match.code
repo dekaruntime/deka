@@ -1,0 +1,12 @@
+const a = Option.Some("value")
+const b = Option.None
+console.log(match (a) {
+  Some(v) => v,
+  None => "empty",
+  _ => "?",
+})
+console.log(match (b) {
+  Some(v) => v,
+  None => "empty",
+  _ => "?",
+})

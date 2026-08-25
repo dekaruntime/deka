@@ -1,0 +1,2 @@
+const result = { ok: false, error: "title is required" };
+console.log(result.error);

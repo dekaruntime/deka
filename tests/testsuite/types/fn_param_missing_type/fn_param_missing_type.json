@@ -1,0 +1,6 @@
+{
+  "title": "Function parameter without type annotation fails",
+  "stage": "parse",
+  "expectedDiagnosticContains": "DekaScript parameters require a type annotation",
+  "notes": "Bare parameters are rejected in DekaScript."
+}

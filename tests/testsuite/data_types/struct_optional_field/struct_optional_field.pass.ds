@@ -1,0 +1,8 @@
+struct Node {
+  value: number
+  next: Node?
+}
+const tail = Node { value: 2 }
+const head = Node { value: 1, next: Some(tail) }
+console.log(head.value)
+console.log(match (head.next) { Some(n) => n.value, None => 0 })

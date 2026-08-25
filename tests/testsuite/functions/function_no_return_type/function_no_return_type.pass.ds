@@ -1,0 +1,4 @@
+fn greet(name: string) {
+  console.log("Hi " + name)
+}
+greet("Deka")

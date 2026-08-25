@@ -1,0 +1,5 @@
+async fn main() {
+  console.log(await 1)
+}
+
+await main()

@@ -1,0 +1,5 @@
+{
+  "title": "Async anonymous function expressions are not supported",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Expected ':' after object key"
+}

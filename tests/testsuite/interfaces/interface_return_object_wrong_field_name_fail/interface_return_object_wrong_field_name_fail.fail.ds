@@ -1,0 +1,7 @@
+interface Named {
+  name: string
+}
+fn makeNamed() Named {
+  return { nombre: "A" }
+}
+console.log(makeNamed().name)

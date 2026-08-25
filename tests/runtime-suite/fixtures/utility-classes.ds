@@ -1,6 +1,0 @@
----
-fn Card() Component {
-  return <div class="p-4 bg-blue-500 text-white rounded">DekaScript</div>
-}
----
-<Card />

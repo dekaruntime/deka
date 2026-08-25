@@ -1,0 +1,6 @@
+{
+  "title": "Interface field type mismatch fails",
+  "stage": "parse",
+  "notes": "",
+  "expectedDiagnosticContains": "Argument 1 type mismatch: expected interface Named, got Object<{name: number}>"
+}

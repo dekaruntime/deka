@@ -1,8 +1,0 @@
-const Tags = globalThis.schema.array(globalThis.schema.string);
-const result = Tags.parse(["a", "b", "c"]);
-console.log(result.ok);
-console.log(result.value.length);
-
-const bad = Tags.parse(["a", 2, "c"]);
-console.log(bad.ok);
-console.log(bad.error.length);

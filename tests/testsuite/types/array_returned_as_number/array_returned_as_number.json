@@ -1,0 +1,6 @@
+{
+  "title": "Returning an array from a number-typed function fails",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Return type mismatch: expected number, got array",
+  "notes": "Arrays are distinct from scalar number return types."
+}

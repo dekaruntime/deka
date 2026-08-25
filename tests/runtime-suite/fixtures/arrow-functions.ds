@@ -1,6 +1,0 @@
-const typed = fn(n: number) number { return n * 2 };
-const untyped = fn(n: number) number { return n * 2 };
-const add = fn(left: number, right: number) number { return left + right };
-console.log(typed(21));
-console.log(untyped(21));
-console.log(add(20, 22));

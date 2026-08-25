@@ -1,0 +1,5 @@
+{
+  "title": "Assigning to an awaited expression fails",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Assignments can only happen to writable values"
+}

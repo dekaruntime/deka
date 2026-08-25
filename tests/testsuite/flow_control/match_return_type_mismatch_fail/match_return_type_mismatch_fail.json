@@ -1,0 +1,6 @@
+{
+  "title": "Match arm type mismatch in a typed return fails",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Return type mismatch: expected number, got number | string",
+  "notes": "When a match is returned from a typed function, all arms must agree with the return type."
+}

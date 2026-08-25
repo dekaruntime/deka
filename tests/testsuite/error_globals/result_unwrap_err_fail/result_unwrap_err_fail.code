@@ -1,0 +1,2 @@
+const r = Result.Err("bad")
+console.log(r.unwrap())

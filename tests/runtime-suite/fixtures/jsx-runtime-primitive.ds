@@ -1,2 +1,0 @@
-const node = globalThis.deka.ui.jsx("div", { "class": "container", children: "hello" })
-console.log(match (unsafe { JSON.stringify(node) }) { Ok(v) => v, Err(e) => e })

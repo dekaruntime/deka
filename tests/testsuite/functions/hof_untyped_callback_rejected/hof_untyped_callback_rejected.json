@@ -1,0 +1,5 @@
+{
+  "title": "Untyped callback parameter is rejected",
+  "stage": "parse",
+  "expectedDiagnosticContains": "DekaScript parameters require a type annotation"
+}

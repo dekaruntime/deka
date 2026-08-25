@@ -1,11 +1,52 @@
 # Testing Deka
 
-This repo has two in-tree test layers: Rust unit/integration tests, and
-`tests/runtime-suite/` (fixtures through the local CLI and WASM compiler).
+One language suite. This repo owns it. The other two repos are delivery
+vehicles. See [deka#292](https://github.com/dekaruntime/deka/issues/292) and
+[RFD 26](https://github.com/dekaruntime/rfd/issues/26).
 
-The **public diagnostic suite** is `dekaruntime/testsuite` (https://testsuite.deka.gg).
-It runs fixtures on the native isolate (`deka run`) and in a Chromium Worker.
-That is not Node. See [RFD 26](https://github.com/dekaruntime/rfd/issues/26).
+| Repo | Owns | Does not own |
+|---|---|---|
+| **deka** (this repo) | Every language test. `tests/testsuite/` (Hats folders: the public contract), `tests/tour/` (samples deka.gg displays), plus Rust / WASM. | The testsuite.deka.gg UI, tour markdown |
+| **testsuite** | The website: grid, live browser playground, **CACHED RESULTS** for native-only / packages / recorded-only. | Fixture sources. After #292 steps 2–3, CI does **not** re-run the suite. |
+| **website** | Lesson prose, titles, section order. CI: pinned WASM + tour sources compile, pages are not garbage. | The language. No second runtime suite. |
+
+`tests/testsuite` **is** the suite. Display names are never keys — match by
+stable id / slug.
+
+## The loop
+
+```bash
+./run.sh
+./run.sh --filter json
+./run.sh --list
+```
+
+That is the testsuite-repo `./run.sh` equivalent for this tree. It finds bun,
+builds `target/release/cli` (or uses `DEKA_NATIVE`), compiles every tour
+lesson, then runs Hats natively. Same files CI runs. Fail locally. Do not
+discover a language break on a Hats deploy.
+
+Native isolate only (`deka run`). Browser WASM stays the live playground on the
+site; dump-time browser results are a website concern until this repo publishes
+a dump (#292 step 2). The full log lands in `.cache/report.txt`.
+
+The bun commands below are what `./run.sh` invokes, for a subset or a rerun
+when the CLI is already built.
+
+## Pipelines
+
+1. **deka CI** — `tests/tour` + `tests/testsuite` (native). A language PR that
+   breaks a fixture is red here.
+2. **deka release** — dump native + browser (`tests/dump`), pack
+   `tests/tour` + `tests/testsuite` + `hats-results.json`, upload to
+   `wasm.deka.gg/v<VERSION>/conformance/` and `latest/conformance/`.
+3. **testsuite CI** — ingest that pack, `next build`, deploy. No second
+   `deka run` of 620 cases. No Chromium for conformance.
+4. **website** — sync tour sources **by id** next to the compiler artifact.
+   `curriculum.ts` has prose + `sourceId` only.
+
+Until steps 2–3 land, https://testsuite.deka.gg still dumps native + Chromium
+Worker itself. That dump is not the language gate. This tree is.
 
 ## Prerequisites
 
@@ -34,109 +75,114 @@ cargo test -p deka_compiler_wasm   # browser compiler; CI runs this via scripts/
 cargo test -p cli --lib -- --test-threads=1
 ```
 
-To run everything the CI runs (excluding the WASM browser build and the runtime
-execution suite):
+`cargo test -p php-rs` is deliberately absent from CI. It has a large number of
+pre-existing failures; do not treat its local red as a regression without
+diffing failure **names** against a clean `origin/main` worktree.
 
-```bash
-cargo build -p deka_http -p pool -p engine -p deka_js -p php-rs -p bundler
-cargo test -p deka_http
-cargo test -p pool
-cargo test -p engine
-cargo test -p deka_js
-cargo test -p php-rs
-cargo test -p bundler
-cargo test -p cli --lib -- --test-threads=1
+To reproduce CI's exact sequence, use the list in [`CI.md`](./CI.md), not the
+crate list above. CI covers `deka_compiler_wasm` via
+`scripts/test-deka-compiler-wasm.sh`, then builds the CLI and runs `./run.sh`.
+
+## Public conformance suite (`tests/testsuite`)
+
+Hats folders. Source of truth for https://testsuite.deka.gg.
+
+```
+tests/testsuite/<category>/<name>/
+  <name>.pass.ds | <name>.fail.ds
+  <name>.stdout          # optional exact stdout
+  <name>.code            # formatter output (website dump, not the native runner)
+  <name>.json            # title, stage, hosts, diagnostics, packages
 ```
 
-## DekaScript runtime execution suite
-
-The execution suite lives in `tests/runtime-suite/`. It compiles each
-fixture through the native CLI and the browser WASM compiler, runs the emitted
-JS with the Deka runtime globals, and asserts on stdout or compile diagnostics.
-
-Build the native CLI and the browser WASM compiler, then run the suite:
-
 ```bash
-# Native CLI (release build, as used by the harness)
 cargo build --release -p cli
-
-# Browser WASM compiler
-CARGO_INCREMENTAL=0 cargo build --release \
-  --target wasm32-unknown-unknown -p deka_compiler_wasm --no-default-features
-
-# Run the full suite
-bun tests/runtime-suite/run.mjs
+bun tests/testsuite/run.mjs
+bun tests/testsuite/run.mjs --filter json
+bun tests/testsuite/run.mjs --list
+bun tests/testsuite/run.mjs --jobs 4
 ```
 
-The harness picks the newest `deka_compiler.wasm` it can find between
-`target/wasm32-unknown-unknown/release/deka_compiler_wasm.wasm` and
-`dist/deka-compiler-wasm/deka_compiler.wasm`.
+Uses `target/release/cli` or `DEKA_NATIVE`. Native isolate only. The runner
+matches by slug (`category-name`), never by title. Fixtures with `hosts` that
+do not include `native` are skipped (JSX that needs `deka.ui` in the Worker,
+`console.assert`, and similar). Index `packages` fixtures run in the dump, not
+this language gate.
 
-### Running a subset
+### Adding a Hats fixture
+
+1. Create `tests/testsuite/<category>/<name>/`.
+2. Add `<name>.pass.ds` or `<name>.fail.ds`.
+3. Add `<name>.json` with `title`, `stage` (`parse` / `typecheck` / `run`), and
+   optional `hosts`, `expectedDiagnosticContains`, `packages`.
+4. For a passing run test, add `<name>.stdout` with exact native stdout.
+5. Run `bun tests/testsuite/run.mjs --filter <name>`.
+
+Multi-file cases put extra `.ds` modules next to the entry file. The entry must
+sit at the top of the folder (`*.pass.ds` / `*.fail.ds` with no `/` in the
+relative path). Metadata is read from `<entry-basename>.json` (for
+`main.pass.ds` that is `main.json`).
+
+## Tour lessons (`tests/tour`)
+
+Canonical DekaScript for deka.gg. The website owns prose; this directory owns
+the samples. Match by `id` in `manifest.json`, never by display name.
 
 ```bash
-# List every fixture currently registered
-bun tests/runtime-suite/run.mjs --list
-
-# Run only fixtures matching a substring of their display name
-bun tests/runtime-suite/run.mjs --filter structs
-bun tests/runtime-suite/run.mjs --filter option
+bun tests/tour/run.mjs
+bun tests/tour/run.mjs --filter structs
+bun tests/tour/run.mjs --list
 ```
 
-### Adding a fixture
+Compiles every lesson with the local CLI. A language PR that breaks a lesson
+fails here. `deka_compiler_wasm` unit tests and `browser-parity.mjs` load the
+same files.
 
-1. Create a `.ds` file in `tests/runtime-suite/fixtures/`.
-2. Add an entry to `tests/runtime-suite/fixtures.json`:
-   - `name` — human-readable name
-   - `file` — filename in `fixtures/`
-   - `expectCompile` — `true` if the fixture should compile
-   - `expectStdout` — expected stdout when compilation succeeds
-   - `expectError` — substring expected in diagnostics when compilation fails
-   - `xfail` — optional reason the test is currently expected to fail
+### Adding a lesson
 
-When you hit a weird tour example, copy the source into a new fixture, set the
-expected output, and run the suite. If it fails on `main`, you have a minimal
-reproduction before the bug reaches the website.
+1. Pick a stable `id` (slug, not a title). Website routes may alias it later.
+2. Add `tests/tour/<id>.ds`.
+3. Append an entry to `tests/tour/manifest.json`:
+   - `id` — the filename stem
+   - `title` — display only
+   - `expectCompile` — `true` / `false`
+   - `expectError` — substring of the diagnostic when compile must fail
+4. Run `bun tests/tour/run.mjs --filter <id>`.
 
-## Testing a runtime checkout against the public suite
+An `.ds` file without a manifest row (or the reverse) is a hard error.
 
-The in-tree suites above test this repo against itself. They cannot tell you how
-a compiler change behaves on the two real hosts — the native isolate and the
-browser Worker running the same fixture. That is what `dekaruntime/testsuite`
-is for, and it runs locally against whatever checkout you point it at.
+## Browser compiler WASM smoke test
 
-Run it for any change to the compiler, the typechecker, diagnostics, or the
-emitted JS.
+```bash
+DEKA_SKIP_DIRTY_CHECK=1 scripts/test-deka-compiler-wasm.sh
+```
 
-### Running it
+Builds the browser compiler, runs its in-crate tests (including every
+`tests/tour` lesson against the WASM ABI), then `browser-parity.mjs`.
+
+## Dual-host dump (testsuite website, transitional)
+
+`bun tests/testsuite/run.mjs` is the in-tree native gate. Until #292 steps 2–3
+land, the published site still compiles and runs **both** hosts: native isolate
+(`deka run`) and a Chromium Worker. Node is not an execution host.
+
+That dump reports on the runtime you point it at. Failures and native/browser
+divergences are findings to read, not a pass/fail verdict. Exit `0` means the
+suite ran; exit `2` means the environment could not support a run.
 
 ```bash
 git clone git@github.com:dekaruntime/testsuite.git
 cd testsuite
 ./run.sh /path/to/your/deka/checkout
+./run.sh                   # auto-detect ($DEKA_REPO, ../deka, ...)
+./run.sh --published       # released compilers instead
 ```
 
-That is the whole procedure. `run.sh` installs dependencies and Chromium if
-missing, builds the native CLI and the wasm compiler from the checkout you name,
-runs every fixture against both hosts, and writes `.cache/report.txt`.
-
-```bash
-./run.sh ~/Projects/deka   # test that checkout
-./run.sh                   # same, auto-detecting ($DEKA_REPO, ../deka, ...)
-./run.sh --published       # test the released compilers instead
-```
-
-It reports on the runtime you point it at. Failures and native/browser
-divergences are findings to read, not a pass/fail verdict. Exit `0` means the
-suite ran; exit `2` means the environment could not support a run, which is
-never a statement about your runtime.
-
-The setup is deliberately not left to the reader. Chromium in particular is a
-separate download from the npm package, and without it the browser host drops
-and the suite reports zero divergences no matter what the browser compiler does
--- a run that looks *healthier* than a correct one. Both compilers are rebuilt
-every run because cargo is incremental and it is the only way to guarantee the
-two hosts came from one source.
+`run.sh` installs dependencies and Chromium if missing, builds both compilers
+from the checkout you name, and writes `.cache/report.txt`. Chromium is a
+separate download from the npm package. Without it the browser host drops and
+the suite reports zero divergences — a run that looks *healthier* than a
+correct one.
 
 ### What preflight asserts, and why each one exists
 
@@ -148,19 +194,9 @@ two hosts came from one source.
 | both hosts available | A host that did not run cannot be reported on, so the harness refuses rather than publishing half a result |
 
 Every one of these has produced a confident wrong answer in practice. A broken
-environment does not look broken -- it looks like a clean run with a number you
+environment does not look broken — it looks like a clean run with a number you
 would quote.
 
 Note `[hats build] wasm compiler version=` comes from the published CDN
 manifest. When testing a local checkout it says so explicitly rather than
 implying the artifact under test carries that version.
-
-## Browser compiler WASM smoke test
-
-CI also runs a dedicated WASM build/test script:
-
-```bash
-DEKA_SKIP_DIRTY_CHECK=1 scripts/test-deka-compiler-wasm.sh
-```
-
-This builds the browser compiler and runs its own in-WASM tests.

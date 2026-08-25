@@ -1,0 +1,5 @@
+{
+  "title": "Template literals are rejected",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Unexpected token"
+}

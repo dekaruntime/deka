@@ -1,0 +1,4 @@
+fn f(x: number) number {
+  return x
+}
+console.log(f(["1", "2"]))

@@ -1,0 +1,5 @@
+const r = unsafe { deka.panic("boom") }
+console.log(match (r) {
+  Ok(v) => `ok: ${v}`,
+  Err(e) => `err: ${e.message}`,
+})

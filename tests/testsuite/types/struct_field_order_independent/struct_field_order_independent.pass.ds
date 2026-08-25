@@ -1,0 +1,6 @@
+struct Point {
+  x: number
+  y: number
+}
+const p = Point { y: 2, x: 1 }
+console.log(p.x)

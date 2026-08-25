@@ -1,0 +1,6 @@
+fn demo() number {
+  let a = 1
+  const b = a + 2
+  return b
+}
+console.log(demo())

@@ -1,0 +1,14 @@
+interface Shouter {
+  fn shout(msg: string) void {}
+}
+
+struct Bullhorn {}
+fn (b Bullhorn) shout(msg: string) {
+  console.log(msg)
+}
+
+fn runShouter(s: Shouter) {
+  s.shout("hey")
+}
+
+runShouter(Bullhorn {  })

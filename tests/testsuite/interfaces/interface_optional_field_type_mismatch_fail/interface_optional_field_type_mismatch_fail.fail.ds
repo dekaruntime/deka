@@ -1,0 +1,8 @@
+interface Card {
+  title: string
+  subtitle?: string
+}
+fn show(c: Card) {
+  console.log(c.title, c.subtitle)
+}
+show({ title: "Hello", subtitle: 42 })

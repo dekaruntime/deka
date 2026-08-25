@@ -1,0 +1,6 @@
+{
+  "title": "Unclosed JSX tag fails",
+  "stage": "parse",
+  "notes": "",
+  "expectedDiagnosticContains": "Unterminated JSX children"
+}

@@ -1,0 +1,14 @@
+interface Named {
+  name: string;
+}
+
+struct Person {
+  name: string;
+  age: number;
+}
+
+fn show(n: Named) {
+  console.log(n.name)
+}
+
+show(Person { name: "X", age: 1 })

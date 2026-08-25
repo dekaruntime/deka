@@ -1,0 +1,10 @@
+async fn double(x: number) Promise<number> {
+  return x * 2
+}
+async fn main() {
+  const arr = [1, 2, 3]
+  for (const x of arr) {
+    console.log(await double(x))
+  }
+}
+await main()

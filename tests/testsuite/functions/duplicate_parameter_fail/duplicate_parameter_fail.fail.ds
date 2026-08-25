@@ -1,0 +1,4 @@
+fn add(x: number, x: number) number {
+  return x + x
+}
+console.log(add(1, 2))

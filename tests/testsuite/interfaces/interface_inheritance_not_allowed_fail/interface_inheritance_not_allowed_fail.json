@@ -1,0 +1,5 @@
+{
+  "title": "Interface inheritance is not allowed",
+  "stage": "parse",
+  "expectedDiagnosticContains": "interface inheritance is not allowed in DekaScript"
+}

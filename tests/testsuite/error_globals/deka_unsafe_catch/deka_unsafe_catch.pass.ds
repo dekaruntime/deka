@@ -1,0 +1,2 @@
+const x = unsafe { panic("inner") }
+console.log(match (x) { Ok(v) => v, Err(_) => 99 })

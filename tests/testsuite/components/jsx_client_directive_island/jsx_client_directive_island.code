@@ -1,0 +1,7 @@
+const ui = globalThis.deka.ui
+fn Counter(props: object) object {
+  return ui.jsx("button", {children: "0"})
+}
+
+const html = ui.renderToString(ui.jsx(Counter, {"client:load": true}))
+console.log(html.html)

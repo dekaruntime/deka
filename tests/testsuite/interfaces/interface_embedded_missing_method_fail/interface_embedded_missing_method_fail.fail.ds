@@ -1,0 +1,11 @@
+interface Mover {
+  fn move() string
+}
+struct Wheels {}
+struct Robot {
+  Wheels
+}
+fn run(m: Mover) {
+  console.log(m.move())
+}
+run(Robot { Wheels: Wheels {} })

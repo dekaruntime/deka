@@ -1,0 +1,13 @@
+struct Point {
+  x: number
+  y: number
+}
+
+fn (p mut Point) translate(dx: number, dy: number) void {
+  p.x += dx
+  p.y += dy
+}
+
+let p = Point { x: 1, y: 2 };
+p.translate(3, 4);
+console.log(p.x + p.y);

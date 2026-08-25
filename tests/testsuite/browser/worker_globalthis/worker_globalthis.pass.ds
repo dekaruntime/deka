@@ -1,0 +1,2 @@
+const r = unsafe { typeof TextEncoder }
+console.log(match (r) { Ok(v) => v, Err(e) => "err" })

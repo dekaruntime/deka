@@ -1,0 +1,5 @@
+{
+  "title": "Enum payload match fails at runtime",
+  "stage": "run",
+  "notes": "Compile succeeds, but generated JS references undefined match identifiers A/B."
+}

@@ -1,0 +1,6 @@
+const r = Result.Ok(42)
+console.log(match (r) {
+  Ok(v) => v,
+  Err(e) => -1,
+  _ => -2,
+})

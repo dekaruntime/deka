@@ -1,0 +1,5 @@
+{
+  "title": "Assigning to console is currently allowed",
+  "stage": "run",
+  "notes": "The compiler rewrites the assignment into a local let that is accessed in its TDZ."
+}

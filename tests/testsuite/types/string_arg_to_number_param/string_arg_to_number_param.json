@@ -1,0 +1,6 @@
+{
+  "title": "String argument passed to number parameter fails",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Argument 1 type mismatch: expected number, got string",
+  "notes": "Primitive argument type mismatch is caught."
+}

@@ -1,0 +1,3 @@
+const obj = { a: 1 }
+const encoded = unsafe { JSON.stringify(obj) }
+console.log(match (encoded) { Ok(v) => v, Err(_) => "" })

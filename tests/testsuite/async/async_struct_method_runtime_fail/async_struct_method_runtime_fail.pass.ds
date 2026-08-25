@@ -1,0 +1,11 @@
+struct Counter {
+  count: number
+}
+
+async fn (c Counter) fetch() Promise<number> {
+  return c.count
+}
+
+const counter = Counter { count: 7 }
+const value = await counter.fetch()
+console.log(value)

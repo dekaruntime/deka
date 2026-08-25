@@ -1,0 +1,2 @@
+const x = Option.Some(5)
+console.log(x.unwrap())

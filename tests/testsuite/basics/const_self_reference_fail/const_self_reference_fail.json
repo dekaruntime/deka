@@ -1,0 +1,6 @@
+{
+  "title": "Self-referencing const initializer fails",
+  "stage": "parse",
+  "notes": "",
+  "expectedDiagnosticContains": "`x` cannot be used in its own initializer"
+}

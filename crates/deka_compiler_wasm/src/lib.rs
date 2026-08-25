@@ -2,15 +2,15 @@
 //!
 //! The neutral `deka_compiler_*` exports are the only browser-facing ABI.
 
-use std::alloc::{Layout, alloc, dealloc};
+use std::alloc::{alloc, dealloc, Layout};
 use std::{ptr, slice, str};
 
 use bumpalo::Bump;
 use modules_php::{
     compiler_api::compile_deka,
     validation::{
-        Severity, ValidationError, ValidationWarning, format_validation_error,
-        format_validation_warning,
+        format_validation_error, format_validation_warning, Severity, ValidationError,
+        ValidationWarning,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -173,7 +173,11 @@ struct FormatResponse {
     diagnostics: Vec<Diagnostic>,
 }
 
-pub(crate) fn read_utf8<'a>(ptr: *const u8, len: u32, label: &'static str) -> Result<&'a str, &'static str> {
+pub(crate) fn read_utf8<'a>(
+    ptr: *const u8,
+    len: u32,
+    label: &'static str,
+) -> Result<&'a str, &'static str> {
     if len == 0 {
         return Ok("");
     }
@@ -280,9 +284,11 @@ fn compile_request(source: &str, filename: &str, requested_mode: &str) -> String
             meta.host_is_browser = true;
             match deka_js::emit_js_from_ast_with_warnings(program, source.as_bytes(), meta) {
                 Ok((code, warnings)) => {
-                    diagnostics.extend(warnings.into_iter().map(|message| {
-                        internal_diagnostic(filename, source, message)
-                    }));
+                    diagnostics.extend(
+                        warnings
+                            .into_iter()
+                            .map(|message| internal_diagnostic(filename, source, message)),
+                    );
                     code
                 }
                 Err(message) => {
@@ -338,7 +344,11 @@ fn diagnostic_from_error(error: &ValidationError, source: &str, filename: &str) 
     }
 }
 
-fn diagnostic_from_warning(warning: &ValidationWarning, source: &str, filename: &str) -> Diagnostic {
+fn diagnostic_from_warning(
+    warning: &ValidationWarning,
+    source: &str,
+    filename: &str,
+) -> Diagnostic {
     Diagnostic {
         severity: severity_label(warning.severity),
         code: warning.kind.as_str().to_string(),
@@ -455,11 +465,64 @@ mod tests {
     use serde_json::Value;
 
     #[derive(Deserialize)]
-    struct TourCase {
-        name: String,
-        source: String,
+    #[serde(rename_all = "camelCase")]
+    struct TourLesson {
+        id: String,
+        title: String,
         expect_compile: bool,
         expect_error: Option<String>,
+    }
+
+    fn load_tour_lessons() -> Vec<(TourLesson, String)> {
+        let tour_dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/tour");
+        let manifest_path = tour_dir.join("manifest.json");
+        let manifest: Vec<TourLesson> = serde_json::from_str(
+            &std::fs::read_to_string(&manifest_path)
+                .unwrap_or_else(|error| panic!("read {}: {error}", manifest_path.display())),
+        )
+        .expect("tests/tour/manifest.json");
+
+        let ds_files: Vec<String> = std::fs::read_dir(&tour_dir)
+            .unwrap_or_else(|error| panic!("read {}: {error}", tour_dir.display()))
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "ds"))
+            .map(|entry| {
+                entry
+                    .path()
+                    .file_stem()
+                    .expect("tour .ds stem")
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+
+        let manifest_ids: std::collections::HashSet<&str> =
+            manifest.iter().map(|lesson| lesson.id.as_str()).collect();
+        for id in &ds_files {
+            assert!(
+                manifest_ids.contains(id.as_str()),
+                "tests/tour/{id}.ds is not listed in manifest.json"
+            );
+        }
+        for lesson in &manifest {
+            assert!(
+                ds_files.iter().any(|id| id == &lesson.id),
+                "manifest id {} has no tests/tour/{}.ds",
+                lesson.id,
+                lesson.id
+            );
+        }
+
+        manifest
+            .into_iter()
+            .map(|lesson| {
+                let source_path = tour_dir.join(format!("{}.ds", lesson.id));
+                let source = std::fs::read_to_string(&source_path)
+                    .unwrap_or_else(|error| panic!("read {}: {error}", source_path.display()));
+                (lesson, source)
+            })
+            .collect()
     }
 
     #[test]
@@ -472,11 +535,9 @@ mod tests {
         assert_eq!(response["ok"], true);
         assert_eq!(response["metadata"]["language"], "deka");
         assert_eq!(response["metadata"]["filename"], "lesson.ds");
-        assert!(
-            response["output"]["code"]
-                .as_str()
-                .is_some_and(|code| code.contains("const answer = deka.freeze(42)"))
-        );
+        assert!(response["output"]["code"]
+            .as_str()
+            .is_some_and(|code| code.contains("const answer = deka.freeze(42)")));
         assert_eq!(response["diagnostics"].as_array().map(Vec::len), Some(0));
     }
 
@@ -491,21 +552,17 @@ mod tests {
 
         assert_eq!(filename_response["ok"], false);
         assert_eq!(filename_response["metadata"]["language"], "unknown");
-        assert!(
-            filename_response["diagnostics"][0]["message"]
-                .as_str()
-                .is_some_and(|message| message.contains("only accepts .ds"))
-        );
+        assert!(filename_response["diagnostics"][0]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("only accepts .ds")));
 
         let mode_response: Value =
             serde_json::from_str(&compile_request("const answer = 42;", "lesson.ds", "phpx"))
                 .expect("response JSON");
         assert_eq!(mode_response["ok"], false);
-        assert!(
-            mode_response["diagnostics"][0]["message"]
-                .as_str()
-                .is_some_and(|message| message.contains("supported modes are `auto` and `deka`"))
-        );
+        assert!(mode_response["diagnostics"][0]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("supported modes are `auto` and `deka`")));
     }
 
     #[test]
@@ -543,8 +600,8 @@ mod tests {
 
 const origin = Point { x: 3, y: 4 };
 "#;
-        let response: Value =
-            serde_json::from_str(&compile_request(source, "struct.ds", "deka")).expect("response JSON");
+        let response: Value = serde_json::from_str(&compile_request(source, "struct.ds", "deka"))
+            .expect("response JSON");
 
         assert_eq!(response["ok"], true, "{response}");
         let code = response["output"]["code"]
@@ -566,29 +623,30 @@ const origin = Point { x: 3, y: 4 };
 
     #[test]
     fn all_website_tour_sources_match_the_native_abi_contract() {
-        let cases: Vec<TourCase> =
-            serde_json::from_str(include_str!("../tests/fixtures/deka-tour-sources.json"))
-                .expect("website tour fixture JSON");
-        assert_eq!(cases.len(), 37, "all website tour sources must be covered");
+        let lessons = load_tour_lessons();
+        assert!(
+            !lessons.is_empty(),
+            "tests/tour must contain at least one lesson"
+        );
 
-        for case in cases {
-            let response: Value =
-                serde_json::from_str(&compile_request(&case.source, "tour.ds", "deka"))
-                    .unwrap_or_else(|error| {
-                        panic!("{}: invalid response JSON: {error}", case.name)
-                    });
+        for (lesson, source) in lessons {
+            let filename = format!("{}.ds", lesson.id);
+            let response: Value = serde_json::from_str(&compile_request(
+                &source, &filename, "deka",
+            ))
+            .unwrap_or_else(|error| panic!("{}: invalid response JSON: {error}", lesson.id));
             assert_eq!(
-                response["ok"], case.expect_compile,
-                "{}: {response}",
-                case.name
+                response["ok"], lesson.expect_compile,
+                "{} ({}): {response}",
+                lesson.id, lesson.title
             );
-            if case.expect_compile {
+            if lesson.expect_compile {
                 assert!(
                     response["output"]["code"].as_str().is_some(),
                     "{}: {response}",
-                    case.name
+                    lesson.id
                 );
-            } else if let Some(expected_error) = case.expect_error {
+            } else if let Some(expected_error) = lesson.expect_error {
                 assert!(
                     response["diagnostics"]
                         .as_array()
@@ -600,7 +658,7 @@ const origin = Point { x: 3, y: 4 };
                             })
                         }),
                     "{}: expected diagnostic containing {expected_error:?}: {response}",
-                    case.name
+                    lesson.id
                 );
             }
         }

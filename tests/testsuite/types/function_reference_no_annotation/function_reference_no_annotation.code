@@ -1,0 +1,6 @@
+fn f(x: number) number {
+  return x
+}
+
+const g = f
+console.log(g(42))

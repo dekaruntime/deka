@@ -1,0 +1,15 @@
+---
+interface ButtonProps {
+  label: string;
+  onClick: fn() void
+}
+
+fn Button({ label, onClick }: ButtonProps) Component {
+  return <button onClick={onClick}>{label}</button>
+}
+
+fn handleClick() void {
+  console.log("clicked")
+}
+---
+<Button label="Click me" onClick={handleClick} />

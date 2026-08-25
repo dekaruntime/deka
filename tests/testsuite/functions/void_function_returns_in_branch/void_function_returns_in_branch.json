@@ -1,0 +1,6 @@
+{
+  "title": "Returning a value from a void function inside a branch fails",
+  "stage": "parse",
+  "notes": "",
+  "expectedDiagnosticContains": "Return type mismatch: expected object, got number"
+}

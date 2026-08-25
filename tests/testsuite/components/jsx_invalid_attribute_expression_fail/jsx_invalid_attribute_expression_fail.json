@@ -1,0 +1,6 @@
+{
+  "title": "Invalid JSX attribute expression fails",
+  "stage": "parse",
+  "notes": "",
+  "expectedDiagnosticContains": "Syntax error"
+}

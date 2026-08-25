@@ -1,0 +1,6 @@
+{
+  "title": "Unmatched JSX closing tag fails",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Unexpected token in JSX attributes",
+  "notes": ""
+}

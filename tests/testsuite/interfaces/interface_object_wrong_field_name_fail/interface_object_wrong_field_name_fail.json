@@ -1,0 +1,6 @@
+{
+  "title": "Object literal with wrong field name fails interface check",
+  "stage": "parse",
+  "notes": "",
+  "expectedDiagnosticContains": "Argument 1 type mismatch: expected interface Named, got Object<{nombre: string}>"
+}

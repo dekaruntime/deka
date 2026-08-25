@@ -1,0 +1,6 @@
+{
+  "title": "Accessing an unknown struct field fails",
+  "stage": "parse",
+  "expectedDiagnosticContains": "Unknown struct field 'Point::y'",
+  "notes": "Struct field access is restricted to declared fields."
+}

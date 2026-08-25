@@ -1,0 +1,7 @@
+fn apply(f, x: number) number {
+  return f(x)
+}
+fn inc(n: number) number {
+  return n + 1
+}
+console.log(apply(inc, 5))

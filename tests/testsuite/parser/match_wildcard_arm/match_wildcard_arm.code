@@ -1,0 +1,7 @@
+const x = 42
+const result = match (x) {
+  1 => "one",
+  _ => "other",
+}
+
+console.log(result)

@@ -1,0 +1,4 @@
+const start = 2;
+let total = start;
+total += 3;
+console.log(total);

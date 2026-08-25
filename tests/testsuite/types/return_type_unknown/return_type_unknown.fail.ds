@@ -1,0 +1,2 @@
+fn f() NotAType {}
+console.log("ok")

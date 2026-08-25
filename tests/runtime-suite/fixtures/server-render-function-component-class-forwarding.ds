@@ -1,8 +1,0 @@
-fn Card(props: object) object {
-  return globalThis.deka.ui.jsx("div", { children: props.children })
-}
-
-const result = globalThis.deka.ui.renderToString(
-  globalThis.deka.ui.jsx(Card, { class: "bg-blue-300 w-[50%] p-4", children: "Hello" })
-)
-console.log(result.html)

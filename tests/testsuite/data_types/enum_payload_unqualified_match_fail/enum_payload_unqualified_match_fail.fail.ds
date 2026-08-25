@@ -1,0 +1,9 @@
+enum Shape {
+  Circle(number)
+  Square(number)
+}
+const s = Shape.Circle(5)
+match (s) {
+  Circle(r) => console.log(r)
+  Square(side) => console.log(side)
+}

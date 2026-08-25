@@ -1,0 +1,3 @@
+const arr = []
+const sum = arr.reduce(fn (acc: number, x: number) number { return acc + x })
+console.log(sum)

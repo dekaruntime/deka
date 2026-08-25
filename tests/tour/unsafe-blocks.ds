@@ -1,0 +1,2 @@
+const result = unsafe { 21 + 21 }
+console.log(match (result) { Ok(v) => v, Err(_) => 0 })
