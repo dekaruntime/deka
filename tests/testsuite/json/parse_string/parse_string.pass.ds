@@ -1,0 +1,5 @@
+import { parse } from "json"
+console.log(match (parse("\"hi\"")) {
+  Ok(v) => v,
+  Err(e) => "fail"
+})

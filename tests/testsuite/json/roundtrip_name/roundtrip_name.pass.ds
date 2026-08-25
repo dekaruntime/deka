@@ -1,0 +1,13 @@
+import { stringify, parse } from "json"
+const encoded = match (stringify({ name: "deka" })) {
+  Ok(v) => v,
+  Err(e) => ""
+}
+const name = match (parse(encoded)) {
+  Err(e) => "",
+  Ok(o) => match (unsafe { String(o.name) }) {
+    Ok(v) => v,
+    Err(e) => ""
+  }
+}
+console.log(name)

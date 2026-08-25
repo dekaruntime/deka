@@ -1,0 +1,4 @@
+import { now } from "time"
+const a = now()
+const b = now()
+console.log(b >= a)

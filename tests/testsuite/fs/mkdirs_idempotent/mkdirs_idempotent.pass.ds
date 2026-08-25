@@ -1,0 +1,7 @@
+import { mkdirs } from "fs"
+async fn go() {
+  await mkdirs(".cache/id")
+  const r = await mkdirs(".cache/id")
+  console.log(match (r) { Ok(v) => "ok", Err(e) => "err" })
+}
+go()

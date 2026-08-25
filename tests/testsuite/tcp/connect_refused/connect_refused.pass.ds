@@ -1,0 +1,5 @@
+import { connect } from "tcp"
+console.log(match (connect("127.0.0.1", 1)) {
+  Ok(h) => "ok",
+  Err(e) => "err"
+})

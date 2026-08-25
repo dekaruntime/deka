@@ -1,0 +1,9 @@
+import { parse_url } from "http"
+const u = match (parse_url("https://example.com/path")) {
+  Ok(v) => v,
+  Err(e) => { host: "", path: "", port: 0, scheme: "" }
+}
+console.log(match (unsafe { Number(u.port) }) {
+  Ok(v) => v,
+  Err(e) => 0
+})

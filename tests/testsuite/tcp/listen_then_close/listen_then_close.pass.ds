@@ -1,0 +1,13 @@
+import { listen, close } from "tcp"
+const h = match (listen("127.0.0.1", 0)) {
+  Ok(v) => v,
+  Err(e) => -1
+}
+if (h == -1) {
+  console.log("err")
+} else {
+  console.log(match (close(h)) {
+    Ok(v) => "ok",
+    Err(e) => "err"
+  })
+}

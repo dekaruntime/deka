@@ -1,0 +1,2 @@
+import { now } from "time"
+console.log(now() > 0)

@@ -1,0 +1,3 @@
+import { sha256 } from "crypto"
+const r = sha256("abc")
+console.log(r)

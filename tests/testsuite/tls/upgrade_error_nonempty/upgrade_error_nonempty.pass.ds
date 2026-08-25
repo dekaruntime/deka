@@ -1,0 +1,9 @@
+import { upgrade } from "tls"
+const msg = match (upgrade(0, "localhost")) {
+  Ok(h) => "",
+  Err(e) => match (unsafe { String(e) }) {
+    Ok(s) => s,
+    Err(err) => ""
+  }
+}
+console.log(msg.length > 0)
