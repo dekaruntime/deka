@@ -134,6 +134,25 @@ fn ds_allows_declared_function_calls() {
 }
 
 #[test]
+fn ds_generic_export_fn_emits_named_export() {
+    let source = r#"
+        export fn identity<T>(value: T) T {
+            return value
+        }
+    "#;
+    let js = crate::compile_phpx_source_to_js(
+        source,
+        "id.ds",
+        crate::parse_source_module_meta(source),
+    )
+    .expect("generic export fn should compile");
+    assert!(
+        js.contains("export function identity(value)"),
+        "generic export fn must emit a JS export named after the function, not the type params:\n{js}"
+    );
+}
+
+#[test]
 fn ds_generic_variadic_identity_preserves_all_rest_values() {
     let source = r#"
         fn collect<T>(...values: Array<T>) Array<T> {
