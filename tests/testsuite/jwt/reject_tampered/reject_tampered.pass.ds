@@ -1,0 +1,20 @@
+import { sign, verify } from "jwt"
+fn utf8(value: string): bytes {
+  let encoded = unsafe { new TextEncoder().encode(value) }
+  return match (encoded) {
+    Ok(buf) => buf,
+    Err(err) => utf8("")
+  }
+}
+const token = match (sign({ sub: "1" }, utf8("secret"), {})) {
+  Ok(v) => v,
+  Err(e) => ""
+}
+const tampered = match (unsafe { token.slice(0, -1) + (token.slice(-1) === "A" ? "B" : "A") }) {
+  Ok(v) => v,
+  Err(e) => token
+}
+console.log(match (verify(tampered, utf8("secret"), {})) {
+  Ok(v) => "ok",
+  Err(e) => "err"
+})

@@ -1,0 +1,13 @@
+import { format_request } from "http"
+fn utf8(value: string): bytes {
+  let encoded = unsafe { new TextEncoder().encode(value) }
+  return match (encoded) {
+    Ok(buf) => buf,
+    Err(err) => utf8("")
+  }
+}
+const req = format_request("GET", "/hello", "example.com", {}, utf8(""))
+console.log(match (unsafe { req.indexOf("GET /hello HTTP/1.1") == 0 }) {
+  Ok(v) => v,
+  Err(e) => false
+})

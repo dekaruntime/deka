@@ -1,0 +1,9 @@
+import { parse } from "json"
+const v = match (parse("{\"x\":2}")) {
+  Ok(o) => o,
+  Err(e) => { x: 0 }
+}
+console.log(match (unsafe { Number(v.x) }) {
+  Ok(n) => n,
+  Err(e) => -1
+})

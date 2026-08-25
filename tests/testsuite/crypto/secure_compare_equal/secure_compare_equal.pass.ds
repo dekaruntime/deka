@@ -1,0 +1,12 @@
+import { secure_compare } from "crypto"
+fn utf8(value: string): bytes {
+  let encoded = unsafe { new TextEncoder().encode(value) }
+  return match (encoded) {
+    Ok(buf) => buf,
+    Err(err) => utf8("")
+  }
+}
+console.log(match (secure_compare(utf8("abc"), utf8("abc"))) {
+  Ok(v) => v,
+  Err(e) => false
+})

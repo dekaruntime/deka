@@ -1,0 +1,5 @@
+import { validate } from "json"
+console.log(match (validate("{")) {
+  Ok(v) => v,
+  Err(e) => true
+})

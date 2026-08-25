@@ -1,0 +1,4 @@
+import { now, sleep_ms } from "time"
+const before = now()
+sleep_ms(0)
+console.log(now() - before < 1000)

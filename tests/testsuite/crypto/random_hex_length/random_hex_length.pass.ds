@@ -1,0 +1,5 @@
+import { random_hex } from "crypto"
+console.log(match (random_hex(8)) {
+  Ok(v) => v.length,
+  Err(e) => 0
+})

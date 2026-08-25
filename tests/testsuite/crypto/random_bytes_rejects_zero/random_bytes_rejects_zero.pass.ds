@@ -1,0 +1,5 @@
+import { random_bytes } from "crypto"
+console.log(match (random_bytes(0)) {
+  Ok(v) => "ok",
+  Err(e) => "err"
+})

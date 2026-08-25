@@ -1,0 +1,5 @@
+import { sleep_ms } from "time"
+console.log(match (sleep_ms(3)) {
+  Ok(v) => v,
+  Err(e) => -1
+})

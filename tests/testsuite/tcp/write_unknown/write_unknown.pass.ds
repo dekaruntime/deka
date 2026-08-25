@@ -1,0 +1,14 @@
+import { write } from "tcp"
+fn utf8(value: string): bytes {
+  let encoded = unsafe { new TextEncoder().encode(value) }
+  return match (encoded) {
+    Ok(buf) => buf,
+    Err(err) => utf8("")
+  }
+}
+let data = utf8("x")
+
+console.log(match (write(0, data)) {
+  Ok(v) => "ok",
+  Err(e) => "err"
+})

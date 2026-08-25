@@ -1,0 +1,28 @@
+import { sha384 } from "crypto"
+fn utf8(value: string): bytes {
+  let encoded = unsafe { new TextEncoder().encode(value) }
+  return match (encoded) {
+    Ok(buf) => buf,
+    Err(err) => utf8("")
+  }
+}
+fn to_hex(value: bytes): string {
+  let r = unsafe {
+    var s = "";
+    var i = 0;
+    for (i = 0; i < value.byteLength; i++) {
+      var hex = value[i].toString(16);
+      s += hex.length < 2 ? "0" + hex : hex;
+    }
+    return s;
+  }
+  return match (r) {
+    Ok(v) => v,
+    Err(e) => ""
+  }
+}
+const r = sha384(utf8("abc"))
+console.log(match (r) {
+  Ok(v) => to_hex(v),
+  Err(e) => "fail"
+})
