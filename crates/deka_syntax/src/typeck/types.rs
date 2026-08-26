@@ -31,6 +31,8 @@ pub enum Type<'a> {
         base: &'a str,
         args: Vec<Type<'a>>,
     },
+    /// A user-defined struct type.
+    Struct { name: &'a str },
 }
 
 impl<'a> Type<'a> {
@@ -68,6 +70,7 @@ impl fmt::Display for Type<'_> {
                 }
                 write!(f, ">")
             }
+            Type::Struct { name } => write!(f, "{name}"),
         }
     }
 }

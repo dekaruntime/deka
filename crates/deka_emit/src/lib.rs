@@ -182,10 +182,10 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) -> Result<(), String>
             write_indent(out, indent);
             out.push('}');
         }
-        Stmt::ReceiverMethod { .. }
-        | Stmt::Struct { .. }
-        | Stmt::Enum { .. }
-        | Stmt::TypeAlias { .. } => {
+        Stmt::Struct { .. } | Stmt::Enum { .. } | Stmt::TypeAlias { .. } => {
+            // Type declarations are erased at runtime.
+        }
+        Stmt::ReceiverMethod { .. } => {
             return Err(format!("unsupported statement: {:?}", stmt));
         }
     }
@@ -274,6 +274,18 @@ fn emit_expr(out: &mut String, expr: &Expr) -> Result<(), String> {
             emit_expr(out, object)?;
             out.push('.');
             out.push_str(field);
+        }
+        Expr::StructLiteral { fields, .. } => {
+            out.push_str("({ ");
+            for (i, field) in fields.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(field.name);
+                out.push_str(": ");
+                emit_expr(out, &field.value)?;
+            }
+            out.push_str(" })");
         }
         Expr::IndexAccess { object, index, .. } => {
             emit_expr(out, object)?;
@@ -364,8 +376,7 @@ fn emit_expr(out: &mut String, expr: &Expr) -> Result<(), String> {
         } => {
             emit_match(out, scrutinee, arms)?;
         }
-        Expr::StructLiteral { .. }
-        | Expr::Pipe { .. }
+        Expr::Pipe { .. }
         | Expr::Await { .. }
         | Expr::JsxElement { .. }
         | Expr::JsxFragment { .. } => {
@@ -578,5 +589,14 @@ mod tests {
         let out = parse_and_emit("const o = Some(5);");
         assert!(out.contains("__case"), "expected case tag, got: {}", out);
         assert!(out.contains("Some"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_struct_literal() {
+        let out = parse_and_emit(
+            "struct Point { x: number, y: number } const p = Point { x: 1, y: 2 };",
+        );
+        assert!(out.contains("x: 1"), "got: {}", out);
+        assert!(out.contains("y: 2"), "got: {}", out);
     }
 }

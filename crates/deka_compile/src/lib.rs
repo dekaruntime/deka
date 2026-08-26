@@ -180,4 +180,15 @@ mod tests {
         assert!(result.js.contains("Some"));
         assert!(result.js.contains("None"));
     }
+
+    #[test]
+    fn compile_struct_literal() {
+        let result = compile_to_js(
+            "struct Point { x: number, y: number } const p = Point { x: 1, y: 2 };",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("x: 1"));
+        assert!(result.js.contains("y: 2"));
+    }
 }

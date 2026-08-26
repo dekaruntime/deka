@@ -29,7 +29,9 @@ impl<'a> Checker<'a> {
                     Type::Error
                 }
                 _ => {
-                    if let Some(alias) = self.aliases.get(name).cloned() {
+                    if self.structs.contains_key(name) {
+                        Type::Struct { name }
+                    } else if let Some(alias) = self.aliases.get(name).cloned() {
                         if !seen.insert(name) {
                             self.error_span(*span, format!("cyclic type alias `{name}`"));
                             return Type::Error;

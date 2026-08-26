@@ -9,7 +9,7 @@ use super::Checker;
 
 impl<'a> Checker<'a> {
     pub(super) fn check_program(&mut self) {
-        self.collect_aliases();
+        self.collect_declarations();
         self.collect_function_signatures();
 
         // Check function bodies first so that inferred return types are
@@ -48,7 +48,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn collect_aliases(&mut self) {
+    fn collect_declarations(&mut self) {
         for stmt in self.program.statements {
             if let ast::Stmt::TypeAlias { name, value, span, .. } = stmt {
                 if self.aliases.insert(name, value.clone()).is_some() {
@@ -67,6 +67,11 @@ impl<'a> Checker<'a> {
                             format!("duplicate enum case name `{}`", case.name),
                         );
                     }
+                }
+            }
+            if let ast::Stmt::Struct { name, fields, span, .. } = stmt {
+                if self.structs.insert(name, super::StructInfo { fields }).is_some() {
+                    self.error_span(*span, format!("duplicate struct definition `{name}`"));
                 }
             }
         }
@@ -207,16 +212,16 @@ impl<'a> Checker<'a> {
                 }
                 self.scopes.pop();
             }
-            ast::Stmt::TypeAlias { .. } => {
+            ast::Stmt::TypeAlias { .. }
+            | ast::Stmt::Struct { .. }
+            | ast::Stmt::Enum { .. } => {
                 // Already collected and validated lazily at use sites.
             }
             ast::Stmt::Import { span, .. } => {
                 self.error_span(*span, "imports are not supported in v2 typeck");
             }
-            ast::Stmt::ReceiverMethod { span, .. }
-            | ast::Stmt::Struct { span, .. }
-            | ast::Stmt::Enum { span, .. } => {
-                self.error_span(*span, "this statement kind is not supported in v2 typeck");
+            ast::Stmt::ReceiverMethod { span, .. } => {
+                self.error_span(*span, "receiver methods are not supported in v2 typeck");
             }
         }
     }

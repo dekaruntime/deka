@@ -50,6 +50,12 @@ struct EnumInfo<'a> {
     cases: &'a [ast::EnumCase<'a>],
 }
 
+/// Information about a struct's fields, collected before typechecking bodies.
+#[derive(Clone)]
+struct StructInfo<'a> {
+    fields: &'a [ast::StructField<'a>],
+}
+
 struct Checker<'a> {
     program: &'a ast::Program<'a>,
     errors: Vec<Diagnostic>,
@@ -62,6 +68,8 @@ struct Checker<'a> {
     enums: HashMap<&'a str, EnumInfo<'a>>,
     /// Map from enum case name back to the enum that defines it.
     case_to_enum: HashMap<&'a str, &'a str>,
+    /// User-defined structs.
+    structs: HashMap<&'a str, StructInfo<'a>>,
     /// Local scopes. The first scope is the top-level scope.
     scopes: Vec<HashMap<&'a str, Type<'a>>>,
     /// Are we currently inside a function body?
@@ -80,6 +88,7 @@ impl<'a> Checker<'a> {
             aliases: HashMap::new(),
             enums: HashMap::new(),
             case_to_enum: HashMap::new(),
+            structs: HashMap::new(),
             scopes: vec![HashMap::new()],
             in_function: false,
             return_type: None,
@@ -213,5 +222,10 @@ mod tests {
     #[test]
     fn result_ok_constructor_passes() {
         assert!(typeck("const r: Result<number, string> = Ok(5);").is_empty());
+    }
+
+    #[test]
+    fn struct_literal_and_field_access_passes() {
+        assert!(typeck("struct Point { x: number, y: number } const p: Point = Point { x: 1, y: 2 }; const x: number = p.x;").is_empty());
     }
 }

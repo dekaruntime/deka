@@ -454,4 +454,26 @@ mod tests {
             _ => panic!("expected const declaration"),
         }
     }
+
+    #[test]
+    fn parse_struct_declaration_and_literal() {
+        let arena = Bump::new();
+        let result = parse(
+            "struct Point { x: number, y: number } const p = Point { x: 1, y: 2 };",
+            &arena,
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        assert_eq!(program.statements.len(), 2);
+        match &program.statements[1] {
+            Stmt::Const { value, .. } => match value {
+                Expr::StructLiteral { name, fields, .. } => {
+                    assert_eq!(name.to_string(), "Point");
+                    assert_eq!(fields.len(), 2);
+                }
+                _ => panic!("expected struct literal, got {:?}", value),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
 }

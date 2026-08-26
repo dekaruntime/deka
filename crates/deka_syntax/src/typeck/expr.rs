@@ -1,6 +1,6 @@
 //! Expression typechecking.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast;
 
@@ -39,10 +39,14 @@ impl<'a> Checker<'a> {
                 span,
                 ..
             } => self.check_call(callee, args, *span),
-            ast::Expr::FieldAccess { span, .. } => {
-                self.error_span(*span, "field access is not yet supported in v2 typeck");
-                Type::Error
+            ast::Expr::FieldAccess { object, field, span } => {
+                self.check_field_access(object, field, *span)
             }
+            ast::Expr::StructLiteral {
+                name,
+                fields,
+                span,
+            } => self.check_struct_literal(name, fields, *span),
             ast::Expr::Paren { expr, .. } => self.check_expr(expr),
             ast::Expr::Match {
                 scrutinee,
@@ -57,6 +61,109 @@ impl<'a> Checker<'a> {
             } => self.check_enum_constructor(enum_name, case_name, payload.as_deref(), *span),
             _ => {
                 self.error_at_expr(expr, "unsupported expression in v2 typeck");
+                Type::Error
+            }
+        }
+    }
+
+    fn check_struct_literal(
+        &mut self,
+        name: &'a str,
+        fields: &'a [ast::StructLiteralField<'a>],
+        span: ast::Span,
+    ) -> Type<'a> {
+        let info = match self.structs.get(name).cloned() {
+            Some(info) => info,
+            None => {
+                self.error_span(span, format!("unknown struct `{name}`"));
+                return Type::Error;
+            }
+        };
+
+        let mut seen_fields = HashSet::new();
+        for field in fields {
+            if !seen_fields.insert(field.name) {
+                self.error_span(
+                    field.span,
+                    format!("duplicate field `{}` in struct literal", field.name),
+                );
+            }
+            let expected_type = match info.fields.iter().find(|f| f.name == field.name) {
+                Some(f) => self.resolve_ast_type(&f.ty),
+                None => {
+                    self.error_span(
+                        field.span,
+                        format!("struct `{name}` has no field `{}`", field.name),
+                    );
+                    Type::Error
+                }
+            };
+            let value_type = self.check_expr(&field.value);
+            if !is_assignable(&expected_type, &value_type) {
+                self.error_span(
+                    field.span,
+                    format!(
+                        "field `{}` expected type `{expected_type}`, found type `{value_type}`",
+                        field.name
+                    ),
+                );
+            }
+        }
+
+        for field in info.fields {
+            if field.default_value.is_none() && !seen_fields.contains(field.name) {
+                self.error_span(
+                    span,
+                    format!(
+                        "missing required field `{}` in struct literal for `{name}`",
+                        field.name
+                    ),
+                );
+            }
+        }
+
+        Type::Struct { name }
+    }
+
+    fn check_field_access(
+        &mut self,
+        object: &ast::Expr<'a>,
+        field: &'a str,
+        span: ast::Span,
+    ) -> Type<'a> {
+        let object_type = self.check_expr(object);
+        if object_type.is_error() {
+            return Type::Error;
+        }
+
+        let struct_name = match &object_type {
+            Type::Struct { name } => *name,
+            _ => {
+                self.error_span(
+                    span,
+                    format!("cannot access field `{field}` on type `{object_type}`"),
+                );
+                return Type::Error;
+            }
+        };
+
+        let info = match self.structs.get(struct_name).cloned() {
+            Some(info) => info,
+            None => {
+                self.error_span(span, format!("unknown struct `{struct_name}`"));
+                return Type::Error;
+            }
+        };
+
+        match info.fields.iter().find(|f| f.name == field) {
+            Some(f) => self.resolve_ast_type(&f.ty),
+            None => {
+                self.error_span(
+                    span,
+                    format!(
+                        "struct `{struct_name}` has no field `{field}`"
+                    ),
+                );
                 Type::Error
             }
         }
