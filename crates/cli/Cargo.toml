@@ -16,6 +16,8 @@ native = [
   "dep:dekascript_lsp",
   "dep:modules_php",
   "dep:deka_js",
+  "dep:deka_compile",
+  "dep:deka_syntax",
   "dep:bundler",
   "dep:rusqlite",
   "dep:deka-fmt",
@@ -40,6 +42,8 @@ php-rs = { path = "../php-rs", optional = true }
 dekascript_lsp = { path = "../deka_lsp", optional = true }
 modules_php = { path = "../modules_php", optional = true }
 deka_js = { path = "../deka_js", optional = true }
+deka_compile = { path = "../deka_compile", optional = true }
+deka_syntax = { path = "../deka_syntax", optional = true }
 bumpalo = "3.12"
 rusqlite = { version = "0.32", optional = true }
 sha2 = "0.10"

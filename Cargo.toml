@@ -31,6 +31,9 @@ members = [
     "crates/deka-router",
     "crates/deka-validation",
     "crates/deka-fmt",
+    "crates/deka_syntax",
+    "crates/deka_emit",
+    "crates/deka_compile",
 ]
 
 [workspace.package]
