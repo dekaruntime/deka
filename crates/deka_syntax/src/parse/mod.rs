@@ -313,7 +313,7 @@ mod tests {
     #[test]
     fn parse_let_with_type_and_optional() {
         let arena = Bump::new();
-        let result = parse("let y: string? = \"hi\";", &arena);
+        let result = parse("let y: Option<string> = \"hi\";", &arena);
         assert!(result.errors.is_empty(), "{:?}", result.errors);
         let program = result.program.unwrap();
         match &program.statements[0] {
@@ -322,11 +322,15 @@ mod tests {
             } => {
                 assert_eq!(name.to_string(), "y");
                 match ty {
-                    Some(Type::Option { inner, .. }) => match inner {
-                        Type::Named { name, .. } => assert_eq!(name.to_string(), "string"),
-                        _ => panic!("expected string"),
-                    },
-                    _ => panic!("expected optional type"),
+                    Some(Type::Generic { base, args, .. }) => {
+                        assert_eq!(base.to_string(), "Option");
+                        assert_eq!(args.len(), 1);
+                        match &args[0] {
+                            Type::Named { name, .. } => assert_eq!(name.to_string(), "string"),
+                            _ => panic!("expected string"),
+                        }
+                    }
+                    _ => panic!("expected Option<string> generic type"),
                 }
                 match value {
                     Expr::String { value, .. } => assert_eq!(value.to_string(), "hi"),
