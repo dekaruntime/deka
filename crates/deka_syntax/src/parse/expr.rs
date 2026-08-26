@@ -245,6 +245,14 @@ impl<'a> Parser<'a> {
                     span: self.span_from(start),
                 })
             }
+            TokenKind::Await => {
+                self.advance();
+                let operand = self.parse_expr(12)?;
+                Some(Expr::Await {
+                    expr: alloc(self.arena, operand),
+                    span: self.span_from(start),
+                })
+            }
             TokenKind::LBracket => {
                 self.advance();
                 let mut elements = Vec::new();

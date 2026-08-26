@@ -733,4 +733,39 @@ mod tests {
             _ => panic!("expected const declaration"),
         }
     }
+
+    #[test]
+    fn parse_await() {
+        let arena = Bump::new();
+        let result = parse("const x = await fetch();", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { value, .. } => match value {
+                Expr::Await { expr, .. } => {
+                    assert!(matches!(expr, Expr::Call { .. }));
+                }
+                _ => panic!("expected await expression"),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_pipe() {
+        let arena = Bump::new();
+        let result = parse("const y = x |> double;", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { value, .. } => match value {
+                Expr::Binary { op: BinOp::Pipe, left, right, .. } => {
+                    assert!(matches!(left, Expr::Identifier { name, .. } if name == &"x"));
+                    assert!(matches!(right, Expr::Identifier { name, .. } if name == &"double"));
+                }
+                _ => panic!("expected pipe expression, got {:?}", value),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
 }

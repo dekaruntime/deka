@@ -297,11 +297,6 @@ pub enum Expr<'a> {
         body: &'a [Stmt<'a>],
         span: Span,
     },
-    Pipe {
-        left: &'a Expr<'a>,
-        right: &'a Expr<'a>,
-        span: Span,
-    },
     Await {
         expr: &'a Expr<'a>,
         span: Span,
@@ -347,6 +342,7 @@ pub enum BinOp {
     Ge,
     And,
     Or,
+    Pipe,
     BitAnd,
     BitOr,
     BitXor,
@@ -464,7 +460,6 @@ impl<'a> Expr<'a> {
             Expr::EnumConstructor { span, .. } => *span,
             Expr::Match { span, .. } => *span,
             Expr::Unsafe { span, .. } => *span,
-            Expr::Pipe { span, .. } => *span,
             Expr::Await { span, .. } => *span,
             Expr::JsxElement { span, .. } => *span,
             Expr::JsxFragment { span, .. } => *span,

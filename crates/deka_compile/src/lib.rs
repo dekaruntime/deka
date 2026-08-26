@@ -272,4 +272,15 @@ mod tests {
         assert!(result.js.contains("const o = {x: 1};"), "got: {}", result.js);
         assert!(result.js.contains("a[0] + o[\"x\"]"), "got: {}", result.js);
     }
+
+    #[test]
+    fn compile_await_and_pipe() {
+        let result = compile_to_js(
+            "function fetch(): number { return 1; } function double(n: number): number { return n * 2; } const y = await fetch() |> double;",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("await fetch()"), "got: {}", result.js);
+        assert!(result.js.contains("(double)("), "got: {}", result.js);
+    }
 }

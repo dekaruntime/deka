@@ -278,11 +278,20 @@ fn emit_expr(out: &mut String, expr: &Expr) -> Result<(), String> {
             out.push_str(name);
         }
         Expr::Binary { op, left, right, .. } => {
-            emit_expr(out, left)?;
-            out.push(' ');
-            out.push_str(bin_op_str(*op));
-            out.push(' ');
-            emit_expr(out, right)?;
+            if *op == BinOp::Pipe {
+                // Simple pipe: `left |> right` becomes `(right)(left)`.
+                out.push('(');
+                emit_expr(out, right)?;
+                out.push_str(")(");
+                emit_expr(out, left)?;
+                out.push(')');
+            } else {
+                emit_expr(out, left)?;
+                out.push(' ');
+                out.push_str(bin_op_str(*op));
+                out.push(' ');
+                emit_expr(out, right)?;
+            }
         }
         Expr::Unary { op, operand, .. } => {
             out.push_str(un_op_str(*op));
@@ -390,10 +399,11 @@ fn emit_expr(out: &mut String, expr: &Expr) -> Result<(), String> {
         } => {
             emit_match(out, scrutinee, arms)?;
         }
-        Expr::Pipe { .. }
-        | Expr::Await { .. }
-        | Expr::JsxElement { .. }
-        | Expr::JsxFragment { .. } => {
+        Expr::Await { expr, .. } => {
+            out.push_str("await ");
+            emit_expr(out, expr)?;
+        }
+        Expr::JsxElement { .. } | Expr::JsxFragment { .. } => {
             return Err(format!("unsupported expression: {:?}", expr));
         }
     }
@@ -524,6 +534,7 @@ fn bin_op_str(op: BinOp) -> &'static str {
         BinOp::BitXor => "^",
         BinOp::Shl => "<<",
         BinOp::Shr => ">>",
+        BinOp::Pipe => "|>",
     }
 }
 
@@ -697,5 +708,17 @@ mod tests {
     fn emit_index_access() {
         let out = parse_and_emit("const x = arr[0];");
         assert!(out.contains("const x = arr[0];"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_await() {
+        let out = parse_and_emit("const x = await fetch();");
+        assert!(out.contains("const x = await fetch();"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_pipe() {
+        let out = parse_and_emit("const y = x |> double;");
+        assert!(out.contains("const y = (double)(x);"), "got: {}", out);
     }
 }

@@ -91,6 +91,11 @@ impl<'a> Checker<'a> {
                 self.check_expr(expr);
                 Type::Infer
             }
+            ast::Expr::Await { expr, .. } => {
+                self.check_expr(expr);
+                // TODO: unwrap Promise<T> once async types are modeled.
+                Type::Infer
+            }
             _ => {
                 self.error_at_expr(expr, "unsupported expression in v2 typeck");
                 Type::Error
@@ -568,6 +573,11 @@ impl<'a> Checker<'a> {
                     self.expect_boolean(&right_type, right.span());
                 }
                 Type::Named { name: "boolean" }
+            }
+            Pipe => {
+                self.check_expr(left);
+                self.check_expr(right);
+                Type::Infer
             }
             _ => {
                 self.error_span(span, format!("binary operator `{op:?}` is not supported in v2 typeck"));

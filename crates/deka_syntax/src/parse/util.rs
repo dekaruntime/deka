@@ -14,6 +14,7 @@ pub(super) fn infix_info(kind: TokenKind) -> Option<(u8, u8, BinOp)> {
         Le => (7, 8, BinOp::Le),
         Gt => (7, 8, BinOp::Gt),
         Ge => (7, 8, BinOp::Ge),
+        Pipe => (3, 4, BinOp::Pipe),
         Plus => (9, 10, BinOp::Add),
         Minus => (9, 10, BinOp::Sub),
         Star => (11, 12, BinOp::Mul),

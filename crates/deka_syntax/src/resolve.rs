@@ -341,11 +341,6 @@ fn transform_expr<'a>(
                 span: *span,
             }
         }
-        Expr::Pipe { left, right, span } => Expr::Pipe {
-            left: transform_expr(left, arena, enums),
-            right: transform_expr(right, arena, enums),
-            span: *span,
-        },
         Expr::Await { expr, span } => Expr::Await {
             expr: transform_expr(expr, arena, enums),
             span: *span,
@@ -860,11 +855,6 @@ fn lower_expr<'a>(
                 span: *span,
             }
         }
-        Expr::Pipe { left, right, span } => Expr::Pipe {
-            left: lower_expr(left, arena, method_calls),
-            right: lower_expr(right, arena, method_calls),
-            span: *span,
-        },
         Expr::Await { expr, span } => Expr::Await {
             expr: lower_expr(expr, arena, method_calls),
             span: *span,

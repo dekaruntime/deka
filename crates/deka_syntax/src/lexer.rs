@@ -633,12 +633,15 @@ impl<'a> Lexer<'a> {
                         text: "||",
                         span: self.span_from(start),
                     }
-                } else {
+                } else if self.current() == Some('>') {
+                    self.advance();
                     Token {
                         kind: TokenKind::Pipe,
-                        text: "|",
+                        text: "|>",
                         span: self.span_from(start),
                     }
+                } else {
+                    self.error(format!("unexpected `|`; did you mean `||` or `|>`?"))
                 }
             }
             '^' => {
