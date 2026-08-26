@@ -109,24 +109,31 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) -> Result<(), String>
                 }
             }
         }
-        Stmt::Import { specifiers, .. } => {
+        Stmt::Import { specifiers, source, .. } => {
             write_indent(out, indent);
-            out.push_str("import { ");
-            for (i, spec) in specifiers.iter().enumerate() {
-                if i > 0 {
-                    out.push_str(", ");
+            if specifiers.is_empty() {
+                // Side-effect import.
+                out.push_str("import \"");
+                out.push_str(source);
+                out.push_str("\";");
+            } else {
+                out.push_str("import { ");
+                for (i, spec) in specifiers.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
+                    if spec.imported == spec.local {
+                        out.push_str(spec.imported);
+                    } else {
+                        out.push_str(spec.imported);
+                        out.push_str(" as ");
+                        out.push_str(spec.local);
+                    }
                 }
-                if spec.imported == spec.local {
-                    out.push_str(spec.imported);
-                } else {
-                    out.push_str(spec.imported);
-                    out.push_str(" as ");
-                    out.push_str(spec.local);
-                }
+                out.push_str(" } from \"");
+                out.push_str(source);
+                out.push_str("\";");
             }
-            out.push_str(" } from \"");
-            out.push_str("PLACEHOLDER");
-            out.push_str("\";");
         }
         Stmt::If {
             condition,
@@ -623,5 +630,36 @@ mod tests {
         );
         assert!(out.contains("function Point_distance"), "got: {}", out);
         assert!(out.contains("p1.distance(p2)"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_import_named() {
+        let out = parse_and_emit("import { add } from \"./math.ds\";");
+        assert!(out.contains("import { add } from \"./math.ds\";"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_import_aliased() {
+        let out = parse_and_emit("import { add as plus } from \"./math.ds\";");
+        assert!(out.contains("import { add as plus } from \"./math.ds\";"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_import_side_effect() {
+        let out = parse_and_emit("import \"./side-effects.ds\";");
+        assert!(out.contains("import \"./side-effects.ds\";"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_export_const() {
+        let out = parse_and_emit("export const x: number = 42;");
+        assert!(out.contains("export const x = 42;"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_export_function() {
+        let out = parse_and_emit("export function add(a: number, b: number): number { return a + b; }");
+        assert!(out.contains("export function add(a, b) {"), "got: {}", out);
+        assert!(out.contains("return a + b;"), "got: {}", out);
     }
 }

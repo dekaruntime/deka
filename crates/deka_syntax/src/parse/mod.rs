@@ -558,4 +558,88 @@ mod tests {
             _ => panic!("expected function"),
         }
     }
+
+    #[test]
+    fn parse_import_named() {
+        let arena = Bump::new();
+        let result = parse("import { add } from \"./math.ds\";", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Import { specifiers, source, .. } => {
+                assert_eq!(source, &"./math.ds");
+                assert_eq!(specifiers.len(), 1);
+                assert_eq!(specifiers[0].imported, "add");
+                assert_eq!(specifiers[0].local, "add");
+            }
+            _ => panic!("expected import"),
+        }
+    }
+
+    #[test]
+    fn parse_import_aliased() {
+        let arena = Bump::new();
+        let result = parse("import { add as plus } from \"./math.ds\";", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Import { specifiers, .. } => {
+                assert_eq!(specifiers.len(), 1);
+                assert_eq!(specifiers[0].imported, "add");
+                assert_eq!(specifiers[0].local, "plus");
+            }
+            _ => panic!("expected import"),
+        }
+    }
+
+    #[test]
+    fn parse_import_side_effect() {
+        let arena = Bump::new();
+        let result = parse("import \"./side-effects.ds\";", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Import { specifiers, source, .. } => {
+                assert!(specifiers.is_empty());
+                assert_eq!(source, &"./side-effects.ds");
+            }
+            _ => panic!("expected import"),
+        }
+    }
+
+    #[test]
+    fn parse_export_const() {
+        let arena = Bump::new();
+        let result = parse("export const x: number = 42;", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Export { decl, .. } => match decl {
+                crate::ast::ExportDecl::Const { name, ty, .. } => {
+                    assert_eq!(name, &"x");
+                    assert!(ty.is_some());
+                }
+                _ => panic!("expected const export"),
+            },
+            _ => panic!("expected export"),
+        }
+    }
+
+    #[test]
+    fn parse_export_function() {
+        let arena = Bump::new();
+        let result = parse("export function add(a: number, b: number): number { return a + b; }", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Export { decl, .. } => match decl {
+                crate::ast::ExportDecl::Function { name, params, .. } => {
+                    assert_eq!(name, &"add");
+                    assert_eq!(params.len(), 2);
+                }
+                _ => panic!("expected function export"),
+            },
+            _ => panic!("expected export"),
+        }
+    }
 }

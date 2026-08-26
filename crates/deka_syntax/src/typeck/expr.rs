@@ -675,6 +675,14 @@ impl<'a> Checker<'a> {
                 substituted_ret
             }
             Type::Error => Type::Error,
+            Type::Infer => {
+                // Imported or otherwise externally-provided binding with no
+                // known type. Treat the call as opaque rather than erroring.
+                for arg in args.iter() {
+                    self.check_expr(arg);
+                }
+                Type::Infer
+            }
             other => {
                 self.error_span(span, format!("value of type `{other}` is not callable"));
                 Type::Error

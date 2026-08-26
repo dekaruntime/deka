@@ -287,8 +287,14 @@ impl<'a> Checker<'a> {
             | ast::Stmt::ReceiverMethod { .. } => {
                 // Already collected and validated lazily at use sites.
             }
-            ast::Stmt::Import { span, .. } => {
-                self.error_span(*span, "imports are not supported in v2 typeck");
+            ast::Stmt::Import { specifiers, .. } => {
+                // Without a resolved module graph, imported bindings are treated
+                // as externally provided. They are assigned the infer sentinel
+                // so uses of them typecheck generically; a real module resolver
+                // will supply concrete types later.
+                for spec in specifiers.iter() {
+                    self.declare_var(spec.local, Type::Infer);
+                }
             }
         }
     }

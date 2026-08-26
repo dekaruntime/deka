@@ -83,6 +83,11 @@ pub fn is_assignable<'a>(expected: &Type<'a>, actual: &Type<'a>) -> bool {
     if expected.is_error() || actual.is_error() {
         return true;
     }
+    // `Infer` is the unknown/externally-provided type. It is compatible with
+    // any type until a concrete type is available.
+    if matches!(expected, Type::Infer) || matches!(actual, Type::Infer) {
+        return true;
+    }
     if expected == actual {
         return true;
     }

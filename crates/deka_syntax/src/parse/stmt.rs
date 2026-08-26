@@ -78,6 +78,10 @@ impl<'a> Parser<'a> {
 
             TokenKind::Type => self.parse_type_alias_statement(start),
 
+            TokenKind::Import => self.parse_import_statement(start),
+
+            TokenKind::Export => self.parse_export_statement(start),
+
             TokenKind::Return => {
                 self.advance();
                 let value =
@@ -280,6 +284,126 @@ impl<'a> Parser<'a> {
             value,
             span: self.span_from(start),
         })
+    }
+
+    fn parse_import_statement(&mut self, start: Pos) -> Option<Stmt<'a>> {
+        self.advance(); // `import`
+
+        // Side-effect import: `import "./mod.ds";`
+        if self.at(TokenKind::String) {
+            let source = self.bump_str(self.current_text());
+            self.advance();
+            self.expect_statement_end(false)?;
+            return Some(Stmt::Import {
+                specifiers: alloc_slice(self.arena, Vec::new()),
+                source,
+                span: self.span_from(start),
+            });
+        }
+
+        self.expect(TokenKind::LBrace)?;
+        let mut specs = Vec::new();
+        if !self.at(TokenKind::RBrace) {
+            loop {
+                let spec_start = self.current_span().start;
+                let imported = self.expect_identifier()?;
+                let local = if self.eat(TokenKind::As) {
+                    self.expect_identifier()?
+                } else {
+                    imported
+                };
+                specs.push(crate::ast::ImportSpec {
+                    imported,
+                    local,
+                    span: self.span_from(spec_start),
+                });
+                if !self.eat(TokenKind::Comma) {
+                    break;
+                }
+            }
+        }
+        self.expect(TokenKind::RBrace)?;
+        self.expect(TokenKind::From)?;
+
+        if !self.at(TokenKind::String) {
+            self.error(format!(
+                "expected module path string, found `{}`",
+                token_name(self.current_kind())
+            ));
+            return None;
+        }
+        let source = self.bump_str(self.current_text());
+        self.advance();
+        self.expect_statement_end(false)?;
+
+        Some(Stmt::Import {
+            specifiers: alloc_slice(self.arena, specs),
+            source,
+            span: self.span_from(start),
+        })
+    }
+
+    fn parse_export_statement(&mut self, start: Pos) -> Option<Stmt<'a>> {
+        self.advance(); // `export`
+
+        match self.current_kind() {
+            TokenKind::Const => {
+                self.advance();
+
+                let name = self.expect_identifier()?;
+                let ty = if self.eat(TokenKind::Colon) {
+                    Some(self.parse_type()?)
+                } else {
+                    None
+                };
+                self.expect(TokenKind::Eq)?;
+                let value = self.parse_expression()?;
+                self.expect_statement_end(false)?;
+
+                let span = self.span_from(start);
+                let decl = crate::ast::ExportDecl::Const { name, ty, value };
+                Some(Stmt::Export { decl, span })
+            }
+            TokenKind::Function => {
+                self.advance();
+
+                let name = self.expect_identifier()?;
+                let type_params = if self.at(TokenKind::Lt) {
+                    self.parse_type_params()?
+                } else {
+                    &[]
+                };
+
+                self.expect(TokenKind::LParen)?;
+                let params = self.parse_params()?;
+                self.expect(TokenKind::RParen)?;
+
+                let return_type = if self.eat(TokenKind::Colon) {
+                    Some(self.parse_type()?)
+                } else {
+                    None
+                };
+
+                let body = self.parse_block()?;
+                let span = self.span_from(start);
+
+                let decl = crate::ast::ExportDecl::Function {
+                    name,
+                    type_params,
+                    params,
+                    return_type,
+                    body,
+                };
+                Some(Stmt::Export { decl, span })
+            }
+            _ => {
+                self.error(format!(
+                    "expected `const` or `function` after `export`, found `{}`",
+                    token_name(self.current_kind())
+                ));
+                None
+            }
+        }
     }
 
     pub(super) fn parse_block(&mut self) -> Option<&'a [Stmt<'a>]> {

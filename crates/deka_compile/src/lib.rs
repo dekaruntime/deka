@@ -229,4 +229,35 @@ mod tests {
         assert!(result.js.contains("function id"));
         assert!(result.js.contains("id(5)"));
     }
+
+    #[test]
+    fn compile_import_and_use() {
+        let result = compile_to_js(
+            "import { add } from \"./math.ds\"; const r: number = add(1, 2);",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("import { add } from \"./math.ds\";"), "got: {}", result.js);
+        assert!(result.js.contains("add(1, 2)"), "got: {}", result.js);
+    }
+
+    #[test]
+    fn compile_export_const() {
+        let result = compile_to_js(
+            "export const x: number = 42;",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("export const x = 42;"), "got: {}", result.js);
+    }
+
+    #[test]
+    fn compile_export_function() {
+        let result = compile_to_js(
+            "export function add(a: number, b: number): number { return a + b; }",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("export function add(a, b) {"), "got: {}", result.js);
+    }
 }
