@@ -1,0 +1,84 @@
+//! Type parsing.
+
+use crate::ast::{alloc, alloc_slice, Type};
+use crate::lexer::TokenKind;
+
+use super::util::token_name;
+use super::Parser;
+
+impl<'a> Parser<'a> {
+    pub(super) fn parse_type(&mut self) -> Option<Type<'a>> {
+        let start = self.current_span().start;
+        let mut ty = self.parse_type_primary()?;
+
+        while self.eat(TokenKind::Question) {
+            let span = self.span_from(start);
+            ty = Type::Option {
+                inner: alloc(self.arena, ty),
+                span,
+            };
+        }
+
+        Some(ty)
+    }
+
+    fn parse_type_primary(&mut self) -> Option<Type<'a>> {
+        let start = self.current_span().start;
+
+        if self.eat(TokenKind::LParen) {
+            // Either a function type `(T, U) => R` or a grouped type `(T)`.
+            let mut params = Vec::new();
+            if !self.at(TokenKind::RParen) {
+                loop {
+                    params.push(self.parse_type()?);
+                    if !self.eat(TokenKind::Comma) {
+                        break;
+                    }
+                }
+            }
+            self.expect(TokenKind::RParen)?;
+
+            if self.eat(TokenKind::FatArrow) {
+                let ret = self.parse_type()?;
+                Some(Type::Function {
+                    params: alloc_slice(self.arena, params),
+                    ret: alloc(self.arena, ret),
+                    span: self.span_from(start),
+                })
+            } else if params.len() == 1 {
+                Some(params.into_iter().next().unwrap())
+            } else {
+                self.error("expected function arrow `=>` or a single grouped type".to_string());
+                None
+            }
+        } else if self.at(TokenKind::Identifier) {
+            let name = self.bump_str(self.current_text());
+            let span = self.current_span();
+            self.advance();
+
+            if self.eat(TokenKind::Lt) {
+                let mut args = Vec::new();
+                loop {
+                    args.push(self.parse_type()?);
+                    if !self.eat(TokenKind::Comma) {
+                        break;
+                    }
+                }
+                self.expect(TokenKind::Gt)?;
+                Some(Type::Generic {
+                    base: name,
+                    args: alloc_slice(self.arena, args),
+                    span: self.span_from(start),
+                })
+            } else {
+                Some(Type::Named { name, span })
+            }
+        } else {
+            self.error(format!(
+                "expected type, found `{}`",
+                token_name(self.current_kind())
+            ));
+            None
+        }
+    }
+}

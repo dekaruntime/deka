@@ -1,10 +1,10 @@
 use bundler::{BuildOptions, VirtualSource, bundle_virtual_entry};
 use core::{CommandSpec, Context, ParamSpec, Registry};
-use deka_js::{SourceModuleMeta, parse_source_module_meta};
+use deka_js::{SourceModuleMeta as V1SourceModuleMeta, parse_source_module_meta as parse_v1_meta};
 use runtime_core::module_spec::{ds_source_candidates, module_spec_aliases};
 use runtime_core::modules::{resolve_modules_dir, MODULES_DIR};
 
-use crate::compile_helper::{compile_js_or_report, compiler_version_from_context};
+use crate::compile_helper::{compile_js_or_report, compiler_version_from_context, ModuleMeta};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -249,7 +249,7 @@ fn resolve_import_map_path(output_path: &Path) -> PathBuf {
         .join("importmap.json")
 }
 
-fn emit_import_map_json(meta: &SourceModuleMeta, output_path: &Path) -> String {
+fn emit_import_map_json(meta: &V1SourceModuleMeta, output_path: &Path) -> String {
     let mut imports = default_import_map();
 
     for decl in &meta.imports {
@@ -358,7 +358,7 @@ fn project_root_search_start(input_path: &Path) -> PathBuf {
         .to_path_buf()
 }
 
-fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Result<(), String> {
+fn ensure_project_layout(project_root: &Path, meta: &V1SourceModuleMeta) -> Result<(), String> {
     // PHPX_MODULE_ROOT bypass (#220): when set, the tenant relies on the runtime stdlib at
     // that root and we trust the runtime-provided modules without requiring a local
     // deka.lock or php_modules/. Tenant-local packages would still need a lockfile, but
@@ -406,7 +406,7 @@ fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Result
     }
 }
 
-fn collect_stdlib_imports(meta: &SourceModuleMeta) -> Vec<String> {
+fn collect_stdlib_imports(meta: &V1SourceModuleMeta) -> Vec<String> {
     let mut seen = BTreeSet::new();
     for decl in &meta.imports {
         let spec = decl.from.trim();
@@ -628,7 +628,10 @@ fn validate_app_dir_sources(
             .ok_or_else(|| format!("invalid utf-8 path: {}", path.display()))?;
         let source = fs::read_to_string(&path)
             .map_err(|err| format!("failed to read {}: {}", path.display(), err))?;
-        let meta = parse_source_module_meta(&source);
+        let meta = match compiler {
+            deka_compile::CompilerVersion::V1 => ModuleMeta::V1(parse_v1_meta(&source)),
+            deka_compile::CompilerVersion::V2 => ModuleMeta::V2(deka_compile::parse_source_module_meta(&source)),
+        };
         compile_js_or_report(&source, input, meta, compiler)
             .map_err(|err| format!("{}: {}", path.display(), err))?;
     }
@@ -811,7 +814,7 @@ fn inject_app_html(index_html: &str, app_html: &str) -> String {
 
 struct JsBuildOutput {
     js: String,
-    meta: SourceModuleMeta,
+    meta: V1SourceModuleMeta,
     project_root: PathBuf,
 }
 
@@ -887,19 +890,31 @@ fn build_single_file_to_string(
 
     let source = fs::read_to_string(input_path)
         .map_err(|err| format!("failed to read {}: {}", input_path.display(), err))?;
-    let meta = parse_source_module_meta(&source);
+    let (compile_meta, layout_meta) = match compiler {
+        deka_compile::CompilerVersion::V1 => {
+            let meta = parse_v1_meta(&source);
+            (ModuleMeta::V1(meta.clone()), meta)
+        }
+        deka_compile::CompilerVersion::V2 => {
+            let v1_meta = V1SourceModuleMeta::empty();
+            (
+                ModuleMeta::V2(deka_compile::parse_source_module_meta(&source)),
+                v1_meta,
+            )
+        }
+    };
 
     // Validate the source before checking project layout so that syntax/type
     // errors are surfaced immediately instead of being blocked by a missing
     // deka.lock or php_modules/ directory (dekaruntime/deka#117).
-    let js = compile_js_or_report(&source, input, meta.clone(), compiler)?;
+    let js = compile_js_or_report(&source, input, compile_meta, compiler)?;
 
     let project_root = resolve_project_root(input_path)?;
-    ensure_project_layout(&project_root, &meta)?;
+    ensure_project_layout(&project_root, &layout_meta)?;
 
     Ok(JsBuildOutput {
         js,
-        meta,
+        meta: layout_meta,
         project_root,
     })
 }
@@ -939,7 +954,10 @@ impl VirtualSource for PhpxProvider {
             .ok_or_else(|| format!("invalid utf-8 path: {}", path.display()))?;
         let source =
             fs::read_to_string(path).map_err(|err| format!("failed to read {}: {}", input, err))?;
-        let meta = parse_source_module_meta(&source);
+        let meta = match self.compiler {
+            deka_compile::CompilerVersion::V1 => ModuleMeta::V1(parse_v1_meta(&source)),
+            deka_compile::CompilerVersion::V2 => ModuleMeta::V2(deka_compile::parse_source_module_meta(&source)),
+        };
         let js = compile_js_or_report(&source, input, meta, self.compiler)?;
         Ok(Some(js))
     }
