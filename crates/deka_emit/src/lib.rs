@@ -44,7 +44,7 @@ mod tests {
 
     #[test]
     fn emit_function_with_return() {
-        let out = parse_and_emit("function add(a: number, b: number): number { return a + b; }");
+        let out = parse_and_emit("fn add(a: number, b: number): number { return a + b; }");
         assert!(out.contains("function add(a, b) {"), "got: {}", out);
         assert!(out.contains("return a + b;"), "got: {}", out);
     }
@@ -99,7 +99,7 @@ mod tests {
     #[test]
     fn emit_receiver_method() {
         let out = parse_and_emit(
-            "struct Point { x: number, y: number } fn Point.distance(other: Point): number { return 0; } const p1 = Point { x: 0, y: 0 }; const p2 = Point { x: 3, y: 4 }; const d = p1.distance(p2);",
+            "struct Point { x: number, y: number } fn (p Point) distance(other: Point): number { return 0; } const p1 = Point { x: 0, y: 0 }; const p2 = Point { x: 3, y: 4 }; const d = p1.distance(p2);",
         );
         assert!(out.contains("function Point_distance"), "got: {}", out);
         assert!(out.contains("p1.distance(p2)"), "got: {}", out);
@@ -131,7 +131,7 @@ mod tests {
 
     #[test]
     fn emit_export_function() {
-        let out = parse_and_emit("export function add(a: number, b: number): number { return a + b; }");
+        let out = parse_and_emit("export fn add(a: number, b: number): number { return a + b; }");
         assert!(out.contains("export function add(a, b) {"), "got: {}", out);
         assert!(out.contains("return a + b;"), "got: {}", out);
     }

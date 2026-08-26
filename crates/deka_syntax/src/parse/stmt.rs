@@ -68,9 +68,7 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            TokenKind::Function => self.parse_function_statement(start),
-
-            TokenKind::Fn => self.parse_receiver_method_statement(start),
+            TokenKind::Fn => self.parse_fn_statement(start),
 
             TokenKind::Struct => self.parse_struct_statement(start),
 
@@ -108,9 +106,48 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_function_statement(&mut self, start: Pos) -> Option<Stmt<'a>> {
-        self.advance(); // `function`
+    fn parse_fn_statement(&mut self, start: Pos) -> Option<Stmt<'a>> {
+        self.advance(); // `fn`
 
+        // Receiver method: `fn (p Point) distance<T>(...): Ret { ... }`
+        if self.at(TokenKind::LParen) {
+            self.advance(); // `(`
+            let _receiver_name = self.expect_identifier()?;
+            let receiver_type = self.expect_identifier()?;
+            self.expect(TokenKind::RParen)?;
+
+            let name = self.expect_identifier()?;
+
+            let type_params = if self.at(TokenKind::Lt) {
+                self.parse_type_params()?
+            } else {
+                &[]
+            };
+
+            self.expect(TokenKind::LParen)?;
+            let params = self.parse_params()?;
+            self.expect(TokenKind::RParen)?;
+
+            let return_type = if self.eat(TokenKind::Colon) {
+                Some(self.parse_type()?)
+            } else {
+                None
+            };
+
+            let body = self.parse_block()?;
+
+            return Some(Stmt::ReceiverMethod {
+                receiver_type,
+                name,
+                type_params,
+                params,
+                return_type,
+                body,
+                span: self.span_from(start),
+            });
+        }
+
+        // Regular function: `fn add<T>(...): Ret { ... }`
         let name = self.expect_identifier()?;
         let type_params = if self.at(TokenKind::Lt) {
             self.parse_type_params()?
@@ -131,42 +168,6 @@ impl<'a> Parser<'a> {
         let body = self.parse_block()?;
 
         Some(Stmt::Function {
-            name,
-            type_params,
-            params,
-            return_type,
-            body,
-            span: self.span_from(start),
-        })
-    }
-
-    fn parse_receiver_method_statement(&mut self, start: Pos) -> Option<Stmt<'a>> {
-        self.advance(); // `fn`
-
-        let receiver_type = self.expect_identifier()?;
-        self.expect(TokenKind::Dot)?;
-        let name = self.expect_identifier()?;
-
-        let type_params = if self.at(TokenKind::Lt) {
-            self.parse_type_params()?
-        } else {
-            &[]
-        };
-
-        self.expect(TokenKind::LParen)?;
-        let params = self.parse_params()?;
-        self.expect(TokenKind::RParen)?;
-
-        let return_type = if self.eat(TokenKind::Colon) {
-            Some(self.parse_type()?)
-        } else {
-            None
-        };
-
-        let body = self.parse_block()?;
-
-        Some(Stmt::ReceiverMethod {
-            receiver_type,
             name,
             type_params,
             params,
@@ -364,41 +365,35 @@ impl<'a> Parser<'a> {
                 let decl = crate::ast::ExportDecl::Const { name, ty, value };
                 Some(Stmt::Export { decl, span })
             }
-            TokenKind::Function => {
-                self.advance();
-
-                let name = self.expect_identifier()?;
-                let type_params = if self.at(TokenKind::Lt) {
-                    self.parse_type_params()?
-                } else {
-                    &[]
-                };
-
-                self.expect(TokenKind::LParen)?;
-                let params = self.parse_params()?;
-                self.expect(TokenKind::RParen)?;
-
-                let return_type = if self.eat(TokenKind::Colon) {
-                    Some(self.parse_type()?)
-                } else {
-                    None
-                };
-
-                let body = self.parse_block()?;
+            TokenKind::Fn => {
+                let fn_stmt = self.parse_fn_statement(start)?;
                 let span = self.span_from(start);
-
-                let decl = crate::ast::ExportDecl::Function {
-                    name,
-                    type_params,
-                    params,
-                    return_type,
-                    body,
+                let decl = match fn_stmt {
+                    Stmt::Function {
+                        name,
+                        type_params,
+                        params,
+                        return_type,
+                        body,
+                        ..
+                    } => crate::ast::ExportDecl::Function {
+                        name,
+                        type_params,
+                        params,
+                        return_type,
+                        body,
+                    },
+                    Stmt::ReceiverMethod { .. } => {
+                        self.error("cannot export a receiver method");
+                        return None;
+                    }
+                    _ => unreachable!(),
                 };
                 Some(Stmt::Export { decl, span })
             }
             _ => {
                 self.error(format!(
-                    "expected `const` or `function` after `export`, found `{}`",
+                    "expected `const` or `fn` after `export`, found `{}`",
                     token_name(self.current_kind())
                 ));
                 None

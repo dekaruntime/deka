@@ -184,7 +184,7 @@ mod tests {
     #[test]
     fn function_add_passes() {
         assert!(
-            typeck("function add(a: number, b: number): number { return a + b; }").is_empty()
+            typeck("fn add(a: number, b: number): number { return a + b; }").is_empty()
         );
     }
 
@@ -199,7 +199,7 @@ mod tests {
     #[test]
     fn call_wrong_arg_type_fails() {
         let errors =
-            typeck("function add(a: number, b: number): number { return a + b; } add(\"one\", 2);");
+            typeck("fn add(a: number, b: number): number { return a + b; } add(\"one\", 2);");
         assert_eq!(errors.len(), 1);
         assert!(errors[0].message.contains("number"), "{}", errors[0].message);
         assert!(errors[0].message.contains("string"), "{}", errors[0].message);
@@ -207,7 +207,7 @@ mod tests {
 
     #[test]
     fn return_wrong_type_fails() {
-        let errors = typeck("function f(): number { return \"x\"; }");
+        let errors = typeck("fn f(): number { return \"x\"; }");
         assert_eq!(errors.len(), 1);
         assert!(errors[0].message.contains("number"), "{}", errors[0].message);
         assert!(errors[0].message.contains("string"), "{}", errors[0].message);
@@ -216,7 +216,7 @@ mod tests {
     #[test]
     fn recursive_function_passes() {
         assert!(typeck(
-            "function forever(n: number): number { return forever(n); }"
+            "fn forever(n: number): number { return forever(n); }"
         )
         .is_empty());
     }
@@ -275,23 +275,23 @@ mod tests {
     #[test]
     fn receiver_method_passes() {
         assert!(typeck(
-            "struct Point { x: number, y: number } fn Point.distance(other: Point): number { return 0; } const p1: Point = Point { x: 0, y: 0 }; const p2: Point = Point { x: 3, y: 4 }; const d: number = p1.distance(p2);"
+            "struct Point { x: number, y: number } fn (p Point) distance(other: Point): number { return 0; } const p1: Point = Point { x: 0, y: 0 }; const p2: Point = Point { x: 3, y: 4 }; const d: number = p1.distance(p2);"
         ).is_empty());
     }
 
     #[test]
     fn generic_function_inferred_passes() {
-        assert!(typeck("function id<T>(x: T): T { return x; } const n: number = id(5); const s: string = id(\"hi\");").is_empty());
+        assert!(typeck("fn id<T>(x: T): T { return x; } const n: number = id(5); const s: string = id(\"hi\");").is_empty());
     }
 
     #[test]
     fn generic_function_explicit_type_args_passes() {
-        assert!(typeck("function id<T>(x: T): T { return x; } const n: number = id<number>(5);").is_empty());
+        assert!(typeck("fn id<T>(x: T): T { return x; } const n: number = id<number>(5);").is_empty());
     }
 
     #[test]
     fn generic_function_wrong_arg_type_fails() {
-        let errors = typeck("function id<T>(x: T): T { return x; } const n: number = id(\"hi\");");
+        let errors = typeck("fn id<T>(x: T): T { return x; } const n: number = id(\"hi\");");
         assert_eq!(errors.len(), 1);
         assert!(errors[0].message.contains("number"), "{}", errors[0].message);
         assert!(errors[0].message.contains("string"), "{}", errors[0].message);

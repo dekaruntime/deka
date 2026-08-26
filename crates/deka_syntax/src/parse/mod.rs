@@ -201,7 +201,7 @@ mod tests {
     fn parse_function_add() {
         let arena = Bump::new();
         let result = parse(
-            "function add(a: number, b: number): number { return a + b; }",
+            "fn add(a: number, b: number): number { return a + b; }",
             &arena,
         );
         assert!(result.errors.is_empty(), "{:?}", result.errors);
@@ -514,7 +514,7 @@ mod tests {
     fn parse_receiver_method() {
         let arena = Bump::new();
         let result = parse(
-            "struct Point { x: number, y: number } fn Point.distance(other: Point): number { return 0; }",
+            "struct Point { x: number, y: number } fn (p Point) distance(other: Point): number { return 0; }",
             &arena,
         );
         assert!(result.errors.is_empty(), "{:?}", result.errors);
@@ -539,7 +539,7 @@ mod tests {
     #[test]
     fn parse_generic_function() {
         let arena = Bump::new();
-        let result = parse("function id<T>(x: T): T { return x; }", &arena);
+        let result = parse("fn id<T>(x: T): T { return x; }", &arena);
         assert!(result.errors.is_empty(), "{:?}", result.errors);
         let program = result.program.unwrap();
         match &program.statements[0] {
@@ -628,7 +628,7 @@ mod tests {
     #[test]
     fn parse_export_function() {
         let arena = Bump::new();
-        let result = parse("export function add(a: number, b: number): number { return a + b; }", &arena);
+        let result = parse("export fn add(a: number, b: number): number { return a + b; }", &arena);
         assert!(result.errors.is_empty(), "{:?}", result.errors);
         let program = result.program.unwrap();
         match &program.statements[0] {

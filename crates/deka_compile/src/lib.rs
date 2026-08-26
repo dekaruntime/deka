@@ -139,7 +139,7 @@ mod tests {
     #[test]
     fn compile_function_and_call() {
         let result = compile_to_js(
-            "function add(a: number, b: number): number { return a + b; } const r = add(1, 2);",
+            "fn add(a: number, b: number): number { return a + b; } const r = add(1, 2);",
             "test.ds",
         )
         .expect("compile should succeed");
@@ -150,7 +150,7 @@ mod tests {
     #[test]
     fn compile_recursive_function() {
         let result = compile_to_js(
-            "function forever(n: number): number { return forever(n); }",
+            "fn forever(n: number): number { return forever(n); }",
             "test.ds",
         )
         .expect("compile should succeed");
@@ -211,7 +211,7 @@ mod tests {
     #[test]
     fn compile_receiver_method() {
         let result = compile_to_js(
-            "struct Point { x: number, y: number } fn Point.distance(other: Point): number { return 0; } const p1: Point = Point { x: 0, y: 0 }; const p2: Point = Point { x: 3, y: 4 }; const d: number = p1.distance(p2);",
+            "struct Point { x: number, y: number } fn (p Point) distance(other: Point): number { return 0; } const p1: Point = Point { x: 0, y: 0 }; const p2: Point = Point { x: 3, y: 4 }; const d: number = p1.distance(p2);",
             "test.ds",
         )
         .expect("compile should succeed");
@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn compile_generic_function() {
         let result = compile_to_js(
-            "function id<T>(x: T): T { return x; } const n: number = id(5);",
+            "fn id<T>(x: T): T { return x; } const n: number = id(5);",
             "test.ds",
         )
         .expect("compile should succeed");
@@ -254,7 +254,7 @@ mod tests {
     #[test]
     fn compile_export_function() {
         let result = compile_to_js(
-            "export function add(a: number, b: number): number { return a + b; }",
+            "export fn add(a: number, b: number): number { return a + b; }",
             "test.ds",
         )
         .expect("compile should succeed");
@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn compile_await_and_pipe() {
         let result = compile_to_js(
-            "function fetch(): number { return 1; } function double(n: number): number { return n * 2; } const y = await fetch() |> double;",
+            "fn fetch(): number { return 1; } fn double(n: number): number { return n * 2; } const y = await fetch() |> double;",
             "test.ds",
         )
         .expect("compile should succeed");
