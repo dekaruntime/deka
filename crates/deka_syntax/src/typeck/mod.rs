@@ -32,6 +32,9 @@ pub struct TypeckResult<'a> {
     pub program: &'a Program<'a>,
     pub errors: Vec<Diagnostic>,
     pub warnings: Vec<Diagnostic>,
+    /// Map from method call expression pointer to the mangled top-level
+    /// function name that should replace it during lowering.
+    pub method_calls: HashMap<*const ast::Expr<'a>, String>,
 }
 
 pub fn check_program<'a>(program: &'a Program<'a>, _source: &str) -> TypeckResult<'a> {
@@ -42,6 +45,7 @@ pub fn check_program<'a>(program: &'a Program<'a>, _source: &str) -> TypeckResul
         program,
         errors: checker.errors,
         warnings: checker.warnings,
+        method_calls: checker.method_calls,
     }
 }
 
@@ -54,6 +58,13 @@ struct EnumInfo<'a> {
 #[derive(Clone)]
 struct StructInfo<'a> {
     fields: &'a [ast::StructField<'a>],
+}
+
+/// Information about a receiver method declared on a struct.
+#[derive(Clone)]
+struct MethodInfo<'a> {
+    params: &'a [ast::Param<'a>],
+    return_type: Option<ast::Type<'a>>,
 }
 
 struct Checker<'a> {
@@ -70,6 +81,10 @@ struct Checker<'a> {
     case_to_enum: HashMap<&'a str, &'a str>,
     /// User-defined structs.
     structs: HashMap<&'a str, StructInfo<'a>>,
+    /// Receiver methods keyed by `(receiver_type, method_name)`.
+    receiver_methods: HashMap<(&'a str, &'a str), MethodInfo<'a>>,
+    /// Method call sites to lower, keyed by call expression pointer.
+    method_calls: HashMap<*const ast::Expr<'a>, String>,
     /// Local scopes. The first scope is the top-level scope.
     scopes: Vec<HashMap<&'a str, Type<'a>>>,
     /// Are we currently inside a function body?
@@ -89,6 +104,8 @@ impl<'a> Checker<'a> {
             enums: HashMap::new(),
             case_to_enum: HashMap::new(),
             structs: HashMap::new(),
+            receiver_methods: HashMap::new(),
+            method_calls: HashMap::new(),
             scopes: vec![HashMap::new()],
             in_function: false,
             return_type: None,
@@ -250,5 +267,12 @@ mod tests {
     #[test]
     fn user_defined_enum_match_passes() {
         assert!(typeck("enum Color { Red, Green, Blue } const c: Color = Color.Red; const x: number = match c { Red => 1, Green => 2, Blue => 3 };").is_empty());
+    }
+
+    #[test]
+    fn receiver_method_passes() {
+        assert!(typeck(
+            "struct Point { x: number, y: number } fn Point.distance(other: Point): number { return 0; } const p1: Point = Point { x: 0, y: 0 }; const p2: Point = Point { x: 3, y: 4 }; const d: number = p1.distance(p2);"
+        ).is_empty());
     }
 }

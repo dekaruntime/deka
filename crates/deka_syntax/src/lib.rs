@@ -13,4 +13,5 @@ pub use ast::*;
 pub use diagnostics::{Diagnostic, Severity};
 pub use lexer::Lexer;
 pub use parse::{parse, ParseResult};
+pub use resolve::lower_method_calls;
 pub use typeck::{check_program, TypeError};

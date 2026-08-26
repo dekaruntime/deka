@@ -2,7 +2,7 @@
 
 use bumpalo::Bump;
 use deka_emit::emit_js;
-use deka_syntax::{check_program, parse, Diagnostic};
+use deka_syntax::{check_program, lower_method_calls, parse, Diagnostic};
 
 /// Compiler pipeline version selector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +84,11 @@ pub fn compile_to_js(source: &str, file_path: &str) -> Result<CompileResult, Vec
     if !typeck_result.errors.is_empty() {
         return Err(typeck_result.errors);
     }
+
+    // Lower method calls after typechecking so the emitter sees ordinary
+    // function calls instead of struct receiver syntax.
+    let mut program = program.clone();
+    lower_method_calls(&mut program, &arena, &typeck_result.method_calls);
 
     let js = emit_js(&program, source).map_err(|message| vec![Diagnostic::error(0, 0, message)])?;
 
@@ -201,5 +206,16 @@ mod tests {
         .expect("compile should succeed");
         assert!(result.js.contains("__case"));
         assert!(result.js.contains("Red"));
+    }
+
+    #[test]
+    fn compile_receiver_method() {
+        let result = compile_to_js(
+            "struct Point { x: number, y: number } fn Point.distance(other: Point): number { return 0; } const p1: Point = Point { x: 0, y: 0 }; const p2: Point = Point { x: 3, y: 4 }; const d: number = p1.distance(p2);",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("function Point_distance"));
+        assert!(result.js.contains("Point_distance(p1, p2)"));
     }
 }

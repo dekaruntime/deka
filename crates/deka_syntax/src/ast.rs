@@ -29,7 +29,7 @@ pub struct Pos {
 }
 
 /// A whole `.ds` file.
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Program<'a> {
     pub statements: &'a [Stmt<'a>],
     pub span: Span,
@@ -499,4 +499,9 @@ pub fn alloc_slice<'a, T>(arena: &'a Bump, items: Vec<T>) -> &'a [T] {
 /// Helper to allocate a single value in the bump arena.
 pub fn alloc<'a, T>(arena: &'a Bump, item: T) -> &'a T {
     arena.alloc(item)
+}
+
+/// Helper to allocate a string slice in the bump arena.
+pub fn alloc_str<'a>(arena: &'a Bump, s: &str) -> &'a str {
+    arena.alloc_str(s)
 }

@@ -185,8 +185,30 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) -> Result<(), String>
         Stmt::Struct { .. } | Stmt::Enum { .. } | Stmt::TypeAlias { .. } => {
             // Type declarations are erased at runtime.
         }
-        Stmt::ReceiverMethod { .. } => {
-            return Err(format!("unsupported statement: {:?}", stmt));
+        Stmt::ReceiverMethod {
+            receiver_type,
+            name,
+            params,
+            body,
+            ..
+        } => {
+            write_indent(out, indent);
+            out.push_str("function ");
+            out.push_str(receiver_type);
+            out.push('_');
+            out.push_str(name);
+            out.push_str("(this");
+            for param in params.iter() {
+                out.push_str(", ");
+                out.push_str(param.name);
+            }
+            out.push_str(") {\n");
+            for stmt in body.iter() {
+                emit_stmt(out, stmt, indent + 2)?;
+                out.push('\n');
+            }
+            write_indent(out, indent);
+            out.push('}');
         }
     }
     Ok(())
@@ -613,5 +635,14 @@ mod tests {
         assert!(out.contains("__case"), "expected case tag, got: {}", out);
         assert!(out.contains("Circle"), "got: {}", out);
         assert!(out.contains("value: 5"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_receiver_method() {
+        let out = parse_and_emit(
+            "struct Point { x: number, y: number } fn Point.distance(other: Point): number { return 0; } const p1 = Point { x: 0, y: 0 }; const p2 = Point { x: 3, y: 4 }; const d = p1.distance(p2);",
+        );
+        assert!(out.contains("function Point_distance"), "got: {}", out);
+        assert!(out.contains("p1.distance(p2)"), "got: {}", out);
     }
 }

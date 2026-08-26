@@ -509,4 +509,30 @@ mod tests {
             _ => panic!("expected const declaration"),
         }
     }
+
+    #[test]
+    fn parse_receiver_method() {
+        let arena = Bump::new();
+        let result = parse(
+            "struct Point { x: number, y: number } fn Point.distance(other: Point): number { return 0; }",
+            &arena,
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[1] {
+            Stmt::ReceiverMethod {
+                receiver_type,
+                name,
+                params,
+                return_type,
+                ..
+            } => {
+                assert_eq!(receiver_type.to_string(), "Point");
+                assert_eq!(name.to_string(), "distance");
+                assert_eq!(params.len(), 1);
+                assert!(return_type.is_some());
+            }
+            _ => panic!("expected receiver method"),
+        }
+    }
 }

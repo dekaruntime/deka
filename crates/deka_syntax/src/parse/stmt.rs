@@ -70,6 +70,8 @@ impl<'a> Parser<'a> {
 
             TokenKind::Function => self.parse_function_statement(start),
 
+            TokenKind::Fn => self.parse_receiver_method_statement(start),
+
             TokenKind::Struct => self.parse_struct_statement(start),
 
             TokenKind::Enum => self.parse_enum_statement(start),
@@ -125,6 +127,42 @@ impl<'a> Parser<'a> {
         let body = self.parse_block()?;
 
         Some(Stmt::Function {
+            name,
+            type_params,
+            params,
+            return_type,
+            body,
+            span: self.span_from(start),
+        })
+    }
+
+    fn parse_receiver_method_statement(&mut self, start: Pos) -> Option<Stmt<'a>> {
+        self.advance(); // `fn`
+
+        let receiver_type = self.expect_identifier()?;
+        self.expect(TokenKind::Dot)?;
+        let name = self.expect_identifier()?;
+
+        let type_params = if self.at(TokenKind::Lt) {
+            self.parse_type_params()?
+        } else {
+            &[]
+        };
+
+        self.expect(TokenKind::LParen)?;
+        let params = self.parse_params()?;
+        self.expect(TokenKind::RParen)?;
+
+        let return_type = if self.eat(TokenKind::Colon) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+
+        let body = self.parse_block()?;
+
+        Some(Stmt::ReceiverMethod {
+            receiver_type,
             name,
             type_params,
             params,

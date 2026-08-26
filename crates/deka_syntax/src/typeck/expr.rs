@@ -38,7 +38,13 @@ impl<'a> Checker<'a> {
                 args,
                 span,
                 ..
-            } => self.check_call(callee, args, *span),
+            } => {
+                if let Some(ret) = self.try_check_method_call(expr, callee, args, *span) {
+                    ret
+                } else {
+                    self.check_call(callee, args, *span)
+                }
+            }
             ast::Expr::FieldAccess { object, field, span } => {
                 self.check_field_access(object, field, *span)
             }
@@ -547,6 +553,73 @@ impl<'a> Checker<'a> {
                 Type::Named { name: "boolean" }
             }
         }
+    }
+
+    fn try_check_method_call(
+        &mut self,
+        call_expr: &ast::Expr<'a>,
+        callee: &ast::Expr<'a>,
+        args: &'a [ast::Expr<'a>],
+        span: ast::Span,
+    ) -> Option<Type<'a>> {
+        let (object, method_name) = match callee {
+            ast::Expr::FieldAccess { object, field, .. } => (object, *field),
+            _ => return None,
+        };
+
+        let object_type = self.check_expr(object);
+        let receiver_type = match &object_type {
+            Type::Struct { name } => *name,
+            _ => return None,
+        };
+
+        let info = match self.receiver_methods.get(&(receiver_type, method_name)) {
+            Some(i) => i.clone(),
+            None => return None,
+        };
+
+        // Record this call site so the emitter can lower it to a mangled call.
+        let mangled = format!("{receiver_type}_{method_name}");
+        self.method_calls.insert(call_expr as *const ast::Expr<'a>, mangled);
+
+        let expected_params: Vec<Type<'a>> = info
+            .params
+            .iter()
+            .map(|p| match &p.ty {
+                Some(t) => self.resolve_ast_type(t),
+                None => Type::Error,
+            })
+            .collect();
+
+        if expected_params.len() != args.len() {
+            self.error_span(
+                span,
+                format!(
+                    "method `{method_name}` on `{receiver_type}` expected {} argument{}, found {}",
+                    expected_params.len(),
+                    if expected_params.len() == 1 { "" } else { "s" },
+                    args.len()
+                ),
+            );
+        } else {
+            for (expected, arg) in expected_params.iter().zip(args.iter()) {
+                let arg_type = self.check_expr(arg);
+                if !is_assignable(expected, &arg_type) {
+                    self.error_at_expr(
+                        arg,
+                        format!(
+                            "expected argument type `{expected}`, found type `{arg_type}`"
+                        ),
+                    );
+                }
+            }
+        }
+
+        info.return_type
+            .as_ref()
+            .map(|t| self.resolve_ast_type(t))
+            .unwrap_or(Type::None)
+            .into()
     }
 
     fn check_call(

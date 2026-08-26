@@ -549,3 +549,480 @@ fn try_resolve_enum_expr<'a>(
 fn alloc_expr<'a>(arena: &'a Bump, expr: Expr<'a>) -> &'a Expr<'a> {
     ast::alloc(arena, expr)
 }
+
+/// Lower recorded method calls into calls to mangled top-level functions.
+///
+/// After typechecking, any call `obj.method(args)` where `obj` is a struct with
+/// a receiver method `method` has been recorded in `method_calls`. This pass
+/// rewrites those call sites to `StructName_method(obj, args)` so the emitter
+/// can treat them as ordinary function calls.
+pub fn lower_method_calls<'a>(
+    program: &mut Program<'a>,
+    arena: &'a Bump,
+    method_calls: &HashMap<*const Expr<'a>, String>,
+) {
+    let transformed: Vec<Stmt<'a>> = program
+        .statements
+        .iter()
+        .map(|stmt| lower_stmt(stmt, arena, method_calls))
+        .collect();
+
+    program.statements = ast::alloc_slice(arena, transformed);
+}
+
+fn lower_stmt<'a>(
+    stmt: &'a Stmt<'a>,
+    arena: &'a Bump,
+    method_calls: &HashMap<*const Expr<'a>, String>,
+) -> Stmt<'a> {
+    match stmt {
+        Stmt::Export { decl, span } => {
+            let new_decl = match decl {
+                ast::ExportDecl::Const { name, ty, value } => ast::ExportDecl::Const {
+                    name,
+                    ty: ty.clone(),
+                    value: lower_expr(value, arena, method_calls).clone(),
+                },
+                ast::ExportDecl::Function {
+                    name,
+                    type_params,
+                    params,
+                    return_type,
+                    body,
+                } => {
+                    let new_body: Vec<Stmt<'a>> = body
+                        .iter()
+                        .map(|s| lower_stmt(s, arena, method_calls))
+                        .collect();
+                    ast::ExportDecl::Function {
+                        name,
+                        type_params,
+                        params,
+                        return_type: return_type.clone(),
+                        body: ast::alloc_slice(arena, new_body),
+                    }
+                }
+            };
+            Stmt::Export {
+                decl: new_decl,
+                span: *span,
+            }
+        }
+        Stmt::Import { .. } => stmt.clone(),
+        Stmt::Const {
+            name,
+            ty,
+            value,
+            span,
+        } => Stmt::Const {
+            name,
+            ty: ty.clone(),
+            value: lower_expr(value, arena, method_calls).clone(),
+            span: *span,
+        },
+        Stmt::Let {
+            name,
+            ty,
+            value,
+            span,
+        } => Stmt::Let {
+            name,
+            ty: ty.clone(),
+            value: lower_expr(value, arena, method_calls).clone(),
+            span: *span,
+        },
+        Stmt::Function {
+            name,
+            type_params,
+            params,
+            return_type,
+            body,
+            span,
+        } => {
+            let new_body: Vec<Stmt<'a>> = body
+                .iter()
+                .map(|s| lower_stmt(s, arena, method_calls))
+                .collect();
+            Stmt::Function {
+                name,
+                type_params,
+                params,
+                return_type: return_type.clone(),
+                body: ast::alloc_slice(arena, new_body),
+                span: *span,
+            }
+        }
+        Stmt::ReceiverMethod {
+            receiver_type,
+            name,
+            type_params,
+            params,
+            return_type,
+            body,
+            span,
+        } => {
+            let new_body: Vec<Stmt<'a>> = body
+                .iter()
+                .map(|s| lower_stmt(s, arena, method_calls))
+                .collect();
+            Stmt::ReceiverMethod {
+                receiver_type,
+                name,
+                type_params,
+                params,
+                return_type: return_type.clone(),
+                body: ast::alloc_slice(arena, new_body),
+                span: *span,
+            }
+        }
+        Stmt::Struct {
+            name,
+            type_params,
+            fields,
+            embeds,
+            span,
+        } => {
+            let new_fields: Vec<ast::StructField<'a>> = fields
+                .iter()
+                .map(|f| ast::StructField {
+                    name: f.name,
+                    ty: f.ty.clone(),
+                    default_value: f
+                        .default_value
+                        .as_ref()
+                        .map(|v| lower_expr(v, arena, method_calls).clone()),
+                    span: f.span,
+                })
+                .collect();
+            Stmt::Struct {
+                name,
+                type_params,
+                fields: ast::alloc_slice(arena, new_fields),
+                embeds,
+                span: *span,
+            }
+        }
+        Stmt::Enum { .. } | Stmt::TypeAlias { .. } => stmt.clone(),
+        Stmt::Expr { expr, span } => Stmt::Expr {
+            expr: lower_expr(expr, arena, method_calls).clone(),
+            span: *span,
+        },
+        Stmt::Return { value, span } => Stmt::Return {
+            value: value
+                .as_ref()
+                .map(|v| lower_expr(v, arena, method_calls).clone()),
+            span: *span,
+        },
+        Stmt::If {
+            condition,
+            then_body,
+            else_body,
+            span,
+        } => {
+            let new_then: Vec<Stmt<'a>> = then_body
+                .iter()
+                .map(|s| lower_stmt(s, arena, method_calls))
+                .collect();
+            let new_else: Vec<Stmt<'a>> = else_body
+                .iter()
+                .map(|s| lower_stmt(s, arena, method_calls))
+                .collect();
+            Stmt::If {
+                condition: lower_expr(condition, arena, method_calls).clone(),
+                then_body: ast::alloc_slice(arena, new_then),
+                else_body: ast::alloc_slice(arena, new_else),
+                span: *span,
+            }
+        }
+        Stmt::For {
+            init,
+            condition,
+            step,
+            body,
+            span,
+        } => {
+            let new_init = init.as_ref().map(|i| match i {
+                ast::ForInit::Const { name, value } => ast::ForInit::Const {
+                    name,
+                    value: lower_expr(value, arena, method_calls).clone(),
+                },
+                ast::ForInit::Let { name, value } => ast::ForInit::Let {
+                    name,
+                    value: lower_expr(value, arena, method_calls).clone(),
+                },
+                ast::ForInit::Expr(expr) => {
+                    ast::ForInit::Expr(lower_expr(expr, arena, method_calls).clone())
+                }
+            });
+            let new_body: Vec<Stmt<'a>> = body
+                .iter()
+                .map(|s| lower_stmt(s, arena, method_calls))
+                .collect();
+            Stmt::For {
+                init: new_init,
+                condition: condition
+                    .as_ref()
+                    .map(|c| lower_expr(c, arena, method_calls).clone()),
+                step: step.as_ref().map(|s| lower_expr(s, arena, method_calls).clone()),
+                body: ast::alloc_slice(arena, new_body),
+                span: *span,
+            }
+        }
+    }
+}
+
+fn lower_expr<'a>(
+    expr: &'a Expr<'a>,
+    arena: &'a Bump,
+    method_calls: &HashMap<*const Expr<'a>, String>,
+) -> &'a Expr<'a> {
+    // If this expression is a recorded method call, rewrite it.
+    if let Some(mangled) = method_calls.get(&(expr as *const Expr<'a>)) {
+        if let Expr::Call {
+            callee: ast::Expr::FieldAccess { object, span, .. },
+            args,
+            ..
+        } = expr
+        {
+            let mangled_name = ast::alloc_str(arena, mangled);
+            let mut new_args: Vec<Expr<'a>> = vec![(*object).clone()];
+            new_args.extend(args.iter().cloned());
+            let new_expr = Expr::Call {
+                callee: ast::alloc(
+                    arena,
+                    Expr::Identifier {
+                        name: mangled_name,
+                        span: *span,
+                    },
+                ),
+                type_args: &[],
+                args: ast::alloc_slice(arena, new_args),
+                span: *span,
+            };
+            return ast::alloc(arena, new_expr);
+        }
+    }
+
+    let new_expr = match expr {
+        Expr::Number { .. }
+        | Expr::BigInt { .. }
+        | Expr::String { .. }
+        | Expr::Boolean { .. }
+        | Expr::None { .. }
+        | Expr::Identifier { .. } => return expr,
+
+        Expr::Binary { op, left, right, span } => Expr::Binary {
+            op: *op,
+            left: lower_expr(left, arena, method_calls),
+            right: lower_expr(right, arena, method_calls),
+            span: *span,
+        },
+        Expr::Unary { op, operand, span } => Expr::Unary {
+            op: *op,
+            operand: lower_expr(operand, arena, method_calls),
+            span: *span,
+        },
+        Expr::Call {
+            callee,
+            type_args,
+            args,
+            span,
+        } => Expr::Call {
+            callee: lower_expr(callee, arena, method_calls),
+            type_args,
+            args: lower_exprs(args, arena, method_calls),
+            span: *span,
+        },
+        Expr::FieldAccess { object, field, span } => Expr::FieldAccess {
+            object: lower_expr(object, arena, method_calls),
+            field,
+            span: *span,
+        },
+        Expr::IndexAccess { object, index, span } => Expr::IndexAccess {
+            object: lower_expr(object, arena, method_calls),
+            index: lower_expr(index, arena, method_calls),
+            span: *span,
+        },
+        Expr::StructLiteral { name, fields, span } => Expr::StructLiteral {
+            name,
+            fields: lower_struct_fields(fields, arena, method_calls),
+            span: *span,
+        },
+        Expr::EnumConstructor {
+            enum_name,
+            case_name,
+            payload,
+            span,
+        } => Expr::EnumConstructor {
+            enum_name,
+            case_name,
+            payload: payload
+                .as_ref()
+                .map(|p| lower_expr(p, arena, method_calls) as &'a Expr<'a>),
+            span: *span,
+        },
+        Expr::Match {
+            scrutinee,
+            arms,
+            span,
+        } => Expr::Match {
+            scrutinee: lower_expr(scrutinee, arena, method_calls),
+            arms: lower_match_arms(arms, arena, method_calls),
+            span: *span,
+        },
+        Expr::Unsafe { body, span } => {
+            let new_body: Vec<Stmt<'a>> = body
+                .iter()
+                .map(|s| lower_stmt(s, arena, method_calls))
+                .collect();
+            Expr::Unsafe {
+                body: ast::alloc_slice(arena, new_body),
+                span: *span,
+            }
+        }
+        Expr::Pipe { left, right, span } => Expr::Pipe {
+            left: lower_expr(left, arena, method_calls),
+            right: lower_expr(right, arena, method_calls),
+            span: *span,
+        },
+        Expr::Await { expr, span } => Expr::Await {
+            expr: lower_expr(expr, arena, method_calls),
+            span: *span,
+        },
+        Expr::JsxElement { element, span } => Expr::JsxElement {
+            element: lower_jsx_element(element, arena, method_calls),
+            span: *span,
+        },
+        Expr::JsxFragment { children, span } => Expr::JsxFragment {
+            children: lower_exprs(children, arena, method_calls),
+            span: *span,
+        },
+        Expr::Array { elements, span } => Expr::Array {
+            elements: lower_exprs(elements, arena, method_calls),
+            span: *span,
+        },
+        Expr::Object { fields, span } => Expr::Object {
+            fields: lower_object_fields(fields, arena, method_calls),
+            span: *span,
+        },
+        Expr::Spread { expr, span } => Expr::Spread {
+            expr: lower_expr(expr, arena, method_calls),
+            span: *span,
+        },
+        Expr::Paren { expr, span } => Expr::Paren {
+            expr: lower_expr(expr, arena, method_calls),
+            span: *span,
+        },
+        Expr::ArrowFunction { params, return_type, body, span } => {
+            let new_body = match body {
+                ast::ArrowBody::Expr(e) => {
+                    ast::ArrowBody::Expr(lower_expr(e, arena, method_calls))
+                }
+                ast::ArrowBody::Block(stmts) => {
+                    let new_stmts: Vec<Stmt<'a>> = stmts
+                        .iter()
+                        .map(|s| lower_stmt(s, arena, method_calls))
+                        .collect();
+                    ast::ArrowBody::Block(ast::alloc_slice(arena, new_stmts))
+                }
+            };
+            Expr::ArrowFunction {
+                params,
+                return_type: return_type.clone(),
+                body: new_body,
+                span: *span,
+            }
+        }
+    };
+
+    ast::alloc(arena, new_expr)
+}
+
+fn lower_exprs<'a>(
+    exprs: &'a [Expr<'a>],
+    arena: &'a Bump,
+    method_calls: &HashMap<*const Expr<'a>, String>,
+) -> &'a [Expr<'a>] {
+    let transformed: Vec<Expr<'a>> = exprs
+        .iter()
+        .map(|e| lower_expr(e, arena, method_calls).clone())
+        .collect();
+    ast::alloc_slice(arena, transformed)
+}
+
+fn lower_struct_fields<'a>(
+    fields: &'a [ast::StructLiteralField<'a>],
+    arena: &'a Bump,
+    method_calls: &HashMap<*const Expr<'a>, String>,
+) -> &'a [ast::StructLiteralField<'a>] {
+    let transformed: Vec<ast::StructLiteralField<'a>> = fields
+        .iter()
+        .map(|f| ast::StructLiteralField {
+            name: f.name,
+            value: lower_expr(&f.value, arena, method_calls).clone(),
+            span: f.span,
+        })
+        .collect();
+    ast::alloc_slice(arena, transformed)
+}
+
+fn lower_object_fields<'a>(
+    fields: &'a [ast::ObjectField<'a>],
+    arena: &'a Bump,
+    method_calls: &HashMap<*const Expr<'a>, String>,
+) -> &'a [ast::ObjectField<'a>] {
+    let transformed: Vec<ast::ObjectField<'a>> = fields
+        .iter()
+        .map(|f| ast::ObjectField {
+            key: f.key,
+            value: lower_expr(&f.value, arena, method_calls).clone(),
+            span: f.span,
+        })
+        .collect();
+    ast::alloc_slice(arena, transformed)
+}
+
+fn lower_match_arms<'a>(
+    arms: &'a [ast::MatchArm<'a>],
+    arena: &'a Bump,
+    method_calls: &HashMap<*const Expr<'a>, String>,
+) -> &'a [ast::MatchArm<'a>] {
+    let transformed: Vec<ast::MatchArm<'a>> = arms
+        .iter()
+        .map(|arm| ast::MatchArm {
+            pattern: arm.pattern.clone(),
+            guard: arm
+                .guard
+                .as_ref()
+                .map(|g| lower_expr(g, arena, method_calls).clone()),
+            body: lower_expr(&arm.body, arena, method_calls).clone(),
+            span: arm.span,
+        })
+        .collect();
+    ast::alloc_slice(arena, transformed)
+}
+
+fn lower_jsx_element<'a>(
+    element: &ast::JsxElement<'a>,
+    arena: &'a Bump,
+    method_calls: &HashMap<*const Expr<'a>, String>,
+) -> ast::JsxElement<'a> {
+    let new_attrs: Vec<ast::JsxAttribute<'a>> = element
+        .attributes
+        .iter()
+        .map(|attr| ast::JsxAttribute {
+            name: attr.name,
+            value: attr
+                .value
+                .as_ref()
+                .map(|v| lower_expr(v, arena, method_calls).clone()),
+            span: attr.span,
+        })
+        .collect();
+    ast::JsxElement {
+        tag: element.tag,
+        attributes: ast::alloc_slice(arena, new_attrs),
+        children: lower_exprs(element.children, arena, method_calls),
+        span: element.span,
+    }
+}
