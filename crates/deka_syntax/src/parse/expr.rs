@@ -79,6 +79,20 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
+            // Index access: `arr[0]` or `obj["key"]`.
+            if self.at(TokenKind::LBracket) {
+                self.advance();
+                let index = self.parse_expression()?;
+                self.expect(TokenKind::RBracket)?;
+                let span = self.span_from(start);
+                left = Expr::IndexAccess {
+                    object: alloc(self.arena, left),
+                    index: alloc(self.arena, index),
+                    span,
+                };
+                continue;
+            }
+
             // Struct literal: `Name { field: expr, ... }`.
             // We peek ahead to confirm this is really a struct literal and not
             // a block/record-like construct (e.g. a match body after the
@@ -231,6 +245,63 @@ impl<'a> Parser<'a> {
                     span: self.span_from(start),
                 })
             }
+            TokenKind::LBracket => {
+                self.advance();
+                let mut elements = Vec::new();
+                if !self.at(TokenKind::RBracket) {
+                    loop {
+                        elements.push(self.parse_spreadable_expr()?);
+                        if !self.eat(TokenKind::Comma) {
+                            break;
+                        }
+                        if self.at(TokenKind::RBracket) {
+                            break;
+                        }
+                    }
+                }
+                self.expect(TokenKind::RBracket)?;
+                Some(Expr::Array {
+                    elements: alloc_slice(self.arena, elements),
+                    span: self.span_from(start),
+                })
+            }
+            TokenKind::LBrace => {
+                self.advance();
+                let mut fields = Vec::new();
+                if !self.at(TokenKind::RBrace) {
+                    loop {
+                        let field_start = self.current_span().start;
+                        if self.eat(TokenKind::Spread) {
+                            let expr = self.parse_expression()?;
+                            fields.push(crate::ast::ObjectField {
+                                key: "",
+                                value: expr,
+                                span: self.span_from(field_start),
+                            });
+                        } else {
+                            let key = self.expect_object_key()?;
+                            self.expect(TokenKind::Colon)?;
+                            let value = self.parse_expression()?;
+                            fields.push(crate::ast::ObjectField {
+                                key,
+                                value,
+                                span: self.span_from(field_start),
+                            });
+                        }
+                        if !self.eat(TokenKind::Comma) {
+                            break;
+                        }
+                        if self.at(TokenKind::RBrace) {
+                            break;
+                        }
+                    }
+                }
+                self.expect(TokenKind::RBrace)?;
+                Some(Expr::Object {
+                    fields: alloc_slice(self.arena, fields),
+                    span: self.span_from(start),
+                })
+            }
             _ => {
                 self.error(format!(
                     "expected expression, found `{}`",
@@ -265,6 +336,43 @@ impl<'a> Parser<'a> {
                 matches!(next_next, Some(TokenKind::Colon))
             }
             _ => false,
+        }
+    }
+
+    /// Parse an expression that may be a spread element (`...expr`).
+    fn parse_spreadable_expr(&mut self) -> Option<Expr<'a>> {
+        let start = self.current_span().start;
+        if self.eat(TokenKind::Spread) {
+            let expr = self.parse_expression()?;
+            Some(Expr::Spread {
+                expr: alloc(self.arena, expr),
+                span: self.span_from(start),
+            })
+        } else {
+            self.parse_expression()
+        }
+    }
+
+    /// Parse an object literal key: identifier or string.
+    fn expect_object_key(&mut self) -> Option<&'a str> {
+        match self.current_kind() {
+            TokenKind::Identifier => {
+                let key = self.bump_str(self.current_text());
+                self.advance();
+                Some(key)
+            }
+            TokenKind::String => {
+                let key = self.bump_str(self.current_text());
+                self.advance();
+                Some(key)
+            }
+            _ => {
+                self.error(format!(
+                    "expected object key, found `{}`",
+                    token_name(self.current_kind())
+                ));
+                None
+            }
         }
     }
 

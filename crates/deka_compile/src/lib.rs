@@ -260,4 +260,16 @@ mod tests {
         .expect("compile should succeed");
         assert!(result.js.contains("export function add(a, b) {"), "got: {}", result.js);
     }
+
+    #[test]
+    fn compile_array_object_index() {
+        let result = compile_to_js(
+            "const a = [1, 2, 3]; const o = { x: 1 }; const v = a[0] + o[\"x\"];",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("const a = [1, 2, 3];"), "got: {}", result.js);
+        assert!(result.js.contains("const o = {x: 1};"), "got: {}", result.js);
+        assert!(result.js.contains("a[0] + o[\"x\"]"), "got: {}", result.js);
+    }
 }

@@ -66,6 +66,31 @@ impl<'a> Checker<'a> {
                 payload,
                 span,
             } => self.check_enum_constructor(enum_name, case_name, payload.as_deref(), *span),
+            ast::Expr::Array { elements, .. } => {
+                for element in elements.iter() {
+                    self.check_expr(element);
+                }
+                // TODO: infer element type and return Array<T> once the type
+                // system has a dedicated array type.
+                Type::Infer
+            }
+            ast::Expr::Object { fields, .. } => {
+                for field in fields.iter() {
+                    self.check_expr(&field.value);
+                }
+                // TODO: return a concrete object/record type.
+                Type::Infer
+            }
+            ast::Expr::IndexAccess { object, index, .. } => {
+                self.check_expr(object);
+                self.check_expr(index);
+                // TODO: return element type once collection types are modeled.
+                Type::Infer
+            }
+            ast::Expr::Spread { expr, .. } => {
+                self.check_expr(expr);
+                Type::Infer
+            }
             _ => {
                 self.error_at_expr(expr, "unsupported expression in v2 typeck");
                 Type::Error
@@ -486,6 +511,9 @@ impl<'a> Checker<'a> {
                 if left_type.is_error() || right_type.is_error() {
                     return Type::Named { name: "number" };
                 }
+                if matches!(left_type, Type::Infer) || matches!(right_type, Type::Infer) {
+                    return Type::Infer;
+                }
                 if Self::is_number(&left_type) && Self::is_number(&right_type) {
                     Type::Named { name: "number" }
                 } else if Self::is_string(&left_type) && Self::is_string(&right_type) {
@@ -501,12 +529,19 @@ impl<'a> Checker<'a> {
                 }
             }
             Sub | Mul | Div | Mod => {
-                self.expect_number(&left_type, left.span());
-                self.expect_number(&right_type, right.span());
+                if !matches!(left_type, Type::Infer) {
+                    self.expect_number(&left_type, left.span());
+                }
+                if !matches!(right_type, Type::Infer) {
+                    self.expect_number(&right_type, right.span());
+                }
                 Type::Named { name: "number" }
             }
             Eq | Ne | Lt | Le | Gt | Ge => {
                 if left_type.is_error() || right_type.is_error() {
+                    return Type::Named { name: "boolean" };
+                }
+                if matches!(left_type, Type::Infer) || matches!(right_type, Type::Infer) {
                     return Type::Named { name: "boolean" };
                 }
                 if left_type == right_type
@@ -526,8 +561,12 @@ impl<'a> Checker<'a> {
                 }
             }
             And | Or => {
-                self.expect_boolean(&left_type, left.span());
-                self.expect_boolean(&right_type, right.span());
+                if !matches!(left_type, Type::Infer) {
+                    self.expect_boolean(&left_type, left.span());
+                }
+                if !matches!(right_type, Type::Infer) {
+                    self.expect_boolean(&right_type, right.span());
+                }
                 Type::Named { name: "boolean" }
             }
             _ => {

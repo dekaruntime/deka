@@ -642,4 +642,95 @@ mod tests {
             _ => panic!("expected export"),
         }
     }
+
+    #[test]
+    fn parse_array_literal() {
+        let arena = Bump::new();
+        let result = parse("const a = [1, 2, 3];", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { value, .. } => match value {
+                Expr::Array { elements, .. } => {
+                    assert_eq!(elements.len(), 3);
+                }
+                _ => panic!("expected array literal"),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_array_spread() {
+        let arena = Bump::new();
+        let result = parse("const a = [...b];", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { value, .. } => match value {
+                Expr::Array { elements, .. } => {
+                    assert_eq!(elements.len(), 1);
+                    assert!(matches!(elements[0], Expr::Spread { .. }));
+                }
+                _ => panic!("expected array literal"),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_object_literal() {
+        let arena = Bump::new();
+        let result = parse("const o = { a: 1, b: \"two\" };", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { value, .. } => match value {
+                Expr::Object { fields, .. } => {
+                    assert_eq!(fields.len(), 2);
+                    assert_eq!(fields[0].key, "a");
+                    assert_eq!(fields[1].key, "b");
+                }
+                _ => panic!("expected object literal"),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_object_spread() {
+        let arena = Bump::new();
+        let result = parse("const o = { ...base, x: 1 };", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { value, .. } => match value {
+                Expr::Object { fields, .. } => {
+                    assert_eq!(fields.len(), 2);
+                    assert_eq!(fields[0].key, "");
+                    assert_eq!(fields[1].key, "x");
+                }
+                _ => panic!("expected object literal"),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_index_access() {
+        let arena = Bump::new();
+        let result = parse("const x = arr[0];", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { value, .. } => match value {
+                Expr::IndexAccess { object, index, .. } => {
+                    assert!(matches!(object, Expr::Identifier { name, .. } if name == &"arr"));
+                    assert!(matches!(index, Expr::Number { value, .. } if *value == 0.0));
+                }
+                _ => panic!("expected index access"),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
 }

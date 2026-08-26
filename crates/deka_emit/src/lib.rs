@@ -343,9 +343,15 @@ fn emit_expr(out: &mut String, expr: &Expr) -> Result<(), String> {
                 if i > 0 {
                     out.push_str(", ");
                 }
-                out.push_str(&field.key);
-                out.push_str(": ");
-                emit_expr(out, &field.value)?;
+                // Empty key is the sentinel used by the parser for `{ ...obj }`.
+                if field.key.is_empty() {
+                    out.push_str("...");
+                    emit_expr(out, &field.value)?;
+                } else {
+                    out.push_str(&field.key);
+                    out.push_str(": ");
+                    emit_expr(out, &field.value)?;
+                }
             }
             out.push_str("}");
         }
@@ -661,5 +667,35 @@ mod tests {
         let out = parse_and_emit("export function add(a: number, b: number): number { return a + b; }");
         assert!(out.contains("export function add(a, b) {"), "got: {}", out);
         assert!(out.contains("return a + b;"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_array_literal() {
+        let out = parse_and_emit("const a = [1, 2, 3];");
+        assert!(out.contains("const a = [1, 2, 3];"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_array_spread() {
+        let out = parse_and_emit("const a = [...b];");
+        assert!(out.contains("const a = [...b];"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_object_literal() {
+        let out = parse_and_emit("const o = { a: 1, b: \"two\" };");
+        assert!(out.contains("const o = {a: 1, b: \"two\"};"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_object_spread() {
+        let out = parse_and_emit("const o = { ...base, x: 1 };");
+        assert!(out.contains("const o = {...base, x: 1};"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_index_access() {
+        let out = parse_and_emit("const x = arr[0];");
+        assert!(out.contains("const x = arr[0];"), "got: {}", out);
     }
 }
