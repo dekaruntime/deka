@@ -1,9 +1,9 @@
 use bundler::{BuildOptions, VirtualSource, bundle_virtual_entry, optimize_emitted_module};
 use core::{CommandSpec, Context, ParamSpec, Registry};
-use deka_js::parse_source_module_meta;
+use deka_js::parse_source_module_meta as parse_v1_meta;
 use std::collections::BTreeSet;
 
-use crate::compile_helper::{compile_js_or_report, compiler_version_from_context};
+use crate::compile_helper::{compile_js_or_report, compiler_version_from_context, ModuleMeta};
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
@@ -312,7 +312,10 @@ fn compile_source(
     let input_name = input
         .to_str()
         .ok_or_else(|| format!("input path is not valid UTF-8: {}", input.display()))?;
-    let meta = parse_source_module_meta(&source);
+    let meta = match compiler {
+        deka_compile::CompilerVersion::V1 => ModuleMeta::V1(parse_v1_meta(&source)),
+        deka_compile::CompilerVersion::V2 => ModuleMeta::V2(deka_compile::parse_source_module_meta(&source)),
+    };
 
     let source_to_compile = match compiler {
         deka_compile::CompilerVersion::V1 => {

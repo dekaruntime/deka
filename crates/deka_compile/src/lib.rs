@@ -16,7 +16,44 @@ pub struct CompileOptions {
     pub compiler: CompilerVersion,
 }
 
+/// Module metadata extracted from a DekaScript source file.
+///
+/// This is the v2 equivalent of `deka_js::SourceModuleMeta`. It is intentionally
+/// minimal while the v2 module system is being implemented; frontmatter parsing
+/// will populate the fields as imports/exports land.
+#[derive(Debug, Clone, Default)]
+pub struct SourceModuleMeta {
+    pub imports: Vec<ImportDecl>,
+    pub exports: Vec<ExportDecl>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ImportDecl {
+    pub path: String,
+    pub specs: Vec<ImportSpec>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ImportSpec {
+    pub name: String,
+    pub alias: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExportDecl {
+    pub name: String,
+}
+
+/// Parse frontmatter metadata from a DekaScript source file.
+///
+/// Currently returns an empty metadata object; frontmatter parsing will be
+/// wired up once the v2 module syntax is stable.
+pub fn parse_source_module_meta(_source: &str) -> SourceModuleMeta {
+    SourceModuleMeta::default()
+}
+
 /// Successful result of compiling a DekaScript source file to JavaScript.
+#[derive(Debug)]
 pub struct CompileResult {
     pub js: String,
     pub diagnostics: Vec<Diagnostic>,
@@ -91,6 +128,44 @@ mod tests {
             result.js.contains("const x = 42;"),
             "expected emitted JS to contain 'const x = 42;', got:\n{}",
             result.js
+        );
+    }
+
+    #[test]
+    fn compile_function_and_call() {
+        let result = compile_to_js(
+            "function add(a: number, b: number): number { return a + b; } const r = add(1, 2);",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("function add"));
+        assert!(result.js.contains("add(1, 2)"));
+    }
+
+    #[test]
+    fn compile_recursive_function() {
+        let result = compile_to_js(
+            "function forever(n: number): number { return forever(n); }",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("function forever"));
+    }
+
+    #[test]
+    fn compile_option_none() {
+        let result = compile_to_js("const x: Option<number> = none;", "test.ds")
+            .expect("compile should succeed");
+        assert!(result.js.contains("const x"));
+    }
+
+    #[test]
+    fn compile_type_error_returns_diagnostics() {
+        let err = compile_to_js("const x: string = 42;", "test.ds").expect_err("compile should fail");
+        assert!(
+            err.iter().any(|d| d.message.contains("string") && d.message.contains("number")),
+            "expected type mismatch diagnostic, got: {:?}",
+            err
         );
     }
 }
