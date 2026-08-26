@@ -271,7 +271,7 @@ impl<'a> Lexer<'a> {
         let kind = match text {
             "true" => TokenKind::True,
             "false" => TokenKind::False,
-            "none" => TokenKind::None,
+            "None" => TokenKind::None,
             "const" => TokenKind::Const,
             "let" => TokenKind::Let,
             "mut" => TokenKind::Mut,

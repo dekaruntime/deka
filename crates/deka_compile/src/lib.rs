@@ -159,7 +159,7 @@ mod tests {
 
     #[test]
     fn compile_option_none() {
-        let result = compile_to_js("const x: Option<number> = none;", "test.ds")
+        let result = compile_to_js("const x: Option<number> = None;", "test.ds")
             .expect("compile should succeed");
         assert!(result.js.contains("const x"));
     }
@@ -183,7 +183,7 @@ mod tests {
         .expect("compile should succeed");
         assert!(result.js.contains("__case"));
         assert!(result.js.contains("Some"));
-        assert!(result.js.contains("None"));
+        assert!(result.js.contains("null"));
     }
 
     #[test]

@@ -62,7 +62,7 @@ mod tests {
         );
         assert!(out.contains("__case"), "expected case dispatch, got: {}", out);
         assert!(out.contains("Some"), "got: {}", out);
-        assert!(out.contains("None"), "got: {}", out);
+        assert!(out.contains("null"), "got: {}", out);
     }
 
     #[test]
