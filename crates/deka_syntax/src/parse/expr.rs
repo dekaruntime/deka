@@ -1,6 +1,6 @@
 //! Expression parsing (Pratt parser).
 
-use crate::ast::{alloc, alloc_slice, Expr, UnOp};
+use crate::ast::{alloc, alloc_slice, Expr, StructLiteralField, UnOp};
 use crate::lexer::TokenKind;
 
 use super::util::{infix_info, token_name};
@@ -64,6 +64,42 @@ impl<'a> Parser<'a> {
                     span,
                 };
                 continue;
+            }
+
+            // Struct literal: `Name { field: expr, ... }`.
+            // We peek ahead to confirm this is really a struct literal and not
+            // a block/record-like construct (e.g. a match body after the
+            // scrutinee). It must be empty `{}` or start with `field: expr`.
+            if self.at(TokenKind::LBrace) && self.looks_like_struct_literal() {
+                if let Expr::Identifier { name, .. } = &left {
+                    let struct_name = *name;
+                    self.advance();
+                    let mut fields = Vec::new();
+                    if !self.at(TokenKind::RBrace) {
+                        loop {
+                            let field_start = self.current_span().start;
+                            let field_name = self.expect_identifier()?;
+                            self.expect(TokenKind::Colon)?;
+                            let value = self.parse_expression()?;
+                            fields.push(StructLiteralField {
+                                name: field_name,
+                                value,
+                                span: self.span_from(field_start),
+                            });
+                            if !self.eat(TokenKind::Comma) {
+                                break;
+                            }
+                        }
+                    }
+                    self.expect(TokenKind::RBrace)?;
+                    let span = self.span_from(start);
+                    left = Expr::StructLiteral {
+                        name: struct_name,
+                        fields: alloc_slice(self.arena, fields),
+                        span,
+                    };
+                    continue;
+                }
             }
 
             let (lbp, rbp, op) = match infix_info(self.current_kind()) {
@@ -201,5 +237,21 @@ fn builtin_enum_constructor(name: &str) -> Option<(&'static str, bool)> {
         "Ok" => Some(("Result", true)),
         "Err" => Some(("Result", true)),
         _ => None,
+    }
+}
+
+impl<'a> Parser<'a> {
+    /// Peek at the tokens after the current `{` to decide whether this is a
+    /// struct literal (`Name {}` or `Name { a: 1 }`) or something else.
+    fn looks_like_struct_literal(&self) -> bool {
+        let next = self.tokens.get(self.pos + 1).map(|t| t.kind);
+        match next {
+            Some(TokenKind::RBrace) => true,
+            Some(TokenKind::Identifier) => {
+                let next_next = self.tokens.get(self.pos + 2).map(|t| t.kind);
+                matches!(next_next, Some(TokenKind::Colon))
+            }
+            _ => false,
+        }
     }
 }

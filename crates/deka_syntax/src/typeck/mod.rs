@@ -32,6 +32,9 @@ pub struct TypeckResult<'a> {
     pub program: &'a Program<'a>,
     pub errors: Vec<Diagnostic>,
     pub warnings: Vec<Diagnostic>,
+    /// Map from method call expression pointer to the mangled top-level
+    /// function name that should replace it during lowering.
+    pub method_calls: HashMap<*const ast::Expr<'a>, String>,
 }
 
 pub fn check_program<'a>(program: &'a Program<'a>, _source: &str) -> TypeckResult<'a> {
@@ -42,12 +45,26 @@ pub fn check_program<'a>(program: &'a Program<'a>, _source: &str) -> TypeckResul
         program,
         errors: checker.errors,
         warnings: checker.warnings,
+        method_calls: checker.method_calls,
     }
 }
 
 /// Information about an enum's cases, collected before typechecking bodies.
 struct EnumInfo<'a> {
     cases: &'a [ast::EnumCase<'a>],
+}
+
+/// Information about a struct's fields, collected before typechecking bodies.
+#[derive(Clone)]
+struct StructInfo<'a> {
+    fields: &'a [ast::StructField<'a>],
+}
+
+/// Information about a receiver method declared on a struct.
+#[derive(Clone)]
+struct MethodInfo<'a> {
+    params: &'a [ast::Param<'a>],
+    return_type: Option<ast::Type<'a>>,
 }
 
 struct Checker<'a> {
@@ -62,6 +79,12 @@ struct Checker<'a> {
     enums: HashMap<&'a str, EnumInfo<'a>>,
     /// Map from enum case name back to the enum that defines it.
     case_to_enum: HashMap<&'a str, &'a str>,
+    /// User-defined structs.
+    structs: HashMap<&'a str, StructInfo<'a>>,
+    /// Receiver methods keyed by `(receiver_type, method_name)`.
+    receiver_methods: HashMap<(&'a str, &'a str), MethodInfo<'a>>,
+    /// Method call sites to lower, keyed by call expression pointer.
+    method_calls: HashMap<*const ast::Expr<'a>, String>,
     /// Local scopes. The first scope is the top-level scope.
     scopes: Vec<HashMap<&'a str, Type<'a>>>,
     /// Are we currently inside a function body?
@@ -80,6 +103,9 @@ impl<'a> Checker<'a> {
             aliases: HashMap::new(),
             enums: HashMap::new(),
             case_to_enum: HashMap::new(),
+            structs: HashMap::new(),
+            receiver_methods: HashMap::new(),
+            method_calls: HashMap::new(),
             scopes: vec![HashMap::new()],
             in_function: false,
             return_type: None,
@@ -213,5 +239,40 @@ mod tests {
     #[test]
     fn result_ok_constructor_passes() {
         assert!(typeck("const r: Result<number, string> = Ok(5);").is_empty());
+    }
+
+    #[test]
+    fn struct_literal_and_field_access_passes() {
+        assert!(typeck("struct Point { x: number, y: number } const p: Point = Point { x: 1, y: 2 }; const x: number = p.x;").is_empty());
+    }
+
+    #[test]
+    fn user_defined_enum_constructor_passes() {
+        assert!(typeck("enum Color { Red, Green, Blue } const c: Color = Color.Red;").is_empty());
+    }
+
+    #[test]
+    fn user_defined_enum_payload_constructor_passes() {
+        assert!(typeck("enum Shape { Circle(number), Label(string) } const s: Shape = Shape.Circle(5); const t: Shape = Shape.Label(\"hello\");").is_empty());
+    }
+
+    #[test]
+    fn user_defined_enum_wrong_payload_type_fails() {
+        let errors = typeck("enum Shape { Circle(number) } const s: Shape = Shape.Circle(\"oops\");");
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
+        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn user_defined_enum_match_passes() {
+        assert!(typeck("enum Color { Red, Green, Blue } const c: Color = Color.Red; const x: number = match c { Red => 1, Green => 2, Blue => 3 };").is_empty());
+    }
+
+    #[test]
+    fn receiver_method_passes() {
+        assert!(typeck(
+            "struct Point { x: number, y: number } fn Point.distance(other: Point): number { return 0; } const p1: Point = Point { x: 0, y: 0 }; const p2: Point = Point { x: 3, y: 4 }; const d: number = p1.distance(p2);"
+        ).is_empty());
     }
 }

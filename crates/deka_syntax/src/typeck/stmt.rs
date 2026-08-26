@@ -9,11 +9,12 @@ use super::Checker;
 
 impl<'a> Checker<'a> {
     pub(super) fn check_program(&mut self) {
-        self.collect_aliases();
+        self.collect_declarations();
         self.collect_function_signatures();
+        self.collect_receiver_methods();
 
-        // Check function bodies first so that inferred return types are
-        // available to later top-level statements.
+        // Check function and receiver-method bodies first so that inferred
+        // return types are available to later top-level statements.
         for stmt in self.program.statements {
             match stmt {
                 ast::Stmt::Function {
@@ -24,6 +25,22 @@ impl<'a> Checker<'a> {
                     span,
                     ..
                 } => self.check_function(name, params, return_type.as_ref(), body, *span),
+                ast::Stmt::ReceiverMethod {
+                    receiver_type,
+                    name,
+                    params,
+                    return_type,
+                    body,
+                    span,
+                    ..
+                } => self.check_receiver_method(
+                    receiver_type,
+                    name,
+                    params,
+                    return_type.as_ref(),
+                    body,
+                    *span,
+                ),
                 ast::Stmt::Export {
                     decl: ast::ExportDecl::Function { .. },
                     ..
@@ -38,7 +55,7 @@ impl<'a> Checker<'a> {
         // Now check non-function top-level statements in source order.
         for stmt in self.program.statements {
             match stmt {
-                ast::Stmt::Function { .. } => {}
+                ast::Stmt::Function { .. } | ast::Stmt::ReceiverMethod { .. } => {}
                 ast::Stmt::Export {
                     decl: ast::ExportDecl::Function { .. },
                     ..
@@ -48,7 +65,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn collect_aliases(&mut self) {
+    fn collect_declarations(&mut self) {
         for stmt in self.program.statements {
             if let ast::Stmt::TypeAlias { name, value, span, .. } = stmt {
                 if self.aliases.insert(name, value.clone()).is_some() {
@@ -67,6 +84,40 @@ impl<'a> Checker<'a> {
                             format!("duplicate enum case name `{}`", case.name),
                         );
                     }
+                }
+            }
+            if let ast::Stmt::Struct { name, fields, span, .. } = stmt {
+                if self.structs.insert(name, super::StructInfo { fields }).is_some() {
+                    self.error_span(*span, format!("duplicate struct definition `{name}`"));
+                }
+            }
+        }
+    }
+
+    fn collect_receiver_methods(&mut self) {
+        for stmt in self.program.statements {
+            if let ast::Stmt::ReceiverMethod {
+                receiver_type,
+                name,
+                params,
+                return_type,
+                span,
+                ..
+            } = stmt
+            {
+                if !self.structs.contains_key(receiver_type) {
+                    self.error_span(*span, format!("unknown receiver type `{receiver_type}`"));
+                    continue;
+                }
+                let key = (*receiver_type, *name);
+                if self.receiver_methods.insert(key, super::MethodInfo {
+                    params,
+                    return_type: return_type.clone(),
+                }).is_some()
+                {
+                    self.error_span(*span, format!(
+                        "duplicate receiver method `{name}` on type `{receiver_type}`"
+                    ));
                 }
             }
         }
@@ -207,16 +258,14 @@ impl<'a> Checker<'a> {
                 }
                 self.scopes.pop();
             }
-            ast::Stmt::TypeAlias { .. } => {
+            ast::Stmt::TypeAlias { .. }
+            | ast::Stmt::Struct { .. }
+            | ast::Stmt::Enum { .. }
+            | ast::Stmt::ReceiverMethod { .. } => {
                 // Already collected and validated lazily at use sites.
             }
             ast::Stmt::Import { span, .. } => {
                 self.error_span(*span, "imports are not supported in v2 typeck");
-            }
-            ast::Stmt::ReceiverMethod { span, .. }
-            | ast::Stmt::Struct { span, .. }
-            | ast::Stmt::Enum { span, .. } => {
-                self.error_span(*span, "this statement kind is not supported in v2 typeck");
             }
         }
     }
@@ -346,6 +395,68 @@ impl<'a> Checker<'a> {
             Type::Function {
                 params: param_types,
                 ret: Box::new(final_ret),
+            },
+        );
+    }
+
+    pub(super) fn check_receiver_method(
+        &mut self,
+        receiver_type: &'a str,
+        name: &'a str,
+        params: &'a [ast::Param<'a>],
+        return_type: Option<&ast::Type<'a>>,
+        body: &'a [ast::Stmt<'a>],
+        _span: ast::Span,
+    ) {
+        let info = match self.receiver_methods.get(&(receiver_type, name)) {
+            Some(i) => i.clone(),
+            None => return,
+        };
+
+        let mut param_types = Vec::new();
+        for p in params {
+            match &p.ty {
+                Some(t) => param_types.push(self.resolve_ast_type(t)),
+                None => {
+                    self.error_span(
+                        p.span,
+                        format!("parameter `{}` is missing a type annotation", p.name),
+                    );
+                    param_types.push(Type::Error);
+                }
+            }
+        }
+
+        let explicit_ret = return_type.map(|t| self.resolve_ast_type(t));
+
+        self.scopes.push(HashMap::new());
+
+        // Bind `this` to the receiver type inside the method body.
+        self.declare_var("this", Type::Struct { name: receiver_type });
+
+        for (p, t) in params.iter().zip(param_types.iter()) {
+            self.declare_var(p.name, t.clone());
+        }
+
+        let saved_in_function = self.in_function;
+        let saved_return_type = self.return_type.clone();
+        self.in_function = true;
+        self.return_type = explicit_ret.clone();
+
+        for stmt in body {
+            self.check_statement(stmt);
+        }
+
+        self.in_function = saved_in_function;
+        self.return_type = saved_return_type;
+        self.scopes.pop();
+
+        // Update the stored signature with resolved types.
+        self.receiver_methods.insert(
+            (receiver_type, name),
+            super::MethodInfo {
+                params,
+                return_type: info.return_type.clone(),
             },
         );
     }

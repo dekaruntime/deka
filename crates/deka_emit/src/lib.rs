@@ -182,11 +182,33 @@ fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) -> Result<(), String>
             write_indent(out, indent);
             out.push('}');
         }
-        Stmt::ReceiverMethod { .. }
-        | Stmt::Struct { .. }
-        | Stmt::Enum { .. }
-        | Stmt::TypeAlias { .. } => {
-            return Err(format!("unsupported statement: {:?}", stmt));
+        Stmt::Struct { .. } | Stmt::Enum { .. } | Stmt::TypeAlias { .. } => {
+            // Type declarations are erased at runtime.
+        }
+        Stmt::ReceiverMethod {
+            receiver_type,
+            name,
+            params,
+            body,
+            ..
+        } => {
+            write_indent(out, indent);
+            out.push_str("function ");
+            out.push_str(receiver_type);
+            out.push('_');
+            out.push_str(name);
+            out.push_str("(this");
+            for param in params.iter() {
+                out.push_str(", ");
+                out.push_str(param.name);
+            }
+            out.push_str(") {\n");
+            for stmt in body.iter() {
+                emit_stmt(out, stmt, indent + 2)?;
+                out.push('\n');
+            }
+            write_indent(out, indent);
+            out.push('}');
         }
     }
     Ok(())
@@ -274,6 +296,18 @@ fn emit_expr(out: &mut String, expr: &Expr) -> Result<(), String> {
             emit_expr(out, object)?;
             out.push('.');
             out.push_str(field);
+        }
+        Expr::StructLiteral { fields, .. } => {
+            out.push_str("({ ");
+            for (i, field) in fields.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(field.name);
+                out.push_str(": ");
+                emit_expr(out, &field.value)?;
+            }
+            out.push_str(" })");
         }
         Expr::IndexAccess { object, index, .. } => {
             emit_expr(out, object)?;
@@ -364,8 +398,7 @@ fn emit_expr(out: &mut String, expr: &Expr) -> Result<(), String> {
         } => {
             emit_match(out, scrutinee, arms)?;
         }
-        Expr::StructLiteral { .. }
-        | Expr::Pipe { .. }
+        Expr::Pipe { .. }
         | Expr::Await { .. }
         | Expr::JsxElement { .. }
         | Expr::JsxFragment { .. } => {
@@ -578,5 +611,38 @@ mod tests {
         let out = parse_and_emit("const o = Some(5);");
         assert!(out.contains("__case"), "expected case tag, got: {}", out);
         assert!(out.contains("Some"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_struct_literal() {
+        let out = parse_and_emit(
+            "struct Point { x: number, y: number } const p = Point { x: 1, y: 2 };",
+        );
+        assert!(out.contains("x: 1"), "got: {}", out);
+        assert!(out.contains("y: 2"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_user_defined_enum_constructor() {
+        let out = parse_and_emit("enum Color { Red, Green, Blue } const c = Color.Red;");
+        assert!(out.contains("__case"), "expected case tag, got: {}", out);
+        assert!(out.contains("Red"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_user_defined_enum_payload_constructor() {
+        let out = parse_and_emit("enum Shape { Circle(number) } const s = Shape.Circle(5);");
+        assert!(out.contains("__case"), "expected case tag, got: {}", out);
+        assert!(out.contains("Circle"), "got: {}", out);
+        assert!(out.contains("value: 5"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_receiver_method() {
+        let out = parse_and_emit(
+            "struct Point { x: number, y: number } fn Point.distance(other: Point): number { return 0; } const p1 = Point { x: 0, y: 0 }; const p2 = Point { x: 3, y: 4 }; const d = p1.distance(p2);",
+        );
+        assert!(out.contains("function Point_distance"), "got: {}", out);
+        assert!(out.contains("p1.distance(p2)"), "got: {}", out);
     }
 }

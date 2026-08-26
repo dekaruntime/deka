@@ -1,6 +1,6 @@
 //! Expression typechecking.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast;
 
@@ -38,11 +38,21 @@ impl<'a> Checker<'a> {
                 args,
                 span,
                 ..
-            } => self.check_call(callee, args, *span),
-            ast::Expr::FieldAccess { span, .. } => {
-                self.error_span(*span, "field access is not yet supported in v2 typeck");
-                Type::Error
+            } => {
+                if let Some(ret) = self.try_check_method_call(expr, callee, args, *span) {
+                    ret
+                } else {
+                    self.check_call(callee, args, *span)
+                }
             }
+            ast::Expr::FieldAccess { object, field, span } => {
+                self.check_field_access(object, field, *span)
+            }
+            ast::Expr::StructLiteral {
+                name,
+                fields,
+                span,
+            } => self.check_struct_literal(name, fields, *span),
             ast::Expr::Paren { expr, .. } => self.check_expr(expr),
             ast::Expr::Match {
                 scrutinee,
@@ -62,6 +72,109 @@ impl<'a> Checker<'a> {
         }
     }
 
+    fn check_struct_literal(
+        &mut self,
+        name: &'a str,
+        fields: &'a [ast::StructLiteralField<'a>],
+        span: ast::Span,
+    ) -> Type<'a> {
+        let info = match self.structs.get(name).cloned() {
+            Some(info) => info,
+            None => {
+                self.error_span(span, format!("unknown struct `{name}`"));
+                return Type::Error;
+            }
+        };
+
+        let mut seen_fields = HashSet::new();
+        for field in fields {
+            if !seen_fields.insert(field.name) {
+                self.error_span(
+                    field.span,
+                    format!("duplicate field `{}` in struct literal", field.name),
+                );
+            }
+            let expected_type = match info.fields.iter().find(|f| f.name == field.name) {
+                Some(f) => self.resolve_ast_type(&f.ty),
+                None => {
+                    self.error_span(
+                        field.span,
+                        format!("struct `{name}` has no field `{}`", field.name),
+                    );
+                    Type::Error
+                }
+            };
+            let value_type = self.check_expr(&field.value);
+            if !is_assignable(&expected_type, &value_type) {
+                self.error_span(
+                    field.span,
+                    format!(
+                        "field `{}` expected type `{expected_type}`, found type `{value_type}`",
+                        field.name
+                    ),
+                );
+            }
+        }
+
+        for field in info.fields {
+            if field.default_value.is_none() && !seen_fields.contains(field.name) {
+                self.error_span(
+                    span,
+                    format!(
+                        "missing required field `{}` in struct literal for `{name}`",
+                        field.name
+                    ),
+                );
+            }
+        }
+
+        Type::Struct { name }
+    }
+
+    fn check_field_access(
+        &mut self,
+        object: &ast::Expr<'a>,
+        field: &'a str,
+        span: ast::Span,
+    ) -> Type<'a> {
+        let object_type = self.check_expr(object);
+        if object_type.is_error() {
+            return Type::Error;
+        }
+
+        let struct_name = match &object_type {
+            Type::Struct { name } => *name,
+            _ => {
+                self.error_span(
+                    span,
+                    format!("cannot access field `{field}` on type `{object_type}`"),
+                );
+                return Type::Error;
+            }
+        };
+
+        let info = match self.structs.get(struct_name).cloned() {
+            Some(info) => info,
+            None => {
+                self.error_span(span, format!("unknown struct `{struct_name}`"));
+                return Type::Error;
+            }
+        };
+
+        match info.fields.iter().find(|f| f.name == field) {
+            Some(f) => self.resolve_ast_type(&f.ty),
+            None => {
+                self.error_span(
+                    span,
+                    format!(
+                        "struct `{struct_name}` has no field `{field}`"
+                    ),
+                );
+                Type::Error
+            }
+        }
+    }
+
     fn check_enum_constructor(
         &mut self,
         enum_name: &'a str,
@@ -72,57 +185,117 @@ impl<'a> Checker<'a> {
         let payload_type = payload.map(|expr| self.check_expr(expr));
 
         if enum_name == "Option" {
-            match case_name {
-                "Some" => match payload_type {
-                    Some(t) => Type::Option { inner: Box::new(t) },
-                    None => {
-                        self.error_span(span, "`Some` requires a payload");
-                        Type::Error
-                    }
-                },
-                "None" => {
-                    if payload.is_some() {
-                        self.error_span(span, "`None` cannot have a payload");
-                    }
-                    Type::None
-                }
-                _ => {
-                    self.error_span(span, format!("unknown Option case `{case_name}`"));
-                    Type::Error
+            return self.check_option_constructor(case_name, payload, payload_type, span);
+        }
+
+        if enum_name == "Result" {
+            return self.check_result_constructor(case_name, payload, payload_type, span);
+        }
+
+        // User-defined enum.
+        let info = match self.enums.get(enum_name) {
+            Some(i) => i,
+            None => {
+                self.error_span(span, format!("unknown enum `{enum_name}`"));
+                return Type::Error;
+            }
+        };
+
+        let case = match info.cases.iter().find(|c| c.name == case_name) {
+            Some(c) => c,
+            None => {
+                self.error_span(
+                    span,
+                    format!("case `{case_name}` not found in enum `{enum_name}`"),
+                );
+                return Type::Error;
+            }
+        };
+
+        match (&case.payload, payload_type) {
+            (Some(expected), Some(actual)) => {
+                let expected_ty = self.resolve_ast_type(expected);
+                if !is_assignable(&expected_ty, &actual) {
+                    self.error_span(
+                        span,
+                        format!(
+                            "enum case `{case_name}` expected payload type `{expected_ty}`, found type `{actual}`"
+                        ),
+                    );
                 }
             }
-        } else if enum_name == "Result" {
-            // Result<T, E> is a prelude enum. For Ok/Err constructors, the
-            // uninferred side is treated as `never` until more context is known.
-            match case_name {
-                "Ok" => match payload_type {
-                    Some(t) => Type::Generic {
-                        base: "Result",
-                        args: vec![t, Type::Never],
-                    },
-                    None => {
-                        self.error_span(span, "`Ok` requires a payload");
-                        Type::Error
-                    }
-                },
-                "Err" => match payload_type {
-                    Some(e) => Type::Generic {
-                        base: "Result",
-                        args: vec![Type::Never, e],
-                    },
-                    None => {
-                        self.error_span(span, "`Err` requires a payload");
-                        Type::Error
-                    }
-                },
-                _ => {
-                    self.error_span(span, format!("unknown Result case `{case_name}`"));
+            (Some(_), None) => {
+                self.error_span(span, format!("`{case_name}` requires a payload"));
+            }
+            (None, Some(_)) => {
+                self.error_span(span, format!("`{case_name}` cannot have a payload"));
+            }
+            (None, None) => {}
+        }
+
+        Type::Named { name: enum_name }
+    }
+
+    fn check_option_constructor(
+        &mut self,
+        case_name: &'a str,
+        payload: Option<&ast::Expr<'a>>,
+        payload_type: Option<Type<'a>>,
+        span: ast::Span,
+    ) -> Type<'a> {
+        match case_name {
+            "Some" => match payload_type {
+                Some(t) => Type::Option { inner: Box::new(t) },
+                None => {
+                    self.error_span(span, "`Some` requires a payload");
                     Type::Error
                 }
+            },
+            "None" => {
+                if payload.is_some() {
+                    self.error_span(span, "`None` cannot have a payload");
+                }
+                Type::None
             }
-        } else {
-            self.error_span(span, format!("unsupported enum constructor `{enum_name}`"));
-            Type::Error
+            _ => {
+                self.error_span(span, format!("unknown Option case `{case_name}`"));
+                Type::Error
+            }
+        }
+    }
+
+    fn check_result_constructor(
+        &mut self,
+        case_name: &'a str,
+        _payload: Option<&ast::Expr<'a>>,
+        payload_type: Option<Type<'a>>,
+        span: ast::Span,
+    ) -> Type<'a> {
+        match case_name {
+            "Ok" => match payload_type {
+                Some(t) => Type::Generic {
+                    base: "Result",
+                    args: vec![t, Type::Never],
+                },
+                None => {
+                    self.error_span(span, "`Ok` requires a payload");
+                    Type::Error
+                }
+            },
+            "Err" => match payload_type {
+                Some(e) => Type::Generic {
+                    base: "Result",
+                    args: vec![Type::Never, e],
+                },
+                None => {
+                    self.error_span(span, "`Err` requires a payload");
+                    Type::Error
+                }
+            },
+            _ => {
+                self.error_span(span, format!("unknown Result case `{case_name}`"));
+                Type::Error
+            }
         }
     }
 
@@ -268,6 +441,14 @@ impl<'a> Checker<'a> {
             None => return,
         };
 
+        if !scrutinee_type.is_error() && !matches!(scrutinee_type, Type::Named { name } if *name == enum_name) {
+            self.error_span(
+                span,
+                format!("`{name}` is not a case of type `{scrutinee_type}`"),
+            );
+            return;
+        }
+
         let case = match info.cases.iter().find(|c| c.name == name) {
             Some(c) => c,
             None => {
@@ -372,6 +553,73 @@ impl<'a> Checker<'a> {
                 Type::Named { name: "boolean" }
             }
         }
+    }
+
+    fn try_check_method_call(
+        &mut self,
+        call_expr: &ast::Expr<'a>,
+        callee: &ast::Expr<'a>,
+        args: &'a [ast::Expr<'a>],
+        span: ast::Span,
+    ) -> Option<Type<'a>> {
+        let (object, method_name) = match callee {
+            ast::Expr::FieldAccess { object, field, .. } => (object, *field),
+            _ => return None,
+        };
+
+        let object_type = self.check_expr(object);
+        let receiver_type = match &object_type {
+            Type::Struct { name } => *name,
+            _ => return None,
+        };
+
+        let info = match self.receiver_methods.get(&(receiver_type, method_name)) {
+            Some(i) => i.clone(),
+            None => return None,
+        };
+
+        // Record this call site so the emitter can lower it to a mangled call.
+        let mangled = format!("{receiver_type}_{method_name}");
+        self.method_calls.insert(call_expr as *const ast::Expr<'a>, mangled);
+
+        let expected_params: Vec<Type<'a>> = info
+            .params
+            .iter()
+            .map(|p| match &p.ty {
+                Some(t) => self.resolve_ast_type(t),
+                None => Type::Error,
+            })
+            .collect();
+
+        if expected_params.len() != args.len() {
+            self.error_span(
+                span,
+                format!(
+                    "method `{method_name}` on `{receiver_type}` expected {} argument{}, found {}",
+                    expected_params.len(),
+                    if expected_params.len() == 1 { "" } else { "s" },
+                    args.len()
+                ),
+            );
+        } else {
+            for (expected, arg) in expected_params.iter().zip(args.iter()) {
+                let arg_type = self.check_expr(arg);
+                if !is_assignable(expected, &arg_type) {
+                    self.error_at_expr(
+                        arg,
+                        format!(
+                            "expected argument type `{expected}`, found type `{arg_type}`"
+                        ),
+                    );
+                }
+            }
+        }
+
+        info.return_type
+            .as_ref()
+            .map(|t| self.resolve_ast_type(t))
+            .unwrap_or(Type::None)
+            .into()
     }
 
     fn check_call(
