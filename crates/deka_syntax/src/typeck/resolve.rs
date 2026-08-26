@@ -54,6 +54,19 @@ impl<'a> Checker<'a> {
                         self.error_span(*span, "Option requires exactly one type argument");
                         Type::Error
                     }
+                } else if base == &"Result" {
+                    if args.len() == 2 {
+                        Type::Generic {
+                            base: "Result",
+                            args: args
+                                .iter()
+                                .map(|arg| self.resolve_ast_type_rec(arg, seen))
+                                .collect(),
+                        }
+                    } else {
+                        self.error_span(*span, "Result requires exactly two type arguments");
+                        Type::Error
+                    }
                 } else {
                     self.error_span(*span, format!("unsupported generic type `{base}`"));
                     Type::Error

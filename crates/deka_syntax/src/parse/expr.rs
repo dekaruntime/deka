@@ -41,6 +41,22 @@ impl<'a> Parser<'a> {
                 }
                 self.expect(TokenKind::RParen)?;
                 let span = self.span_from(start);
+
+                // Built-in prelude enum constructors: Some/Ok/Err take one payload.
+                if let Expr::Identifier { name, .. } = &left {
+                    if let Some((enum_name, _requires_payload)) = builtin_enum_constructor(name) {
+                        if args.len() == 1 {
+                            left = Expr::EnumConstructor {
+                                enum_name: self.bump_str(enum_name),
+                                case_name: name,
+                                payload: Some(alloc(self.arena, args.into_iter().next().unwrap())),
+                                span,
+                            };
+                            continue;
+                        }
+                    }
+                }
+
                 left = Expr::Call {
                     callee: alloc(self.arena, left),
                     type_args: &[],
@@ -156,6 +172,16 @@ impl<'a> Parser<'a> {
                     span: self.span_from(start),
                 })
             }
+            TokenKind::Match => {
+                self.advance();
+                let scrutinee = alloc(self.arena, self.parse_expression()?);
+                let arms = self.parse_match_arms()?;
+                Some(Expr::Match {
+                    scrutinee,
+                    arms,
+                    span: self.span_from(start),
+                })
+            }
             _ => {
                 self.error(format!(
                     "expected expression, found `{}`",
@@ -164,5 +190,16 @@ impl<'a> Parser<'a> {
                 None
             }
         }
+    }
+}
+
+/// Returns `(enum_name, requires_payload)` for built-in prelude enum
+/// constructors that are parsed specially instead of as function calls.
+fn builtin_enum_constructor(name: &str) -> Option<(&'static str, bool)> {
+    match name {
+        "Some" => Some(("Option", true)),
+        "Ok" => Some(("Result", true)),
+        "Err" => Some(("Result", true)),
+        _ => None,
     }
 }

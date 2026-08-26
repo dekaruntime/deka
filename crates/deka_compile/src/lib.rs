@@ -168,4 +168,16 @@ mod tests {
             err
         );
     }
+
+    #[test]
+    fn compile_match_expression() {
+        let result = compile_to_js(
+            "const o = Some(5); const x = match o { Some(n) => n, None => 0 };",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("__case"));
+        assert!(result.js.contains("Some"));
+        assert!(result.js.contains("None"));
+    }
 }
