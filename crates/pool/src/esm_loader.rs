@@ -16,14 +16,71 @@ use deno_core::ResolutionKind;
 use deno_core::resolve_import;
 use deno_error::JsErrorBox;
 
-use deka_js::SourceModuleMeta;
 use deka_js::compile_phpx_source_to_js_with_warnings_detailed;
-use deka_js::parse_source_module_meta;
+use deka_js::parse_source_module_meta as parse_v1_source_module_meta;
 use deka_js::{CompileError, DEKA_VALIDATION_ERROR_MARKER};
 use runtime_core::module_spec::{
     ds_source_candidates, is_bare_module_specifier, module_spec_aliases, resolve_ds_source_file,
 };
 use runtime_core::modules::{resolve_modules_dir, MODULES_DIR};
+
+/// Runtime compiler version selector.
+///
+/// Reads `DEKA_COMPILER` from the environment. Anything other than `v2` selects
+/// the legacy v1 compiler.
+fn selected_compiler_version() -> deka_compile::CompilerVersion {
+    if let Ok(value) = std::env::var("DEKA_COMPILER") {
+        if value.trim().eq_ignore_ascii_case("v2") {
+            return deka_compile::CompilerVersion::V2;
+        }
+    }
+    deka_compile::CompilerVersion::V1
+}
+
+/// Compile a single `.ds` source file to JavaScript using the selected compiler.
+fn compile_ds_source_to_js(source: &str, input: &str) -> Result<String, JsErrorBox> {
+    match selected_compiler_version() {
+        deka_compile::CompilerVersion::V1 => {
+            let meta = parse_v1_source_module_meta(source);
+            match compile_phpx_source_to_js_with_warnings_detailed(source, input, meta) {
+                Ok(outcome) => Ok(outcome.js),
+                Err(CompileError::Validation { diagnostics }) => Err(JsErrorBox::generic(format!(
+                    "{}{}",
+                    DEKA_VALIDATION_ERROR_MARKER, diagnostics
+                ))),
+                Err(CompileError::Other(msg)) => Err(JsErrorBox::generic(msg)),
+            }
+        }
+        deka_compile::CompilerVersion::V2 => match deka_compile::compile_to_js(source, input) {
+            Ok(result) => Ok(result.js),
+            Err(diagnostics) => {
+                let message = diagnostics
+                    .iter()
+                    .map(|d| d.message.clone())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                Err(JsErrorBox::generic(format!(
+                    "{}{}",
+                    DEKA_VALIDATION_ERROR_MARKER, message
+                )))
+            }
+        },
+    }
+}
+
+/// Parse module imports from a `.ds` source using the selected compiler's parser.
+fn parse_module_imports(source: &str) -> Vec<String> {
+    match selected_compiler_version() {
+        deka_compile::CompilerVersion::V1 => {
+            let meta = parse_v1_source_module_meta(source);
+            meta.imports.iter().map(|decl| decl.from.clone()).collect()
+        }
+        deka_compile::CompilerVersion::V2 => {
+            let meta = deka_compile::parse_source_module_meta(source);
+            meta.imports.iter().map(|decl| decl.path.clone()).collect()
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct PhpxEsmLoader {
@@ -93,23 +150,12 @@ impl PhpxEsmLoader {
         let source = std::fs::read_to_string(path).map_err(|err| {
             JsErrorBox::generic(format!("Failed to read {}: {}", path.display(), err))
         })?;
-        let meta = parse_source_module_meta(&source);
+        let imports = parse_module_imports(&source);
         // Validate the source before checking project layout so syntax/type
         // errors surface immediately instead of being blocked by a missing
         // deka.lock or php_modules/ directory (dekaruntime/deka#117).
-        let js = match compile_phpx_source_to_js_with_warnings_detailed(&source, input, meta.clone()) {
-            Ok(outcome) => outcome.js,
-            Err(CompileError::Validation { diagnostics }) => {
-                return Err(JsErrorBox::generic(format!(
-                    "{}{}",
-                    DEKA_VALIDATION_ERROR_MARKER, diagnostics
-                )));
-            }
-            Err(CompileError::Other(msg)) => {
-                return Err(JsErrorBox::generic(msg));
-            }
-        };
-        ensure_project_layout(&self.project_root, &meta).map_err(|err| JsErrorBox::generic(err))?;
+        let js = compile_ds_source_to_js(&source, input)?;
+        ensure_project_layout(&self.project_root, &imports).map_err(|err| JsErrorBox::generic(err))?;
 
         let cache_path = self.cache_path_for(path);
         if let Some(parent) = cache_path.parent() {
@@ -363,10 +409,9 @@ pub fn hash_module_graph(entry_path: &Path) -> Result<u64, String> {
 
         let ext = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
         if ext == "ds" {
-            let meta = parse_source_module_meta(&source);
-            for decl in meta.imports {
-                if let Some(resolved) = resolve_import_path(&project_root, &path, decl.from.trim())
-                {
+            let imports = parse_module_imports(&source);
+            for spec in imports {
+                if let Some(resolved) = resolve_import_path(&project_root, &path, spec.trim()) {
                     stack.push(resolved);
                 }
             }
@@ -412,7 +457,7 @@ fn collect_deka_source_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Re
     Ok(())
 }
 
-pub fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Result<(), String> {
+pub fn ensure_project_layout(project_root: &Path, imports: &[String]) -> Result<(), String> {
     // DEKA_MODULE_ROOT bypass (#220): when set, the tenant relies on the runtime stdlib at
     // that root and we trust the runtime-provided modules without requiring a local
     // deka.lock or php_modules/. Tenant-local packages would still need a lockfile, but
@@ -429,7 +474,7 @@ pub fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Re
         ));
     }
 
-    let stdlib_imports = collect_stdlib_imports(meta);
+    let stdlib_imports = collect_stdlib_imports(imports);
     if stdlib_imports.is_empty() {
         return Ok(());
     }
@@ -460,10 +505,10 @@ pub fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Re
     }
 }
 
-fn collect_stdlib_imports(meta: &SourceModuleMeta) -> Vec<String> {
+fn collect_stdlib_imports(imports: &[String]) -> Vec<String> {
     let mut seen = HashSet::new();
-    for decl in &meta.imports {
-        let spec = decl.from.trim();
+    for spec in imports {
+        let spec = spec.trim();
         if is_stdlib_module_spec(spec) {
             seen.insert(spec.to_string());
         }

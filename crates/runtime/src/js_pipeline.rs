@@ -8,12 +8,68 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use bundler::{BundleOptions, VirtualSource, bundle_virtual_entry};
 use deka_js::{
-    SourceModuleMeta, compile_phpx_source_to_js, parse_source_module_meta,
+    compile_phpx_source_to_js,
+    parse_source_module_meta as parse_v1_source_module_meta,
 };
 use runtime_core::module_spec::{
     ds_source_candidates, is_bare_module_specifier, module_spec_aliases,
 };
-use runtime_core::modules::{resolve_modules_dir, MODULES_DIR};
+use runtime_core::modules::resolve_modules_dir;
+
+#[cfg(test)]
+use runtime_core::modules::MODULES_DIR;
+
+/// Compiler version selector for the runtime pipeline.
+///
+/// Reads `DEKA_COMPILER` from the environment. Anything other than `v2` selects
+/// the legacy v1 compiler. The CLI `--compiler` flag is expected to be mirrored
+/// into this environment variable by the invoking command handler.
+fn selected_compiler_version() -> deka_compile::CompilerVersion {
+    if let Ok(value) = std::env::var("DEKA_COMPILER") {
+        if value.trim().eq_ignore_ascii_case("v2") {
+            return deka_compile::CompilerVersion::V2;
+        }
+    }
+    deka_compile::CompilerVersion::V1
+}
+
+/// Compile a single `.ds` source file to JavaScript using the selected
+/// compiler version. This is the runtime equivalent of `compile_helper` in
+/// the CLI crate.
+fn compile_ds_source_to_js(source: &str, input: &str) -> Result<String, String> {
+    match selected_compiler_version() {
+        deka_compile::CompilerVersion::V1 => {
+            let meta = parse_v1_source_module_meta(source);
+            compile_phpx_source_to_js(source, input, meta)
+        }
+        deka_compile::CompilerVersion::V2 => {
+            match deka_compile::compile_to_js(source, input) {
+                Ok(result) => Ok(result.js),
+                Err(diagnostics) => Err(diagnostics
+                    .iter()
+                    .map(|d| d.message.clone())
+                    .collect::<Vec<_>>()
+                    .join("\n")),
+            }
+        }
+    }
+}
+
+/// Parse module metadata from a `.ds` source using the selected compiler's
+/// parser. Returns the list of import sources so layout checks stay agnostic
+/// to the metadata representation.
+fn parse_module_imports(source: &str) -> Vec<String> {
+    match selected_compiler_version() {
+        deka_compile::CompilerVersion::V1 => {
+            let meta = parse_v1_source_module_meta(source);
+            meta.imports.iter().map(|decl| decl.from.clone()).collect()
+        }
+        deka_compile::CompilerVersion::V2 => {
+            let meta = deka_compile::parse_source_module_meta(source);
+            meta.imports.iter().map(|decl| decl.path.clone()).collect()
+        }
+    }
+}
 
 pub fn build_deka_handler_bundle(handler_path: &str) -> Result<String, String> {
     let input_path = Path::new(handler_path);
@@ -23,7 +79,6 @@ pub fn build_deka_handler_bundle(handler_path: &str) -> Result<String, String> {
 
     let source = fs::read_to_string(input_path)
         .map_err(|err| format!("failed to read {}: {}", input_path.display(), err))?;
-    let meta = parse_source_module_meta(&source);
 
     let project_root = resolve_project_root(input_path)?;
     // `DEKA_MODULE_ROOT` is process-global because it is also consumed by the
@@ -32,7 +87,7 @@ pub fn build_deka_handler_bundle(handler_path: &str) -> Result<String, String> {
     // platform default from selecting the wrong lockfile while this handler
     // (and its virtual imports) are compiled.
     with_project_module_root(&project_root, || {
-        build_deka_handler_bundle_in_project(input_path, input, source, meta, project_root.clone())
+        build_deka_handler_bundle_in_project(input_path, input, source, project_root.clone())
     })
 }
 
@@ -40,12 +95,12 @@ fn build_deka_handler_bundle_in_project(
     input_path: &Path,
     input: &str,
     source: String,
-    meta: SourceModuleMeta,
     project_root: PathBuf,
 ) -> Result<String, String> {
-    ensure_project_layout(&project_root, &meta)?;
+    let imports = parse_module_imports(&source);
+    ensure_project_layout(&project_root, &imports)?;
 
-    let mut entry_js = compile_phpx_source_to_js(&source, input, meta)?;
+    let mut entry_js = compile_ds_source_to_js(&source, input)?;
 
     let prelude = String::new();
 
@@ -158,8 +213,7 @@ impl VirtualSource for PhpxBundleProvider {
             .ok_or_else(|| format!("invalid utf-8 path: {}", path.display()))?;
         let source =
             fs::read_to_string(path).map_err(|err| format!("failed to read {}: {}", input, err))?;
-        let meta = parse_source_module_meta(&source);
-        let js = compile_phpx_source_to_js(&source, input, meta)?;
+        let js = compile_ds_source_to_js(&source, input)?;
         Ok(Some(js))
     }
 }
@@ -194,7 +248,10 @@ pub fn resolve_project_root(input_path: &Path) -> Result<PathBuf, String> {
     ))
 }
 
-pub fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Result<(), String> {
+pub fn ensure_project_layout(
+    project_root: &Path,
+    imports: &[String],
+) -> Result<(), String> {
     // DEKA_MODULE_ROOT bypass (#220): when set, the tenant relies on the runtime stdlib at
     // that root and we trust the runtime-provided modules without requiring a local
     // deka.lock or php_modules/. Tenant-local packages would still need a lockfile, but
@@ -211,12 +268,12 @@ pub fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Re
         ));
     }
 
-    let stdlib_imports = collect_stdlib_imports(meta);
+    let stdlib_imports = collect_stdlib_imports(imports);
     if stdlib_imports.is_empty() {
         return Ok(());
     }
 
-    let modules_dir = runtime_core::modules::resolve_modules_dir(project_root);
+    let modules_dir = resolve_modules_dir(project_root);
     if !modules_dir.is_dir() {
         return Err(format!(
             "deka run requires ds_modules/ at project root when using stdlib imports ({}). Run `deka install`.",
@@ -242,10 +299,10 @@ pub fn ensure_project_layout(project_root: &Path, meta: &SourceModuleMeta) -> Re
     }
 }
 
-fn collect_stdlib_imports(meta: &SourceModuleMeta) -> Vec<String> {
+fn collect_stdlib_imports(imports: &[String]) -> Vec<String> {
     let mut seen = BTreeSet::new();
-    for decl in &meta.imports {
-        let spec = decl.from.trim();
+    for spec in imports {
+        let spec = spec.trim();
         if is_stdlib_module_spec(spec) {
             seen.insert(spec.to_string());
         }
@@ -317,7 +374,6 @@ mod tests {
         resolve_project_root, MODULES_DIR,
     };
     use modules_php::integrity::compute_package_integrity;
-    use deka_js::parse_source_module_meta;
     use std::path::Path;
     use std::sync::Mutex;
 
@@ -402,18 +458,17 @@ mod tests {
             .expect("module index");
         }
 
-        let source = "\
-import { http_get } from '@deka/http'
-import { random_hex } from '@deka/crypto'
-import { now_ms } from '@deka/time'
-";
-        let meta = parse_source_module_meta(source);
+        let imports = vec![
+            "@deka/http".to_string(),
+            "@deka/crypto".to_string(),
+            "@deka/time".to_string(),
+        ];
         assert_eq!(
-            super::collect_stdlib_imports(&meta),
+            super::collect_stdlib_imports(&imports),
             vec!["@deka/crypto", "@deka/http", "@deka/time"]
         );
 
-        ensure_project_layout(tmp.path(), &meta).expect("layout should pass");
+        ensure_project_layout(tmp.path(), &imports).expect("layout should pass");
     }
 
     #[test]

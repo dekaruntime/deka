@@ -17,6 +17,7 @@ deka_http = { path = "../http" }
 stdio = { path = "../stdio" }
 modules_php = { path = "../modules_php" }
 deka_js = { path = "../deka_js" }
+deka_compile = { path = "../deka_compile" }
 bundler = { path = "../bundler" }
 compile = { path = "../compile" }
 axum = { workspace = true }

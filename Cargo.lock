@@ -6003,6 +6003,7 @@ version = "0.33.0"
 dependencies = [
  "core_affinity",
  "deka-validation",
+ "deka_compile",
  "deka_js",
  "deno_core",
  "deno_error",
@@ -6838,6 +6839,7 @@ dependencies = [
  "bytes",
  "compile",
  "core",
+ "deka_compile",
  "deka_http",
  "deka_js",
  "deno_core",
