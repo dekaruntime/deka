@@ -43,7 +43,7 @@ pub fn parse<'a>(source: &'a str, arena: &'a Bump) -> ParseResult<'a> {
     // Resolve syntactic ambiguities (e.g. enum member access) before handing
     // the AST to consumers.
     if let Some(ref mut program) = program {
-        crate::resolve::resolve_enum_constructors(program, arena);
+        crate::canonicalize::resolve_enum_constructors(program, arena);
     }
 
     ParseResult {

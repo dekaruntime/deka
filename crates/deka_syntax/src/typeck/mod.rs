@@ -16,8 +16,8 @@ use crate::ast;
 use crate::ast::Program;
 use crate::diagnostics::Diagnostic;
 
+mod ast_type;
 mod expr;
-mod resolve;
 mod stmt;
 mod types;
 
