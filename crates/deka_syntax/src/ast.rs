@@ -36,7 +36,7 @@ pub struct Program<'a> {
 }
 
 /// Top-level or block statement.
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub enum Stmt<'a> {
     /// `export const x = 1;` or `export function f() {}`
     Export { decl: ExportDecl<'a>, span: Span },
@@ -121,7 +121,7 @@ pub enum Stmt<'a> {
     },
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub enum ExportDecl<'a> {
     Const {
         name: &'a str,
@@ -137,14 +137,14 @@ pub enum ExportDecl<'a> {
     },
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ImportSpec<'a> {
     pub imported: &'a str,
     pub local: &'a str,
     pub span: Span,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Param<'a> {
     pub name: &'a str,
     pub ty: Option<Type<'a>>,
@@ -152,13 +152,13 @@ pub struct Param<'a> {
     pub span: Span,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct TypeParam<'a> {
     pub name: &'a str,
     pub span: Span,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct StructField<'a> {
     pub name: &'a str,
     pub ty: Type<'a>,
@@ -166,20 +166,20 @@ pub struct StructField<'a> {
     pub span: Span,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Embed<'a> {
     pub name: &'a str,
     pub span: Span,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct EnumCase<'a> {
     pub name: &'a str,
     pub payload: Option<Type<'a>>,
     pub span: Span,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub enum ForInit<'a> {
     Const { name: &'a str, value: Expr<'a> },
     Let { name: &'a str, value: Expr<'a> },
@@ -225,7 +225,7 @@ pub struct RecordField<'a> {
 }
 
 /// Expressions.
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub enum Expr<'a> {
     Number {
         value: f64,
@@ -366,14 +366,14 @@ pub enum UnOp {
     Not,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct StructLiteralField<'a> {
     pub name: &'a str,
     pub value: Expr<'a>,
     pub span: Span,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct MatchArm<'a> {
     pub pattern: Pattern<'a>,
     pub guard: Option<Expr<'a>>,
@@ -381,7 +381,7 @@ pub struct MatchArm<'a> {
     pub span: Span,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub enum Pattern<'a> {
     Wildcard {
         span: Span,
@@ -410,27 +410,27 @@ pub enum Pattern<'a> {
     },
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct PatternField<'a> {
     pub name: &'a str,
     pub pattern: Pattern<'a>,
     pub span: Span,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ObjectField<'a> {
     pub key: &'a str,
     pub value: Expr<'a>,
     pub span: Span,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub enum ArrowBody<'a> {
     Expr(&'a Expr<'a>),
     Block(&'a [Stmt<'a>]),
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct JsxElement<'a> {
     pub tag: &'a str,
     pub attributes: &'a [JsxAttribute<'a>],
@@ -438,7 +438,7 @@ pub struct JsxElement<'a> {
     pub span: Span,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct JsxAttribute<'a> {
     pub name: &'a str,
     pub value: Option<Expr<'a>>,

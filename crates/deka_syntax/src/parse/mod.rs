@@ -37,8 +37,14 @@ pub fn parse<'a>(source: &'a str, arena: &'a Bump) -> ParseResult<'a> {
 
     let mut errors: Vec<Diagnostic> = lexer.diagnostics().to_vec();
     let mut parser = Parser::new(arena, tokens);
-    let program = parser.parse_program();
+    let mut program = parser.parse_program();
     errors.extend(parser.errors);
+
+    // Resolve syntactic ambiguities (e.g. enum member access) before handing
+    // the AST to consumers.
+    if let Some(ref mut program) = program {
+        crate::resolve::resolve_enum_constructors(program, arena);
+    }
 
     ParseResult {
         program: if errors.is_empty() { program } else { None },
@@ -472,6 +478,33 @@ mod tests {
                     assert_eq!(fields.len(), 2);
                 }
                 _ => panic!("expected struct literal, got {:?}", value),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_user_defined_enum_constructor() {
+        let arena = Bump::new();
+        let result = parse(
+            "enum Color { Red, Green, Blue } const c = Color.Red;",
+            &arena,
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[1] {
+            Stmt::Const { value, .. } => match value {
+                Expr::EnumConstructor {
+                    enum_name,
+                    case_name,
+                    payload,
+                    ..
+                } => {
+                    assert_eq!(enum_name.to_string(), "Color");
+                    assert_eq!(case_name.to_string(), "Red");
+                    assert!(payload.is_none());
+                }
+                _ => panic!("expected enum constructor, got {:?}", value),
             },
             _ => panic!("expected const declaration"),
         }

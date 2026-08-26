@@ -31,6 +31,8 @@ impl<'a> Checker<'a> {
                 _ => {
                     if self.structs.contains_key(name) {
                         Type::Struct { name }
+                    } else if self.enums.contains_key(name) {
+                        Type::Named { name }
                     } else if let Some(alias) = self.aliases.get(name).cloned() {
                         if !seen.insert(name) {
                             self.error_span(*span, format!("cyclic type alias `{name}`"));
@@ -68,6 +70,14 @@ impl<'a> Checker<'a> {
                     } else {
                         self.error_span(*span, "Result requires exactly two type arguments");
                         Type::Error
+                    }
+                } else if self.enums.contains_key(base) || self.structs.contains_key(base) {
+                    Type::Generic {
+                        base,
+                        args: args
+                            .iter()
+                            .map(|arg| self.resolve_ast_type_rec(arg, seen))
+                            .collect(),
                     }
                 } else {
                     self.error_span(*span, format!("unsupported generic type `{base}`"));

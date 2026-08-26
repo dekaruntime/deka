@@ -228,4 +228,27 @@ mod tests {
     fn struct_literal_and_field_access_passes() {
         assert!(typeck("struct Point { x: number, y: number } const p: Point = Point { x: 1, y: 2 }; const x: number = p.x;").is_empty());
     }
+
+    #[test]
+    fn user_defined_enum_constructor_passes() {
+        assert!(typeck("enum Color { Red, Green, Blue } const c: Color = Color.Red;").is_empty());
+    }
+
+    #[test]
+    fn user_defined_enum_payload_constructor_passes() {
+        assert!(typeck("enum Shape { Circle(number), Label(string) } const s: Shape = Shape.Circle(5); const t: Shape = Shape.Label(\"hello\");").is_empty());
+    }
+
+    #[test]
+    fn user_defined_enum_wrong_payload_type_fails() {
+        let errors = typeck("enum Shape { Circle(number) } const s: Shape = Shape.Circle(\"oops\");");
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
+        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn user_defined_enum_match_passes() {
+        assert!(typeck("enum Color { Red, Green, Blue } const c: Color = Color.Red; const x: number = match c { Red => 1, Green => 2, Blue => 3 };").is_empty());
+    }
 }

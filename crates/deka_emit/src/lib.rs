@@ -599,4 +599,19 @@ mod tests {
         assert!(out.contains("x: 1"), "got: {}", out);
         assert!(out.contains("y: 2"), "got: {}", out);
     }
+
+    #[test]
+    fn emit_user_defined_enum_constructor() {
+        let out = parse_and_emit("enum Color { Red, Green, Blue } const c = Color.Red;");
+        assert!(out.contains("__case"), "expected case tag, got: {}", out);
+        assert!(out.contains("Red"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_user_defined_enum_payload_constructor() {
+        let out = parse_and_emit("enum Shape { Circle(number) } const s = Shape.Circle(5);");
+        assert!(out.contains("__case"), "expected case tag, got: {}", out);
+        assert!(out.contains("Circle"), "got: {}", out);
+        assert!(out.contains("value: 5"), "got: {}", out);
+    }
 }

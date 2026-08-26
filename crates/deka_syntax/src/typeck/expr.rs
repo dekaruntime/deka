@@ -179,57 +179,117 @@ impl<'a> Checker<'a> {
         let payload_type = payload.map(|expr| self.check_expr(expr));
 
         if enum_name == "Option" {
-            match case_name {
-                "Some" => match payload_type {
-                    Some(t) => Type::Option { inner: Box::new(t) },
-                    None => {
-                        self.error_span(span, "`Some` requires a payload");
-                        Type::Error
-                    }
-                },
-                "None" => {
-                    if payload.is_some() {
-                        self.error_span(span, "`None` cannot have a payload");
-                    }
-                    Type::None
-                }
-                _ => {
-                    self.error_span(span, format!("unknown Option case `{case_name}`"));
-                    Type::Error
+            return self.check_option_constructor(case_name, payload, payload_type, span);
+        }
+
+        if enum_name == "Result" {
+            return self.check_result_constructor(case_name, payload, payload_type, span);
+        }
+
+        // User-defined enum.
+        let info = match self.enums.get(enum_name) {
+            Some(i) => i,
+            None => {
+                self.error_span(span, format!("unknown enum `{enum_name}`"));
+                return Type::Error;
+            }
+        };
+
+        let case = match info.cases.iter().find(|c| c.name == case_name) {
+            Some(c) => c,
+            None => {
+                self.error_span(
+                    span,
+                    format!("case `{case_name}` not found in enum `{enum_name}`"),
+                );
+                return Type::Error;
+            }
+        };
+
+        match (&case.payload, payload_type) {
+            (Some(expected), Some(actual)) => {
+                let expected_ty = self.resolve_ast_type(expected);
+                if !is_assignable(&expected_ty, &actual) {
+                    self.error_span(
+                        span,
+                        format!(
+                            "enum case `{case_name}` expected payload type `{expected_ty}`, found type `{actual}`"
+                        ),
+                    );
                 }
             }
-        } else if enum_name == "Result" {
-            // Result<T, E> is a prelude enum. For Ok/Err constructors, the
-            // uninferred side is treated as `never` until more context is known.
-            match case_name {
-                "Ok" => match payload_type {
-                    Some(t) => Type::Generic {
-                        base: "Result",
-                        args: vec![t, Type::Never],
-                    },
-                    None => {
-                        self.error_span(span, "`Ok` requires a payload");
-                        Type::Error
-                    }
-                },
-                "Err" => match payload_type {
-                    Some(e) => Type::Generic {
-                        base: "Result",
-                        args: vec![Type::Never, e],
-                    },
-                    None => {
-                        self.error_span(span, "`Err` requires a payload");
-                        Type::Error
-                    }
-                },
-                _ => {
-                    self.error_span(span, format!("unknown Result case `{case_name}`"));
+            (Some(_), None) => {
+                self.error_span(span, format!("`{case_name}` requires a payload"));
+            }
+            (None, Some(_)) => {
+                self.error_span(span, format!("`{case_name}` cannot have a payload"));
+            }
+            (None, None) => {}
+        }
+
+        Type::Named { name: enum_name }
+    }
+
+    fn check_option_constructor(
+        &mut self,
+        case_name: &'a str,
+        payload: Option<&ast::Expr<'a>>,
+        payload_type: Option<Type<'a>>,
+        span: ast::Span,
+    ) -> Type<'a> {
+        match case_name {
+            "Some" => match payload_type {
+                Some(t) => Type::Option { inner: Box::new(t) },
+                None => {
+                    self.error_span(span, "`Some` requires a payload");
                     Type::Error
                 }
+            },
+            "None" => {
+                if payload.is_some() {
+                    self.error_span(span, "`None` cannot have a payload");
+                }
+                Type::None
             }
-        } else {
-            self.error_span(span, format!("unsupported enum constructor `{enum_name}`"));
-            Type::Error
+            _ => {
+                self.error_span(span, format!("unknown Option case `{case_name}`"));
+                Type::Error
+            }
+        }
+    }
+
+    fn check_result_constructor(
+        &mut self,
+        case_name: &'a str,
+        _payload: Option<&ast::Expr<'a>>,
+        payload_type: Option<Type<'a>>,
+        span: ast::Span,
+    ) -> Type<'a> {
+        match case_name {
+            "Ok" => match payload_type {
+                Some(t) => Type::Generic {
+                    base: "Result",
+                    args: vec![t, Type::Never],
+                },
+                None => {
+                    self.error_span(span, "`Ok` requires a payload");
+                    Type::Error
+                }
+            },
+            "Err" => match payload_type {
+                Some(e) => Type::Generic {
+                    base: "Result",
+                    args: vec![Type::Never, e],
+                },
+                None => {
+                    self.error_span(span, "`Err` requires a payload");
+                    Type::Error
+                }
+            },
+            _ => {
+                self.error_span(span, format!("unknown Result case `{case_name}`"));
+                Type::Error
+            }
         }
     }
 
@@ -374,6 +434,14 @@ impl<'a> Checker<'a> {
             Some(i) => i,
             None => return,
         };
+
+        if !scrutinee_type.is_error() && !matches!(scrutinee_type, Type::Named { name } if *name == enum_name) {
+            self.error_span(
+                span,
+                format!("`{name}` is not a case of type `{scrutinee_type}`"),
+            );
+            return;
+        }
 
         let case = match info.cases.iter().find(|c| c.name == name) {
             Some(c) => c,

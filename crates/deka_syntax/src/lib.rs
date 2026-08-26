@@ -6,6 +6,7 @@ pub mod ast;
 pub mod diagnostics;
 pub mod lexer;
 pub mod parse;
+pub mod resolve;
 pub mod typeck;
 
 pub use ast::*;

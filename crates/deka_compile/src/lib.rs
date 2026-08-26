@@ -191,4 +191,15 @@ mod tests {
         assert!(result.js.contains("x: 1"));
         assert!(result.js.contains("y: 2"));
     }
+
+    #[test]
+    fn compile_user_defined_enum_constructor() {
+        let result = compile_to_js(
+            "enum Color { Red, Green, Blue } const c: Color = Color.Red;",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("__case"));
+        assert!(result.js.contains("Red"));
+    }
 }
