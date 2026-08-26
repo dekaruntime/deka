@@ -41,6 +41,13 @@ impl<'a> Parser<'a> {
         }
 
         let tag = self.expect_identifier()?;
+
+        // RFD 8: JSX member expressions (`<My.Component />`) are disallowed.
+        if self.at(TokenKind::Dot) {
+            self.error("JSX member expressions are not allowed; use a single identifier for the tag (RFD 8)");
+            return None;
+        }
+
         let attributes = self.parse_jsx_attributes()?;
 
         // Self-closing: `<tag ... />`

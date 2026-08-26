@@ -872,4 +872,16 @@ mod tests {
             _ => panic!("expected const declaration"),
         }
     }
+
+    #[test]
+    fn parse_jsx_member_expression_rejected() {
+        let arena = Bump::new();
+        let result = parse("const el = <My.Component />;", &arena);
+        assert!(result.program.is_none(), "member expression should fail to parse");
+        assert!(
+            result.errors.iter().any(|e| e.message.contains("member expressions")),
+            "expected member expression error, got: {:?}",
+            result.errors
+        );
+    }
 }
