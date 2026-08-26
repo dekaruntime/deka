@@ -330,12 +330,6 @@ pub enum Expr<'a> {
         expr: &'a Expr<'a>,
         span: Span,
     },
-    ArrowFunction {
-        params: &'a [Param<'a>],
-        return_type: Option<Type<'a>>,
-        body: ArrowBody<'a>,
-        span: Span,
-    },
 }
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
@@ -425,12 +419,6 @@ pub struct ObjectField<'a> {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub enum ArrowBody<'a> {
-    Expr(&'a Expr<'a>),
-    Block(&'a [Stmt<'a>]),
-}
-
-#[derive(Clone, Debug, Serialize)]
 pub struct JsxElement<'a> {
     pub tag: &'a str,
     pub attributes: &'a [JsxAttribute<'a>],
@@ -484,7 +472,6 @@ impl<'a> Expr<'a> {
             Expr::Object { span, .. } => *span,
             Expr::Spread { span, .. } => *span,
             Expr::Paren { span, .. } => *span,
-            Expr::ArrowFunction { span, .. } => *span,
         }
     }
 }

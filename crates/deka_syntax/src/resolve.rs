@@ -374,26 +374,6 @@ fn transform_expr<'a>(
             expr: transform_expr(expr, arena, enums),
             span: *span,
         },
-        Expr::ArrowFunction { params, return_type, body, span } => {
-            let new_body = match body {
-                ast::ArrowBody::Expr(e) => {
-                    ast::ArrowBody::Expr(transform_expr(e, arena, enums))
-                }
-                ast::ArrowBody::Block(stmts) => {
-                    let new_stmts: Vec<Stmt<'a>> = stmts
-                        .iter()
-                        .map(|s| transform_stmt(s, arena, enums))
-                        .collect();
-                    ast::ArrowBody::Block(ast::alloc_slice(arena, new_stmts))
-                }
-            };
-            Expr::ArrowFunction {
-                params,
-                return_type: return_type.clone(),
-                body: new_body,
-                span: *span,
-            }
-        }
     };
 
     alloc_expr(arena, new_expr)
@@ -913,26 +893,6 @@ fn lower_expr<'a>(
             expr: lower_expr(expr, arena, method_calls),
             span: *span,
         },
-        Expr::ArrowFunction { params, return_type, body, span } => {
-            let new_body = match body {
-                ast::ArrowBody::Expr(e) => {
-                    ast::ArrowBody::Expr(lower_expr(e, arena, method_calls))
-                }
-                ast::ArrowBody::Block(stmts) => {
-                    let new_stmts: Vec<Stmt<'a>> = stmts
-                        .iter()
-                        .map(|s| lower_stmt(s, arena, method_calls))
-                        .collect();
-                    ast::ArrowBody::Block(ast::alloc_slice(arena, new_stmts))
-                }
-            };
-            Expr::ArrowFunction {
-                params,
-                return_type: return_type.clone(),
-                body: new_body,
-                span: *span,
-            }
-        }
     };
 
     ast::alloc(arena, new_expr)
