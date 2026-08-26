@@ -535,4 +535,27 @@ mod tests {
             _ => panic!("expected receiver method"),
         }
     }
+
+    #[test]
+    fn parse_generic_function() {
+        let arena = Bump::new();
+        let result = parse("function id<T>(x: T): T { return x; }", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Function {
+                name,
+                type_params,
+                params,
+                return_type,
+                ..
+            } => {
+                assert_eq!(name.to_string(), "id");
+                assert_eq!(type_params.len(), 1);
+                assert_eq!(params.len(), 1);
+                assert!(return_type.is_some());
+            }
+            _ => panic!("expected function"),
+        }
+    }
 }

@@ -1,6 +1,6 @@
 //! Expression parsing (Pratt parser).
 
-use crate::ast::{alloc, alloc_slice, Expr, StructLiteralField, UnOp};
+use crate::ast::{alloc, alloc_slice, Expr, StructLiteralField, Type, UnOp};
 use crate::lexer::TokenKind;
 
 use super::util::{infix_info, token_name};
@@ -28,6 +28,17 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
+            // Explicit type arguments: `id<number>(args)`.
+            let type_args = if self.at(TokenKind::Lt) {
+                if let Some(args) = self.try_parse_type_args() {
+                    args
+                } else {
+                    &[]
+                }
+            } else {
+                &[]
+            };
+
             if self.at(TokenKind::LParen) {
                 self.advance();
                 let mut args = Vec::new();
@@ -43,23 +54,25 @@ impl<'a> Parser<'a> {
                 let span = self.span_from(start);
 
                 // Built-in prelude enum constructors: Some/Ok/Err take one payload.
-                if let Expr::Identifier { name, .. } = &left {
-                    if let Some((enum_name, _requires_payload)) = builtin_enum_constructor(name) {
-                        if args.len() == 1 {
-                            left = Expr::EnumConstructor {
-                                enum_name: self.bump_str(enum_name),
-                                case_name: name,
-                                payload: Some(alloc(self.arena, args.into_iter().next().unwrap())),
-                                span,
-                            };
-                            continue;
+                if type_args.is_empty() {
+                    if let Expr::Identifier { name, .. } = &left {
+                        if let Some((enum_name, _requires_payload)) = builtin_enum_constructor(name) {
+                            if args.len() == 1 {
+                                left = Expr::EnumConstructor {
+                                    enum_name: self.bump_str(enum_name),
+                                    case_name: name,
+                                    payload: Some(alloc(self.arena, args.into_iter().next().unwrap())),
+                                    span,
+                                };
+                                continue;
+                            }
                         }
                     }
                 }
 
                 left = Expr::Call {
                     callee: alloc(self.arena, left),
-                    type_args: &[],
+                    type_args,
                     args: alloc_slice(self.arena, args),
                     span,
                 };
@@ -253,5 +266,42 @@ impl<'a> Parser<'a> {
             }
             _ => false,
         }
+    }
+
+    /// Try to parse explicit type arguments `<T, U>`.
+    /// On success, returns the parsed types and advances the cursor.
+    /// On failure, leaves the cursor unchanged.
+    fn try_parse_type_args(&mut self) -> Option<&'a [Type<'a>]> {
+        let saved_pos = self.pos;
+        let saved_prev = self.prev.clone();
+
+        if !self.eat(TokenKind::Lt) {
+            return None;
+        }
+
+        let mut args = Vec::new();
+        if !self.at(TokenKind::Gt) {
+            loop {
+                match self.parse_type() {
+                    Some(ty) => args.push(ty),
+                    None => {
+                        self.pos = saved_pos;
+                        self.prev = saved_prev;
+                        return None;
+                    }
+                }
+                if !self.eat(TokenKind::Comma) {
+                    break;
+                }
+            }
+        }
+
+        if !self.eat(TokenKind::Gt) {
+            self.pos = saved_pos;
+            self.prev = saved_prev;
+            return None;
+        }
+
+        Some(alloc_slice(self.arena, args))
     }
 }

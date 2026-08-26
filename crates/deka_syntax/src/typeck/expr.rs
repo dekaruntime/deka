@@ -35,6 +35,7 @@ impl<'a> Checker<'a> {
             } => self.check_unary(*op, operand, *span),
             ast::Expr::Call {
                 callee,
+                type_args,
                 args,
                 span,
                 ..
@@ -42,7 +43,7 @@ impl<'a> Checker<'a> {
                 if let Some(ret) = self.try_check_method_call(expr, callee, args, *span) {
                     ret
                 } else {
-                    self.check_call(callee, args, *span)
+                    self.check_call(callee, type_args, args, *span)
                 }
             }
             ast::Expr::FieldAccess { object, field, span } => {
@@ -625,6 +626,7 @@ impl<'a> Checker<'a> {
     fn check_call(
         &mut self,
         callee: &ast::Expr<'a>,
+        type_args: &'a [ast::Type<'a>],
         args: &'a [ast::Expr<'a>],
         span: ast::Span,
     ) -> Type<'a> {
@@ -632,18 +634,33 @@ impl<'a> Checker<'a> {
 
         match callee_type {
             Type::Function { params, ret } => {
-                if params.len() != args.len() {
+                // Build a substitution for any type parameters appearing in the
+                // function signature. Explicit type args are used when present;
+                // otherwise we try to infer from the first argument.
+                let subst = if params.iter().any(|p| contains_param(p)) || contains_param(&ret) {
+                    self.infer_substitution(type_args, &params, args)
+                } else {
+                    HashMap::new()
+                };
+
+                let substituted_params: Vec<Type<'a>> = params
+                    .iter()
+                    .map(|p| substitute_type(p, &subst))
+                    .collect();
+                let substituted_ret = substitute_type(&ret, &subst);
+
+                if substituted_params.len() != args.len() {
                     self.error_span(
                         span,
                         format!(
                             "expected {} argument{}, found {}",
-                            params.len(),
-                            if params.len() == 1 { "" } else { "s" },
+                            substituted_params.len(),
+                            if substituted_params.len() == 1 { "" } else { "s" },
                             args.len()
                         ),
                     );
                 } else {
-                    for (expected, arg) in params.iter().zip(args.iter()) {
+                    for (expected, arg) in substituted_params.iter().zip(args.iter()) {
                         let arg_type = self.check_expr(arg);
                         if !is_assignable(expected, &arg_type) {
                             self.error_at_expr(
@@ -655,7 +672,7 @@ impl<'a> Checker<'a> {
                         }
                     }
                 }
-                *ret
+                substituted_ret
             }
             Type::Error => Type::Error,
             other => {
@@ -663,5 +680,104 @@ impl<'a> Checker<'a> {
                 Type::Error
             }
         }
+    }
+}
+
+impl<'a> Checker<'a> {
+    fn infer_substitution(
+        &mut self,
+        explicit_type_args: &'a [ast::Type<'a>],
+        function_params: &[Type<'a>],
+        call_args: &'a [ast::Expr<'a>],
+    ) -> HashMap<&'a str, Type<'a>> {
+        let param_names: Vec<&'a str> = collect_param_names(function_params);
+
+        if !explicit_type_args.is_empty() {
+            let mut subst = HashMap::new();
+            if explicit_type_args.len() != param_names.len() {
+                // Error reported at call site; return empty substitution.
+                return subst;
+            }
+            for (name, ty) in param_names.iter().zip(explicit_type_args.iter()) {
+                subst.insert(*name, self.resolve_ast_type(ty));
+            }
+            return subst;
+        }
+
+        // No explicit type args: infer from arguments.
+        let mut subst = HashMap::new();
+        for (param_ty, arg) in function_params.iter().zip(call_args.iter()) {
+            if let Type::Param { name } = param_ty {
+                if subst.contains_key(*name) {
+                    continue;
+                }
+                let arg_type = self.check_expr(arg);
+                subst.insert(*name, arg_type);
+            }
+        }
+        subst
+    }
+}
+
+fn collect_param_names<'a>(tys: &[Type<'a>]) -> Vec<&'a str> {
+    let mut names = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for ty in tys {
+        collect_param_names_rec(ty, &mut names, &mut seen);
+    }
+    names
+}
+
+fn collect_param_names_rec<'a>(ty: &Type<'a>, names: &mut Vec<&'a str>, seen: &mut std::collections::HashSet<&'a str>) {
+    match ty {
+        Type::Param { name } => {
+            if seen.insert(*name) {
+                names.push(*name);
+            }
+        }
+        Type::Option { inner } => collect_param_names_rec(inner, names, seen),
+        Type::Function { params, ret } => {
+            for p in params {
+                collect_param_names_rec(p, names, seen);
+            }
+            collect_param_names_rec(ret, names, seen);
+        }
+        Type::Generic { args, .. } => {
+            for a in args {
+                collect_param_names_rec(a, names, seen);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn contains_param(ty: &Type<'_>) -> bool {
+    match ty {
+        Type::Param { .. } => true,
+        Type::Option { inner } => contains_param(inner),
+        Type::Function { params, ret } => {
+            params.iter().any(contains_param) || contains_param(ret)
+        }
+        Type::Generic { args, .. } => args.iter().any(contains_param),
+        _ => false,
+    }
+}
+
+/// Replace type parameters according to `subst`.
+fn substitute_type<'a>(ty: &Type<'a>, subst: &HashMap<&'a str, Type<'a>>) -> Type<'a> {
+    match ty {
+        Type::Param { name } => subst.get(name).cloned().unwrap_or_else(|| Type::Param { name }),
+        Type::Option { inner } => Type::Option {
+            inner: Box::new(substitute_type(inner, subst)),
+        },
+        Type::Function { params, ret } => Type::Function {
+            params: params.iter().map(|p| substitute_type(p, subst)).collect(),
+            ret: Box::new(substitute_type(ret, subst)),
+        },
+        Type::Generic { base, args } => Type::Generic {
+            base,
+            args: args.iter().map(|a| substitute_type(a, subst)).collect(),
+        },
+        other => other.clone(),
     }
 }

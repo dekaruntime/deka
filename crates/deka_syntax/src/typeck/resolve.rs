@@ -29,6 +29,9 @@ impl<'a> Checker<'a> {
                     Type::Error
                 }
                 _ => {
+                    if let Some(param) = self.lookup_type_param(name) {
+                        return param;
+                    }
                     if self.structs.contains_key(name) {
                         Type::Struct { name }
                     } else if self.enums.contains_key(name) {
@@ -110,5 +113,14 @@ impl<'a> Checker<'a> {
             span.start.column,
             message,
         ));
+    }
+
+    pub(super) fn lookup_type_param(&self, name: &'a str) -> Option<Type<'a>> {
+        for scope in self.type_scopes.iter().rev() {
+            if let Some(ty) = scope.get(name) {
+                return Some(ty.clone());
+            }
+        }
+        None
     }
 }

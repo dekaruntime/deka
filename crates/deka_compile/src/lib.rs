@@ -218,4 +218,15 @@ mod tests {
         assert!(result.js.contains("function Point_distance"));
         assert!(result.js.contains("Point_distance(p1, p2)"));
     }
+
+    #[test]
+    fn compile_generic_function() {
+        let result = compile_to_js(
+            "function id<T>(x: T): T { return x; } const n: number = id(5);",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("function id"));
+        assert!(result.js.contains("id(5)"));
+    }
 }

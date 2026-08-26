@@ -33,6 +33,8 @@ pub enum Type<'a> {
     },
     /// A user-defined struct type.
     Struct { name: &'a str },
+    /// A type parameter, e.g. `T` inside a generic function or type.
+    Param { name: &'a str },
 }
 
 impl<'a> Type<'a> {
@@ -71,6 +73,7 @@ impl fmt::Display for Type<'_> {
                 write!(f, ">")
             }
             Type::Struct { name } => write!(f, "{name}"),
+            Type::Param { name } => write!(f, "{name}"),
         }
     }
 }

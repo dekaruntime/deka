@@ -19,12 +19,13 @@ impl<'a> Checker<'a> {
             match stmt {
                 ast::Stmt::Function {
                     name,
+                    type_params,
                     params,
                     return_type,
                     body,
                     span,
                     ..
-                } => self.check_function(name, params, return_type.as_ref(), body, *span),
+                } => self.check_function(name, type_params, params, return_type.as_ref(), body, *span),
                 ast::Stmt::ReceiverMethod {
                     receiver_type,
                     name,
@@ -94,6 +95,21 @@ impl<'a> Checker<'a> {
         }
     }
 
+    fn push_type_params(&mut self, type_params: &'a [ast::TypeParam<'a>]) {
+        if type_params.is_empty() {
+            return;
+        }
+        let mut scope = HashMap::new();
+        for param in type_params {
+            scope.insert(param.name, Type::Param { name: param.name });
+        }
+        self.type_scopes.push(scope);
+    }
+
+    fn pop_type_params(&mut self) {
+        self.type_scopes.pop();
+    }
+
     fn collect_receiver_methods(&mut self) {
         for stmt in self.program.statements {
             if let ast::Stmt::ReceiverMethod {
@@ -125,25 +141,29 @@ impl<'a> Checker<'a> {
 
     fn collect_function_signatures(&mut self) {
         for stmt in self.program.statements {
-            let (name, params, return_type) = match stmt {
+            let (name, type_params, params, return_type) = match stmt {
                 ast::Stmt::Function {
                     name,
+                    type_params,
                     params,
                     return_type,
                     ..
-                } => (*name, *params, return_type.as_ref()),
+                } => (*name, *type_params, *params, return_type.as_ref()),
                 ast::Stmt::Export {
                     decl:
                         ast::ExportDecl::Function {
                             name,
+                            type_params,
                             params,
                             return_type,
                             ..
                         },
                     ..
-                } => (*name, *params, return_type.as_ref()),
+                } => (*name, *type_params, *params, return_type.as_ref()),
                 _ => continue,
             };
+
+            self.push_type_params(type_params);
 
             let param_types: Vec<Type<'a>> = params
                 .iter()
@@ -163,6 +183,8 @@ impl<'a> Checker<'a> {
                 Some(t) => self.resolve_ast_type(t),
                 None => Type::Infer,
             };
+
+            self.pop_type_params();
 
             self.globals.insert(
                 name,
@@ -194,13 +216,14 @@ impl<'a> Checker<'a> {
             }
             ast::Stmt::Function {
                 name,
+                type_params,
                 params,
                 return_type,
                 body,
                 span,
                 ..
             } => {
-                self.check_function(name, params, return_type.as_ref(), body, *span);
+                self.check_function(name, type_params, params, return_type.as_ref(), body, *span);
             }
             ast::Stmt::Export { decl, .. } => match decl {
                 ast::ExportDecl::Const {
@@ -275,6 +298,7 @@ impl<'a> Checker<'a> {
             decl:
                 ast::ExportDecl::Function {
                     name,
+                    type_params,
                     params,
                     return_type,
                     body,
@@ -283,7 +307,7 @@ impl<'a> Checker<'a> {
             span,
         } = stmt
         {
-            self.check_function(name, params, return_type.as_ref(), body, *span);
+            self.check_function(name, type_params, params, return_type.as_ref(), body, *span);
         }
     }
 
@@ -329,6 +353,7 @@ impl<'a> Checker<'a> {
     pub(super) fn check_function(
         &mut self,
         name: &'a str,
+        type_params: &'a [ast::TypeParam<'a>],
         params: &'a [ast::Param<'a>],
         return_type: Option<&ast::Type<'a>>,
         body: &'a [ast::Stmt<'a>],
@@ -355,6 +380,8 @@ impl<'a> Checker<'a> {
                 pts
             }
         };
+
+        self.push_type_params(type_params);
 
         let explicit_ret = return_type.map(|t| self.resolve_ast_type(t));
 
@@ -387,6 +414,8 @@ impl<'a> Checker<'a> {
         self.in_function = saved_in_function;
         self.return_type = saved_return_type;
         self.scopes.pop();
+
+        self.pop_type_params();
 
         // Update the global function type with the final (possibly inferred)
         // return type.

@@ -87,6 +87,8 @@ struct Checker<'a> {
     method_calls: HashMap<*const ast::Expr<'a>, String>,
     /// Local scopes. The first scope is the top-level scope.
     scopes: Vec<HashMap<&'a str, Type<'a>>>,
+    /// Type parameter scopes. Each generic binding introduces a new scope.
+    type_scopes: Vec<HashMap<&'a str, Type<'a>>>,
     /// Are we currently inside a function body?
     in_function: bool,
     /// Expected / inferred return type of the current function.
@@ -107,6 +109,7 @@ impl<'a> Checker<'a> {
             receiver_methods: HashMap::new(),
             method_calls: HashMap::new(),
             scopes: vec![HashMap::new()],
+            type_scopes: Vec::new(),
             in_function: false,
             return_type: None,
         }
@@ -274,5 +277,23 @@ mod tests {
         assert!(typeck(
             "struct Point { x: number, y: number } fn Point.distance(other: Point): number { return 0; } const p1: Point = Point { x: 0, y: 0 }; const p2: Point = Point { x: 3, y: 4 }; const d: number = p1.distance(p2);"
         ).is_empty());
+    }
+
+    #[test]
+    fn generic_function_inferred_passes() {
+        assert!(typeck("function id<T>(x: T): T { return x; } const n: number = id(5); const s: string = id(\"hi\");").is_empty());
+    }
+
+    #[test]
+    fn generic_function_explicit_type_args_passes() {
+        assert!(typeck("function id<T>(x: T): T { return x; } const n: number = id<number>(5);").is_empty());
+    }
+
+    #[test]
+    fn generic_function_wrong_arg_type_fails() {
+        let errors = typeck("function id<T>(x: T): T { return x; } const n: number = id(\"hi\");");
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
+        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
     }
 }
