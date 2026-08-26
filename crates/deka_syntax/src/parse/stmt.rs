@@ -8,6 +8,7 @@ use super::Parser;
 
 impl<'a> Parser<'a> {
     pub(super) fn parse_program(&mut self) -> Option<Program<'a>> {
+        self.skip_newlines();
         let (start, start_byte) = self.span_start();
         let mut statements = Vec::new();
 
@@ -24,6 +25,7 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
+            self.skip_newlines();
         }
 
         Some(Program {
@@ -33,6 +35,7 @@ impl<'a> Parser<'a> {
     }
 
     pub(super) fn parse_statement(&mut self, in_block: bool) -> Option<Stmt<'a>> {
+        self.skip_newlines();
         let (start, start_byte) = self.span_start();
 
         match self.current_kind() {
@@ -211,6 +214,7 @@ impl<'a> Parser<'a> {
             }
         }
 
+        self.skip_newlines();
         self.expect(TokenKind::RBrace)?;
 
         Some(Stmt::Struct {
@@ -255,6 +259,7 @@ impl<'a> Parser<'a> {
             }
         }
 
+        self.skip_newlines();
         self.expect(TokenKind::RBrace)?;
 
         Some(Stmt::Enum {
@@ -405,6 +410,7 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::LBrace)?;
         let mut statements = Vec::new();
 
+        self.skip_newlines();
         while !self.at(TokenKind::RBrace) && !self.at_end() {
             let before = self.pos;
             match self.parse_statement(true) {
@@ -416,6 +422,7 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
+            self.skip_newlines();
         }
 
         self.expect(TokenKind::RBrace)?;
@@ -449,9 +456,11 @@ impl<'a> Parser<'a> {
                 if !self.eat(TokenKind::Comma) {
                     break;
                 }
+                self.skip_newlines();
             }
         }
 
+        self.skip_newlines();
         Some(alloc_slice(self.arena, params))
     }
 
@@ -466,8 +475,10 @@ impl<'a> Parser<'a> {
             if !self.eat(TokenKind::Comma) {
                 break;
             }
+            self.skip_newlines();
         }
 
+        self.skip_newlines();
         self.expect(TokenKind::Gt)?;
         Some(alloc_slice(self.arena, params))
     }
@@ -478,9 +489,14 @@ impl<'a> Parser<'a> {
         } else if in_block && self.at(TokenKind::RBrace) {
             // Optional semicolon before a closing brace.
             Some(())
+        } else if self.at(TokenKind::Newline) || self.at(TokenKind::Eof) {
+            // Optional semicolon: a newline or end-of-file terminates the
+            // statement. Consume any following newlines as well.
+            self.skip_newlines();
+            Some(())
         } else {
             self.error(format!(
-                "expected `;`, found `{}`",
+                "expected `;` or newline, found `{}`",
                 token_name(self.current_kind())
             ));
             None

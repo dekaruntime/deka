@@ -10,6 +10,7 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_match_arms(&mut self) -> Option<&'a [MatchArm<'a>]> {
         self.expect(TokenKind::LBrace)?;
         let mut arms = Vec::new();
+        self.skip_newlines();
 
         while !self.at(TokenKind::RBrace) && !self.at_end() {
             arms.push(self.parse_match_arm()?);
@@ -17,6 +18,7 @@ impl<'a> Parser<'a> {
                 // Allow trailing comma or newline-separated arms.
                 break;
             }
+            self.skip_newlines();
         }
 
         self.expect(TokenKind::RBrace)?;
@@ -37,6 +39,7 @@ impl<'a> Parser<'a> {
     }
 
     pub(super) fn parse_pattern(&mut self) -> Option<Pattern<'a>> {
+        self.skip_newlines();
         let (start, start_byte) = self.span_start();
 
         match self.current_kind() {
@@ -74,6 +77,7 @@ impl<'a> Parser<'a> {
                             if !self.eat(TokenKind::Comma) {
                                 break;
                             }
+                            self.skip_newlines();
                         }
                     }
                     self.expect(TokenKind::RBrace)?;
@@ -127,6 +131,7 @@ impl<'a> Parser<'a> {
                 }
                 let mut elements = vec![first];
                 while self.eat(TokenKind::Comma) {
+                    self.skip_newlines();
                     if self.at(TokenKind::RParen) {
                         break;
                     }

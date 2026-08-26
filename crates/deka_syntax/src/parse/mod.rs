@@ -25,8 +25,9 @@ pub fn parse<'a>(source: &'a str, arena: &'a Bump) -> ParseResult<'a> {
 
     loop {
         let tok = lexer.next_token();
-        // Comments and newlines are treated as whitespace for this subset.
-        if tok.kind == TokenKind::Comment || tok.kind == TokenKind::Newline {
+        // Comments are treated as whitespace. Newlines are kept so the parser
+        // can implement optional semicolon insertion.
+        if tok.kind == TokenKind::Comment {
             continue;
         }
         let is_eof = tok.kind == TokenKind::Eof;
@@ -132,6 +133,7 @@ impl<'a> Parser<'a> {
     }
 
     fn expect_identifier(&mut self) -> Option<&'a str> {
+        self.skip_newlines();
         if self.at(TokenKind::Identifier) {
             let name = self.bump_str(self.current_text());
             self.advance();
@@ -156,6 +158,22 @@ impl<'a> Parser<'a> {
 
     fn span_start(&self) -> (crate::ast::Pos, usize) {
         (self.current_span().start, self.current_span().byte_start)
+    }
+
+    fn skip_newlines(&mut self) {
+        while self.at(TokenKind::Newline) {
+            self.advance();
+        }
+    }
+
+    /// Look past any immediately-following newlines and return the kind of
+    /// the first non-newline token. Does not advance the parser.
+    fn peek_after_newlines(&self) -> TokenKind {
+        let mut i = self.pos;
+        while i < self.tokens.len() && self.tokens[i].kind == TokenKind::Newline {
+            i += 1;
+        }
+        self.tokens.get(i).map(|t| t.kind).unwrap_or(TokenKind::Eof)
     }
 
     fn bump_str(&self, s: &str) -> &'a str {
@@ -883,5 +901,118 @@ mod tests {
             "expected member expression error, got: {:?}",
             result.errors
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Optional semicolon insertion
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn parse_optional_semicolon_top_level() {
+        let arena = Bump::new();
+        let result = parse("const x = 1\nconst y = 2\n", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        assert_eq!(program.statements.len(), 2);
+    }
+
+    #[test]
+    fn parse_optional_semicolon_in_block() {
+        let arena = Bump::new();
+        let result = parse("fn add(a: number, b: number): number {\n  const c = a + b\n  return c\n}", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Function { body, .. } => {
+                assert_eq!(body.len(), 2);
+            }
+            _ => panic!("expected function"),
+        }
+    }
+
+    #[test]
+    fn parse_optional_semicolon_before_closing_brace() {
+        let arena = Bump::new();
+        let result = parse("fn one(): number { return 1 }", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Function { body, .. } => {
+                assert_eq!(body.len(), 1);
+            }
+            _ => panic!("expected function"),
+        }
+    }
+
+    #[test]
+    fn parse_multiline_expression_does_not_terminate_early() {
+        let arena = Bump::new();
+        let result = parse("const x = 1 +\n  2 +\n  3\n", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { value, .. } => match value {
+                Expr::Binary { op, left, right, .. } => {
+                    assert!(matches!(op, BinOp::Add));
+                    // (1 + 2) + 3
+                    match left {
+                        Expr::Binary { op: inner_op, .. } => {
+                            assert!(matches!(inner_op, BinOp::Add));
+                        }
+                        _ => panic!("expected nested binary on left"),
+                    }
+                    match right {
+                        Expr::Number { value, .. } => assert_eq!(*value, 3.0),
+                        _ => panic!("expected 3 on right"),
+                    }
+                }
+                _ => panic!("expected binary expression, got {:?}", value),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_multiline_function_signature() {
+        let arena = Bump::new();
+        let result = parse(
+            "fn add(\n  a: number,\n  b: number\n): number {\n  return a + b\n}",
+            &arena,
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Function { params, .. } => {
+                assert_eq!(params.len(), 2);
+                assert_eq!(params[0].name.to_string(), "a");
+                assert_eq!(params[1].name.to_string(), "b");
+            }
+            _ => panic!("expected function"),
+        }
+    }
+
+    #[test]
+    fn parse_multiline_type_arguments() {
+        let arena = Bump::new();
+        let result = parse("const m: Map<\n  string,\n  number\n> = None\n", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { ty, .. } => match ty {
+                Some(Type::Generic { base, args, .. }) => {
+                    assert_eq!(base.to_string(), "Map");
+                    assert_eq!(args.len(), 2);
+                }
+                _ => panic!("expected generic type"),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_semicolon_still_required_inline() {
+        let arena = Bump::new();
+        let result = parse("const x = 1 const y = 2", &arena);
+        assert!(result.program.is_none(), "expected parse failure without newline or semicolon");
     }
 }

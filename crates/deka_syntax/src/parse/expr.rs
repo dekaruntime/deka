@@ -8,16 +8,27 @@ use super::Parser;
 
 impl<'a> Parser<'a> {
     pub(super) fn parse_expression(&mut self) -> Option<Expr<'a>> {
+        self.skip_newlines();
         self.parse_expr(0)
     }
 
     fn parse_expr(&mut self, min_prec: u8) -> Option<Expr<'a>> {
+        self.skip_newlines();
         let (start, start_byte) = self.span_start();
         let mut left = self.parse_prefix()?;
 
         loop {
-            // Postfix member access and calls bind tighter than any binary operator.
-            if self.eat(TokenKind::Dot) {
+            // Optional-semicolon rule: do not eagerly skip newlines here.
+            // A newline terminates the expression unless the following token
+            // clearly continues it (a leading `.` for method chaining, or a
+            // binary operator). We peek past newlines to make that decision
+            // without consuming a statement terminator.
+            let next_kind = self.peek_after_newlines();
+
+            // Postfix member access: allow newline before `.` for chaining.
+            if next_kind == TokenKind::Dot {
+                self.skip_newlines();
+                self.advance(); // `.`
                 let field = self.expect_identifier()?;
                 let span = self.span_from(start, start_byte);
                 left = Expr::FieldAccess {
@@ -28,7 +39,8 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
-            // Explicit type arguments: `id<number>(args)`.
+            // Explicit type arguments: `id<number>(args)`. Do not span newlines
+            // before `<`; a newline should terminate the statement instead.
             let type_args = if self.at(TokenKind::Lt) {
                 if let Some(args) = self.try_parse_type_args() {
                     args
@@ -48,6 +60,7 @@ impl<'a> Parser<'a> {
                         if !self.eat(TokenKind::Comma) {
                             break;
                         }
+                        self.skip_newlines();
                     }
                 }
                 self.expect(TokenKind::RParen)?;
@@ -116,6 +129,7 @@ impl<'a> Parser<'a> {
                             if !self.eat(TokenKind::Comma) {
                                 break;
                             }
+                            self.skip_newlines();
                         }
                     }
                     self.expect(TokenKind::RBrace)?;
@@ -129,7 +143,7 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            let (lbp, rbp, op) = match infix_info(self.current_kind()) {
+            let (lbp, rbp, op) = match infix_info(next_kind) {
                 Some(info) => info,
                 None => break,
             };
@@ -138,7 +152,11 @@ impl<'a> Parser<'a> {
                 break;
             }
 
+            // Commit to the binary operator: skip any newlines before it, then
+            // the operator itself, then any newlines after it, then the RHS.
+            self.skip_newlines();
             self.advance();
+            self.skip_newlines();
             let right = self.parse_expr(rbp)?;
             let span = self.span_from(start, start_byte);
 
@@ -154,6 +172,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_prefix(&mut self) -> Option<Expr<'a>> {
+        self.skip_newlines();
         let (start, start_byte) = self.span_start();
 
         match self.current_kind() {
@@ -264,6 +283,7 @@ impl<'a> Parser<'a> {
                         if !self.eat(TokenKind::Comma) {
                             break;
                         }
+                        self.skip_newlines();
                         if self.at(TokenKind::RBracket) {
                             break;
                         }
@@ -301,6 +321,7 @@ impl<'a> Parser<'a> {
                         if !self.eat(TokenKind::Comma) {
                             break;
                         }
+                        self.skip_newlines();
                         if self.at(TokenKind::RBrace) {
                             break;
                         }

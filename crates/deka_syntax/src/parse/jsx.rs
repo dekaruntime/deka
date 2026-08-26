@@ -85,6 +85,7 @@ impl<'a> Parser<'a> {
             && !self.at(TokenKind::Slash)
             && !self.at(TokenKind::Eof)
         {
+            self.skip_newlines();
             // Spread attribute: `{...expr}`
             if self.at(TokenKind::LBrace) {
                 let attr_start = self.current_span().start;

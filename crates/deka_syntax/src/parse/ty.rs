@@ -12,6 +12,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type_primary(&mut self) -> Option<Type<'a>> {
+        self.skip_newlines();
         let (start, start_byte) = self.span_start();
 
         if self.eat(TokenKind::Fn) {
@@ -24,8 +25,11 @@ impl<'a> Parser<'a> {
                     if !self.eat(TokenKind::Comma) {
                         break;
                     }
+                    self.skip_newlines();
                 }
+                self.skip_newlines();
             }
+            self.skip_newlines();
             self.expect(TokenKind::RParen)?;
             let ret = self.parse_type()?;
             Some(Type::Function {
@@ -50,7 +54,9 @@ impl<'a> Parser<'a> {
                     if !self.eat(TokenKind::Comma) {
                         break;
                     }
+                    self.skip_newlines();
                 }
+                self.skip_newlines();
                 self.expect(TokenKind::Gt)?;
                 Some(Type::Generic {
                     base: name,
