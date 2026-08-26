@@ -18,9 +18,9 @@ pub struct CompileOptions {
 
 /// Module metadata extracted from a DekaScript source file.
 ///
-/// This is the v2 equivalent of `deka_js::SourceModuleMeta`. It is intentionally
-/// minimal while the v2 module system is being implemented; frontmatter parsing
-/// will populate the fields as imports/exports land.
+/// This is the v2 equivalent of `deka_js::SourceModuleMeta`. It is populated by
+/// parsing import/export statements at the top level of a `.ds` file. There is
+/// no frontmatter stage (RFD 24).
 #[derive(Debug, Clone, Default)]
 pub struct SourceModuleMeta {
     pub imports: Vec<ImportDecl>,
@@ -44,12 +44,52 @@ pub struct ExportDecl {
     pub name: String,
 }
 
-/// Parse frontmatter metadata from a DekaScript source file.
+/// Extract module metadata (imports and exports) from a `.ds` source file.
 ///
-/// Currently returns an empty metadata object; frontmatter parsing will be
-/// wired up once the v2 module syntax is stable.
-pub fn parse_source_module_meta(_source: &str) -> SourceModuleMeta {
-    SourceModuleMeta::default()
+/// This performs a lightweight parse and walks the top-level statements to
+/// collect import sources/specifiers and exported names. It does not
+/// typecheck or emit. RFD 24: there is no frontmatter stage.
+pub fn parse_source_module_meta(source: &str) -> SourceModuleMeta {
+    let arena = Bump::new();
+    let result = parse(source, &arena);
+    let mut imports = Vec::new();
+    let mut exports = Vec::new();
+
+    let Some(program) = result.program else {
+        return SourceModuleMeta { imports, exports };
+    };
+
+    for stmt in program.statements.iter() {
+        match stmt {
+            deka_syntax::Stmt::Import { specifiers, source: src, .. } => {
+                let specs = specifiers
+                    .iter()
+                    .map(|spec| ImportSpec {
+                        name: spec.imported.to_string(),
+                        alias: if spec.imported == spec.local {
+                            None
+                        } else {
+                            Some(spec.local.to_string())
+                        },
+                    })
+                    .collect();
+                imports.push(ImportDecl {
+                    path: src.to_string(),
+                    specs,
+                });
+            }
+            deka_syntax::Stmt::Export { decl, .. } => {
+                let name = match decl {
+                    deka_syntax::ExportDecl::Const { name, .. } => name,
+                    deka_syntax::ExportDecl::Function { name, .. } => name,
+                };
+                exports.push(ExportDecl { name: name.to_string() });
+            }
+            _ => {}
+        }
+    }
+
+    SourceModuleMeta { imports, exports }
 }
 
 /// Successful result of compiling a DekaScript source file to JavaScript.
@@ -282,5 +322,20 @@ mod tests {
         .expect("compile should succeed");
         assert!(result.js.contains("await fetch()"), "got: {}", result.js);
         assert!(result.js.contains("(double)("), "got: {}", result.js);
+    }
+
+    #[test]
+    fn extract_module_meta() {
+        let meta = parse_source_module_meta(
+            "import { add } from \"./math.ds\";\nexport const x: number = 1;\nexport fn double(n: number): number { return n * 2; }",
+        );
+        assert_eq!(meta.imports.len(), 1);
+        assert_eq!(meta.imports[0].path, "./math.ds");
+        assert_eq!(meta.imports[0].specs.len(), 1);
+        assert_eq!(meta.imports[0].specs[0].name, "add");
+        assert!(meta.imports[0].specs[0].alias.is_none());
+        assert_eq!(meta.exports.len(), 2);
+        assert_eq!(meta.exports[0].name, "x");
+        assert_eq!(meta.exports[1].name, "double");
     }
 }
