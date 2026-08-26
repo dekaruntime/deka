@@ -418,6 +418,7 @@ function evaluate(test, result) {
 function parseArgs(argv) {
   const args = {
     list: false,
+    json: false,
     filter: null,
     help: false,
     jobs: Math.min(8, os.availableParallelism?.() || 4),
@@ -425,6 +426,7 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--list" || arg === "-l") args.list = true;
+    else if (arg === "--json") args.json = true;
     else if (arg === "--filter" || arg === "-f") args.filter = argv[++i] || "";
     else if (arg === "--jobs" || arg === "-j") args.jobs = Number(argv[++i] || args.jobs);
     else if (arg === "--help" || arg === "-h") args.help = true;
@@ -437,6 +439,7 @@ function printUsage() {
 
 options:
   -l, --list                 List all fixtures and exit
+  --json                     Output a JSON array of per-fixture results
   -f, --filter <substr>      Run only fixtures whose slug or title matches
   -j, --jobs <n>             Parallel native runs (default: min(8, CPUs))
   -h, --help                 Show this help
@@ -447,7 +450,8 @@ Browser/WASM is the live playground on testsuite.deka.gg.
 examples:
   cargo build --release -p cli
   bun tests/testsuite/run.mjs
-  bun tests/testsuite/run.mjs --filter json`);
+  bun tests/testsuite/run.mjs --filter json
+  DEKA_COMPILER=v2 bun tests/testsuite/run.mjs --json`);
 }
 
 async function mapPool(items, limit, fn) {
@@ -507,8 +511,10 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`native CLI: ${cliBinary}`);
-  console.log(`fixtures: ${filtered.length}  jobs: ${args.jobs}`);
+  if (!args.json) {
+    console.log(`native CLI: ${cliBinary}`);
+    console.log(`fixtures: ${filtered.length}  jobs: ${args.jobs}`);
+  }
 
   const results = await mapPool(filtered, args.jobs, async (test) => {
     if (!test.hosts.includes("native")) {
@@ -525,6 +531,27 @@ async function main() {
   let passed = 0;
   let failed = 0;
   let skipped = 0;
+
+  if (args.json) {
+    const output = results.map((r) => ({
+      slug: r.test.slug,
+      category: r.test.category,
+      name: r.test.name,
+      expectedStatus: r.test.status,
+      expectedStage: r.test.stage,
+      skipped: r.skipped ?? false,
+      skipReason: r.skipped ? r.reason : undefined,
+      matched: r.matched ?? false,
+      actualStatus: r.native ? (r.native.ok ? "pass" : "fail") : undefined,
+      actualStage: r.stage,
+      stdout: r.native?.stdout,
+      stderr: r.native?.stderr,
+      error: r.native?.error,
+      reasons: r.reasons,
+    }));
+    console.log(JSON.stringify(output, null, 2));
+    process.exit(0);
+  }
 
   console.log("");
   for (const result of results) {
