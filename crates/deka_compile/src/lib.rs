@@ -341,6 +341,20 @@ mod tests {
     }
 
     #[test]
+    fn compile_jsx_element() {
+        let result = compile_to_js("const el = <div class=\"box\" />;", "test.dsx")
+            .expect("compile should succeed");
+        assert!(result.js.contains("deka.ui.jsx"), "got: {}", result.js);
+    }
+
+    #[test]
+    fn compile_jsx_fragment() {
+        let result = compile_to_js("const el = <><span>a</span><span>b</span></>;", "test.dsx")
+            .expect("compile should succeed");
+        assert!(result.js.contains("deka.ui.Fragment"), "got: {}", result.js);
+    }
+
+    #[test]
     fn extract_module_meta() {
         let meta = parse_source_module_meta(
             "import { add } from \"./math.ds\";\nexport const x: number = 1;\nexport fn double(n: number): number { return n * 2; }",

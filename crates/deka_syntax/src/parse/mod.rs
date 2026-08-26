@@ -7,6 +7,7 @@ use crate::diagnostics::Diagnostic;
 use crate::lexer::{Lexer, Token, TokenKind};
 
 mod expr;
+mod jsx;
 mod pattern;
 mod stmt;
 mod ty;
@@ -811,6 +812,62 @@ mod tests {
                     assert!(source.contains("f()"));
                 }
                 _ => panic!("expected unsafe expression, got {:?}", value),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_jsx_element() {
+        let arena = Bump::new();
+        let result = parse("const el = <div class=\"box\" />;", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { value, .. } => match value {
+                Expr::JsxElement { element, .. } => {
+                    assert_eq!(element.tag, "div");
+                    assert_eq!(element.attributes.len(), 1);
+                    assert_eq!(element.attributes[0].name, "class");
+                }
+                _ => panic!("expected jsx element, got {:?}", value),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_jsx_with_children() {
+        let arena = Bump::new();
+        let result = parse("const el = <p>hello {name}</p>;", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { value, .. } => match value {
+                Expr::JsxElement { element, .. } => {
+                    assert_eq!(element.tag, "p");
+                    assert_eq!(element.children.len(), 2);
+                    assert!(matches!(element.children[0], Expr::JsxText { .. }));
+                    assert!(matches!(element.children[1], Expr::Identifier { .. }));
+                }
+                _ => panic!("expected jsx element, got {:?}", value),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_jsx_fragment() {
+        let arena = Bump::new();
+        let result = parse("const el = <><span>a</span><span>b</span></>;", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { value, .. } => match value {
+                Expr::JsxFragment { children, .. } => {
+                    assert_eq!(children.len(), 2);
+                }
+                _ => panic!("expected jsx fragment, got {:?}", value),
             },
             _ => panic!("expected const declaration"),
         }

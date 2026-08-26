@@ -254,6 +254,7 @@ impl<'a> Parser<'a> {
                 })
             }
             TokenKind::Unsafe => self.parse_unsafe_expression(start, start_byte),
+            TokenKind::Lt => self.parse_jsx(start, start_byte),
             TokenKind::LBracket => {
                 self.advance();
                 let mut elements = Vec::new();

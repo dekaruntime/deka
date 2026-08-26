@@ -96,6 +96,24 @@ impl<'a> Checker<'a> {
                 // TODO: unwrap Promise<T> once async types are modeled.
                 Type::Infer
             }
+            ast::Expr::JsxElement { element, .. } => {
+                for attr in element.attributes.iter() {
+                    if let Some(value) = &attr.value {
+                        self.check_expr(value);
+                    }
+                }
+                for child in element.children.iter() {
+                    self.check_expr(child);
+                }
+                Type::Infer
+            }
+            ast::Expr::JsxFragment { children, .. } => {
+                for child in children.iter() {
+                    self.check_expr(child);
+                }
+                Type::Infer
+            }
+            ast::Expr::JsxText { .. } => Type::Infer,
             ast::Expr::Unsafe { .. } => {
                 // Raw JavaScript block. Its dynamic result is opaque to the
                 // v2 typechecker; match on it to inspect the Result.

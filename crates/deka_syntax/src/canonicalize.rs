@@ -347,6 +347,7 @@ fn transform_expr<'a>(
             children: transform_exprs(children, arena, enums),
             span: *span,
         },
+        Expr::JsxText { value, span } => Expr::JsxText { value, span: *span },
         Expr::Array { elements, span } => Expr::Array {
             elements: transform_exprs(elements, arena, enums),
             span: *span,
@@ -855,6 +856,7 @@ fn lower_expr<'a>(
             children: lower_exprs(children, arena, method_calls),
             span: *span,
         },
+        Expr::JsxText { value, span } => Expr::JsxText { value, span: *span },
         Expr::Array { elements, span } => Expr::Array {
             elements: lower_exprs(elements, arena, method_calls),
             span: *span,

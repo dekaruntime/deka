@@ -199,4 +199,26 @@ mod tests {
         assert!(out.contains("const x = 1;"), "expected raw JS statements, got: {}", out);
         assert!(out.contains("return x + 2;"), "expected raw JS statements, got: {}", out);
     }
+
+    #[test]
+    fn emit_jsx_element() {
+        let out = parse_and_emit("const el = <div class=\"box\" />;");
+        assert!(out.contains("deka.ui.jsx"), "expected jsx call, got: {}", out);
+        assert!(out.contains("\"div\""), "expected tag, got: {}", out);
+        assert!(out.contains("\"class\": \"box\""), "expected class prop, got: {}", out);
+    }
+
+    #[test]
+    fn emit_jsx_with_children() {
+        let out = parse_and_emit("const el = <p>hello {name}</p>;");
+        assert!(out.contains("deka.ui.jsxs"), "expected jsxs call, got: {}", out);
+        assert!(out.contains("\"children\": ["), "expected children array, got: {}", out);
+    }
+
+    #[test]
+    fn emit_jsx_fragment() {
+        let out = parse_and_emit("const el = <><span>a</span><span>b</span></>;");
+        assert!(out.contains("deka.ui.jsxs"), "expected jsxs call, got: {}", out);
+        assert!(out.contains("deka.ui.Fragment"), "expected Fragment, got: {}", out);
+    }
 }

@@ -314,6 +314,10 @@ pub enum Expr<'a> {
         children: &'a [Expr<'a>],
         span: Span,
     },
+    JsxText {
+        value: &'a str,
+        span: Span,
+    },
     Array {
         elements: &'a [Expr<'a>],
         span: Span,
@@ -468,6 +472,7 @@ impl<'a> Expr<'a> {
             Expr::Await { span, .. } => *span,
             Expr::JsxElement { span, .. } => *span,
             Expr::JsxFragment { span, .. } => *span,
+            Expr::JsxText { span, .. } => *span,
             Expr::Array { span, .. } => *span,
             Expr::Object { span, .. } => *span,
             Expr::Spread { span, .. } => *span,

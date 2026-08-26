@@ -154,8 +154,16 @@ pub fn emit_expr(out: &mut String, expr: &Expr) -> Result<(), String> {
             out.push_str("await ");
             emit_expr(out, expr)?;
         }
-        Expr::JsxElement { .. } | Expr::JsxFragment { .. } => {
-            return Err(format!("unsupported expression: {:?}", expr));
+        Expr::JsxElement { element, .. } => {
+            emit_jsx_element(out, element)?;
+        }
+        Expr::JsxFragment { children, .. } => {
+            emit_jsx_fragment(out, children)?;
+        }
+        Expr::JsxText { value, .. } => {
+            out.push('"');
+            out.push_str(&crate::util::escape_string(value));
+            out.push('"');
         }
     }
     Ok(())
@@ -239,4 +247,100 @@ fn raw_js_looks_like_statements(raw: &str) -> bool {
 fn js_has_top_level_await(raw: &str) -> bool {
     raw.split(|c: char| !c.is_alphanumeric() && c != '_')
         .any(|word| word == "await")
+}
+
+/// Emit a JSX element as a `deka.ui.jsx` or `deka.ui.jsxs` runtime call.
+fn emit_jsx_element(out: &mut String, element: &deka_syntax::JsxElement) -> Result<(), String> {
+    let is_component = element
+        .tag
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_uppercase())
+        .unwrap_or(false);
+    let tag_expr = if is_component {
+        element.tag.to_string()
+    } else {
+        format!("\"{}\"", crate::util::escape_string(element.tag))
+    };
+
+    let mut props = Vec::new();
+    for attr in element.attributes.iter() {
+        if attr.name.is_empty() {
+            // Spread attribute: `{...expr}` stored with empty name.
+            if let Some(value) = &attr.value {
+                props.push(format!("...",));
+                let mut buf = String::new();
+                emit_expr(&mut buf, value)?;
+                props.last_mut().unwrap().push_str(&buf);
+            }
+        } else {
+            let value = match &attr.value {
+                Some(v) => {
+                    let mut buf = String::new();
+                    emit_expr(&mut buf, v)?;
+                    buf
+                }
+                None => "true".to_string(),
+            };
+            props.push(format!(
+                "\"{}\": {}",
+                crate::util::escape_string(attr.name),
+                value
+            ));
+        }
+    }
+
+    let mut child_values = Vec::new();
+    for child in element.children.iter() {
+        let mut buf = String::new();
+        emit_expr(&mut buf, child)?;
+        child_values.push(buf);
+    }
+
+    if !child_values.is_empty() {
+        if child_values.len() == 1 {
+            props.push(format!("\"children\": {}", child_values[0]));
+        } else {
+            props.push(format!("\"children\": [{}]", child_values.join(", ")));
+        }
+    }
+
+    let fn_name = if child_values.len() > 1 { "jsxs" } else { "jsx" };
+    out.push_str("deka.ui.");
+    out.push_str(fn_name);
+    out.push('(');
+    out.push_str(&tag_expr);
+    out.push_str(", {");
+    out.push_str(&props.join(", "));
+    out.push_str("})");
+
+    Ok(())
+}
+
+/// Emit a JSX fragment as a `deka.ui.jsx` call with `deka.ui.Fragment`.
+fn emit_jsx_fragment(out: &mut String, children: &[deka_syntax::Expr]) -> Result<(), String> {
+    let mut child_values = Vec::new();
+    for child in children.iter() {
+        let mut buf = String::new();
+        emit_expr(&mut buf, child)?;
+        child_values.push(buf);
+    }
+
+    let fn_name = if child_values.len() > 1 { "jsxs" } else { "jsx" };
+    out.push_str("deka.ui.");
+    out.push_str(fn_name);
+    out.push_str("(deka.ui.Fragment, {");
+    if !child_values.is_empty() {
+        if child_values.len() == 1 {
+            out.push_str("\"children\": ");
+            out.push_str(&child_values[0]);
+        } else {
+            out.push_str("\"children\": [");
+            out.push_str(&child_values.join(", "));
+            out.push(']');
+        }
+    }
+    out.push_str("})");
+
+    Ok(())
 }
