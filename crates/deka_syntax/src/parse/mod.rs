@@ -340,7 +340,7 @@ mod tests {
     #[test]
     fn parse_function_type() {
         let arena = Bump::new();
-        let result = parse("const f: (number) => string = none;", &arena);
+        let result = parse("const f: fn(number) string = none;", &arena);
         assert!(result.errors.is_empty(), "{:?}", result.errors);
         let program = result.program.unwrap();
         match &program.statements[0] {

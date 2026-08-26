@@ -53,14 +53,14 @@ impl fmt::Display for Type<'_> {
             Type::Named { name } => write!(f, "{name}"),
             Type::Option { inner } => write!(f, "Option<{inner}>"),
             Type::Function { params, ret } => {
-                write!(f, "(")?;
+                write!(f, "fn(")?;
                 for (i, p) in params.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
                     write!(f, "{p}")?;
                 }
-                write!(f, ") => {ret}")
+                write!(f, ") {ret}")
             }
             Type::Generic { base, args } => {
                 write!(f, "{base}<")?;

@@ -25,8 +25,9 @@ impl<'a> Parser<'a> {
     fn parse_type_primary(&mut self) -> Option<Type<'a>> {
         let start = self.current_span().start;
 
-        if self.eat(TokenKind::LParen) {
-            // Either a function type `(T, U) => R` or a grouped type `(T)`.
+        if self.eat(TokenKind::Fn) {
+            // Function type: `fn(T, U) R`.
+            self.expect(TokenKind::LParen)?;
             let mut params = Vec::new();
             if !self.at(TokenKind::RParen) {
                 loop {
@@ -37,20 +38,17 @@ impl<'a> Parser<'a> {
                 }
             }
             self.expect(TokenKind::RParen)?;
-
-            if self.eat(TokenKind::FatArrow) {
-                let ret = self.parse_type()?;
-                Some(Type::Function {
-                    params: alloc_slice(self.arena, params),
-                    ret: alloc(self.arena, ret),
-                    span: self.span_from(start),
-                })
-            } else if params.len() == 1 {
-                Some(params.into_iter().next().unwrap())
-            } else {
-                self.error("expected function arrow `=>` or a single grouped type".to_string());
-                None
-            }
+            let ret = self.parse_type()?;
+            Some(Type::Function {
+                params: alloc_slice(self.arena, params),
+                ret: alloc(self.arena, ret),
+                span: self.span_from(start),
+            })
+        } else if self.eat(TokenKind::LParen) {
+            // Grouped type `(T)`.
+            let ty = self.parse_type()?;
+            self.expect(TokenKind::RParen)?;
+            Some(ty)
         } else if self.at(TokenKind::Identifier) {
             let name = self.bump_str(self.current_text());
             let span = self.current_span();
