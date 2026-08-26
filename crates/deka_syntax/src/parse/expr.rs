@@ -12,14 +12,14 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expr(&mut self, min_prec: u8) -> Option<Expr<'a>> {
-        let start = self.current_span().start;
+        let (start, start_byte) = self.span_start();
         let mut left = self.parse_prefix()?;
 
         loop {
             // Postfix member access and calls bind tighter than any binary operator.
             if self.eat(TokenKind::Dot) {
                 let field = self.expect_identifier()?;
-                let span = self.span_from(start);
+                let span = self.span_from(start, start_byte);
                 left = Expr::FieldAccess {
                     object: alloc(self.arena, left),
                     field,
@@ -51,7 +51,7 @@ impl<'a> Parser<'a> {
                     }
                 }
                 self.expect(TokenKind::RParen)?;
-                let span = self.span_from(start);
+                let span = self.span_from(start, start_byte);
 
                 // Built-in prelude enum constructors: Some/Ok/Err take one payload.
                 if type_args.is_empty() {
@@ -84,7 +84,7 @@ impl<'a> Parser<'a> {
                 self.advance();
                 let index = self.parse_expression()?;
                 self.expect(TokenKind::RBracket)?;
-                let span = self.span_from(start);
+                let span = self.span_from(start, start_byte);
                 left = Expr::IndexAccess {
                     object: alloc(self.arena, left),
                     index: alloc(self.arena, index),
@@ -104,14 +104,14 @@ impl<'a> Parser<'a> {
                     let mut fields = Vec::new();
                     if !self.at(TokenKind::RBrace) {
                         loop {
-                            let field_start = self.current_span().start;
+                            let (field_start, field_start_byte) = self.span_start();
                             let field_name = self.expect_identifier()?;
                             self.expect(TokenKind::Colon)?;
                             let value = self.parse_expression()?;
                             fields.push(StructLiteralField {
                                 name: field_name,
                                 value,
-                                span: self.span_from(field_start),
+                                span: self.span_from(field_start, field_start_byte),
                             });
                             if !self.eat(TokenKind::Comma) {
                                 break;
@@ -119,7 +119,7 @@ impl<'a> Parser<'a> {
                         }
                     }
                     self.expect(TokenKind::RBrace)?;
-                    let span = self.span_from(start);
+                    let span = self.span_from(start, start_byte);
                     left = Expr::StructLiteral {
                         name: struct_name,
                         fields: alloc_slice(self.arena, fields),
@@ -140,7 +140,7 @@ impl<'a> Parser<'a> {
 
             self.advance();
             let right = self.parse_expr(rbp)?;
-            let span = self.span_from(start);
+            let span = self.span_from(start, start_byte);
 
             left = Expr::Binary {
                 op,
@@ -154,7 +154,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_prefix(&mut self) -> Option<Expr<'a>> {
-        let start = self.current_span().start;
+        let (start, start_byte) = self.span_start();
 
         match self.current_kind() {
             TokenKind::Number => {
@@ -169,7 +169,7 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Some(Expr::Number {
                     value,
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 })
             }
             TokenKind::String => {
@@ -177,27 +177,27 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Some(Expr::String {
                     value,
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 })
             }
             TokenKind::True => {
                 self.advance();
                 Some(Expr::Boolean {
                     value: true,
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 })
             }
             TokenKind::False => {
                 self.advance();
                 Some(Expr::Boolean {
                     value: false,
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 })
             }
             TokenKind::None => {
                 self.advance();
                 Some(Expr::None {
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 })
             }
             TokenKind::Identifier => {
@@ -205,7 +205,7 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Some(Expr::Identifier {
                     name,
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 })
             }
             TokenKind::LParen => {
@@ -214,7 +214,7 @@ impl<'a> Parser<'a> {
                 self.expect(TokenKind::RParen)?;
                 Some(Expr::Paren {
                     expr: alloc(self.arena, expr),
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 })
             }
             TokenKind::Minus => {
@@ -223,7 +223,7 @@ impl<'a> Parser<'a> {
                 Some(Expr::Unary {
                     op: UnOp::Neg,
                     operand: alloc(self.arena, operand),
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 })
             }
             TokenKind::Not => {
@@ -232,7 +232,7 @@ impl<'a> Parser<'a> {
                 Some(Expr::Unary {
                     op: UnOp::Not,
                     operand: alloc(self.arena, operand),
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 })
             }
             TokenKind::Match => {
@@ -242,7 +242,7 @@ impl<'a> Parser<'a> {
                 Some(Expr::Match {
                     scrutinee,
                     arms,
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 })
             }
             TokenKind::Await => {
@@ -250,9 +250,10 @@ impl<'a> Parser<'a> {
                 let operand = self.parse_expr(12)?;
                 Some(Expr::Await {
                     expr: alloc(self.arena, operand),
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 })
             }
+            TokenKind::Unsafe => self.parse_unsafe_expression(start, start_byte),
             TokenKind::LBracket => {
                 self.advance();
                 let mut elements = Vec::new();
@@ -270,7 +271,7 @@ impl<'a> Parser<'a> {
                 self.expect(TokenKind::RBracket)?;
                 Some(Expr::Array {
                     elements: alloc_slice(self.arena, elements),
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 })
             }
             TokenKind::LBrace => {
@@ -278,13 +279,13 @@ impl<'a> Parser<'a> {
                 let mut fields = Vec::new();
                 if !self.at(TokenKind::RBrace) {
                     loop {
-                        let field_start = self.current_span().start;
+                        let (field_start, field_start_byte) = self.span_start();
                         if self.eat(TokenKind::Spread) {
                             let expr = self.parse_expression()?;
                             fields.push(crate::ast::ObjectField {
                                 key: "",
                                 value: expr,
-                                span: self.span_from(field_start),
+                                span: self.span_from(field_start, field_start_byte),
                             });
                         } else {
                             let key = self.expect_object_key()?;
@@ -293,7 +294,7 @@ impl<'a> Parser<'a> {
                             fields.push(crate::ast::ObjectField {
                                 key,
                                 value,
-                                span: self.span_from(field_start),
+                                span: self.span_from(field_start, field_start_byte),
                             });
                         }
                         if !self.eat(TokenKind::Comma) {
@@ -307,7 +308,7 @@ impl<'a> Parser<'a> {
                 self.expect(TokenKind::RBrace)?;
                 Some(Expr::Object {
                     fields: alloc_slice(self.arena, fields),
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 })
             }
             _ => {
@@ -347,14 +348,63 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse an `unsafe { ... }` raw JavaScript block.
+    ///
+    /// The lexer has already tokenised the contents; we skip tokens until we
+    /// find the matching `}` and extract the literal source bytes between the
+    /// braces. The contents are not parsed as DekaScript.
+    fn parse_unsafe_expression(
+        &mut self,
+        start: crate::ast::Pos,
+        start_byte: usize,
+    ) -> Option<Expr<'a>> {
+        self.advance(); // `unsafe`
+
+        if !self.at(TokenKind::LBrace) {
+            self.error("expected `{` after `unsafe`");
+            return None;
+        }
+
+        let body_start_byte = self.current_span().byte_start + 1; // after `{`
+        self.advance(); // `{`
+
+        let mut depth = 1;
+        let mut body_end_byte = body_start_byte;
+        while depth > 0 && !self.at_end() {
+            if self.at(TokenKind::LBrace) {
+                depth += 1;
+                self.advance();
+            } else if self.at(TokenKind::RBrace) {
+                depth -= 1;
+                if depth == 0 {
+                    body_end_byte = self.current_span().byte_start;
+                }
+                self.advance();
+            } else {
+                self.advance();
+            }
+        }
+
+        if depth != 0 {
+            self.error("unterminated `unsafe` block; expected `}`");
+            return None;
+        }
+
+        let source = &self.source[body_start_byte..body_end_byte];
+        Some(Expr::Unsafe {
+            source: self.bump_str(source),
+            span: self.span_from(start, start_byte),
+        })
+    }
+
     /// Parse an expression that may be a spread element (`...expr`).
     fn parse_spreadable_expr(&mut self) -> Option<Expr<'a>> {
-        let start = self.current_span().start;
+        let (start, start_byte) = self.span_start();
         if self.eat(TokenKind::Spread) {
             let expr = self.parse_expression()?;
             Some(Expr::Spread {
                 expr: alloc(self.arena, expr),
-                span: self.span_from(start),
+                span: self.span_from(start, start_byte),
             })
         } else {
             self.parse_expression()

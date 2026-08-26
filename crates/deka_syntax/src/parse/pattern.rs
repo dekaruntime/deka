@@ -24,7 +24,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_match_arm(&mut self) -> Option<MatchArm<'a>> {
-        let start = self.current_span().start;
+        let (start, start_byte) = self.span_start();
         let pattern = self.parse_pattern()?;
         self.expect(TokenKind::FatArrow)?;
         let body = self.parse_expression()?;
@@ -32,12 +32,12 @@ impl<'a> Parser<'a> {
             pattern,
             guard: None,
             body,
-            span: self.span_from(start),
+            span: self.span_from(start, start_byte),
         })
     }
 
     pub(super) fn parse_pattern(&mut self) -> Option<Pattern<'a>> {
-        let start = self.current_span().start;
+        let (start, start_byte) = self.span_start();
 
         match self.current_kind() {
             TokenKind::Identifier => {
@@ -46,7 +46,7 @@ impl<'a> Parser<'a> {
 
                 if name == "_" {
                     return Some(Pattern::Wildcard {
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     });
                 }
 
@@ -56,20 +56,20 @@ impl<'a> Parser<'a> {
                     let mut fields = Vec::new();
                     if !self.at(TokenKind::RBrace) {
                         loop {
-                            let field_start = self.current_span().start;
+                            let (field_start, field_start_byte) = self.span_start();
                             let field_name = self.expect_identifier()?;
                             let pattern = if self.eat(TokenKind::Colon) {
                                 self.parse_pattern()?
                             } else {
                                 Pattern::Identifier {
                                     name: field_name,
-                                    span: self.span_from(field_start),
+                                    span: self.span_from(field_start, field_start_byte),
                                 }
                             };
                             fields.push(PatternField {
                                 name: field_name,
                                 pattern,
-                                span: self.span_from(field_start),
+                                span: self.span_from(field_start, field_start_byte),
                             });
                             if !self.eat(TokenKind::Comma) {
                                 break;
@@ -80,7 +80,7 @@ impl<'a> Parser<'a> {
                     return Some(Pattern::Struct {
                         name,
                         fields: crate::ast::alloc_slice(self.arena, fields),
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     });
                 }
 
@@ -96,13 +96,13 @@ impl<'a> Parser<'a> {
                     return Some(Pattern::Constructor {
                         name,
                         payload,
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     });
                 }
 
                 Some(Pattern::Identifier {
                     name,
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 })
             }
 
@@ -110,7 +110,7 @@ impl<'a> Parser<'a> {
                 let expr = self.parse_expression()?;
                 Some(Pattern::Literal {
                     expr,
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 })
             }
 
@@ -135,7 +135,7 @@ impl<'a> Parser<'a> {
                 self.expect(TokenKind::RParen)?;
                 Some(Pattern::Tuple {
                     elements: crate::ast::alloc_slice(self.arena, elements),
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 })
             }
 

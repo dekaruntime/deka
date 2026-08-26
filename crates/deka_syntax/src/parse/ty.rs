@@ -12,7 +12,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type_primary(&mut self) -> Option<Type<'a>> {
-        let start = self.current_span().start;
+        let (start, start_byte) = self.span_start();
 
         if self.eat(TokenKind::Fn) {
             // Function type: `fn(T, U) R`.
@@ -31,7 +31,7 @@ impl<'a> Parser<'a> {
             Some(Type::Function {
                 params: alloc_slice(self.arena, params),
                 ret: alloc(self.arena, ret),
-                span: self.span_from(start),
+                span: self.span_from(start, start_byte),
             })
         } else if self.eat(TokenKind::LParen) {
             // Grouped type `(T)`.
@@ -55,7 +55,7 @@ impl<'a> Parser<'a> {
                 Some(Type::Generic {
                     base: name,
                     args: alloc_slice(self.arena, args),
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 })
             } else {
                 Some(Type::Named { name, span })

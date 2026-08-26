@@ -6,11 +6,14 @@
 use bumpalo::Bump;
 use serde::Serialize;
 
-/// A source span: line and column are 1-based.
+/// A source span: line and column are 1-based; byte offsets index the original
+/// source string.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct Span {
     pub start: Pos,
     pub end: Pos,
+    pub byte_start: usize,
+    pub byte_end: usize,
 }
 
 impl Span {
@@ -18,6 +21,8 @@ impl Span {
         Self {
             start: Pos { line: 1, column: 1 },
             end: Pos { line: 1, column: 1 },
+            byte_start: 0,
+            byte_end: 0,
         }
     }
 }
@@ -294,7 +299,7 @@ pub enum Expr<'a> {
         span: Span,
     },
     Unsafe {
-        body: &'a [Stmt<'a>],
+        source: &'a str,
         span: Span,
     },
     Await {

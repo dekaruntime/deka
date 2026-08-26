@@ -2,7 +2,6 @@
 
 use deka_syntax::{BinOp, Expr};
 
-use crate::stmt::emit_stmt;
 use crate::util::{bin_op_str, escape_string, un_op_str};
 
 pub fn emit_expr(out: &mut String, expr: &Expr) -> Result<(), String> {
@@ -131,15 +130,8 @@ pub fn emit_expr(out: &mut String, expr: &Expr) -> Result<(), String> {
             out.push_str("...");
             emit_expr(out, expr)?;
         }
-        Expr::Unsafe { body, .. } => {
-            // Block expression encountered outside a function body; wrap in an
-            // IIFE to preserve statement semantics.
-            out.push_str("(() => {\n");
-            for stmt in body.iter() {
-                emit_stmt(out, stmt, 2)?;
-                out.push('\n');
-            }
-            out.push_str("})()");
+        Expr::Unsafe { source, .. } => {
+            emit_unsafe(out, source)?;
         }
         Expr::EnumConstructor {
             case_name,
@@ -167,4 +159,84 @@ pub fn emit_expr(out: &mut String, expr: &Expr) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Emit an `unsafe { ... }` block as a JavaScript IIFE wrapped in try/catch.
+///
+/// The raw source inside the braces is passed through verbatim. The wrapper
+/// returns a `Result<T, E>` enum value (`{ __case: "Ok", value: ... }` or
+/// `{ __case: "Err", value: err }`). If the source contains top-level `await`,
+/// the wrapper is async and the value is awaited.
+fn emit_unsafe(out: &mut String, source: &str) -> Result<(), String> {
+    let trimmed = source.trim();
+    if trimmed.is_empty() {
+        out.push_str("(function() { try { return { __case: \"Ok\", value: undefined }; } catch (err) { return { __case: \"Err\", value: err }; } })()");
+        return Ok(());
+    }
+
+    let is_async = js_has_top_level_await(trimmed);
+    let is_statement_block = raw_js_looks_like_statements(trimmed);
+
+    let fn_kw = if is_async { "async function" } else { "function" };
+    let inner = if is_statement_block {
+        format!("({fn_kw}() {{ {trimmed} }})()")
+    } else {
+        format!("({fn_kw}() {{ return ({trimmed}); }})()")
+    };
+
+    let awaited = if is_async {
+        format!("await {inner}")
+    } else {
+        inner
+    };
+
+    out.push('(');
+    out.push_str(fn_kw);
+    out.push_str("() { try { return { __case: \"Ok\", value: ");
+    out.push_str(&awaited);
+    out.push_str(" }; } catch (err) { return { __case: \"Err\", value: err }; } })()");
+
+    Ok(())
+}
+
+/// Heuristic to decide whether raw JavaScript inside an `unsafe { ... }` block
+/// should be treated as a statement block or a single expression.
+fn raw_js_looks_like_statements(raw: &str) -> bool {
+    if raw.contains(';') {
+        return true;
+    }
+    let head = raw
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_matches(|c: char| c == '(' || c == '{' || c == '[');
+    matches!(
+        head,
+        "const"
+            | "let"
+            | "var"
+            | "function"
+            | "class"
+            | "if"
+            | "for"
+            | "while"
+            | "do"
+            | "try"
+            | "switch"
+            | "return"
+            | "throw"
+            | "break"
+            | "continue"
+            | "with"
+            | "debugger"
+            | "import"
+            | "export"
+            | "async"
+    )
+}
+
+/// Heuristic to detect a top-level `await` keyword in raw JavaScript.
+fn js_has_top_level_await(raw: &str) -> bool {
+    raw.split(|c: char| !c.is_alphanumeric() && c != '_')
+        .any(|word| word == "await")
 }

@@ -331,16 +331,10 @@ fn transform_expr<'a>(
             arms: transform_match_arms(arms, arena, enums),
             span: *span,
         },
-        Expr::Unsafe { body, span } => {
-            let new_body: Vec<Stmt<'a>> = body
-                .iter()
-                .map(|s| transform_stmt(s, arena, enums))
-                .collect();
-            Expr::Unsafe {
-                body: ast::alloc_slice(arena, new_body),
-                span: *span,
-            }
-        }
+        Expr::Unsafe { source, span } => Expr::Unsafe {
+            source,
+            span: *span,
+        },
         Expr::Await { expr, span } => Expr::Await {
             expr: transform_expr(expr, arena, enums),
             span: *span,
@@ -845,16 +839,10 @@ fn lower_expr<'a>(
             arms: lower_match_arms(arms, arena, method_calls),
             span: *span,
         },
-        Expr::Unsafe { body, span } => {
-            let new_body: Vec<Stmt<'a>> = body
-                .iter()
-                .map(|s| lower_stmt(s, arena, method_calls))
-                .collect();
-            Expr::Unsafe {
-                body: ast::alloc_slice(arena, new_body),
-                span: *span,
-            }
-        }
+        Expr::Unsafe { source, span } => Expr::Unsafe {
+            source,
+            span: *span,
+        },
         Expr::Await { expr, span } => Expr::Await {
             expr: lower_expr(expr, arena, method_calls),
             span: *span,

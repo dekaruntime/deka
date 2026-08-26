@@ -96,6 +96,11 @@ impl<'a> Checker<'a> {
                 // TODO: unwrap Promise<T> once async types are modeled.
                 Type::Infer
             }
+            ast::Expr::Unsafe { .. } => {
+                // Raw JavaScript block. Its dynamic result is opaque to the
+                // v2 typechecker; match on it to inspect the Result.
+                Type::Infer
+            }
             _ => {
                 self.error_at_expr(expr, "unsupported expression in v2 typeck");
                 Type::Error

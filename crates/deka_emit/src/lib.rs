@@ -177,4 +177,26 @@ mod tests {
         let out = parse_and_emit("const y = x |> double;");
         assert!(out.contains("const y = (double)(x);"), "got: {}", out);
     }
+
+    #[test]
+    fn emit_unsafe_expression() {
+        let out = parse_and_emit("const r = unsafe { JSON.parse('{}') };");
+        assert!(out.contains("__case: \"Ok\""), "expected Ok case, got: {}", out);
+        assert!(out.contains("__case: \"Err\""), "expected Err case, got: {}", out);
+        assert!(out.contains("JSON.parse('{}')"), "expected raw JS, got: {}", out);
+    }
+
+    #[test]
+    fn emit_unsafe_async_await() {
+        let out = parse_and_emit("const r = unsafe { await fetch(url) };");
+        assert!(out.contains("async function"), "expected async wrapper, got: {}", out);
+        assert!(out.contains("await fetch(url)"), "expected raw await, got: {}", out);
+    }
+
+    #[test]
+    fn emit_unsafe_statement_block() {
+        let out = parse_and_emit("const r = unsafe { const x = 1; return x + 2; };");
+        assert!(out.contains("const x = 1;"), "expected raw JS statements, got: {}", out);
+        assert!(out.contains("return x + 2;"), "expected raw JS statements, got: {}", out);
+    }
 }

@@ -149,18 +149,21 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn span_from(&self, start: Pos) -> Span {
+    fn span_from(&self, start: Pos, start_byte: usize) -> Span {
         Span {
             start,
             end: self.pos_at(),
+            byte_start: start_byte,
+            byte_end: self.pos,
         }
     }
 
     fn error(&mut self, message: impl Into<String>) -> Token<'a> {
         let start = self.pos_at();
+        let start_byte = self.pos;
         let ch = self.advance();
         let text = if ch.is_some() {
-            &self.source[start.line - 1..self.pos]
+            &self.source[start_byte..self.pos]
         } else {
             ""
         };
@@ -175,7 +178,7 @@ impl<'a> Lexer<'a> {
         Token {
             kind: TokenKind::Error,
             text,
-            span: self.span_from(start),
+            span: self.span_from(start, start_byte),
         }
     }
 
@@ -191,6 +194,7 @@ impl<'a> Lexer<'a> {
 
     fn read_string(&mut self) -> Token<'a> {
         let start = self.pos_at();
+        let start_byte = self.pos;
         let quote = self.current().unwrap();
         self.advance(); // opening quote
         let start_pos = self.pos;
@@ -224,12 +228,13 @@ impl<'a> Lexer<'a> {
         Token {
             kind: TokenKind::String,
             text,
-            span: self.span_from(start),
+            span: self.span_from(start, start_byte),
         }
     }
 
     fn read_number(&mut self) -> Token<'a> {
         let start = self.pos_at();
+        let start_byte = self.pos;
         let start_pos = self.pos;
         let mut saw_dot = false;
         while let Some(ch) = self.current() {
@@ -253,12 +258,13 @@ impl<'a> Lexer<'a> {
         Token {
             kind,
             text: &self.source[start_pos..self.pos],
-            span: self.span_from(start),
+            span: self.span_from(start, start_byte),
         }
     }
 
     fn read_identifier(&mut self) -> Token<'a> {
         let start = self.pos_at();
+        let start_byte = self.pos;
         let start_pos = self.pos;
         while let Some(ch) = self.current() {
             if ch.is_alphanumeric() || ch == '_' {
@@ -298,12 +304,13 @@ impl<'a> Lexer<'a> {
         Token {
             kind,
             text,
-            span: self.span_from(start),
+            span: self.span_from(start, start_byte),
         }
     }
 
     fn read_line_comment(&mut self) -> Token<'a> {
         let start = self.pos_at();
+        let start_byte = self.pos;
         let start_pos = self.pos;
         self.advance(); // /
         self.advance(); // /
@@ -316,12 +323,13 @@ impl<'a> Lexer<'a> {
         Token {
             kind: TokenKind::Comment,
             text: &self.source[start_pos..self.pos],
-            span: self.span_from(start),
+            span: self.span_from(start, start_byte),
         }
     }
 
     fn read_block_comment(&mut self) -> Token<'a> {
         let start = self.pos_at();
+        let start_byte = self.pos;
         let start_pos = self.pos;
         self.advance(); // /
         self.advance(); // *
@@ -336,20 +344,26 @@ impl<'a> Lexer<'a> {
         Token {
             kind: TokenKind::Comment,
             text: &self.source[start_pos..self.pos],
-            span: self.span_from(start),
+            span: self.span_from(start, start_byte),
         }
     }
 
     pub fn next_token(&mut self) -> Token<'a> {
         self.skip_whitespace();
         let start = self.pos_at();
+        let start_byte = self.pos;
         let ch = match self.current() {
             Some(c) => c,
             None => {
                 return Token {
                     kind: TokenKind::Eof,
                     text: "",
-                    span: Span { start, end: start },
+                    span: Span {
+                        start,
+                        end: start,
+                        byte_start: start_byte,
+                        byte_end: start_byte,
+                    },
                 }
             }
         };
@@ -360,7 +374,7 @@ impl<'a> Lexer<'a> {
                 Token {
                     kind: TokenKind::Newline,
                     text: "\n",
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 }
             }
             '"' | '\'' => self.read_string(),
@@ -371,7 +385,7 @@ impl<'a> Lexer<'a> {
                 Token {
                     kind: TokenKind::LParen,
                     text: "(",
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 }
             }
             ')' => {
@@ -379,7 +393,7 @@ impl<'a> Lexer<'a> {
                 Token {
                     kind: TokenKind::RParen,
                     text: ")",
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 }
             }
             '{' => {
@@ -387,7 +401,7 @@ impl<'a> Lexer<'a> {
                 Token {
                     kind: TokenKind::LBrace,
                     text: "{",
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 }
             }
             '}' => {
@@ -395,7 +409,7 @@ impl<'a> Lexer<'a> {
                 Token {
                     kind: TokenKind::RBrace,
                     text: "}",
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 }
             }
             '[' => {
@@ -403,7 +417,7 @@ impl<'a> Lexer<'a> {
                 Token {
                     kind: TokenKind::LBracket,
                     text: "[",
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 }
             }
             ']' => {
@@ -411,7 +425,7 @@ impl<'a> Lexer<'a> {
                 Token {
                     kind: TokenKind::RBracket,
                     text: "]",
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 }
             }
             ',' => {
@@ -419,7 +433,7 @@ impl<'a> Lexer<'a> {
                 Token {
                     kind: TokenKind::Comma,
                     text: ",",
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 }
             }
             ';' => {
@@ -427,7 +441,7 @@ impl<'a> Lexer<'a> {
                 Token {
                     kind: TokenKind::Semicolon,
                     text: ";",
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 }
             }
             ':' => {
@@ -437,13 +451,13 @@ impl<'a> Lexer<'a> {
                     Token {
                         kind: TokenKind::DoubleColon,
                         text: "::",
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     }
                 } else {
                     Token {
                         kind: TokenKind::Colon,
                         text: ":",
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     }
                 }
             }
@@ -455,13 +469,13 @@ impl<'a> Lexer<'a> {
                     Token {
                         kind: TokenKind::Spread,
                         text: "...",
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     }
                 } else {
                     Token {
                         kind: TokenKind::Dot,
                         text: ".",
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     }
                 }
             }
@@ -470,7 +484,7 @@ impl<'a> Lexer<'a> {
                 Token {
                     kind: TokenKind::Plus,
                     text: "+",
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 }
             }
             '-' => {
@@ -480,13 +494,13 @@ impl<'a> Lexer<'a> {
                     Token {
                         kind: TokenKind::Arrow,
                         text: "->",
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     }
                 } else {
                     Token {
                         kind: TokenKind::Minus,
                         text: "-",
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     }
                 }
             }
@@ -495,7 +509,7 @@ impl<'a> Lexer<'a> {
                 Token {
                     kind: TokenKind::Star,
                     text: "*",
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 }
             }
             '/' => {
@@ -506,7 +520,7 @@ impl<'a> Lexer<'a> {
                     _ => Token {
                         kind: TokenKind::Slash,
                         text: "/",
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     },
                 }
             }
@@ -515,7 +529,7 @@ impl<'a> Lexer<'a> {
                 Token {
                     kind: TokenKind::Percent,
                     text: "%",
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 }
             }
             '=' => {
@@ -525,20 +539,20 @@ impl<'a> Lexer<'a> {
                     Token {
                         kind: TokenKind::EqEq,
                         text: "==",
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     }
                 } else if self.current() == Some('>') {
                     self.advance();
                     Token {
                         kind: TokenKind::FatArrow,
                         text: "=>",
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     }
                 } else {
                     Token {
                         kind: TokenKind::Eq,
                         text: "=",
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     }
                 }
             }
@@ -549,13 +563,13 @@ impl<'a> Lexer<'a> {
                     Token {
                         kind: TokenKind::NotEq,
                         text: "!=",
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     }
                 } else {
                     Token {
                         kind: TokenKind::Not,
                         text: "!",
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     }
                 }
             }
@@ -566,20 +580,20 @@ impl<'a> Lexer<'a> {
                     Token {
                         kind: TokenKind::Le,
                         text: "<=",
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     }
                 } else if self.current() == Some('<') {
                     self.advance();
                     Token {
                         kind: TokenKind::Shl,
                         text: "<<",
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     }
                 } else {
                     Token {
                         kind: TokenKind::Lt,
                         text: "<",
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     }
                 }
             }
@@ -590,20 +604,20 @@ impl<'a> Lexer<'a> {
                     Token {
                         kind: TokenKind::Ge,
                         text: ">=",
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     }
                 } else if self.current() == Some('>') {
                     self.advance();
                     Token {
                         kind: TokenKind::Shr,
                         text: ">>",
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     }
                 } else {
                     Token {
                         kind: TokenKind::Gt,
                         text: ">",
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     }
                 }
             }
@@ -614,13 +628,13 @@ impl<'a> Lexer<'a> {
                     Token {
                         kind: TokenKind::And,
                         text: "&&",
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     }
                 } else {
                     Token {
                         kind: TokenKind::Ampersand,
                         text: "&",
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     }
                 }
             }
@@ -631,14 +645,14 @@ impl<'a> Lexer<'a> {
                     Token {
                         kind: TokenKind::Or,
                         text: "||",
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     }
                 } else if self.current() == Some('>') {
                     self.advance();
                     Token {
                         kind: TokenKind::Pipe,
                         text: "|>",
-                        span: self.span_from(start),
+                        span: self.span_from(start, start_byte),
                     }
                 } else {
                     self.error(format!("unexpected `|`; did you mean `||` or `|>`?"))
@@ -649,7 +663,7 @@ impl<'a> Lexer<'a> {
                 Token {
                     kind: TokenKind::Caret,
                     text: "^",
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 }
             }
             '?' => {
@@ -657,7 +671,7 @@ impl<'a> Lexer<'a> {
                 Token {
                     kind: TokenKind::Question,
                     text: "?",
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 }
             }
             _ => self.error(format!("unexpected character '{}'", ch)),

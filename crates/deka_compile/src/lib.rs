@@ -325,6 +325,22 @@ mod tests {
     }
 
     #[test]
+    fn compile_unsafe_expression() {
+        let result = compile_to_js("const r = unsafe { JSON.parse('{}') };", "test.ds")
+            .expect("compile should succeed");
+        assert!(result.js.contains("__case: \"Ok\""), "got: {}", result.js);
+        assert!(result.js.contains("JSON.parse('{}')"), "got: {}", result.js);
+    }
+
+    #[test]
+    fn compile_unsafe_async() {
+        let result = compile_to_js("const r = unsafe { await fetch(url) };", "test.ds")
+            .expect("compile should succeed");
+        assert!(result.js.contains("async function"), "got: {}", result.js);
+        assert!(result.js.contains("await fetch(url)"), "got: {}", result.js);
+    }
+
+    #[test]
     fn extract_module_meta() {
         let meta = parse_source_module_meta(
             "import { add } from \"./math.ds\";\nexport const x: number = 1;\nexport fn double(n: number): number { return n * 2; }",

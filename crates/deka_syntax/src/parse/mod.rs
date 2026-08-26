@@ -36,7 +36,7 @@ pub fn parse<'a>(source: &'a str, arena: &'a Bump) -> ParseResult<'a> {
     }
 
     let mut errors: Vec<Diagnostic> = lexer.diagnostics().to_vec();
-    let mut parser = Parser::new(arena, tokens);
+    let mut parser = Parser::new(arena, source, tokens);
     let mut program = parser.parse_program();
     errors.extend(parser.errors);
 
@@ -55,19 +55,21 @@ pub fn parse<'a>(source: &'a str, arena: &'a Bump) -> ParseResult<'a> {
 struct Parser<'a> {
     arena: &'a Bump,
     tokens: Vec<Token<'a>>,
+    source: &'a str,
     pos: usize,
     prev: Token<'a>,
     errors: Vec<Diagnostic>,
 }
 
 impl<'a> Parser<'a> {
-    fn new(arena: &'a Bump, tokens: Vec<Token<'a>>) -> Self {
+    fn new(arena: &'a Bump, source: &'a str, tokens: Vec<Token<'a>>) -> Self {
         Self {
             arena,
             pos: 0,
             prev: util::eof_token(),
             errors: Vec::new(),
             tokens,
+            source,
         }
     }
 
@@ -142,11 +144,17 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn span_from(&self, start: crate::ast::Pos) -> Span {
+    fn span_from(&self, start: crate::ast::Pos, start_byte: usize) -> Span {
         Span {
             start,
             end: self.prev.span.end,
+            byte_start: start_byte,
+            byte_end: self.prev.span.byte_end,
         }
+    }
+
+    fn span_start(&self) -> (crate::ast::Pos, usize) {
+        (self.current_span().start, self.current_span().byte_start)
     }
 
     fn bump_str(&self, s: &str) -> &'a str {
@@ -768,6 +776,41 @@ mod tests {
                     assert!(matches!(right, Expr::Identifier { name, .. } if name == &"double"));
                 }
                 _ => panic!("expected pipe expression, got {:?}", value),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_unsafe_expression() {
+        let arena = Bump::new();
+        let result = parse("const r = unsafe { JSON.parse('{}') };", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { value, .. } => match value {
+                Expr::Unsafe { source, .. } => {
+                    assert_eq!(source.trim(), "JSON.parse('{}')");
+                }
+                _ => panic!("expected unsafe expression, got {:?}", value),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_unsafe_block_with_nested_braces() {
+        let arena = Bump::new();
+        let result = parse("const r = unsafe { function f() { return 1; } f() };", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { value, .. } => match value {
+                Expr::Unsafe { source, .. } => {
+                    assert!(source.contains("function f()"));
+                    assert!(source.contains("f()"));
+                }
+                _ => panic!("expected unsafe expression, got {:?}", value),
             },
             _ => panic!("expected const declaration"),
         }

@@ -8,7 +8,7 @@ use super::Parser;
 
 impl<'a> Parser<'a> {
     pub(super) fn parse_program(&mut self) -> Option<Program<'a>> {
-        let start = self.current_span().start;
+        let (start, start_byte) = self.span_start();
         let mut statements = Vec::new();
 
         while !self.at_end() {
@@ -28,12 +28,12 @@ impl<'a> Parser<'a> {
 
         Some(Program {
             statements: alloc_slice(self.arena, statements),
-            span: self.span_from(start),
+            span: self.span_from(start, start_byte),
         })
     }
 
     pub(super) fn parse_statement(&mut self, in_block: bool) -> Option<Stmt<'a>> {
-        let start = self.current_span().start;
+        let (start, start_byte) = self.span_start();
 
         match self.current_kind() {
             TokenKind::Const | TokenKind::Let => {
@@ -50,7 +50,7 @@ impl<'a> Parser<'a> {
                 let value = self.parse_expression()?;
                 self.expect_statement_end(in_block)?;
 
-                let span = self.span_from(start);
+                let span = self.span_from(start, start_byte);
                 if is_const {
                     Some(Stmt::Const {
                         name,
@@ -68,17 +68,17 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            TokenKind::Fn => self.parse_fn_statement(start),
+            TokenKind::Fn => self.parse_fn_statement(start, start_byte),
 
-            TokenKind::Struct => self.parse_struct_statement(start),
+            TokenKind::Struct => self.parse_struct_statement(start, start_byte),
 
-            TokenKind::Enum => self.parse_enum_statement(start),
+            TokenKind::Enum => self.parse_enum_statement(start, start_byte),
 
-            TokenKind::Type => self.parse_type_alias_statement(start),
+            TokenKind::Type => self.parse_type_alias_statement(start, start_byte),
 
-            TokenKind::Import => self.parse_import_statement(start),
+            TokenKind::Import => self.parse_import_statement(start, start_byte),
 
-            TokenKind::Export => self.parse_export_statement(start),
+            TokenKind::Export => self.parse_export_statement(start, start_byte),
 
             TokenKind::Return => {
                 self.advance();
@@ -91,7 +91,7 @@ impl<'a> Parser<'a> {
                 self.expect_statement_end(in_block)?;
                 Some(Stmt::Return {
                     value,
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 })
             }
 
@@ -100,13 +100,13 @@ impl<'a> Parser<'a> {
                 self.expect_statement_end(in_block)?;
                 Some(Stmt::Expr {
                     expr,
-                    span: self.span_from(start),
+                    span: self.span_from(start, start_byte),
                 })
             }
         }
     }
 
-    fn parse_fn_statement(&mut self, start: Pos) -> Option<Stmt<'a>> {
+    fn parse_fn_statement(&mut self, start: Pos, start_byte: usize) -> Option<Stmt<'a>> {
         self.advance(); // `fn`
 
         // Receiver method: `fn (p Point) distance<T>(...): Ret { ... }`
@@ -143,7 +143,7 @@ impl<'a> Parser<'a> {
                 params,
                 return_type,
                 body,
-                span: self.span_from(start),
+                span: self.span_from(start, start_byte),
             });
         }
 
@@ -173,11 +173,11 @@ impl<'a> Parser<'a> {
             params,
             return_type,
             body,
-            span: self.span_from(start),
+            span: self.span_from(start, start_byte),
         })
     }
 
-    fn parse_struct_statement(&mut self, start: Pos) -> Option<Stmt<'a>> {
+    fn parse_struct_statement(&mut self, start: Pos, start_byte: usize) -> Option<Stmt<'a>> {
         self.advance(); // `struct`
 
         let name = self.expect_identifier()?;
@@ -191,7 +191,7 @@ impl<'a> Parser<'a> {
         let mut fields = Vec::new();
 
         while !self.at(TokenKind::RBrace) && !self.at_end() {
-            let field_start = self.current_span().start;
+            let (field_start, field_start_byte) = self.span_start();
             let field_name = self.expect_identifier()?;
             self.expect(TokenKind::Colon)?;
             let field_type = self.parse_type()?;
@@ -204,7 +204,7 @@ impl<'a> Parser<'a> {
                 name: field_name,
                 ty: field_type,
                 default_value,
-                span: self.span_from(field_start),
+                span: self.span_from(field_start, field_start_byte),
             });
             if !self.eat(TokenKind::Comma) {
                 break;
@@ -218,11 +218,11 @@ impl<'a> Parser<'a> {
             type_params,
             fields: alloc_slice(self.arena, fields),
             embeds: alloc_slice(self.arena, Vec::new()),
-            span: self.span_from(start),
+            span: self.span_from(start, start_byte),
         })
     }
 
-    fn parse_enum_statement(&mut self, start: Pos) -> Option<Stmt<'a>> {
+    fn parse_enum_statement(&mut self, start: Pos, start_byte: usize) -> Option<Stmt<'a>> {
         self.advance(); // `enum`
 
         let name = self.expect_identifier()?;
@@ -236,7 +236,7 @@ impl<'a> Parser<'a> {
         let mut cases = Vec::new();
 
         while !self.at(TokenKind::RBrace) && !self.at_end() {
-            let case_start = self.current_span().start;
+            let (case_start, case_start_byte) = self.span_start();
             let case_name = self.expect_identifier()?;
             let payload = if self.eat(TokenKind::LParen) {
                 let ty = self.parse_type()?;
@@ -248,7 +248,7 @@ impl<'a> Parser<'a> {
             cases.push(EnumCase {
                 name: case_name,
                 payload,
-                span: self.span_from(case_start),
+                span: self.span_from(case_start, case_start_byte),
             });
             if !self.eat(TokenKind::Comma) {
                 break;
@@ -261,11 +261,11 @@ impl<'a> Parser<'a> {
             name,
             type_params,
             cases: alloc_slice(self.arena, cases),
-            span: self.span_from(start),
+            span: self.span_from(start, start_byte),
         })
     }
 
-    fn parse_type_alias_statement(&mut self, start: Pos) -> Option<Stmt<'a>> {
+    fn parse_type_alias_statement(&mut self, start: Pos, start_byte: usize) -> Option<Stmt<'a>> {
         self.advance(); // `type`
 
         let name = self.expect_identifier()?;
@@ -283,11 +283,11 @@ impl<'a> Parser<'a> {
             name,
             type_params,
             value,
-            span: self.span_from(start),
+            span: self.span_from(start, start_byte),
         })
     }
 
-    fn parse_import_statement(&mut self, start: Pos) -> Option<Stmt<'a>> {
+    fn parse_import_statement(&mut self, start: Pos, start_byte: usize) -> Option<Stmt<'a>> {
         self.advance(); // `import`
 
         // Side-effect import: `import "./mod.ds";`
@@ -298,7 +298,7 @@ impl<'a> Parser<'a> {
             return Some(Stmt::Import {
                 specifiers: alloc_slice(self.arena, Vec::new()),
                 source,
-                span: self.span_from(start),
+                span: self.span_from(start, start_byte),
             });
         }
 
@@ -306,7 +306,7 @@ impl<'a> Parser<'a> {
         let mut specs = Vec::new();
         if !self.at(TokenKind::RBrace) {
             loop {
-                let spec_start = self.current_span().start;
+                let (spec_start, spec_start_byte) = self.span_start();
                 let imported = self.expect_identifier()?;
                 let local = if self.eat(TokenKind::As) {
                     self.expect_identifier()?
@@ -316,7 +316,7 @@ impl<'a> Parser<'a> {
                 specs.push(crate::ast::ImportSpec {
                     imported,
                     local,
-                    span: self.span_from(spec_start),
+                    span: self.span_from(spec_start, spec_start_byte),
                 });
                 if !self.eat(TokenKind::Comma) {
                     break;
@@ -340,11 +340,11 @@ impl<'a> Parser<'a> {
         Some(Stmt::Import {
             specifiers: alloc_slice(self.arena, specs),
             source,
-            span: self.span_from(start),
+            span: self.span_from(start, start_byte),
         })
     }
 
-    fn parse_export_statement(&mut self, start: Pos) -> Option<Stmt<'a>> {
+    fn parse_export_statement(&mut self, start: Pos, start_byte: usize) -> Option<Stmt<'a>> {
         self.advance(); // `export`
 
         match self.current_kind() {
@@ -361,13 +361,13 @@ impl<'a> Parser<'a> {
                 let value = self.parse_expression()?;
                 self.expect_statement_end(false)?;
 
-                let span = self.span_from(start);
+                let span = self.span_from(start, start_byte);
                 let decl = crate::ast::ExportDecl::Const { name, ty, value };
                 Some(Stmt::Export { decl, span })
             }
             TokenKind::Fn => {
-                let fn_stmt = self.parse_fn_statement(start)?;
-                let span = self.span_from(start);
+                let fn_stmt = self.parse_fn_statement(start, start_byte)?;
+                let span = self.span_from(start, start_byte);
                 let decl = match fn_stmt {
                     Stmt::Function {
                         name,
@@ -427,7 +427,7 @@ impl<'a> Parser<'a> {
 
         if !self.at(TokenKind::RParen) {
             loop {
-                let param_start = self.current_span().start;
+                let (param_start, param_start_byte) = self.span_start();
                 let name = self.expect_identifier()?;
                 let ty = if self.eat(TokenKind::Colon) {
                     Some(self.parse_type()?)
@@ -443,7 +443,7 @@ impl<'a> Parser<'a> {
                     name,
                     ty,
                     default_value,
-                    span: self.span_from(param_start),
+                    span: self.span_from(param_start, param_start_byte),
                 });
 
                 if !self.eat(TokenKind::Comma) {
@@ -461,7 +461,7 @@ impl<'a> Parser<'a> {
 
         loop {
             let name = self.expect_identifier()?;
-            let span = self.span_from(self.prev.span.start);
+            let span = self.span_from(self.prev.span.start, self.prev.span.byte_start);
             params.push(TypeParam { name, span });
             if !self.eat(TokenKind::Comma) {
                 break;
