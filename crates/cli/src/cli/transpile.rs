@@ -3,7 +3,7 @@ use core::{CommandSpec, Context, ParamSpec, Registry};
 use deka_js::parse_source_module_meta;
 use std::collections::BTreeSet;
 
-use crate::compile_helper::compile_js_or_report;
+use crate::compile_helper::{compile_js_or_report, compiler_version_from_context};
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
@@ -78,10 +78,11 @@ fn run(context: &Context) -> Result<(), String> {
         .get("--treeshake")
         .copied()
         .unwrap_or(false);
+    let compiler = compiler_version_from_context(context);
 
     match (input.is_file(), input.is_dir()) {
-        (true, _) => transpile_file(&input, output.as_deref(), mode, treeshake),
-        (_, true) => transpile_directory(&input, output.as_deref(), mode, treeshake),
+        (true, _) => transpile_file(&input, output.as_deref(), mode, treeshake, compiler),
+        (_, true) => transpile_directory(&input, output.as_deref(), mode, treeshake, compiler),
         _ => Err(format!("input path does not exist: {}", input.display())),
     }
 }
@@ -123,6 +124,7 @@ fn transpile_file(
     out: Option<&Path>,
     mode: TranspileMode,
     treeshake: bool,
+    compiler: deka_compile::CompilerVersion,
 ) -> Result<(), String> {
     require_ds(input)?;
     let output = out
@@ -134,9 +136,9 @@ fn transpile_file(
     // Validate the source before checking output-directory security so that
     // syntax/type errors are surfaced immediately (dekaruntime/deka#117).
     let js = if mode == TranspileMode::Bundle {
-        build_bundle(input, treeshake)?
+        build_bundle(input, treeshake, compiler)?
     } else {
-        build_module(input, &output, treeshake)?
+        build_module(input, &output, treeshake, compiler)?
     };
     let mappings = vec![(input.to_path_buf(), output.clone())];
     let root = SecureOutputRoot::open_or_create(output_root_parent(&output))?;
@@ -161,6 +163,7 @@ fn transpile_directory(
     out: Option<&Path>,
     mode: TranspileMode,
     treeshake: bool,
+    compiler: deka_compile::CompilerVersion,
 ) -> Result<(), String> {
     let sources = collect_ds_sources(input)?;
     if sources.is_empty() {
@@ -178,7 +181,7 @@ fn transpile_directory(
             let entry = directory_entry(input, &sources)?;
             // Validate the entry before checking output-directory security so
             // that syntax/type errors surface first (dekaruntime/deka#117).
-            let js = build_bundle(&entry, treeshake)?;
+            let js = build_bundle(&entry, treeshake, compiler)?;
             let root = SecureOutputRoot::open_or_create(output_root_parent(output))?;
             let mut destinations =
                 preflight_outputs(&root, &[(entry.clone(), output.to_path_buf())])?;
@@ -214,7 +217,7 @@ fn transpile_directory(
             // Validate every source before checking output-directory security so
             // that syntax/type errors surface first (dekaruntime/deka#117).
             for source in &sources {
-                compile_source(source)?;
+                compile_source(source, compiler)?;
             }
             let root = SecureOutputRoot::open_or_create(&output_root)?;
             let destinations = preflight_outputs(&root, &mappings)?;
@@ -222,7 +225,8 @@ fn transpile_directory(
                 .iter()
                 .zip(destinations)
                 .map(|((source, output), destination)| {
-                    build_module(source, output, treeshake).map(|js| OutputPlan { destination, js })
+                    build_module(source, output, treeshake, compiler)
+                        .map(|js| OutputPlan { destination, js })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             commit_outputs(&root, plans)?;
@@ -259,8 +263,13 @@ fn output_root_parent(output: &Path) -> &Path {
         .unwrap_or(Path::new("."))
 }
 
-fn build_module(input: &Path, output: &Path, treeshake: bool) -> Result<String, String> {
-    let mut js = compile_source(input)?;
+fn build_module(
+    input: &Path,
+    output: &Path,
+    treeshake: bool,
+    compiler: deka_compile::CompilerVersion,
+) -> Result<String, String> {
+    let mut js = compile_source(input, compiler)?;
     js = rewrite_relative_ds_imports(js);
     if treeshake {
         js = optimize_emitted_module(&js, output)?;
@@ -268,14 +277,19 @@ fn build_module(input: &Path, output: &Path, treeshake: bool) -> Result<String, 
     Ok(js)
 }
 
-fn build_bundle(input: &Path, treeshake: bool) -> Result<String, String> {
+fn build_bundle(
+    input: &Path,
+    treeshake: bool,
+    compiler: deka_compile::CompilerVersion,
+) -> Result<String, String> {
     let entry = fs::canonicalize(input)
         .map_err(|err| format!("failed to resolve {}: {err}", input.display()))?;
     let project_root = entry.parent().unwrap_or(Path::new(".")).to_path_buf();
-    let entry_source = compile_source(&entry)?;
+    let entry_source = compile_source(&entry, compiler)?;
     let provider = Arc::new(DsSourceProvider {
         entry: entry.clone(),
         entry_source,
+        compiler,
     });
     bundle_virtual_entry(
         &entry,
@@ -288,7 +302,10 @@ fn build_bundle(input: &Path, treeshake: bool) -> Result<String, String> {
     )
 }
 
-fn compile_source(input: &Path) -> Result<String, String> {
+fn compile_source(
+    input: &Path,
+    compiler: deka_compile::CompilerVersion,
+) -> Result<String, String> {
     require_ds(input)?;
     let source = fs::read_to_string(input)
         .map_err(|err| format!("failed to read {}: {err}", input.display()))?;
@@ -296,12 +313,19 @@ fn compile_source(input: &Path) -> Result<String, String> {
         .to_str()
         .ok_or_else(|| format!("input path is not valid UTF-8: {}", input.display()))?;
     let meta = parse_source_module_meta(&source);
-    // The existing module validator owns package imports but predates the
-    // runtime resolver's relative .ds support. Keep relative imports in the
-    // emitter metadata while excluding only those frontmatter declarations
-    // from package validation; the bundler/runtime resolves them as files.
-    let validation_source = mask_relative_frontmatter_imports(&source);
-    compile_js_or_report(&validation_source, input_name, meta)
+
+    let source_to_compile = match compiler {
+        deka_compile::CompilerVersion::V1 => {
+            // The existing module validator owns package imports but predates the
+            // runtime resolver's relative .ds support. Keep relative imports in the
+            // emitter metadata while excluding only those frontmatter declarations
+            // from package validation; the bundler/runtime resolves them as files.
+            mask_relative_frontmatter_imports(&source)
+        }
+        deka_compile::CompilerVersion::V2 => source,
+    };
+
+    compile_js_or_report(&source_to_compile, input_name, meta, compiler)
 }
 
 fn mask_relative_frontmatter_imports(source: &str) -> String {
@@ -335,6 +359,7 @@ fn mask_relative_frontmatter_imports(source: &str) -> String {
 struct DsSourceProvider {
     entry: PathBuf,
     entry_source: String,
+    compiler: deka_compile::CompilerVersion,
 }
 
 impl VirtualSource for DsSourceProvider {
@@ -345,7 +370,7 @@ impl VirtualSource for DsSourceProvider {
         if !is_ds(path) {
             return Ok(None);
         }
-        compile_source(path).map(Some)
+        compile_source(path, self.compiler).map(Some)
     }
 }
 
@@ -1010,6 +1035,7 @@ fn is_ds(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use deka_compile::CompilerVersion;
     use std::process::Command;
     #[cfg(unix)]
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -1026,7 +1052,8 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let input = temp.path().join("answer.ds");
         write(&input, "export const answer = 42;\n");
-        transpile_file(&input, None, TranspileMode::Preserve, false).expect("transpile");
+        transpile_file(&input, None, TranspileMode::Preserve, false, CompilerVersion::V1)
+            .expect("transpile");
         let output = input.with_extension("js");
         let emitted = fs::read_to_string(&output).expect("output");
         assert!(emitted.starts_with(GENERATED_MARKER));
@@ -1063,7 +1090,8 @@ mod tests {
             include_str!("../../tests/fixtures/transpile/tree/main.ds"),
         );
         let out = temp.path().join("generated");
-        transpile_directory(&root, Some(&out), TranspileMode::Preserve, false).expect("transpile");
+        transpile_directory(&root, Some(&out), TranspileMode::Preserve, false, CompilerVersion::V1)
+            .expect("transpile");
         assert!(out.join("nested/math.js").is_file());
         assert!(
             fs::read_to_string(out.join("main.js"))
@@ -1084,11 +1112,12 @@ mod tests {
             &root.join("main.ds"),
             include_str!("../../tests/fixtures/transpile/bundle/main.ds"),
         );
-        let err =
-            transpile_directory(&root, None, TranspileMode::Bundle, true).expect_err("needs out");
+        let err = transpile_directory(&root, None, TranspileMode::Bundle, true, CompilerVersion::V1)
+            .expect_err("needs out");
         assert!(err.contains("requires --out"));
         let out = temp.path().join("bundle.js");
-        transpile_directory(&root, Some(&out), TranspileMode::Bundle, true).expect("bundle");
+        transpile_directory(&root, Some(&out), TranspileMode::Bundle, true, CompilerVersion::V1)
+            .expect("bundle");
         let emitted = fs::read_to_string(out).expect("bundle output");
         assert!(emitted.starts_with(GENERATED_MARKER));
         assert!(emitted.contains("answer"), "{emitted}");
@@ -1101,15 +1130,23 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let txt = temp.path().join("bad.txt");
         write(&txt, "nope\n");
-        assert!(transpile_file(&txt, None, TranspileMode::Preserve, false).is_err());
+        assert!(
+            transpile_file(&txt, None, TranspileMode::Preserve, false, CompilerVersion::V1).is_err()
+        );
         let input = temp.path().join("main.ds");
         let output = temp.path().join("main.js");
         write(&input, "export const value = 1;\n");
         write(&output, "customer file\n");
         assert!(
-            transpile_file(&input, Some(&output), TranspileMode::Preserve, false)
-                .expect_err("collision")
-                .contains("output collision")
+            transpile_file(
+                &input,
+                Some(&output),
+                TranspileMode::Preserve,
+                false,
+                CompilerVersion::V1
+            )
+            .expect_err("collision")
+            .contains("output collision")
         );
     }
 
@@ -1122,8 +1159,14 @@ mod tests {
         let protected = root.join("nested/math.js");
         write(&protected, "customer file\n");
 
-        let error = transpile_directory(&root, None, TranspileMode::Preserve, false)
-            .expect_err("preflight collision");
+        let error = transpile_directory(
+            &root,
+            None,
+            TranspileMode::Preserve,
+            false,
+            CompilerVersion::V1,
+        )
+        .expect_err("preflight collision");
 
         assert!(error.contains("output collision"));
         assert!(
@@ -1148,7 +1191,14 @@ mod tests {
         fs::create_dir_all(&output).expect("output");
         std::os::unix::fs::symlink(&outside, output.join("nested")).expect("symlink");
 
-        assert!(transpile_directory(&root, Some(&output), TranspileMode::Preserve, false).is_err());
+        assert!(transpile_directory(
+            &root,
+            Some(&output),
+            TranspileMode::Preserve,
+            false,
+            CompilerVersion::V1
+        )
+        .is_err());
         assert!(!outside.join("math.js").exists());
     }
 
@@ -1228,8 +1278,14 @@ mod tests {
                 &hook_swapped,
             );
         }));
-        let error = transpile_directory(&root, Some(&output), TranspileMode::Preserve, false)
-            .expect_err("swapped output parent must be rejected");
+        let error = transpile_directory(
+            &root,
+            Some(&output),
+            TranspileMode::Preserve,
+            false,
+            CompilerVersion::V1,
+        )
+        .expect_err("swapped output parent must be rejected");
         *PHASE_HOOK
             .get_or_init(|| std::sync::Mutex::new(None))
             .lock()

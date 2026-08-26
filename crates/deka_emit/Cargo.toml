@@ -12,3 +12,4 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 insta = "1.40"
+bumpalo = "3.16"

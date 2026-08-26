@@ -39,10 +39,7 @@ pub struct Program<'a> {
 #[derive(Debug, Serialize)]
 pub enum Stmt<'a> {
     /// `export const x = 1;` or `export function f() {}`
-    Export {
-        decl: ExportDecl<'a>,
-        span: Span,
-    },
+    Export { decl: ExportDecl<'a>, span: Span },
     /// `import { a, b } from "./mod.ds";`
     Import {
         specifiers: &'a [ImportSpec<'a>],
@@ -104,15 +101,9 @@ pub enum Stmt<'a> {
         span: Span,
     },
     /// Expression statement, e.g. `console.log(x);`
-    Expr {
-        expr: Expr<'a>,
-        span: Span,
-    },
+    Expr { expr: Expr<'a>, span: Span },
     /// `return expr;`
-    Return {
-        value: Option<Expr<'a>>,
-        span: Span,
-    },
+    Return { value: Option<Expr<'a>>, span: Span },
     /// `if (cond) { ... } else { ... }`
     If {
         condition: Expr<'a>,
@@ -132,7 +123,11 @@ pub enum Stmt<'a> {
 
 #[derive(Debug, Serialize)]
 pub enum ExportDecl<'a> {
-    Const { name: &'a str, ty: Option<Type<'a>>, value: Expr<'a> },
+    Const {
+        name: &'a str,
+        ty: Option<Type<'a>>,
+        value: Expr<'a>,
+    },
     Function {
         name: &'a str,
         type_params: &'a [TypeParam<'a>],
@@ -194,12 +189,32 @@ pub enum ForInit<'a> {
 /// Type syntax nodes.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub enum Type<'a> {
-    Named { name: &'a str, span: Span },
-    Generic { base: &'a str, args: &'a [Type<'a>], span: Span },
-    Function { params: &'a [Type<'a>], ret: &'a Type<'a>, span: Span },
-    Option { inner: &'a Type<'a>, span: Span },
-    Tuple { elements: &'a [Type<'a>], span: Span },
-    Record { fields: &'a [RecordField<'a>], span: Span },
+    Named {
+        name: &'a str,
+        span: Span,
+    },
+    Generic {
+        base: &'a str,
+        args: &'a [Type<'a>],
+        span: Span,
+    },
+    Function {
+        params: &'a [Type<'a>],
+        ret: &'a Type<'a>,
+        span: Span,
+    },
+    Option {
+        inner: &'a Type<'a>,
+        span: Span,
+    },
+    Tuple {
+        elements: &'a [Type<'a>],
+        span: Span,
+    },
+    Record {
+        fields: &'a [RecordField<'a>],
+        span: Span,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -212,12 +227,29 @@ pub struct RecordField<'a> {
 /// Expressions.
 #[derive(Debug, Serialize)]
 pub enum Expr<'a> {
-    Number { value: f64, span: Span },
-    BigInt { value: &'a str, span: Span },
-    String { value: &'a str, span: Span },
-    Boolean { value: bool, span: Span },
-    None { span: Span },
-    Identifier { name: &'a str, span: Span },
+    Number {
+        value: f64,
+        span: Span,
+    },
+    BigInt {
+        value: &'a str,
+        span: Span,
+    },
+    String {
+        value: &'a str,
+        span: Span,
+    },
+    Boolean {
+        value: bool,
+        span: Span,
+    },
+    None {
+        span: Span,
+    },
+    Identifier {
+        name: &'a str,
+        span: Span,
+    },
     Binary {
         op: BinOp,
         left: &'a Expr<'a>,
@@ -274,12 +306,30 @@ pub enum Expr<'a> {
         expr: &'a Expr<'a>,
         span: Span,
     },
-    JsxElement { element: JsxElement<'a>, span: Span },
-    JsxFragment { children: &'a [Expr<'a>], span: Span },
-    Array { elements: &'a [Expr<'a>], span: Span },
-    Object { fields: &'a [ObjectField<'a>], span: Span },
-    Spread { expr: &'a Expr<'a>, span: Span },
-    Paren { expr: &'a Expr<'a>, span: Span },
+    JsxElement {
+        element: JsxElement<'a>,
+        span: Span,
+    },
+    JsxFragment {
+        children: &'a [Expr<'a>],
+        span: Span,
+    },
+    Array {
+        elements: &'a [Expr<'a>],
+        span: Span,
+    },
+    Object {
+        fields: &'a [ObjectField<'a>],
+        span: Span,
+    },
+    Spread {
+        expr: &'a Expr<'a>,
+        span: Span,
+    },
+    Paren {
+        expr: &'a Expr<'a>,
+        span: Span,
+    },
     ArrowFunction {
         params: &'a [Param<'a>],
         return_type: Option<Type<'a>>,
@@ -333,9 +383,17 @@ pub struct MatchArm<'a> {
 
 #[derive(Debug, Serialize)]
 pub enum Pattern<'a> {
-    Wildcard { span: Span },
-    Identifier { name: &'a str, span: Span },
-    Literal { expr: Expr<'a>, span: Span },
+    Wildcard {
+        span: Span,
+    },
+    Identifier {
+        name: &'a str,
+        span: Span,
+    },
+    Literal {
+        expr: Expr<'a>,
+        span: Span,
+    },
     Constructor {
         name: &'a str,
         payload: Option<&'a Pattern<'a>>,
@@ -346,7 +404,10 @@ pub enum Pattern<'a> {
         fields: &'a [PatternField<'a>],
         span: Span,
     },
-    Tuple { elements: &'a [Pattern<'a>], span: Span },
+    Tuple {
+        elements: &'a [Pattern<'a>],
+        span: Span,
+    },
 }
 
 #[derive(Debug, Serialize)]

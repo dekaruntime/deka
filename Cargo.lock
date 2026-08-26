@@ -972,7 +972,9 @@ dependencies = [
  "core",
  "ctrlc",
  "deka-fmt",
+ "deka_compile",
  "deka_js",
+ "deka_syntax",
  "dekascript_lsp",
  "deno_task_shell",
  "glob",
@@ -1583,6 +1585,7 @@ dependencies = [
 name = "deka_compile"
 version = "0.33.0"
 dependencies = [
+ "bumpalo",
  "deka_emit",
  "deka_syntax",
  "insta",
@@ -1607,6 +1610,7 @@ dependencies = [
 name = "deka_emit"
 version = "0.33.0"
 dependencies = [
+ "bumpalo",
  "deka_syntax",
  "insta",
  "serde",

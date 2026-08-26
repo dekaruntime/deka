@@ -8,6 +8,7 @@ license = "MIT"
 [dependencies]
 deka_syntax = { path = "../deka_syntax" }
 deka_emit = { path = "../deka_emit" }
+bumpalo = "3.16"
 serde = { workspace = true }
 
 [dev-dependencies]

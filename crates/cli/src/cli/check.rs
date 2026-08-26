@@ -2,7 +2,7 @@ use core::{CommandSpec, Context, Registry};
 use std::fs;
 use std::path::Path;
 
-use crate::compile_helper::compile_or_report;
+use crate::compile_helper::{compile_or_report, compiler_version_from_context};
 use deka_js::parse_source_module_meta;
 
 const COMMAND: CommandSpec = CommandSpec {
@@ -41,7 +41,8 @@ fn run(context: &Context) -> Result<(), String> {
 
     let source = fs::read_to_string(path)
         .map_err(|err| format!("failed to read {}: {}", path.display(), err))?;
-    let report = compile_or_report(&source, input, parse_source_module_meta(&source))?;
+    let compiler = compiler_version_from_context(context);
+    let report = compile_or_report(&source, input, parse_source_module_meta(&source), compiler)?;
 
     // Warnings never gate `deka check` -- a program with only warnings is a
     // successful check (deka#59). They're printed with the same colored,

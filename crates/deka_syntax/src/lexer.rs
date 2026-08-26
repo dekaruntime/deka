@@ -349,10 +349,7 @@ impl<'a> Lexer<'a> {
                 return Token {
                     kind: TokenKind::Eof,
                     text: "",
-                    span: Span {
-                        start,
-                        end: start,
-                    },
+                    span: Span { start, end: start },
                 }
             }
         };
