@@ -45,6 +45,11 @@ pub fn check_program<'a>(program: &'a Program<'a>, _source: &str) -> TypeckResul
     }
 }
 
+/// Information about an enum's cases, collected before typechecking bodies.
+struct EnumInfo<'a> {
+    cases: &'a [ast::EnumCase<'a>],
+}
+
 struct Checker<'a> {
     program: &'a ast::Program<'a>,
     errors: Vec<Diagnostic>,
@@ -53,6 +58,10 @@ struct Checker<'a> {
     globals: HashMap<&'a str, Type<'a>>,
     /// User-defined type aliases without type parameters.
     aliases: HashMap<&'a str, ast::Type<'a>>,
+    /// User-defined enums.
+    enums: HashMap<&'a str, EnumInfo<'a>>,
+    /// Map from enum case name back to the enum that defines it.
+    case_to_enum: HashMap<&'a str, &'a str>,
     /// Local scopes. The first scope is the top-level scope.
     scopes: Vec<HashMap<&'a str, Type<'a>>>,
     /// Are we currently inside a function body?
@@ -69,6 +78,8 @@ impl<'a> Checker<'a> {
             warnings: Vec::new(),
             globals: HashMap::new(),
             aliases: HashMap::new(),
+            enums: HashMap::new(),
+            case_to_enum: HashMap::new(),
             scopes: vec![HashMap::new()],
             in_function: false,
             return_type: None,
@@ -179,5 +190,28 @@ mod tests {
             "function forever(n: number): number { return forever(n); }"
         )
         .is_empty());
+    }
+
+    #[test]
+    fn match_option_number_passes() {
+        assert!(typeck("const o = Some(5); const x: number = match o { Some(n) => n, None => 0 };").is_empty());
+    }
+
+    #[test]
+    fn match_arm_type_mismatch_fails() {
+        let errors = typeck("const o = Some(5); const x: number = match o { Some(n) => n, None => \"oops\" };");
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
+        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn option_some_constructor_passes() {
+        assert!(typeck("const o: Option<number> = Some(5);").is_empty());
+    }
+
+    #[test]
+    fn result_ok_constructor_passes() {
+        assert!(typeck("const r: Result<number, string> = Ok(5);").is_empty());
     }
 }

@@ -26,6 +26,11 @@ pub enum Type<'a> {
         params: Vec<Type<'a>>,
         ret: Box<Type<'a>>,
     },
+    /// Generic instantiation, e.g. `Result<number, string>`.
+    Generic {
+        base: &'a str,
+        args: Vec<Type<'a>>,
+    },
 }
 
 impl<'a> Type<'a> {
@@ -53,6 +58,16 @@ impl fmt::Display for Type<'_> {
                 }
                 write!(f, ") => {ret}")
             }
+            Type::Generic { base, args } => {
+                write!(f, "{base}<")?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{arg}")?;
+                }
+                write!(f, ">")
+            }
         }
     }
 }
@@ -65,9 +80,26 @@ pub fn is_assignable<'a>(expected: &Type<'a>, actual: &Type<'a>) -> bool {
     if expected == actual {
         return true;
     }
+    // `never` is the bottom type: assignable to anything.
+    if matches!(actual, Type::Never) {
+        return true;
+    }
     // `none` is assignable to any Option<T>.
     if matches!(expected, Type::Option { .. }) && matches!(actual, Type::None) {
         return true;
+    }
+    // Structural subtyping for generic types like Result<T, E>.
+    if let (
+        Type::Generic { base: expected_base, args: expected_args },
+        Type::Generic { base: actual_base, args: actual_args },
+    ) = (expected, actual)
+    {
+        if expected_base == actual_base && expected_args.len() == actual_args.len() {
+            return expected_args
+                .iter()
+                .zip(actual_args.iter())
+                .all(|(e, a)| is_assignable(e, a));
+        }
     }
     false
 }

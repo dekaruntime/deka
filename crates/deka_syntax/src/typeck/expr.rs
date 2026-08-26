@@ -1,5 +1,7 @@
 //! Expression typechecking.
 
+use std::collections::HashMap;
+
 use crate::ast;
 
 use super::types::{is_assignable, Type};
@@ -42,10 +44,247 @@ impl<'a> Checker<'a> {
                 Type::Error
             }
             ast::Expr::Paren { expr, .. } => self.check_expr(expr),
+            ast::Expr::Match {
+                scrutinee,
+                arms,
+                span,
+            } => self.check_match(scrutinee, arms, *span),
+            ast::Expr::EnumConstructor {
+                enum_name,
+                case_name,
+                payload,
+                span,
+            } => self.check_enum_constructor(enum_name, case_name, payload.as_deref(), *span),
             _ => {
                 self.error_at_expr(expr, "unsupported expression in v2 typeck");
                 Type::Error
             }
+        }
+    }
+
+    fn check_enum_constructor(
+        &mut self,
+        enum_name: &'a str,
+        case_name: &'a str,
+        payload: Option<&ast::Expr<'a>>,
+        span: ast::Span,
+    ) -> Type<'a> {
+        let payload_type = payload.map(|expr| self.check_expr(expr));
+
+        if enum_name == "Option" {
+            match case_name {
+                "Some" => match payload_type {
+                    Some(t) => Type::Option { inner: Box::new(t) },
+                    None => {
+                        self.error_span(span, "`Some` requires a payload");
+                        Type::Error
+                    }
+                },
+                "None" => {
+                    if payload.is_some() {
+                        self.error_span(span, "`None` cannot have a payload");
+                    }
+                    Type::None
+                }
+                _ => {
+                    self.error_span(span, format!("unknown Option case `{case_name}`"));
+                    Type::Error
+                }
+            }
+        } else if enum_name == "Result" {
+            // Result<T, E> is a prelude enum. For Ok/Err constructors, the
+            // uninferred side is treated as `never` until more context is known.
+            match case_name {
+                "Ok" => match payload_type {
+                    Some(t) => Type::Generic {
+                        base: "Result",
+                        args: vec![t, Type::Never],
+                    },
+                    None => {
+                        self.error_span(span, "`Ok` requires a payload");
+                        Type::Error
+                    }
+                },
+                "Err" => match payload_type {
+                    Some(e) => Type::Generic {
+                        base: "Result",
+                        args: vec![Type::Never, e],
+                    },
+                    None => {
+                        self.error_span(span, "`Err` requires a payload");
+                        Type::Error
+                    }
+                },
+                _ => {
+                    self.error_span(span, format!("unknown Result case `{case_name}`"));
+                    Type::Error
+                }
+            }
+        } else {
+            self.error_span(span, format!("unsupported enum constructor `{enum_name}`"));
+            Type::Error
+        }
+    }
+
+    fn check_match(
+        &mut self,
+        scrutinee: &ast::Expr<'a>,
+        arms: &'a [ast::MatchArm<'a>],
+        span: ast::Span,
+    ) -> Type<'a> {
+        if arms.is_empty() {
+            self.error_span(span, "match expression must have at least one arm");
+            return Type::Error;
+        }
+
+        let scrutinee_type = self.check_expr(scrutinee);
+        let mut result_type: Option<Type<'a>> = None;
+
+        for arm in arms {
+            self.scopes.push(HashMap::new());
+            self.check_pattern(&arm.pattern, &scrutinee_type);
+            let arm_type = self.check_expr(&arm.body);
+            self.scopes.pop();
+
+            match &result_type {
+                Some(expected) => {
+                    if !is_assignable(expected, &arm_type) {
+                        self.error_at_expr(
+                            &arm.body,
+                            format!(
+                                "match arm has type `{arm_type}`, expected type `{expected}`"
+                            ),
+                        );
+                    }
+                }
+                None => result_type = Some(arm_type),
+            }
+        }
+
+        result_type.unwrap_or(Type::None)
+    }
+
+    fn check_pattern(&mut self, pattern: &ast::Pattern<'a>, scrutinee_type: &Type<'a>) {
+        match pattern {
+            ast::Pattern::Wildcard { .. } => {}
+            ast::Pattern::Identifier { name, .. } => {
+                self.declare_var(name, scrutinee_type.clone());
+            }
+            ast::Pattern::Literal { expr, span } => {
+                let literal_type = self.check_expr(expr);
+                if !is_assignable(scrutinee_type, &literal_type) {
+                    self.error_span(
+                        *span,
+                        format!(
+                            "literal pattern has type `{literal_type}`, expected type `{scrutinee_type}`"
+                        ),
+                    );
+                }
+            }
+            ast::Pattern::Constructor {
+                name,
+                payload,
+                span,
+            } => {
+                self.check_constructor_pattern(name, payload.as_deref(), *span, scrutinee_type);
+            }
+            ast::Pattern::Struct { span, .. } | ast::Pattern::Tuple { span, .. } => {
+                self.error_span(*span, "struct/tuple patterns are not supported in v2 typeck");
+            }
+        }
+    }
+
+    fn check_constructor_pattern(
+        &mut self,
+        name: &'a str,
+        payload: Option<&ast::Pattern<'a>>,
+        span: ast::Span,
+        scrutinee_type: &Type<'a>,
+    ) {
+        // Built-in Option cases.
+        if name == "Some" || name == "None" {
+            match scrutinee_type {
+                Type::Option { inner } => {
+                    if name == "None" {
+                        if payload.is_some() {
+                            self.error_span(span, "`None` pattern cannot have a payload");
+                        }
+                    } else if let Some(p) = payload {
+                        self.check_pattern(p, inner);
+                    } else {
+                        self.error_span(span, "`Some` pattern requires a payload");
+                    }
+                    return;
+                }
+                _ if scrutinee_type.is_error() => return,
+                _ => {
+                    self.error_span(
+                        span,
+                        format!(
+                            "`{name}` is not a case of type `{scrutinee_type}`"
+                        ),
+                    );
+                    return;
+                }
+            }
+        }
+
+        // Built-in Result cases.
+        if name == "Ok" || name == "Err" {
+            match scrutinee_type {
+                Type::Generic { base: "Result", args } if args.len() == 2 => {
+                    let expected_payload = if name == "Ok" { &args[0] } else { &args[1] };
+                    if let Some(p) = payload {
+                        self.check_pattern(p, expected_payload);
+                    } else {
+                        self.error_span(span, format!("`{name}` pattern requires a payload"));
+                    }
+                    return;
+                }
+                _ if scrutinee_type.is_error() => return,
+                _ => {
+                    self.error_span(
+                        span,
+                        format!(
+                            "`{name}` is not a case of type `{scrutinee_type}`"
+                        ),
+                    );
+                    return;
+                }
+            }
+        }
+
+        // User-defined enum cases.
+        let enum_name = match self.case_to_enum.get(name).copied() {
+            Some(n) => n,
+            None => {
+                self.error_span(span, format!("unknown constructor `{name}`"));
+                return;
+            }
+        };
+
+        let info = match self.enums.get(enum_name) {
+            Some(i) => i,
+            None => return,
+        };
+
+        let case = match info.cases.iter().find(|c| c.name == name) {
+            Some(c) => c,
+            None => {
+                self.error_span(span, format!("case `{name}` not found in enum `{enum_name}`"));
+                return;
+            }
+        };
+
+        if let Some(payload_type) = &case.payload {
+            let resolved_payload = self.resolve_ast_type(payload_type);
+            if let Some(p) = payload {
+                self.check_pattern(p, &resolved_payload);
+            } else {
+                self.error_span(span, format!("`{name}` pattern requires a payload"));
+            }
+        } else if payload.is_some() {
+            self.error_span(span, format!("`{name}` pattern cannot have a payload"));
         }
     }
 

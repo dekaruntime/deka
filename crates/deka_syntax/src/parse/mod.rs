@@ -7,6 +7,7 @@ use crate::diagnostics::Diagnostic;
 use crate::lexer::{Lexer, Token, TokenKind};
 
 mod expr;
+mod pattern;
 mod stmt;
 mod ty;
 mod util;
@@ -414,6 +415,41 @@ mod tests {
                     }
                 }
                 _ => panic!("expected binary add"),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_match_expression() {
+        let arena = Bump::new();
+        let result = parse("const x = match o { Some(n) => n, None => 0 };", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { value, .. } => match value {
+                Expr::Match { arms, .. } => {
+                    assert_eq!(arms.len(), 2);
+                }
+                _ => panic!("expected match expression"),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_enum_constructor() {
+        let arena = Bump::new();
+        let result = parse("const o = Some(5);", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { value, .. } => match value {
+                Expr::EnumConstructor { enum_name, case_name, .. } => {
+                    assert_eq!(enum_name.to_string(), "Option");
+                    assert_eq!(case_name.to_string(), "Some");
+                }
+                _ => panic!("expected enum constructor, got {:?}", value),
             },
             _ => panic!("expected const declaration"),
         }

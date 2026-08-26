@@ -55,6 +55,20 @@ impl<'a> Checker<'a> {
                     self.error_span(*span, format!("duplicate type alias `{name}`"));
                 }
             }
+            if let ast::Stmt::Enum { name, cases, span, .. } = stmt {
+                if self.enums.insert(name, super::EnumInfo { cases }).is_some() {
+                    self.error_span(*span, format!("duplicate enum definition `{name}`"));
+                    continue;
+                }
+                for case in cases.iter() {
+                    if self.case_to_enum.insert(case.name, name).is_some() {
+                        self.error_span(
+                            case.span,
+                            format!("duplicate enum case name `{}`", case.name),
+                        );
+                    }
+                }
+            }
         }
     }
 
