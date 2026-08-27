@@ -397,6 +397,26 @@ impl<'a> Checker<'a> {
                 self.loop_depth -= 1;
                 self.scopes.pop();
             }
+            ast::Stmt::ForOf {
+                name,
+                is_const,
+                iterable,
+                body,
+                ..
+            } => {
+                self.check_expr(iterable);
+                self.scopes.push(HashMap::new());
+                self.declare_var(name, Type::Infer);
+                if !*is_const {
+                    self.mutables.insert(*name);
+                }
+                self.loop_depth += 1;
+                for s in body.iter() {
+                    self.check_statement(s);
+                }
+                self.loop_depth -= 1;
+                self.scopes.pop();
+            }
             ast::Stmt::Break { span } => {
                 if self.loop_depth == 0 {
                     self.error_span(*span, "`break` outside of loop");

@@ -67,6 +67,7 @@ pub(super) fn token_name(kind: TokenKind) -> &'static str {
         If => "`if`",
         Else => "`else`",
         For => "`for`",
+        Of => "`of`",
         Return => "`return`",
         Match => "`match`",
         Unsafe => "`unsafe`",

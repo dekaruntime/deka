@@ -235,20 +235,56 @@ impl<'a> Parser<'a> {
         self.advance(); // `for`
         self.expect(TokenKind::LParen)?;
 
+        // for-of: `for (const x of iterable) { ... }` or `for (let x of iterable) { ... }`
+        if self.at(TokenKind::Const) || self.at(TokenKind::Let) {
+            let is_const = self.at(TokenKind::Const);
+            self.advance();
+            let name = self.expect_identifier()?;
+            if self.eat(TokenKind::Of) {
+                let iterable = self.parse_expression()?;
+                self.expect(TokenKind::RParen)?;
+                let body = self.parse_block()?;
+                return Some(Stmt::ForOf {
+                    name,
+                    is_const,
+                    iterable,
+                    body,
+                    span: self.span_from(start, start_byte),
+                });
+            }
+            // Otherwise fall back to C-style for with const/let init.
+            self.expect(TokenKind::Eq)?;
+            let value = self.parse_expression()?;
+            let init = if is_const {
+                ForInit::Const { name, value }
+            } else {
+                ForInit::Let { name, value }
+            };
+            self.expect(TokenKind::Semicolon)?;
+            let condition = if self.at(TokenKind::Semicolon) {
+                None
+            } else {
+                Some(self.parse_expression()?)
+            };
+            self.expect(TokenKind::Semicolon)?;
+            let step = if self.at(TokenKind::RParen) {
+                None
+            } else {
+                Some(self.parse_expression()?)
+            };
+            self.expect(TokenKind::RParen)?;
+            let body = self.parse_block()?;
+            return Some(Stmt::For {
+                init: Some(init),
+                condition,
+                step,
+                body,
+                span: self.span_from(start, start_byte),
+            });
+        }
+
         let init = if self.at(TokenKind::Semicolon) {
             None
-        } else if self.at(TokenKind::Const) {
-            self.advance();
-            let name = self.expect_identifier()?;
-            self.expect(TokenKind::Eq)?;
-            let value = self.parse_expression()?;
-            Some(ForInit::Const { name, value })
-        } else if self.at(TokenKind::Let) {
-            self.advance();
-            let name = self.expect_identifier()?;
-            self.expect(TokenKind::Eq)?;
-            let value = self.parse_expression()?;
-            Some(ForInit::Let { name, value })
         } else {
             Some(ForInit::Expr(self.parse_expression()?))
         };

@@ -128,6 +128,7 @@ impl<'a> Emitter<'a> {
                 | Stmt::If { .. }
                 | Stmt::Block { .. }
                 | Stmt::For { .. }
+                | Stmt::ForOf { .. }
                 | Stmt::Break { .. }
                 | Stmt::Continue { .. }
         )
@@ -550,6 +551,31 @@ impl<'a> Emitter<'a> {
                 if let Some(step) = step {
                     self.emit_expr(step)?;
                 }
+                self.out.push_str(") {\n");
+                for stmt in body.iter() {
+                    self.emit_stmt(stmt)?;
+                    self.out.push('\n');
+                }
+                write_indent(&mut self.out, 0);
+                self.out.push('}');
+            }
+            Stmt::ForOf {
+                name,
+                is_const,
+                iterable,
+                body,
+                ..
+            } => {
+                write_indent(&mut self.out, 0);
+                self.out.push_str("for (");
+                if *is_const {
+                    self.out.push_str("const ");
+                } else {
+                    self.out.push_str("let ");
+                }
+                self.out.push_str(name);
+                self.out.push_str(" of ");
+                self.emit_expr(iterable)?;
                 self.out.push_str(") {\n");
                 for stmt in body.iter() {
                     self.emit_stmt(stmt)?;
@@ -1325,7 +1351,8 @@ fn visit_stmt_exprs(stmt: &Stmt, visitor: &mut dyn FnMut(&Expr)) {
         },
         Stmt::Function { body, .. }
         | Stmt::ReceiverMethod { body, .. }
-        | Stmt::For { body, .. } => {
+        | Stmt::For { body, .. }
+        | Stmt::ForOf { body, .. } => {
             for s in body.iter() {
                 visit_stmt_exprs(s, visitor);
             }

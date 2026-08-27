@@ -134,6 +134,14 @@ pub enum Stmt<'a> {
         body: &'a [Stmt<'a>],
         span: Span,
     },
+    /// `for (const x of iterable) { ... }`
+    ForOf {
+        name: &'a str,
+        is_const: bool,
+        iterable: Expr<'a>,
+        body: &'a [Stmt<'a>],
+        span: Span,
+    },
     /// `break`
     Break {
         span: Span,
