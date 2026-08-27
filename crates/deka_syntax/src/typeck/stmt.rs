@@ -36,6 +36,7 @@ impl<'a> Checker<'a> {
                     return_type,
                     body,
                     span,
+                    is_async,
                     ..
                 } => self.check_receiver_method(
                     receiver_type,
@@ -44,6 +45,7 @@ impl<'a> Checker<'a> {
                     params,
                     return_type.as_ref(),
                     body,
+                    *is_async,
                     *span,
                 ),
                 ast::Stmt::Export {
@@ -706,6 +708,7 @@ impl<'a> Checker<'a> {
         params: &'a [ast::Param<'a>],
         return_type: Option<&ast::Type<'a>>,
         body: &'a [ast::Stmt<'a>],
+        is_async: bool,
         _span: ast::Span,
     ) {
         let info = match self.receiver_methods.get(&(receiver_type, name)) {
@@ -728,6 +731,8 @@ impl<'a> Checker<'a> {
         }
 
         let explicit_ret = return_type.map(|t| self.resolve_ast_type(t));
+        let (body_expected_ret, final_ret) =
+            self.function_return_context(is_async, explicit_ret.clone(), _span);
 
         self.scopes.push(HashMap::new());
 
@@ -739,15 +744,18 @@ impl<'a> Checker<'a> {
         }
 
         let saved_in_function = self.in_function;
+        let saved_in_async = self.in_async_function;
         let saved_return_type = self.return_type.clone();
         self.in_function = true;
-        self.return_type = explicit_ret.clone();
+        self.in_async_function = is_async;
+        self.return_type = body_expected_ret.clone();
 
         for stmt in body {
             self.check_statement(stmt);
         }
 
         self.in_function = saved_in_function;
+        self.in_async_function = saved_in_async;
         self.return_type = saved_return_type;
         self.scopes.pop();
 
@@ -756,9 +764,11 @@ impl<'a> Checker<'a> {
             (receiver_type, name),
             super::MethodInfo {
                 params,
-                return_type: info.return_type.clone(),
+                return_type: return_type.map(|t| t.clone()),
             },
         );
+
+        let _ = final_ret; // signature already uses the declared return type
     }
 
     pub(super) fn check_return(&mut self, value: Option<&ast::Expr<'a>>, span: ast::Span) {
