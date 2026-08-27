@@ -1,4 +1,5 @@
+import { echo } from "io"
 const greet = fn(name: string) string {
   return `Hello, ${name}`
 }
-console.log(greet("DekaScript"))
+echo(greet("DekaScript"))

@@ -1,3 +1,4 @@
+import { echo } from "io"
 type Mapper = fn(number) number
 
 fn transform(values: array<number>, f: Mapper) array<number> {
@@ -11,4 +12,4 @@ fn transform(values: array<number>, f: Mapper) array<number> {
 const doubled = transform([1, 2, 3], fn(n: number) number {
   return n * 2
 })
-console.log(doubled.length)
+echo(doubled.length)

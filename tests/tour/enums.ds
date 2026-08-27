@@ -1,3 +1,4 @@
+import { echo } from "io"
 enum Status {
   Loading,
   Ready,
@@ -13,4 +14,4 @@ const label = match (current) {
   _ => "Unknown"
 };
 
-console.log(label);
+echo(label);

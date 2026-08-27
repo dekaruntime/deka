@@ -1,5 +1,6 @@
+import { echo } from "io"
 fn greet(name: string) string {
   return `Hello, ${name}`
 }
 
-console.log(greet("DekaScript"))
+echo(greet("DekaScript"))

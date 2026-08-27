@@ -1,14 +1,15 @@
+import { echo } from "io"
 const pair = deka.ui.createSignal(0)
 const get = pair[0]
 const set = pair[1]
 
-console.log(get())
+echo(get())
 set(5)
-console.log(get())
+echo(get())
 
 fn doubleValue() number {
   return get() * 2
 }
 
 const memoGet = deka.ui.createMemo(doubleValue)
-console.log(memoGet())
+echo(memoGet())

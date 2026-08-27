@@ -1,3 +1,4 @@
+import { echo } from "io"
 struct User {
   name: string
   email: string?
@@ -11,4 +12,4 @@ const contact = match (u.email) {
   _ => "unknown"
 };
 
-console.log(contact);
+echo(contact);

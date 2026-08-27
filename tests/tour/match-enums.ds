@@ -1,3 +1,4 @@
+import { echo } from "io"
 enum Status {
   Loading,
   Ready,
@@ -11,4 +12,4 @@ const label = match (current) {
   Status.Failed => "failed",
   _ => "other",
 }
-console.log(label)
+echo(label)

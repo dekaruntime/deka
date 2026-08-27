@@ -7,7 +7,7 @@ use std::{ptr, slice, str};
 
 use bumpalo::Bump;
 use modules_php::{
-    compiler_api::compile_deka,
+    compiler_api::{compile_deka, compile_deka_project_module},
     validation::{
         format_validation_error, format_validation_warning, Severity, ValidationError,
         ValidationWarning,
@@ -280,6 +280,72 @@ fn compile_request(source: &str, filename: &str, requested_mode: &str) -> String
             // The browser compiler only ever accepts .ds source, so the emitted
             // JS should follow the DekaScript path (deka.Struct, deka.freeze,
             // safe globals, etc.) rather than the legacy PHPX path.
+            meta.is_ds = true;
+            meta.host_is_browser = true;
+            match deka_js::emit_js_from_ast_with_warnings(program, source.as_bytes(), meta) {
+                Ok((code, warnings)) => {
+                    diagnostics.extend(
+                        warnings
+                            .into_iter()
+                            .map(|message| internal_diagnostic(filename, source, message)),
+                    );
+                    code
+                }
+                Err(message) => {
+                    diagnostics.push(internal_diagnostic(filename, &source, message));
+                    String::new()
+                }
+            }
+        })
+    } else {
+        None
+    };
+    let ok = output.as_ref().is_some_and(|code| !code.is_empty())
+        && !diagnostics.iter().any(|d| d.severity == "error");
+    let response = CompileResponse {
+        abi_version: ABI_VERSION,
+        ok,
+        output: output
+            .as_ref()
+            .filter(|_| ok)
+            .map(|code| CompileOutput { code }),
+        diagnostics,
+        metadata: CompileMetadata {
+            filename,
+            language: mode,
+            compiler: CompilerMetadata::current(),
+        },
+    };
+    json(&response)
+}
+
+/// Compile a DekaScript source as part of a virtual project.
+///
+/// This skips filesystem module resolution, which is what the browser playground
+/// does: stdlib modules such as `io` are provided by the host at runtime rather
+/// than resolved from disk.
+fn compile_project_request(source: &str, filename: &str, requested_mode: &str) -> String {
+    let mode = match resolve_mode(filename, requested_mode) {
+        Ok(mode) => mode,
+        Err(message) => return request_error(filename, message),
+    };
+    let arena = Bump::new();
+    let result = compile_deka_project_module(source, filename, &arena);
+
+    let mut diagnostics = result
+        .errors
+        .iter()
+        .map(|error| diagnostic_from_error(error, &source, filename))
+        .collect::<Vec<_>>();
+    diagnostics.extend(
+        result
+            .warnings
+            .iter()
+            .map(|warning| diagnostic_from_warning(warning, &source, filename)),
+    );
+    let output = if result.errors.is_empty() {
+        result.ast.as_ref().map(|program| {
+            let mut meta = deka_js::parse_source_module_meta(source);
             meta.is_ds = true;
             meta.host_is_browser = true;
             match deka_js::emit_js_from_ast_with_warnings(program, source.as_bytes(), meta) {
@@ -631,7 +697,11 @@ const origin = Point { x: 3, y: 4 };
 
         for (lesson, source) in lessons {
             let filename = format!("{}.ds", lesson.id);
-            let response: Value = serde_json::from_str(&compile_request(
+            // Tour lessons import stdlib modules (e.g. `io`) that the browser
+            // runtime provides. Use project-module compilation so the wasm
+            // compiler validates syntax/types without requiring the modules on
+            // disk, matching how the browser playground hosts the compiler.
+            let response: Value = serde_json::from_str(&compile_project_request(
                 &source, &filename, "deka",
             ))
             .unwrap_or_else(|error| panic!("{}: invalid response JSON: {error}", lesson.id));
