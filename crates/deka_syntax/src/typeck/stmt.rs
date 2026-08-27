@@ -1,6 +1,6 @@
 //! Statement typechecking.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast;
 
@@ -12,6 +12,7 @@ impl<'a> Checker<'a> {
         self.collect_declarations();
         self.collect_function_signatures();
         self.collect_receiver_methods();
+        self.check_embedded_method_ambiguity();
 
         // Check function and receiver-method bodies first so that inferred
         // return types are available to later top-level statements.
@@ -93,6 +94,33 @@ impl<'a> Checker<'a> {
             if let ast::Stmt::Struct { name, fields, embeds, span, .. } = stmt {
                 if self.structs.insert(name, super::StructInfo { fields, embeds }).is_some() {
                     self.error_span(*span, format!("duplicate struct definition `{name}`"));
+                    continue;
+                }
+
+                let mut seen_fields = HashSet::new();
+                for field in fields.iter() {
+                    if !seen_fields.insert(field.name) {
+                        self.error_span(
+                            field.span,
+                            format!(
+                                "Duplicate field '{}' in struct '{}'.",
+                                field.name, name
+                            ),
+                        );
+                    }
+                }
+
+                let mut seen_embeds = HashSet::new();
+                for embed in embeds.iter() {
+                    if !seen_embeds.insert(embed.name) {
+                        self.error_span(
+                            embed.span,
+                            format!(
+                                "Duplicate embedded struct '{}'",
+                                embed.name
+                            ),
+                        );
+                    }
                 }
             }
         }
@@ -138,6 +166,66 @@ impl<'a> Checker<'a> {
                         "duplicate receiver method `{name}` on type `{receiver_type}`"
                     ));
                 }
+            }
+        }
+    }
+
+    fn check_embedded_method_ambiguity(&mut self) {
+        // Collect errors first so we don't borrow `self` mutably while iterating
+        // over `self.structs`.
+        let mut errors: Vec<(ast::Span, String)> = Vec::new();
+        for (struct_name, info) in self.structs.iter() {
+            if info.embeds.is_empty() {
+                continue;
+            }
+
+            // Map each method name to the list of embedded structs that promote it.
+            let mut promoted: HashMap<&str, Vec<&str>> = HashMap::new();
+            for embed in info.embeds.iter() {
+                let mut seen = HashSet::new();
+                self.collect_promoted_methods(embed.name, &mut promoted, embed.name, &mut seen);
+            }
+
+            for (method_name, sources) in promoted.iter() {
+                if sources.len() > 1 {
+                    errors.push((
+                        info.embeds[0].span,
+                        format!(
+                            "Ambiguous method '{}' on struct '{}'; multiple embedded structs promote it",
+                            method_name, struct_name
+                        ),
+                    ));
+                }
+            }
+        }
+
+        for (span, message) in errors {
+            self.error_span(span, message);
+        }
+    }
+
+    fn collect_promoted_methods(
+        &self,
+        embed_name: &'a str,
+        promoted: &mut HashMap<&'a str, Vec<&'a str>>,
+        source: &'a str,
+        seen: &mut HashSet<&'a str>,
+    ) {
+        if !seen.insert(embed_name) {
+            return;
+        }
+
+        // Direct methods on the embedded struct are promoted.
+        for ((rt, method_name), _) in self.receiver_methods.iter() {
+            if *rt == embed_name {
+                promoted.entry(*method_name).or_default().push(source);
+            }
+        }
+
+        // Methods promoted by nested embeds are also promoted.
+        if let Some(info) = self.structs.get(embed_name) {
+            for nested in info.embeds.iter() {
+                self.collect_promoted_methods(nested.name, promoted, source, seen);
             }
         }
     }

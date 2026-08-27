@@ -287,6 +287,8 @@ impl<'a> Emitter<'a> {
     // Prelude
     // ------------------------------------------------------------------
     fn emit_prelude(&mut self) -> Result<(), String> {
+        self.out.push_str("\"use strict\";\n");
+
         // Determine which helpers are needed by scanning the AST.
         self.uses_struct = self.needs_struct_helper();
         self.uses_prelude_enums = self.uses_prelude_enums || self.needs_prelude_enums();
@@ -348,7 +350,16 @@ impl<'a> Emitter<'a> {
                 self.out.push_str("const ");
                 self.out.push_str(name);
                 self.out.push_str(" = ");
+                // Const bindings in DekaScript are immutable. Freeze array and
+                // object literals at creation so mutations throw at runtime.
+                let needs_freeze = matches!(value, Expr::Array { .. } | Expr::Object { .. });
+                if needs_freeze {
+                    self.out.push_str("Object.freeze(");
+                }
                 self.emit_expr(value)?;
+                if needs_freeze {
+                    self.out.push_str(")");
+                }
                 self.out.push_str(";");
             }
             Stmt::Let { name, value, .. } => {

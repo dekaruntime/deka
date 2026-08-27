@@ -344,8 +344,8 @@ mod tests {
             "test.ds",
         )
         .expect("compile should succeed");
-        assert!(result.js.contains("const a = [1, 2, 3];"), "got: {}", result.js);
-        assert!(result.js.contains("const o = {x: 1};"), "got: {}", result.js);
+        assert!(result.js.contains("const a = Object.freeze([1, 2, 3]);"), "got: {}", result.js);
+        assert!(result.js.contains("const o = Object.freeze({x: 1});"), "got: {}", result.js);
         assert!(result.js.contains("a[0] + o[\"x\"]"), "got: {}", result.js);
     }
 
