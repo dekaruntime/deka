@@ -2,5 +2,5 @@
   "title": "Missing comma in nested object literal fails",
   "stage": "parse",
   "notes": "",
-  "expectedDiagnosticContains": "Missing semicolon"
+  "expectedDiagnosticContains": "expected ``}``, found `identifier`"
 }

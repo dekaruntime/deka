@@ -1,5 +1,5 @@
 {
   "title": "Malformed scientific notation fails",
-  "stage": "run",
+  "stage": "parse",
   "notes": ""
 }

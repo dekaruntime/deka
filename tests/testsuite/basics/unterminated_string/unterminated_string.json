@@ -1,6 +1,6 @@
 {
   "title": "Unterminated string literal is rejected",
   "stage": "parse",
-  "expectedDiagnosticContains": "Unexpected token",
+  "expectedDiagnosticContains": "unterminated string literal",
   "notes": ""
 }

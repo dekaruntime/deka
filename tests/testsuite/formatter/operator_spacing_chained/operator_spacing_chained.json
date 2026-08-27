@@ -2,5 +2,5 @@
   "title": "Invalid binary operator sequence",
   "stage": "parse",
   "notes": "Two binary operators in a row without an operand is a parse error.",
-  "expectedDiagnosticContains": "Syntax error"
+  "expectedDiagnosticContains": "expected expression, found ``*``"
 }

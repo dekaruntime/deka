@@ -1,5 +1,5 @@
 {
   "title": "Optional interface field with wrong type fails",
   "stage": "parse",
-  "expectedDiagnosticContains": "Argument 1 type mismatch: expected interface Card, got Object<{subtitle: number, title: string}>"
+  "expectedDiagnosticContains": "expected argument type `Card`, found type `{title: string, subtitle: number}`"
 }

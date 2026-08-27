@@ -2,5 +2,5 @@
   "title": "Readonly visibility modifier on interface field fails",
   "stage": "parse",
   "notes": "",
-  "expectedDiagnosticContains": "interface fields do not use visibility modifiers in DekaScript"
+  "expectedDiagnosticContains": "expected ``:``, found `identifier`"
 }

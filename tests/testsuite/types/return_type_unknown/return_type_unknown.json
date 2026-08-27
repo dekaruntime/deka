@@ -1,6 +1,6 @@
 {
   "title": "Unknown type name in function return annotation fails",
   "stage": "parse",
-  "expectedDiagnosticContains": "Unknown type 'NotAType' in DekaScript; classes are not allowed",
+  "expectedDiagnosticContains": "unknown type `NotAType`",
   "notes": "Return type annotations must refer to defined types."
 }

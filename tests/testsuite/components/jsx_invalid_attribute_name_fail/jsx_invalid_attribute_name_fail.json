@@ -1,6 +1,6 @@
 {
   "title": "Invalid JSX attribute name fails",
   "stage": "parse",
-  "expectedDiagnosticContains": "Unexpected token in JSX attributes",
+  "expectedDiagnosticContains": "expected identifier, found ``.``",
   "notes": ""
 }

@@ -1,6 +1,6 @@
 {
   "title": "Assigning a string to an inferred number binding fails",
   "stage": "parse",
-  "expectedDiagnosticContains": "Type mismatch: expected number, got string",
+  "expectedDiagnosticContains": "cannot assign to immutable variable `n`",
   "notes": "Const bindings preserve their inferred type and reject incompatible assignments."
 }

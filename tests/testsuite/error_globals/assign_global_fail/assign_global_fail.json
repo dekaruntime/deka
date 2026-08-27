@@ -1,5 +1,6 @@
 {
-  "title": "Assigning to console is currently allowed",
-  "stage": "run",
-  "notes": "The compiler rewrites the assignment into a local let that is accessed in its TDZ."
+  "title": "Assigning to a frozen global field fails",
+  "stage": "parse",
+  "expectedDiagnosticContains": "cannot assign to field",
+  "notes": "Global objects like Math are frozen."
 }

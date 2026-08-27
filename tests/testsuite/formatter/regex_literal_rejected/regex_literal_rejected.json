@@ -2,5 +2,5 @@
   "title": "Regex literal is rejected",
   "stage": "parse",
   "notes": "DekaScript does not support regex literals; the formatter sees a syntax error.",
-  "expectedDiagnosticContains": "Syntax error"
+  "expectedDiagnosticContains": "expected expression, found ``/``"
 }

@@ -1,5 +1,5 @@
 {
   "title": "Returning a value from an async Promise<void> function fails",
   "stage": "parse",
-  "expectedDiagnosticContains": "Return type mismatch: expected object, got number"
+  "expectedDiagnosticContains": "expected return type `void`, found type `number`"
 }

@@ -1,6 +1,6 @@
 {
   "title": "Mismatched JSX tag case fails",
   "stage": "parse",
-  "expectedDiagnosticContains": "Unknown component 'Div'; import it or define function Div().",
+  "expectedDiagnosticContains": "expected closing tag `</Div>` but found `</div>`",
   "notes": ""
 }

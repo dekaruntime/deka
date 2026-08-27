@@ -1,6 +1,5 @@
 {
-  "title": "Template String Rejected",
-  "stage": "parse",
-  "notes": "Formatter passthrough for invalid template string rejected source.",
-  "expectedDiagnosticContains": "Unexpected token"
+  "title": "Template string with interpolation is valid DS",
+  "stage": "run",
+  "notes": "Formatter accepts template literals with embedded expressions."
 }

@@ -2,5 +2,5 @@
   "title": "Object missing required interface field fails",
   "stage": "parse",
   "notes": "",
-  "expectedDiagnosticContains": "Argument 1 type mismatch: expected interface Named, got Object<{}>"
+  "expectedDiagnosticContains": "expected argument type `Named`, found type `{}`"
 }

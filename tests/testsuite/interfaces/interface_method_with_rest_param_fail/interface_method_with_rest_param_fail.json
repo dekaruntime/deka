@@ -2,5 +2,5 @@
   "title": "Rest parameters in interface method signatures are not supported",
   "stage": "parse",
   "notes": "",
-  "expectedDiagnosticContains": "Destructuring parameters require at least one variable binding"
+  "expectedDiagnosticContains": "expected identifier, found ``...``"
 }

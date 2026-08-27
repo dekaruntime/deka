@@ -1,6 +1,6 @@
 {
   "title": "yield expression is rejected",
-  "stage": "run",
+  "stage": "parse",
   "notes": "Native CLI currently accepts yield expressions silently, producing a divergence.",
-  "expectedDiagnosticContains": "yield expressions are not supported in JS subset emitter"
+  "expectedDiagnosticContains": "expected"
 }

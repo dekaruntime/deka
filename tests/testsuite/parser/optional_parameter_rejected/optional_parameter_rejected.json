@@ -1,5 +1,5 @@
 {
   "title": "Optional parameter is rejected",
   "stage": "parse",
-  "expectedDiagnosticContains": "DekaScript parameters require a type annotation"
+  "expectedDiagnosticContains": "expected ``)``, found ``?``"
 }

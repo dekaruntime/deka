@@ -1,5 +1,5 @@
 {
   "title": "`function` keyword is rejected; use `fn`",
   "stage": "parse",
-  "expectedDiagnosticContains": "DekaScript uses `fn` for function declarations, not `function`"
+  "expectedDiagnosticContains": "expected expression, found ``function``"
 }

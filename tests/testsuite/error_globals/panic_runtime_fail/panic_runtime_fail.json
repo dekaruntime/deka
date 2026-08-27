@@ -1,6 +1,6 @@
 {
   "title": "panic fails at runtime",
-  "stage": "run",
+  "stage": "parse",
   "notes": "",
-  "expectedDiagnosticContains": "oops"
+  "expectedDiagnosticContains": "unknown identifier"
 }

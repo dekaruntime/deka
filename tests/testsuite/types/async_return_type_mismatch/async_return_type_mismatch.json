@@ -1,6 +1,6 @@
 {
   "title": "Async function returning wrong Promise type fails",
   "stage": "parse",
-  "expectedDiagnosticContains": "Return type mismatch: expected string, got number",
+  "expectedDiagnosticContains": "expected return type `string`, found type `number`",
   "notes": "The resolved type of an async Promise is checked against the return annotation."
 }

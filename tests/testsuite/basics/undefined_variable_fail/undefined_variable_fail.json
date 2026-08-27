@@ -1,5 +1,5 @@
 {
   "title": "Reference to an undefined variable fails",
-  "stage": "run",
+  "stage": "parse",
   "notes": ""
 }

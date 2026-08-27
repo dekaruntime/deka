@@ -2,5 +2,5 @@
   "title": "Explicit catch clause is rejected in unsafe",
   "stage": "parse",
   "notes": "",
-  "expectedDiagnosticContains": "Missing semicolon"
+  "expectedDiagnosticContains": "expected `;` or newline, found `identifier`"
 }

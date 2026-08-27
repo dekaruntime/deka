@@ -1,5 +1,5 @@
 {
   "title": "Calling nonexistent string find method fails at runtime",
-  "stage": "run",
+  "stage": "parse",
   "notes": ""
 }

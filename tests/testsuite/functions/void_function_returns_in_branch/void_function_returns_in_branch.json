@@ -2,5 +2,5 @@
   "title": "Returning a value from a void function inside a branch fails",
   "stage": "parse",
   "notes": "",
-  "expectedDiagnosticContains": "Return type mismatch: expected object, got number"
+  "expectedDiagnosticContains": "expected return type `void`, found type `number`"
 }

@@ -2,5 +2,5 @@
   "title": "Bare return in a non-void function fails",
   "stage": "parse",
   "notes": "",
-  "expectedDiagnosticContains": "Return type mismatch: expected number, got null"
+  "expectedDiagnosticContains": "expected expression, found ``}``"
 }

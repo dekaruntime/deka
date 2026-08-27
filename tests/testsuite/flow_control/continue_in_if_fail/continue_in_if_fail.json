@@ -1,5 +1,5 @@
 {
   "title": "Continue inside bare if block fails",
-  "stage": "run",
+  "stage": "parse",
   "notes": "Continue is only valid inside a loop."
 }

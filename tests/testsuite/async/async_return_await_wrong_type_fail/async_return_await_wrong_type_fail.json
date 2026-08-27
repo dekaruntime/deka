@@ -1,5 +1,5 @@
 {
   "title": "Returning an awaited value of the wrong type fails",
   "stage": "parse",
-  "expectedDiagnosticContains": "Return type mismatch: expected string, got number"
+  "expectedDiagnosticContains": "expected return type `string`, found type `number`"
 }

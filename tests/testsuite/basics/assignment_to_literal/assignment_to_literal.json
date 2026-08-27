@@ -1,6 +1,6 @@
 {
   "title": "Assignment to a literal value is rejected",
   "stage": "parse",
-  "expectedDiagnosticContains": "Assignments can only happen to writable values",
+  "expectedDiagnosticContains": "assignment target must be a mutable local variable, field, or index",
   "notes": ""
 }

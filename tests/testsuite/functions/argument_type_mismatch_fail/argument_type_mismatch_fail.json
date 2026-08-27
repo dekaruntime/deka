@@ -2,5 +2,5 @@
   "title": "Argument type mismatch fails",
   "stage": "parse",
   "notes": "",
-  "expectedDiagnosticContains": "Argument 1 type mismatch: expected string, got number"
+  "expectedDiagnosticContains": "expected argument type `string`, found type `number`"
 }

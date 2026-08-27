@@ -1,5 +1,5 @@
 {
   "title": "Arrow function is rejected",
   "stage": "parse",
-  "expectedDiagnosticContains": "Syntax error"
+  "expectedDiagnosticContains": "expected expression, found ``)``"
 }

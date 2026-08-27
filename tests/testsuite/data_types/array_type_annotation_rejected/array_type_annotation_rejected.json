@@ -1,6 +1,6 @@
 {
   "title": "Array type annotation rejected",
   "stage": "parse",
-  "expectedDiagnosticContains": "Expected '='",
+  "expectedDiagnosticContains": "expected ``=``, found ``[``",
   "notes": ""
 }

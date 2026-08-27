@@ -2,5 +2,5 @@
   "title": "Unclosed JSX tag fails",
   "stage": "parse",
   "notes": "",
-  "expectedDiagnosticContains": "Unterminated JSX children"
+  "expectedDiagnosticContains": "expected ``<``, found `end of file`"
 }

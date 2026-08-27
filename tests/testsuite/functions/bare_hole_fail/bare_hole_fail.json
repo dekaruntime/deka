@@ -2,5 +2,5 @@
   "title": "Bare _ is not a value",
   "stage": "parse",
   "notes": "RFD 30",
-  "expectedDiagnosticContains": "function-capture"
+  "expectedDiagnosticContains": "unknown identifier `_`"
 }

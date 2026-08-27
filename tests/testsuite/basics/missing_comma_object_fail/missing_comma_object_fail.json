@@ -1,6 +1,6 @@
 {
   "title": "Missing comma between object fields is rejected",
   "stage": "parse",
-  "expectedDiagnosticContains": "Missing semicolon",
+  "expectedDiagnosticContains": "expected ``}``, found `identifier`",
   "notes": ""
 }

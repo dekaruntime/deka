@@ -1,6 +1,6 @@
 {
   "title": "Property access on undefined fails",
   "stage": "parse",
-  "expectedDiagnosticContains": "The `undefined` pseudo-literal is not allowed in DekaScript.",
+  "expectedDiagnosticContains": "unknown identifier `undefined`",
   "notes": ""
 }

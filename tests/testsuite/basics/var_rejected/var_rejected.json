@@ -1,6 +1,6 @@
 {
   "title": "var declarations are rejected",
   "stage": "parse",
-  "expectedDiagnosticContains": "Syntax error",
+  "expectedDiagnosticContains": "expected `;` or newline, found `identifier`",
   "notes": ""
 }
