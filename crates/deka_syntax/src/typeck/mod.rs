@@ -95,6 +95,8 @@ struct Checker<'a> {
     type_scopes: Vec<HashMap<&'a str, Type<'a>>>,
     /// Are we currently inside a function body?
     in_function: bool,
+    /// Are we currently inside an async function body?
+    in_async_function: bool,
     /// Expected / inferred return type of the current function.
     return_type: Option<Type<'a>>,
     /// How many nested loops currently enclose the checked statement?
@@ -118,6 +120,7 @@ impl<'a> Checker<'a> {
             mutables: HashSet::new(),
             type_scopes: Vec::new(),
             in_function: false,
+            in_async_function: false,
             return_type: None,
             loop_depth: 0,
         }
@@ -352,5 +355,17 @@ mod tests {
     #[test]
     fn async_function_passes() {
         assert!(typeck("async fn value() Promise<number> { return 1 } const p: Promise<number> = value();").is_empty());
+    }
+
+    #[test]
+    fn top_level_await_passes() {
+        assert!(typeck("async fn main() Promise<number> { return 1 } const n: number = await main();").is_empty());
+    }
+
+    #[test]
+    fn await_in_sync_function_fails() {
+        let errors = typeck("fn f() { await 1 }");
+        assert!(!errors.is_empty());
+        assert!(errors.iter().any(|e| e.message.contains("await")), "{:?}", errors);
     }
 }

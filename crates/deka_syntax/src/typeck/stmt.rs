@@ -434,13 +434,17 @@ impl<'a> Checker<'a> {
         }
 
         let saved_in_function = self.in_function;
+        let saved_in_async = self.in_async_function;
         let saved_return_type = self.return_type.clone();
         self.in_function = true;
+        self.in_async_function = is_async;
         self.return_type = body_expected_ret.clone();
 
         for stmt in body {
             self.check_statement(stmt);
         }
+
+        self.in_async_function = saved_in_async;
 
         let final_ret = if is_async {
             // The public signature is always the declared Promise type (or a

@@ -92,6 +92,12 @@ impl<'a> Checker<'a> {
                 Type::Infer
             }
             ast::Expr::Await { expr, span } => {
+                if self.in_function && !self.in_async_function {
+                    self.error_span(
+                        *span,
+                        "`await` is only allowed inside async functions or at the top level",
+                    );
+                }
                 let operand_type = self.check_expr(expr);
                 match operand_type {
                     Type::Generic { base: "Promise", args } if args.len() == 1 => args.into_iter().next().unwrap(),
@@ -173,13 +179,17 @@ impl<'a> Checker<'a> {
         }
 
         let saved_in_function = self.in_function;
+        let saved_in_async = self.in_async_function;
         let saved_return_type = self.return_type.clone();
         self.in_function = true;
+        self.in_async_function = is_async;
         self.return_type = body_expected_ret.clone();
 
         for stmt in body {
             self.check_statement(stmt);
         }
+
+        self.in_async_function = saved_in_async;
 
         let final_ret = if is_async {
             match explicit_ret {

@@ -371,6 +371,16 @@ mod tests {
     }
 
     #[test]
+    fn compile_top_level_await() {
+        let result = compile_to_js(
+            "async fn main() Promise<number> { return 1 } const n = await main();",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("await main()"), "got: {}", result.js);
+    }
+
+    #[test]
     fn compile_jsx_element() {
         let result = compile_to_js("const el = <div class=\"box\" />;", "test.dsx")
             .expect("compile should succeed");
@@ -382,6 +392,17 @@ mod tests {
         let result = compile_to_js("const el = <><span>a</span><span>b</span></>;", "test.dsx")
             .expect("compile should succeed");
         assert!(result.js.contains("deka.ui.Fragment"), "got: {}", result.js);
+    }
+
+    #[test]
+    fn compile_jsx_component() {
+        let result = compile_to_js(
+            "const Greeting = fn () { return <h1 /> }; const el = <Greeting name=\"Deka\" />;",
+            "test.dsx",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("deka.ui.jsx(Greeting"), "got: {}", result.js);
+        assert!(result.js.contains("\"name\": \"Deka\""), "got: {}", result.js);
     }
 
     #[test]
