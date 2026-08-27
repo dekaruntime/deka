@@ -333,13 +333,25 @@ impl<'a> Lexer<'a> {
         let start_pos = self.pos;
         self.advance(); // /
         self.advance(); // *
+        let mut terminated = false;
         while let Some(ch) = self.current() {
             if ch == '*' && self.peek(1) == Some('/') {
                 self.advance();
                 self.advance();
+                terminated = true;
                 break;
             }
             self.advance();
+        }
+        if !terminated {
+            self.diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                line: start.line,
+                column: start.column,
+                message: "unterminated block comment".into(),
+                help_text: Some("add `*/` to close the comment".into()),
+                underline_length: 2,
+            });
         }
         Token {
             kind: TokenKind::Comment,
@@ -723,5 +735,17 @@ mod tests {
         for expected in kinds {
             assert_eq!(lexer.next_token().kind, expected);
         }
+    }
+
+    #[test]
+    fn unterminated_block_comment_emits_error() {
+        let mut lexer = Lexer::new("/* unterminated");
+        let tok = lexer.next_token();
+        assert_eq!(tok.kind, TokenKind::Comment);
+        assert!(
+            lexer.diagnostics().iter().any(|d| d.message.contains("unterminated block comment")),
+            "expected unterminated block comment error, got: {:?}",
+            lexer.diagnostics()
+        );
     }
 }
