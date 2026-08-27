@@ -174,7 +174,8 @@ impl<'a> Parser<'a> {
         match self.current_kind() {
             TokenKind::Number => {
                 let text = self.current_text();
-                let value = match text.parse::<f64>() {
+                let without_underscores: String = text.chars().filter(|&c| c != '_').collect();
+                let value = match without_underscores.parse::<f64>() {
                     Ok(v) => v,
                     Err(_) => {
                         self.error(format!("invalid number literal `{}`", text));
@@ -188,7 +189,9 @@ impl<'a> Parser<'a> {
                 })
             }
             TokenKind::String => {
-                let value = self.bump_str(self.current_text());
+                let text = self.current_text();
+                let unescaped = unescape_string(text);
+                let value = self.bump_str(&unescaped);
                 self.advance();
                 Some(Expr::String {
                     value,
@@ -571,4 +574,33 @@ impl<'a> Parser<'a> {
 
         Some(alloc_slice(self.arena, args))
     }
+}
+
+/// Unescape a string literal body (without surrounding quotes).
+/// Recognizes the standard C-style escapes used in DekaScript.
+fn unescape_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('t') => out.push('\t'),
+            Some('\\') => out.push('\\'),
+            Some('"') => out.push('"'),
+            Some('\'') => out.push('\''),
+            Some('0') => out.push('\0'),
+            Some(c) => {
+                // Unknown escape: keep both characters to preserve source meaning.
+                out.push('\\');
+                out.push(c);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
 }
