@@ -28,6 +28,10 @@ impl<'a> Checker<'a> {
                     );
                     Type::Error
                 }
+                "none" => {
+                    self.error_span(*span, "`none` is a value, not a type");
+                    Type::Error
+                }
                 _ => {
                     if let Some(param) = self.lookup_type_param(name) {
                         return param;
@@ -54,8 +58,9 @@ impl<'a> Checker<'a> {
             ast::Type::Generic { base, args, span } => {
                 if base == &"Option" {
                     if args.len() == 1 {
-                        Type::Option {
-                            inner: Box::new(self.resolve_ast_type_rec(&args[0], seen)),
+                        Type::Generic {
+                            base: "Option",
+                            args: vec![self.resolve_ast_type_rec(&args[0], seen)],
                         }
                     } else {
                         self.error_span(*span, "Option requires exactly one type argument");
@@ -106,8 +111,9 @@ impl<'a> Checker<'a> {
                 ret: Box::new(self.resolve_ast_type_rec(ret, seen)),
             },
 
-            ast::Type::Option { inner, .. } => Type::Option {
-                inner: Box::new(self.resolve_ast_type_rec(inner, seen)),
+            ast::Type::Option { inner, .. } => Type::Generic {
+                base: "Option",
+                args: vec![self.resolve_ast_type_rec(inner, seen)],
             },
 
             ast::Type::Tuple { span, .. } | ast::Type::Record { span, .. } => {

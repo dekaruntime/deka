@@ -4,8 +4,9 @@ use std::fmt;
 
 /// Type used internally by the typechecker.
 ///
-/// `Type::None` is the type of the literal `none`.  It is distinct from
-/// `Option<T>` but assignable to any `Option<T>`.
+/// `Option<T>` and `Result<T, E>` are represented as `Type::Generic`, just
+/// like user-defined generic types. The literal `none` has type
+/// `Option<never>` so it is assignable to any `Option<T>`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Type<'a> {
     /// Sentinel used for error recovery.
@@ -15,12 +16,8 @@ pub enum Type<'a> {
     /// The bottom type (`never`). Not produced by the parser, but accepted in
     /// annotations for forward compatibility.
     Never,
-    /// The type of the literal `none`.
-    None,
     /// A named scalar or user-defined type.
     Named { name: &'a str },
-    /// `Option<T>`.
-    Option { inner: Box<Type<'a>> },
     /// Function type.
     Function {
         params: Vec<Type<'a>>,
@@ -49,9 +46,7 @@ impl fmt::Display for Type<'_> {
             Type::Error => write!(f, "<error>"),
             Type::Infer => write!(f, "<infer>"),
             Type::Never => write!(f, "never"),
-            Type::None => write!(f, "none"),
             Type::Named { name } => write!(f, "{name}"),
-            Type::Option { inner } => write!(f, "Option<{inner}>"),
             Type::Function { params, ret } => {
                 write!(f, "fn(")?;
                 for (i, p) in params.iter().enumerate() {
@@ -91,15 +86,13 @@ pub fn is_assignable<'a>(expected: &Type<'a>, actual: &Type<'a>) -> bool {
     if expected == actual {
         return true;
     }
-    // `never` is the bottom type: assignable to anything.
+    // `never` is the bottom type: assignable to anything. This also makes
+    // `Option<never>` (the type of the literal `none`) assignable to any
+    // `Option<T>` via the generic subtyping check below.
     if matches!(actual, Type::Never) {
         return true;
     }
-    // `none` is assignable to any Option<T>.
-    if matches!(expected, Type::Option { .. }) && matches!(actual, Type::None) {
-        return true;
-    }
-    // Structural subtyping for generic types like Result<T, E>.
+    // Structural subtyping for generic types like Option<T> and Result<T, E>.
     if let (
         Type::Generic { base: expected_base, args: expected_args },
         Type::Generic { base: actual_base, args: actual_args },

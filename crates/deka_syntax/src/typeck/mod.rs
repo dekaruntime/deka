@@ -2,13 +2,12 @@
 //!
 //! This is a baseline typechecker for the parser's supported subset.  It is
 //! intentionally simple: structural checks for the built-in scalar types,
-//! generic `Option<T>` (with `none` represented by a dedicated `NoneType`),
-//! function types, and local/top-level bindings.
+//! generic `Option<T>` and `Result<T, E>`, function types, and local/top-level
+//! bindings.
 //!
 //! Design choice for `none`:
-//! `none` is given a fresh built-in type `Type::None` (displayed as `none`).
-//! `Type::None` is assignable to any `Option<T>` because it is the empty
-//! option payload.
+//! `none` has type `Option<never>` so it is assignable to any `Option<T>`
+//! via the standard generic subtyping rule (`never` is the bottom type).
 
 use std::collections::HashMap;
 

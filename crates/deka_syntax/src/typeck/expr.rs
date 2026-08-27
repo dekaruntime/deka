@@ -15,7 +15,10 @@ impl<'a> Checker<'a> {
             ast::Expr::Boolean { value: true, .. } | ast::Expr::Boolean { value: false, .. } => {
                 Type::Named { name: "boolean" }
             }
-            ast::Expr::None { .. } => Type::None,
+            ast::Expr::None { .. } => Type::Generic {
+                base: "Option",
+                args: vec![Type::Never],
+            },
             ast::Expr::Identifier { name, span } => {
                 self.lookup_var(name).unwrap_or_else(|| {
                     self.error_span(*span, format!("unknown identifier `{name}`"));
@@ -207,11 +210,21 @@ impl<'a> Checker<'a> {
                     })
                     .unwrap_or(Type::Generic {
                         base: "Promise",
-                        args: vec![Type::None],
+                        args: vec![Type::Generic {
+                            base: "Option",
+                            args: vec![Type::Never],
+                        }],
                     }),
             }
         } else {
-            body_expected_ret.unwrap_or_else(|| self.return_type.take().unwrap_or(Type::None))
+            body_expected_ret.unwrap_or_else(|| {
+                self.return_type
+                    .take()
+                    .unwrap_or(Type::Generic {
+                        base: "Option",
+                        args: vec![Type::Never],
+                    })
+            })
         };
 
         self.in_function = saved_in_function;
@@ -417,7 +430,10 @@ impl<'a> Checker<'a> {
     ) -> Type<'a> {
         match case_name {
             "Some" => match payload_type {
-                Some(t) => Type::Option { inner: Box::new(t) },
+                Some(t) => Type::Generic {
+                    base: "Option",
+                    args: vec![t],
+                },
                 None => {
                     self.error_span(span, "`Some` requires a payload");
                     Type::Error
@@ -427,7 +443,10 @@ impl<'a> Checker<'a> {
                 if payload.is_some() {
                     self.error_span(span, "`None` cannot have a payload");
                 }
-                Type::None
+                Type::Generic {
+                    base: "Option",
+                    args: vec![Type::Never],
+                }
             }
             _ => {
                 self.error_span(span, format!("unknown Option case `{case_name}`"));
@@ -506,7 +525,7 @@ impl<'a> Checker<'a> {
             }
         }
 
-        result_type.unwrap_or(Type::None)
+        result_type.unwrap_or(Type::Error)
     }
 
     fn check_pattern(&mut self, pattern: &ast::Pattern<'a>, scrutinee_type: &Type<'a>) {
@@ -549,7 +568,8 @@ impl<'a> Checker<'a> {
         // Built-in Option cases.
         if name == "Some" || name == "None" {
             match scrutinee_type {
-                Type::Option { inner } => {
+                Type::Generic { base: "Option", args } if args.len() == 1 => {
+                    let inner = &args[0];
                     if name == "None" {
                         if payload.is_some() {
                             self.error_span(span, "`None` pattern cannot have a payload");
@@ -861,7 +881,10 @@ impl<'a> Checker<'a> {
         info.return_type
             .as_ref()
             .map(|t| self.resolve_ast_type(t))
-            .unwrap_or(Type::None)
+            .unwrap_or(Type::Generic {
+                base: "Option",
+                args: vec![Type::Never],
+            })
             .into()
     }
 
@@ -1008,7 +1031,6 @@ fn collect_param_names_rec<'a>(ty: &Type<'a>, names: &mut Vec<&'a str>, seen: &m
                 names.push(*name);
             }
         }
-        Type::Option { inner } => collect_param_names_rec(inner, names, seen),
         Type::Function { params, ret } => {
             for p in params {
                 collect_param_names_rec(p, names, seen);
@@ -1027,7 +1049,6 @@ fn collect_param_names_rec<'a>(ty: &Type<'a>, names: &mut Vec<&'a str>, seen: &m
 fn contains_param(ty: &Type<'_>) -> bool {
     match ty {
         Type::Param { .. } => true,
-        Type::Option { inner } => contains_param(inner),
         Type::Function { params, ret } => {
             params.iter().any(contains_param) || contains_param(ret)
         }
@@ -1040,9 +1061,6 @@ fn contains_param(ty: &Type<'_>) -> bool {
 fn substitute_type<'a>(ty: &Type<'a>, subst: &HashMap<&'a str, Type<'a>>) -> Type<'a> {
     match ty {
         Type::Param { name } => subst.get(name).cloned().unwrap_or_else(|| Type::Param { name }),
-        Type::Option { inner } => Type::Option {
-            inner: Box::new(substitute_type(inner, subst)),
-        },
         Type::Function { params, ret } => Type::Function {
             params: params.iter().map(|p| substitute_type(p, subst)).collect(),
             ret: Box::new(substitute_type(ret, subst)),

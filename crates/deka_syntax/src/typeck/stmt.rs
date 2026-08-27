@@ -460,11 +460,21 @@ impl<'a> Checker<'a> {
                     })
                     .unwrap_or(Type::Generic {
                         base: "Promise",
-                        args: vec![Type::None],
+                        args: vec![Type::Generic {
+                            base: "Option",
+                            args: vec![Type::Never],
+                        }],
                     }),
             }
         } else {
-            body_expected_ret.unwrap_or_else(|| self.return_type.take().unwrap_or(Type::None))
+            body_expected_ret.unwrap_or_else(|| {
+                self.return_type
+                    .take()
+                    .unwrap_or(Type::Generic {
+                        base: "Option",
+                        args: vec![Type::Never],
+                    })
+            })
         };
 
         self.in_function = saved_in_function;
@@ -517,7 +527,10 @@ impl<'a> Checker<'a> {
                 None,
                 Type::Generic {
                     base: "Promise",
-                    args: vec![Type::None],
+                    args: vec![Type::Generic {
+                        base: "Option",
+                        args: vec![Type::Never],
+                    }],
                 },
             ),
         }
@@ -593,7 +606,10 @@ impl<'a> Checker<'a> {
 
         let value_type = match value {
             Some(expr) => self.check_expr(expr),
-            None => Type::None,
+            None => Type::Generic {
+                base: "Option",
+                args: vec![Type::Never],
+            },
         };
 
         if let Some(expected) = self.return_type.as_ref() {
