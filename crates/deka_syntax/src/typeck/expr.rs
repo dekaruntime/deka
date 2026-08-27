@@ -928,7 +928,13 @@ impl<'a> Checker<'a> {
                 }
                 if Self::is_number(&left_type) && Self::is_number(&right_type) {
                     Type::Named { name: "number" }
-                } else if Self::is_string(&left_type) && Self::is_string(&right_type) {
+                } else if Self::is_string(&left_type) || Self::is_string(&right_type) {
+                    // String concatenation: JS coerces the other operand to string.
+                    Type::Named { name: "string" }
+                } else if Self::is_promise(&left_type)
+                    || Self::is_promise(&right_type)
+                {
+                    // Promise<T> + primitive coerces to string in JS.
                     Type::Named { name: "string" }
                 } else {
                     self.error_span(

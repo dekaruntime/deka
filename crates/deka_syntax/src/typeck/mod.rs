@@ -267,7 +267,7 @@ impl<'a> Checker<'a> {
         // Host-provided JavaScript globals that the test suite (and v1) rely on.
         // They are typed opaquely as Infer; field/method access on Infer is
         // allowed and returns Infer. Console is intentionally excluded per RFD 32.
-        for name in ["Math", "Date", "JSON", "Object", "crypto", "parseInt", "process"] {
+        for name in ["Math", "Date", "JSON", "Object", "Promise", "crypto", "parseInt", "process"] {
             self.globals.insert(name, Type::Infer);
         }
     }
@@ -347,6 +347,10 @@ impl<'a> Checker<'a> {
 
     fn is_boolean(ty: &Type<'_>) -> bool {
         matches!(ty, Type::Named { name: "boolean" })
+    }
+
+    fn is_promise(ty: &Type<'_>) -> bool {
+        matches!(ty, Type::Generic { base: "Promise", .. })
     }
 
     fn expect_number(&mut self, ty: &Type<'a>, span: ast::Span) {

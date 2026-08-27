@@ -391,9 +391,12 @@ impl<'a> Emitter<'a> {
                     if i > 0 {
                         self.out.push_str(", ");
                     }
-                    self.emit_param(param)?;
+                    self.emit_param(param, !is_async)?;
                 }
                 self.out.push_str(") {\n");
+                if *is_async {
+                    self.emit_default_param_assignments(params, 1)?;
+                }
                 for stmt in body.iter() {
                     self.emit_stmt(stmt)?;
                     self.out.push('\n');
@@ -444,9 +447,12 @@ impl<'a> Emitter<'a> {
                             if i > 0 {
                                 self.out.push_str(", ");
                             }
-                            self.emit_param(param)?;
+                            self.emit_param(param, !is_async)?;
                         }
                         self.out.push_str(") {\n");
+                        if *is_async {
+                            self.emit_default_param_assignments(params, 1)?;
+                        }
                         for stmt in body.iter() {
                             self.emit_stmt(stmt)?;
                             self.out.push('\n');
@@ -956,9 +962,12 @@ impl<'a> Emitter<'a> {
                     if i > 0 {
                         self.out.push_str(", ");
                     }
-                    self.emit_param(param)?;
+                    self.emit_param(param, !is_async)?;
                 }
                 self.out.push_str(") {\n");
+                if *is_async {
+                    self.emit_default_param_assignments(params, 1)?;
+                }
                 for stmt in body.iter() {
                     self.emit_stmt(stmt)?;
                     self.out.push('\n');
@@ -969,11 +978,33 @@ impl<'a> Emitter<'a> {
         Ok(())
     }
 
-    fn emit_param(&mut self, param: &deka_syntax::Param<'a>) -> Result<(), String> {
+    fn emit_param(&mut self, param: &deka_syntax::Param<'a>, emit_default: bool) -> Result<(), String> {
         self.out.push_str(param.name);
-        if let Some(default) = &param.default_value {
-            self.out.push_str(" = ");
-            self.emit_expr(default)?;
+        if emit_default {
+            if let Some(default) = &param.default_value {
+                self.out.push_str(" = ");
+                self.emit_expr(default)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn emit_default_param_assignments(
+        &mut self,
+        params: &[deka_syntax::Param<'a>],
+        indent: usize,
+    ) -> Result<(), String> {
+        for param in params.iter() {
+            if param.default_value.is_some() {
+                write_indent(&mut self.out, indent);
+                self.out.push_str("if (");
+                self.out.push_str(param.name);
+                self.out.push_str(" === undefined) { ");
+                self.out.push_str(param.name);
+                self.out.push_str(" = ");
+                self.emit_expr(param.default_value.as_ref().unwrap())?;
+                self.out.push_str("; }\n");
+            }
         }
         Ok(())
     }
