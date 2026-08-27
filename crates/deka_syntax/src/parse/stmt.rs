@@ -71,10 +71,18 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            TokenKind::Fn => self.parse_fn_statement(start, start_byte),
+            TokenKind::Fn => {
+                if in_block {
+                    self.error("function declarations are only allowed at the top level in DekaScript");
+                }
+                self.parse_fn_statement(start, start_byte)
+            }
 
             TokenKind::Async => {
                 if self.tokens.get(self.pos + 1).map(|t| t.kind) == Some(TokenKind::Fn) {
+                    if in_block {
+                        self.error("function declarations are only allowed at the top level in DekaScript");
+                    }
                     self.parse_fn_statement(start, start_byte)
                 } else {
                     self.error("expected `fn` after `async`");
@@ -102,9 +110,19 @@ impl<'a> Parser<'a> {
                 })
             }
 
-            TokenKind::Struct => self.parse_struct_statement(start, start_byte),
+            TokenKind::Struct => {
+                if in_block {
+                    self.error("struct declarations are only allowed at the top level in DekaScript");
+                }
+                self.parse_struct_statement(start, start_byte)
+            }
 
-            TokenKind::Enum => self.parse_enum_statement(start, start_byte),
+            TokenKind::Enum => {
+                if in_block {
+                    self.error("enum declarations are only allowed at the top level in DekaScript");
+                }
+                self.parse_enum_statement(start, start_byte)
+            }
 
             TokenKind::Type => self.parse_type_alias_statement(start, start_byte),
 
