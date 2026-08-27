@@ -770,7 +770,7 @@ mod tests {
 
     #[test]
     fn struct_literal_and_field_access_passes() {
-        assert!(typeck("struct Point { x: number, y: number } const p: Point = Point { x: 1, y: 2 }; const x: number = p.x;").is_empty());
+        assert!(typeck("struct Point { x: number; y: number } const p: Point = Point { x: 1, y: 2 }; const x: number = p.x;").is_empty());
     }
 
     #[test]
@@ -799,7 +799,7 @@ mod tests {
     #[test]
     fn receiver_method_passes() {
         assert!(typeck(
-            "struct Point { x: number, y: number } fn (p Point) distance(other: Point): number { return 0; } const p1: Point = Point { x: 0, y: 0 }; const p2: Point = Point { x: 3, y: 4 }; const d: number = p1.distance(p2);"
+            "struct Point { x: number; y: number } fn (p Point) distance(other: Point): number { return 0; } const p1: Point = Point { x: 0, y: 0 }; const p2: Point = Point { x: 3, y: 4 }; const d: number = p1.distance(p2);"
         ).is_empty());
     }
 

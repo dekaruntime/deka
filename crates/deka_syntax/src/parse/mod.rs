@@ -513,7 +513,7 @@ mod tests {
     fn parse_struct_declaration_and_literal() {
         let arena = Bump::new();
         let result = parse(
-            "struct Point { x: number, y: number } const p = Point { x: 1, y: 2 };",
+            "struct Point { x: number; y: number } const p = Point { x: 1, y: 2 };",
             &arena,
         );
         assert!(result.errors.is_empty(), "{:?}", result.errors);
@@ -591,7 +591,7 @@ mod tests {
     #[test]
     fn parse_struct_optional_field_postfix() {
         let arena = Bump::new();
-        let result = parse("struct User { name: string, email: string? }", &arena);
+        let result = parse("struct User { name: string; email: string? }", &arena);
         assert!(result.errors.is_empty(), "{:?}", result.errors);
         let program = result.program.unwrap();
         match &program.statements[0] {
@@ -606,7 +606,7 @@ mod tests {
     #[test]
     fn parse_struct_optional_field_prefix() {
         let arena = Bump::new();
-        let result = parse("struct User { name: string, email?: string }", &arena);
+        let result = parse("struct User { name: string; email?: string }", &arena);
         assert!(result.errors.is_empty(), "{:?}", result.errors);
         let program = result.program.unwrap();
         match &program.statements[0] {
@@ -691,7 +691,7 @@ mod tests {
     fn parse_receiver_method() {
         let arena = Bump::new();
         let result = parse(
-            "struct Point { x: number, y: number } fn (p Point) distance(other: Point): number { return 0; }",
+            "struct Point { x: number; y: number } fn (p Point) distance(other: Point): number { return 0; }",
             &arena,
         );
         assert!(result.errors.is_empty(), "{:?}", result.errors);

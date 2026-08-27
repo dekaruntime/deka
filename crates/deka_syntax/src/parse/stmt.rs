@@ -436,12 +436,9 @@ impl<'a> Parser<'a> {
             if self.at(TokenKind::RBrace) {
                 break;
             }
-            if self.eat(TokenKind::Comma) {
-                self.skip_newlines();
-                if self.at(TokenKind::RBrace) {
-                    break;
-                }
-                continue;
+            if self.at(TokenKind::Comma) {
+                self.error("Missing semicolon: struct fields must be separated by ';' or a newline");
+                return None;
             }
             if self.eat(TokenKind::Semicolon) {
                 self.skip_newlines();
@@ -457,7 +454,7 @@ impl<'a> Parser<'a> {
                 }
                 continue;
             }
-            self.error("expected `,` or newline between struct fields");
+            self.error("expected `;` or newline between struct fields");
             break;
         }
 
