@@ -1,3 +1,4 @@
+import { echo } from "io"
 type Name = string
 const n: Name = "hi"
-console.log(n)
+echo(n)

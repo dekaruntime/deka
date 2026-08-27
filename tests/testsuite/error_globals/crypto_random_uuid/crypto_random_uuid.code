@@ -1,1 +1,2 @@
-console.log(crypto.randomUUID().length)
+import { echo } from "io"
+echo(crypto.randomUUID().length)

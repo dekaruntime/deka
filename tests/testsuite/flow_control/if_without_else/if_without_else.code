@@ -1,6 +1,7 @@
+import { echo } from "io"
 const x = 5
 if (x > 3) {
-  console.log("big")
+  echo("big")
 }
 
-console.log("done")
+echo("done")

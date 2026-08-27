@@ -1,3 +1,4 @@
+import { echo } from "io"
 interface Named {
   name: string;
 }
@@ -12,7 +13,7 @@ struct Person {
 }
 
 fn describe(n: Named, a: Aged) {
-  console.log(n.name, a.age)
+  echo(n.name, a.age)
 }
 
 const p = Person { name: "A", age: 1 }

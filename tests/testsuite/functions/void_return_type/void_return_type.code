@@ -1,5 +1,6 @@
+import { echo } from "io"
 fn log(x: number) void {
-  console.log(x)
+  echo(x)
 }
 
 log(5)

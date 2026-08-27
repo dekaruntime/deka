@@ -1,1 +1,2 @@
-console.log(process.cwd())
+import { echo } from "io"
+echo(process.cwd())

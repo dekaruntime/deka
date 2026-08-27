@@ -1,9 +1,10 @@
+import { echo } from "io"
 interface Config {
   label: Option<string>;
 }
 
 fn show(c: Config) {
-  console.log(match (c.label) {
+  echo(match (c.label) {
     Some(v) => v,
     None => "default",
     _ => "?",

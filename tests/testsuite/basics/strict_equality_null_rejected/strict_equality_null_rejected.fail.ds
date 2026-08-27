@@ -1,1 +1,2 @@
-console.log(null === null)
+import { echo } from "io"
+echo(null === null)

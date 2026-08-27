@@ -23,10 +23,23 @@ const PACKAGE_DEKA_JSON = {
   security: {
     allow: {
       read: ['./'],
-      write: ['.cache', 'php_modules'],
+      write: ['.cache', 'php_modules', 'ds_modules'],
     },
     prompt: false,
   },
+}
+
+function sourceImportsIo(source: string, files?: Record<string, string>): boolean {
+  const blobs = [source, ...Object.values(files ?? {})]
+  return blobs.some((s) => /\bfrom\s+["']io["']/.test(s))
+}
+
+function packagesFor(source: string, files: Record<string, string> | undefined, declared?: string[]): string[] {
+  const packages = [...(declared ?? [])]
+  if (sourceImportsIo(source, files) && !packages.some((p) => p === 'io' || p === '@deka/io')) {
+    packages.push('io')
+  }
+  return packages
 }
 
 export interface NativeRunResult {
@@ -207,6 +220,15 @@ function writeProjectFiles(tmpDir: string, entryPath: string, source: string, fi
   return { inputPath: tmpDir, outputPath, isProject: true }
 }
 
+function restoreCachedModules(cacheDir: string, tmpDir: string) {
+  for (const name of ['ds_modules', 'php_modules']) {
+    const cached = path.join(cacheDir, name)
+    if (fs.existsSync(cached)) {
+      fs.cpSync(cached, path.join(tmpDir, name), { recursive: true })
+    }
+  }
+}
+
 function installPackages(
   cliPath: string,
   tmpDir: string,
@@ -215,10 +237,12 @@ function installPackages(
   const cacheKey = packages.slice().sort().join('+')
   const cacheDir = path.join(process.cwd(), '.cache', 'deka-packages', cacheKey)
   const cachedLock = path.join(cacheDir, 'deka.lock')
-  const cachedModules = path.join(cacheDir, 'php_modules')
+  const hasCachedModules =
+    fs.existsSync(path.join(cacheDir, 'ds_modules')) ||
+    fs.existsSync(path.join(cacheDir, 'php_modules'))
 
-  if (fs.existsSync(cachedLock) && fs.existsSync(cachedModules)) {
-    fs.cpSync(cachedModules, path.join(tmpDir, 'php_modules'), { recursive: true })
+  if (fs.existsSync(cachedLock) && hasCachedModules) {
+    restoreCachedModules(cacheDir, tmpDir)
     fs.copyFileSync(cachedLock, path.join(tmpDir, 'deka.lock'))
     return { ok: true, stderr: '' }
   }
@@ -245,9 +269,11 @@ function installPackages(
   }
 
   fs.mkdirSync(cacheDir, { recursive: true })
-  const modulesDir = path.join(tmpDir, 'php_modules')
-  if (fs.existsSync(modulesDir)) {
-    fs.cpSync(modulesDir, cachedModules, { recursive: true })
+  for (const name of ['ds_modules', 'php_modules']) {
+    const dir = path.join(tmpDir, name)
+    if (fs.existsSync(dir)) {
+      fs.cpSync(dir, path.join(cacheDir, name), { recursive: true })
+    }
   }
   const lockPath = path.join(tmpDir, 'deka.lock')
   if (fs.existsSync(lockPath)) {
@@ -264,7 +290,7 @@ export async function runNativeCli(
   options?: { dekaJson?: Record<string, unknown>; packages?: string[] }
 ): Promise<NativeRunResult> {
   const tmpDir = createPrivateTempDir()
-  const packages = options?.packages ?? []
+  const packages = packagesFor(source, files, options?.packages)
 
   try {
     const { isProject } = writeProjectFiles(tmpDir, entryPath ?? 'test.ds', source, files)

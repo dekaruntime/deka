@@ -1,3 +1,4 @@
+import { echo } from "io"
 import { write_file } from "fs"
 fn utf8(value: string): bytes {
   let encoded = unsafe { new TextEncoder().encode(value) }
@@ -8,6 +9,6 @@ fn utf8(value: string): bytes {
 }
 async fn go() {
   const w = await write_file(".cache/n.txt", utf8("abcd"))
-  console.log(match (w) { Ok(n) => n, Err(e) => 0 })
+  echo(match (w) { Ok(n) => n, Err(e) => 0 })
 }
 go()

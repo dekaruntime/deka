@@ -1,3 +1,4 @@
+import { echo } from "io"
 import { PI, E } from "./constants.ds";
-console.log(PI);
-console.log(E);
+echo(PI);
+echo(E);

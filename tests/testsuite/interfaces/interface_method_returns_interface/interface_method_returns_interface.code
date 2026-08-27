@@ -1,3 +1,4 @@
+import { echo } from "io"
 interface Counter {
   value: number;
   fn next() Counter {}
@@ -13,7 +14,7 @@ fn (s Step) next() Counter {
 
 fn run(c: Counter) {
   const n = c.next()
-  console.log(n.value)
+  echo(n.value)
 }
 
 run(Step { value: 0 })

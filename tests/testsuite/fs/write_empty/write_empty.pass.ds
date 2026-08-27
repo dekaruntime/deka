@@ -1,3 +1,4 @@
+import { echo } from "io"
 import { write_file, read_file } from "fs"
 fn utf8(value: string): bytes {
   let encoded = unsafe { new TextEncoder().encode(value) }
@@ -13,6 +14,6 @@ async fn go() {
     Ok(buf) => match (unsafe { buf.byteLength }) { Ok(v) => v, Err(e) => -1 },
     Err(e) => -2
   }
-  console.log(n)
+  echo(n)
 }
 go()

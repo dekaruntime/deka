@@ -1,3 +1,4 @@
+import { echo } from "io"
 enum E {
   A(number),
   B(string),
@@ -10,4 +11,4 @@ const r = match (e) {
   _ => 0,
 }
 
-console.log(r)
+echo(r)

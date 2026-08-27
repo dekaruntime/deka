@@ -1,5 +1,6 @@
+import { echo } from "io"
 import { stringify } from "json"
-console.log(match (stringify({ a: { b: 1 } })) {
+echo(match (stringify({ a: { b: 1 } })) {
   Ok(v) => v,
   Err(e) => "fail"
 })

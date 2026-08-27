@@ -1,1 +1,2 @@
-console.log(08)
+import { echo } from "io"
+echo(08)

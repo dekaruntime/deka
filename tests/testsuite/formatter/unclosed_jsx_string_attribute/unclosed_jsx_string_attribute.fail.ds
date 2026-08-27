@@ -1,4 +1,5 @@
+import { echo } from "io"
 const ui = globalThis.deka.ui
 fn Box(props: object) object { return ui.jsxs("div", props) }
 const node = ui.jsxs(Box, { className: 'box })
-console.log(ui.renderToString(node).html)
+echo(ui.renderToString(node).html)

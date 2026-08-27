@@ -1,3 +1,4 @@
+import { echo } from "io"
 struct A{b:number}
 let a=A{b:1}
-console.log(a?.b)
+echo(a?.b)

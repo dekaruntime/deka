@@ -1,3 +1,4 @@
+import { echo } from "io"
 import { hmac, hs256, secure_compare } from "crypto"
 fn utf8(value: string): bytes {
   let encoded = unsafe { new TextEncoder().encode(value) }
@@ -8,7 +9,7 @@ fn utf8(value: string): bytes {
 }
 const a = hmac("sha256", utf8("k"), utf8("m"))
 const b = hs256(utf8("k"), utf8("m"))
-console.log(match (a) {
+echo(match (a) {
   Err(e) => "fail",
   Ok(x) => match (b) {
     Err(e) => "fail",

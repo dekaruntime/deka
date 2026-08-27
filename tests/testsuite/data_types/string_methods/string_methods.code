@@ -1,3 +1,4 @@
+import { echo } from "io"
 const s = "hello"
-console.log(s.toUpperCase())
-console.log(s.length)
+echo(s.toUpperCase())
+echo(s.length)

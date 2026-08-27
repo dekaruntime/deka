@@ -1,3 +1,4 @@
+import { echo } from "io"
 import { sign } from "jwt"
 fn utf8(value: string): bytes {
   let encoded = unsafe { new TextEncoder().encode(value) }
@@ -10,4 +11,4 @@ const token = match (sign({ sub: "1234567890", name: "John Doe", iat: 1516239022
   Ok(v) => v,
   Err(e) => "fail"
 }
-console.log(token)
+echo(token)

@@ -1,3 +1,4 @@
+import { echo } from "io"
 interface Card {
   title: string;
   subtitle?: string;
@@ -5,9 +6,9 @@ interface Card {
 
 fn show(c: Card) {
   if (isset(c.subtitle)) {
-    console.log(c.subtitle)
+    echo(c.subtitle)
   } else {
-    console.log(c.title)
+    echo(c.title)
   }
 }
 

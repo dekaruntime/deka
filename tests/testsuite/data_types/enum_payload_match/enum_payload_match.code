@@ -1,3 +1,4 @@
+import { echo } from "io"
 enum Shape {
   Circle(number),
   Square(number),
@@ -5,6 +6,6 @@ enum Shape {
 
 const s = Shape.Circle(5)
 match (s) {
-  Shape.Circle(r) => console.log(r),
-  Shape.Square(side) => console.log(side),
+  Shape.Circle(r) => echo(r),
+  Shape.Square(side) => echo(side),
 }

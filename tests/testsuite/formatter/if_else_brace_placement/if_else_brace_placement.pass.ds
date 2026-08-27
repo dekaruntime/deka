@@ -1,1 +1,2 @@
-if(true){console.log("yes")}else{console.log("no")}
+import { echo } from "io"
+if(true){echo("yes")}else{echo("no")}

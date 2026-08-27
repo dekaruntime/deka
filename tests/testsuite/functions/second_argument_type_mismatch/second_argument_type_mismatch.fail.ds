@@ -1,4 +1,5 @@
+import { echo } from "io"
 fn add(x: number, y: number) number {
   return x + y
 }
-console.log(add(1, "two"))
+echo(add(1, "two"))

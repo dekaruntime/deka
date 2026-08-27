@@ -1,3 +1,4 @@
+import { echo } from "io"
 struct Box {
   value: number
 }
@@ -6,4 +7,4 @@ async fn (b Box) add(x) Promise<number> {
   return b.value + x
 }
 
-console.log(await Box { value: 1 }.add(2))
+echo(await Box { value: 1 }.add(2))

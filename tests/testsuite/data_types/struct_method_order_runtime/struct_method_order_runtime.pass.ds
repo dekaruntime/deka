@@ -1,3 +1,4 @@
+import { echo } from "io"
 struct Counter {
   count: number
 }
@@ -6,4 +7,4 @@ const c2 = c.inc()
 fn (c Counter) inc() Counter {
   return Counter { count: c.count + 1 }
 }
-console.log(c2.count)
+echo(c2.count)

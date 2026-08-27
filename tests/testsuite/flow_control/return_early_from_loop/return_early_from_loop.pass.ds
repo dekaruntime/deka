@@ -1,3 +1,4 @@
+import { echo } from "io"
 fn find(xs: Array<number>, target: number) number {
   for (const x of xs) {
     if (x === target) {
@@ -6,5 +7,5 @@ fn find(xs: Array<number>, target: number) number {
   }
   return -1
 }
-console.log(find([1, 2, 3], 2))
-console.log(find([1, 2, 3], 5))
+echo(find([1, 2, 3], 2))
+echo(find([1, 2, 3], 5))

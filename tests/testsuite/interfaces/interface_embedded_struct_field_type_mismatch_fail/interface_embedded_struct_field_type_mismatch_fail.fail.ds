@@ -1,3 +1,4 @@
+import { echo } from "io"
 interface Named {
   name: string
 }
@@ -8,6 +9,6 @@ struct Person {
   Label
 }
 fn show(n: Named) {
-  console.log(n.name)
+  echo(n.name)
 }
 show(Person { Label: Label {} })

@@ -1,3 +1,4 @@
+import { echo } from "io"
 struct Point {
   x: number;
   y: number;
@@ -9,4 +10,4 @@ struct LabeledPoint {
 }
 
 const p = LabeledPoint { Point: Point { x: 1, y: 2 }, label: "origin" }
-console.log(p.label)
+echo(p.label)

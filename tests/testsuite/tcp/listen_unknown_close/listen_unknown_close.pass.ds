@@ -1,5 +1,6 @@
+import { echo } from "io"
 import { close } from "tcp"
-console.log(match (close(42)) {
+echo(match (close(42)) {
   Ok(v) => "ok",
   Err(e) => "err"
 })

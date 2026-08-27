@@ -1,3 +1,4 @@
+import { echo } from "io"
 fn broken(
-  console.log("x")
+  echo("x")
 }

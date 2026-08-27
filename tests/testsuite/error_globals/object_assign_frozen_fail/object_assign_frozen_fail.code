@@ -1,5 +1,6 @@
+import { echo } from "io"
 const a = {x: 1}
 const b = {y: 2}
 const c = Object.assign(a, b)
-console.log(c.x)
-console.log(c.y)
+echo(c.x)
+echo(c.y)

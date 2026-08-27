@@ -1,6 +1,7 @@
+import { echo } from "io"
 let i = 0
 for (let j = 0; false; j = j + 1) {
-  console.log("never")
+  echo("never")
   i = i + 1
 }
-console.log(i)
+echo(i)

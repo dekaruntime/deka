@@ -1,5 +1,6 @@
+import { echo } from "io"
 import { validate } from "json"
-console.log(match (validate("{\"a\":1}")) {
+echo(match (validate("{\"a\":1}")) {
   Ok(v) => v,
   Err(e) => false
 })

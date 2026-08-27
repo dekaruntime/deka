@@ -1,5 +1,6 @@
+import { echo } from "io"
 fn double(x: number) number {
   return x * 2
 }
 
-console.log(double(5))
+echo(double(5))

@@ -1,3 +1,4 @@
+import { echo } from "io"
 interface Op {
   op: fn(number, number) number
 }
@@ -5,6 +6,6 @@ fn add(a: number, b: number) number {
   return a + b
 }
 fn run(o: Op) {
-  console.log(o.op(1, 2))
+  echo(o.op(1, 2))
 }
 run({ op: add })

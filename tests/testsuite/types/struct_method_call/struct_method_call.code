@@ -1,3 +1,4 @@
+import { echo } from "io"
 struct Counter {
   value: number;
 }
@@ -7,4 +8,4 @@ fn (c Counter) get() number {
 }
 
 const c = Counter { value: 5 }
-console.log(c.get())
+echo(c.get())

@@ -1,3 +1,4 @@
+import { echo } from "io"
 import { sign, verify } from "jwt"
 fn utf8(value: string): bytes {
   let encoded = unsafe { new TextEncoder().encode(value) }
@@ -10,7 +11,7 @@ const token = match (sign({ sub: "1", nbf: 4000000000 }, utf8("secret"), {})) {
   Ok(v) => v,
   Err(e) => ""
 }
-console.log(match (verify(token, utf8("secret"), {})) {
+echo(match (verify(token, utf8("secret"), {})) {
   Ok(v) => "ok",
   Err(e) => "err"
 })

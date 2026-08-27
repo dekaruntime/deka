@@ -1,5 +1,6 @@
+import { echo } from "io"
 import { now } from "time"
-console.log(match (unsafe { Number.isFinite(now()) }) {
+echo(match (unsafe { Number.isFinite(now()) }) {
   Ok(v) => v,
   Err(e) => false
 })

@@ -1,5 +1,6 @@
+import { echo } from "io"
 async fn greet(name: string) Promise<void> {
-  console.log(name)
+  echo(name)
 }
 async fn main() {
   await greet(1)

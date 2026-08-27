@@ -1,9 +1,10 @@
+import { echo } from "io"
 async fn work() Promise<void> {
-  console.log("ok")
+  echo("ok")
 }
 
 fn takesNumber(n: number) {
-  console.log(n)
+  echo(n)
 }
 
 async fn main() {
