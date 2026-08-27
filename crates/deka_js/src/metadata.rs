@@ -129,7 +129,10 @@ fn parse_export_function_line(line: &str) -> Option<String> {
     } else {
         return None;
     };
-    let name = rest.split(|ch: char| ch == '(' || ch.is_whitespace()).next()?.trim();
+    let name = rest
+        .split(|ch: char| ch == '(' || ch == '<' || ch.is_whitespace())
+        .next()?
+        .trim();
     if name.is_empty() {
         return None;
     }

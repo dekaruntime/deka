@@ -1,0 +1,252 @@
+let tests = []
+let suiteNames = []
+let beforeEachHooks = []
+let afterEachHooks = []
+let beforeAllHooks = []
+let afterAllHooks = []
+let currentFailures = []
+let abortedFlag = [false]
+
+export fn describe(name: string, body: fn() void) {
+  suiteNames.push(name)
+  const be = beforeEachHooks.length
+  const ae = afterEachHooks.length
+  const ba = beforeAllHooks.length
+  const aa = afterAllHooks.length
+  body()
+  suiteNames.pop()
+  for (let i = beforeEachHooks.length; i > be; i = i - 1) {
+    beforeEachHooks.pop()
+  }
+  for (let i = afterEachHooks.length; i > ae; i = i - 1) {
+    afterEachHooks.pop()
+  }
+  for (let i = beforeAllHooks.length; i > ba; i = i - 1) {
+    beforeAllHooks.pop()
+  }
+  for (let i = afterAllHooks.length; i > aa; i = i - 1) {
+    afterAllHooks.pop()
+  }
+}
+
+export fn it(name: string, body: fn() void) {
+  tests.push({
+    name: name,
+    fullName: fullName(name),
+    suite: currentSuite(),
+    body: body,
+    beforeEach: snapshot(beforeEachHooks),
+    afterEach: snapshot(afterEachHooks),
+    beforeAll: snapshot(beforeAllHooks),
+    afterAll: snapshot(afterAllHooks),
+  })
+}
+
+export fn test(name: string, body: fn() void) {
+  it(name, body)
+}
+
+export fn beforeEach(body: fn() void) {
+  beforeEachHooks.push(body)
+}
+
+export fn afterEach(body: fn() void) {
+  afterEachHooks.push(body)
+}
+
+export fn beforeAll(body: fn() void) {
+  beforeAllHooks.push(body)
+}
+
+export fn afterAll(body: fn() void) {
+  afterAllHooks.push(body)
+}
+
+export fn fail(message: string) void {
+  currentFailures.push(message)
+  abortedFlag[0] = true
+}
+
+export fn toBe<T>(received: T, expected: T) T {
+  if (abortedFlag[0]) {
+    return received
+  }
+  if (received != expected) {
+    currentFailures.push("expected " + fmt(expected) + ", got " + fmt(received))
+  }
+  return received
+}
+
+export fn toEqual<T>(received: T, expected: T) T {
+  if (abortedFlag[0]) {
+    return received
+  }
+  if (!deepEqual(received, expected)) {
+    currentFailures.push("expected " + fmt(expected) + ", got " + fmt(received))
+  }
+  return received
+}
+
+export fn toBeOk<T, E>(received: Result<T, E>) T {
+  if (!abortedFlag[0] && !enum_is(received, "Result", "Ok")) {
+    fail("expected Ok, got " + fmt(received))
+  }
+  return match (unsafe { received.value }) {
+    Ok(v) => v,
+    Err(e) => v,
+  }
+}
+
+export fn toBeErr<T, E>(received: Result<T, E>) E {
+  if (!abortedFlag[0] && !enum_is(received, "Result", "Err")) {
+    fail("expected Err, got " + fmt(received))
+  }
+  return match (unsafe { received.error }) {
+    Ok(v) => v,
+    Err(e) => v,
+  }
+}
+
+export fn toBeSome<T>(received: Option<T>) T {
+  if (!abortedFlag[0] && !enum_is(received, "Option", "Some")) {
+    fail("expected Some, got " + fmt(received))
+  }
+  return match (unsafe { received.value }) {
+    Ok(v) => v,
+    Err(e) => v,
+  }
+}
+
+export fn toBeNone<T>(received: Option<T>) Option<T> {
+  if (!abortedFlag[0] && !enum_is(received, "Option", "None")) {
+    fail("expected None, got " + fmt(received))
+  }
+  return received
+}
+
+export fn run(pattern: string) void {
+  let passed = 0
+  let failed = 0
+  let lastSuite = ""
+  for (const t of tests) {
+    if (!nameMatches(t.fullName, pattern)) {
+      continue
+    }
+    abortedFlag[0] = false
+    clear_failures()
+    if (t.suite != lastSuite) {
+      runHooks(t.beforeAll)
+      lastSuite = t.suite
+    }
+    runHooks(t.beforeEach)
+    callTest(t.body)
+    runHooks(t.afterEach)
+    if (currentFailures.length > 0) {
+      failed = failed + 1
+      console.log("[fail] " + t.fullName)
+      for (const message of currentFailures) {
+        console.log(message)
+      }
+    } else {
+      passed = passed + 1
+      console.log("[pass] " + t.fullName)
+    }
+  }
+  const total = passed + failed
+  console.log("[test] total=" + total + " passed=" + passed + " failed=" + failed)
+}
+
+fn currentSuite() string {
+  if (suiteNames.length == 0) {
+    return ""
+  }
+  let out = ""
+  for (const part of suiteNames) {
+    if (out == "") {
+      out = part
+    } else {
+      out = out + " > " + part
+    }
+  }
+  return out
+}
+
+fn fullName(name: string) string {
+  const suite = currentSuite()
+  if (suite == "") {
+    return name
+  }
+  return suite + " > " + name
+}
+
+fn snapshot(hooks: array<fn() void>) array<fn() void> {
+  let copy = []
+  for (const hook of hooks) {
+    copy.push(hook)
+  }
+  return copy
+}
+
+fn nameMatches(full: string, pattern: string) boolean {
+  if (pattern == "") {
+    return true
+  }
+  const hit = match (unsafe { full.indexOf(pattern) >= 0 }) {
+    Ok(v) => v,
+    Err(e) => true,
+  }
+  return hit
+}
+
+fn runHooks(hooks: array<fn() void>) void {
+  for (const hook of hooks) {
+    callTest(hook)
+  }
+}
+
+fn callTest(body: fn() void) void {
+  body()
+}
+
+fn clear_failures() void {
+  for (let i = currentFailures.length; i > 0; i = i - 1) {
+    currentFailures.pop()
+  }
+}
+
+fn enum_is<T>(value: T, enumName: string, caseName: string) boolean {
+  const hit = match (unsafe { value && value.__enum === enumName && value.__case === caseName }) {
+    Ok(v) => v,
+    Err(e) => false,
+  }
+  return hit
+}
+
+fn fmt<T>(value: T) string {
+  const r = match (unsafe { JSON.stringify(value) }) {
+    Ok(v) => v,
+    Err(e) => "",
+  }
+  if (r == "") {
+    return "?"
+  }
+  return r
+}
+
+fn deepEqual<T>(a: T, b: T) boolean {
+  if (a == b) {
+    return true
+  }
+  const left = match (unsafe { JSON.stringify(a) }) {
+    Ok(v) => v,
+    Err(e) => "",
+  }
+  const right = match (unsafe { JSON.stringify(b) }) {
+    Ok(v) => v,
+    Err(e) => "",
+  }
+  if (left == "" || right == "") {
+    return false
+  }
+  return left == right
+}
