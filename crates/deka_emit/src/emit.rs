@@ -842,6 +842,18 @@ impl<'a> Emitter<'a> {
             Expr::Unsafe { source, .. } => {
                 self.emit_unsafe(source)?;
             }
+            Expr::Ternary {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                self.emit_expr(condition)?;
+                self.out.push_str(" ? ");
+                self.emit_expr(then_branch)?;
+                self.out.push_str(" : ");
+                self.emit_expr(else_branch)?;
+            }
             Expr::EnumConstructor {
                 enum_name,
                 case_name,

@@ -139,6 +139,26 @@ impl<'a> Parser<'a> {
                 }
             }
 
+            // Ternary conditional: `cond ? then : else`. Low precedence,
+            // right-associative, and binds looser than `||`.
+            if next_kind == TokenKind::Question && min_prec <= 2 {
+                self.skip_newlines();
+                self.advance(); // `?`
+                let then_branch = alloc(self.arena, self.parse_expr(2)?);
+                self.skip_newlines();
+                self.expect(TokenKind::Colon)?;
+                self.skip_newlines();
+                let else_branch = alloc(self.arena, self.parse_expr(2)?);
+                let span = self.span_from(start, start_byte);
+                left = Expr::Ternary {
+                    condition: alloc(self.arena, left),
+                    then_branch,
+                    else_branch,
+                    span,
+                };
+                continue;
+            }
+
             let (lbp, rbp, op) = match infix_info(next_kind) {
                 Some(info) => info,
                 None => break,

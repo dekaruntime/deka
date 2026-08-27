@@ -398,6 +398,17 @@ fn transform_expr<'a>(
             source,
             span: *span,
         },
+        Expr::Ternary {
+            condition,
+            then_branch,
+            else_branch,
+            span,
+        } => Expr::Ternary {
+            condition: transform_expr(condition, arena, enums),
+            then_branch: transform_expr(then_branch, arena, enums),
+            else_branch: transform_expr(else_branch, arena, enums),
+            span: *span,
+        },
         Expr::Await { expr, span } => Expr::Await {
             expr: transform_expr(expr, arena, enums),
             span: *span,
@@ -969,6 +980,17 @@ fn lower_expr<'a>(
         },
         Expr::Unsafe { source, span } => Expr::Unsafe {
             source,
+            span: *span,
+        },
+        Expr::Ternary {
+            condition,
+            then_branch,
+            else_branch,
+            span,
+        } => Expr::Ternary {
+            condition: lower_expr(condition, arena, method_calls),
+            then_branch: lower_expr(then_branch, arena, method_calls),
+            else_branch: lower_expr(else_branch, arena, method_calls),
             span: *span,
         },
         Expr::Await { expr, span } => Expr::Await {

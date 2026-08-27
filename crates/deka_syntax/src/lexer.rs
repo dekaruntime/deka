@@ -55,6 +55,7 @@ pub enum TokenKind {
     PercentEq,
     Eq,
     EqEq,
+    TripleEq,
     NotEq,
     Lt,
     Le,
@@ -700,10 +701,19 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 if self.current() == Some('=') {
                     self.advance();
-                    Token {
-                        kind: TokenKind::EqEq,
-                        text: "==",
-                        span: self.span_from(start, start_byte),
+                    if self.current() == Some('=') {
+                        self.advance();
+                        Token {
+                            kind: TokenKind::TripleEq,
+                            text: "===",
+                            span: self.span_from(start, start_byte),
+                        }
+                    } else {
+                        Token {
+                            kind: TokenKind::EqEq,
+                            text: "==",
+                            span: self.span_from(start, start_byte),
+                        }
                     }
                 } else if self.current() == Some('>') {
                     self.advance();

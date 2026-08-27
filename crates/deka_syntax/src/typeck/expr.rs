@@ -146,6 +146,30 @@ impl<'a> Checker<'a> {
                     args: vec![Type::Infer, Type::Infer],
                 }
             }
+            ast::Expr::Ternary {
+                condition,
+                then_branch,
+                else_branch,
+                span,
+            } => {
+                let cond_type = self.check_expr(condition);
+                if !Self::is_boolean(&cond_type) && !cond_type.is_error() && !matches!(cond_type, Type::Infer) {
+                    self.error_span(*span, format!("ternary condition must be boolean, found type `{cond_type}`"));
+                }
+                let then_type = self.check_expr(then_branch);
+                let else_type = self.check_expr(else_branch);
+                if is_assignable(&then_type, &else_type) {
+                    then_type
+                } else if is_assignable(&else_type, &then_type) {
+                    else_type
+                } else {
+                    self.error_span(
+                        *span,
+                        format!("ternary branches have incompatible types `{then_type}` and `{else_type}`"),
+                    );
+                    Type::Error
+                }
+            }
             ast::Expr::TemplateLiteral { .. } => Type::Named { name: "string" },
             ast::Expr::Function {
                 params,
