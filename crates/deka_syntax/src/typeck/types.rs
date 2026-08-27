@@ -127,6 +127,14 @@ pub fn is_assignable<'a>(expected: &Type<'a>, actual: &Type<'a>) -> bool {
             return true;
         }
     }
+    // `Option<A>` is assignable to `Option<B>` when `A` is assignable to `B`.
+    if let (Type::Option { inner: expected_inner }, Type::Option { inner: actual_inner }) =
+        (expected, actual)
+    {
+        if is_assignable(expected_inner, actual_inner) {
+            return true;
+        }
+    }
     // Structural subtyping for generic types like Result<T, E>.
     if let (
         Type::Generic { base: expected_base, args: expected_args },

@@ -347,16 +347,33 @@ impl<'a> Checker<'a> {
         }
 
         for embed in info.embeds {
-            if !seen_fields.contains(embed.name) {
-                self.error_span(
-                    span,
-                    format!(
-                        "missing embedded struct `{}` in struct literal for `{name}`",
-                        embed.name
-                    ),
-                );
+            if seen_fields.contains(embed.name) {
+                continue;
             }
+            // Empty embedded structs (no fields and only empty embeds) are
+            // auto-filled by the emitter, so they need not be supplied literally.
+            if self.is_empty_embed_struct(embed.name) {
+                continue;
+            }
+            self.error_span(
+                span,
+                format!(
+                    "missing embedded struct `{}` in struct literal for `{name}`",
+                    embed.name
+                ),
+            );
         }
+    }
+
+    fn is_empty_embed_struct(&self, name: &'a str) -> bool {
+        let info = match self.structs.get(name) {
+            Some(i) => i,
+            None => return false,
+        };
+        if !info.fields.is_empty() {
+            return false;
+        }
+        info.embeds.iter().all(|e| self.is_empty_embed_struct(e.name))
     }
 
     fn check_field_access(
