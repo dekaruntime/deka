@@ -1,1 +1,2 @@
-console.log(Object.values({a: 1, b: 2}))
+import { echo } from "io"
+echo(Object.values({a: 1, b: 2}))

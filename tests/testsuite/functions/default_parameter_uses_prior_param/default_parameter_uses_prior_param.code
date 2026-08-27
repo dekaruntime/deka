@@ -1,6 +1,7 @@
+import { echo } from "io"
 fn scale(x: number, factor: number = x) number {
   return x * factor
 }
 
-console.log(scale(3))
-console.log(scale(3, 4))
+echo(scale(3))
+echo(scale(3, 4))

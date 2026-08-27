@@ -1,3 +1,4 @@
+import { echo } from "io"
 import { write } from "tcp"
 fn utf8(value: string): bytes {
   let encoded = unsafe { new TextEncoder().encode(value) }
@@ -8,7 +9,7 @@ fn utf8(value: string): bytes {
 }
 let data = utf8("x")
 
-console.log(match (write(0, data)) {
+echo(match (write(0, data)) {
   Ok(v) => "ok",
   Err(e) => "err"
 })

@@ -1,1 +1,2 @@
-console.log(undefined())
+import { echo } from "io"
+echo(undefined())

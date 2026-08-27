@@ -1,3 +1,4 @@
+import { echo } from "io"
 async fn one() Promise<number> {
   return 1
 }
@@ -6,6 +7,6 @@ async fn two() Promise<number> {
 }
 async fn main() {
   const x = await one() + await two()
-  console.log(x)
+  echo(x)
 }
 await main()

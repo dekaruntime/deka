@@ -1,6 +1,7 @@
+import { echo } from "io"
 type ProcessFunc = fn(string) string
 fn shout(s: string) string {
   return s + "!"
 }
 const f: ProcessFunc = shout
-console.log(f("hi"))
+echo(f("hi"))

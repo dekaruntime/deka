@@ -1,3 +1,4 @@
+import { echo } from "io"
 interface Box {
   mut value: number
 }
@@ -6,4 +7,4 @@ fn setFive(b: Box) {
 }
 let obj = { value: 0 }
 setFive(obj)
-console.log(obj.value)
+echo(obj.value)

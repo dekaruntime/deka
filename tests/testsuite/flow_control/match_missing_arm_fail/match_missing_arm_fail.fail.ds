@@ -1,3 +1,4 @@
+import { echo } from "io"
 enum Color {
   Red
   Green
@@ -9,4 +10,4 @@ fn name(c: Color) string {
     Color.Green => "green"
   }
 }
-console.log(name(Color.Red))
+echo(name(Color.Red))

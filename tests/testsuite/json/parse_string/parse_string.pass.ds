@@ -1,5 +1,6 @@
+import { echo } from "io"
 import { parse } from "json"
-console.log(match (parse("\"hi\"")) {
+echo(match (parse("\"hi\"")) {
   Ok(v) => v,
   Err(e) => "fail"
 })

@@ -1,3 +1,4 @@
+import { echo } from "io"
 const arr = [1, 2, 3]
 const first = arr.find(fn (x: number) boolean { return x > 5 })
-console.log(first.length)
+echo(first.length)

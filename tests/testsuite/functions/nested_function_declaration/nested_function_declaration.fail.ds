@@ -1,3 +1,4 @@
+import { echo } from "io"
 fn outer(flag: boolean) number {
   if (flag) {
     fn inner() number {
@@ -7,5 +8,5 @@ fn outer(flag: boolean) number {
   }
   return 0
 }
-console.log(outer(true))
-console.log(outer(false))
+echo(outer(true))
+echo(outer(false))

@@ -1,3 +1,4 @@
+import { echo } from "io"
 import { digest } from "crypto"
 fn utf8(value: string): bytes {
   let encoded = unsafe { new TextEncoder().encode(value) }
@@ -6,7 +7,7 @@ fn utf8(value: string): bytes {
     Err(err) => utf8("")
   }
 }
-console.log(match (digest("md5", utf8("x"))) {
+echo(match (digest("md5", utf8("x"))) {
   Ok(v) => "ok",
   Err(e) => "err"
 })

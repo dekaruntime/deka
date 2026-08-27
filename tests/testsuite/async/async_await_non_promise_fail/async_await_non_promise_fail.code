@@ -1,5 +1,6 @@
+import { echo } from "io"
 async fn main() {
-  console.log(await 1)
+  echo(await 1)
 }
 
 await main()

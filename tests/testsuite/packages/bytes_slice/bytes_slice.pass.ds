@@ -1,4 +1,5 @@
+import { echo } from "io"
 import { from_string, slice, to_string } from "bytes"
 
 const encoded = from_string("hello")
-console.log(to_string(slice(encoded, 3)))
+echo(to_string(slice(encoded, 3)))

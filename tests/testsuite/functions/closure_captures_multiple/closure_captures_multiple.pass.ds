@@ -1,3 +1,4 @@
+import { echo } from "io"
 fn makeSum() {
   const a = 10
   const b = 20
@@ -7,4 +8,4 @@ fn makeSum() {
   return sum
 }
 const f = makeSum()
-console.log(f())
+echo(f())

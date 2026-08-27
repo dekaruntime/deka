@@ -1,3 +1,4 @@
+import { echo } from "io"
 interface A {
   x: number
 }
@@ -9,6 +10,6 @@ struct P {
   y: string
 }
 fn show(ab: A & B) {
-  console.log(ab.x, ab.y)
+  echo(ab.x, ab.y)
 }
 show(P { x: 1, y: "two" })

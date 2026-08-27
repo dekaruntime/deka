@@ -1,1 +1,2 @@
-console.log(undefinedFn())
+import { echo } from "io"
+echo(undefinedFn())

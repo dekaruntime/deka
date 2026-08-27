@@ -1,3 +1,4 @@
+import { echo } from "io"
 fn f(r: Result<Option<number>, string>) number {
   return match (r) {
     Err(_) => 0,
@@ -5,4 +6,4 @@ fn f(r: Result<Option<number>, string>) number {
     Ok(Some(v)) => v,
   }
 }
-console.log(f(Ok(Some(7))))
+echo(f(Ok(Some(7))))

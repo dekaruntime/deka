@@ -1,3 +1,4 @@
+import { echo } from "io"
 async fn inner() Promise<number> {
   return 3
 }
@@ -7,4 +8,4 @@ async fn outer() Promise<number> {
 }
 
 const result = await outer()
-console.log(result)
+echo(result)

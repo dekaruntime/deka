@@ -1,3 +1,4 @@
+import { echo } from "io"
 fn maybeReturn(x: boolean) number {
   if (x) {
     return 1
@@ -5,4 +6,4 @@ fn maybeReturn(x: boolean) number {
     return 2
   }
 }
-console.log(maybeReturn(true))
+echo(maybeReturn(true))

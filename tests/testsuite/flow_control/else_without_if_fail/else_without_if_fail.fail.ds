@@ -1,4 +1,5 @@
-console.log("x")
+import { echo } from "io"
+echo("x")
 else {
-  console.log("y")
+  echo("y")
 }

@@ -1,3 +1,4 @@
+import { echo } from "io"
 import { format_request } from "http"
 fn utf8(value: string): bytes {
   let encoded = unsafe { new TextEncoder().encode(value) }
@@ -7,7 +8,7 @@ fn utf8(value: string): bytes {
   }
 }
 const req = format_request("POST", "/", "h", {}, utf8("abcd"))
-console.log(match (unsafe { req.indexOf("Content-Length: 4") >= 0 }) {
+echo(match (unsafe { req.indexOf("Content-Length: 4") >= 0 }) {
   Ok(v) => v,
   Err(e) => false
 })

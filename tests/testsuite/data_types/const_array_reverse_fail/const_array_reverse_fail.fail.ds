@@ -1,3 +1,4 @@
+import { echo } from "io"
 const arr = [1, 2]
 arr.reverse()
-console.log(arr[0])
+echo(arr[0])

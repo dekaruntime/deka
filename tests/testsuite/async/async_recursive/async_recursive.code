@@ -1,6 +1,7 @@
+import { echo } from "io"
 async fn countdown(n: number) Promise<void> {
   if (n > 0) {
-    console.log(n)
+    echo(n)
     await countdown(n - 1)
   }
 }

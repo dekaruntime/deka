@@ -1,3 +1,4 @@
+import { echo } from "io"
 import { mkdirs, read_dir } from "fs"
 async fn go() {
   await mkdirs(".cache/parent/child")
@@ -9,6 +10,6 @@ async fn go() {
       Err(e) => false
     }
   }
-  console.log(is_dir)
+  echo(is_dir)
 }
 go()

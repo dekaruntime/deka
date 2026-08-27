@@ -1,3 +1,4 @@
-console.log(1 < 2)
-console.log(5 >= 5)
-console.log("a" === "a")
+import { echo } from "io"
+echo(1 < 2)
+echo(5 >= 5)
+echo("a" === "a")

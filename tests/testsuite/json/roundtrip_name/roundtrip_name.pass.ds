@@ -1,3 +1,4 @@
+import { echo } from "io"
 import { stringify, parse } from "json"
 const encoded = match (stringify({ name: "deka" })) {
   Ok(v) => v,
@@ -10,4 +11,4 @@ const name = match (parse(encoded)) {
     Err(e) => ""
   }
 }
-console.log(name)
+echo(name)

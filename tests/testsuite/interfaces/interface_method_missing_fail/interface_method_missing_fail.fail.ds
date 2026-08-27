@@ -1,3 +1,4 @@
+import { echo } from "io"
 interface Greeter {
   fn greet() string
 }
@@ -5,6 +6,6 @@ struct Person {
   name: string
 }
 fn welcome(g: Greeter) {
-  console.log(g.greet())
+  echo(g.greet())
 }
 welcome(Person { name: "Deka" })

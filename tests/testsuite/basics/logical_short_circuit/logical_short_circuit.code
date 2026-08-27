@@ -1,1 +1,2 @@
-console.log(false && console.log("x"))
+import { echo } from "io"
+echo(false && echo("x"))

@@ -1,3 +1,4 @@
+import { echo } from "io"
 struct Store {
   count: number
 }
@@ -7,6 +8,6 @@ fn (s Store) async load() Promise<number> {
 const store = Store { count: 5 }
 async fn main() {
   const v = await store.load()
-  console.log(v)
+  echo(v)
 }
 main()

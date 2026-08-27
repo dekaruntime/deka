@@ -1,1 +1,2 @@
-console.log("a" in { a: 1 })
+import { echo } from "io"
+echo("a" in { a: 1 })

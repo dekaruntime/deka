@@ -193,7 +193,6 @@ fn ds_rejects_nested_declarations() {
 fn ds_rejects_php_surface_and_const_reassignment() {
     for (source, expected) in [
         ("$name;", "bare identifiers"),
-        ("echo 'hello';", "echo is not part"),
         ("array('hello');", "PHP array()"),
         ("(string) value;", "PHP casts"),
         ("foreach (items as item) {}", "foreach is not part"),

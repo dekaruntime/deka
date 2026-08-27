@@ -1,3 +1,4 @@
+import { echo } from "io"
 const x = 1
 x++
-console.log(x)
+echo(x)

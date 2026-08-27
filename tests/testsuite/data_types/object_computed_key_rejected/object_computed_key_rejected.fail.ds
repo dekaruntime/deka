@@ -1,3 +1,4 @@
+import { echo } from "io"
 const key = "a"
 const obj = { [key]: 1 }
-console.log(obj.a)
+echo(obj.a)

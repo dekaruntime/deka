@@ -1,5 +1,6 @@
+import { echo } from "io"
 import { get } from "http"
-console.log(match (get("not a url")) {
+echo(match (get("not a url")) {
   Ok(v) => "ok",
   Err(e) => "err"
 })

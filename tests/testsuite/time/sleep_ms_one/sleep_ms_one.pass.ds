@@ -1,5 +1,6 @@
+import { echo } from "io"
 import { sleep_ms } from "time"
-console.log(match (sleep_ms(1)) {
+echo(match (sleep_ms(1)) {
   Ok(v) => "ok",
   Err(e) => "err"
 })

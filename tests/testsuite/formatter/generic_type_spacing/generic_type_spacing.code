@@ -1,4 +1,5 @@
+import { echo } from "io"
 fn id<T>(x: T) T {
   return x
 }
-console.log(id(42))
+echo(id(42))

@@ -1,3 +1,4 @@
+import { echo } from "io"
 import { mkdirs, write_file, read_dir } from "fs"
 fn utf8(value: string): bytes {
   let encoded = unsafe { new TextEncoder().encode(value) }
@@ -17,6 +18,6 @@ async fn go() {
       Err(e) => false
     }
   }
-  console.log(is_file)
+  echo(is_file)
 }
 go()
