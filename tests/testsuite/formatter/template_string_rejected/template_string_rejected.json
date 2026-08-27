@@ -1,6 +1,5 @@
 {
-  "title": "Template String Rejected",
-  "stage": "parse",
-  "notes": "Formatter passthrough for invalid template string rejected source.",
-  "expectedDiagnosticContains": "Unexpected token"
+  "title": "Template string formatting",
+  "stage": "run",
+  "notes": "Template strings with embedded expressions are formatted and executed correctly in v2."
 }

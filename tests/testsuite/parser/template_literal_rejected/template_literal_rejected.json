@@ -1,5 +1,5 @@
 {
-  "title": "Template literals are rejected",
-  "stage": "parse",
-  "expectedDiagnosticContains": "Unexpected token"
+  "title": "Template literals with interpolation",
+  "stage": "run",
+  "notes": "Template literals with embedded expressions are supported in v2."
 }
