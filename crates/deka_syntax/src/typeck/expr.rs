@@ -119,7 +119,20 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            ast::Expr::JsxElement { element, .. } => {
+            ast::Expr::JsxElement { element, span } => {
+                // Uppercase JSX tags are component references and must be in
+                // scope; lowercase tags are plain HTML element names.
+                if let Some(first) = element.tag.chars().next() {
+                    if first.is_uppercase() && self.lookup_var(element.tag).is_none() {
+                        self.error_span(
+                            *span,
+                            format!(
+                                "`{}` is used here but is not initialized until later",
+                                element.tag
+                            ),
+                        );
+                    }
+                }
                 for attr in element.attributes.iter() {
                     if let Some(value) = &attr.value {
                         self.check_expr(value);
@@ -1334,6 +1347,68 @@ impl<'a> Checker<'a> {
         };
 
         let object_type = self.check_expr(object);
+
+        // Interface receiver: dispatch is dynamic; validate against the
+        // interface signature and enforce mutable-method requirements inferred
+        // from satisfying structs.
+        if let Type::Interface { name: iface_name } = &object_type {
+            let info = self.interfaces.get(iface_name)?;
+            let method = info.members.iter().find(|m| match m {
+                ast::InterfaceMember::Method { name, .. } => *name == method_name,
+                _ => false,
+            })?;
+            let method_mutable = matches!(
+                method,
+                ast::InterfaceMember::Method { mutable: true, .. }
+            );
+            if method_mutable && !self.is_mutable_expr(object) {
+                self.error_at_expr(
+                    object,
+                    format!(
+                        "cannot call mutable method `{method_name}` on an immutable receiver"
+                    ),
+                );
+            }
+            let (params, return_type) = match method {
+                ast::InterfaceMember::Method { params, return_type, .. } => (*params, return_type.as_ref()),
+                _ => unreachable!(),
+            };
+            let expected_params: Vec<Type<'a>> = params
+                .iter()
+                .map(|p| match &p.ty {
+                    Some(t) => self.resolve_ast_type(t),
+                    None => Type::Error,
+                })
+                .collect();
+            if expected_params.len() != args.len() {
+                self.error_span(
+                    span,
+                    format!(
+                        "method `{method_name}` on `{iface_name}` expected {} argument{}, found {}",
+                        expected_params.len(),
+                        if expected_params.len() == 1 { "" } else { "s" },
+                        args.len()
+                    ),
+                );
+            } else {
+                for (expected, arg) in expected_params.iter().zip(args.iter()) {
+                    let arg_type = self.check_expr(arg);
+                    if !self.is_assignable(expected, &arg_type) {
+                        self.error_at_expr(
+                            arg,
+                            format!(
+                                "expected argument type `{expected}`, found type `{arg_type}`"
+                            ),
+                        );
+                    }
+                }
+            }
+            return return_type
+                .map(|t| self.resolve_ast_type(t))
+                .unwrap_or(Type::None)
+                .into();
+        }
+
         let receiver_type = match &object_type {
             Type::Struct { name } => *name,
             _ => return None,

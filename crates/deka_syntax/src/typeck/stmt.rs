@@ -121,6 +121,13 @@ impl<'a> Checker<'a> {
 
                 let mut seen_embeds = HashSet::new();
                 for embed in embeds.iter() {
+                    if embed.name == *name {
+                        self.error_span(
+                            embed.span,
+                            format!("Struct cannot embed itself (`{name}`)"),
+                        );
+                        continue;
+                    }
                     if !seen_embeds.insert(embed.name) {
                         self.error_span(
                             embed.span,

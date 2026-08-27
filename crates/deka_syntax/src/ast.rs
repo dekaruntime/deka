@@ -238,6 +238,7 @@ pub enum InterfaceMember<'a> {
         name: &'a str,
         params: &'a [Param<'a>],
         return_type: Option<Type<'a>>,
+        mutable: bool,
         span: Span,
     },
 }

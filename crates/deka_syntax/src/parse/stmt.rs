@@ -587,6 +587,7 @@ impl<'a> Parser<'a> {
                     name: method_name,
                     params: alloc_slice(self.arena, params.to_vec()),
                     return_type,
+                    mutable,
                     span: self.span_from(member_start, member_start_byte),
                 });
             } else {
