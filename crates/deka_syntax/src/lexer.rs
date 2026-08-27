@@ -306,9 +306,26 @@ impl<'a> Lexer<'a> {
         } else {
             TokenKind::Number
         };
+        let text = &self.source[start_pos..self.pos];
+        // Reject octal-style leading-zero integers like `08` or `00`.
+        // Decimal `0` and floats are still allowed.
+        if text.len() > 1
+            && text.starts_with('0')
+            && !saw_dot
+            && !matches!(
+                text.chars().nth(1),
+                Some('x' | 'X' | 'b' | 'B' | 'o' | 'O')
+            )
+        {
+            self.diagnostics.push(Diagnostic::error(
+                start.line,
+                start.column,
+                "leading-zero octal-style integers are not allowed in DekaScript",
+            ));
+        }
         Token {
             kind,
-            text: &self.source[start_pos..self.pos],
+            text,
             span: self.span_from(start, start_byte),
         }
     }
@@ -843,5 +860,31 @@ mod tests {
             "expected unterminated block comment error, got: {:?}",
             lexer.diagnostics()
         );
+    }
+
+    #[test]
+    fn leading_zero_octal_integer_rejected() {
+        let mut lexer = Lexer::new("08");
+        let tok = lexer.next_token();
+        assert_eq!(tok.kind, TokenKind::Number);
+        assert!(
+            lexer.diagnostics().iter().any(|d| d.message.contains("leading-zero octal-style")),
+            "expected leading-zero octal error, got: {:?}",
+            lexer.diagnostics()
+        );
+    }
+
+    #[test]
+    fn zero_and_float_still_allowed() {
+        let mut lexer = Lexer::new("0 0.5");
+        let kinds = [
+            TokenKind::Number,
+            TokenKind::Number,
+            TokenKind::Eof,
+        ];
+        for expected in kinds {
+            assert_eq!(lexer.next_token().kind, expected);
+        }
+        assert!(lexer.diagnostics().is_empty(), "{:?}", lexer.diagnostics());
     }
 }
