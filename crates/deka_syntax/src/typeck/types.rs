@@ -25,6 +25,9 @@ pub enum Type<'a> {
     Function {
         params: Vec<Type<'a>>,
         ret: Box<Type<'a>>,
+        /// Number of trailing parameters that have default values and may be
+        /// omitted at call sites.
+        optional: usize,
     },
     /// Generic instantiation, e.g. `Result<number, string>`.
     Generic {
@@ -56,11 +59,15 @@ impl fmt::Display for Type<'_> {
             Type::None => write!(f, "none"),
             Type::Named { name } => write!(f, "{name}"),
             Type::Option { inner } => write!(f, "Option<{inner}>"),
-            Type::Function { params, ret } => {
+            Type::Function { params, ret, optional } => {
                 write!(f, "fn(")?;
+                let required = params.len().saturating_sub(*optional);
                 for (i, p) in params.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
+                    }
+                    if i == required && *optional > 0 {
+                        write!(f, "optional ")?;
                     }
                     write!(f, "{p}")?;
                 }

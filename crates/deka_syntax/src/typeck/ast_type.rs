@@ -20,7 +20,9 @@ impl<'a> Checker<'a> {
     ) -> Type<'a> {
         match ty {
             ast::Type::Named { name, span } => match *name {
-                "number" | "string" | "boolean" | "never" => Type::Named { name },
+                "number" | "string" | "boolean" | "never" | "void" | "bytes" => {
+                    Type::Named { name }
+                }
                 "Option" => {
                     self.error_span(
                         *span,
@@ -104,6 +106,7 @@ impl<'a> Checker<'a> {
                     .map(|p| self.resolve_ast_type_rec(p, seen))
                     .collect(),
                 ret: Box::new(self.resolve_ast_type_rec(ret, seen)),
+                optional: 0,
             },
 
             ast::Type::Option { inner, .. } => Type::Option {

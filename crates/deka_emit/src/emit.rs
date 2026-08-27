@@ -389,7 +389,7 @@ impl<'a> Emitter<'a> {
                     if i > 0 {
                         self.out.push_str(", ");
                     }
-                    self.out.push_str(param.name);
+                    self.emit_param(param)?;
                 }
                 self.out.push_str(") {\n");
                 for stmt in body.iter() {
@@ -442,7 +442,7 @@ impl<'a> Emitter<'a> {
                             if i > 0 {
                                 self.out.push_str(", ");
                             }
-                            self.out.push_str(param.name);
+                            self.emit_param(param)?;
                         }
                         self.out.push_str(") {\n");
                         for stmt in body.iter() {
@@ -907,7 +907,7 @@ impl<'a> Emitter<'a> {
                     if i > 0 {
                         self.out.push_str(", ");
                     }
-                    self.out.push_str(param.name);
+                    self.emit_param(param)?;
                 }
                 self.out.push_str(") {\n");
                 for stmt in body.iter() {
@@ -916,6 +916,15 @@ impl<'a> Emitter<'a> {
                 }
                 self.out.push('}');
             }
+        }
+        Ok(())
+    }
+
+    fn emit_param(&mut self, param: &deka_syntax::Param<'a>) -> Result<(), String> {
+        self.out.push_str(param.name);
+        if let Some(default) = &param.default_value {
+            self.out.push_str(" = ");
+            self.emit_expr(default)?;
         }
         Ok(())
     }

@@ -277,11 +277,18 @@ impl<'a> Checker<'a> {
 
             self.pop_type_params();
 
+            let optional = params
+                .iter()
+                .rev()
+                .take_while(|p| p.default_value.is_some())
+                .count();
+
             self.globals.insert(
                 name,
                 Type::Function {
                     params: param_types,
                     ret: Box::new(ret),
+                    optional,
                 },
             );
         }
@@ -509,8 +516,8 @@ impl<'a> Checker<'a> {
     ) {
         // Use the previously collected signature for parameter types so that
         // errors about missing annotations are reported exactly once.
-        let param_types = match self.globals.get(name).cloned() {
-            Some(Type::Function { params, ret: _ }) => params,
+        let (param_types, optional) = match self.globals.get(name).cloned() {
+            Some(Type::Function { params, ret: _, optional }) => (params, optional),
             _ => {
                 let mut pts = Vec::new();
                 for p in params {
@@ -525,7 +532,12 @@ impl<'a> Checker<'a> {
                         }
                     }
                 }
-                pts
+                let optional = params
+                    .iter()
+                    .rev()
+                    .take_while(|p| p.default_value.is_some())
+                    .count();
+                (pts, optional)
             }
         };
 
@@ -543,6 +555,7 @@ impl<'a> Checker<'a> {
         let self_type = Type::Function {
             params: param_types.clone(),
             ret: Box::new(final_ret.clone()),
+            optional,
         };
         self.declare_var(name, self_type);
 
@@ -607,6 +620,7 @@ impl<'a> Checker<'a> {
             Type::Function {
                 params: param_types,
                 ret: Box::new(final_ret),
+                optional,
             },
         );
     }

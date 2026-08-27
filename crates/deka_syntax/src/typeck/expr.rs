@@ -229,9 +229,16 @@ impl<'a> Checker<'a> {
         self.return_type = saved_return_type;
         self.scopes.pop();
 
+        let optional = params
+            .iter()
+            .rev()
+            .take_while(|p| p.default_value.is_some())
+            .count();
+
         Type::Function {
             params: param_types,
             ret: Box::new(final_ret),
+            optional,
         }
     }
 
@@ -376,14 +383,17 @@ impl<'a> Checker<'a> {
         let fn0 = |ret: Type<'a>| Type::Function {
             params: Vec::new(),
             ret: Box::new(ret),
+            optional: 0,
         };
         let fn1 = |p: Type<'a>, ret: Type<'a>| Type::Function {
             params: vec![p],
             ret: Box::new(ret),
+            optional: 0,
         };
         let fn2 = |p1: Type<'a>, p2: Type<'a>, ret: Type<'a>| Type::Function {
             params: vec![p1, p2],
             ret: Box::new(ret),
+            optional: 0,
         };
 
         match type_name {
@@ -428,14 +438,17 @@ impl<'a> Checker<'a> {
         let fn0 = |ret: Type<'a>| Type::Function {
             params: Vec::new(),
             ret: Box::new(ret),
+            optional: 0,
         };
         let fn1 = |p: Type<'a>, ret: Type<'a>| Type::Function {
             params: vec![p],
             ret: Box::new(ret),
+            optional: 0,
         };
         let fn2 = |p1: Type<'a>, p2: Type<'a>, ret: Type<'a>| Type::Function {
             params: vec![p1, p2],
             ret: Box::new(ret),
+            optional: 0,
         };
 
         match field {
@@ -453,6 +466,7 @@ impl<'a> Checker<'a> {
                 Type::Function {
                     params: vec![elem.clone()],
                     ret: Box::new(boolean_ty.clone()),
+                    optional: 0,
                 },
                 array_ty.clone(),
             ),
@@ -460,13 +474,16 @@ impl<'a> Checker<'a> {
                 params: vec![Type::Function {
                     params: vec![elem.clone()],
                     ret: Box::new(Type::Infer),
+                    optional: 0,
                 }],
                 ret: Box::new(Type::Array { elem: Box::new(Type::Infer) }),
+                optional: 0,
             },
             "find" => fn1(
                 Type::Function {
                     params: vec![elem.clone()],
                     ret: Box::new(boolean_ty.clone()),
+                    optional: 0,
                 },
                 Type::Option { inner: Box::new(elem.clone()) },
             ),
@@ -474,6 +491,7 @@ impl<'a> Checker<'a> {
                 Type::Function {
                     params: vec![elem.clone()],
                     ret: Box::new(Type::None),
+                    optional: 0,
                 },
                 Type::None,
             ),
@@ -481,8 +499,10 @@ impl<'a> Checker<'a> {
                 params: vec![Type::Function {
                     params: vec![Type::Infer, elem.clone()],
                     ret: Box::new(Type::Infer),
+                    optional: 0,
                 }],
                 ret: Box::new(Type::Infer),
+                optional: 0,
             },
             _ => {
                 self.error_span(span, format!("array has no field `{field}`"));
@@ -1060,7 +1080,7 @@ impl<'a> Checker<'a> {
         let callee_type = self.check_expr(callee);
 
         match callee_type {
-            Type::Function { params, ret } => {
+            Type::Function { params, ret, optional } => {
                 // Build a substitution for any type parameters appearing in the
                 // function signature. Explicit type args are used when present;
                 // otherwise we try to infer from the first argument.
@@ -1076,15 +1096,20 @@ impl<'a> Checker<'a> {
                     .collect();
                 let substituted_ret = substitute_type(&ret, &subst);
 
-                if substituted_params.len() != args.len() {
+                let required = substituted_params.len().saturating_sub(optional);
+                if args.len() < required || args.len() > substituted_params.len() {
+                    let expected_msg = if optional > 0 {
+                        format!("{} to {} arguments", required, substituted_params.len())
+                    } else {
+                        format!(
+                            "{} argument{}",
+                            substituted_params.len(),
+                            if substituted_params.len() == 1 { "" } else { "s" }
+                        )
+                    };
                     self.error_span(
                         span,
-                        format!(
-                            "expected {} argument{}, found {}",
-                            substituted_params.len(),
-                            if substituted_params.len() == 1 { "" } else { "s" },
-                            args.len()
-                        ),
+                        format!("expected {}, found {}", expected_msg, args.len()),
                     );
                 } else {
                     for (expected, arg) in substituted_params.iter().zip(args.iter()) {
@@ -1171,7 +1196,7 @@ fn collect_param_names_rec<'a>(ty: &Type<'a>, names: &mut Vec<&'a str>, seen: &m
             }
         }
         Type::Option { inner } => collect_param_names_rec(inner, names, seen),
-        Type::Function { params, ret } => {
+        Type::Function { params, ret, .. } => {
             for p in params {
                 collect_param_names_rec(p, names, seen);
             }
@@ -1190,7 +1215,7 @@ fn contains_param(ty: &Type<'_>) -> bool {
     match ty {
         Type::Param { .. } => true,
         Type::Option { inner } => contains_param(inner),
-        Type::Function { params, ret } => {
+        Type::Function { params, ret, .. } => {
             params.iter().any(contains_param) || contains_param(ret)
         }
         Type::Generic { args, .. } => args.iter().any(contains_param),
@@ -1205,9 +1230,10 @@ fn substitute_type<'a>(ty: &Type<'a>, subst: &HashMap<&'a str, Type<'a>>) -> Typ
         Type::Option { inner } => Type::Option {
             inner: Box::new(substitute_type(inner, subst)),
         },
-        Type::Function { params, ret } => Type::Function {
+        Type::Function { params, ret, optional } => Type::Function {
             params: params.iter().map(|p| substitute_type(p, subst)).collect(),
             ret: Box::new(substitute_type(ret, subst)),
+            optional: *optional,
         },
         Type::Generic { base, args } => Type::Generic {
             base,
