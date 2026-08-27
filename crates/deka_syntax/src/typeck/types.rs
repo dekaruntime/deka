@@ -99,6 +99,10 @@ pub fn is_assignable<'a>(expected: &Type<'a>, actual: &Type<'a>) -> bool {
     if matches!(expected, Type::Option { .. }) && matches!(actual, Type::None) {
         return true;
     }
+    // `none` is assignable to `void`, and `void` is assignable to `void`.
+    if matches!(expected, Type::Named { name: "void" }) && matches!(actual, Type::None | Type::Named { name: "void" }) {
+        return true;
+    }
     // Structural subtyping for generic types like Result<T, E>.
     if let (
         Type::Generic { base: expected_base, args: expected_args },
