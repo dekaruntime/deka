@@ -1,6 +1,6 @@
 //! Statement parsing.
 
-use crate::ast::{alloc, alloc_slice, EnumCase, ForInit, Param, Pos, Program, StructField, Stmt, Type, TypeParam};
+use crate::ast::{alloc, alloc_slice, EnumCase, ForInit, InterfaceMember, Param, Pos, Program, StructField, Stmt, Type, TypeParam};
 use crate::lexer::TokenKind;
 
 use super::util::token_name;
@@ -142,6 +142,14 @@ impl<'a> Parser<'a> {
                 self.parse_enum_statement(start, start_byte)
             }
 
+            TokenKind::Interface => {
+                if in_block {
+                    self.error("interface declarations are only allowed at the top level in DekaScript");
+                    return None;
+                }
+                self.parse_interface_statement(start, start_byte)
+            }
+
             TokenKind::Type => self.parse_type_alias_statement(start, start_byte),
 
             TokenKind::Import => self.parse_import_statement(start, start_byte),
@@ -182,6 +190,7 @@ impl<'a> Parser<'a> {
         if self.at(TokenKind::LParen) {
             self.advance(); // `(`
             let receiver_name = self.expect_identifier()?;
+            let receiver_mutable = self.eat(TokenKind::Mut);
             let receiver_type = self.expect_identifier()?;
             self.expect(TokenKind::RParen)?;
 
@@ -210,6 +219,7 @@ impl<'a> Parser<'a> {
             return Some(Stmt::ReceiverMethod {
                 receiver_type,
                 receiver_name,
+                receiver_mutable,
                 name,
                 type_params,
                 params,
@@ -532,6 +542,106 @@ impl<'a> Parser<'a> {
             name,
             type_params,
             cases: alloc_slice(self.arena, cases),
+            span: self.span_from(start, start_byte),
+        })
+    }
+
+    fn parse_interface_statement(&mut self, start: Pos, start_byte: usize) -> Option<Stmt<'a>> {
+        self.advance(); // `interface`
+
+        let name = self.expect_identifier()?;
+        let type_params = if self.at(TokenKind::Lt) {
+            self.parse_type_params()?
+        } else {
+            &[]
+        };
+
+        self.expect(TokenKind::LBrace)?;
+        let mut members = Vec::new();
+
+        while !self.at(TokenKind::RBrace) && !self.at_end() {
+            self.skip_newlines();
+            if self.at(TokenKind::RBrace) {
+                break;
+            }
+
+            let (member_start, member_start_byte) = self.span_start();
+
+            // Optional `mut` for mutable fields.
+            let mutable = self.eat(TokenKind::Mut);
+
+            if self.at(TokenKind::Fn) {
+                // Method signature: fn name(params) Ret
+                self.advance(); // `fn`
+                let method_name = self.expect_identifier()?;
+                self.expect(TokenKind::LParen)?;
+                let params = self.parse_params()?;
+                self.expect(TokenKind::RParen)?;
+                let return_type = if !self.at(TokenKind::Semicolon)
+                    && !self.at(TokenKind::Newline)
+                    && !self.at(TokenKind::RBrace)
+                    && !self.at(TokenKind::Comma)
+                {
+                    Some(self.parse_type()?)
+                } else {
+                    None
+                };
+                members.push(InterfaceMember::Method {
+                    name: method_name,
+                    params: alloc_slice(self.arena, params.to_vec()),
+                    return_type,
+                    span: self.span_from(member_start, member_start_byte),
+                });
+            } else {
+                // Field declaration.
+                let field_name = self.expect_identifier()?;
+                let optional = self.eat(TokenKind::Question);
+                self.expect(TokenKind::Colon)?;
+                let field_type = self.parse_type()?;
+                members.push(InterfaceMember::Field {
+                    name: field_name,
+                    ty: field_type,
+                    mutable,
+                    optional,
+                    span: self.span_from(member_start, member_start_byte),
+                });
+            }
+
+            if self.at(TokenKind::RBrace) {
+                break;
+            }
+            if self.eat(TokenKind::Comma) {
+                self.skip_newlines();
+                if self.at(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            if self.eat(TokenKind::Semicolon) {
+                self.skip_newlines();
+                if self.at(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            if self.at(TokenKind::Newline) {
+                self.skip_newlines();
+                if self.at(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            self.error("expected `,` or newline between interface members");
+            break;
+        }
+
+        self.skip_newlines();
+        self.expect(TokenKind::RBrace)?;
+
+        Some(Stmt::Interface {
+            name,
+            type_params,
+            members: alloc_slice(self.arena, members),
             span: self.span_from(start, start_byte),
         })
     }

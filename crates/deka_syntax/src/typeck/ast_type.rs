@@ -20,7 +20,7 @@ impl<'a> Checker<'a> {
     ) -> Type<'a> {
         match ty {
             ast::Type::Named { name, span } => match *name {
-                "number" | "string" | "boolean" | "never" | "void" | "bytes" => {
+                "number" | "string" | "boolean" | "never" | "void" | "bytes" | "Component" => {
                     Type::Named { name }
                 }
                 "Option" => {
@@ -38,6 +38,8 @@ impl<'a> Checker<'a> {
                         Type::Struct { name }
                     } else if self.enums.contains_key(name) {
                         Type::Named { name }
+                    } else if self.interfaces.contains_key(name) {
+                        Type::Interface { name }
                     } else if let Some(alias) = self.aliases.get(name).cloned() {
                         if !seen.insert(name) {
                             self.error_span(*span, format!("cyclic type alias `{name}`"));

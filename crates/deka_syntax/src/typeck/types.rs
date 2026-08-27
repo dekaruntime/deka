@@ -40,6 +40,8 @@ pub enum Type<'a> {
     Array { elem: Box<Type<'a>> },
     /// An object record type with known fields.
     Object { fields: Vec<(&'a str, Type<'a>)> },
+    /// A declared interface type.
+    Interface { name: &'a str },
     /// A type parameter, e.g. `T` inside a generic function or type.
     Param { name: &'a str },
 }
@@ -95,6 +97,7 @@ impl fmt::Display for Type<'_> {
                 }
                 write!(f, "}}")
             }
+            Type::Interface { name } => write!(f, "{name}"),
             Type::Param { name } => write!(f, "{name}"),
         }
     }
@@ -187,6 +190,13 @@ pub fn is_assignable<'a>(expected: &Type<'a>, actual: &Type<'a>) -> bool {
                 .all(|(a, e)| is_assignable(a, e))
                 && is_assignable(expected_ret, actual_ret);
         }
+    }
+    // Interface compatibility: structs and objects structurally satisfy
+    // interfaces at runtime through their fields/receiver methods.
+    if matches!(expected, Type::Interface { .. })
+        && (matches!(actual, Type::Struct { .. }) || matches!(actual, Type::Object { .. }))
+    {
+        return true;
     }
     false
 }

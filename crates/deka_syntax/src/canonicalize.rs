@@ -196,6 +196,7 @@ fn transform_stmt<'a>(
         Stmt::ReceiverMethod {
             receiver_type,
             receiver_name,
+            receiver_mutable,
             name,
             type_params,
             params,
@@ -211,6 +212,7 @@ fn transform_stmt<'a>(
             Stmt::ReceiverMethod {
                 receiver_type,
                 receiver_name,
+                receiver_mutable: *receiver_mutable,
                 name,
                 type_params,
                 params,
@@ -250,7 +252,8 @@ fn transform_stmt<'a>(
         }
         Stmt::Empty { .. }
         | Stmt::Enum { .. }
-        | Stmt::TypeAlias { .. } => return stmt.clone(),
+        | Stmt::TypeAlias { .. }
+        | Stmt::Interface { .. } => return stmt.clone(),
         Stmt::Break { .. } | Stmt::Continue { .. } => return stmt.clone(),
         Stmt::Expr { expr, span } => Stmt::Expr {
             expr: transform_expr(expr, arena, enums).clone(),
@@ -773,6 +776,7 @@ fn lower_stmt<'a>(
         Stmt::ReceiverMethod {
             receiver_type,
             receiver_name,
+            receiver_mutable,
             name,
             type_params,
             params,
@@ -788,6 +792,7 @@ fn lower_stmt<'a>(
             Stmt::ReceiverMethod {
                 receiver_type,
                 receiver_name,
+                receiver_mutable: *receiver_mutable,
                 name,
                 type_params,
                 params,
@@ -827,7 +832,8 @@ fn lower_stmt<'a>(
         }
         Stmt::Empty { .. }
         | Stmt::Enum { .. }
-        | Stmt::TypeAlias { .. } => stmt.clone(),
+        | Stmt::TypeAlias { .. }
+        | Stmt::Interface { .. } => stmt.clone(),
         Stmt::Break { .. } | Stmt::Continue { .. } => stmt.clone(),
         Stmt::Expr { expr, span } => Stmt::Expr {
             expr: lower_expr(expr, arena, method_calls).clone(),

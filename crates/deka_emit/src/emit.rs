@@ -52,6 +52,7 @@ struct EnumMeta {
 struct ReceiverMethod<'a> {
     name: String,
     receiver_name: String,
+    receiver_mutable: bool,
     params: Vec<String>,
     body: Vec<deka_syntax::Stmt<'a>>,
     is_async: bool,
@@ -182,6 +183,7 @@ impl<'a> Emitter<'a> {
                 Stmt::ReceiverMethod {
                     receiver_type,
                     receiver_name,
+                    receiver_mutable,
                     name,
                     params,
                     body,
@@ -194,6 +196,7 @@ impl<'a> Emitter<'a> {
                         .push(ReceiverMethod {
                             name: name.to_string(),
                             receiver_name: receiver_name.to_string(),
+                            receiver_mutable: *receiver_mutable,
                             params: params.iter().map(|p| p.name.to_string()).collect(),
                             body: body.to_vec(),
                             is_async: *is_async,
@@ -616,6 +619,9 @@ impl<'a> Emitter<'a> {
             Stmt::TypeAlias { .. } => {
                 // Erased at runtime.
             }
+            Stmt::Interface { .. } => {
+                // Erased at runtime.
+            }
             Stmt::Break { .. } => {
                 write_indent(&mut self.out, 0);
                 self.out.push_str("break;");
@@ -705,7 +711,7 @@ impl<'a> Emitter<'a> {
             for method in methods {
                     write_indent(&mut self.out, 0);
                     self.out.push_str(&struct_name);
-                    self.out.push_str(".impl(");
+                    self.out.push_str(if method.receiver_mutable { ".implMut(" } else { ".impl(" });
                     self.out.push_str(&json_string(&method.name));
                     self.out.push_str(", ");
                     if method.is_async {
@@ -866,6 +872,14 @@ impl<'a> Emitter<'a> {
                         } else {
                             self.emit_expr(arg)?;
                         }
+                    }
+                    self.out.push(')');
+                } else if is_builtin_call(callee, "isset") {
+                    // isset(x) returns true when x is a concrete value.
+                    // For Option, None is considered unset.
+                    self.out.push_str("((__deka_isset_arg) => (__deka_isset_arg !== undefined && __deka_isset_arg !== null && !(__deka_isset_arg.__case === \"None\")))(");
+                    if let Some(arg) = args.first() {
+                        self.emit_expr(arg)?;
                     }
                     self.out.push(')');
                 } else {
@@ -1389,6 +1403,10 @@ fn is_js_identifier(s: &str) -> bool {
 
 fn is_hole_expr(expr: &Expr) -> bool {
     matches!(expr, Expr::Identifier { name: "_", .. })
+}
+
+fn is_builtin_call<'a>(callee: &Expr<'a>, name: &str) -> bool {
+    matches!(callee, Expr::Identifier { name: n, .. } if *n == name)
 }
 
 fn raw_js_looks_like_statements(raw: &str) -> bool {

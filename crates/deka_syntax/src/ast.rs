@@ -78,6 +78,7 @@ pub enum Stmt<'a> {
     ReceiverMethod {
         receiver_type: &'a str,
         receiver_name: &'a str,
+        receiver_mutable: bool,
         name: &'a str,
         type_params: &'a [TypeParam<'a>],
         params: &'a [Param<'a>],
@@ -106,6 +107,13 @@ pub enum Stmt<'a> {
         name: &'a str,
         type_params: &'a [TypeParam<'a>],
         value: Type<'a>,
+        span: Span,
+    },
+    /// `interface Name { field: Type; fn method() Ret }`
+    Interface {
+        name: &'a str,
+        type_params: &'a [TypeParam<'a>],
+        members: &'a [InterfaceMember<'a>],
         span: Span,
     },
     /// Expression statement, e.g. `console.log(x);`
@@ -215,6 +223,23 @@ pub struct StructField<'a> {
 pub struct Embed<'a> {
     pub name: &'a str,
     pub span: Span,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub enum InterfaceMember<'a> {
+    Field {
+        name: &'a str,
+        ty: Type<'a>,
+        mutable: bool,
+        optional: bool,
+        span: Span,
+    },
+    Method {
+        name: &'a str,
+        params: &'a [Param<'a>],
+        return_type: Option<Type<'a>>,
+        span: Span,
+    },
 }
 
 /// Lowering target for a receiver-method call that has been resolved by the

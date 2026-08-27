@@ -31,6 +31,7 @@ impl<'a> Checker<'a> {
                 ast::Stmt::ReceiverMethod {
                     receiver_type,
                     receiver_name,
+                    receiver_mutable,
                     name,
                     params,
                     return_type,
@@ -41,6 +42,7 @@ impl<'a> Checker<'a> {
                 } => self.check_receiver_method(
                     receiver_type,
                     receiver_name,
+                    *receiver_mutable,
                     name,
                     params,
                     return_type.as_ref(),
@@ -127,6 +129,11 @@ impl<'a> Checker<'a> {
                             ),
                         );
                     }
+                }
+            }
+            if let ast::Stmt::Interface { name, members, span, .. } = stmt {
+                if self.interfaces.insert(name, super::InterfaceInfo { members }).is_some() {
+                    self.error_span(*span, format!("duplicate interface definition `{name}`"));
                 }
             }
         }
@@ -463,6 +470,7 @@ impl<'a> Checker<'a> {
             }
             ast::Stmt::Empty { .. }
             | ast::Stmt::TypeAlias { .. }
+            | ast::Stmt::Interface { .. }
             | ast::Stmt::ReceiverMethod { .. } => {
                 // Already collected and validated lazily at use sites (or no-op).
             }
@@ -708,6 +716,7 @@ impl<'a> Checker<'a> {
         &mut self,
         receiver_type: &'a str,
         receiver_name: &'a str,
+        receiver_mutable: bool,
         name: &'a str,
         params: &'a [ast::Param<'a>],
         return_type: Option<&ast::Type<'a>>,
@@ -741,7 +750,11 @@ impl<'a> Checker<'a> {
         self.scopes.push(HashMap::new());
 
         // Bind the receiver name to the receiver type inside the method body.
-        self.declare_var(receiver_name, Type::Struct { name: receiver_type });
+        if receiver_mutable {
+            self.declare_mutable_var(receiver_name, Type::Struct { name: receiver_type });
+        } else {
+            self.declare_var(receiver_name, Type::Struct { name: receiver_type });
+        }
 
         for (p, t) in params.iter().zip(param_types.iter()) {
             self.declare_var(p.name, t.clone());

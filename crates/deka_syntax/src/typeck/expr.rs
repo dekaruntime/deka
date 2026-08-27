@@ -418,6 +418,10 @@ impl<'a> Checker<'a> {
                 }
             }
             Type::Array { elem } => self.resolve_array_field(field, elem, span),
+            Type::Interface { name } => self.resolve_interface_field(name, field).unwrap_or_else(|| {
+                self.error_span(span, format!("interface `{name}` has no field `{field}`"));
+                Type::Error
+            }),
             Type::Named { name } => self.resolve_primitive_field(name, field, span),
             _ => {
                 // Enum namespace access: `Color.Red` where `Color` is an enum name.
@@ -509,6 +513,42 @@ impl<'a> Checker<'a> {
                 Type::Error
             }
         }
+    }
+
+    fn resolve_interface_field(
+        &mut self,
+        interface_name: &'a str,
+        field: &'a str,
+    ) -> Option<Type<'a>> {
+        let info = self.interfaces.get(interface_name)?;
+        for member in info.members.iter() {
+            match member {
+                ast::InterfaceMember::Field { name, ty, .. } if *name == field => {
+                    return Some(self.resolve_ast_type(ty));
+                }
+                ast::InterfaceMember::Method { name, params, return_type, .. } if *name == field => {
+                    let param_types: Vec<Type<'a>> = params
+                        .iter()
+                        .map(|p| {
+                            p.ty.as_ref()
+                                .map(|t| self.resolve_ast_type(t))
+                                .unwrap_or(Type::Infer)
+                        })
+                        .collect();
+                    let ret = return_type
+                        .as_ref()
+                        .map(|t| self.resolve_ast_type(t))
+                        .unwrap_or(Type::Named { name: "void" });
+                    return Some(Type::Function {
+                        params: param_types,
+                        ret: Box::new(ret),
+                        optional: 0,
+                    });
+                }
+                _ => {}
+            }
+        }
+        None
     }
 
     fn resolve_array_field(
@@ -1299,6 +1339,14 @@ impl<'a> Checker<'a> {
         args: &'a [ast::Expr<'a>],
         span: ast::Span,
     ) -> Type<'a> {
+        // Built-in special forms that need a concrete return type.
+        if let ast::Expr::Identifier { name: "isset", .. } = callee {
+            for arg in args.iter() {
+                self.check_expr(arg);
+            }
+            return Type::Named { name: "boolean" };
+        }
+
         let callee_type = self.check_expr(callee);
 
         match callee_type {

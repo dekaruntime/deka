@@ -203,6 +203,12 @@ pub struct MethodInfo<'a> {
     pub return_type: Option<ast::Type<'a>>,
 }
 
+/// Information about an interface's declared members.
+#[derive(Clone, Debug)]
+pub struct InterfaceInfo<'a> {
+    pub members: &'a [ast::InterfaceMember<'a>],
+}
+
 struct Checker<'a> {
     program: &'a ast::Program<'a>,
     errors: Vec<Diagnostic>,
@@ -217,6 +223,8 @@ struct Checker<'a> {
     case_to_enum: HashMap<&'a str, &'a str>,
     /// User-defined structs.
     structs: HashMap<&'a str, StructInfo<'a>>,
+    /// User-defined interfaces.
+    interfaces: HashMap<&'a str, InterfaceInfo<'a>>,
     /// Receiver methods keyed by `(receiver_type, method_name)`.
     receiver_methods: HashMap<(&'a str, &'a str), MethodInfo<'a>>,
     /// Method call sites to lower, keyed by call expression pointer.
@@ -248,6 +256,7 @@ impl<'a> Checker<'a> {
             enums: HashMap::new(),
             case_to_enum: HashMap::new(),
             structs: HashMap::new(),
+            interfaces: HashMap::new(),
             receiver_methods: HashMap::new(),
             method_calls: HashMap::new(),
             scopes: vec![HashMap::new()],
@@ -267,7 +276,7 @@ impl<'a> Checker<'a> {
         // Host-provided JavaScript globals that the test suite (and v1) rely on.
         // They are typed opaquely as Infer; field/method access on Infer is
         // allowed and returns Infer. Console is intentionally excluded per RFD 32.
-        for name in ["Math", "Date", "JSON", "Object", "Promise", "crypto", "parseInt", "process"] {
+        for name in ["Math", "Date", "JSON", "Object", "Promise", "crypto", "parseInt", "process", "isset"] {
             self.globals.insert(name, Type::Infer);
         }
     }
