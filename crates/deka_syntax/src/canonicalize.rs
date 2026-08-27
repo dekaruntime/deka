@@ -234,6 +234,7 @@ fn transform_stmt<'a>(
                         .default_value
                         .as_ref()
                         .map(|v| transform_expr(v, arena, enums).clone()),
+                    optional: f.optional,
                     span: f.span,
                 })
                 .collect();
@@ -768,6 +769,7 @@ fn lower_stmt<'a>(
                         .default_value
                         .as_ref()
                         .map(|v| lower_expr(v, arena, method_calls).clone()),
+                    optional: f.optional,
                     span: f.span,
                 })
                 .collect();

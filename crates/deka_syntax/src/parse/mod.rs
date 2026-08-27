@@ -612,6 +612,8 @@ mod tests {
         match &program.statements[0] {
             Stmt::Struct { fields, .. } => {
                 assert_eq!(fields.len(), 2);
+                assert!(!fields[0].optional);
+                assert!(fields[1].optional);
                 assert!(matches!(fields[1].ty, Type::Option { .. }));
             }
             _ => panic!("expected struct declaration"),

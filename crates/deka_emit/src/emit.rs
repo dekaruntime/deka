@@ -36,7 +36,9 @@ pub fn emit_js_with_imports<'a>(
 struct StructMeta {
     fields: HashSet<String>,
     embeds: Vec<String>,
-    optional: HashSet<String>,
+    /// Optional fields: `None` means auto-fill with `Option.None`;
+    /// `Some(expr)` means auto-fill with the pre-emitted default value.
+    optional: HashMap<String, Option<String>>,
     empty_embeds: HashSet<String>,
 }
 
@@ -108,8 +110,18 @@ impl<'a> Emitter<'a> {
                     let mut meta = StructMeta::default();
                     for field in fields.iter() {
                         meta.fields.insert(field.name.to_string());
-                        if field.default_value.is_some() || is_optional_type(&field.ty) {
-                            meta.optional.insert(field.name.to_string());
+                        if field.default_value.is_some() || field.optional || is_optional_type(&field.ty) {
+                            let default = field.default_value.as_ref().map(|v| {
+                                // If a default value cannot be pre-emitted, fall back to null.
+                                self.emit_expr_to_string(v).unwrap_or_else(|_| "null".to_string())
+                            });
+                            if default.is_none() {
+                                // Omitted optional fields auto-fill to Option.None, so the
+                                // prelude enum helpers are required even if the source never
+                                // mentions Some/None explicitly.
+                                self.uses_prelude_enums = true;
+                            }
+                            meta.optional.insert(field.name.to_string(), default);
                         }
                     }
                     for embed in embeds.iter() {
@@ -161,8 +173,13 @@ impl<'a> Emitter<'a> {
                 let mut meta = StructMeta::default();
                 for field in info.fields.iter() {
                     meta.fields.insert(field.name.to_string());
-                    if field.default_value.is_some() || is_optional_type(&field.ty) {
-                        meta.optional.insert(field.name.to_string());
+                    if field.default_value.is_some() || field.optional || is_optional_type(&field.ty) {
+                        // Imported struct defaults are not pre-emitted here;
+                        // omitting the field produces Option.None for Option-typed fields.
+                        if field.default_value.is_none() {
+                            self.uses_prelude_enums = true;
+                        }
+                        meta.optional.insert(field.name.to_string(), None);
                     }
                 }
                 for embed in info.embeds.iter() {
@@ -233,7 +250,7 @@ impl<'a> Emitter<'a> {
     fn emit_prelude(&mut self) -> Result<(), String> {
         // Determine which helpers are needed by scanning the AST.
         self.uses_struct = self.needs_struct_helper();
-        self.uses_prelude_enums = self.needs_prelude_enums();
+        self.uses_prelude_enums = self.uses_prelude_enums || self.needs_prelude_enums();
 
         if self.uses_struct {
             self.out.push_str("const __deka = {");
@@ -624,6 +641,15 @@ impl<'a> Emitter<'a> {
     // ------------------------------------------------------------------
     // Expressions
     // ------------------------------------------------------------------
+    fn emit_expr_to_string(&mut self, expr: &Expr<'a>) -> Result<String, String> {
+        let mut tmp = String::new();
+        std::mem::swap(&mut self.out, &mut tmp);
+        let res = self.emit_expr(expr);
+        std::mem::swap(&mut self.out, &mut tmp);
+        res?;
+        Ok(tmp)
+    }
+
     fn emit_expr(&mut self, expr: &Expr<'a>) -> Result<(), String> {
         match expr {
             Expr::Number { value, .. } => {
@@ -856,10 +882,17 @@ impl<'a> Emitter<'a> {
             }
         }
 
-        // Auto-fill optional fields with null.
-        for opt in &meta.optional {
+        // Auto-fill omitted optional fields.
+        for (opt, default) in &meta.optional {
             if !seen.contains(opt) {
-                entries.push(format!("{}: null", opt));
+                let value = match default {
+                    Some(expr) => expr.clone(),
+                    None => {
+                        self.uses_prelude_enums = true;
+                        "None".to_string()
+                    }
+                };
+                entries.push(format!("{}: {}", opt, value));
             }
         }
 

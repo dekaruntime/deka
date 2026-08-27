@@ -248,7 +248,7 @@ mod tests {
         .expect("compile should succeed");
         assert!(result.js.contains("__case"));
         assert!(result.js.contains("Some"));
-        assert!(result.js.contains("null"));
+        assert!(result.js.contains("None"));
     }
 
     #[test]

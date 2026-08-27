@@ -19,6 +19,9 @@ impl<'a> Parser<'a> {
                 break;
             }
             self.skip_newlines();
+            if self.at(TokenKind::RBrace) {
+                break;
+            }
         }
 
         self.expect(TokenKind::RBrace)?;
@@ -135,7 +138,16 @@ impl<'a> Parser<'a> {
                 })
             }
 
-            TokenKind::Number | TokenKind::String | TokenKind::True | TokenKind::False | TokenKind::None => {
+            TokenKind::None => {
+                self.advance();
+                Some(Pattern::Constructor {
+                    name: "None",
+                    payload: None,
+                    span: self.span_from(start, start_byte),
+                })
+            }
+
+            TokenKind::Number | TokenKind::String | TokenKind::True | TokenKind::False => {
                 let expr = self.parse_expression()?;
                 Some(Pattern::Literal {
                     expr,

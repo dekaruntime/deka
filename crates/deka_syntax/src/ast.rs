@@ -192,6 +192,8 @@ pub struct StructField<'a> {
     pub name: &'a str,
     pub ty: Type<'a>,
     pub default_value: Option<Expr<'a>>,
+    /// True for `field?: T` syntax: the field may be omitted in literals.
+    pub optional: bool,
     pub span: Span,
 }
 

@@ -346,6 +346,7 @@ impl<'a> Parser<'a> {
                     name: field_name,
                     ty: field_type,
                     default_value,
+                    optional: is_optional,
                     span: self.span_from(field_start, field_start_byte),
                 });
             } else {
@@ -360,10 +361,23 @@ impl<'a> Parser<'a> {
             }
             if self.eat(TokenKind::Comma) {
                 self.skip_newlines();
+                if self.at(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            if self.eat(TokenKind::Semicolon) {
+                self.skip_newlines();
+                if self.at(TokenKind::RBrace) {
+                    break;
+                }
                 continue;
             }
             if self.at(TokenKind::Newline) {
                 self.skip_newlines();
+                if self.at(TokenKind::RBrace) {
+                    break;
+                }
                 continue;
             }
             self.error("expected `,` or newline between struct fields");
@@ -411,6 +425,10 @@ impl<'a> Parser<'a> {
                 span: self.span_from(case_start, case_start_byte),
             });
             if !self.eat(TokenKind::Comma) {
+                break;
+            }
+            self.skip_newlines();
+            if self.at(TokenKind::RBrace) {
                 break;
             }
         }
