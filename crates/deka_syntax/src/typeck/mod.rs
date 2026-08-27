@@ -368,4 +368,12 @@ mod tests {
         assert!(!errors.is_empty());
         assert!(errors.iter().any(|e| e.message.contains("await")), "{:?}", errors);
     }
+
+    #[test]
+    fn unsafe_block_match_result_passes() {
+        let errors = typeck(
+            "const r = match (unsafe { console.log(1) }) { Ok(v) => v, Err(e) => e };",
+        );
+        assert!(errors.is_empty(), "{:?}", errors);
+    }
 }

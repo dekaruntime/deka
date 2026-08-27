@@ -17,7 +17,7 @@ pub fn emit_match(out: &mut String, scrutinee: &Expr, arms: &[MatchArm]) -> Resu
     }
 
     out.push_str("  throw new Error(\"non-exhaustive match\");\n");
-    out.push_str(")(");
+    out.push_str("})(");
     emit_expr(out, scrutinee)?;
     out.push_str(")");
     Ok(())

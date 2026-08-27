@@ -1589,7 +1589,9 @@ dependencies = [
  "deka_emit",
  "deka_syntax",
  "insta",
+ "runtime_core",
  "serde",
+ "tempfile",
 ]
 
 [[package]]

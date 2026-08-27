@@ -8,8 +8,10 @@ license = "MIT"
 [dependencies]
 deka_syntax = { path = "../deka_syntax" }
 deka_emit = { path = "../deka_emit" }
+runtime_core = { path = "../runtime_core" }
 bumpalo = "3.16"
 serde = { workspace = true }
 
 [dev-dependencies]
 insta = "1.40"
+tempfile = "3.14"

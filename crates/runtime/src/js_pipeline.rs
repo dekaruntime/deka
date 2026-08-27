@@ -1,6 +1,6 @@
 #[cfg(test)]
 use std::cell::Cell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -100,24 +100,27 @@ fn build_deka_handler_bundle_in_project(
     let imports = parse_module_imports(&source);
     ensure_project_layout(&project_root, &imports)?;
 
-    let mut entry_js = compile_ds_source_to_js(&source, input)?;
-
     let prelude = String::new();
-
-    // Inject the tenant root so that globalThis.__dekaFs (installed by
-    // php/php.js at extension-init time) can enforce per-tenant path
-    // confinement.  The root is the canonicalised project_root — i.e. the
-    // directory containing deka.json for this tenant.
     let canonical_root = fs::canonicalize(&project_root).unwrap_or_else(|_| project_root.clone());
     let root_json = serde_json::to_string(&canonical_root.to_string_lossy().to_string())
         .unwrap_or_else(|_| "\"\"".to_string());
     let tenant_root_injection = format!("globalThis.__dekaFsTenantRoot = {};\n", root_json);
 
-    entry_js = format!("{prelude}\n{tenant_root_injection}{entry_js}");
     let entry_path = fs::canonicalize(input_path)
         .map_err(|err| format!("failed to resolve {}: {}", input_path.display(), err))?;
 
-    let provider = Arc::new(PhpxBundleProvider::new(entry_path.clone(), entry_js));
+    let provider: Arc<dyn VirtualSource> = if selected_compiler_version() == deka_compile::CompilerVersion::V2 {
+        let loader = deka_compile::module_graph::FsModuleLoader::new(project_root.clone());
+        let graph = deka_compile::module_graph::compile_module_graph(&entry_path, &loader).map_err(|diagnostics| {
+            deka_compile::format_diagnostics(&diagnostics)
+        })?;
+        Arc::new(V2BundleProvider::new(entry_path.clone(), graph.modules, tenant_root_injection))
+    } else {
+        let mut entry_js = compile_ds_source_to_js(&source, input)?;
+        entry_js = format!("{prelude}\n{tenant_root_injection}{entry_js}");
+        Arc::new(PhpxBundleProvider::new(entry_path.clone(), entry_js))
+    };
+
     bundle_virtual_entry(
         &entry_path,
         BundleOptions {
@@ -215,6 +218,55 @@ impl VirtualSource for PhpxBundleProvider {
             fs::read_to_string(path).map_err(|err| format!("failed to read {}: {}", input, err))?;
         let js = compile_ds_source_to_js(&source, input)?;
         Ok(Some(js))
+    }
+}
+
+/// Virtual source provider for compiler v2 that serves pre-compiled JS from
+/// the module graph.  The entry module receives the tenant-root injection
+/// that v1 previously added to the entry source.
+struct V2BundleProvider {
+    entry_path: PathBuf,
+    modules: HashMap<PathBuf, String>,
+    tenant_root_injection: String,
+}
+
+impl V2BundleProvider {
+    fn new(
+        entry_path: PathBuf,
+        modules: HashMap<PathBuf, String>,
+        tenant_root_injection: String,
+    ) -> Self {
+        Self {
+            entry_path,
+            modules,
+            tenant_root_injection,
+        }
+    }
+
+    fn resolve_key(&self, path: &Path) -> Option<PathBuf> {
+        if let Ok(canon) = fs::canonicalize(path) {
+            return Some(canon);
+        }
+        self.modules.keys().find(|k| k == &&path).cloned()
+    }
+}
+
+impl VirtualSource for V2BundleProvider {
+    fn load_virtual(&self, path: &Path) -> Result<Option<String>, String> {
+        let key = match self.resolve_key(path) {
+            Some(k) => k,
+            None => return Ok(None),
+        };
+        let Some(js) = self.modules.get(&key) else {
+            return Ok(None);
+        };
+        if key == self.entry_path {
+            return Ok(Some(format!(
+                "{}\n{}",
+                self.tenant_root_injection, js
+            )));
+        }
+        Ok(Some(js.clone()))
     }
 }
 
@@ -341,6 +393,7 @@ fn is_stdlib_module_spec(spec: &str) -> bool {
                 | "auth"
                 | "db"
                 | "time"
+                | "io"
         )
 }
 

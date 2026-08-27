@@ -127,9 +127,13 @@ impl<'a> Checker<'a> {
             }
             ast::Expr::JsxText { .. } => Type::Infer,
             ast::Expr::Unsafe { .. } => {
-                // Raw JavaScript block. Its dynamic result is opaque to the
-                // v2 typechecker; match on it to inspect the Result.
-                Type::Infer
+                // Raw JavaScript block. The emitter wraps it as a Result, so
+                // the typechecker exposes it as Result<Infer, Infer> so
+                // match arms can bind Ok/Err payloads.
+                Type::Generic {
+                    base: "Result",
+                    args: vec![Type::Infer, Type::Infer],
+                }
             }
             ast::Expr::TemplateLiteral { .. } => Type::Named { name: "string" },
             ast::Expr::Function {

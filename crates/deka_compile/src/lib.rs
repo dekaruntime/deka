@@ -1,5 +1,7 @@
 //! DekaScript compiler orchestrator (Compiler v2).
 
+pub mod module_graph;
+
 use bumpalo::Bump;
 use deka_emit::emit_js;
 use deka_syntax::{check_program, lower_method_calls, parse, Diagnostic};

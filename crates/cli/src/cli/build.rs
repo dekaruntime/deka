@@ -446,6 +446,9 @@ fn is_stdlib_module_spec(spec: &str) -> bool {
                 | "cookies"
                 | "auth"
                 | "db"
+                | "time"
+                | "test"
+                | "io"
         )
 }
 
