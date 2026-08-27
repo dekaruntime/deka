@@ -299,11 +299,12 @@ impl<'a> Checker<'a> {
                     self.error_span(*span, "`continue` outside of loop");
                 }
             }
-            ast::Stmt::TypeAlias { .. }
+            ast::Stmt::Empty { .. }
+            | ast::Stmt::TypeAlias { .. }
             | ast::Stmt::Struct { .. }
             | ast::Stmt::Enum { .. }
             | ast::Stmt::ReceiverMethod { .. } => {
-                // Already collected and validated lazily at use sites.
+                // Already collected and validated lazily at use sites (or no-op).
             }
             ast::Stmt::Import { specifiers, .. } => {
                 // Without a resolved module graph, imported bindings are treated

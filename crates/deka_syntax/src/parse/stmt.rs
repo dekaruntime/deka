@@ -38,6 +38,12 @@ impl<'a> Parser<'a> {
         self.skip_newlines();
         let (start, start_byte) = self.span_start();
 
+        if self.eat(TokenKind::Semicolon) {
+            return Some(Stmt::Empty {
+                span: self.span_from(start, start_byte),
+            });
+        }
+
         match self.current_kind() {
             TokenKind::Const | TokenKind::Let => {
                 let is_const = self.current_kind() == TokenKind::Const;
@@ -334,9 +340,19 @@ impl<'a> Parser<'a> {
                 });
             }
 
-            if !self.eat(TokenKind::Comma) {
+            if self.at(TokenKind::RBrace) {
                 break;
             }
+            if self.eat(TokenKind::Comma) {
+                self.skip_newlines();
+                continue;
+            }
+            if self.at(TokenKind::Newline) {
+                self.skip_newlines();
+                continue;
+            }
+            self.error("expected `,` or newline between struct fields");
+            break;
         }
 
         self.skip_newlines();

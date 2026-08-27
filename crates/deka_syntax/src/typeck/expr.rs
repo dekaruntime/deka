@@ -792,6 +792,10 @@ impl<'a> Checker<'a> {
                 self.expect_boolean(&operand_type, operand.span());
                 Type::Named { name: "boolean" }
             }
+            ast::UnOp::Plus => {
+                self.expect_number(&operand_type, operand.span());
+                Type::Named { name: "number" }
+            }
         }
     }
 

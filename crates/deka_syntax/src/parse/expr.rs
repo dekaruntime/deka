@@ -249,6 +249,15 @@ impl<'a> Parser<'a> {
                     span: self.span_from(start, start_byte),
                 })
             }
+            TokenKind::Plus => {
+                self.advance();
+                let operand = self.parse_expr(12)?;
+                Some(Expr::Unary {
+                    op: UnOp::Plus,
+                    operand: alloc(self.arena, operand),
+                    span: self.span_from(start, start_byte),
+                })
+            }
             TokenKind::Not => {
                 self.advance();
                 let operand = self.parse_expr(12)?;

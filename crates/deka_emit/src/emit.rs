@@ -518,6 +518,9 @@ impl<'a> Emitter<'a> {
                 // Collected in the pre-pass and emitted after all struct
                 // factories have been declared.
             }
+            Stmt::Empty { .. } => {
+                // No output.
+            }
         }
         Ok(())
     }
