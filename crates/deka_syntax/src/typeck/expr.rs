@@ -1500,6 +1500,13 @@ impl<'a> Checker<'a> {
                     .map(|(i, _)| i)
                     .collect();
 
+                if hole_positions.len() > 1 {
+                    self.error_span(
+                        span,
+                        "function capture requires exactly one hole, found multiple".to_string(),
+                    );
+                }
+
                 if !hole_positions.is_empty() {
                     // Partial application: `add(1, _)` becomes a function that
                     // takes the hole arguments and forwards them.

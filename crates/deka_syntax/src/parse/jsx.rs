@@ -88,20 +88,13 @@ impl<'a> Parser<'a> {
             self.skip_newlines();
             // Spread attribute: `{...expr}`
             if self.at(TokenKind::LBrace) {
-                let attr_start = self.current_span().start;
-                let attr_start_byte = self.current_span().byte_start;
                 self.advance();
                 self.expect(TokenKind::Spread)?;
-                let expr = self.parse_expression()?;
-                self.expect(TokenKind::RBrace)?;
-                // Represent spread as an attribute with an empty name and the
-                // spread expression as its value. The emitter recognises this.
-                attrs.push(JsxAttribute {
-                    name: "",
-                    value: Some(expr),
-                    span: self.span_from(attr_start, attr_start_byte),
-                });
-                continue;
+                // Consume the expression and closing brace for error recovery.
+                let _ = self.parse_expression();
+                let _ = self.expect(TokenKind::RBrace);
+                self.error("Invalid JSX attribute name '...'.");
+                return None;
             }
 
             let name = self.expect_identifier()?;
