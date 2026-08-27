@@ -790,10 +790,19 @@ impl<'a> Checker<'a> {
 
         let scrutinee_type = self.check_expr(scrutinee);
         let mut result_type: Option<Type<'a>> = None;
+        let mut covered_cases: HashSet<&'a str> = HashSet::new();
+        let mut has_catch_all = false;
 
         for arm in arms {
             self.scopes.push(HashMap::new());
             self.check_pattern(&arm.pattern, &scrutinee_type);
+            if !has_catch_all {
+                if Self::pattern_is_catch_all(&arm.pattern) {
+                    has_catch_all = true;
+                } else if let ast::Pattern::Constructor { name, .. } = &arm.pattern {
+                    covered_cases.insert(*name);
+                }
+            }
             let arm_type = self.check_expr(&arm.body);
             self.scopes.pop();
 
@@ -812,7 +821,57 @@ impl<'a> Checker<'a> {
             }
         }
 
+        if !has_catch_all && !scrutinee_type.is_error() {
+            self.check_match_exhaustiveness(span, &scrutinee_type, &covered_cases);
+        }
+
         result_type.unwrap_or(Type::None)
+    }
+
+    fn pattern_is_catch_all(pattern: &ast::Pattern<'_>) -> bool {
+        matches!(
+            pattern,
+            ast::Pattern::Wildcard { .. } | ast::Pattern::Identifier { .. }
+        )
+    }
+
+    fn check_match_exhaustiveness(
+        &mut self,
+        span: ast::Span,
+        scrutinee_type: &Type<'a>,
+        covered_cases: &HashSet<&'a str>,
+    ) {
+        let enum_name = match scrutinee_type {
+            Type::Named { name } => *name,
+            Type::Option { .. } => return, // Option is exhaustive via Some/None; already checked.
+            Type::Generic { base: "Result", .. } => return, // Result is exhaustive via Ok/Err.
+            _ => return,
+        };
+
+        let Some(info) = self.enums.get(enum_name) else {
+            return;
+        };
+
+        let missing: Vec<&'a str> = info
+            .cases
+            .iter()
+            .map(|c| c.name)
+            .filter(|name| !covered_cases.contains(*name))
+            .collect();
+
+        if !missing.is_empty() {
+            let missing_qualified: Vec<String> = missing
+                .iter()
+                .map(|name| format!("{enum_name}::{name}"))
+                .collect();
+            self.error_span(
+                span,
+                format!(
+                    "non-exhaustive match: missing {}",
+                    missing_qualified.join(", ")
+                ),
+            );
+        }
     }
 
     fn check_pattern(&mut self, pattern: &ast::Pattern<'a>, scrutinee_type: &Type<'a>) {
