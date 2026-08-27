@@ -10,7 +10,7 @@
 //! `Type::None` is assignable to any `Option<T>` because it is the empty
 //! option payload.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use bumpalo::Bump;
 
@@ -24,6 +24,12 @@ mod stmt;
 mod types;
 
 pub use types::Type;
+
+/// A binding in a local scope, tracking both its type and mutability.
+struct Binding<'a> {
+    ty: Type<'a>,
+    mutable: bool,
+}
 
 #[derive(Debug)]
 pub struct TypeError {
@@ -222,9 +228,7 @@ struct Checker<'a> {
     /// Method call sites to lower, keyed by call expression pointer.
     method_calls: HashMap<*const ast::Expr<'a>, MethodTarget<'a>>,
     /// Local scopes. The first scope is the top-level scope.
-    scopes: Vec<HashMap<&'a str, Type<'a>>>,
-    /// Bindings that were introduced with `let` and may be reassigned.
-    mutables: HashSet<&'a str>,
+    scopes: Vec<HashMap<&'a str, Binding<'a>>>,
     /// Type parameter scopes. Each generic binding introduces a new scope.
     type_scopes: Vec<HashMap<&'a str, Type<'a>>>,
     /// Are we currently inside a function body?
@@ -251,7 +255,6 @@ impl<'a> Checker<'a> {
             receiver_methods: HashMap::new(),
             method_calls: HashMap::new(),
             scopes: vec![HashMap::new()],
-            mutables: HashSet::new(),
             type_scopes: Vec::new(),
             in_function: false,
             in_async_function: false,
@@ -310,21 +313,36 @@ impl<'a> Checker<'a> {
     // ------------------------------------------------------------------
 
     fn declare_var(&mut self, name: &'a str, ty: Type<'a>) {
-        self.scopes.last_mut().unwrap().insert(name, ty);
+        self.scopes
+            .last_mut()
+            .unwrap()
+            .insert(name, Binding { ty, mutable: false });
     }
 
     fn declare_mutable_var(&mut self, name: &'a str, ty: Type<'a>) {
-        self.scopes.last_mut().unwrap().insert(name, ty);
-        self.mutables.insert(name);
+        self.scopes
+            .last_mut()
+            .unwrap()
+            .insert(name, Binding { ty, mutable: true });
+    }
+
+    fn lookup_binding(&self, name: &'a str) -> Option<&Binding<'a>> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(binding) = scope.get(name) {
+                return Some(binding);
+            }
+        }
+        None
     }
 
     fn lookup_var(&self, name: &'a str) -> Option<Type<'a>> {
-        for scope in self.scopes.iter().rev() {
-            if let Some(ty) = scope.get(name) {
-                return Some(ty.clone());
-            }
-        }
-        self.globals.get(name).cloned()
+        self.lookup_binding(name)
+            .map(|b| b.ty.clone())
+            .or_else(|| self.globals.get(name).cloned())
+    }
+
+    fn is_mutable(&self, name: &'a str) -> bool {
+        self.lookup_binding(name).map(|b| b.mutable).unwrap_or(false)
     }
 
     fn is_number(ty: &Type<'_>) -> bool {
@@ -550,5 +568,22 @@ mod tests {
             "const r = match (unsafe { console.log(1) }) { Ok(v) => v, Err(e) => e };",
         );
         assert!(errors.is_empty(), "{:?}", errors);
+    }
+
+    #[test]
+    fn mutable_binding_respects_scope() {
+        // An inner `let x` must not make an outer `const x` appear mutable.
+        let errors = typeck("const x = 1; for (let i = 0; i < 1; i = i + 1) { let x = 2; } x = 3;");
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert!(
+            errors[0].message.contains("cannot assign to immutable variable `x`"),
+            "{:?}",
+            errors[0].message
+        );
+    }
+
+    #[test]
+    fn outer_let_mutable_in_inner_scope() {
+        assert!(typeck("let x = 1; for (let i = 0; i < 1; i = i + 1) { x = 2; }").is_empty());
     }
 }

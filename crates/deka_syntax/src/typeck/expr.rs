@@ -731,7 +731,7 @@ impl<'a> Checker<'a> {
                         return right_type;
                     }
                 };
-                if !self.mutables.contains(name) {
+                if !self.is_mutable(name) {
                     self.error_span(
                         left.span(),
                         format!("cannot assign to immutable variable `{name}`"),
@@ -749,7 +749,7 @@ impl<'a> Checker<'a> {
             }
             AddAssign | SubAssign | MulAssign | DivAssign | ModAssign => {
                 if let ast::Expr::Identifier { name, .. } = left {
-                    if !self.mutables.contains(*name) {
+                    if !self.is_mutable(*name) {
                         self.error_span(
                             left.span(),
                             format!("cannot assign to immutable variable `{name}`"),
