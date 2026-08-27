@@ -199,7 +199,7 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{BinOp, Expr, Stmt, Type, UnOp};
+    use crate::ast::{BinOp, Expr, Stmt, TemplatePart, Type, UnOp};
 
     #[test]
     fn parse_const_number() {
@@ -901,6 +901,24 @@ mod tests {
             "expected member expression error, got: {:?}",
             result.errors
         );
+    }
+
+    #[test]
+    fn parse_template_literal() {
+        let arena = Bump::new();
+        let result = parse("const s = `hello ${x}`;", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { value, .. } => match value {
+                Expr::TemplateLiteral { parts, .. } => {
+                    assert_eq!(parts.len(), 1);
+                    assert!(matches!(parts[0], TemplatePart::Text(text) if text == "hello ${x}"));
+                }
+                _ => panic!("expected template literal, got {:?}", value),
+            },
+            _ => panic!("expected const declaration"),
+        }
     }
 
     // ------------------------------------------------------------------

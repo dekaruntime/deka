@@ -334,6 +334,16 @@ pub enum Expr<'a> {
         expr: &'a Expr<'a>,
         span: Span,
     },
+    TemplateLiteral {
+        parts: &'a [TemplatePart<'a>],
+        span: Span,
+    },
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub enum TemplatePart<'a> {
+    Text(&'a str),
+    Expr(&'a Expr<'a>),
 }
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
@@ -477,6 +487,7 @@ impl<'a> Expr<'a> {
             Expr::Object { span, .. } => *span,
             Expr::Spread { span, .. } => *span,
             Expr::Paren { span, .. } => *span,
+            Expr::TemplateLiteral { span, .. } => *span,
         }
     }
 }

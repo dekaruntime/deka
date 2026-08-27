@@ -165,6 +165,20 @@ pub fn emit_expr(out: &mut String, expr: &Expr) -> Result<(), String> {
             out.push_str(&crate::util::escape_string(value));
             out.push('"');
         }
+        Expr::TemplateLiteral { parts, .. } => {
+            out.push('`');
+            for part in parts.iter() {
+                match part {
+                    deka_syntax::TemplatePart::Text(text) => out.push_str(text),
+                    deka_syntax::TemplatePart::Expr(expr) => {
+                        out.push_str("${");
+                        emit_expr(out, expr)?;
+                        out.push('}');
+                    }
+                }
+            }
+            out.push('`');
+        }
     }
     Ok(())
 }

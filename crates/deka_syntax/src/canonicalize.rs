@@ -364,9 +364,30 @@ fn transform_expr<'a>(
             expr: transform_expr(expr, arena, enums),
             span: *span,
         },
+        Expr::TemplateLiteral { parts, span } => Expr::TemplateLiteral {
+            parts: transform_template_parts(parts, arena, enums),
+            span: *span,
+        },
     };
 
     alloc_expr(arena, new_expr)
+}
+
+fn transform_template_parts<'a>(
+    parts: &'a [ast::TemplatePart<'a>],
+    arena: &'a Bump,
+    enums: &HashMap<&'a str, HashSet<&'a str>>,
+) -> &'a [ast::TemplatePart<'a>] {
+    let transformed: Vec<ast::TemplatePart<'a>> = parts
+        .iter()
+        .map(|part| match part {
+            ast::TemplatePart::Text(text) => ast::TemplatePart::Text(text),
+            ast::TemplatePart::Expr(expr) => {
+                ast::TemplatePart::Expr(transform_expr(expr, arena, enums))
+            }
+        })
+        .collect();
+    ast::alloc_slice(arena, transformed)
 }
 
 fn transform_exprs<'a>(
@@ -873,9 +894,30 @@ fn lower_expr<'a>(
             expr: lower_expr(expr, arena, method_calls),
             span: *span,
         },
+        Expr::TemplateLiteral { parts, span } => Expr::TemplateLiteral {
+            parts: lower_template_parts(parts, arena, method_calls),
+            span: *span,
+        },
     };
 
     ast::alloc(arena, new_expr)
+}
+
+fn lower_template_parts<'a>(
+    parts: &'a [ast::TemplatePart<'a>],
+    arena: &'a Bump,
+    method_calls: &HashMap<*const Expr<'a>, String>,
+) -> &'a [ast::TemplatePart<'a>] {
+    let transformed: Vec<ast::TemplatePart<'a>> = parts
+        .iter()
+        .map(|part| match part {
+            ast::TemplatePart::Text(text) => ast::TemplatePart::Text(text),
+            ast::TemplatePart::Expr(expr) => {
+                ast::TemplatePart::Expr(lower_expr(expr, arena, method_calls))
+            }
+        })
+        .collect();
+    ast::alloc_slice(arena, transformed)
 }
 
 fn lower_exprs<'a>(

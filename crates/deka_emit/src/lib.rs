@@ -221,4 +221,10 @@ mod tests {
         assert!(out.contains("deka.ui.jsxs"), "expected jsxs call, got: {}", out);
         assert!(out.contains("deka.ui.Fragment"), "expected Fragment, got: {}", out);
     }
+
+    #[test]
+    fn emit_template_literal() {
+        let out = parse_and_emit("const s = `hello ${x}`;");
+        assert!(out.contains("const s = `hello ${x}`;"), "expected backtick output, got: {}", out);
+    }
 }

@@ -38,6 +38,7 @@ pub(super) fn token_name(kind: TokenKind) -> &'static str {
         Number => "number",
         BigInt => "bigint",
         String => "string",
+        BacktickString => "backtick string",
         True => "`true`",
         False => "`false`",
         None => "`none`",

@@ -119,6 +119,7 @@ impl<'a> Checker<'a> {
                 // v2 typechecker; match on it to inspect the Result.
                 Type::Infer
             }
+            ast::Expr::TemplateLiteral { .. } => Type::Named { name: "string" },
             _ => {
                 self.error_at_expr(expr, "unsupported expression in v2 typeck");
                 Type::Error

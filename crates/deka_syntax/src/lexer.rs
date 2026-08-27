@@ -9,6 +9,7 @@ pub enum TokenKind {
     Number,
     BigInt,
     String,
+    BacktickString,
     True,
     False,
     None,
@@ -232,6 +233,49 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Read a backtick-delimited raw string. DS does not currently support
+    /// template literal interpolation, but backtick strings appear inside
+    /// `unsafe { }` blocks as raw JavaScript, so the lexer must consume them
+    /// as a single token without emitting an error.
+    fn read_backtick_string(&mut self) -> Token<'a> {
+        let start = self.pos_at();
+        let start_byte = self.pos;
+        self.advance(); // opening backtick
+        let start_pos = self.pos;
+        loop {
+            match self.current() {
+                None => {
+                    self.diagnostics.push(Diagnostic {
+                        severity: Severity::Error,
+                        line: start.line,
+                        column: start.column,
+                        message: "unterminated backtick string".into(),
+                        help_text: Some("add a closing backtick".into()),
+                        underline_length: 1,
+                    });
+                    break;
+                }
+                Some('\\') => {
+                    self.advance();
+                    self.advance();
+                }
+                Some('`') => {
+                    self.advance();
+                    break;
+                }
+                Some(_) => {
+                    self.advance();
+                }
+            }
+        }
+        let text = &self.source[start_pos..self.pos - 1];
+        Token {
+            kind: TokenKind::BacktickString,
+            text,
+            span: self.span_from(start, start_byte),
+        }
+    }
+
     fn read_number(&mut self) -> Token<'a> {
         let start = self.pos_at();
         let start_byte = self.pos;
@@ -390,6 +434,7 @@ impl<'a> Lexer<'a> {
                 }
             }
             '"' | '\'' => self.read_string(),
+            '`' => self.read_backtick_string(),
             '0'..='9' => self.read_number(),
             'a'..='z' | 'A'..='Z' | '_' => self.read_identifier(),
             '(' => {

@@ -199,6 +199,14 @@ impl<'a> Parser<'a> {
                     span: self.span_from(start, start_byte),
                 })
             }
+            TokenKind::BacktickString => {
+                let value = self.bump_str(self.current_text());
+                self.advance();
+                Some(Expr::TemplateLiteral {
+                    parts: alloc_slice(self.arena, vec![crate::ast::TemplatePart::Text(value)]),
+                    span: self.span_from(start, start_byte),
+                })
+            }
             TokenKind::True => {
                 self.advance();
                 Some(Expr::Boolean {
