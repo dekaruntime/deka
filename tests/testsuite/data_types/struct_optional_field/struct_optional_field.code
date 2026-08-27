@@ -1,3 +1,4 @@
+import { echo } from "io"
 struct Node {
   value: number;
   next?: Node;
@@ -5,5 +6,5 @@ struct Node {
 
 const tail = Node { value: 2 }
 const head = Node { value: 1, next: tail }
-console.log(head.value)
-console.log(head.next.value)
+echo(head.value)
+echo(head.next.value)

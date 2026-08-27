@@ -1,3 +1,4 @@
+import { echo } from "io"
 fn greet(name: Option<string>) string {
   return match (name) {
     Some(n) => "Hello " + n,
@@ -5,5 +6,5 @@ fn greet(name: Option<string>) string {
   }
 }
 
-console.log(greet(Option.Some("Deka")))
-console.log(greet(Option.None))
+echo(greet(Option.Some("Deka")))
+echo(greet(Option.None))

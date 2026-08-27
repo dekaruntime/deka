@@ -1,3 +1,4 @@
+import { echo } from "io"
 import { random_bytes, aes_256_gcm_encrypt, aes_256_gcm_decrypt } from "crypto"
 fn utf8(value: string): bytes {
   let encoded = unsafe { new TextEncoder().encode(value) }
@@ -39,4 +40,4 @@ const round = match (aes_256_gcm_encrypt(key, nonce, pt, aad)) {
     Ok(out) => to_hex(out)
   }
 }
-console.log(round == to_hex(pt))
+echo(round == to_hex(pt))

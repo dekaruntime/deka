@@ -1,9 +1,10 @@
+import { echo } from "io"
 interface Named {
   name: string;
 }
 
 fn show(n: Named) {
-  console.log(n.name)
+  echo(n.name)
 }
 
 show({name: "Deka"})

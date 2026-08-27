@@ -1,3 +1,4 @@
+import { echo } from "io"
 import { now } from "time"
 const r = now(1)
-console.log(r)
+echo(r)

@@ -1,6 +1,7 @@
+import { echo } from "io"
 fn helper() number {
   return 42
 }
 if (true) {
-  console.log(helper())
+  echo(helper())
 }

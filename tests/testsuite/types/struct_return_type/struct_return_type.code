@@ -1,3 +1,4 @@
+import { echo } from "io"
 struct Box {
   value: number;
 }
@@ -7,4 +8,4 @@ fn makeBox(v: number) Box {
 }
 
 const b = makeBox(7)
-console.log(b.value)
+echo(b.value)

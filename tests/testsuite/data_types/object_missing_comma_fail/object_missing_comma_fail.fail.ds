@@ -1,5 +1,6 @@
+import { echo } from "io"
 const obj = {
   x: 1
   y: 2
 }
-console.log(obj.x + obj.y)
+echo(obj.x + obj.y)

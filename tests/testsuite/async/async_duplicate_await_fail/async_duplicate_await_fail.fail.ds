@@ -1,9 +1,10 @@
+import { echo } from "io"
 async fn value() Promise<number> {
   return 1
 }
 
 async fn main() {
-  console.log(await await value())
+  echo(await await value())
 }
 
 await main()

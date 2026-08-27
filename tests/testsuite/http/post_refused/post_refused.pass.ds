@@ -1,3 +1,4 @@
+import { echo } from "io"
 import { post } from "http"
 fn utf8(value: string): bytes {
   let encoded = unsafe { new TextEncoder().encode(value) }
@@ -6,7 +7,7 @@ fn utf8(value: string): bytes {
     Err(err) => utf8("")
   }
 }
-console.log(match (post("http://127.0.0.1:1/", "text/plain", utf8("x"))) {
+echo(match (post("http://127.0.0.1:1/", "text/plain", utf8("x"))) {
   Ok(v) => "ok",
   Err(e) => "err"
 })

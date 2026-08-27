@@ -33,11 +33,24 @@ const PACKAGE_DEKA_JSON = {
   security: {
     allow: {
       read: ["./"],
-      write: [".cache", "php_modules"],
+      write: [".cache", "php_modules", "ds_modules"],
     },
     prompt: false,
   },
 };
+
+function fixtureImportsIo(test) {
+  const blobs = [test.source, ...Object.values(test.files ?? {})];
+  return blobs.some((s) => /\bfrom\s+["']io["']/.test(s));
+}
+
+function packagesFor(test) {
+  const packages = [...(test.packages ?? [])];
+  if (fixtureImportsIo(test) && !packages.some((p) => p === "io" || p === "@deka/io")) {
+    packages.push("io");
+  }
+  return packages;
+}
 
 function findCliBinary() {
   if (process.env.DEKA_NATIVE) {
@@ -247,14 +260,24 @@ function writeProjectFiles(tmpDir, entryPath, source, files) {
   return { isProject: true };
 }
 
+function restoreCachedModules(cacheDir, tmpDir) {
+  for (const name of ["ds_modules", "php_modules"]) {
+    const cached = join(cacheDir, name);
+    if (existsSync(cached)) {
+      cpSync(cached, join(tmpDir, name), { recursive: true });
+    }
+  }
+}
+
 function installPackages(cliPath, tmpDir, packages) {
   const cacheKey = packages.slice().sort().join("+");
   const cacheDir = join(repoRoot, ".cache", "deka-packages", cacheKey);
   const cachedLock = join(cacheDir, "deka.lock");
-  const cachedModules = join(cacheDir, "php_modules");
+  const hasCachedModules =
+    existsSync(join(cacheDir, "ds_modules")) || existsSync(join(cacheDir, "php_modules"));
 
-  if (existsSync(cachedLock) && existsSync(cachedModules)) {
-    cpSync(cachedModules, join(tmpDir, "php_modules"), { recursive: true });
+  if (existsSync(cachedLock) && hasCachedModules) {
+    restoreCachedModules(cacheDir, tmpDir);
     copyFileSync(cachedLock, join(tmpDir, "deka.lock"));
     return { ok: true, stderr: "" };
   }
@@ -281,9 +304,11 @@ function installPackages(cliPath, tmpDir, packages) {
   }
 
   mkdirSync(cacheDir, { recursive: true });
-  const modulesDir = join(tmpDir, "php_modules");
-  if (existsSync(modulesDir)) {
-    cpSync(modulesDir, cachedModules, { recursive: true });
+  for (const name of ["ds_modules", "php_modules"]) {
+    const dir = join(tmpDir, name);
+    if (existsSync(dir)) {
+      cpSync(dir, join(cacheDir, name), { recursive: true });
+    }
   }
   const lockPath = join(tmpDir, "deka.lock");
   if (existsSync(lockPath)) {
@@ -296,7 +321,7 @@ function runNative(cliPath, test) {
   mkdirSync(scratchRoot, { recursive: true });
   const tmpDir = mkdtempSync(join(scratchRoot, "case-"));
   chmodSync(tmpDir, 0o700);
-  const packages = test.packages ?? [];
+  const packages = packagesFor(test);
 
   try {
     const { isProject } = writeProjectFiles(tmpDir, test.entryPath ?? "test.ds", test.source, test.files);

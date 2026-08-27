@@ -1,5 +1,6 @@
+import { echo } from "io"
 async fn greet() {
-  console.log("hi")
+  echo("hi")
 }
 
 await greet()

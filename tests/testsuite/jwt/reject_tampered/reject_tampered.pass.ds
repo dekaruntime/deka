@@ -1,3 +1,4 @@
+import { echo } from "io"
 import { sign, verify } from "jwt"
 fn utf8(value: string): bytes {
   let encoded = unsafe { new TextEncoder().encode(value) }
@@ -14,7 +15,7 @@ const tampered = match (unsafe { token.slice(0, -1) + (token.slice(-1) === "A" ?
   Ok(v) => v,
   Err(e) => token
 }
-console.log(match (verify(tampered, utf8("secret"), {})) {
+echo(match (verify(tampered, utf8("secret"), {})) {
   Ok(v) => "ok",
   Err(e) => "err"
 })

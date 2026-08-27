@@ -1,3 +1,4 @@
+import { echo } from "io"
 struct Person {}
 fn (p Person) greet() string {
   return "Hello"
@@ -13,4 +14,4 @@ fn (e Employee) greet() string {
 }
 
 let e = Employee { name: "DekaScript" }
-console.log(e.greet())
+echo(e.greet())

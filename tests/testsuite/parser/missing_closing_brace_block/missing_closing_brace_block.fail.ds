@@ -1,3 +1,4 @@
+import { echo } from "io"
 const t = true
 if (t) {
-  console.log(1)
+  echo(1)

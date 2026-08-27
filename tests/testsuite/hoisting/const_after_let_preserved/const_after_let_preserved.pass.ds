@@ -1,3 +1,4 @@
+import { echo } from "io"
 let a = 1
 const b = a + 2
-console.log(a + b)
+echo(a + b)

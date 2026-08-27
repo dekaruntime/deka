@@ -1,10 +1,11 @@
+import { echo } from "io"
 let x = 2
 if (x === 0) {
-  console.log("zero")
+  echo("zero")
 } else if (x === 1) {
-  console.log("one")
+  echo("one")
 } else if (x === 2) {
-  console.log("two")
+  echo("two")
 } else {
-  console.log("many")
+  echo("many")
 }

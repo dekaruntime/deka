@@ -1,3 +1,4 @@
+import { echo } from "io"
 for (var x of [1, 2]) {
-  console.log(x)
+  echo(x)
 }

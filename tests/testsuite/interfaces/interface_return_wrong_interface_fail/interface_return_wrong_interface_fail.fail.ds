@@ -1,3 +1,4 @@
+import { echo } from "io"
 interface A {
   x: number
 }
@@ -7,4 +8,4 @@ interface B {
 fn getA() A {
   return { y: "oops" }
 }
-console.log(getA().x)
+echo(getA().x)

@@ -1,5 +1,6 @@
+import { echo } from "io"
 if (true) {
-  console.log("yes")
+  echo("yes")
 } else {
-  console.log("no")
+  echo("no")
 }

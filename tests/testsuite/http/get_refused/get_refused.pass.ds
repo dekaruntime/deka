@@ -1,5 +1,6 @@
+import { echo } from "io"
 import { get } from "http"
-console.log(match (get("http://127.0.0.1:1/")) {
+echo(match (get("http://127.0.0.1:1/")) {
   Ok(v) => "ok",
   Err(e) => "err"
 })

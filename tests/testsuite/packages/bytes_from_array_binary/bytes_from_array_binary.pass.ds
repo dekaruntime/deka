@@ -1,6 +1,7 @@
+import { echo } from "io"
 import { from_array, len, get } from "bytes"
 
 const encoded = from_array([255, 0, 128])
-console.log(len(encoded))
-console.log(get(encoded, 0))
-console.log(get(encoded, 2))
+echo(len(encoded))
+echo(get(encoded, 0))
+echo(get(encoded, 2))

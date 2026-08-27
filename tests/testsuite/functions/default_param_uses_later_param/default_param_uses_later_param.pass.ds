@@ -1,4 +1,5 @@
+import { echo } from "io"
 fn pair(y: number, x: number = y) number {
   return x + y
 }
-console.log(pair(3))
+echo(pair(3))

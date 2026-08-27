@@ -1,3 +1,4 @@
+import { echo } from "io"
 interface Counter {
   fn increment() void
 }
@@ -12,4 +13,4 @@ fn bump(i: Counter) {
 }
 let c = Clicker { count: 0 }
 bump(c)
-console.log(c.count)
+echo(c.count)

@@ -1,3 +1,4 @@
+import { echo } from "io"
 async fn double(x: number) Promise<number> {
   return x * 2
 }
@@ -8,7 +9,7 @@ async fn main() {
     if (x > 10) {
       break
     }
-    console.log(await double(x))
+    echo(await double(x))
   }
 }
 

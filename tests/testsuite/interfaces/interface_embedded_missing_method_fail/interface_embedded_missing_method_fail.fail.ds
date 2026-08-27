@@ -1,3 +1,4 @@
+import { echo } from "io"
 interface Mover {
   fn move() string
 }
@@ -6,6 +7,6 @@ struct Robot {
   Wheels
 }
 fn run(m: Mover) {
-  console.log(m.move())
+  echo(m.move())
 }
 run(Robot { Wheels: Wheels {} })

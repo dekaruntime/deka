@@ -1,3 +1,4 @@
+import { echo } from "io"
 interface Greeter {
   fn greet() string {}
 }
@@ -8,4 +9,4 @@ fn (p Person) greet() string {
   return "Hello, " + p.name
 }
 const g = Person { name: "Deka" }
-console.log(g.greet())
+echo(g.greet())

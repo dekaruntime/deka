@@ -1,3 +1,4 @@
+import { echo } from "io"
 struct Counter {
   count: number;
 }
@@ -9,7 +10,7 @@ async fn (c mut Counter) inc() Promise<void> {
 async fn main() {
   const c = Counter { count: 0 }
   await c.inc()
-  console.log(c.count)
+  echo(c.count)
 }
 
 await main()

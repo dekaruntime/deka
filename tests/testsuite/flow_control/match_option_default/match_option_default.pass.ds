@@ -1,3 +1,4 @@
+import { echo } from "io"
 const some = Option.Some(7)
 const none = Option.None
 const a = match (some) {
@@ -10,5 +11,5 @@ const b = match (none) {
   None => 0,
   _ => -1
 }
-console.log(a)
-console.log(b)
+echo(a)
+echo(b)

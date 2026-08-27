@@ -1,2 +1,3 @@
-console.log(Array.isArray([1, 2, 3]))
-console.log(Array.isArray("not array"))
+import { echo } from "io"
+echo(Array.isArray([1, 2, 3]))
+echo(Array.isArray("not array"))

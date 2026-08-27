@@ -1,3 +1,4 @@
+import { echo } from "io"
 import { hmac } from "crypto"
 fn utf8(value: string): bytes {
   let encoded = unsafe { new TextEncoder().encode(value) }
@@ -22,7 +23,7 @@ fn to_hex(value: bytes): string {
   }
 }
 const r = hmac("sha256", utf8("key"), utf8("The quick brown fox jumps over the lazy dog"))
-console.log(match (r) {
+echo(match (r) {
   Ok(v) => to_hex(v),
   Err(e) => "fail"
 })

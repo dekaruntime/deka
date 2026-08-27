@@ -1,3 +1,4 @@
+import { echo } from "io"
 enum Shape {
   Circle(number),
   Square(number),
@@ -15,5 +16,5 @@ fn area(h: HasShape) number {
   }
 }
 
-console.log(area({shape: Shape.Circle(3)}))
-console.log(area({shape: Shape.Square(2)}))
+echo(area({shape: Shape.Circle(3)}))
+echo(area({shape: Shape.Square(2)}))

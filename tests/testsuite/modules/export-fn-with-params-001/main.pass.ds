@@ -1,2 +1,3 @@
+import { echo } from "io"
 import { multiply } from "./math.ds";
-console.log(multiply(6, 7));
+echo(multiply(6, 7));

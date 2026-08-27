@@ -1,3 +1,4 @@
+import { echo } from "io"
 import { Person } from "./person.ds"
 const p = Person { name: "Deka" }
-unsafe { console.log(p.name) }
+echo(p.name)

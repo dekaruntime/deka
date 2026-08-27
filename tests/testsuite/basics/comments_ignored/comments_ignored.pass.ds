@@ -1,4 +1,5 @@
 // this is a single-line comment
 /* this is
    a block comment */
-console.log(1)
+import { echo } from "io"
+echo(1)

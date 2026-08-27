@@ -1,3 +1,4 @@
+import { echo } from "io"
 struct Runner {}
 fn (r Runner) move() string {
   return "running"
@@ -11,4 +12,4 @@ struct Triathlete {
   Swimmer
 }
 const t = Triathlete { Runner: Runner {}, Swimmer: Swimmer {} }
-console.log(t.move())
+echo(t.move())

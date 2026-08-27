@@ -1,3 +1,4 @@
+import { echo } from "io"
 if {
-  console.log("x")
+  echo("x")
 }

@@ -1,5 +1,6 @@
+import { echo } from "io"
 fn greet(greeting: string = "hi") void {
-  console.log(greeting)
+  echo(greeting)
 }
 
 greet()

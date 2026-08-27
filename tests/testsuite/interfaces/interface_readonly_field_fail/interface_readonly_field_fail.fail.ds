@@ -1,7 +1,8 @@
+import { echo } from "io"
 interface Config {
   readonly port: number
 }
 fn show(c: Config) {
-  console.log(c.port)
+  echo(c.port)
 }
 show({ port: 8080 })

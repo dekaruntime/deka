@@ -1,3 +1,4 @@
+import { echo } from "io"
 const arr = [3, 1, 2]
 arr.sort()
-console.log(arr)
+echo(arr)

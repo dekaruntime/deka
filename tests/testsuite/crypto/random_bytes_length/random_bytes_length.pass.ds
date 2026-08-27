@@ -1,5 +1,6 @@
+import { echo } from "io"
 import { random_bytes } from "crypto"
-console.log(match (random_bytes(16)) {
+echo(match (random_bytes(16)) {
   Ok(v) => match (unsafe { v.byteLength }) {
     Ok(n) => n,
     Err(e) => 0

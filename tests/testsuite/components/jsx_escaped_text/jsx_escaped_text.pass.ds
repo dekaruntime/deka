@@ -1,3 +1,4 @@
+import { echo } from "io"
 const ui = globalThis.deka.ui
 const html = ui.renderToString(ui.jsx("p", { children: "a < b & c > d" }))
-console.log(html.html)
+echo(html.html)

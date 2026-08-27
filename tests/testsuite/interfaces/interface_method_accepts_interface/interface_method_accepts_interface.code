@@ -1,3 +1,4 @@
+import { echo } from "io"
 interface Named {
   name: string;
 }
@@ -15,7 +16,7 @@ fn (p Person) greet(other: Named) string {
 }
 
 fn run(g: Greeter) {
-  console.log(g.greet(Person { name: "World" }))
+  echo(g.greet(Person { name: "World" }))
 }
 
 run(Person { name: "Deka" })

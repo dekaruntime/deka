@@ -1,3 +1,4 @@
+import { echo } from "io"
 import { upgrade } from "tls"
 const msg = match (upgrade(0, "localhost")) {
   Ok(h) => "",
@@ -6,4 +7,4 @@ const msg = match (upgrade(0, "localhost")) {
     Err(err) => ""
   }
 }
-console.log(msg.length > 0)
+echo(msg.length > 0)

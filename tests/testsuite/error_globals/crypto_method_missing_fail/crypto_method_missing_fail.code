@@ -1,1 +1,2 @@
-console.log(crypto.nonexistent())
+import { echo } from "io"
+echo(crypto.nonexistent())

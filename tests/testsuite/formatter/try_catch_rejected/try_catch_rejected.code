@@ -1,1 +1,2 @@
-try { console.log(1) } catch (e) { console.log(e) }
+import { echo } from "io"
+try { echo(1) } catch (e) { echo(e) }

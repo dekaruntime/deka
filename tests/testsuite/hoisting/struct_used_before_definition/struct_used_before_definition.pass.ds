@@ -1,2 +1,3 @@
-console.log(Person({ name: "Ada" }).name)
+import { echo } from "io"
+echo(Person({ name: "Ada" }).name)
 struct Person { name: string }
