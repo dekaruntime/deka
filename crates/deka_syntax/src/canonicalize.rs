@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use bumpalo::Bump;
 
 use crate::ast;
-use crate::ast::{Expr, Program, Stmt};
+use crate::ast::{Expr, MethodTarget, Program, Stmt};
 
 /// Rewrite enum member access into explicit enum constructor expressions.
 ///
@@ -576,7 +576,7 @@ fn alloc_expr<'a>(arena: &'a Bump, expr: Expr<'a>) -> &'a Expr<'a> {
 pub fn lower_method_calls<'a>(
     program: &mut Program<'a>,
     arena: &'a Bump,
-    method_calls: &HashMap<*const Expr<'a>, String>,
+    method_calls: &HashMap<*const Expr<'a>, MethodTarget<'a>>,
 ) {
     let transformed: Vec<Stmt<'a>> = program
         .statements
@@ -590,7 +590,7 @@ pub fn lower_method_calls<'a>(
 fn lower_stmt<'a>(
     stmt: &'a Stmt<'a>,
     arena: &'a Bump,
-    method_calls: &HashMap<*const Expr<'a>, String>,
+    method_calls: &HashMap<*const Expr<'a>, MethodTarget<'a>>,
 ) -> Stmt<'a> {
     match stmt {
         Stmt::Export { decl, span } => {
@@ -798,18 +798,29 @@ fn lower_stmt<'a>(
 fn lower_expr<'a>(
     expr: &'a Expr<'a>,
     arena: &'a Bump,
-    method_calls: &HashMap<*const Expr<'a>, String>,
+    method_calls: &HashMap<*const Expr<'a>, MethodTarget<'a>>,
 ) -> &'a Expr<'a> {
     // If this expression is a recorded method call, rewrite it.
-    if let Some(mangled) = method_calls.get(&(expr as *const Expr<'a>)) {
+    if let Some(target) = method_calls.get(&(expr as *const Expr<'a>)) {
         if let Expr::Call {
             callee: ast::Expr::FieldAccess { object, span, .. },
             args,
             ..
         } = expr
         {
-            let mangled_name = ast::alloc_str(arena, mangled);
-            let mut new_args: Vec<Expr<'a>> = vec![(*object).clone()];
+            let mangled_name = ast::alloc_str(arena, &target.mangled);
+
+            // For embedded methods, traverse the embed chain to reach the owner.
+            let mut receiver_expr: Expr<'a> = (*object).clone();
+            for embed_name in target.embed_path.iter() {
+                receiver_expr = Expr::FieldAccess {
+                    object: ast::alloc(arena, receiver_expr),
+                    field: embed_name,
+                    span: *span,
+                };
+            }
+
+            let mut new_args: Vec<Expr<'a>> = vec![receiver_expr];
             new_args.extend(args.iter().cloned());
             let new_expr = Expr::Call {
                 callee: ast::alloc(
@@ -958,7 +969,7 @@ fn lower_expr<'a>(
 fn lower_template_parts<'a>(
     parts: &'a [ast::TemplatePart<'a>],
     arena: &'a Bump,
-    method_calls: &HashMap<*const Expr<'a>, String>,
+    method_calls: &HashMap<*const Expr<'a>, MethodTarget<'a>>,
 ) -> &'a [ast::TemplatePart<'a>] {
     let transformed: Vec<ast::TemplatePart<'a>> = parts
         .iter()
@@ -975,7 +986,7 @@ fn lower_template_parts<'a>(
 fn lower_exprs<'a>(
     exprs: &'a [Expr<'a>],
     arena: &'a Bump,
-    method_calls: &HashMap<*const Expr<'a>, String>,
+    method_calls: &HashMap<*const Expr<'a>, MethodTarget<'a>>,
 ) -> &'a [Expr<'a>] {
     let transformed: Vec<Expr<'a>> = exprs
         .iter()
@@ -987,7 +998,7 @@ fn lower_exprs<'a>(
 fn lower_struct_fields<'a>(
     fields: &'a [ast::StructLiteralField<'a>],
     arena: &'a Bump,
-    method_calls: &HashMap<*const Expr<'a>, String>,
+    method_calls: &HashMap<*const Expr<'a>, MethodTarget<'a>>,
 ) -> &'a [ast::StructLiteralField<'a>] {
     let transformed: Vec<ast::StructLiteralField<'a>> = fields
         .iter()
@@ -1003,7 +1014,7 @@ fn lower_struct_fields<'a>(
 fn lower_object_fields<'a>(
     fields: &'a [ast::ObjectField<'a>],
     arena: &'a Bump,
-    method_calls: &HashMap<*const Expr<'a>, String>,
+    method_calls: &HashMap<*const Expr<'a>, MethodTarget<'a>>,
 ) -> &'a [ast::ObjectField<'a>] {
     let transformed: Vec<ast::ObjectField<'a>> = fields
         .iter()
@@ -1019,7 +1030,7 @@ fn lower_object_fields<'a>(
 fn lower_match_arms<'a>(
     arms: &'a [ast::MatchArm<'a>],
     arena: &'a Bump,
-    method_calls: &HashMap<*const Expr<'a>, String>,
+    method_calls: &HashMap<*const Expr<'a>, MethodTarget<'a>>,
 ) -> &'a [ast::MatchArm<'a>] {
     let transformed: Vec<ast::MatchArm<'a>> = arms
         .iter()
@@ -1039,7 +1050,7 @@ fn lower_match_arms<'a>(
 fn lower_jsx_element<'a>(
     element: &ast::JsxElement<'a>,
     arena: &'a Bump,
-    method_calls: &HashMap<*const Expr<'a>, String>,
+    method_calls: &HashMap<*const Expr<'a>, MethodTarget<'a>>,
 ) -> ast::JsxElement<'a> {
     let new_attrs: Vec<ast::JsxAttribute<'a>> = element
         .attributes

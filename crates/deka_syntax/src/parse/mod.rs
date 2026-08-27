@@ -515,6 +515,24 @@ mod tests {
     }
 
     #[test]
+    fn parse_struct_embed() {
+        let arena = Bump::new();
+        let result = parse(
+            "struct Legs {} struct Robot { Legs } const r = Robot { Legs: Legs {} };",
+            &arena,
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[1] {
+            Stmt::Struct { embeds, .. } => {
+                assert_eq!(embeds.len(), 1);
+                assert_eq!(embeds[0].name, "Legs");
+            }
+            _ => panic!("expected struct declaration"),
+        }
+    }
+
+    #[test]
     fn parse_user_defined_enum_constructor() {
         let arena = Bump::new();
         let result = parse(

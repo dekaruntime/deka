@@ -305,23 +305,35 @@ impl<'a> Parser<'a> {
 
         self.expect(TokenKind::LBrace)?;
         let mut fields = Vec::new();
+        let mut embeds = Vec::new();
 
         while !self.at(TokenKind::RBrace) && !self.at_end() {
             let (field_start, field_start_byte) = self.span_start();
             let field_name = self.expect_identifier()?;
-            self.expect(TokenKind::Colon)?;
-            let field_type = self.parse_type()?;
-            let default_value = if self.eat(TokenKind::Eq) {
-                Some(self.parse_expression()?)
+
+            // If the identifier is followed by `:`, this is a regular field.
+            // Otherwise it names an embedded struct (e.g. `struct Outer { Inner }`).
+            if self.at(TokenKind::Colon) {
+                self.advance();
+                let field_type = self.parse_type()?;
+                let default_value = if self.eat(TokenKind::Eq) {
+                    Some(self.parse_expression()?)
+                } else {
+                    None
+                };
+                fields.push(StructField {
+                    name: field_name,
+                    ty: field_type,
+                    default_value,
+                    span: self.span_from(field_start, field_start_byte),
+                });
             } else {
-                None
-            };
-            fields.push(StructField {
-                name: field_name,
-                ty: field_type,
-                default_value,
-                span: self.span_from(field_start, field_start_byte),
-            });
+                embeds.push(crate::ast::Embed {
+                    name: field_name,
+                    span: self.span_from(field_start, field_start_byte),
+                });
+            }
+
             if !self.eat(TokenKind::Comma) {
                 break;
             }
@@ -334,7 +346,7 @@ impl<'a> Parser<'a> {
             name,
             type_params,
             fields: alloc_slice(self.arena, fields),
-            embeds: alloc_slice(self.arena, Vec::new()),
+            embeds: alloc_slice(self.arena, embeds),
             span: self.span_from(start, start_byte),
         })
     }

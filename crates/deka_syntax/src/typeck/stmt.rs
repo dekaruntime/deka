@@ -88,8 +88,8 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            if let ast::Stmt::Struct { name, fields, span, .. } = stmt {
-                if self.structs.insert(name, super::StructInfo { fields }).is_some() {
+            if let ast::Stmt::Struct { name, fields, embeds, span, .. } = stmt {
+                if self.structs.insert(name, super::StructInfo { fields, embeds }).is_some() {
                     self.error_span(*span, format!("duplicate struct definition `{name}`"));
                 }
             }

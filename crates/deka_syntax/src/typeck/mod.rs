@@ -13,7 +13,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast;
-use crate::ast::Program;
+use crate::ast::{MethodTarget, Program};
 use crate::diagnostics::Diagnostic;
 
 mod ast_type;
@@ -32,9 +32,9 @@ pub struct TypeckResult<'a> {
     pub program: &'a Program<'a>,
     pub errors: Vec<Diagnostic>,
     pub warnings: Vec<Diagnostic>,
-    /// Map from method call expression pointer to the mangled top-level
-    /// function name that should replace it during lowering.
-    pub method_calls: HashMap<*const ast::Expr<'a>, String>,
+    /// Map from method call expression pointer to the lowering target for the
+    /// receiver method that should replace it during lowering.
+    pub method_calls: HashMap<*const ast::Expr<'a>, MethodTarget<'a>>,
 }
 
 pub fn check_program<'a>(program: &'a Program<'a>, _source: &str) -> TypeckResult<'a> {
@@ -54,10 +54,12 @@ struct EnumInfo<'a> {
     cases: &'a [ast::EnumCase<'a>],
 }
 
-/// Information about a struct's fields, collected before typechecking bodies.
+/// Information about a struct's fields and embedded structs, collected before
+/// typechecking bodies.
 #[derive(Clone)]
 struct StructInfo<'a> {
     fields: &'a [ast::StructField<'a>],
+    embeds: &'a [ast::Embed<'a>],
 }
 
 /// Information about a receiver method declared on a struct.
@@ -84,7 +86,7 @@ struct Checker<'a> {
     /// Receiver methods keyed by `(receiver_type, method_name)`.
     receiver_methods: HashMap<(&'a str, &'a str), MethodInfo<'a>>,
     /// Method call sites to lower, keyed by call expression pointer.
-    method_calls: HashMap<*const ast::Expr<'a>, String>,
+    method_calls: HashMap<*const ast::Expr<'a>, MethodTarget<'a>>,
     /// Local scopes. The first scope is the top-level scope.
     scopes: Vec<HashMap<&'a str, Type<'a>>>,
     /// Bindings that were introduced with `let` and may be reassigned.
@@ -331,6 +333,20 @@ mod tests {
         let errors = typeck("break;");
         assert_eq!(errors.len(), 1);
         assert!(errors[0].message.contains("outside of loop"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn struct_embed_field_access_passes() {
+        assert!(typeck(
+            "struct Label { name: string } struct Person { Label } const p: Person = Person { Label: Label { name: \"Ada\" } }; const n: string = p.name;"
+        ).is_empty());
+    }
+
+    #[test]
+    fn struct_embed_method_call_passes() {
+        assert!(typeck(
+            "struct Legs {} fn (l Legs) move() string { return \"walk\" } struct Robot { Legs } const r: Robot = Robot { Legs: Legs {} }; const m: string = r.move();"
+        ).is_empty());
     }
 
     #[test]

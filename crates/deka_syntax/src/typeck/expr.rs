@@ -224,6 +224,7 @@ impl<'a> Checker<'a> {
             }
         };
 
+        let embed_names: HashSet<&str> = info.embeds.iter().map(|e| e.name).collect();
         let mut seen_fields = HashSet::new();
         for field in fields {
             if !seen_fields.insert(field.name) {
@@ -232,16 +233,19 @@ impl<'a> Checker<'a> {
                     format!("duplicate field `{}` in struct literal", field.name),
                 );
             }
-            let expected_type = match info.fields.iter().find(|f| f.name == field.name) {
-                Some(f) => self.resolve_ast_type(&f.ty),
-                None => {
-                    self.error_span(
-                        field.span,
-                        format!("struct `{name}` has no field `{}`", field.name),
-                    );
-                    Type::Error
-                }
+
+            let expected_type = if let Some(f) = info.fields.iter().find(|f| f.name == field.name) {
+                self.resolve_ast_type(&f.ty)
+            } else if embed_names.contains(field.name) {
+                Type::Struct { name: field.name }
+            } else {
+                self.error_span(
+                    field.span,
+                    format!("struct `{name}` has no field or embed `{}`", field.name),
+                );
+                Type::Error
             };
+
             let value_type = self.check_expr(&field.value);
             if !is_assignable(&expected_type, &value_type) {
                 self.error_span(
@@ -261,6 +265,18 @@ impl<'a> Checker<'a> {
                     format!(
                         "missing required field `{}` in struct literal for `{name}`",
                         field.name
+                    ),
+                );
+            }
+        }
+
+        for embed in info.embeds {
+            if !seen_fields.contains(embed.name) {
+                self.error_span(
+                    span,
+                    format!(
+                        "missing embedded struct `{}` in struct literal for `{name}`",
+                        embed.name
                     ),
                 );
             }
@@ -291,26 +307,30 @@ impl<'a> Checker<'a> {
             }
         };
 
-        let info = match self.structs.get(struct_name).cloned() {
-            Some(info) => info,
-            None => {
-                self.error_span(span, format!("unknown struct `{struct_name}`"));
-                return Type::Error;
-            }
-        };
-
-        match info.fields.iter().find(|f| f.name == field) {
-            Some(f) => self.resolve_ast_type(&f.ty),
+        match self.resolve_field_type(struct_name, field) {
+            Some(ty) => ty,
             None => {
                 self.error_span(
                     span,
-                    format!(
-                        "struct `{struct_name}` has no field `{field}`"
-                    ),
+                    format!("struct `{struct_name}` has no field `{field}`"),
                 );
                 Type::Error
             }
         }
+    }
+
+    /// Resolve a field's type, recursively searching embedded structs.
+    fn resolve_field_type(&mut self, struct_name: &'a str, field: &'a str) -> Option<Type<'a>> {
+        let info = self.structs.get(struct_name)?;
+        if let Some(f) = info.fields.iter().find(|f| f.name == field) {
+            return Some(self.resolve_ast_type(&f.ty));
+        }
+        for embed in info.embeds {
+            if let Some(ty) = self.resolve_field_type(embed.name, field) {
+                return Some(ty);
+            }
+        }
+        None
     }
 
     fn check_enum_constructor(
@@ -779,14 +799,17 @@ impl<'a> Checker<'a> {
             _ => return None,
         };
 
-        let info = match self.receiver_methods.get(&(receiver_type, method_name)) {
-            Some(i) => i.clone(),
-            None => return None,
-        };
+        let mut embed_path = Vec::new();
+        let info = self.find_receiver_method(receiver_type, method_name, &mut embed_path)?;
 
         // Record this call site so the emitter can lower it to a mangled call.
-        let mangled = format!("{receiver_type}_{method_name}");
-        self.method_calls.insert(call_expr as *const ast::Expr<'a>, mangled);
+        // The owner of the method is the embedded struct (or the receiver itself).
+        let owner = embed_path.last().copied().unwrap_or(receiver_type);
+        let mangled = format!("{owner}_{method_name}");
+        self.method_calls.insert(
+            call_expr as *const ast::Expr<'a>,
+            ast::MethodTarget { mangled, embed_path },
+        );
 
         let expected_params: Vec<Type<'a>> = info
             .params
@@ -826,6 +849,29 @@ impl<'a> Checker<'a> {
             .map(|t| self.resolve_ast_type(t))
             .unwrap_or(Type::None)
             .into()
+    }
+
+    /// Look up a receiver method on a struct type, recursively searching
+    /// embedded structs. On success, returns the method info and the path of
+    /// embed names that must be traversed to reach the method's owner.
+    fn find_receiver_method(
+        &self,
+        receiver_type: &'a str,
+        method_name: &'a str,
+        path: &mut Vec<&'a str>,
+    ) -> Option<super::MethodInfo<'a>> {
+        if let Some(info) = self.receiver_methods.get(&(receiver_type, method_name)) {
+            return Some(info.clone());
+        }
+        let info = self.structs.get(receiver_type)?;
+        for embed in info.embeds {
+            path.push(embed.name);
+            if let Some(found) = self.find_receiver_method(embed.name, method_name, path) {
+                return Some(found);
+            }
+            path.pop();
+        }
+        None
     }
 
     fn check_call(

@@ -341,6 +341,16 @@ mod tests {
     }
 
     #[test]
+    fn compile_struct_embed_method() {
+        let result = compile_to_js(
+            "struct Legs {} fn (l Legs) move() string { return \"walk\" } struct Robot { Legs } const r = Robot { Legs: Legs {} }; const m = r.move();",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("Legs_move(r.Legs)"), "got: {}", result.js);
+    }
+
+    #[test]
     fn compile_jsx_element() {
         let result = compile_to_js("const el = <div class=\"box\" />;", "test.dsx")
             .expect("compile should succeed");

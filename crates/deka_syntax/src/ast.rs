@@ -188,6 +188,16 @@ pub struct Embed<'a> {
     pub span: Span,
 }
 
+/// Lowering target for a receiver-method call that has been resolved by the
+/// typechecker. `embed_path` is empty for methods declared directly on the
+/// receiver type; otherwise it lists the embedded struct types that must be
+/// traversed to reach the method's owner.
+#[derive(Clone, Debug)]
+pub struct MethodTarget<'a> {
+    pub mangled: String,
+    pub embed_path: Vec<&'a str>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct EnumCase<'a> {
     pub name: &'a str,
