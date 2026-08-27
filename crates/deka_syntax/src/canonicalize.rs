@@ -368,6 +368,23 @@ fn transform_expr<'a>(
             parts: transform_template_parts(parts, arena, enums),
             span: *span,
         },
+        Expr::Function {
+            params,
+            return_type,
+            body,
+            span,
+        } => {
+            let new_body: Vec<Stmt<'a>> = body
+                .iter()
+                .map(|s| transform_stmt(s, arena, enums))
+                .collect();
+            Expr::Function {
+                params,
+                return_type: return_type.clone(),
+                body: ast::alloc_slice(arena, new_body),
+                span: *span,
+            }
+        }
     };
 
     alloc_expr(arena, new_expr)
@@ -898,6 +915,23 @@ fn lower_expr<'a>(
             parts: lower_template_parts(parts, arena, method_calls),
             span: *span,
         },
+        Expr::Function {
+            params,
+            return_type,
+            body,
+            span,
+        } => {
+            let new_body: Vec<Stmt<'a>> = body
+                .iter()
+                .map(|s| lower_stmt(s, arena, method_calls))
+                .collect();
+            Expr::Function {
+                params,
+                return_type: return_type.clone(),
+                body: ast::alloc_slice(arena, new_body),
+                span: *span,
+            }
+        }
     };
 
     ast::alloc(arena, new_expr)

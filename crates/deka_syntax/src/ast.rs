@@ -338,6 +338,13 @@ pub enum Expr<'a> {
         parts: &'a [TemplatePart<'a>],
         span: Span,
     },
+    /// Anonymous function expression: `fn (x: number) number { return x * 2 }`.
+    Function {
+        params: &'a [Param<'a>],
+        return_type: Option<Type<'a>>,
+        body: &'a [Stmt<'a>],
+        span: Span,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -488,6 +495,7 @@ impl<'a> Expr<'a> {
             Expr::Spread { span, .. } => *span,
             Expr::Paren { span, .. } => *span,
             Expr::TemplateLiteral { span, .. } => *span,
+            Expr::Function { span, .. } => *span,
         }
     }
 }

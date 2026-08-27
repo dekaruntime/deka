@@ -1033,4 +1033,24 @@ mod tests {
         let result = parse("const x = 1 const y = 2", &arena);
         assert!(result.program.is_none(), "expected parse failure without newline or semicolon");
     }
+
+    #[test]
+    fn parse_fn_expression_literal() {
+        let arena = Bump::new();
+        let result = parse("const double = fn (x: number) number { return x * 2 }", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { value, .. } => match value {
+                Expr::Function { params, return_type, body, .. } => {
+                    assert_eq!(params.len(), 1);
+                    assert_eq!(params[0].name, "x");
+                    assert!(return_type.is_some());
+                    assert_eq!(body.len(), 1);
+                }
+                _ => panic!("expected function expression, got {:?}", value),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
 }

@@ -296,4 +296,17 @@ mod tests {
         assert!(errors[0].message.contains("number"), "{}", errors[0].message);
         assert!(errors[0].message.contains("string"), "{}", errors[0].message);
     }
+
+    #[test]
+    fn fn_expression_literal_passes() {
+        assert!(typeck("const double = fn (x: number) number { return x * 2 }; const y: number = double(5);").is_empty());
+    }
+
+    #[test]
+    fn fn_expression_return_type_mismatch_fails() {
+        let errors = typeck("const double = fn (x: number) number { return \"oops\" };");
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
+        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+    }
 }

@@ -227,4 +227,11 @@ mod tests {
         let out = parse_and_emit("const s = `hello ${x}`;");
         assert!(out.contains("const s = `hello ${x}`;"), "expected backtick output, got: {}", out);
     }
+
+    #[test]
+    fn emit_fn_expression_literal() {
+        let out = parse_and_emit("const double = fn (x: number) number { return x * 2 };");
+        assert!(out.contains("const double = function(x) {"), "expected function expression, got: {}", out);
+        assert!(out.contains("return x * 2;"), "expected return body, got: {}", out);
+    }
 }

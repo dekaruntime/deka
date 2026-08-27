@@ -120,10 +120,66 @@ impl<'a> Checker<'a> {
                 Type::Infer
             }
             ast::Expr::TemplateLiteral { .. } => Type::Named { name: "string" },
+            ast::Expr::Function {
+                params,
+                return_type,
+                body,
+                span,
+            } => self.check_function_expr(params, return_type.as_ref(), body, *span),
             _ => {
                 self.error_at_expr(expr, "unsupported expression in v2 typeck");
                 Type::Error
             }
+        }
+    }
+
+    fn check_function_expr(
+        &mut self,
+        params: &'a [ast::Param<'a>],
+        return_type: Option<&ast::Type<'a>>,
+        body: &'a [ast::Stmt<'a>],
+        _span: ast::Span,
+    ) -> Type<'a> {
+        let mut param_types = Vec::new();
+        for p in params {
+            match &p.ty {
+                Some(t) => param_types.push(self.resolve_ast_type(t)),
+                None => {
+                    self.error_span(
+                        p.span,
+                        format!("parameter `{}` is missing a type annotation", p.name),
+                    );
+                    param_types.push(Type::Error);
+                }
+            }
+        }
+
+        let explicit_ret = return_type.map(|t| self.resolve_ast_type(t));
+
+        self.scopes.push(HashMap::new());
+
+        for (p, t) in params.iter().zip(param_types.iter()) {
+            self.declare_var(p.name, t.clone());
+        }
+
+        let saved_in_function = self.in_function;
+        let saved_return_type = self.return_type.clone();
+        self.in_function = true;
+        self.return_type = explicit_ret.clone();
+
+        for stmt in body {
+            self.check_statement(stmt);
+        }
+
+        let final_ret = self.return_type.take().unwrap_or(Type::None);
+
+        self.in_function = saved_in_function;
+        self.return_type = saved_return_type;
+        self.scopes.pop();
+
+        Type::Function {
+            params: param_types,
+            ret: Box::new(final_ret),
         }
     }
 

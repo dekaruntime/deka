@@ -179,6 +179,21 @@ pub fn emit_expr(out: &mut String, expr: &Expr) -> Result<(), String> {
             }
             out.push('`');
         }
+        Expr::Function { params, body, .. } => {
+            out.push_str("function(");
+            for (i, param) in params.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(param.name);
+            }
+            out.push_str(") {\n");
+            for stmt in body.iter() {
+                crate::stmt::emit_stmt(out, stmt, 2)?;
+                out.push('\n');
+            }
+            out.push('}');
+        }
     }
     Ok(())
 }

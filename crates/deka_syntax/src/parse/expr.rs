@@ -280,6 +280,7 @@ impl<'a> Parser<'a> {
                     span: self.span_from(start, start_byte),
                 })
             }
+            TokenKind::Fn => self.parse_fn_expression(start, start_byte),
             TokenKind::Unsafe => self.parse_unsafe_expression(start, start_byte),
             TokenKind::Lt => self.parse_jsx(start, start_byte),
             TokenKind::LBracket => {
@@ -423,6 +424,34 @@ impl<'a> Parser<'a> {
         let source = &self.source[body_start_byte..body_end_byte];
         Some(Expr::Unsafe {
             source: self.bump_str(source),
+            span: self.span_from(start, start_byte),
+        })
+    }
+
+    /// Parse an anonymous function expression: `fn (x: number) number { ... }`.
+    fn parse_fn_expression(
+        &mut self,
+        start: crate::ast::Pos,
+        start_byte: usize,
+    ) -> Option<Expr<'a>> {
+        self.advance(); // `fn`
+        self.expect(TokenKind::LParen)?;
+        let params = self.parse_params()?;
+        self.expect(TokenKind::RParen)?;
+
+        let return_type = if self.at(TokenKind::LBrace) {
+            None
+        } else if self.eat(TokenKind::Colon) {
+            Some(self.parse_type()?)
+        } else {
+            Some(self.parse_type()?)
+        };
+
+        let body = self.parse_block()?;
+        Some(Expr::Function {
+            params,
+            return_type,
+            body,
             span: self.span_from(start, start_byte),
         })
     }
