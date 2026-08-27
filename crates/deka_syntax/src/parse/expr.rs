@@ -439,6 +439,10 @@ impl<'a> Parser<'a> {
         start_byte: usize,
     ) -> Option<Expr<'a>> {
         let is_async = self.eat(TokenKind::Async);
+        if is_async {
+            self.error("async function expressions are not supported in DekaScript");
+            return None;
+        }
         self.advance(); // `fn`
         self.expect(TokenKind::LParen)?;
         let params = self.parse_params()?;

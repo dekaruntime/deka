@@ -1134,17 +1134,13 @@ mod tests {
     }
 
     #[test]
-    fn parse_async_fn_expression() {
+    fn parse_async_fn_expression_rejected() {
         let arena = Bump::new();
         let result = parse("const f = async fn () Promise<number> { return 1 }", &arena);
-        assert!(result.errors.is_empty(), "{:?}", result.errors);
-        let program = result.program.unwrap();
-        match &program.statements[0] {
-            Stmt::Const { value, .. } => match value {
-                Expr::Function { is_async, .. } => assert!(*is_async),
-                _ => panic!("expected async function expression"),
-            },
-            _ => panic!("expected const declaration"),
-        }
+        assert!(!result.errors.is_empty());
+        assert!(result
+            .errors
+            .iter()
+            .any(|d| d.message.contains("async function expressions are not supported")));
     }
 }
