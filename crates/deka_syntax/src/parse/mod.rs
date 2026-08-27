@@ -1122,6 +1122,40 @@ mod tests {
     }
 
     #[test]
+    fn parse_for_of_loop() {
+        let arena = Bump::new();
+        let result = parse("for (x of [1, 2, 3]) { echo(x) }", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::ForOf { name, iterable, body, .. } => {
+                assert_eq!(*name, "x");
+                assert!(matches!(iterable, Expr::Array { .. }));
+                assert_eq!(body.len(), 1);
+            }
+            _ => panic!("expected for-of loop, got {:?}", program.statements[0]),
+        }
+    }
+
+    #[test]
+    fn parse_for_of_loop_const_binding() {
+        let arena = Bump::new();
+        let result = parse("for (const x of [1, 2, 3]) { echo(x) }", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        assert!(matches!(program.statements[0], Stmt::ForOf { name: "x", .. }));
+    }
+
+    #[test]
+    fn parse_for_of_loop_let_binding() {
+        let arena = Bump::new();
+        let result = parse("for (let x of [1, 2, 3]) { echo(x) }", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        assert!(matches!(program.statements[0], Stmt::ForOf { name: "x", .. }));
+    }
+
+    #[test]
     fn parse_async_function() {
         let arena = Bump::new();
         let result = parse("async fn value() Promise<number> { return 1 }", &arena);

@@ -211,6 +211,13 @@ mod tests {
     }
 
     #[test]
+    fn emit_for_of_loop() {
+        let out = parse_and_emit("for (x of [1, 2, 3]) { echo(x); }");
+        assert!(out.contains("for (const x of [1, 2, 3]) {"), "expected for-of header, got: {}", out);
+        assert!(out.contains("echo(x);"), "expected body, got: {}", out);
+    }
+
+    #[test]
     fn emit_async_function() {
         let out = parse_and_emit("async fn value() Promise<number> { return 1 }");
         assert!(out.contains("async function value()"), "expected async function, got: {}", out);

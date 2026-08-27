@@ -310,6 +310,23 @@ fn transform_stmt<'a>(
                 span: *span,
             }
         }
+        Stmt::ForOf {
+            name,
+            iterable,
+            body,
+            span,
+        } => {
+            let new_body: Vec<Stmt<'a>> = body
+                .iter()
+                .map(|s| transform_stmt(s, arena, enums))
+                .collect();
+            Stmt::ForOf {
+                name,
+                iterable: transform_expr(iterable, arena, enums).clone(),
+                body: ast::alloc_slice(arena, new_body),
+                span: *span,
+            }
+        }
     }
 }
 
@@ -840,6 +857,23 @@ fn lower_stmt<'a>(
                     .as_ref()
                     .map(|c| lower_expr(c, arena, method_calls).clone()),
                 step: step.as_ref().map(|s| lower_expr(s, arena, method_calls).clone()),
+                body: ast::alloc_slice(arena, new_body),
+                span: *span,
+            }
+        }
+        Stmt::ForOf {
+            name,
+            iterable,
+            body,
+            span,
+        } => {
+            let new_body: Vec<Stmt<'a>> = body
+                .iter()
+                .map(|s| lower_stmt(s, arena, method_calls))
+                .collect();
+            Stmt::ForOf {
+                name,
+                iterable: lower_expr(iterable, arena, method_calls).clone(),
                 body: ast::alloc_slice(arena, new_body),
                 span: *span,
             }

@@ -289,6 +289,38 @@ impl<'a> Checker<'a> {
                 self.loop_depth -= 1;
                 self.scopes.pop();
             }
+            ast::Stmt::ForOf {
+                name,
+                iterable,
+                body,
+                span,
+            } => {
+                let iterable_type = self.check_expr(iterable);
+                let item_type = match &iterable_type {
+                    Type::Generic { base: "Array", args } if !args.is_empty() => args[0].clone(),
+                    Type::Named { name: "string" } => Type::Named { name: "string" },
+                    // Array/object literals currently type as Infer; allow for-of
+                    // over them until dedicated iterable typing lands.
+                    Type::Infer => Type::Infer,
+                    _ => {
+                        self.error_span(
+                            *span,
+                            format!(
+                                "cannot iterate over type `{iterable_type}` in for-of loop"
+                            ),
+                        );
+                        Type::Error
+                    }
+                };
+                self.scopes.push(HashMap::new());
+                self.declare_var(name, item_type);
+                self.loop_depth += 1;
+                for s in body.iter() {
+                    self.check_statement(s);
+                }
+                self.loop_depth -= 1;
+                self.scopes.pop();
+            }
             ast::Stmt::Break { span } => {
                 if self.loop_depth == 0 {
                     self.error_span(*span, "`break` outside of loop");

@@ -126,6 +126,13 @@ pub enum Stmt<'a> {
         body: &'a [Stmt<'a>],
         span: Span,
     },
+    /// `for (item of iterable) { ... }`
+    ForOf {
+        name: &'a str,
+        iterable: Expr<'a>,
+        body: &'a [Stmt<'a>],
+        span: Span,
+    },
     /// `break`
     Break {
         span: Span,
@@ -395,6 +402,8 @@ pub enum BinOp {
     Mod,
     Eq,
     Ne,
+    StrictEq,
+    StrictNe,
     Lt,
     Le,
     Gt,

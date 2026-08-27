@@ -220,6 +220,30 @@ impl<'a> Parser<'a> {
         self.advance(); // `for`
         self.expect(TokenKind::LParen)?;
 
+        // Detect `for (name of iterable)` or `for (const/let name of iterable)`
+        // before committing to C-style parsing.
+        let binding_start = self.pos;
+        let has_binding_keyword = self.eat(TokenKind::Const) || self.eat(TokenKind::Let);
+        if self.at(TokenKind::Identifier) {
+            let name = self.current_text();
+            self.advance();
+            if self.at(TokenKind::Of) {
+                self.advance();
+                let iterable = self.parse_expression()?;
+                self.expect(TokenKind::RParen)?;
+                let body = self.parse_block()?;
+                let _ = has_binding_keyword; // binding mode is not stored; emitter uses `const`
+                return Some(Stmt::ForOf {
+                    name,
+                    iterable,
+                    body,
+                    span: self.span_from(start, start_byte),
+                });
+            }
+        }
+        // Not a for-of: rewind to before any const/let and parse as C-style for.
+        self.pos = binding_start;
+
         let init = if self.at(TokenKind::Semicolon) {
             None
         } else if self.at(TokenKind::Const) {

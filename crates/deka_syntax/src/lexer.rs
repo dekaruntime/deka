@@ -41,6 +41,7 @@ pub enum TokenKind {
     Pub,
     Break,
     Continue,
+    Of,
 
     // Operators
     Plus,
@@ -55,7 +56,9 @@ pub enum TokenKind {
     PercentEq,
     Eq,
     EqEq,
+    EqEqEq,
     NotEq,
+    NotEqEq,
     Lt,
     Le,
     Gt,
@@ -352,6 +355,7 @@ impl<'a> Lexer<'a> {
             "pub" => TokenKind::Pub,
             "break" => TokenKind::Break,
             "continue" => TokenKind::Continue,
+            "of" => TokenKind::Of,
             _ => TokenKind::Identifier,
         };
         Token {
@@ -644,10 +648,19 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 if self.current() == Some('=') {
                     self.advance();
-                    Token {
-                        kind: TokenKind::EqEq,
-                        text: "==",
-                        span: self.span_from(start, start_byte),
+                    if self.current() == Some('=') {
+                        self.advance();
+                        Token {
+                            kind: TokenKind::EqEqEq,
+                            text: "===",
+                            span: self.span_from(start, start_byte),
+                        }
+                    } else {
+                        Token {
+                            kind: TokenKind::EqEq,
+                            text: "==",
+                            span: self.span_from(start, start_byte),
+                        }
                     }
                 } else if self.current() == Some('>') {
                     self.advance();
@@ -668,10 +681,19 @@ impl<'a> Lexer<'a> {
                 self.advance();
                 if self.current() == Some('=') {
                     self.advance();
-                    Token {
-                        kind: TokenKind::NotEq,
-                        text: "!=",
-                        span: self.span_from(start, start_byte),
+                    if self.current() == Some('=') {
+                        self.advance();
+                        Token {
+                            kind: TokenKind::NotEqEq,
+                            text: "!==",
+                            span: self.span_from(start, start_byte),
+                        }
+                    } else {
+                        Token {
+                            kind: TokenKind::NotEq,
+                            text: "!=",
+                            span: self.span_from(start, start_byte),
+                        }
                     }
                 } else {
                     Token {
@@ -817,10 +839,12 @@ mod tests {
 
     #[test]
     fn lexes_operators() {
-        let mut lexer = Lexer::new("== != <= >= => && ||");
+        let mut lexer = Lexer::new("== != === !== <= >= => && ||");
         let kinds = [
             TokenKind::EqEq,
             TokenKind::NotEq,
+            TokenKind::EqEqEq,
+            TokenKind::NotEqEq,
             TokenKind::Le,
             TokenKind::Ge,
             TokenKind::FatArrow,

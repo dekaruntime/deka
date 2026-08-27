@@ -480,6 +480,25 @@ impl<'a> Emitter<'a> {
                 write_indent(&mut self.out, 0);
                 self.out.push('}');
             }
+            Stmt::ForOf {
+                name,
+                iterable,
+                body,
+                ..
+            } => {
+                write_indent(&mut self.out, 0);
+                self.out.push_str("for (const ");
+                self.out.push_str(name);
+                self.out.push_str(" of ");
+                self.emit_expr(iterable)?;
+                self.out.push_str(") {\n");
+                for stmt in body.iter() {
+                    self.emit_stmt(stmt)?;
+                    self.out.push('\n');
+                }
+                write_indent(&mut self.out, 0);
+                self.out.push('}');
+            }
             Stmt::Struct { name, embeds, .. } => {
                 write_indent(&mut self.out, 0);
                 self.out.push_str("const ");

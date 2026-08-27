@@ -507,6 +507,23 @@ mod tests {
     }
 
     #[test]
+    fn for_of_loop_passes() {
+        assert!(typeck("for (x of [1, 2, 3]) { const y: number = x; }").is_empty());
+    }
+
+    #[test]
+    fn for_of_string_iterates_characters() {
+        assert!(typeck("for (ch of \"hello\") { const c: string = ch; }").is_empty());
+    }
+
+    #[test]
+    fn for_of_non_iterable_fails() {
+        let errors = typeck("for (x of 42) { const y: number = x; }");
+        assert!(!errors.is_empty());
+        assert!(errors.iter().any(|e| e.message.contains("cannot iterate")), "errors: {:?}", errors);
+    }
+
+    #[test]
     fn break_outside_loop_fails() {
         let errors = typeck("break;");
         assert_eq!(errors.len(), 1);

@@ -11,6 +11,8 @@ pub fn bin_op_str(op: BinOp) -> &'static str {
         BinOp::Mod => "%",
         BinOp::Eq => "==",
         BinOp::Ne => "!=",
+        BinOp::StrictEq => "===",
+        BinOp::StrictNe => "!==",
         BinOp::Lt => "<",
         BinOp::Le => "<=",
         BinOp::Gt => ">",

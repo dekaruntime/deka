@@ -683,7 +683,7 @@ impl<'a> Checker<'a> {
                 }
                 Type::Named { name: "number" }
             }
-            Eq | Ne | Lt | Le | Gt | Ge => {
+            Eq | Ne | StrictEq | StrictNe | Lt | Le | Gt | Ge => {
                 if left_type.is_error() || right_type.is_error() {
                     return Type::Named { name: "boolean" };
                 }
