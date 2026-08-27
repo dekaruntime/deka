@@ -1,3 +1,4 @@
+import { echo } from "io"
 fn increment(s: object) object {
   return { count: s.count + 1 }
 }
@@ -11,8 +12,8 @@ const useCounter = deka.ui.State.create({ count: 0 }, {
   add: add,
 })
 
-console.log(useCounter().count)
+echo(useCounter().count)
 useCounter.increment()
-console.log(useCounter().count)
+echo(useCounter().count)
 useCounter.add(5)
-console.log(useCounter().count)
+echo(useCounter().count)

@@ -1,3 +1,4 @@
+import { echo } from "io"
 fn apply(n: number, f: fn(number) number) number {
   return f(n)
 }
@@ -9,4 +10,4 @@ fn makeMultiplier(factor: number) fn(number) number {
 }
 
 const triple = makeMultiplier(3)
-console.log(apply(7, triple))
+echo(apply(7, triple))

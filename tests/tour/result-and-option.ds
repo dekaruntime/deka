@@ -1,3 +1,4 @@
+import { echo } from "io"
 const found = Option.Some("DekaScript");
 
 const message = match (found) {
@@ -6,4 +7,4 @@ const message = match (found) {
   _ => "unknown"
 };
 
-console.log(message);
+echo(message);

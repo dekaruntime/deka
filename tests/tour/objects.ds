@@ -1,10 +1,11 @@
+import { echo } from "io"
 const person = {
   name: "Deka",
   age: 3,
 }
-console.log(person.name)
-console.log(person.age)
+echo(person.name)
+echo(person.age)
 
 let next = person
 next = { name: person.name, age: person.age + 1 }
-console.log(next.age)
+echo(next.age)
