@@ -124,6 +124,14 @@ pub enum Stmt<'a> {
         body: &'a [Stmt<'a>],
         span: Span,
     },
+    /// `break`
+    Break {
+        span: Span,
+    },
+    /// `continue`
+    Continue {
+        span: Span,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -374,6 +382,12 @@ pub enum BinOp {
     BitXor,
     Shl,
     Shr,
+    Assign,
+    AddAssign,
+    SubAssign,
+    MulAssign,
+    DivAssign,
+    ModAssign,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]

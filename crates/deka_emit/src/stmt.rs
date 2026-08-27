@@ -180,6 +180,14 @@ pub fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) -> Result<(), Str
         Stmt::Struct { .. } | Stmt::Enum { .. } | Stmt::TypeAlias { .. } => {
             // Type declarations are erased at runtime.
         }
+        Stmt::Break { .. } => {
+            write_indent(out, indent);
+            out.push_str("break;");
+        }
+        Stmt::Continue { .. } => {
+            write_indent(out, indent);
+            out.push_str("continue;");
+        }
         Stmt::ReceiverMethod {
             receiver_type,
             name,

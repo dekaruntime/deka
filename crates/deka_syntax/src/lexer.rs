@@ -39,6 +39,8 @@ pub enum TokenKind {
     Await,
     Async,
     Pub,
+    Break,
+    Continue,
 
     // Operators
     Plus,
@@ -46,6 +48,11 @@ pub enum TokenKind {
     Star,
     Slash,
     Percent,
+    PlusEq,
+    MinusEq,
+    StarEq,
+    SlashEq,
+    PercentEq,
     Eq,
     EqEq,
     NotEq,
@@ -343,6 +350,8 @@ impl<'a> Lexer<'a> {
             "await" => TokenKind::Await,
             "async" => TokenKind::Async,
             "pub" => TokenKind::Pub,
+            "break" => TokenKind::Break,
+            "continue" => TokenKind::Continue,
             _ => TokenKind::Identifier,
         };
         Token {
@@ -538,10 +547,19 @@ impl<'a> Lexer<'a> {
             }
             '+' => {
                 self.advance();
-                Token {
-                    kind: TokenKind::Plus,
-                    text: "+",
-                    span: self.span_from(start, start_byte),
+                if self.current() == Some('=') {
+                    self.advance();
+                    Token {
+                        kind: TokenKind::PlusEq,
+                        text: "+=",
+                        span: self.span_from(start, start_byte),
+                    }
+                } else {
+                    Token {
+                        kind: TokenKind::Plus,
+                        text: "+",
+                        span: self.span_from(start, start_byte),
+                    }
                 }
             }
             '-' => {
@@ -551,6 +569,13 @@ impl<'a> Lexer<'a> {
                     Token {
                         kind: TokenKind::Arrow,
                         text: "->",
+                        span: self.span_from(start, start_byte),
+                    }
+                } else if self.current() == Some('=') {
+                    self.advance();
+                    Token {
+                        kind: TokenKind::MinusEq,
+                        text: "-=",
                         span: self.span_from(start, start_byte),
                     }
                 } else {
@@ -563,10 +588,19 @@ impl<'a> Lexer<'a> {
             }
             '*' => {
                 self.advance();
-                Token {
-                    kind: TokenKind::Star,
-                    text: "*",
-                    span: self.span_from(start, start_byte),
+                if self.current() == Some('=') {
+                    self.advance();
+                    Token {
+                        kind: TokenKind::StarEq,
+                        text: "*=",
+                        span: self.span_from(start, start_byte),
+                    }
+                } else {
+                    Token {
+                        kind: TokenKind::Star,
+                        text: "*",
+                        span: self.span_from(start, start_byte),
+                    }
                 }
             }
             '/' => {
@@ -574,6 +608,14 @@ impl<'a> Lexer<'a> {
                 match self.current() {
                     Some('/') => self.read_line_comment(),
                     Some('*') => self.read_block_comment(),
+                    Some('=') => {
+                        self.advance();
+                        Token {
+                            kind: TokenKind::SlashEq,
+                            text: "/=",
+                            span: self.span_from(start, start_byte),
+                        }
+                    }
                     _ => Token {
                         kind: TokenKind::Slash,
                         text: "/",
@@ -583,10 +625,19 @@ impl<'a> Lexer<'a> {
             }
             '%' => {
                 self.advance();
-                Token {
-                    kind: TokenKind::Percent,
-                    text: "%",
-                    span: self.span_from(start, start_byte),
+                if self.current() == Some('=') {
+                    self.advance();
+                    Token {
+                        kind: TokenKind::PercentEq,
+                        text: "%=",
+                        span: self.span_from(start, start_byte),
+                    }
+                } else {
+                    Token {
+                        kind: TokenKind::Percent,
+                        text: "%",
+                        span: self.span_from(start, start_byte),
+                    }
                 }
             }
             '=' => {

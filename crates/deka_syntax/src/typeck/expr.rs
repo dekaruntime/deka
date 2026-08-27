@@ -659,6 +659,55 @@ impl<'a> Checker<'a> {
                 self.check_expr(right);
                 Type::Infer
             }
+            Assign => {
+                let name = match left {
+                    ast::Expr::Identifier { name, .. } => *name,
+                    _ => {
+                        self.error_span(
+                            span,
+                            "assignment target must be a mutable local variable",
+                        );
+                        return right_type;
+                    }
+                };
+                if !self.mutables.contains(name) {
+                    self.error_span(
+                        left.span(),
+                        format!("cannot assign to immutable variable `{name}`"),
+                    );
+                } else if !left_type.is_error()
+                    && !right_type.is_error()
+                    && !is_assignable(&left_type, &right_type)
+                {
+                    self.error_span(
+                        span,
+                        format!("cannot assign type `{right_type}` to `{left_type}`"),
+                    );
+                }
+                right_type
+            }
+            AddAssign | SubAssign | MulAssign | DivAssign | ModAssign => {
+                if let ast::Expr::Identifier { name, .. } = left {
+                    if !self.mutables.contains(*name) {
+                        self.error_span(
+                            left.span(),
+                            format!("cannot assign to immutable variable `{name}`"),
+                        );
+                    }
+                } else {
+                    self.error_span(
+                        span,
+                        "compound assignment target must be a mutable local variable",
+                    );
+                }
+                if !matches!(left_type, Type::Infer | Type::Error) {
+                    self.expect_number(&left_type, left.span());
+                }
+                if !matches!(right_type, Type::Infer | Type::Error) {
+                    self.expect_number(&right_type, right.span());
+                }
+                left_type
+            }
             _ => {
                 self.error_span(span, format!("binary operator `{op:?}` is not supported in v2 typeck"));
                 Type::Error

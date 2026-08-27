@@ -204,7 +204,7 @@ impl<'a> Checker<'a> {
                 value,
                 span,
             } => {
-                self.check_binding(name, ty.as_ref(), value, *span);
+                self.check_binding(name, ty.as_ref(), value, false, *span);
             }
             ast::Stmt::Let {
                 name,
@@ -212,7 +212,7 @@ impl<'a> Checker<'a> {
                 value,
                 span,
             } => {
-                self.check_binding(name, ty.as_ref(), value, *span);
+                self.check_binding(name, ty.as_ref(), value, true, *span);
             }
             ast::Stmt::Function {
                 name,
@@ -231,7 +231,7 @@ impl<'a> Checker<'a> {
                     ty,
                     value,
                 } => {
-                    self.check_binding(name, ty.as_ref(), value, value.span());
+                    self.check_binding(name, ty.as_ref(), value, false, value.span());
                 }
                 ast::ExportDecl::Function { .. } => {
                     self.check_export_function(stmt);
@@ -276,10 +276,22 @@ impl<'a> Checker<'a> {
                 if let Some(step) = step {
                     self.check_expr(step);
                 }
+                self.loop_depth += 1;
                 for s in body.iter() {
                     self.check_statement(s);
                 }
+                self.loop_depth -= 1;
                 self.scopes.pop();
+            }
+            ast::Stmt::Break { span } => {
+                if self.loop_depth == 0 {
+                    self.error_span(*span, "`break` outside of loop");
+                }
+            }
+            ast::Stmt::Continue { span } => {
+                if self.loop_depth == 0 {
+                    self.error_span(*span, "`continue` outside of loop");
+                }
             }
             ast::Stmt::TypeAlias { .. }
             | ast::Stmt::Struct { .. }
@@ -325,7 +337,7 @@ impl<'a> Checker<'a> {
             }
             ast::ForInit::Let { name, value } => {
                 let value_type = self.check_expr(value);
-                self.declare_var(name, value_type);
+                self.declare_mutable_var(name, value_type);
             }
             ast::ForInit::Expr(expr) => {
                 self.check_expr(expr);
@@ -338,6 +350,7 @@ impl<'a> Checker<'a> {
         name: &'a str,
         ty: Option<&ast::Type<'a>>,
         value: &ast::Expr<'a>,
+        mutable: bool,
         _span: ast::Span,
     ) {
         let value_type = self.check_expr(value);
@@ -353,7 +366,11 @@ impl<'a> Checker<'a> {
         } else {
             value_type
         };
-        self.declare_var(name, final_type);
+        if mutable {
+            self.declare_mutable_var(name, final_type);
+        } else {
+            self.declare_var(name, final_type);
+        }
     }
 
     pub(super) fn check_function(

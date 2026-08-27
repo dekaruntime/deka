@@ -1,6 +1,6 @@
 //! Statement parsing.
 
-use crate::ast::{alloc_slice, EnumCase, Param, Pos, Program, StructField, Stmt, TypeParam};
+use crate::ast::{alloc_slice, EnumCase, ForInit, Param, Pos, Program, StructField, Stmt, TypeParam};
 use crate::lexer::TokenKind;
 
 use super::util::token_name;
@@ -72,6 +72,26 @@ impl<'a> Parser<'a> {
             }
 
             TokenKind::Fn => self.parse_fn_statement(start, start_byte),
+
+            TokenKind::For => self.parse_for_statement(start, start_byte),
+
+            TokenKind::If => self.parse_if_statement(start, start_byte),
+
+            TokenKind::Break => {
+                self.advance();
+                self.expect_statement_end(in_block)?;
+                Some(Stmt::Break {
+                    span: self.span_from(start, start_byte),
+                })
+            }
+
+            TokenKind::Continue => {
+                self.advance();
+                self.expect_statement_end(in_block)?;
+                Some(Stmt::Continue {
+                    span: self.span_from(start, start_byte),
+                })
+            }
 
             TokenKind::Struct => self.parse_struct_statement(start, start_byte),
 
@@ -176,6 +196,83 @@ impl<'a> Parser<'a> {
             params,
             return_type,
             body,
+            span: self.span_from(start, start_byte),
+        })
+    }
+
+    fn parse_for_statement(&mut self, start: Pos, start_byte: usize) -> Option<Stmt<'a>> {
+        self.advance(); // `for`
+        self.expect(TokenKind::LParen)?;
+
+        let init = if self.at(TokenKind::Semicolon) {
+            None
+        } else if self.at(TokenKind::Const) {
+            self.advance();
+            let name = self.expect_identifier()?;
+            self.expect(TokenKind::Eq)?;
+            let value = self.parse_expression()?;
+            Some(ForInit::Const { name, value })
+        } else if self.at(TokenKind::Let) {
+            self.advance();
+            let name = self.expect_identifier()?;
+            self.expect(TokenKind::Eq)?;
+            let value = self.parse_expression()?;
+            Some(ForInit::Let { name, value })
+        } else {
+            Some(ForInit::Expr(self.parse_expression()?))
+        };
+
+        self.expect(TokenKind::Semicolon)?;
+
+        let condition = if self.at(TokenKind::Semicolon) {
+            None
+        } else {
+            Some(self.parse_expression()?)
+        };
+
+        self.expect(TokenKind::Semicolon)?;
+
+        let step = if self.at(TokenKind::RParen) {
+            None
+        } else {
+            Some(self.parse_expression()?)
+        };
+
+        self.expect(TokenKind::RParen)?;
+        let body = self.parse_block()?;
+
+        Some(Stmt::For {
+            init,
+            condition,
+            step,
+            body,
+            span: self.span_from(start, start_byte),
+        })
+    }
+
+    fn parse_if_statement(&mut self, start: Pos, start_byte: usize) -> Option<Stmt<'a>> {
+        self.advance(); // `if`
+        self.expect(TokenKind::LParen)?;
+        let condition = self.parse_expression()?;
+        self.expect(TokenKind::RParen)?;
+        let then_body = self.parse_block()?;
+
+        let else_body = if self.eat(TokenKind::Else) {
+            if self.at(TokenKind::If) {
+                let else_start = self.span_start();
+                let else_if = self.parse_if_statement(else_start.0, else_start.1)?;
+                alloc_slice(self.arena, vec![else_if])
+            } else {
+                self.parse_block()?
+            }
+        } else {
+            &[]
+        };
+
+        Some(Stmt::If {
+            condition,
+            then_body,
+            else_body,
             span: self.span_from(start, start_byte),
         })
     }

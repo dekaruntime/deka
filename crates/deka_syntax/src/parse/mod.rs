@@ -1053,4 +1053,22 @@ mod tests {
             _ => panic!("expected const declaration"),
         }
     }
+
+    #[test]
+    fn parse_for_loop() {
+        let arena = Bump::new();
+        let result = parse("for (let i = 0; i < 10; i = i + 1) { break }", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::For { init, condition, step, body, .. } => {
+                assert!(init.is_some());
+                assert!(condition.is_some());
+                assert!(step.is_some());
+                assert_eq!(body.len(), 1);
+                assert!(matches!(body[0], Stmt::Break { .. }));
+            }
+            _ => panic!("expected for loop"),
+        }
+    }
 }

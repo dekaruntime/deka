@@ -23,6 +23,12 @@ pub fn bin_op_str(op: BinOp) -> &'static str {
         BinOp::BitXor => "^",
         BinOp::Shl => "<<",
         BinOp::Shr => ">>",
+        BinOp::Assign => "=",
+        BinOp::AddAssign => "+=",
+        BinOp::SubAssign => "-=",
+        BinOp::MulAssign => "*=",
+        BinOp::DivAssign => "/=",
+        BinOp::ModAssign => "%=",
     }
 }
 

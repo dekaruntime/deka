@@ -234,4 +234,11 @@ mod tests {
         assert!(out.contains("const double = function(x) {"), "expected function expression, got: {}", out);
         assert!(out.contains("return x * 2;"), "expected return body, got: {}", out);
     }
+
+    #[test]
+    fn emit_for_loop() {
+        let out = parse_and_emit("for (let i = 0; i < 10; i = i + 1) { break; }");
+        assert!(out.contains("for (let i = 0; i < 10; i = i + 1) {"), "expected for header, got: {}", out);
+        assert!(out.contains("break;"), "expected break, got: {}", out);
+    }
 }

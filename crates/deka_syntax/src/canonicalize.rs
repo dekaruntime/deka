@@ -189,6 +189,7 @@ fn transform_stmt<'a>(
             }
         }
         Stmt::Enum { .. } | Stmt::TypeAlias { .. } => return stmt.clone(),
+        Stmt::Break { .. } | Stmt::Continue { .. } => return stmt.clone(),
         Stmt::Expr { expr, span } => Stmt::Expr {
             expr: transform_expr(expr, arena, enums).clone(),
             span: *span,
@@ -711,6 +712,7 @@ fn lower_stmt<'a>(
             }
         }
         Stmt::Enum { .. } | Stmt::TypeAlias { .. } => stmt.clone(),
+        Stmt::Break { .. } | Stmt::Continue { .. } => stmt.clone(),
         Stmt::Expr { expr, span } => Stmt::Expr {
             expr: lower_expr(expr, arena, method_calls).clone(),
             span: *span,

@@ -10,7 +10,7 @@
 //! `Type::None` is assignable to any `Option<T>` because it is the empty
 //! option payload.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast;
 use crate::ast::Program;
@@ -87,12 +87,16 @@ struct Checker<'a> {
     method_calls: HashMap<*const ast::Expr<'a>, String>,
     /// Local scopes. The first scope is the top-level scope.
     scopes: Vec<HashMap<&'a str, Type<'a>>>,
+    /// Bindings that were introduced with `let` and may be reassigned.
+    mutables: HashSet<&'a str>,
     /// Type parameter scopes. Each generic binding introduces a new scope.
     type_scopes: Vec<HashMap<&'a str, Type<'a>>>,
     /// Are we currently inside a function body?
     in_function: bool,
     /// Expected / inferred return type of the current function.
     return_type: Option<Type<'a>>,
+    /// How many nested loops currently enclose the checked statement?
+    loop_depth: usize,
 }
 
 impl<'a> Checker<'a> {
@@ -109,9 +113,11 @@ impl<'a> Checker<'a> {
             receiver_methods: HashMap::new(),
             method_calls: HashMap::new(),
             scopes: vec![HashMap::new()],
+            mutables: HashSet::new(),
             type_scopes: Vec::new(),
             in_function: false,
             return_type: None,
+            loop_depth: 0,
         }
     }
 
@@ -125,6 +131,11 @@ impl<'a> Checker<'a> {
 
     fn declare_var(&mut self, name: &'a str, ty: Type<'a>) {
         self.scopes.last_mut().unwrap().insert(name, ty);
+    }
+
+    fn declare_mutable_var(&mut self, name: &'a str, ty: Type<'a>) {
+        self.scopes.last_mut().unwrap().insert(name, ty);
+        self.mutables.insert(name);
     }
 
     fn lookup_var(&self, name: &'a str) -> Option<Type<'a>> {
@@ -308,5 +319,17 @@ mod tests {
         assert_eq!(errors.len(), 1);
         assert!(errors[0].message.contains("number"), "{}", errors[0].message);
         assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn for_loop_break_continue_passes() {
+        assert!(typeck("for (let i = 0; i < 10; i = i + 1) { if (i == 5) { break } else { continue } }").is_empty());
+    }
+
+    #[test]
+    fn break_outside_loop_fails() {
+        let errors = typeck("break;");
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("outside of loop"), "{}", errors[0].message);
     }
 }

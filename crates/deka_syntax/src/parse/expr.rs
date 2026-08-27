@@ -41,12 +41,8 @@ impl<'a> Parser<'a> {
 
             // Explicit type arguments: `id<number>(args)`. Do not span newlines
             // before `<`; a newline should terminate the statement instead.
-            let type_args = if self.at(TokenKind::Lt) {
-                if let Some(args) = self.try_parse_type_args() {
-                    args
-                } else {
-                    &[]
-                }
+            let type_args = if self.at(TokenKind::Lt) && self.next_lt_is_type_args() {
+                self.try_parse_type_args().unwrap_or(&[])
             } else {
                 &[]
             };
@@ -491,6 +487,33 @@ impl<'a> Parser<'a> {
                 None
             }
         }
+    }
+
+    /// Peek at the `<` at the current position and decide whether it opens an
+    /// explicit type argument list that is immediately followed by a call `(`.
+    /// This prevents `<` in comparison expressions (`a < b`) from being parsed
+    /// as (and erroring during) a speculative type argument list.
+    fn next_lt_is_type_args(&self) -> bool {
+        if !self.at(TokenKind::Lt) {
+            return false;
+        }
+        let mut depth = 1usize;
+        let mut i = self.pos + 1;
+        while i < self.tokens.len() {
+            match self.tokens[i].kind {
+                TokenKind::Lt => depth += 1,
+                TokenKind::Gt => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return i + 1 < self.tokens.len()
+                            && self.tokens[i + 1].kind == TokenKind::LParen;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        false
     }
 
     /// Try to parse explicit type arguments `<T, U>`.
