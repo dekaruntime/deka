@@ -533,6 +533,45 @@ mod tests {
     }
 
     #[test]
+    fn parse_struct_fields_without_commas() {
+        let arena = Bump::new();
+        let result = parse(
+            "struct Point {\n  x: number\n  y: number\n}",
+            &arena,
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Struct { fields, .. } => assert_eq!(fields.len(), 2),
+            _ => panic!("expected struct declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_empty_statement() {
+        let arena = Bump::new();
+        let result = parse("const x = 1;;", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        assert!(matches!(program.statements[1], Stmt::Empty { .. }));
+    }
+
+    #[test]
+    fn parse_unary_plus() {
+        let arena = Bump::new();
+        let result = parse("const x = +5;", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { value, .. } => match value {
+                Expr::Unary { op: UnOp::Plus, .. } => {}
+                _ => panic!("expected unary plus, got {:?}", value),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
     fn parse_user_defined_enum_constructor() {
         let arena = Bump::new();
         let result = parse(

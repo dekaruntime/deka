@@ -299,11 +299,38 @@ impl<'a> Checker<'a> {
                     self.error_span(*span, "`continue` outside of loop");
                 }
             }
-            ast::Stmt::TypeAlias { .. }
-            | ast::Stmt::Struct { .. }
-            | ast::Stmt::Enum { .. }
+            ast::Stmt::Struct {
+                name,
+                type_params,
+                fields,
+                embeds,
+                span: _,
+            } => {
+                self.push_type_params(type_params);
+                for field in *fields {
+                    self.resolve_ast_type(&field.ty);
+                }
+                for embed in *embeds {
+                    if !self.structs.contains_key(embed.name) {
+                        self.error_span(
+                            embed.span,
+                            format!("unknown embed type `{}` in struct `{name}`", embed.name),
+                        );
+                    }
+                }
+                self.pop_type_params();
+            }
+            ast::Stmt::Enum { name: _, cases, span: _, .. } => {
+                for case in *cases {
+                    if let Some(payload) = &case.payload {
+                        self.resolve_ast_type(payload);
+                    }
+                }
+            }
+            ast::Stmt::Empty { .. }
+            | ast::Stmt::TypeAlias { .. }
             | ast::Stmt::ReceiverMethod { .. } => {
-                // Already collected and validated lazily at use sites.
+                // Already collected and validated lazily at use sites (or no-op).
             }
             ast::Stmt::Import { specifiers, .. } => {
                 // Without a resolved module graph, imported bindings are treated
@@ -460,11 +487,21 @@ impl<'a> Checker<'a> {
                     })
                     .unwrap_or(Type::Generic {
                         base: "Promise",
-                        args: vec![Type::None],
+                        args: vec![Type::Generic {
+                            base: "Option",
+                            args: vec![Type::Never],
+                        }],
                     }),
             }
         } else {
-            body_expected_ret.unwrap_or_else(|| self.return_type.take().unwrap_or(Type::None))
+            body_expected_ret.unwrap_or_else(|| {
+                self.return_type
+                    .take()
+                    .unwrap_or(Type::Generic {
+                        base: "Option",
+                        args: vec![Type::Never],
+                    })
+            })
         };
 
         self.in_function = saved_in_function;
@@ -517,7 +554,10 @@ impl<'a> Checker<'a> {
                 None,
                 Type::Generic {
                     base: "Promise",
-                    args: vec![Type::None],
+                    args: vec![Type::Generic {
+                        base: "Option",
+                        args: vec![Type::Never],
+                    }],
                 },
             ),
         }
@@ -593,7 +633,10 @@ impl<'a> Checker<'a> {
 
         let value_type = match value {
             Some(expr) => self.check_expr(expr),
-            None => Type::None,
+            None => Type::Generic {
+                base: "Option",
+                args: vec![Type::Never],
+            },
         };
 
         if let Some(expected) = self.return_type.as_ref() {

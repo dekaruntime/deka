@@ -118,6 +118,8 @@ pub enum Stmt<'a> {
         else_body: &'a [Stmt<'a>],
         span: Span,
     },
+    /// An empty statement: just `;`.
+    Empty { span: Span },
     /// `for (init; cond; step) { ... }`
     For {
         init: Option<ForInit<'a>>,
@@ -419,6 +421,7 @@ pub enum BinOp {
 pub enum UnOp {
     Neg,
     Not,
+    Plus,
 }
 
 #[derive(Clone, Debug, Serialize)]

@@ -288,17 +288,56 @@ impl<'a> Lexer<'a> {
         let start_byte = self.pos;
         let start_pos = self.pos;
         let mut saw_dot = false;
+        let mut saw_exp = false;
         while let Some(ch) = self.current() {
             match ch {
                 '0'..='9' => {
                     self.advance();
                 }
-                '.' if !saw_dot && matches!(self.peek(1), Some('0'..='9')) => {
+                '_' => {
+                    self.advance();
+                }
+                '.' if !saw_dot && !saw_exp && matches!(self.peek(1), Some('0'..='9')) => {
                     saw_dot = true;
                     self.advance();
                 }
+                'e' | 'E' if !saw_exp => {
+                    let next = self.peek(1);
+                    let has_digit = matches!(next, Some('0'..='9'));
+                    let has_signed_digit = matches!(next, Some('+' | '-'))
+                        && matches!(self.peek(2), Some('0'..='9'));
+                    if has_digit || has_signed_digit {
+                        saw_exp = true;
+                        self.advance();
+                        if matches!(self.current(), Some('+' | '-')) {
+                            self.advance();
+                        }
+                        while matches!(self.current(), Some('0'..='9' | '_')) {
+                            self.advance();
+                        }
+                    } else {
+                        break;
+                    }
+                }
                 _ => break,
             };
+        }
+        let text = &self.source[start_pos..self.pos];
+        // Validate underscores: must sit between two digits.
+        let mut prev = '\0';
+        let mut chars = text.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch == '_' {
+                if !prev.is_ascii_digit() || !chars.peek().map_or(false, |c| c.is_ascii_digit()) {
+                    self.diagnostics.push(Diagnostic::error(
+                        start.line,
+                        start.column,
+                        "invalid placement of underscore in numeric literal",
+                    ));
+                    break;
+                }
+            }
+            prev = ch;
         }
         let kind = if self.current() == Some('n') {
             self.advance();
@@ -306,9 +345,26 @@ impl<'a> Lexer<'a> {
         } else {
             TokenKind::Number
         };
+        let text = &self.source[start_pos..self.pos];
+        // Reject octal-style leading-zero integers like `08` or `00`.
+        // Decimal `0` and floats are still allowed.
+        if text.len() > 1
+            && text.starts_with('0')
+            && !saw_dot
+            && !matches!(
+                text.chars().nth(1),
+                Some('x' | 'X' | 'b' | 'B' | 'o' | 'O')
+            )
+        {
+            self.diagnostics.push(Diagnostic::error(
+                start.line,
+                start.column,
+                "leading-zero octal-style integers are not allowed in DekaScript",
+            ));
+        }
         Token {
             kind,
-            text: &self.source[start_pos..self.pos],
+            text,
             span: self.span_from(start, start_byte),
         }
     }
@@ -841,6 +897,63 @@ mod tests {
         assert!(
             lexer.diagnostics().iter().any(|d| d.message.contains("unterminated block comment")),
             "expected unterminated block comment error, got: {:?}",
+            lexer.diagnostics()
+        );
+    }
+
+    #[test]
+    fn leading_zero_octal_integer_rejected() {
+        let mut lexer = Lexer::new("08");
+        let tok = lexer.next_token();
+        assert_eq!(tok.kind, TokenKind::Number);
+        assert!(
+            lexer.diagnostics().iter().any(|d| d.message.contains("leading-zero octal-style")),
+            "expected leading-zero octal error, got: {:?}",
+            lexer.diagnostics()
+        );
+    }
+
+    #[test]
+    fn zero_and_float_still_allowed() {
+        let mut lexer = Lexer::new("0 0.5");
+        let kinds = [
+            TokenKind::Number,
+            TokenKind::Number,
+            TokenKind::Eof,
+        ];
+        for expected in kinds {
+            assert_eq!(lexer.next_token().kind, expected);
+        }
+        assert!(lexer.diagnostics().is_empty(), "{:?}", lexer.diagnostics());
+    }
+
+    #[test]
+    fn lexes_scientific_notation() {
+        for source in ["1e3", "1E3", "1e-3", "1.5e10", "1.5e-10"] {
+            let mut lexer = Lexer::new(source);
+            let tok = lexer.next_token();
+            assert_eq!(tok.kind, TokenKind::Number, "failed for {}", source);
+            assert!(lexer.diagnostics().is_empty(), "{:?}", lexer.diagnostics());
+        }
+    }
+
+    #[test]
+    fn lexes_numeric_underscores() {
+        let mut lexer = Lexer::new("1_000_000");
+        let tok = lexer.next_token();
+        assert_eq!(tok.kind, TokenKind::Number);
+        assert_eq!(tok.text, "1_000_000");
+        assert!(lexer.diagnostics().is_empty(), "{:?}", lexer.diagnostics());
+    }
+
+    #[test]
+    fn numeric_underscore_before_decimal_is_error() {
+        let mut lexer = Lexer::new("1_.5");
+        let tok = lexer.next_token();
+        assert_eq!(tok.kind, TokenKind::Number);
+        assert!(
+            lexer.diagnostics().iter().any(|d| d.message.contains("invalid placement")),
+            "expected invalid underscore placement error, got: {:?}",
             lexer.diagnostics()
         );
     }
