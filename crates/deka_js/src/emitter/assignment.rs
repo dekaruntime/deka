@@ -85,6 +85,12 @@ impl<'a> JsSubsetEmitter<'a> {
         let condition_js = self.emit_expr(condition)?;
         let mut rendered = String::new();
 
+        // Evaluate the scrutinee once and bind it to a local. Without this,
+        // side-effecting scrutinee expressions (e.g. `unsafe { ... }`) are
+        // re-executed for every guard and payload binding, which duplicates
+        // console output, host calls, and mutations. See deka#311.
+        let scrutinee_var = "__deka_match";
+
         for arm in arms.iter().rev() {
             let mut arm_expr = self.emit_expr(arm.body)?;
             // If the arm matches an enum payload pattern, bind the payload
@@ -95,7 +101,7 @@ impl<'a> JsSubsetEmitter<'a> {
             if let Some(conditions) = arm.conditions {
                 if conditions.len() == 1 {
                     if let Some(pattern) = self.enum_pattern_from_expr(conditions[0]) {
-                        let bindings = self.emit_enum_pattern_bindings(&condition_js, &pattern);
+                        let bindings = self.emit_enum_pattern_bindings(scrutinee_var, &pattern);
                         if !bindings.is_empty() {
                             arm_expr =
                                 format!("(() => {{\n{}\nreturn {};\n}})()", bindings, arm_expr);
@@ -107,7 +113,7 @@ impl<'a> JsSubsetEmitter<'a> {
                 rendered = arm_expr;
                 continue;
             }
-            let guard = self.emit_match_guard(&condition_js, arm.conditions)?;
+            let guard = self.emit_match_guard(scrutinee_var, arm.conditions)?;
             if rendered.is_empty() {
                 rendered = format!("({} ? {} : undefined)", guard, arm_expr);
             } else {
@@ -118,7 +124,26 @@ impl<'a> JsSubsetEmitter<'a> {
         if rendered.is_empty() {
             return Err("match requires at least one arm".to_string());
         }
-        Ok(rendered)
+
+        // If the scrutinee is async (e.g. an unsafe block with top-level
+        // await), wrap in an async IIFE and await the result so callers in
+        // async contexts receive the resolved value. Otherwise use a plain
+        // IIFE to keep the match an expression.
+        let is_async = condition_js.starts_with("await ");
+        if is_async {
+            let condition_without_await = condition_js
+                .strip_prefix("await ")
+                .unwrap_or(&condition_js);
+            Ok(format!(
+                "(await (async () => {{ const {} = {}; return {}; }})())",
+                scrutinee_var, condition_without_await, rendered
+            ))
+        } else {
+            Ok(format!(
+                "(() => {{ const {} = {}; return {}; }})()",
+                scrutinee_var, condition_js, rendered
+            ))
+        }
     }
 
     pub(super) fn emit_match_guard(

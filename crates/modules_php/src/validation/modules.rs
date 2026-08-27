@@ -871,6 +871,7 @@ fn is_deka_stdlib_root(root: &str) -> bool {
             | "encoding"
             | "fs"
             | "http"
+            | "io"
             | "json"
             | "jwt"
             | "test"

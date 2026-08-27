@@ -1,4 +1,2 @@
-struct Person {
-  name: string;
-}
-export { Person };
+struct Person { name: string }
+export { Person }

@@ -1,8 +1,12 @@
 //! DekaScript compiler orchestrator (Compiler v2).
 
+pub mod module_graph;
+
+use std::collections::HashMap;
+
 use bumpalo::Bump;
-use deka_emit::emit_js;
-use deka_syntax::{check_program, lower_method_calls, parse, Diagnostic};
+use deka_emit::emit_js_with_imports;
+use deka_syntax::{check_program_with_imports, parse, resolve_imported_enum_constructors, Diagnostic, ModuleExports};
 
 /// Compiler pipeline version selector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,13 +120,26 @@ pub struct CompileResult {
 /// single diagnostic.
 pub fn compile_to_js(source: &str, file_path: &str) -> Result<CompileResult, Vec<Diagnostic>> {
     let arena = Bump::new();
+    let imports = HashMap::new();
+    compile_to_js_with_imports(source, file_path, &arena, &imports)
+}
 
-    let parse_result = parse(source, &arena);
+/// Compile a DekaScript source to JavaScript with imported module signatures.
+///
+/// The `arena` must outlive any `ModuleExports` stored in `imports` because the
+/// returned `CompileResult` does not own the AST.
+pub fn compile_to_js_with_imports<'a>(
+    source: &str,
+    file_path: &str,
+    arena: &'a Bump,
+    imports: &HashMap<&str, &ModuleExports<'a>>,
+) -> Result<CompileResult, Vec<Diagnostic>> {
+    let parse_result = parse(source, arena);
     if !parse_result.errors.is_empty() {
         return Err(parse_result.errors);
     }
 
-    let program = parse_result.program.ok_or_else(|| {
+    let mut program = parse_result.program.ok_or_else(|| {
         vec![Diagnostic::error(
             0,
             0,
@@ -130,17 +147,15 @@ pub fn compile_to_js(source: &str, file_path: &str) -> Result<CompileResult, Vec
         )]
     })?;
 
-    let typeck_result = check_program(&program, source);
+    resolve_imported_enum_constructors(&mut program, arena, imports);
+
+    let typeck_result = check_program_with_imports(&program, source, imports);
     if !typeck_result.errors.is_empty() {
         return Err(typeck_result.errors);
     }
 
-    // Lower method calls after typechecking so the emitter sees ordinary
-    // function calls instead of struct receiver syntax.
-    let mut program = program.clone();
-    lower_method_calls(&mut program, &arena, &typeck_result.method_calls);
-
-    let js = emit_js(&program, source).map_err(|message| vec![Diagnostic::error(0, 0, message)])?;
+    let js = emit_js_with_imports(&program, source, imports)
+        .map_err(|message| vec![Diagnostic::error(0, 0, message)])?;
 
     Ok(CompileResult {
         js,
@@ -265,8 +280,9 @@ mod tests {
             "test.ds",
         )
         .expect("compile should succeed");
-        assert!(result.js.contains("function Point_distance"));
-        assert!(result.js.contains("Point_distance(p1, p2)"));
+        assert!(result.js.contains("const Point = deka.Struct"), "got: {}", result.js);
+        assert!(result.js.contains("Point.impl(\"distance\""), "got: {}", result.js);
+        assert!(result.js.contains("p1.distance(p2)"), "got: {}", result.js);
     }
 
     #[test]
@@ -367,7 +383,10 @@ mod tests {
             "test.ds",
         )
         .expect("compile should succeed");
-        assert!(result.js.contains("Legs_move(r.Legs)"), "got: {}", result.js);
+        assert!(result.js.contains("const Legs = deka.Struct"), "got: {}", result.js);
+        assert!(result.js.contains("const Robot = deka.Struct(\"Robot\", { Legs: Legs })"), "got: {}", result.js);
+        assert!(result.js.contains("Legs.impl(\"move\""), "got: {}", result.js);
+        assert!(result.js.contains("r.move()"), "got: {}", result.js);
     }
 
     #[test]

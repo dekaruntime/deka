@@ -1,5 +1,5 @@
 {
   "title": "non-relative import is rejected in project mode",
   "stage": "parse",
-  "expectedDiagnosticContains": "Missing ds_modules for import"
+  "expectedDiagnosticContains": "Missing module 'bar'"
 }

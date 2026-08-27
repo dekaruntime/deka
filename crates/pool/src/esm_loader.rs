@@ -91,6 +91,9 @@ pub struct PhpxEsmLoader {
     app_directory_path: Option<PathBuf>,
     wrapper_specifier: ModuleSpecifier,
     sources: Rc<RefCell<HashMap<String, ModuleSourceCode>>>,
+    /// Pre-compiled module graph for compiler v2. When present, `.ds` files
+    /// are served from this map instead of compiled on demand.
+    v2_modules: Option<HashMap<PathBuf, String>>,
 }
 
 impl PhpxEsmLoader {
@@ -114,6 +117,29 @@ impl PhpxEsmLoader {
             .map_err(|_| JsErrorBox::generic("invalid entry module path"))?;
         let wrapper_specifier = ModuleSpecifier::from_file_path(entry_wrapper_path(&project_root))
             .map_err(|_| JsErrorBox::generic("invalid entry wrapper path"))?;
+
+        let v2_modules = if !entry_is_app_directory
+            && selected_compiler_version() == deka_compile::CompilerVersion::V2
+        {
+            let loader = deka_compile::module_graph::FsModuleLoader::new(project_root.clone());
+            match deka_compile::module_graph::compile_module_graph(&entry_module_path, &loader) {
+                Ok(graph) => Some(graph.modules),
+                Err(diagnostics) => {
+                    let message = diagnostics
+                        .iter()
+                        .map(|d| format!("{}:{}: {}", d.line, d.column, d.message))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    return Err(JsErrorBox::generic(format!(
+                        "{}{}",
+                        DEKA_VALIDATION_ERROR_MARKER, message
+                    )));
+                }
+            }
+        } else {
+            None
+        };
+
         Ok(Self {
             project_root,
             cache_dir,
@@ -122,6 +148,7 @@ impl PhpxEsmLoader {
             app_directory_path,
             wrapper_specifier,
             sources: Rc::new(RefCell::new(HashMap::new())),
+            v2_modules,
         })
     }
 
@@ -144,6 +171,13 @@ impl PhpxEsmLoader {
     }
 
     fn load_phpx_source(&self, path: &Path) -> Result<ModuleSourceCode, JsErrorBox> {
+        if let Some(v2_modules) = &self.v2_modules {
+            let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+            if let Some(js) = v2_modules.get(&key) {
+                return Ok(ModuleSourceCode::String(js.clone().into()));
+            }
+        }
+
         let input = path
             .to_str()
             .ok_or_else(|| JsErrorBox::generic(format!("invalid path: {}", path.display())))?;
@@ -543,6 +577,9 @@ fn is_stdlib_module_spec(spec: &str) -> bool {
                 | "cookies"
                 | "auth"
                 | "db"
+                | "time"
+                | "test"
+                | "io"
         )
 }
 
