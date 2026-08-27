@@ -121,6 +121,12 @@ pub fn is_assignable<'a>(expected: &Type<'a>, actual: &Type<'a>) -> bool {
     if matches!(expected, Type::Option { .. }) && matches!(actual, Type::None) {
         return true;
     }
+    // A concrete `T` is assignable to `Option<T>` (sugar for `Some(T)`).
+    if let Type::Option { inner } = expected {
+        if is_assignable(inner, actual) {
+            return true;
+        }
+    }
     // Structural subtyping for generic types like Result<T, E>.
     if let (
         Type::Generic { base: expected_base, args: expected_args },

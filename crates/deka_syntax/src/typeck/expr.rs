@@ -280,35 +280,50 @@ impl<'a> Checker<'a> {
             }
         };
 
+        let fields: Vec<( &'a str, &ast::Expr<'a>, ast::Span)> = fields
+            .iter()
+            .map(|f| (f.name, &f.value, f.span))
+            .collect();
+        self.check_struct_literal_fields(name, &info, &fields, span);
+        Type::Struct { name }
+    }
+
+    fn check_struct_literal_fields(
+        &mut self,
+        name: &'a str,
+        info: &super::StructInfo<'a>,
+        fields: &[( &'a str, &ast::Expr<'a>, ast::Span)],
+        span: ast::Span,
+    ) {
         let embed_names: HashSet<&str> = info.embeds.iter().map(|e| e.name).collect();
         let mut seen_fields = HashSet::new();
-        for field in fields {
-            if !seen_fields.insert(field.name) {
+        for (field_name, value, field_span) in fields {
+            if !seen_fields.insert(*field_name) {
                 self.error_span(
-                    field.span,
-                    format!("duplicate field `{}` in struct literal", field.name),
+                    *field_span,
+                    format!("duplicate field `{}` in struct literal", field_name),
                 );
             }
 
-            let expected_type = if let Some(f) = info.fields.iter().find(|f| f.name == field.name) {
+            let expected_type = if let Some(f) = info.fields.iter().find(|f| f.name == *field_name) {
                 self.resolve_ast_type(&f.ty)
-            } else if embed_names.contains(field.name) {
-                Type::Struct { name: field.name }
+            } else if embed_names.contains(field_name) {
+                Type::Struct { name: field_name }
             } else {
                 self.error_span(
-                    field.span,
-                    format!("struct `{name}` has no field or embed `{}`", field.name),
+                    *field_span,
+                    format!("struct `{name}` has no field or embed `{}`", field_name),
                 );
                 Type::Error
             };
 
-            let value_type = self.check_expr(&field.value);
+            let value_type = self.check_expr(value);
             if !is_assignable(&expected_type, &value_type) {
                 self.error_span(
-                    field.span,
+                    *field_span,
                     format!(
                         "field `{}` expected type `{expected_type}`, found type `{value_type}`",
-                        field.name
+                        field_name
                     ),
                 );
             }
@@ -342,8 +357,6 @@ impl<'a> Checker<'a> {
                 );
             }
         }
-
-        Type::Struct { name }
     }
 
     fn check_field_access(
@@ -1166,6 +1179,43 @@ impl<'a> Checker<'a> {
                     self.check_expr(arg);
                 }
                 Type::Infer
+            }
+            Type::Struct { name } => {
+                // Factory-call syntax: Person({ name: "Ada" }) is equivalent to
+                // Person { name: "Ada" }.
+                if args.len() != 1 {
+                    self.error_span(
+                        span,
+                        format!("struct factory `{name}` expects exactly one argument"),
+                    );
+                    return Type::Error;
+                }
+                let info = match self.structs.get(name).cloned() {
+                    Some(info) => info,
+                    None => {
+                        self.error_span(span, format!("unknown struct `{name}`"));
+                        return Type::Error;
+                    }
+                };
+                let arg = &args[0];
+                match arg {
+                    ast::Expr::Object { fields, .. } => {
+                        let mapped: Vec<(&'a str, &ast::Expr<'a>, ast::Span)> = fields
+                            .iter()
+                            .map(|f| (f.key, &f.value, f.span))
+                            .collect();
+                        self.check_struct_literal_fields(name, &info, &mapped, span);
+                    }
+                    _ => {
+                        self.error_at_expr(
+                            arg,
+                            format!(
+                                "struct factory `{name}` expects an object literal argument"
+                            ),
+                        );
+                    }
+                }
+                Type::Struct { name }
             }
             other => {
                 self.error_span(span, format!("value of type `{other}` is not callable"));

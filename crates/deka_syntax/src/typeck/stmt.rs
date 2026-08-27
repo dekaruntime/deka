@@ -98,6 +98,10 @@ impl<'a> Checker<'a> {
                     self.error_span(*span, format!("duplicate struct definition `{name}`"));
                     continue;
                 }
+                // Make the struct factory available as a value so it can be
+                // referenced before its definition (hoisting) and invoked with
+                // factory-call syntax `Person({ ... })`.
+                self.declare_var(name, Type::Struct { name });
 
                 let mut seen_fields = HashSet::new();
                 for field in fields.iter() {
