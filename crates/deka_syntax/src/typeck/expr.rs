@@ -915,7 +915,13 @@ impl<'a> Checker<'a> {
         span: ast::Span,
     ) -> Type<'a> {
         let left_type = self.check_expr(left);
-        let right_type = self.check_expr(right);
+        // Pipe checks its right-hand side specially (it desugars into a call),
+        // so avoid the generic check_expr here.
+        let right_type = if op == ast::BinOp::Pipe {
+            Type::Infer
+        } else {
+            self.check_expr(right)
+        };
 
         use ast::BinOp::*;
         match op {
@@ -988,9 +994,123 @@ impl<'a> Checker<'a> {
                 Type::Named { name: "boolean" }
             }
             Pipe => {
-                self.check_expr(left);
-                self.check_expr(right);
-                Type::Infer
+                // Pipe desugars at emit time. Type-check the effective call.
+                match right {
+                    ast::Expr::Identifier { name, span } => {
+                        let callee_type = self.lookup_var(name).unwrap_or(Type::Infer);
+                        if let Type::Function { params, ret, optional } = callee_type {
+                            let required = params.len().saturating_sub(optional);
+                            if params.len() < 1 || required > 1 {
+                                self.error_span(
+                                    *span,
+                                    format!(
+                                        "pipe right-hand side expects 1 argument, found {} parameters",
+                                        params.len()
+                                    ),
+                                );
+                            }
+                            if !params.is_empty()
+                                && !is_assignable(&params[0], &left_type)
+                                && !matches!(left_type, Type::Infer)
+                                && !matches!(params[0], Type::Infer)
+                            {
+                                self.error_span(
+                                    *span,
+                                    format!(
+                                        "pipe expected argument type `{}`, found type `{left_type}`",
+                                        params[0]
+                                    ),
+                                );
+                            }
+                            *ret
+                        } else {
+                            Type::Infer
+                        }
+                    }
+                    ast::Expr::Call { callee, type_args, args, span } => {
+                        let callee_type = self.check_expr(callee);
+                        if let Type::Function { params, ret, optional } = callee_type {
+                            let subst = if params.iter().any(|p| contains_param(p)) || contains_param(&ret) {
+                                self.infer_substitution(type_args, &params, args)
+                            } else {
+                                HashMap::new()
+                            };
+                            let substituted_params: Vec<Type<'a>> = params
+                                .iter()
+                                .map(|p| substitute_type(p, &subst))
+                                .collect();
+                            let substituted_ret = substitute_type(&ret, &subst);
+
+                            let has_hole = args.iter().any(|a| Self::is_hole_expr(a));
+                            let provided: Vec<&ast::Expr<'a>> = args.iter().collect();
+                            let expected_provided: Vec<&Type<'a>> = if has_hole {
+                                substituted_params.iter().collect()
+                            } else {
+                                substituted_params.iter().skip(1).collect()
+                            };
+
+                            for (expected, arg) in expected_provided.iter().zip(provided.iter()) {
+                                if Self::is_hole_expr(arg) {
+                                    continue;
+                                }
+                                let arg_type = self.check_expr(arg);
+                                if !is_assignable(expected, &arg_type) {
+                                    self.error_at_expr(
+                                        arg,
+                                        format!(
+                                            "expected argument type `{expected}`, found type `{arg_type}`"
+                                        ),
+                                    );
+                                }
+                            }
+
+                            if !has_hole {
+                                if substituted_params.is_empty() {
+                                    self.error_span(*span, "pipe right-hand call takes no arguments");
+                                } else if !is_assignable(&substituted_params[0], &left_type)
+                                    && !matches!(left_type, Type::Infer)
+                                    && !matches!(substituted_params[0], Type::Infer)
+                                {
+                                    self.error_span(
+                                        left.span(),
+                                        format!(
+                                            "pipe expected argument type `{}`, found type `{left_type}`",
+                                            substituted_params[0]
+                                        ),
+                                    );
+                                }
+                            }
+
+                            let required = substituted_params.len().saturating_sub(optional);
+                            let effective_count = if has_hole { args.len() } else { args.len() + 1 };
+                            if effective_count < required || effective_count > substituted_params.len() {
+                                self.error_span(
+                                    *span,
+                                    format!(
+                                        "pipe right-hand call expected {} to {} arguments, found {}",
+                                        required,
+                                        substituted_params.len(),
+                                        effective_count
+                                    ),
+                                );
+                            }
+
+                            substituted_ret
+                        } else if matches!(callee_type, Type::Infer) {
+                            for arg in args.iter() {
+                                self.check_expr(arg);
+                            }
+                            Type::Infer
+                        } else {
+                            self.error_span(*span, format!("value of type `{callee_type}` is not callable"));
+                            Type::Error
+                        }
+                    }
+                    _ => {
+                        self.error_span(span, "pipe right-hand side must be a function or call");
+                        Type::Error
+                    }
+                }
             }
             Assign => {
                 match left {
@@ -1197,6 +1317,41 @@ impl<'a> Checker<'a> {
                     .map(|p| substitute_type(p, &subst))
                     .collect();
                 let substituted_ret = substitute_type(&ret, &subst);
+
+                let hole_positions: Vec<usize> = args
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, a)| Self::is_hole_expr(a))
+                    .map(|(i, _)| i)
+                    .collect();
+
+                if !hole_positions.is_empty() {
+                    // Partial application: `add(1, _)` becomes a function that
+                    // takes the hole arguments and forwards them.
+                    for (i, (expected, arg)) in substituted_params.iter().zip(args.iter()).enumerate() {
+                        if Self::is_hole_expr(arg) {
+                            continue;
+                        }
+                        let arg_type = self.check_expr(arg);
+                        if !is_assignable(expected, &arg_type) {
+                            self.error_at_expr(
+                                arg,
+                                format!(
+                                    "expected argument type `{expected}`, found type `{arg_type}`"
+                                ),
+                            );
+                        }
+                    }
+                    let hole_types: Vec<Type<'a>> = hole_positions
+                        .iter()
+                        .map(|i| substituted_params[*i].clone())
+                        .collect();
+                    return Type::Function {
+                        params: hole_types,
+                        ret: Box::new(substituted_ret),
+                        optional: 0,
+                    };
+                }
 
                 let required = substituted_params.len().saturating_sub(optional);
                 if args.len() < required || args.len() > substituted_params.len() {

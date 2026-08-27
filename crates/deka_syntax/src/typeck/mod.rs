@@ -353,6 +353,10 @@ impl<'a> Checker<'a> {
         matches!(ty, Type::Generic { base: "Promise", .. })
     }
 
+    fn is_hole_expr(expr: &ast::Expr<'_>) -> bool {
+        matches!(expr, ast::Expr::Identifier { name: "_", .. })
+    }
+
     fn expect_number(&mut self, ty: &Type<'a>, span: ast::Span) {
         if !ty.is_error() && !Self::is_number(ty) {
             self.error_span(span, format!("expected type `number`, found type `{ty}`"));

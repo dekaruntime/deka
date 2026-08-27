@@ -804,11 +804,29 @@ impl<'a> Emitter<'a> {
             }
             Expr::Binary { op, left, right, .. } => {
                 if *op == BinOp::Pipe {
-                    self.out.push('(');
-                    self.emit_expr(right)?;
-                    self.out.push_str(")(");
-                    self.emit_expr(left)?;
-                    self.out.push(')');
+                    // Desugar pipe into a call. The left-hand value becomes
+                    // argument 0 unless the right-hand call contains a hole.
+                    match right {
+                        Expr::Call { callee, args, .. }
+                            if !args.iter().any(|a| is_hole_expr(a)) =>
+                        {
+                            self.emit_expr(callee)?;
+                            self.out.push('(');
+                            self.emit_expr(left)?;
+                            for arg in args.iter() {
+                                self.out.push_str(", ");
+                                self.emit_expr(arg)?;
+                            }
+                            self.out.push(')');
+                        }
+                        _ => {
+                            self.out.push('(');
+                            self.emit_expr(right)?;
+                            self.out.push_str(")(");
+                            self.emit_expr(left)?;
+                            self.out.push(')');
+                        }
+                    }
                 } else {
                     self.emit_expr(left)?;
                     self.out.push(' ');
@@ -822,15 +840,45 @@ impl<'a> Emitter<'a> {
                 self.emit_expr(operand)?;
             }
             Expr::Call { callee, args, .. } => {
-                self.emit_expr(callee)?;
-                self.out.push('(');
-                for (i, arg) in args.iter().enumerate() {
-                    if i > 0 {
-                        self.out.push_str(", ");
+                let hole_count = args.iter().filter(|a| is_hole_expr(a)).count();
+                if hole_count > 0 {
+                    // Partial application: emit a wrapper function.
+                    self.out.push('(');
+                    for i in 0..hole_count {
+                        if i > 0 {
+                            self.out.push_str(", ");
+                        }
+                        self.out.push_str("__deka_hole_");
+                        self.out.push_str(&i.to_string());
                     }
-                    self.emit_expr(arg)?;
+                    self.out.push_str(") => ");
+                    self.emit_expr(callee)?;
+                    self.out.push('(');
+                    let mut hole_idx = 0;
+                    for (i, arg) in args.iter().enumerate() {
+                        if i > 0 {
+                            self.out.push_str(", ");
+                        }
+                        if is_hole_expr(arg) {
+                            self.out.push_str("__deka_hole_");
+                            self.out.push_str(&hole_idx.to_string());
+                            hole_idx += 1;
+                        } else {
+                            self.emit_expr(arg)?;
+                        }
+                    }
+                    self.out.push(')');
+                } else {
+                    self.emit_expr(callee)?;
+                    self.out.push('(');
+                    for (i, arg) in args.iter().enumerate() {
+                        if i > 0 {
+                            self.out.push_str(", ");
+                        }
+                        self.emit_expr(arg)?;
+                    }
+                    self.out.push(')');
                 }
-                self.out.push(')');
             }
             Expr::FieldAccess { object, field, .. } => {
                 self.emit_expr(object)?;
@@ -1326,6 +1374,10 @@ fn is_js_identifier(s: &str) -> bool {
         return false;
     }
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+}
+
+fn is_hole_expr(expr: &Expr) -> bool {
+    matches!(expr, Expr::Identifier { name: "_", .. })
 }
 
 fn raw_js_looks_like_statements(raw: &str) -> bool {
