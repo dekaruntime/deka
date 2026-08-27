@@ -91,10 +91,16 @@ impl<'a> Checker<'a> {
                 self.check_expr(expr);
                 Type::Infer
             }
-            ast::Expr::Await { expr, .. } => {
-                self.check_expr(expr);
-                // TODO: unwrap Promise<T> once async types are modeled.
-                Type::Infer
+            ast::Expr::Await { expr, span } => {
+                let operand_type = self.check_expr(expr);
+                match operand_type {
+                    Type::Generic { base: "Promise", args } if args.len() == 1 => args.into_iter().next().unwrap(),
+                    Type::Infer | Type::Error => Type::Infer,
+                    other => {
+                        self.error_span(*span, format!("`await` expected Promise<T>, found type `{other}`"));
+                        Type::Infer
+                    }
+                }
             }
             ast::Expr::JsxElement { element, .. } => {
                 for attr in element.attributes.iter() {
@@ -124,8 +130,9 @@ impl<'a> Checker<'a> {
                 params,
                 return_type,
                 body,
+                is_async,
                 span,
-            } => self.check_function_expr(params, return_type.as_ref(), body, *span),
+            } => self.check_function_expr(params, return_type.as_ref(), body, *is_async, *span),
             _ => {
                 self.error_at_expr(expr, "unsupported expression in v2 typeck");
                 Type::Error
@@ -138,7 +145,8 @@ impl<'a> Checker<'a> {
         params: &'a [ast::Param<'a>],
         return_type: Option<&ast::Type<'a>>,
         body: &'a [ast::Stmt<'a>],
-        _span: ast::Span,
+        is_async: bool,
+        span: ast::Span,
     ) -> Type<'a> {
         let mut param_types = Vec::new();
         for p in params {
@@ -155,6 +163,8 @@ impl<'a> Checker<'a> {
         }
 
         let explicit_ret = return_type.map(|t| self.resolve_ast_type(t));
+        let (body_expected_ret, _final_ret) =
+            self.function_return_context(is_async, explicit_ret.clone(), span);
 
         self.scopes.push(HashMap::new());
 
@@ -165,13 +175,30 @@ impl<'a> Checker<'a> {
         let saved_in_function = self.in_function;
         let saved_return_type = self.return_type.clone();
         self.in_function = true;
-        self.return_type = explicit_ret.clone();
+        self.return_type = body_expected_ret.clone();
 
         for stmt in body {
             self.check_statement(stmt);
         }
 
-        let final_ret = self.return_type.take().unwrap_or(Type::None);
+        let final_ret = if is_async {
+            match explicit_ret {
+                Some(ret) => ret,
+                None => self
+                    .return_type
+                    .take()
+                    .map(|inner| Type::Generic {
+                        base: "Promise",
+                        args: vec![inner],
+                    })
+                    .unwrap_or(Type::Generic {
+                        base: "Promise",
+                        args: vec![Type::None],
+                    }),
+            }
+        } else {
+            body_expected_ret.unwrap_or_else(|| self.return_type.take().unwrap_or(Type::None))
+        };
 
         self.in_function = saved_in_function;
         self.return_type = saved_return_type;

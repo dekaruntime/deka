@@ -241,4 +241,11 @@ mod tests {
         assert!(out.contains("for (let i = 0; i < 10; i = i + 1) {"), "expected for header, got: {}", out);
         assert!(out.contains("break;"), "expected break, got: {}", out);
     }
+
+    #[test]
+    fn emit_async_function() {
+        let out = parse_and_emit("async fn value() Promise<number> { return 1 }");
+        assert!(out.contains("async function value()"), "expected async function, got: {}", out);
+        assert!(out.contains("return 1;"), "expected return, got: {}", out);
+    }
 }

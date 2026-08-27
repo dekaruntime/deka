@@ -332,4 +332,9 @@ mod tests {
         assert_eq!(errors.len(), 1);
         assert!(errors[0].message.contains("outside of loop"), "{}", errors[0].message);
     }
+
+    #[test]
+    fn async_function_passes() {
+        assert!(typeck("async fn value() Promise<number> { return 1 } const p: Promise<number> = value();").is_empty());
+    }
 }

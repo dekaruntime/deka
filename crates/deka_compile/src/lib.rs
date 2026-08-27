@@ -316,7 +316,7 @@ mod tests {
     #[test]
     fn compile_await_and_pipe() {
         let result = compile_to_js(
-            "fn fetch(): number { return 1; } fn double(n: number): number { return n * 2; } const y = await fetch() |> double;",
+            "async fn fetch() Promise<number> { return 1; } fn double(n: number): number { return n * 2; } const y = await fetch() |> double;",
             "test.ds",
         )
         .expect("compile should succeed");

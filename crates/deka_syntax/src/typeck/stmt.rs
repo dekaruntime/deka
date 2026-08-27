@@ -24,8 +24,9 @@ impl<'a> Checker<'a> {
                     return_type,
                     body,
                     span,
+                    is_async,
                     ..
-                } => self.check_function(name, type_params, params, return_type.as_ref(), body, *span),
+                } => self.check_function(name, type_params, params, return_type.as_ref(), body, *is_async, *span),
                 ast::Stmt::ReceiverMethod {
                     receiver_type,
                     name,
@@ -221,9 +222,10 @@ impl<'a> Checker<'a> {
                 return_type,
                 body,
                 span,
+                is_async,
                 ..
             } => {
-                self.check_function(name, type_params, params, return_type.as_ref(), body, *span);
+                self.check_function(name, type_params, params, return_type.as_ref(), body, *is_async, *span);
             }
             ast::Stmt::Export { decl, .. } => match decl {
                 ast::ExportDecl::Const {
@@ -320,12 +322,13 @@ impl<'a> Checker<'a> {
                     params,
                     return_type,
                     body,
+                    is_async,
                     ..
                 },
             span,
         } = stmt
         {
-            self.check_function(name, type_params, params, return_type.as_ref(), body, *span);
+            self.check_function(name, type_params, params, return_type.as_ref(), body, *is_async, *span);
         }
     }
 
@@ -380,6 +383,7 @@ impl<'a> Checker<'a> {
         params: &'a [ast::Param<'a>],
         return_type: Option<&ast::Type<'a>>,
         body: &'a [ast::Stmt<'a>],
+        is_async: bool,
         _span: ast::Span,
     ) {
         // Use the previously collected signature for parameter types so that
@@ -407,6 +411,8 @@ impl<'a> Checker<'a> {
         self.push_type_params(type_params);
 
         let explicit_ret = return_type.map(|t| self.resolve_ast_type(t));
+        let (body_expected_ret, final_ret) =
+            self.function_return_context(is_async, explicit_ret.clone(), _span);
 
         self.scopes.push(HashMap::new());
 
@@ -415,7 +421,7 @@ impl<'a> Checker<'a> {
         // the body is checked.
         let self_type = Type::Function {
             params: param_types.clone(),
-            ret: Box::new(explicit_ret.clone().unwrap_or(Type::Infer)),
+            ret: Box::new(final_ret.clone()),
         };
         self.declare_var(name, self_type);
 
@@ -426,13 +432,32 @@ impl<'a> Checker<'a> {
         let saved_in_function = self.in_function;
         let saved_return_type = self.return_type.clone();
         self.in_function = true;
-        self.return_type = explicit_ret.clone();
+        self.return_type = body_expected_ret.clone();
 
         for stmt in body {
             self.check_statement(stmt);
         }
 
-        let final_ret = self.return_type.take().unwrap_or(Type::None);
+        let final_ret = if is_async {
+            // The public signature is always the declared Promise type (or a
+            // Promise wrapping the inferred payload for unannotated functions).
+            match explicit_ret {
+                Some(ret) => ret,
+                None => self
+                    .return_type
+                    .take()
+                    .map(|inner| Type::Generic {
+                        base: "Promise",
+                        args: vec![inner],
+                    })
+                    .unwrap_or(Type::Generic {
+                        base: "Promise",
+                        args: vec![Type::None],
+                    }),
+            }
+        } else {
+            body_expected_ret.unwrap_or_else(|| self.return_type.take().unwrap_or(Type::None))
+        };
 
         self.in_function = saved_in_function;
         self.return_type = saved_return_type;
@@ -449,6 +474,45 @@ impl<'a> Checker<'a> {
                 ret: Box::new(final_ret),
             },
         );
+    }
+
+    /// Computes the return type expected from the function body and the
+    /// public return type of the function. For async functions the body must
+    /// produce the payload type `T`, while the public type is `Promise<T>`.
+    pub(super) fn function_return_context(
+        &mut self,
+        is_async: bool,
+        explicit_ret: Option<Type<'a>>,
+        span: ast::Span,
+    ) -> (Option<Type<'a>>, Type<'a>) {
+        if !is_async {
+            return (explicit_ret.clone(), explicit_ret.unwrap_or(Type::Infer));
+        }
+
+        match explicit_ret {
+            Some(Type::Generic { base: "Promise", args }) if args.len() == 1 => {
+                let inner = args[0].clone();
+                let public = Type::Generic {
+                    base: "Promise",
+                    args: vec![inner.clone()],
+                };
+                (Some(inner), public)
+            }
+            Some(other) => {
+                self.error_span(
+                    span,
+                    format!("async function must return Promise<T>, found type `{other}`"),
+                );
+                (Some(other.clone()), other)
+            }
+            None => (
+                None,
+                Type::Generic {
+                    base: "Promise",
+                    args: vec![Type::None],
+                },
+            ),
+        }
     }
 
     pub(super) fn check_receiver_method(

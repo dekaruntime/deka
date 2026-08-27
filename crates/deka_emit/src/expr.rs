@@ -179,8 +179,12 @@ pub fn emit_expr(out: &mut String, expr: &Expr) -> Result<(), String> {
             }
             out.push('`');
         }
-        Expr::Function { params, body, .. } => {
-            out.push_str("function(");
+        Expr::Function { params, body, is_async, .. } => {
+            if *is_async {
+                out.push_str("async function(");
+            } else {
+                out.push_str("function(");
+            }
             for (i, param) in params.iter().enumerate() {
                 if i > 0 {
                     out.push_str(", ");

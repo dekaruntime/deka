@@ -27,10 +27,15 @@ pub fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) -> Result<(), Str
             name,
             params,
             body,
+            is_async,
             ..
         } => {
             write_indent(out, indent);
-            out.push_str("function ");
+            if *is_async {
+                out.push_str("async function ");
+            } else {
+                out.push_str("function ");
+            }
             out.push_str(name);
             out.push('(');
             for (i, param) in params.iter().enumerate() {
@@ -76,9 +81,14 @@ pub fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) -> Result<(), Str
                     name,
                     params,
                     body,
+                    is_async,
                     ..
                 } => {
-                    out.push_str("function ");
+                    if *is_async {
+                        out.push_str("async function ");
+                    } else {
+                        out.push_str("function ");
+                    }
                     out.push_str(name);
                     out.push('(');
                     for (i, param) in params.iter().enumerate() {
@@ -193,10 +203,15 @@ pub fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) -> Result<(), Str
             name,
             params,
             body,
+            is_async,
             ..
         } => {
             write_indent(out, indent);
-            out.push_str("function ");
+            if *is_async {
+                out.push_str("async function ");
+            } else {
+                out.push_str("function ");
+            }
             out.push_str(receiver_type);
             out.push('_');
             out.push_str(name);

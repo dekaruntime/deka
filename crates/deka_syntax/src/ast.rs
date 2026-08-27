@@ -71,6 +71,7 @@ pub enum Stmt<'a> {
         params: &'a [Param<'a>],
         return_type: Option<Type<'a>>,
         body: &'a [Stmt<'a>],
+        is_async: bool,
         span: Span,
     },
     /// Receiver method: `fn StructName.method<T>(args): Ret { body }`
@@ -81,6 +82,7 @@ pub enum Stmt<'a> {
         params: &'a [Param<'a>],
         return_type: Option<Type<'a>>,
         body: &'a [Stmt<'a>],
+        is_async: bool,
         span: Span,
     },
     /// `struct Name<T> { field: Type, embed Other }`
@@ -147,6 +149,7 @@ pub enum ExportDecl<'a> {
         params: &'a [Param<'a>],
         return_type: Option<Type<'a>>,
         body: &'a [Stmt<'a>],
+        is_async: bool,
     },
 }
 
@@ -351,6 +354,7 @@ pub enum Expr<'a> {
         params: &'a [Param<'a>],
         return_type: Option<Type<'a>>,
         body: &'a [Stmt<'a>],
+        is_async: bool,
         span: Span,
     },
 }

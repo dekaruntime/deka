@@ -73,6 +73,15 @@ impl<'a> Parser<'a> {
 
             TokenKind::Fn => self.parse_fn_statement(start, start_byte),
 
+            TokenKind::Async => {
+                if self.tokens.get(self.pos + 1).map(|t| t.kind) == Some(TokenKind::Fn) {
+                    self.parse_fn_statement(start, start_byte)
+                } else {
+                    self.error("expected `fn` after `async`");
+                    None
+                }
+            }
+
             TokenKind::For => self.parse_for_statement(start, start_byte),
 
             TokenKind::If => self.parse_if_statement(start, start_byte),
@@ -130,6 +139,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_fn_statement(&mut self, start: Pos, start_byte: usize) -> Option<Stmt<'a>> {
+        let is_async = self.eat(TokenKind::Async);
         self.advance(); // `fn`
 
         // Receiver method: `fn (p Point) distance<T>(...): Ret { ... }`
@@ -151,10 +161,12 @@ impl<'a> Parser<'a> {
             let params = self.parse_params()?;
             self.expect(TokenKind::RParen)?;
 
-            let return_type = if self.eat(TokenKind::Colon) {
+            let return_type = if self.at(TokenKind::LBrace) {
+                None
+            } else if self.eat(TokenKind::Colon) {
                 Some(self.parse_type()?)
             } else {
-                None
+                Some(self.parse_type()?)
             };
 
             let body = self.parse_block()?;
@@ -166,6 +178,7 @@ impl<'a> Parser<'a> {
                 params,
                 return_type,
                 body,
+                is_async,
                 span: self.span_from(start, start_byte),
             });
         }
@@ -182,10 +195,12 @@ impl<'a> Parser<'a> {
         let params = self.parse_params()?;
         self.expect(TokenKind::RParen)?;
 
-        let return_type = if self.eat(TokenKind::Colon) {
+        let return_type = if self.at(TokenKind::LBrace) {
+            None
+        } else if self.eat(TokenKind::Colon) {
             Some(self.parse_type()?)
         } else {
-            None
+            Some(self.parse_type()?)
         };
 
         let body = self.parse_block()?;
@@ -196,6 +211,7 @@ impl<'a> Parser<'a> {
             params,
             return_type,
             body,
+            is_async,
             span: self.span_from(start, start_byte),
         })
     }
@@ -477,6 +493,7 @@ impl<'a> Parser<'a> {
                         params,
                         return_type,
                         body,
+                        is_async,
                         ..
                     } => crate::ast::ExportDecl::Function {
                         name,
@@ -484,6 +501,7 @@ impl<'a> Parser<'a> {
                         params,
                         return_type,
                         body,
+                        is_async,
                     },
                     Stmt::ReceiverMethod { .. } => {
                         self.error("cannot export a receiver method");

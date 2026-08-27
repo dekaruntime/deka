@@ -61,6 +61,16 @@ impl<'a> Checker<'a> {
                         self.error_span(*span, "Option requires exactly one type argument");
                         Type::Error
                     }
+                } else if base == &"Promise" {
+                    if args.len() == 1 {
+                        Type::Generic {
+                            base: "Promise",
+                            args: vec![self.resolve_ast_type_rec(&args[0], seen)],
+                        }
+                    } else {
+                        self.error_span(*span, "Promise requires exactly one type argument");
+                        Type::Error
+                    }
                 } else if base == &"Result" {
                     if args.len() == 2 {
                         Type::Generic {

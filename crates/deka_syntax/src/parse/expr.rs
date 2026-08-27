@@ -276,6 +276,14 @@ impl<'a> Parser<'a> {
                     span: self.span_from(start, start_byte),
                 })
             }
+            TokenKind::Async => {
+                if self.tokens.get(self.pos + 1).map(|t| t.kind) == Some(TokenKind::Fn) {
+                    self.parse_fn_expression(start, start_byte)
+                } else {
+                    self.error("expected `fn` after `async`");
+                    None
+                }
+            }
             TokenKind::Fn => self.parse_fn_expression(start, start_byte),
             TokenKind::Unsafe => self.parse_unsafe_expression(start, start_byte),
             TokenKind::Lt => self.parse_jsx(start, start_byte),
@@ -430,6 +438,7 @@ impl<'a> Parser<'a> {
         start: crate::ast::Pos,
         start_byte: usize,
     ) -> Option<Expr<'a>> {
+        let is_async = self.eat(TokenKind::Async);
         self.advance(); // `fn`
         self.expect(TokenKind::LParen)?;
         let params = self.parse_params()?;
@@ -448,6 +457,7 @@ impl<'a> Parser<'a> {
             params,
             return_type,
             body,
+            is_async,
             span: self.span_from(start, start_byte),
         })
     }

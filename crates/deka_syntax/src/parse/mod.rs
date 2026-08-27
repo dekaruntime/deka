@@ -1071,4 +1071,31 @@ mod tests {
             _ => panic!("expected for loop"),
         }
     }
+
+    #[test]
+    fn parse_async_function() {
+        let arena = Bump::new();
+        let result = parse("async fn value() Promise<number> { return 1 }", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Function { is_async, .. } => assert!(*is_async),
+            _ => panic!("expected async function"),
+        }
+    }
+
+    #[test]
+    fn parse_async_fn_expression() {
+        let arena = Bump::new();
+        let result = parse("const f = async fn () Promise<number> { return 1 }", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { value, .. } => match value {
+                Expr::Function { is_async, .. } => assert!(*is_async),
+                _ => panic!("expected async function expression"),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
 }
