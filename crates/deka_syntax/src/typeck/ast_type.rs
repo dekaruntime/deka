@@ -73,6 +73,15 @@ impl<'a> Checker<'a> {
                         self.error_span(*span, "Promise requires exactly one type argument");
                         Type::Error
                     }
+                } else if base == &"Array" {
+                    if args.len() == 1 {
+                        Type::Array {
+                            elem: Box::new(self.resolve_ast_type_rec(&args[0], seen)),
+                        }
+                    } else {
+                        self.error_span(*span, "Array requires exactly one type argument");
+                        Type::Error
+                    }
                 } else if base == &"Result" {
                     if args.len() == 2 {
                         Type::Generic {

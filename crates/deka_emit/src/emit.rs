@@ -1220,8 +1220,19 @@ impl<'a> Emitter<'a> {
                 literal = tmp.out;
                 format!("{} === {}", scrutinee_var, literal)
             }
-            Pattern::Constructor { name, .. } => {
-                format!("{}.__case === \"{}\"", scrutinee_var, name)
+            Pattern::Constructor { name, payload, .. } => {
+                let mut conditions = vec![format!("{}.__case === \"{}\"", scrutinee_var, name)];
+                if let Some(payload) = payload {
+                    if let Pattern::Constructor { name: payload_name, .. } = payload {
+                        let payload_access = if *name == "Err" {
+                            format!("{}.error", scrutinee_var)
+                        } else {
+                            format!("{}.value", scrutinee_var)
+                        };
+                        conditions.push(format!("{}.__case === \"{}\"", payload_access, payload_name));
+                    }
+                }
+                conditions.join(" && ")
             }
             Pattern::Struct { .. } | Pattern::Tuple { .. } => "false".to_string(),
         }
