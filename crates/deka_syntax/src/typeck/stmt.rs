@@ -133,7 +133,7 @@ impl<'a> Checker<'a> {
                 }
             }
             if let ast::Stmt::Interface { name, members, span, .. } = stmt {
-                if self.interfaces.insert(name, super::InterfaceInfo { members }).is_some() {
+                if self.interfaces.insert(name, super::InterfaceInfo { members, span: *span }).is_some() {
                     self.error_span(*span, format!("duplicate interface definition `{name}`"));
                 }
             }
@@ -143,8 +143,15 @@ impl<'a> Checker<'a> {
     /// Eagerly resolve interface member types so that unknown types and other
     /// annotation errors are reported even when the interface is not used.
     fn validate_interface_declarations(&mut self) {
-        let interfaces: Vec<_> = self.interfaces.values().cloned().collect();
-        for info in interfaces {
+        let interfaces: Vec<_> = self.interfaces.iter().map(|(n, i)| (*n, i.clone())).collect();
+        for (name, info) in interfaces {
+            if info.members.is_empty() {
+                self.error_span(
+                    info.span,
+                    format!("interface `{name}` must declare at least one member"),
+                );
+                continue;
+            }
             for member in info.members.iter() {
                 match member {
                     ast::InterfaceMember::Field { ty, span, .. } => {

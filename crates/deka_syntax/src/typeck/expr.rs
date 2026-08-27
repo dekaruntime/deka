@@ -1233,8 +1233,17 @@ impl<'a> Checker<'a> {
                     ast::Expr::IndexAccess { object, .. } => {
                         self.check_expr(object);
                     }
-                    ast::Expr::FieldAccess { object, .. } => {
-                        self.check_expr(object);
+                    ast::Expr::FieldAccess { object, field, .. } => {
+                        let object_type = self.check_expr(object);
+                        let field_mutable = self.field_is_mutable(&object_type, field);
+                        if !self.is_mutable_expr(object) && !field_mutable {
+                            self.error_span(
+                                left.span(),
+                                format!(
+                                    "cannot assign to field `{field}` of immutable value"
+                                ),
+                            );
+                        }
                     }
                     _ => {
                         self.error_span(
@@ -1423,6 +1432,29 @@ impl<'a> Checker<'a> {
                 .rev()
                 .any(|scope| scope.contains(*name)),
             ast::Expr::FieldAccess { object, .. } => self.is_mutable_expr(object),
+            _ => false,
+        }
+    }
+
+    /// Returns true if `field` is declared mutable on `receiver_type`.
+    /// Struct fields are never mutable in isolation; interface fields may be
+    /// declared with `mut`.
+    fn field_is_mutable(&self, receiver_type: &Type<'a>, field: &str) -> bool {
+        match receiver_type {
+            Type::Interface { name } => self
+                .interfaces
+                .get(name)
+                .and_then(|info| {
+                    info.members.iter().find(|m| match m {
+                        ast::InterfaceMember::Field { name: n, .. } => n == &field,
+                        _ => false,
+                    })
+                })
+                .map(|m| match m {
+                    ast::InterfaceMember::Field { mutable, .. } => *mutable,
+                    _ => false,
+                })
+                .unwrap_or(false),
             _ => false,
         }
     }

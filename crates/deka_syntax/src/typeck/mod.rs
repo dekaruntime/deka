@@ -209,6 +209,7 @@ pub struct MethodInfo<'a> {
 #[derive(Clone, Debug)]
 pub struct InterfaceInfo<'a> {
     pub members: &'a [ast::InterfaceMember<'a>],
+    pub span: ast::Span,
 }
 
 struct Checker<'a> {
