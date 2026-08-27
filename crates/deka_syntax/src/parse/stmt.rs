@@ -516,6 +516,11 @@ impl<'a> Parser<'a> {
                 }
                 continue;
             }
+            // Allow space-separated enum cases for v1 parity:
+            // enum Color { Red Green Blue }
+            if self.at(TokenKind::Identifier) {
+                continue;
+            }
             self.error("expected `,` or newline between enum cases");
             break;
         }

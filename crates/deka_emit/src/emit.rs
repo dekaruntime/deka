@@ -1169,6 +1169,8 @@ impl<'a> Emitter<'a> {
                 if let Some(payload) = payload {
                     let payload_access = if *name == "None" {
                         scrutinee_var.to_string()
+                    } else if *name == "Err" {
+                        format!("{}.error", scrutinee_var)
                     } else {
                         format!("{}.value", scrutinee_var)
                     };

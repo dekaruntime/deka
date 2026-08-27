@@ -371,6 +371,11 @@ impl<'a> Checker<'a> {
         }
 
         match &object_type {
+            Type::Infer => {
+                // An externally-provided or unresolved value may have any field.
+                // Returning Infer preserves the opaque type through the access.
+                Type::Infer
+            }
             Type::Struct { name } => {
                 let struct_name = *name;
                 match self.resolve_field_type(struct_name, field) {
@@ -398,6 +403,19 @@ impl<'a> Checker<'a> {
             Type::Array { elem } => self.resolve_array_field(field, elem, span),
             Type::Named { name } => self.resolve_primitive_field(name, field, span),
             _ => {
+                // Enum namespace access: `Color.Red` where `Color` is an enum name.
+                if let ast::Expr::Identifier { name: enum_name, .. } = object {
+                    if let Some(info) = self.enums.get(enum_name).cloned() {
+                        if info.cases.iter().any(|c| c.name == field) {
+                            return Type::Named { name: enum_name };
+                        }
+                        self.error_span(
+                            span,
+                            format!("case `{field}` not found in enum `{enum_name}`"),
+                        );
+                        return Type::Error;
+                    }
+                }
                 self.error_span(
                     span,
                     format!("cannot access field `{field}` on type `{object_type}`"),
@@ -453,6 +471,20 @@ impl<'a> Checker<'a> {
                 Type::Error
             }
             _ => {
+                // Enum values expose a small reflective surface.
+                if self.enums.contains_key(type_name) {
+                    return match field {
+                        "name" => string_ty,
+                        "index" => number_ty,
+                        _ => {
+                            self.error_span(
+                                span,
+                                format!("enum `{type_name}` has no field `{field}`"),
+                            );
+                            Type::Error
+                        }
+                    };
+                }
                 self.error_span(
                     span,
                     format!("cannot access field `{field}` on type `{type_name}`"),
@@ -642,7 +674,9 @@ impl<'a> Checker<'a> {
                 if payload.is_some() {
                     self.error_span(span, "`None` cannot have a payload");
                 }
-                Type::None
+                // `None` is polymorphic; return Option<Infer> so it can match
+                // any Option<T> in the surrounding context.
+                Type::Option { inner: Box::new(Type::Infer) }
             }
             _ => {
                 self.error_span(span, format!("unknown Option case `{case_name}`"));

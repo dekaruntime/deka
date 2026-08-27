@@ -259,7 +259,17 @@ impl<'a> Checker<'a> {
             loop_depth: 0,
         };
         this.seed_imports(imports);
+        this.seed_builtins();
         this
+    }
+
+    fn seed_builtins(&mut self) {
+        // Host-provided JavaScript globals that the test suite (and v1) rely on.
+        // They are typed opaquely as Infer; field/method access on Infer is
+        // allowed and returns Infer. Console is intentionally excluded per RFD 32.
+        for name in ["Math", "Date", "JSON", "Object", "crypto", "parseInt", "process"] {
+            self.globals.insert(name, Type::Infer);
+        }
     }
 
     fn seed_imports(&mut self, imports: &HashMap<&str, &ModuleExports<'a>>) {
