@@ -128,6 +128,7 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                     MethodInfo {
                         params: *params,
                         return_type: return_type.clone(),
+                        mutable: false,
                     },
                 );
             }
@@ -201,6 +202,7 @@ pub struct StructInfo<'a> {
 pub struct MethodInfo<'a> {
     pub params: &'a [ast::Param<'a>],
     pub return_type: Option<ast::Type<'a>>,
+    pub mutable: bool,
 }
 
 /// Information about an interface's declared members.
@@ -232,7 +234,8 @@ struct Checker<'a> {
     /// Local scopes. The first scope is the top-level scope.
     scopes: Vec<HashMap<&'a str, Type<'a>>>,
     /// Bindings that were introduced with `let` and may be reassigned.
-    mutables: HashSet<&'a str>,
+    /// Each entry mirrors the corresponding scope in `scopes`.
+    mutables: Vec<HashSet<&'a str>>,
     /// Type parameter scopes. Each generic binding introduces a new scope.
     type_scopes: Vec<HashMap<&'a str, Type<'a>>>,
     /// Are we currently inside a function body?
@@ -260,7 +263,7 @@ impl<'a> Checker<'a> {
             receiver_methods: HashMap::new(),
             method_calls: HashMap::new(),
             scopes: vec![HashMap::new()],
-            mutables: HashSet::new(),
+            mutables: vec![HashSet::new()],
             type_scopes: Vec::new(),
             in_function: false,
             in_async_function: false,
@@ -334,7 +337,7 @@ impl<'a> Checker<'a> {
 
     fn declare_mutable_var(&mut self, name: &'a str, ty: Type<'a>) {
         self.scopes.last_mut().unwrap().insert(name, ty);
-        self.mutables.insert(name);
+        self.mutables.last_mut().unwrap().insert(name);
     }
 
     fn lookup_var(&self, name: &'a str) -> Option<Type<'a>> {

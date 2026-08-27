@@ -199,6 +199,7 @@ impl<'a> Checker<'a> {
         for stmt in self.program.statements {
             if let ast::Stmt::ReceiverMethod {
                 receiver_type,
+                receiver_mutable,
                 name,
                 params,
                 return_type,
@@ -214,6 +215,7 @@ impl<'a> Checker<'a> {
                 if self.receiver_methods.insert(key, super::MethodInfo {
                     params,
                     return_type: return_type.clone(),
+                    mutable: *receiver_mutable,
                 }).is_some()
                 {
                     self.error_span(*span, format!(
@@ -409,22 +411,28 @@ impl<'a> Checker<'a> {
                 let cond_type = self.check_expr(condition);
                 self.expect_boolean(&cond_type, condition.span());
                 self.scopes.push(HashMap::new());
+                self.mutables.push(HashSet::new());
                 for s in then_body.iter() {
                     self.check_statement(s);
                 }
                 self.scopes.pop();
+                self.mutables.pop();
                 self.scopes.push(HashMap::new());
+                self.mutables.push(HashSet::new());
                 for s in else_body.iter() {
                     self.check_statement(s);
                 }
                 self.scopes.pop();
+                self.mutables.pop();
             }
             ast::Stmt::Block { body, .. } => {
                 self.scopes.push(HashMap::new());
+                self.mutables.push(HashSet::new());
                 for s in body.iter() {
                     self.check_statement(s);
                 }
                 self.scopes.pop();
+                self.mutables.pop();
             }
             ast::Stmt::For {
                 init,
@@ -434,6 +442,7 @@ impl<'a> Checker<'a> {
                 ..
             } => {
                 self.scopes.push(HashMap::new());
+                self.mutables.push(HashSet::new());
                 if let Some(init) = init {
                     self.check_for_init(init);
                 }
@@ -450,6 +459,7 @@ impl<'a> Checker<'a> {
                 }
                 self.loop_depth -= 1;
                 self.scopes.pop();
+                self.mutables.pop();
             }
             ast::Stmt::ForOf {
                 name,
@@ -460,9 +470,10 @@ impl<'a> Checker<'a> {
             } => {
                 self.check_expr(iterable);
                 self.scopes.push(HashMap::new());
+                self.mutables.push(HashSet::new());
                 self.declare_var(name, Type::Infer);
                 if !*is_const {
-                    self.mutables.insert(*name);
+                    self.mutables.last_mut().unwrap().insert(*name);
                 }
                 self.loop_depth += 1;
                 for s in body.iter() {
@@ -470,6 +481,7 @@ impl<'a> Checker<'a> {
                 }
                 self.loop_depth -= 1;
                 self.scopes.pop();
+                self.mutables.pop();
             }
             ast::Stmt::Break { span } => {
                 if self.loop_depth == 0 {
@@ -573,7 +585,24 @@ impl<'a> Checker<'a> {
         let value_type = self.check_expr(value);
         let final_type = if let Some(annot) = ty {
             let expected = self.resolve_ast_type(annot);
-            if !self.is_assignable(&expected, &value_type) {
+            if let Type::Option { inner } = &expected {
+                // Explicit `Option<T>` bindings must be initialized with
+                // `Some(...)` or `none`; the struct-field sugar that accepts a
+                // concrete `T` does not apply here.
+                if !value_type.is_error()
+                    && !matches!(
+                        value_type,
+                        Type::Option { .. } | Type::None | Type::Infer
+                    )
+                {
+                    self.error_at_expr(
+                        value,
+                        format!(
+                            "`{name}` is declared Option<{inner}> but the initializer is {value_type}"
+                        ),
+                    );
+                }
+            } else if !self.is_assignable(&expected, &value_type) {
                 self.error_at_expr(
                     value,
                     format!("expected type `{expected}`, found type `{value_type}`"),
@@ -634,6 +663,7 @@ impl<'a> Checker<'a> {
             self.function_return_context(is_async, explicit_ret.clone(), _span);
 
         self.scopes.push(HashMap::new());
+        self.mutables.push(HashSet::new());
 
         // Make the function available to its own body for recursion. Use the
         // signature collected earlier; the return type will be refined after
@@ -696,6 +726,7 @@ impl<'a> Checker<'a> {
         self.in_function = saved_in_function;
         self.return_type = saved_return_type;
         self.scopes.pop();
+        self.mutables.pop();
 
         self.pop_type_params();
 
@@ -789,6 +820,7 @@ impl<'a> Checker<'a> {
             self.function_return_context(is_async, explicit_ret.clone(), _span);
 
         self.scopes.push(HashMap::new());
+        self.mutables.push(HashSet::new());
 
         // Bind the receiver name to the receiver type inside the method body.
         if receiver_mutable {
@@ -816,6 +848,7 @@ impl<'a> Checker<'a> {
         self.in_async_function = saved_in_async;
         self.return_type = saved_return_type;
         self.scopes.pop();
+        self.mutables.pop();
 
         // Update the stored signature with resolved types.
         self.receiver_methods.insert(
@@ -823,6 +856,7 @@ impl<'a> Checker<'a> {
             super::MethodInfo {
                 params,
                 return_type: return_type.map(|t| t.clone()),
+                mutable: receiver_mutable,
             },
         );
 

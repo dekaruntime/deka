@@ -212,6 +212,7 @@ impl<'a> Checker<'a> {
             self.function_return_context(is_async, explicit_ret.clone(), span);
 
         self.scopes.push(HashMap::new());
+        self.mutables.push(HashSet::new());
 
         for (p, t) in params.iter().zip(param_types.iter()) {
             self.declare_var(p.name, t.clone());
@@ -252,6 +253,7 @@ impl<'a> Checker<'a> {
         self.in_function = saved_in_function;
         self.return_type = saved_return_type;
         self.scopes.pop();
+        self.mutables.pop();
 
         let optional = params
             .iter()
@@ -795,6 +797,7 @@ impl<'a> Checker<'a> {
 
         for arm in arms {
             self.scopes.push(HashMap::new());
+            self.mutables.push(HashSet::new());
             self.check_pattern(&arm.pattern, &scrutinee_type);
             if !has_catch_all {
                 if Self::pattern_is_catch_all(&arm.pattern) {
@@ -805,6 +808,7 @@ impl<'a> Checker<'a> {
             }
             let arm_type = self.check_expr(&arm.body);
             self.scopes.pop();
+            self.mutables.pop();
 
             match &result_type {
                 Some(expected) => {
@@ -1214,7 +1218,12 @@ impl<'a> Checker<'a> {
             Assign => {
                 match left {
                     ast::Expr::Identifier { name, .. } => {
-                        if !self.mutables.contains(*name) {
+                        if !self
+                            .mutables
+                            .iter()
+                            .rev()
+                            .any(|scope| scope.contains(*name))
+                        {
                             self.error_span(
                                 left.span(),
                                 format!("cannot assign to immutable variable `{name}`"),
@@ -1248,7 +1257,12 @@ impl<'a> Checker<'a> {
             }
             AddAssign | SubAssign | MulAssign | DivAssign | ModAssign => {
                 if let ast::Expr::Identifier { name, .. } = left {
-                    if !self.mutables.contains(*name) {
+                    if !self
+                        .mutables
+                        .iter()
+                        .rev()
+                        .any(|scope| scope.contains(*name))
+                    {
                         self.error_span(
                             left.span(),
                             format!("cannot assign to immutable variable `{name}`"),
@@ -1318,6 +1332,15 @@ impl<'a> Checker<'a> {
 
         let mut embed_path = Vec::new();
         let info = self.find_receiver_method(receiver_type, method_name, &mut embed_path)?;
+
+        if info.mutable && !self.is_mutable_expr(object) {
+            self.error_at_expr(
+                object,
+                format!(
+                    "cannot call mutable method `{method_name}` on an immutable receiver"
+                ),
+            );
+        }
 
         // Record this call site so the emitter can lower it to a mangled call.
         // The owner of the method is the embedded struct (or the receiver itself).
@@ -1389,6 +1412,19 @@ impl<'a> Checker<'a> {
             path.pop();
         }
         None
+    }
+
+    /// Returns true if the expression denotes a mutable location.
+    fn is_mutable_expr(&self, expr: &ast::Expr<'a>) -> bool {
+        match expr {
+            ast::Expr::Identifier { name, .. } => self
+                .mutables
+                .iter()
+                .rev()
+                .any(|scope| scope.contains(*name)),
+            ast::Expr::FieldAccess { object, .. } => self.is_mutable_expr(object),
+            _ => false,
+        }
     }
 
     fn check_call(
