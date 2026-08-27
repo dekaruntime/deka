@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast;
 
-use super::types::{is_assignable, Type};
+use super::types::Type;
 use super::Checker;
 
 impl<'a> Checker<'a> {
@@ -158,9 +158,9 @@ impl<'a> Checker<'a> {
                 }
                 let then_type = self.check_expr(then_branch);
                 let else_type = self.check_expr(else_branch);
-                if is_assignable(&then_type, &else_type) {
+                if self.is_assignable(&then_type, &else_type) {
                     then_type
-                } else if is_assignable(&else_type, &then_type) {
+                } else if self.is_assignable(&else_type, &then_type) {
                     else_type
                 } else {
                     self.error_span(
@@ -318,7 +318,7 @@ impl<'a> Checker<'a> {
             };
 
             let value_type = self.check_expr(value);
-            if !is_assignable(&expected_type, &value_type) {
+            if !self.is_assignable(&expected_type, &value_type) {
                 self.error_span(
                     *field_span,
                     format!(
@@ -691,7 +691,7 @@ impl<'a> Checker<'a> {
         match (&case.payload, payload_type) {
             (Some(expected), Some(actual)) => {
                 let expected_ty = self.resolve_ast_type(expected);
-                if !is_assignable(&expected_ty, &actual) {
+                if !self.is_assignable(&expected_ty, &actual) {
                     self.error_span(
                         span,
                         format!(
@@ -799,7 +799,7 @@ impl<'a> Checker<'a> {
 
             match &result_type {
                 Some(expected) => {
-                    if !is_assignable(expected, &arm_type) {
+                    if !self.is_assignable(expected, &arm_type) {
                         self.error_at_expr(
                             &arm.body,
                             format!(
@@ -823,7 +823,7 @@ impl<'a> Checker<'a> {
             }
             ast::Pattern::Literal { expr, span } => {
                 let literal_type = self.check_expr(expr);
-                if !is_assignable(scrutinee_type, &literal_type) {
+                if !self.is_assignable(scrutinee_type, &literal_type) {
                     self.error_span(
                         *span,
                         format!(
@@ -1050,7 +1050,7 @@ impl<'a> Checker<'a> {
                                 );
                             }
                             if !params.is_empty()
-                                && !is_assignable(&params[0], &left_type)
+                                && !self.is_assignable(&params[0], &left_type)
                                 && !matches!(left_type, Type::Infer)
                                 && !matches!(params[0], Type::Infer)
                             {
@@ -1094,7 +1094,7 @@ impl<'a> Checker<'a> {
                                     continue;
                                 }
                                 let arg_type = self.check_expr(arg);
-                                if !is_assignable(expected, &arg_type) {
+                                if !self.is_assignable(expected, &arg_type) {
                                     self.error_at_expr(
                                         arg,
                                         format!(
@@ -1107,7 +1107,7 @@ impl<'a> Checker<'a> {
                             if !has_hole {
                                 if substituted_params.is_empty() {
                                     self.error_span(*span, "pipe right-hand call takes no arguments");
-                                } else if !is_assignable(&substituted_params[0], &left_type)
+                                } else if !self.is_assignable(&substituted_params[0], &left_type)
                                     && !matches!(left_type, Type::Infer)
                                     && !matches!(substituted_params[0], Type::Infer)
                                 {
@@ -1178,7 +1178,7 @@ impl<'a> Checker<'a> {
                 }
                 if !left_type.is_error()
                     && !right_type.is_error()
-                    && !is_assignable(&left_type, &right_type)
+                    && !self.is_assignable(&left_type, &right_type)
                 {
                     self.error_span(
                         span,
@@ -1291,7 +1291,7 @@ impl<'a> Checker<'a> {
         } else {
             for (expected, arg) in expected_params.iter().zip(args.iter()) {
                 let arg_type = self.check_expr(arg);
-                if !is_assignable(expected, &arg_type) {
+                if !self.is_assignable(expected, &arg_type) {
                     self.error_at_expr(
                         arg,
                         format!(
@@ -1381,7 +1381,7 @@ impl<'a> Checker<'a> {
                             continue;
                         }
                         let arg_type = self.check_expr(arg);
-                        if !is_assignable(expected, &arg_type) {
+                        if !self.is_assignable(expected, &arg_type) {
                             self.error_at_expr(
                                 arg,
                                 format!(
@@ -1419,7 +1419,7 @@ impl<'a> Checker<'a> {
                 } else {
                     for (expected, arg) in substituted_params.iter().zip(args.iter()) {
                         let arg_type = self.check_expr(arg);
-                        if !is_assignable(expected, &arg_type) {
+                        if !self.is_assignable(expected, &arg_type) {
                             self.error_at_expr(
                                 arg,
                                 format!(

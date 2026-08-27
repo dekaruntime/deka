@@ -377,6 +377,308 @@ impl<'a> Checker<'a> {
             self.error_span(span, format!("expected type `boolean`, found type `{ty}`"));
         }
     }
+
+    /// Assignment / subtyping check. `actual` must be assignable to `expected`.
+    fn is_assignable(&mut self, expected: &Type<'a>, actual: &Type<'a>) -> bool {
+        if expected.is_error() || actual.is_error() {
+            return true;
+        }
+        // `Infer` is the unknown/externally-provided type. It is compatible with
+        // any type until a concrete type is available.
+        if matches!(expected, Type::Infer) || matches!(actual, Type::Infer) {
+            return true;
+        }
+        if expected == actual {
+            return true;
+        }
+        // `never` is the bottom type: assignable to anything.
+        if matches!(actual, Type::Never) {
+            return true;
+        }
+        // `none` is assignable to any Option<T>.
+        if matches!(expected, Type::Option { .. }) && matches!(actual, Type::None) {
+            return true;
+        }
+        // `none` is assignable to `void` (both represent "no useful return value").
+        if matches!(expected, Type::Named { name: "void" }) && matches!(actual, Type::None) {
+            return true;
+        }
+        // A concrete `T` is assignable to `Option<T>` (sugar for `Some(T)`).
+        if let Type::Option { inner } = expected {
+            if self.is_assignable(inner, actual) {
+                return true;
+            }
+        }
+        // `Option<A>` is assignable to `Option<B>` when `A` is assignable to `B`.
+        if let (Type::Option { inner: expected_inner }, Type::Option { inner: actual_inner }) =
+            (expected, actual)
+        {
+            if self.is_assignable(expected_inner, actual_inner) {
+                return true;
+            }
+        }
+        // Structural subtyping for generic types like Result<T, E>.
+        if let (
+            Type::Generic { base: expected_base, args: expected_args },
+            Type::Generic { base: actual_base, args: actual_args },
+        ) = (expected, actual)
+        {
+            if expected_base == actual_base && expected_args.len() == actual_args.len() {
+                return expected_args
+                    .iter()
+                    .zip(actual_args.iter())
+                    .all(|(e, a)| self.is_assignable(e, a));
+            }
+        }
+        // Arrays are covariant in their element type.
+        if let (Type::Array { elem: expected_elem }, Type::Array { elem: actual_elem }) =
+            (expected, actual)
+        {
+            return self.is_assignable(expected_elem, actual_elem);
+        }
+        // Object structural subtyping: actual must supply at least the expected fields.
+        if let (Type::Object { fields: expected_fields }, Type::Object { fields: actual_fields }) =
+            (expected, actual)
+        {
+            return expected_fields.iter().all(|(name, expected_ty)| {
+                actual_fields
+                    .iter()
+                    .find(|(n, _)| n == name)
+                    .map(|(_, actual_ty)| self.is_assignable(expected_ty, actual_ty))
+                    .unwrap_or(false)
+            });
+        }
+        // Function subtyping: parameters are contravariant, return type is covariant.
+        if let (
+            Type::Function {
+                params: expected_params,
+                ret: expected_ret,
+                optional: expected_optional,
+            },
+            Type::Function {
+                params: actual_params,
+                ret: actual_ret,
+                optional: actual_optional,
+            },
+        ) = (expected, actual)
+        {
+            if expected_params.len() == actual_params.len() && expected_optional == actual_optional {
+                return actual_params
+                    .iter()
+                    .zip(expected_params.iter())
+                    .all(|(a, e)| self.is_assignable(a, e))
+                    && self.is_assignable(expected_ret, actual_ret);
+            }
+        }
+        // Interface satisfaction: structs and objects must supply every
+        // required field and method with a compatible type.
+        if let Type::Interface { name } = expected {
+            let members: Vec<ast::InterfaceMember<'a>> = self
+                .interfaces
+                .get(name)
+                .map(|info| info.members.to_vec())
+                .unwrap_or_default();
+            if members.is_empty() {
+                return true;
+            }
+
+            match actual {
+                Type::Object { fields: actual_fields } => {
+                    for member in members.iter() {
+                        match member {
+                            ast::InterfaceMember::Field {
+                                name: field_name,
+                                ty,
+                                optional,
+                                ..
+                            } => {
+                                let expected_ty = self.resolve_ast_type(ty);
+                                if expected_ty.is_error() {
+                                    continue;
+                                }
+                                let Some((_, actual_ty)) = actual_fields
+                                    .iter()
+                                    .find(|(n, _)| n == field_name)
+                                else {
+                                    if *optional {
+                                        continue;
+                                    }
+                                    return false;
+                                };
+                                if !self.is_assignable(&expected_ty, actual_ty) {
+                                    return false;
+                                }
+                            }
+                            ast::InterfaceMember::Method {
+                                name: method_name,
+                                params,
+                                return_type,
+                                ..
+                            } => {
+                                let expected_params: Vec<Type<'a>> = params
+                                    .iter()
+                                    .map(|p| {
+                                        p.ty.as_ref()
+                                            .map(|t| self.resolve_ast_type(t))
+                                            .unwrap_or(Type::Infer)
+                                    })
+                                    .collect();
+                                let expected_ret = return_type
+                                    .as_ref()
+                                    .map(|t| self.resolve_ast_type(t))
+                                    .unwrap_or(Type::Named { name: "void" });
+                                let expected_fn = Type::Function {
+                                    params: expected_params,
+                                    ret: Box::new(expected_ret),
+                                    optional: 0,
+                                };
+
+                                let Some((_, actual_ty)) = actual_fields
+                                    .iter()
+                                    .find(|(n, _)| n == method_name)
+                                else {
+                                    return false;
+                                };
+                                if !self.is_assignable(&expected_fn, actual_ty) {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                    return true;
+                }
+                Type::Struct { name: struct_name } => {
+                    let struct_fields: Vec<(&'a str, ast::Type<'a>)> = self
+                        .structs
+                        .get(struct_name)
+                        .map(|info| {
+                            info.fields
+                                .iter()
+                                .map(|f| (f.name, f.ty.clone()))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let struct_methods: Vec<(&'a str, MethodInfo<'a>)> =
+                        self.collect_struct_methods(struct_name);
+
+                    for member in members.iter() {
+                        match member {
+                            ast::InterfaceMember::Field {
+                                name: field_name,
+                                ty,
+                                optional,
+                                ..
+                            } => {
+                                let expected_ty = self.resolve_ast_type(ty);
+                                if expected_ty.is_error() {
+                                    continue;
+                                }
+                                let Some((_, actual_ast_ty)) = struct_fields
+                                    .iter()
+                                    .find(|(n, _)| n == field_name)
+                                else {
+                                    if *optional {
+                                        continue;
+                                    }
+                                    return false;
+                                };
+                                let actual_ty = self.resolve_ast_type(actual_ast_ty);
+                                if !self.is_assignable(&expected_ty, &actual_ty) {
+                                    return false;
+                                }
+                            }
+                            ast::InterfaceMember::Method {
+                                name: method_name,
+                                params,
+                                return_type,
+                                ..
+                            } => {
+                                let expected_params: Vec<Type<'a>> = params
+                                    .iter()
+                                    .map(|p| {
+                                        p.ty.as_ref()
+                                            .map(|t| self.resolve_ast_type(t))
+                                            .unwrap_or(Type::Infer)
+                                    })
+                                    .collect();
+                                let expected_ret = return_type
+                                    .as_ref()
+                                    .map(|t| self.resolve_ast_type(t))
+                                    .unwrap_or(Type::Named { name: "void" });
+                                let expected_fn = Type::Function {
+                                    params: expected_params,
+                                    ret: Box::new(expected_ret),
+                                    optional: 0,
+                                };
+
+                                let Some((_, method_info)) = struct_methods
+                                    .iter()
+                                    .find(|(n, _)| n == method_name)
+                                else {
+                                    return false;
+                                };
+                                let actual_params: Vec<Type<'a>> = method_info
+                                    .params
+                                    .iter()
+                                    .map(|p| {
+                                        p.ty.as_ref()
+                                            .map(|t| self.resolve_ast_type(t))
+                                            .unwrap_or(Type::Infer)
+                                    })
+                                    .collect();
+                                let actual_ret = method_info
+                                    .return_type
+                                    .as_ref()
+                                    .map(|t| self.resolve_ast_type(t))
+                                    .unwrap_or(Type::Named { name: "void" });
+                                let actual_fn = Type::Function {
+                                    params: actual_params,
+                                    ret: Box::new(actual_ret),
+                                    optional: 0,
+                                };
+                                if !self.is_assignable(&expected_fn, &actual_fn) {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                    return true;
+                }
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    /// Collect all receiver methods available on a struct, including methods
+    /// inherited from embedded structs.
+    fn collect_struct_methods(&self, struct_name: &'a str) -> Vec<(&'a str, MethodInfo<'a>)> {
+        let mut methods = Vec::new();
+        let mut seen = HashSet::new();
+        self.collect_struct_methods_rec(struct_name, &mut methods, &mut seen);
+        methods
+    }
+
+    fn collect_struct_methods_rec(
+        &self,
+        struct_name: &'a str,
+        methods: &mut Vec<(&'a str, MethodInfo<'a>)>,
+        seen: &mut HashSet<&'a str>,
+    ) {
+        if !seen.insert(struct_name) {
+            return;
+        }
+        for ((rt, mn), mi) in self.receiver_methods.iter() {
+            if *rt == struct_name && !methods.iter().any(|(n, _)| n == mn) {
+                methods.push((*mn, mi.clone()));
+            }
+        }
+        if let Some(info) = self.structs.get(struct_name) {
+            for embed in info.embeds.iter() {
+                self.collect_struct_methods_rec(embed.name, methods, seen);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

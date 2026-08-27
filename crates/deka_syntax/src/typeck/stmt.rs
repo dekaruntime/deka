@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast;
 
-use super::types::{is_assignable, Type};
+use super::types::Type;
 use super::Checker;
 
 impl<'a> Checker<'a> {
@@ -13,6 +13,7 @@ impl<'a> Checker<'a> {
         self.collect_function_signatures();
         self.collect_receiver_methods();
         self.check_embedded_method_ambiguity();
+        self.validate_interface_declarations();
 
         // Check function and receiver-method bodies first so that inferred
         // return types are available to later top-level statements.
@@ -134,6 +135,46 @@ impl<'a> Checker<'a> {
             if let ast::Stmt::Interface { name, members, span, .. } = stmt {
                 if self.interfaces.insert(name, super::InterfaceInfo { members }).is_some() {
                     self.error_span(*span, format!("duplicate interface definition `{name}`"));
+                }
+            }
+        }
+    }
+
+    /// Eagerly resolve interface member types so that unknown types and other
+    /// annotation errors are reported even when the interface is not used.
+    fn validate_interface_declarations(&mut self) {
+        let interfaces: Vec<_> = self.interfaces.values().cloned().collect();
+        for info in interfaces {
+            for member in info.members.iter() {
+                match member {
+                    ast::InterfaceMember::Field { ty, span, .. } => {
+                        let resolved = self.resolve_ast_type(ty);
+                        if resolved.is_error() {
+                            // Error already reported by resolve_ast_type.
+                            continue;
+                        }
+                        if matches!(resolved, Type::Function { .. }) {
+                            self.error_span(
+                                *span,
+                                "interface fields may not have function types; use a method instead",
+                            );
+                        }
+                    }
+                    ast::InterfaceMember::Method {
+                        params,
+                        return_type,
+                        span,
+                        ..
+                    } => {
+                        for param in params.iter() {
+                            if let Some(ty) = param.ty.as_ref() {
+                                self.resolve_ast_type(ty);
+                            }
+                        }
+                        if let Some(ty) = return_type.as_ref() {
+                            self.resolve_ast_type(ty);
+                        }
+                    }
                 }
             }
         }
@@ -532,7 +573,7 @@ impl<'a> Checker<'a> {
         let value_type = self.check_expr(value);
         let final_type = if let Some(annot) = ty {
             let expected = self.resolve_ast_type(annot);
-            if !is_assignable(&expected, &value_type) {
+            if !self.is_assignable(&expected, &value_type) {
                 self.error_at_expr(
                     value,
                     format!("expected type `{expected}`, found type `{value_type}`"),
@@ -802,8 +843,8 @@ impl<'a> Checker<'a> {
             },
         };
 
-        if let Some(expected) = self.return_type.as_ref() {
-            if !is_assignable(expected, &value_type) {
+        if let Some(expected) = self.return_type.clone() {
+            if !self.is_assignable(&expected, &value_type) {
                 self.error_span(
                     span,
                     format!("expected return type `{expected}`, found type `{value_type}`"),
