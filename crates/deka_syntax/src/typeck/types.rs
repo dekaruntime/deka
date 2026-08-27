@@ -11,7 +11,13 @@ pub enum Type<'a> {
     /// Sentinel used for error recovery.
     Error,
     /// Placeholder used while a function's return type is being inferred.
+    /// Also used for genuinely opaque values (e.g. `unsafe { }` payloads) where
+    /// any concrete type is acceptable.
     Infer,
+    /// Type of a language feature that is not yet implemented in v2 typeck.
+    /// Unlike `Infer`, `Unknown` refuses assignment so that fixtures do not
+    /// silently pass on unimplemented surface.
+    Unknown,
     /// The bottom type (`never`). Not produced by the parser, but accepted in
     /// annotations for forward compatibility.
     Never,
@@ -48,6 +54,7 @@ impl fmt::Display for Type<'_> {
         match self {
             Type::Error => write!(f, "<error>"),
             Type::Infer => write!(f, "<infer>"),
+            Type::Unknown => write!(f, "<unknown>"),
             Type::Never => write!(f, "never"),
             Type::None => write!(f, "none"),
             Type::Named { name } => write!(f, "{name}"),
@@ -84,7 +91,9 @@ pub fn is_assignable<'a>(expected: &Type<'a>, actual: &Type<'a>) -> bool {
         return true;
     }
     // `Infer` is the unknown/externally-provided type. It is compatible with
-    // any type until a concrete type is available.
+    // any type until a concrete type is available.  `Unknown` is intentionally
+    // not universally assignable: it marks unimplemented v2 surface so that
+    // fixtures cannot silently pass on features we have not yet validated.
     if matches!(expected, Type::Infer) || matches!(actual, Type::Infer) {
         return true;
     }

@@ -72,24 +72,24 @@ impl<'a> Checker<'a> {
                 }
                 // TODO: infer element type and return Array<T> once the type
                 // system has a dedicated array type.
-                Type::Infer
+                Type::Unknown
             }
             ast::Expr::Object { fields, .. } => {
                 for field in fields.iter() {
                     self.check_expr(&field.value);
                 }
                 // TODO: return a concrete object/record type.
-                Type::Infer
+                Type::Unknown
             }
             ast::Expr::IndexAccess { object, index, .. } => {
                 self.check_expr(object);
                 self.check_expr(index);
                 // TODO: return element type once collection types are modeled.
-                Type::Infer
+                Type::Unknown
             }
             ast::Expr::Spread { expr, .. } => {
                 self.check_expr(expr);
-                Type::Infer
+                Type::Unknown
             }
             ast::Expr::Await { expr, span } => {
                 if self.in_function && !self.in_async_function {
@@ -117,15 +117,15 @@ impl<'a> Checker<'a> {
                 for child in element.children.iter() {
                     self.check_expr(child);
                 }
-                Type::Infer
+                Type::Unknown
             }
             ast::Expr::JsxFragment { children, .. } => {
                 for child in children.iter() {
                     self.check_expr(child);
                 }
-                Type::Infer
+                Type::Unknown
             }
-            ast::Expr::JsxText { .. } => Type::Infer,
+            ast::Expr::JsxText { .. } => Type::Unknown,
             ast::Expr::Unsafe { .. } => {
                 // Raw JavaScript block. The emitter wraps it as a Result, so
                 // the typechecker exposes it as Result<Infer, Infer> so
