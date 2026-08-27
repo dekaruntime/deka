@@ -425,13 +425,33 @@ impl<'a> Parser<'a> {
                 payload,
                 span: self.span_from(case_start, case_start_byte),
             });
-            if !self.eat(TokenKind::Comma) {
-                break;
-            }
-            self.skip_newlines();
+
             if self.at(TokenKind::RBrace) {
                 break;
             }
+            if self.eat(TokenKind::Comma) {
+                self.skip_newlines();
+                if self.at(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            if self.eat(TokenKind::Semicolon) {
+                self.skip_newlines();
+                if self.at(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            if self.at(TokenKind::Newline) {
+                self.skip_newlines();
+                if self.at(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            self.error("expected `,` or newline between enum cases");
+            break;
         }
 
         self.skip_newlines();

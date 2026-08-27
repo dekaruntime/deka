@@ -594,14 +594,14 @@ impl<'a> Emitter<'a> {
             write_indent(&mut self.out, 2);
             self.out.push_str(&case.name);
             if let Some(payload_ty) = &case.payload {
-                self.out.push_str("(value) => Object.freeze({ ");
+                self.out.push_str("(value) { return Object.freeze({ ");
                 self.out.push_str("__enum: ");
                 self.out.push_str(&json_string(name));
                 self.out.push_str(", __case: ");
                 self.out.push_str(&json_string(&case.name));
                 self.out.push_str(", name: ");
                 self.out.push_str(&json_string(&case.name));
-                self.out.push_str(", value })");
+                self.out.push_str(", value }); }");
                 let _ = payload_ty; // type-only, no runtime effect
             } else {
                 self.out.push_str(": Object.freeze({ ");

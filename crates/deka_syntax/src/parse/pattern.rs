@@ -14,14 +14,33 @@ impl<'a> Parser<'a> {
 
         while !self.at(TokenKind::RBrace) && !self.at_end() {
             arms.push(self.parse_match_arm()?);
-            if !self.eat(TokenKind::Comma) {
-                // Allow trailing comma or newline-separated arms.
-                break;
-            }
-            self.skip_newlines();
+
             if self.at(TokenKind::RBrace) {
                 break;
             }
+            if self.eat(TokenKind::Comma) {
+                self.skip_newlines();
+                if self.at(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            if self.eat(TokenKind::Semicolon) {
+                self.skip_newlines();
+                if self.at(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            if self.at(TokenKind::Newline) {
+                self.skip_newlines();
+                if self.at(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            self.error("expected `,` or newline between match arms");
+            break;
         }
 
         self.expect(TokenKind::RBrace)?;

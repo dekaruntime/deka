@@ -1,5 +1,5 @@
 {
-  "title": "Enum payload match fails at runtime",
+  "title": "Enum payload match with unqualified constructors",
   "stage": "run",
-  "notes": "Compile succeeds, but generated JS references undefined match identifiers A/B."
+  "notes": "Unqualified constructor patterns (A, B) resolve against the enum case names at runtime."
 }
