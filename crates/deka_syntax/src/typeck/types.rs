@@ -33,6 +33,10 @@ pub enum Type<'a> {
     },
     /// A user-defined struct type.
     Struct { name: &'a str },
+    /// An array type, e.g. `Array<number>` or `number[]`.
+    Array { elem: Box<Type<'a>> },
+    /// An object record type with known fields.
+    Object { fields: Vec<(&'a str, Type<'a>)> },
     /// A type parameter, e.g. `T` inside a generic function or type.
     Param { name: &'a str },
 }
@@ -73,6 +77,17 @@ impl fmt::Display for Type<'_> {
                 write!(f, ">")
             }
             Type::Struct { name } => write!(f, "{name}"),
+            Type::Array { elem } => write!(f, "Array<{elem}>"),
+            Type::Object { fields } => {
+                write!(f, "{{")?;
+                for (i, (name, ty)) in fields.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{name}: {ty}")?;
+                }
+                write!(f, "}}")
+            }
             Type::Param { name } => write!(f, "{name}"),
         }
     }
@@ -111,6 +126,24 @@ pub fn is_assignable<'a>(expected: &Type<'a>, actual: &Type<'a>) -> bool {
                 .zip(actual_args.iter())
                 .all(|(e, a)| is_assignable(e, a));
         }
+    }
+    // Arrays are covariant in their element type.
+    if let (Type::Array { elem: expected_elem }, Type::Array { elem: actual_elem }) =
+        (expected, actual)
+    {
+        return is_assignable(expected_elem, actual_elem);
+    }
+    // Object structural subtyping: actual must supply at least the expected fields.
+    if let (Type::Object { fields: expected_fields }, Type::Object { fields: actual_fields }) =
+        (expected, actual)
+    {
+        return expected_fields.iter().all(|(name, expected_ty)| {
+            actual_fields
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, actual_ty)| is_assignable(expected_ty, actual_ty))
+                .unwrap_or(false)
+        });
     }
     false
 }

@@ -67,19 +67,30 @@ impl<'a> Checker<'a> {
                 span,
             } => self.check_enum_constructor(enum_name, case_name, payload.as_deref(), *span),
             ast::Expr::Array { elements, .. } => {
+                let mut elem_type = None;
                 for element in elements.iter() {
-                    self.check_expr(element);
+                    let ty = self.check_expr(element);
+                    if ty.is_error() {
+                        return Type::Error;
+                    }
+                    if elem_type.is_none() {
+                        elem_type = Some(ty);
+                    }
                 }
-                // TODO: infer element type and return Array<T> once the type
-                // system has a dedicated array type.
-                Type::Infer
+                Type::Array {
+                    elem: Box::new(elem_type.unwrap_or(Type::Infer)),
+                }
             }
             ast::Expr::Object { fields, .. } => {
+                let mut field_types = Vec::new();
                 for field in fields.iter() {
-                    self.check_expr(&field.value);
+                    let ty = self.check_expr(&field.value);
+                    if ty.is_error() {
+                        return Type::Error;
+                    }
+                    field_types.push((field.key, ty));
                 }
-                // TODO: return a concrete object/record type.
-                Type::Infer
+                Type::Object { fields: field_types }
             }
             ast::Expr::IndexAccess { object, index, .. } => {
                 self.check_expr(object);
@@ -315,24 +326,166 @@ impl<'a> Checker<'a> {
             return Type::Error;
         }
 
-        let struct_name = match &object_type {
-            Type::Struct { name } => *name,
+        match &object_type {
+            Type::Struct { name } => {
+                let struct_name = *name;
+                match self.resolve_field_type(struct_name, field) {
+                    Some(ty) => ty,
+                    None => {
+                        self.error_span(
+                            span,
+                            format!("struct `{struct_name}` has no field `{field}`"),
+                        );
+                        Type::Error
+                    }
+                }
+            }
+            Type::Object { fields } => {
+                if let Some((_, ty)) = fields.iter().find(|(name, _)| *name == field) {
+                    ty.clone()
+                } else {
+                    self.error_span(
+                        span,
+                        format!("object has no field `{field}`"),
+                    );
+                    Type::Error
+                }
+            }
+            Type::Array { elem } => self.resolve_array_field(field, elem, span),
+            Type::Named { name } => self.resolve_primitive_field(name, field, span),
             _ => {
                 self.error_span(
                     span,
                     format!("cannot access field `{field}` on type `{object_type}`"),
                 );
-                return Type::Error;
+                Type::Error
             }
+        }
+    }
+
+    fn resolve_primitive_field(
+        &mut self,
+        type_name: &'a str,
+        field: &'a str,
+        span: ast::Span,
+    ) -> Type<'a> {
+        let string_ty = Type::Named { name: "string" };
+        let number_ty = Type::Named { name: "number" };
+        let boolean_ty = Type::Named { name: "boolean" };
+
+        let fn0 = |ret: Type<'a>| Type::Function {
+            params: Vec::new(),
+            ret: Box::new(ret),
+        };
+        let fn1 = |p: Type<'a>, ret: Type<'a>| Type::Function {
+            params: vec![p],
+            ret: Box::new(ret),
+        };
+        let fn2 = |p1: Type<'a>, p2: Type<'a>, ret: Type<'a>| Type::Function {
+            params: vec![p1, p2],
+            ret: Box::new(ret),
         };
 
-        match self.resolve_field_type(struct_name, field) {
-            Some(ty) => ty,
-            None => {
+        match type_name {
+            "string" => match field {
+                "length" => number_ty,
+                "toUpperCase" | "toLowerCase" | "trim" => fn0(string_ty.clone()),
+                "charAt" | "indexOf" | "lastIndexOf" => fn1(number_ty.clone(), number_ty.clone()),
+                "includes" | "startsWith" | "endsWith" => fn1(string_ty.clone(), boolean_ty.clone()),
+                "slice" => fn2(number_ty.clone(), number_ty.clone(), string_ty.clone()),
+                "split" => fn1(string_ty.clone(), Type::Array { elem: Box::new(string_ty.clone()) }),
+                "replace" | "replaceAll" | "concat" => fn2(string_ty.clone(), string_ty.clone(), string_ty.clone()),
+                "substring" => fn2(number_ty.clone(), number_ty.clone(), string_ty.clone()),
+                _ => {
+                    self.error_span(span, format!("string has no field `{field}`"));
+                    Type::Error
+                }
+            },
+            "number" | "boolean" => {
+                self.error_span(span, format!("{type_name} has no field `{field}`"));
+                Type::Error
+            }
+            _ => {
                 self.error_span(
                     span,
-                    format!("struct `{struct_name}` has no field `{field}`"),
+                    format!("cannot access field `{field}` on type `{type_name}`"),
                 );
+                Type::Error
+            }
+        }
+    }
+
+    fn resolve_array_field(
+        &mut self,
+        field: &'a str,
+        elem: &Type<'a>,
+        span: ast::Span,
+    ) -> Type<'a> {
+        let number_ty = Type::Named { name: "number" };
+        let boolean_ty = Type::Named { name: "boolean" };
+        let array_ty = Type::Array { elem: Box::new(elem.clone()) };
+
+        let fn0 = |ret: Type<'a>| Type::Function {
+            params: Vec::new(),
+            ret: Box::new(ret),
+        };
+        let fn1 = |p: Type<'a>, ret: Type<'a>| Type::Function {
+            params: vec![p],
+            ret: Box::new(ret),
+        };
+        let fn2 = |p1: Type<'a>, p2: Type<'a>, ret: Type<'a>| Type::Function {
+            params: vec![p1, p2],
+            ret: Box::new(ret),
+        };
+
+        match field {
+            "length" => number_ty,
+            "includes" => fn2(elem.clone(), number_ty.clone(), boolean_ty.clone()),
+            "slice" => fn2(number_ty.clone(), number_ty.clone(), array_ty.clone()),
+            "push" => fn1(elem.clone(), number_ty.clone()),
+            "pop" => fn0(Type::Option { inner: Box::new(elem.clone()) }),
+            "shift" => fn0(Type::Option { inner: Box::new(elem.clone()) }),
+            "unshift" => fn1(elem.clone(), number_ty.clone()),
+            "concat" => fn1(array_ty.clone(), array_ty.clone()),
+            "join" => fn1(Type::Named { name: "string" }, Type::Named { name: "string" }),
+            "reverse" | "sort" => fn0(array_ty.clone()),
+            "filter" => fn1(
+                Type::Function {
+                    params: vec![elem.clone()],
+                    ret: Box::new(boolean_ty.clone()),
+                },
+                array_ty.clone(),
+            ),
+            "map" => Type::Function {
+                params: vec![Type::Function {
+                    params: vec![elem.clone()],
+                    ret: Box::new(Type::Infer),
+                }],
+                ret: Box::new(Type::Array { elem: Box::new(Type::Infer) }),
+            },
+            "find" => fn1(
+                Type::Function {
+                    params: vec![elem.clone()],
+                    ret: Box::new(boolean_ty.clone()),
+                },
+                Type::Option { inner: Box::new(elem.clone()) },
+            ),
+            "forEach" => fn1(
+                Type::Function {
+                    params: vec![elem.clone()],
+                    ret: Box::new(Type::None),
+                },
+                Type::None,
+            ),
+            "reduce" => Type::Function {
+                params: vec![Type::Function {
+                    params: vec![Type::Infer, elem.clone()],
+                    ret: Box::new(Type::Infer),
+                }],
+                ret: Box::new(Type::Infer),
+            },
+            _ => {
+                self.error_span(span, format!("array has no field `{field}`"));
                 Type::Error
             }
         }
