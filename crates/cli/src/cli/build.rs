@@ -443,6 +443,7 @@ fn is_stdlib_module_spec(spec: &str) -> bool {
                 | "fs"
                 | "crypto"
                 | "jwt"
+                | "test"
                 | "cookies"
                 | "auth"
                 | "db"

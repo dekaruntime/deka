@@ -1,5 +1,6 @@
+import { echo } from "io"
 const yes = true
 const no = false
-console.log(yes && no)
-console.log(yes || no)
-console.log(!yes)
+echo(yes && no)
+echo(yes || no)
+echo(!yes)

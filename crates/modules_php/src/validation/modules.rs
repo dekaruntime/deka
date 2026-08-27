@@ -270,6 +270,11 @@ impl ModuleGraph {
                     ));
                     continue;
                 };
+                // Side-effect imports (`import "./mod.ds"`) have an empty imported
+                // name. They load the module; they do not require a named export.
+                if edge.imported.is_empty() {
+                    continue;
+                }
                 if !target.exports.contains(&edge.imported) {
                     errors.push(module_error(
                         edge.line,
@@ -869,6 +874,7 @@ fn is_deka_stdlib_root(root: &str) -> bool {
             | "io"
             | "json"
             | "jwt"
+            | "test"
             | "neo4j"
             | "payments"
             | "redis"
@@ -1639,6 +1645,28 @@ mod tests {
             entry.to_string_lossy().as_ref(),
         );
         assert!(errors.is_empty(), "expected no errors, got: {:?}", errors);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn side_effect_import_does_not_require_named_export() {
+        let root = make_temp_project("side_effect_import");
+        let entry = root.join("main.ds");
+        fs::write(&entry, "import \"./logger.ds\"\nconsole.log(\"after\")\n")
+            .expect("write entry");
+        fs::write(root.join("logger.ds"), "console.log(\"side effect\")\n")
+            .expect("write logger");
+
+        let errors = validate_module_resolution(
+            &fs::read_to_string(&entry).expect("read entry"),
+            entry.to_string_lossy().as_ref(),
+        );
+        assert!(
+            errors.is_empty(),
+            "side-effect import of a module with no exports should succeed, got: {:?}",
+            errors
+        );
 
         let _ = fs::remove_dir_all(root);
     }

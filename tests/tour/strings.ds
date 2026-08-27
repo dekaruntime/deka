@@ -1,3 +1,4 @@
+import { echo } from "io"
 const name = "Deka"
 const greeting = `Hello, ${name}`
-console.log(greeting.slice(0, 5))
+echo(greeting.slice(0, 5))

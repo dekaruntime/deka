@@ -1,3 +1,4 @@
+import { echo } from "io"
 interface Named {
   name: string
   fn displayName() string
@@ -12,7 +13,7 @@ fn (p Person) displayName() string {
 }
 
 fn printName(n: Named) {
-  console.log(n.displayName())
+  echo(n.displayName())
 }
 
 let p = Person { name: "DekaScript" }

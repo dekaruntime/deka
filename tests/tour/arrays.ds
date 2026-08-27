@@ -1,3 +1,4 @@
+import { echo } from "io"
 fn sum(values: array<number>) number {
   let total = 0
   for (const v of values) {
@@ -8,5 +9,5 @@ fn sum(values: array<number>) number {
 
 let values = [1, 2, 3]
 values[0] = 10
-console.log(values.length)
-console.log(sum(values))
+echo(values.length)
+echo(sum(values))

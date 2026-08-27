@@ -1,3 +1,4 @@
+import { echo } from "io"
 const value = 2
 
 const label = match (value) {
@@ -6,4 +7,4 @@ const label = match (value) {
   3 => "three",
   _ => "other",
 }
-console.log(label)
+echo(label)

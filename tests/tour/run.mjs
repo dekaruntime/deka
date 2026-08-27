@@ -2,7 +2,7 @@
 // Compile every tests/tour lesson with the local CLI. Match by id in
 // manifest.json, never by display name. See deka#292.
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, cpSync, copyFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -11,6 +11,78 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, "..", "..");
 const manifestPath = join(__dirname, "manifest.json");
 const scratchDir = join(__dirname, ".run-tmp");
+
+const DEFAULT_DEKA_LOCK = '{\n  "lockfileVersion": 1,\n  "packages": {}\n}\n';
+
+const PACKAGE_DEKA_JSON = {
+  name: "tour-lesson",
+  security: {
+    allow: {
+      read: ["./"],
+      write: [".cache", "php_modules", "ds_modules"],
+    },
+    prompt: false,
+  },
+};
+
+function restoreCachedModules(cacheDir, tmpDir) {
+  for (const name of ["ds_modules", "php_modules"]) {
+    const cached = join(cacheDir, name);
+    if (existsSync(cached)) {
+      cpSync(cached, join(tmpDir, name), { recursive: true });
+    }
+  }
+}
+
+function installIo(cliPath, tmpDir) {
+  const cacheDir = join(repoRoot, ".cache", "deka-packages", "io");
+  const cachedLock = join(cacheDir, "deka.lock");
+  const hasCachedModules =
+    existsSync(join(cacheDir, "ds_modules")) || existsSync(join(cacheDir, "php_modules"));
+
+  writeFileSync(join(tmpDir, "deka.lock"), DEFAULT_DEKA_LOCK);
+  writeFileSync(join(tmpDir, "deka.json"), JSON.stringify(PACKAGE_DEKA_JSON, null, 2) + "\n");
+
+  if (existsSync(cachedLock) && hasCachedModules) {
+    restoreCachedModules(cacheDir, tmpDir);
+    copyFileSync(cachedLock, join(tmpDir, "deka.lock"));
+    return { ok: true, stderr: "" };
+  }
+
+  const spawned = spawnSync(cliPath, ["add", "io", "--yes"], {
+    cwd: tmpDir,
+    encoding: "utf-8",
+    timeout: 120000,
+    env: { ...process.env, DEKA_SECURITY_NO_PROMPT: "1" },
+  });
+  const stderr = spawned.stderr ?? "";
+  if (spawned.status !== 0 || spawned.error) {
+    return {
+      ok: false,
+      error:
+        spawned.error?.message ??
+        stderr
+          .split("\n")
+          .map((line) => line.trim())
+          .find((line) => line.length > 0) ??
+        "deka add io failed",
+      stderr,
+    };
+  }
+
+  mkdirSync(cacheDir, { recursive: true });
+  for (const name of ["ds_modules", "php_modules"]) {
+    const dir = join(tmpDir, name);
+    if (existsSync(dir)) {
+      cpSync(dir, join(cacheDir, name), { recursive: true });
+    }
+  }
+  const lockPath = join(tmpDir, "deka.lock");
+  if (existsSync(lockPath)) {
+    copyFileSync(lockPath, cachedLock);
+  }
+  return { ok: true, stderr };
+}
 
 function findCliBinary() {
   if (process.env.DEKA_NATIVE) {
@@ -50,8 +122,10 @@ options:
   -h, --help            Show this help`);
 }
 
-function compileLesson(cliBinary, sourcePath, outPath) {
-  const result = spawnSync(cliBinary, ["transpile", sourcePath, "--out", outPath], {
+function compileLesson(cliBinary, projectDir, sourcePath, outPath) {
+  copyFileSync(sourcePath, join(projectDir, "lesson.ds"));
+  const result = spawnSync(cliBinary, ["transpile", "./lesson.ds", "--out", outPath], {
+    cwd: projectDir,
     encoding: "utf-8",
     timeout: 30_000,
     env: { ...process.env, DEKA_SECURITY_NO_PROMPT: "1" },
@@ -114,6 +188,14 @@ function main() {
   }
 
   mkdirSync(scratchDir, { recursive: true });
+  const projectDir = join(scratchDir, "project");
+  mkdirSync(projectDir, { recursive: true });
+  const installed = installIo(cliBinary, projectDir);
+  if (!installed.ok) {
+    console.error(`error: could not install io: ${installed.error ?? installed.stderr}`);
+    process.exit(1);
+  }
+
   let passed = 0;
   let failed = 0;
 
@@ -124,7 +206,7 @@ function main() {
     for (const lesson of filtered) {
       const sourcePath = join(__dirname, `${lesson.id}.ds`);
       const outPath = join(scratchDir, `${lesson.id}.js`);
-      const compiled = compileLesson(cliBinary, sourcePath, outPath);
+      const compiled = compileLesson(cliBinary, projectDir, sourcePath, outPath);
       try {
         rmSync(outPath, { force: true });
       } catch {}
