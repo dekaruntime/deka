@@ -354,12 +354,23 @@ impl<'a> Checker<'a> {
             } => {
                 let cond_type = self.check_expr(condition);
                 self.expect_boolean(&cond_type, condition.span());
+                self.scopes.push(HashMap::new());
                 for s in then_body.iter() {
                     self.check_statement(s);
                 }
+                self.scopes.pop();
+                self.scopes.push(HashMap::new());
                 for s in else_body.iter() {
                     self.check_statement(s);
                 }
+                self.scopes.pop();
+            }
+            ast::Stmt::Block { body, .. } => {
+                self.scopes.push(HashMap::new());
+                for s in body.iter() {
+                    self.check_statement(s);
+                }
+                self.scopes.pop();
             }
             ast::Stmt::For {
                 init,

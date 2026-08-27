@@ -152,5 +152,27 @@ pub fn is_assignable<'a>(expected: &Type<'a>, actual: &Type<'a>) -> bool {
                 .unwrap_or(false)
         });
     }
+    // Function subtyping: parameters are contravariant, return type is covariant.
+    if let (
+        Type::Function {
+            params: expected_params,
+            ret: expected_ret,
+            optional: expected_optional,
+        },
+        Type::Function {
+            params: actual_params,
+            ret: actual_ret,
+            optional: actual_optional,
+        },
+    ) = (expected, actual)
+    {
+        if expected_params.len() == actual_params.len() && expected_optional == actual_optional {
+            return actual_params
+                .iter()
+                .zip(expected_params.iter())
+                .all(|(a, e)| is_assignable(a, e))
+                && is_assignable(expected_ret, actual_ret);
+        }
+    }
     false
 }

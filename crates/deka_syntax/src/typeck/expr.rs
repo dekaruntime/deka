@@ -923,22 +923,30 @@ impl<'a> Checker<'a> {
                 Type::Infer
             }
             Assign => {
-                let name = match left {
-                    ast::Expr::Identifier { name, .. } => *name,
+                match left {
+                    ast::Expr::Identifier { name, .. } => {
+                        if !self.mutables.contains(*name) {
+                            self.error_span(
+                                left.span(),
+                                format!("cannot assign to immutable variable `{name}`"),
+                            );
+                        }
+                    }
+                    ast::Expr::IndexAccess { object, .. } => {
+                        self.check_expr(object);
+                    }
+                    ast::Expr::FieldAccess { object, .. } => {
+                        self.check_expr(object);
+                    }
                     _ => {
                         self.error_span(
                             span,
-                            "assignment target must be a mutable local variable",
+                            "assignment target must be a mutable local variable, field, or index",
                         );
                         return right_type;
                     }
-                };
-                if !self.mutables.contains(name) {
-                    self.error_span(
-                        left.span(),
-                        format!("cannot assign to immutable variable `{name}`"),
-                    );
-                } else if !left_type.is_error()
+                }
+                if !left_type.is_error()
                     && !right_type.is_error()
                     && !is_assignable(&left_type, &right_type)
                 {

@@ -119,6 +119,11 @@ pub enum Stmt<'a> {
         else_body: &'a [Stmt<'a>],
         span: Span,
     },
+    /// `{ ... }` block statement introducing a new scope.
+    Block {
+        body: &'a [Stmt<'a>],
+        span: Span,
+    },
     /// An empty statement: just `;`.
     Empty { span: Span },
     /// `for (init; cond; step) { ... }`

@@ -92,6 +92,14 @@ impl<'a> Parser<'a> {
 
             TokenKind::If => self.parse_if_statement(start, start_byte),
 
+            TokenKind::LBrace => {
+                let body = self.parse_block()?;
+                Some(Stmt::Block {
+                    body,
+                    span: self.span_from(start, start_byte),
+                })
+            }
+
             TokenKind::Break => {
                 self.advance();
                 self.expect_statement_end(in_block)?;

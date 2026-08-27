@@ -281,6 +281,16 @@ fn transform_stmt<'a>(
                 span: *span,
             }
         }
+        Stmt::Block { body, span } => {
+            let new_body: Vec<Stmt<'a>> = body
+                .iter()
+                .map(|s| transform_stmt(s, arena, enums))
+                .collect();
+            Stmt::Block {
+                body: ast::alloc_slice(arena, new_body),
+                span: *span,
+            }
+        }
         Stmt::For {
             init,
             condition,
@@ -828,6 +838,16 @@ fn lower_stmt<'a>(
                 condition: lower_expr(condition, arena, method_calls).clone(),
                 then_body: ast::alloc_slice(arena, new_then),
                 else_body: ast::alloc_slice(arena, new_else),
+                span: *span,
+            }
+        }
+        Stmt::Block { body, span } => {
+            let new_body: Vec<Stmt<'a>> = body
+                .iter()
+                .map(|s| lower_stmt(s, arena, method_calls))
+                .collect();
+            Stmt::Block {
+                body: ast::alloc_slice(arena, new_body),
                 span: *span,
             }
         }

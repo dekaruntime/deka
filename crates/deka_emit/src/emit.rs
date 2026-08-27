@@ -126,6 +126,7 @@ impl<'a> Emitter<'a> {
                 | Stmt::Expr { .. }
                 | Stmt::Return { .. }
                 | Stmt::If { .. }
+                | Stmt::Block { .. }
                 | Stmt::For { .. }
                 | Stmt::Break { .. }
                 | Stmt::Continue { .. }
@@ -518,6 +519,16 @@ impl<'a> Emitter<'a> {
                     write_indent(&mut self.out, 0);
                     self.out.push('}');
                 }
+            }
+            Stmt::Block { body, .. } => {
+                write_indent(&mut self.out, 0);
+                self.out.push_str("{\n");
+                for stmt in body.iter() {
+                    self.emit_stmt(stmt)?;
+                    self.out.push('\n');
+                }
+                write_indent(&mut self.out, 0);
+                self.out.push('}');
             }
             Stmt::For {
                 init,
@@ -1324,6 +1335,11 @@ fn visit_stmt_exprs(stmt: &Stmt, visitor: &mut dyn FnMut(&Expr)) {
                 visit_stmt_exprs(s, visitor);
             }
             for s in else_body.iter() {
+                visit_stmt_exprs(s, visitor);
+            }
+        }
+        Stmt::Block { body, .. } => {
+            for s in body.iter() {
                 visit_stmt_exprs(s, visitor);
             }
         }
