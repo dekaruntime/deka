@@ -1,5 +1,4 @@
 {
   "title": "relative-import-struct-001",
-  "expectedDiagnosticContains": "Unknown struct 'Person'.",
-  "stage": "parse"
+  "stage": "run"
 }

@@ -10,8 +10,11 @@ pub mod parse;
 pub mod typeck;
 
 pub use ast::*;
-pub use canonicalize::lower_method_calls;
+pub use canonicalize::{lower_method_calls, resolve_imported_enum_constructors};
 pub use diagnostics::{Diagnostic, Severity};
 pub use lexer::Lexer;
 pub use parse::{parse, ParseResult};
-pub use typeck::{check_program, TypeError};
+pub use typeck::{
+    check_program, check_program_with_imports, collect_module_exports, EnumInfo, MethodInfo,
+    ModuleExports, StructInfo, TypeError,
+};

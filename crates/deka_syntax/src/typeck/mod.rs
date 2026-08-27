@@ -12,6 +12,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use bumpalo::Bump;
+
 use crate::ast;
 use crate::ast::{MethodTarget, Program};
 use crate::diagnostics::Diagnostic;
@@ -38,7 +40,42 @@ pub struct TypeckResult<'a> {
 }
 
 pub fn check_program<'a>(program: &'a Program<'a>, _source: &str) -> TypeckResult<'a> {
-    let mut checker = Checker::new(program);
+    let imports = HashMap::new();
+    check_program_with_imports(program, _source, &imports)
+}
+
+/// Type information exported by a compiled module, used to seed the
+/// typechecker of its importers.
+#[derive(Clone, Debug)]
+pub struct ModuleExports<'a> {
+    pub structs: HashMap<&'a str, StructInfo<'a>>,
+    pub enums: HashMap<&'a str, EnumInfo<'a>>,
+    pub aliases: HashMap<&'a str, ast::Type<'a>>,
+    pub receiver_methods: HashMap<(&'a str, &'a str), MethodInfo<'a>>,
+    /// Value bindings (functions / constants) exported by the module.
+    /// Currently stored as `Type::Infer` so uses typecheck generically.
+    pub values: HashMap<&'a str, Type<'a>>,
+}
+
+impl<'a> Default for ModuleExports<'a> {
+    fn default() -> Self {
+        Self {
+            structs: HashMap::new(),
+            enums: HashMap::new(),
+            aliases: HashMap::new(),
+            receiver_methods: HashMap::new(),
+            values: HashMap::new(),
+        }
+    }
+}
+
+/// Typecheck a program with imported module signatures available.
+pub fn check_program_with_imports<'a>(
+    program: &'a Program<'a>,
+    _source: &str,
+    imports: &HashMap<&str, &ModuleExports<'a>>,
+) -> TypeckResult<'a> {
+    let mut checker = Checker::new(program, imports);
     checker.check_program();
 
     TypeckResult {
@@ -49,24 +86,121 @@ pub fn check_program<'a>(program: &'a Program<'a>, _source: &str) -> TypeckResul
     }
 }
 
+/// Collect the exported type information from a parsed module.
+///
+/// The returned `ModuleExports` references AST nodes allocated in `arena` (and
+/// in the source strings), so `arena` must outlive any importer that consumes
+/// these exports.
+pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) -> ModuleExports<'a> {
+    let mut declared_structs: HashMap<&'a str, StructInfo<'a>> = HashMap::new();
+    let mut declared_enums: HashMap<&'a str, EnumInfo<'a>> = HashMap::new();
+    let mut declared_aliases: HashMap<&'a str, ast::Type<'a>> = HashMap::new();
+    let mut receiver_methods: HashMap<(&'a str, &'a str), MethodInfo<'a>> = HashMap::new();
+
+    for stmt in program.statements.iter() {
+        match stmt {
+            ast::Stmt::Struct {
+                name, fields, embeds, ..
+            } => {
+                declared_structs.insert(
+                    *name,
+                    StructInfo {
+                        fields: *fields,
+                        embeds: *embeds,
+                    },
+                );
+            }
+            ast::Stmt::Enum { name, cases, .. } => {
+                declared_enums.insert(*name, EnumInfo { cases: *cases });
+            }
+            ast::Stmt::TypeAlias { name, value, .. } => {
+                declared_aliases.insert(*name, value.clone());
+            }
+            ast::Stmt::ReceiverMethod {
+                receiver_type,
+                name,
+                params,
+                return_type,
+                ..
+            } => {
+                receiver_methods.insert(
+                    (*receiver_type, *name),
+                    MethodInfo {
+                        params: *params,
+                        return_type: return_type.clone(),
+                    },
+                );
+            }
+            _ => {}
+        }
+    }
+
+    let mut exports = ModuleExports::default();
+
+    for stmt in program.statements.iter() {
+        let ast::Stmt::Export { decl, .. } = stmt else {
+            continue;
+        };
+        match decl {
+            ast::ExportDecl::Const { name, .. } => {
+                exports.values.insert(*name, Type::Infer);
+            }
+            ast::ExportDecl::Function { name, .. } => {
+                exports.values.insert(*name, Type::Infer);
+            }
+            ast::ExportDecl::NamedGroup { names } => {
+                for export_name in names.iter() {
+                    let local = export_name.name;
+                    let external = export_name.alias.unwrap_or(local);
+
+                    if let Some(info) = declared_structs.get(local) {
+                        exports.structs.insert(external, info.clone());
+                        // Promote receiver methods declared on the local
+                        // struct to the exported name.
+                        for ((rt, mn), mi) in receiver_methods.iter() {
+                            if *rt == local {
+                                exports
+                                    .receiver_methods
+                                    .insert((external, *mn), mi.clone());
+                            }
+                        }
+                    }
+                    if let Some(info) = declared_enums.get(local) {
+                        exports.enums.insert(external, info.clone());
+                    }
+                    if let Some(ty) = declared_aliases.get(local) {
+                        exports.aliases.insert(external, ty.clone());
+                    }
+                    if let Some(ty) = exports.values.get(local).cloned() {
+                        exports.values.insert(external, ty);
+                    }
+                }
+            }
+        }
+    }
+
+    exports
+}
+
 /// Information about an enum's cases, collected before typechecking bodies.
-struct EnumInfo<'a> {
-    cases: &'a [ast::EnumCase<'a>],
+#[derive(Clone, Debug)]
+pub struct EnumInfo<'a> {
+    pub cases: &'a [ast::EnumCase<'a>],
 }
 
 /// Information about a struct's fields and embedded structs, collected before
 /// typechecking bodies.
-#[derive(Clone)]
-struct StructInfo<'a> {
-    fields: &'a [ast::StructField<'a>],
-    embeds: &'a [ast::Embed<'a>],
+#[derive(Clone, Debug)]
+pub struct StructInfo<'a> {
+    pub fields: &'a [ast::StructField<'a>],
+    pub embeds: &'a [ast::Embed<'a>],
 }
 
 /// Information about a receiver method declared on a struct.
-#[derive(Clone)]
-struct MethodInfo<'a> {
-    params: &'a [ast::Param<'a>],
-    return_type: Option<ast::Type<'a>>,
+#[derive(Clone, Debug)]
+pub struct MethodInfo<'a> {
+    pub params: &'a [ast::Param<'a>],
+    pub return_type: Option<ast::Type<'a>>,
 }
 
 struct Checker<'a> {
@@ -104,8 +238,8 @@ struct Checker<'a> {
 }
 
 impl<'a> Checker<'a> {
-    fn new(program: &'a ast::Program<'a>) -> Self {
-        Self {
+    fn new(program: &'a ast::Program<'a>, imports: &HashMap<&str, &ModuleExports<'a>>) -> Self {
+        let mut this = Self {
             program,
             errors: Vec::new(),
             warnings: Vec::new(),
@@ -123,6 +257,47 @@ impl<'a> Checker<'a> {
             in_async_function: false,
             return_type: None,
             loop_depth: 0,
+        };
+        this.seed_imports(imports);
+        this
+    }
+
+    fn seed_imports(&mut self, imports: &HashMap<&str, &ModuleExports<'a>>) {
+        for stmt in self.program.statements.iter() {
+            let ast::Stmt::Import { specifiers, source, .. } = stmt else {
+                continue;
+            };
+            let Some(exports) = imports.get(source) else {
+                continue;
+            };
+            for spec in specifiers.iter() {
+                let imported = spec.imported;
+                let local = spec.local;
+
+                if let Some(info) = exports.structs.get(imported) {
+                    self.structs.insert(local, info.clone());
+                    for ((rt, mn), mi) in exports.receiver_methods.iter() {
+                        if *rt == imported {
+                            self.receiver_methods.insert((local, *mn), mi.clone());
+                        }
+                    }
+                }
+
+                if let Some(info) = exports.enums.get(imported) {
+                    self.enums.insert(local, info.clone());
+                    for case in info.cases.iter() {
+                        self.case_to_enum.insert(case.name, local);
+                    }
+                }
+
+                if let Some(ty) = exports.aliases.get(imported) {
+                    self.aliases.insert(local, ty.clone());
+                }
+
+                if let Some(ty) = exports.values.get(imported) {
+                    self.declare_var(local, ty.clone());
+                }
+            }
         }
     }
 

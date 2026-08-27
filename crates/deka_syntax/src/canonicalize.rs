@@ -9,6 +9,7 @@ use bumpalo::Bump;
 
 use crate::ast;
 use crate::ast::{Expr, MethodTarget, Program, Stmt};
+use crate::typeck::ModuleExports;
 
 /// Rewrite enum member access into explicit enum constructor expressions.
 ///
@@ -43,6 +44,55 @@ pub fn resolve_enum_constructors<'a>(program: &mut Program<'a>, arena: &'a Bump)
     result.insert("Ok");
     result.insert("Err");
     enums.insert("Result", result);
+
+    let transformed: Vec<Stmt<'a>> = program
+        .statements
+        .iter()
+        .map(|stmt| transform_stmt(stmt, arena, &enums))
+        .collect();
+
+    program.statements = ast::alloc_slice(arena, transformed);
+}
+
+/// Re-resolve enum constructors after imports are known.
+///
+/// The parser's initial canonicalization only sees enums declared in the same
+/// file, so `Color.Red` where `Color` is imported parses as a field access.
+/// Call this after parsing and after resolving the import graph to resugar
+/// imported enum constructors before typechecking.
+pub fn resolve_imported_enum_constructors<'a>(
+    program: &mut Program<'a>,
+    arena: &'a Bump,
+    imports: &HashMap<&str, &ModuleExports<'a>>,
+) {
+    let mut enums: HashMap<&'a str, HashSet<&'a str>> = HashMap::new();
+
+    // Collect user-defined enums in the current file.
+    for stmt in program.statements.iter() {
+        if let Stmt::Enum { name, cases, .. } = stmt {
+            let set: HashSet<&'a str> = cases.iter().map(|c| c.name).collect();
+            enums.insert(name, set);
+        }
+    }
+
+    // Seed prelude enums.
+    let mut option = HashSet::new();
+    option.insert("Some");
+    option.insert("None");
+    enums.insert("Option", option);
+
+    let mut result = HashSet::new();
+    result.insert("Ok");
+    result.insert("Err");
+    enums.insert("Result", result);
+
+    // Add enum names/cases re-exported by imported modules.
+    for exports in imports.values() {
+        for (name, info) in exports.enums.iter() {
+            let set: HashSet<&'a str> = info.cases.iter().map(|c| c.name).collect();
+            enums.insert(name, set);
+        }
+    }
 
     let transformed: Vec<Stmt<'a>> = program
         .statements

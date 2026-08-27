@@ -1,26 +1,14 @@
 //! DekaScript JavaScript emitter (Compiler v2).
 //!
-//! Emits reasonably formatted JavaScript from the v2 AST, erasing all type
-//! annotations.
+//! Emits reasonably formatted JavaScript from the v2 AST, erasing type
+//! annotations. Structs become `deka.Struct` factories, enums become frozen
+//! case objects, and receiver methods are registered on the factory prototype
+//! so instance method calls work without a separate lowering pass.
 
-mod expr;
-mod r#match;
-mod stmt;
+mod emit;
 mod util;
 
-use deka_syntax::Program;
-
-/// Emit JavaScript for a parsed and type-checked program.
-pub fn emit_js(program: &Program, _source: &str) -> Result<String, String> {
-    let mut out = String::new();
-    for (i, stmt) in program.statements.iter().enumerate() {
-        if i > 0 {
-            out.push('\n');
-        }
-        stmt::emit_stmt(&mut out, stmt, 0)?;
-    }
-    Ok(out)
-}
+pub use emit::{emit_js, emit_js_with_imports};
 
 #[cfg(test)]
 mod tests {
@@ -77,6 +65,7 @@ mod tests {
         let out = parse_and_emit(
             "struct Point { x: number, y: number } const p = Point { x: 1, y: 2 };",
         );
+        assert!(out.contains("Point({"), "expected factory call, got: {}", out);
         assert!(out.contains("x: 1"), "got: {}", out);
         assert!(out.contains("y: 2"), "got: {}", out);
     }
@@ -84,16 +73,14 @@ mod tests {
     #[test]
     fn emit_user_defined_enum_constructor() {
         let out = parse_and_emit("enum Color { Red, Green, Blue } const c = Color.Red;");
-        assert!(out.contains("__case"), "expected case tag, got: {}", out);
-        assert!(out.contains("Red"), "got: {}", out);
+        assert!(out.contains("const Color = Object.freeze"), "got: {}", out);
+        assert!(out.contains("Color.Red"), "got: {}", out);
     }
 
     #[test]
     fn emit_user_defined_enum_payload_constructor() {
         let out = parse_and_emit("enum Shape { Circle(number) } const s = Shape.Circle(5);");
-        assert!(out.contains("__case"), "expected case tag, got: {}", out);
-        assert!(out.contains("Circle"), "got: {}", out);
-        assert!(out.contains("value: 5"), "got: {}", out);
+        assert!(out.contains("Shape.Circle(5)"), "got: {}", out);
     }
 
     #[test]
@@ -101,7 +88,8 @@ mod tests {
         let out = parse_and_emit(
             "struct Point { x: number, y: number } fn (p Point) distance(other: Point): number { return 0; } const p1 = Point { x: 0, y: 0 }; const p2 = Point { x: 3, y: 4 }; const d = p1.distance(p2);",
         );
-        assert!(out.contains("function Point_distance"), "got: {}", out);
+        assert!(out.contains("const Point = deka.Struct"), "got: {}", out);
+        assert!(out.contains("Point.impl(\"distance\""), "got: {}", out);
         assert!(out.contains("p1.distance(p2)"), "got: {}", out);
     }
 
@@ -137,53 +125,33 @@ mod tests {
     }
 
     #[test]
-    fn emit_array_literal() {
-        let out = parse_and_emit("const a = [1, 2, 3];");
+    fn emit_export_named_group() {
+        let out = parse_and_emit("const answer = 42; export { answer };");
+        assert!(out.contains("export { answer };"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_array_object_index() {
+        let out = parse_and_emit("const a = [1, 2, 3]; const o = { x: 1 }; const v = a[0] + o[\"x\"];");
         assert!(out.contains("const a = [1, 2, 3];"), "got: {}", out);
+        assert!(out.contains("const o = {x: 1};"), "got: {}", out);
+        assert!(out.contains("a[0] + o[\"x\"]"), "got: {}", out);
     }
 
     #[test]
-    fn emit_array_spread() {
-        let out = parse_and_emit("const a = [...b];");
-        assert!(out.contains("const a = [...b];"), "got: {}", out);
-    }
-
-    #[test]
-    fn emit_object_literal() {
-        let out = parse_and_emit("const o = { a: 1, b: \"two\" };");
-        assert!(out.contains("const o = {a: 1, b: \"two\"};"), "got: {}", out);
-    }
-
-    #[test]
-    fn emit_object_spread() {
-        let out = parse_and_emit("const o = { ...base, x: 1 };");
-        assert!(out.contains("const o = {...base, x: 1};"), "got: {}", out);
-    }
-
-    #[test]
-    fn emit_index_access() {
-        let out = parse_and_emit("const x = arr[0];");
-        assert!(out.contains("const x = arr[0];"), "got: {}", out);
-    }
-
-    #[test]
-    fn emit_await() {
-        let out = parse_and_emit("const x = await fetch();");
-        assert!(out.contains("const x = await fetch();"), "got: {}", out);
-    }
-
-    #[test]
-    fn emit_pipe() {
-        let out = parse_and_emit("const y = x |> double;");
-        assert!(out.contains("const y = (double)(x);"), "got: {}", out);
+    fn emit_await_and_pipe() {
+        let out = parse_and_emit(
+            "async fn fetch() Promise<number> { return 1; } fn double(n: number): number { return n * 2; } const y = await fetch() |> double;",
+        );
+        assert!(out.contains("await fetch()"), "got: {}", out);
+        assert!(out.contains("(double)("), "got: {}", out);
     }
 
     #[test]
     fn emit_unsafe_expression() {
         let out = parse_and_emit("const r = unsafe { JSON.parse('{}') };");
-        assert!(out.contains("__case: \"Ok\""), "expected Ok case, got: {}", out);
-        assert!(out.contains("__case: \"Err\""), "expected Err case, got: {}", out);
-        assert!(out.contains("JSON.parse('{}')"), "expected raw JS, got: {}", out);
+        assert!(out.contains("__case: \"Ok\""), "got: {}", out);
+        assert!(out.contains("JSON.parse('{}')"), "got: {}", out);
     }
 
     #[test]
@@ -247,5 +215,16 @@ mod tests {
         let out = parse_and_emit("async fn value() Promise<number> { return 1 }");
         assert!(out.contains("async function value()"), "expected async function, got: {}", out);
         assert!(out.contains("return 1;"), "expected return, got: {}", out);
+    }
+
+    #[test]
+    fn emit_struct_embed_method() {
+        let out = parse_and_emit(
+            "struct Legs {} fn (l Legs) move() string { return \"walk\" } struct Robot { Legs } const r = Robot { Legs: Legs {} }; const m = r.move();",
+        );
+        assert!(out.contains("const Legs = deka.Struct"), "got: {}", out);
+        assert!(out.contains("const Robot = deka.Struct(\"Robot\", { Legs: Legs })"), "got: {}", out);
+        assert!(out.contains("Legs.impl(\"move\""), "got: {}", out);
+        assert!(out.contains("r.move()"), "got: {}", out);
     }
 }

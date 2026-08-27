@@ -2,17 +2,17 @@
 //!
 //! This module discovers all reachable `.ds` files from an entry point,
 //! resolves relative and bare stdlib specifiers, and compiles each module
-//! independently through the v2 pipeline.  Imported bindings currently
-//! typecheck as `<infer>`; cross-module type precision is intentionally
-//! left for a later pass so that execution-unblocking resolution can land
-//! first.
+//! through the v2 pipeline.  Exported structs, enums, type aliases, and
+//! receiver methods are propagated through the module graph so importers can
+//! construct imported structs and match imported enums with full typechecking.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
+use bumpalo::Bump;
 use deka_syntax::Diagnostic;
 
-use crate::{compile_to_js, parse_source_module_meta};
+use crate::{compile_to_js_with_imports, parse_source_module_meta};
 
 /// A module loader supplies source text and resolves specifiers for the
 /// graph compiler.
@@ -158,7 +158,8 @@ impl ModuleLoader for FsModuleLoader {
 struct GraphModule {
     path: PathBuf,
     source: String,
-    dependencies: Vec<PathBuf>,
+    /// Resolved dependency path for each import specifier in this module.
+    dependencies: HashMap<String, PathBuf>,
 }
 
 /// Result of compiling a module graph.
@@ -175,13 +176,15 @@ pub struct ModuleGraphResult {
 ///
 /// The graph is discovered via the supplied loader, cycles are rejected with
 /// diagnostics, and each module is compiled through the full v2 pipeline
-/// (parse → typecheck → emit).  Errors are aggregated across all modules and
-/// returned together.
+/// (parse → typecheck → emit).  Type information is propagated from
+/// dependencies to importers in topological order so cross-module structs,
+/// enums, and receiver methods resolve correctly.
 pub fn compile_module_graph(
     entry: &Path,
     loader: &dyn ModuleLoader,
 ) -> Result<ModuleGraphResult, Vec<Diagnostic>> {
     let entry = std::fs::canonicalize(entry).unwrap_or_else(|_| entry.to_path_buf());
+    let arena = Bump::new();
 
     let mut modules: HashMap<PathBuf, GraphModule> = HashMap::new();
     let mut errors: Vec<Diagnostic> = Vec::new();
@@ -206,11 +209,11 @@ pub fn compile_module_graph(
         };
 
         let meta = parse_source_module_meta(&source);
-        let mut dependencies = Vec::with_capacity(meta.imports.len());
+        let mut dependencies = HashMap::with_capacity(meta.imports.len());
         for import in &meta.imports {
             match loader.resolve(&import.path, &path) {
                 Ok(dep) => {
-                    dependencies.push(dep.clone());
+                    dependencies.insert(import.path.clone(), dep.clone());
                     if !modules.contains_key(&dep) {
                         queue.push_back(dep);
                     }
@@ -258,14 +261,46 @@ pub fn compile_module_graph(
     })?;
 
     // ------------------------------------------------------------------
-    // Emit each module.  We compile in dependency order so future
-    // cross-module typechecking can propagate exported signatures.
+    // Collect exported type information for every module first.  We keep the
+    // parsed programs alive alongside the arena so importers can reference
+    // dependency AST nodes safely.
+    // ------------------------------------------------------------------
+    let mut programs: HashMap<PathBuf, deka_syntax::Program> = HashMap::new();
+    let mut exports: HashMap<PathBuf, deka_syntax::ModuleExports> =
+        HashMap::with_capacity(modules.len());
+    for module in modules.values() {
+        let parse_result = deka_syntax::parse(&module.source, &arena);
+        if let Some(program) = parse_result.program {
+            programs.insert(module.path.clone(), program);
+        }
+    }
+    for (path, program) in programs.iter() {
+        exports.insert(path.clone(), deka_syntax::collect_module_exports(program, &arena));
+    }
+
+    // Build per-module import maps pointing to dependency exports.
+    let mut imports: HashMap<PathBuf, HashMap<&str, &deka_syntax::ModuleExports>> =
+        HashMap::with_capacity(modules.len());
+    for module in modules.values() {
+        let mut module_imports = HashMap::new();
+        for (spec, dep) in module.dependencies.iter() {
+            if let Some(dep_exports) = exports.get(dep) {
+                module_imports.insert(spec.as_str(), dep_exports);
+            }
+        }
+        imports.insert(module.path.clone(), module_imports);
+    }
+
+    // ------------------------------------------------------------------
+    // Emit each module.  We compile in dependency order so imported structs,
+    // enums, and receiver methods are known to the typechecker.
     // ------------------------------------------------------------------
     let mut emitted: HashMap<PathBuf, String> = HashMap::with_capacity(modules.len());
     for path in order {
         let module = modules.get(&path).expect("module in graph");
         let input = path.to_string_lossy();
-        match compile_to_js(&module.source, &input) {
+        let module_imports = imports.get(&path).cloned().unwrap_or_default();
+        match compile_to_js_with_imports(&module.source, &input, &arena, &module_imports) {
             Ok(result) => {
                 emitted.insert(path, result.js);
             }
@@ -302,7 +337,7 @@ fn topological_order(modules: &HashMap<PathBuf, GraphModule>) -> Result<Vec<Path
     let mut adj: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
 
     for (path, module) in modules.iter() {
-        for dep in &module.dependencies {
+        for dep in module.dependencies.values() {
             if let Some(dep_module) = modules.get(dep) {
                 // Only count edges to modules that were successfully loaded.
                 *in_degree.entry(dep_module.path.clone()).or_insert(0) += 1;
@@ -365,7 +400,7 @@ fn dfs_cycle(
     stack.push(node.clone());
     on_stack.insert(node.clone());
 
-    for dep in modules.get(node)?.dependencies.iter() {
+    for dep in modules.get(node)?.dependencies.values() {
         if !modules.contains_key(dep) {
             continue;
         }
@@ -456,6 +491,105 @@ mod tests {
         let loader = InMemoryLoader { files, aliases };
         let err = compile_module_graph(&a, &loader).expect_err("cycle should fail");
         assert!(err.iter().any(|d| d.message.contains("cycle")));
+    }
+
+    #[test]
+    fn graph_compiles_cross_module_struct() {
+        let root = PathBuf::from("/project");
+        let person = root.join("person.ds");
+        let main = root.join("main.ds");
+
+        let mut files = HashMap::new();
+        files.insert(
+            person.clone(),
+            "struct Person { name: string }\nfn (p Person) greet(): string { return this.name }\nexport { Person }".to_string(),
+        );
+        files.insert(
+            main.clone(),
+            "import { Person } from \"./person.ds\";\nconst p = Person { name: \"Deka\" };\nconst g: string = p.greet();".to_string(),
+        );
+
+        let mut aliases = HashMap::new();
+        aliases.insert((main.clone(), "./person.ds".to_string()), person.clone());
+
+        let loader = InMemoryLoader { files, aliases };
+        let result = compile_module_graph(&main, &loader).expect("compile graph");
+        assert_eq!(result.modules.len(), 2);
+        let person_js = &result.modules[&person];
+        let main_js = &result.modules[&main];
+        assert!(person_js.contains("const Person = deka.Struct(\"Person\")"), "got: {}", person_js);
+        assert!(person_js.contains("Person.impl(\"greet\""), "got: {}", person_js);
+        assert!(person_js.contains("export { Person };"), "got: {}", person_js);
+        assert!(main_js.contains("import { Person } from \"./person.ds\";"), "got: {}", main_js);
+        assert!(main_js.contains("Person({ name: \"Deka\" })"), "got: {}", main_js);
+        assert!(main_js.contains("p.greet()"), "got: {}", main_js);
+    }
+
+    #[test]
+    fn graph_compiles_cross_module_enum() {
+        let root = PathBuf::from("/project");
+        let color = root.join("color.ds");
+        let main = root.join("main.ds");
+
+        let mut files = HashMap::new();
+        files.insert(
+            color.clone(),
+            "enum Color { Red, Green, Blue }\nexport { Color }".to_string(),
+        );
+        files.insert(
+            main.clone(),
+            "import { Color } from \"./color.ds\";\nconst c: Color = Color.Red;\nconst label: string = match c { Red => \"red\", _ => \"other\" };".to_string(),
+        );
+
+        let mut aliases = HashMap::new();
+        aliases.insert((main.clone(), "./color.ds".to_string()), color.clone());
+
+        let loader = InMemoryLoader { files, aliases };
+        let result = compile_module_graph(&main, &loader).expect("compile graph");
+        assert_eq!(result.modules.len(), 2);
+        let color_js = &result.modules[&color];
+        let main_js = &result.modules[&main];
+        assert!(color_js.contains("const Color = Object.freeze"), "got: {}", color_js);
+        assert!(color_js.contains("export { Color };"), "got: {}", color_js);
+        assert!(main_js.contains("import { Color } from \"./color.ds\";"), "got: {}", main_js);
+        assert!(main_js.contains("Color.Red"), "got: {}", main_js);
+        assert!(main_js.contains("__deka_scrutinee"), "got: {}", main_js);
+    }
+
+    #[test]
+    fn graph_compiles_cross_module_struct_embed() {
+        let root = PathBuf::from("/project");
+        let legs = root.join("legs.ds");
+        let robot = root.join("robot.ds");
+        let main = root.join("main.ds");
+
+        let mut files = HashMap::new();
+        files.insert(
+            legs.clone(),
+            "struct Legs {}\nfn (l Legs) move() string { return \"walk\" }\nexport { Legs }".to_string(),
+        );
+        files.insert(
+            robot.clone(),
+            "import { Legs } from \"./legs.ds\";\nstruct Robot { Legs }\nexport { Robot }".to_string(),
+        );
+        files.insert(
+            main.clone(),
+            "import { Robot } from \"./robot.ds\";\nimport { Legs } from \"./legs.ds\";\nconst r = Robot { Legs: Legs {} };\nconst m: string = r.move();".to_string(),
+        );
+
+        let mut aliases = HashMap::new();
+        aliases.insert((robot.clone(), "./legs.ds".to_string()), legs.clone());
+        aliases.insert((main.clone(), "./robot.ds".to_string()), robot.clone());
+        aliases.insert((main.clone(), "./legs.ds".to_string()), legs.clone());
+
+        let loader = InMemoryLoader { files, aliases };
+        let result = compile_module_graph(&main, &loader).expect("compile graph");
+        assert_eq!(result.modules.len(), 3);
+        let robot_js = &result.modules[&robot];
+        let main_js = &result.modules[&main];
+        assert!(robot_js.contains("Robot = deka.Struct(\"Robot\"") && robot_js.contains("{ Legs: Legs }"), "got: {}", robot_js);
+        assert!(main_js.contains("Robot({ Legs: Legs({"), "got: {}", main_js);
+        assert!(main_js.contains("r.move()"), "got: {}", main_js);
     }
 
     #[test]
