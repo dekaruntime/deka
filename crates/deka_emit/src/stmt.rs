@@ -105,6 +105,20 @@ pub fn emit_stmt(out: &mut String, stmt: &Stmt, indent: usize) -> Result<(), Str
                     write_indent(out, indent);
                     out.push('}');
                 }
+                ExportDecl::NamedGroup { names } => {
+                    out.push_str("{ ");
+                    for (i, name) in names.iter().enumerate() {
+                        if i > 0 {
+                            out.push_str(", ");
+                        }
+                        out.push_str(name.name);
+                        if let Some(alias) = name.alias {
+                            out.push_str(" as ");
+                            out.push_str(alias);
+                        }
+                    }
+                    out.push_str(" };");
+                }
             }
         }
         Stmt::Import { specifiers, source, .. } => {

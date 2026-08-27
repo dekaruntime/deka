@@ -523,9 +523,44 @@ impl<'a> Parser<'a> {
                 };
                 Some(Stmt::Export { decl, span })
             }
+            TokenKind::Identifier if self.current_text() == "default" => {
+                self.error("unsupported export syntax: default exports are not allowed");
+                None
+            }
+            TokenKind::LBrace => {
+                self.advance(); // `{`
+                let mut names = Vec::new();
+                if !self.at(TokenKind::RBrace) {
+                    loop {
+                        let (name_start, name_start_byte) = self.span_start();
+                        let name = self.expect_identifier()?;
+                        let alias = if self.eat(TokenKind::As) {
+                            Some(self.expect_identifier()?)
+                        } else {
+                            None
+                        };
+                        names.push(crate::ast::ExportName {
+                            name,
+                            alias,
+                            span: self.span_from(name_start, name_start_byte),
+                        });
+                        if !self.eat(TokenKind::Comma) {
+                            break;
+                        }
+                    }
+                }
+                self.expect(TokenKind::RBrace)?;
+                self.expect_statement_end(false)?;
+                Some(Stmt::Export {
+                    decl: crate::ast::ExportDecl::NamedGroup {
+                        names: alloc_slice(self.arena, names),
+                    },
+                    span: self.span_from(start, start_byte),
+                })
+            }
             _ => {
                 self.error(format!(
-                    "expected `const` or `fn` after `export`, found `{}`",
+                    "expected `const`, `fn`, `{{` or `default` after `export`, found `{}`",
                     token_name(self.current_kind())
                 ));
                 None

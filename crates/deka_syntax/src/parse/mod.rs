@@ -693,6 +693,37 @@ mod tests {
     }
 
     #[test]
+    fn parse_export_named_group() {
+        let arena = Bump::new();
+        let result = parse("const answer = 42; export { answer };", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[1] {
+            Stmt::Export { decl, .. } => match decl {
+                crate::ast::ExportDecl::NamedGroup { names } => {
+                    assert_eq!(names.len(), 1);
+                    assert_eq!(names[0].name, "answer");
+                    assert!(names[0].alias.is_none());
+                }
+                _ => panic!("expected named-group export"),
+            },
+            _ => panic!("expected export"),
+        }
+    }
+
+    #[test]
+    fn parse_export_default_rejected() {
+        let arena = Bump::new();
+        let result = parse("export default 42;", &arena);
+        assert!(!result.errors.is_empty());
+        assert!(
+            result.errors.iter().any(|e| e.message.contains("default exports")),
+            "{:?}",
+            result.errors
+        );
+    }
+
+    #[test]
     fn parse_array_literal() {
         let arena = Bump::new();
         let result = parse("const a = [1, 2, 3];", &arena);

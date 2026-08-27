@@ -151,6 +151,17 @@ pub enum ExportDecl<'a> {
         body: &'a [Stmt<'a>],
         is_async: bool,
     },
+    /// `export { a, b as c }` — re-exports already-declared names.
+    NamedGroup {
+        names: &'a [ExportName<'a>],
+    },
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ExportName<'a> {
+    pub name: &'a str,
+    pub alias: Option<&'a str>,
+    pub span: Span,
 }
 
 #[derive(Clone, Debug, Serialize)]

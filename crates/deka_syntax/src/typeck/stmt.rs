@@ -238,6 +238,10 @@ impl<'a> Checker<'a> {
                 ast::ExportDecl::Function { .. } => {
                     self.check_export_function(stmt);
                 }
+                ast::ExportDecl::NamedGroup { .. } => {
+                    // Named re-exports refer to already-checked top-level
+                    // declarations; nothing to validate at this scope.
+                }
             },
             ast::Stmt::Expr { expr, .. } => {
                 self.check_expr(expr);

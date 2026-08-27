@@ -79,11 +79,21 @@ pub fn parse_source_module_meta(source: &str) -> SourceModuleMeta {
                 });
             }
             deka_syntax::Stmt::Export { decl, .. } => {
-                let name = match decl {
-                    deka_syntax::ExportDecl::Const { name, .. } => name,
-                    deka_syntax::ExportDecl::Function { name, .. } => name,
-                };
-                exports.push(ExportDecl { name: name.to_string() });
+                match decl {
+                    deka_syntax::ExportDecl::Const { name, .. } => {
+                        exports.push(ExportDecl { name: name.to_string() });
+                    }
+                    deka_syntax::ExportDecl::Function { name, .. } => {
+                        exports.push(ExportDecl { name: name.to_string() });
+                    }
+                    deka_syntax::ExportDecl::NamedGroup { names } => {
+                        for name in names.iter() {
+                            exports.push(ExportDecl {
+                                name: name.alias.unwrap_or(name.name).to_string(),
+                            });
+                        }
+                    }
+                }
             }
             _ => {}
         }
@@ -299,6 +309,16 @@ mod tests {
         )
         .expect("compile should succeed");
         assert!(result.js.contains("export function add(a, b) {"), "got: {}", result.js);
+    }
+
+    #[test]
+    fn compile_export_named_group() {
+        let result = compile_to_js(
+            "const answer = 42; export { answer };",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("export { answer };"), "got: {}", result.js);
     }
 
     #[test]
