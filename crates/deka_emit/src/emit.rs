@@ -51,6 +51,7 @@ struct EnumMeta {
 #[derive(Clone)]
 struct ReceiverMethod<'a> {
     name: String,
+    receiver_name: String,
     params: Vec<String>,
     body: Vec<deka_syntax::Stmt<'a>>,
     is_async: bool,
@@ -85,14 +86,50 @@ impl<'a> Emitter<'a> {
 
     fn emit(&mut self) -> Result<String, String> {
         self.emit_prelude()?;
-        for (i, stmt) in self.program.statements.iter().enumerate() {
-            if i > 0 {
-                self.out.push('\n');
+
+        // First pass: emit struct/enum/function declarations so that all
+        // factories exist before receiver methods are registered.
+        let mut first = true;
+        for stmt in self.program.statements.iter() {
+            if !Self::is_runtime_statement(stmt) {
+                if !first {
+                    self.out.push('\n');
+                }
+                first = false;
+                self.emit_stmt(stmt)?;
             }
-            self.emit_stmt(stmt)?;
         }
+
+        // Register receiver methods after all struct factories are declared.
         self.emit_method_registrations()?;
+
+        // Second pass: emit executable top-level statements (const/let/expr).
+        for stmt in self.program.statements.iter() {
+            if Self::is_runtime_statement(stmt) {
+                if !first {
+                    self.out.push('\n');
+                }
+                first = false;
+                self.emit_stmt(stmt)?;
+            }
+        }
+
         Ok(std::mem::take(&mut self.out))
+    }
+
+    /// Returns true for statements whose initializers run at module load time.
+    fn is_runtime_statement(stmt: &Stmt<'_>) -> bool {
+        matches!(
+            stmt,
+            Stmt::Const { .. }
+                | Stmt::Let { .. }
+                | Stmt::Expr { .. }
+                | Stmt::Return { .. }
+                | Stmt::If { .. }
+                | Stmt::For { .. }
+                | Stmt::Break { .. }
+                | Stmt::Continue { .. }
+        )
     }
 
     // ------------------------------------------------------------------
@@ -142,6 +179,7 @@ impl<'a> Emitter<'a> {
                 }
                 Stmt::ReceiverMethod {
                     receiver_type,
+                    receiver_name,
                     name,
                     params,
                     body,
@@ -153,6 +191,7 @@ impl<'a> Emitter<'a> {
                         .or_default()
                         .push(ReceiverMethod {
                             name: name.to_string(),
+                            receiver_name: receiver_name.to_string(),
                             params: params.iter().map(|p| p.name.to_string()).collect(),
                             body: body.to_vec(),
                             is_async: *is_async,
@@ -254,7 +293,7 @@ impl<'a> Emitter<'a> {
 
         if self.uses_struct {
             self.out.push_str("const __deka = {");
-                        self.out.push_str(r###"Struct:(id,embeds)=>{function f(fields){const o=Object.create(f.prototype);Object.assign(o,fields);Object.defineProperty(o,'__deka_struct',{value:id,enumerable:false,writable:false,configurable:false});return o;}f.id=id;Object.defineProperty(f,'name',{value:id,configurable:true});f.prototype=Object.create(null);f.prototype.constructor=f;f.impl=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){return b(this,...x);};}else{for(const k in a)f.prototype[k]=a[k];}return f;};f.implMut=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka.MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return b(this,...x);};}else{for(const k in a){const fn=a[k];f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka.MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return fn.apply(this,x);};}}return f;};if(embeds){for(const [embedName,embedFactory] of Object.entries(embeds)){for(const key of Object.keys(embedFactory.prototype)){f.prototype[key]=function(...args){return this[embedName][key](...args);};}}}return f;},"###);
+                        self.out.push_str(r###"Struct:(id,embeds)=>{function f(fields){const o=Object.create(f.prototype);Object.assign(o,fields);Object.defineProperty(o,'__deka_struct',{value:id,enumerable:false,writable:false,configurable:false});return o;}f.id=id;Object.defineProperty(f,'name',{value:id,configurable:true});f.prototype=Object.create(null);f.prototype.constructor=f;f.impl=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){return b.apply(this,x);};}else{for(const k in a)f.prototype[k]=a[k];}return f;};f.implMut=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka.MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return b.apply(this,x);};}else{for(const k in a){const fn=a[k];f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka.MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return fn.apply(this,x);};}}return f;};if(embeds){for(const [embedName,embedFactory] of Object.entries(embeds)){for(const key of Object.keys(embedFactory.prototype)){f.prototype[key]=function(...args){return this[embedName][key](...args);};}}}return f;},"###);
             self.out.push_str("getStructId:(v)=>v?.__deka_struct,");
             self.out.push_str(
                 "MutationError:class extends Error{constructor(m){super(m);this.name='MutationError';}}",
@@ -584,11 +623,32 @@ impl<'a> Emitter<'a> {
         Ok(())
     }
 
+    fn collect_methods_for_struct(
+        &self,
+        struct_name: &str,
+        visited: &mut HashSet<String>,
+    ) -> Vec<ReceiverMethod<'a>> {
+        if !visited.insert(struct_name.to_string()) {
+            return Vec::new();
+        }
+        let mut methods = Vec::new();
+        if let Some(meta) = self.structs.get(struct_name) {
+            let embeds = meta.embeds.clone();
+            for embed in embeds {
+                methods.extend(self.collect_methods_for_struct(&embed, visited));
+            }
+        }
+        if let Some(own) = self.receiver_methods.get(struct_name) {
+            methods.extend(own.iter().cloned());
+        }
+        methods
+    }
+
     fn emit_method_registrations(&mut self) -> Result<(), String> {
         let order = self.struct_order.clone();
         for struct_name in order {
-            if let Some(methods) = self.receiver_methods.get(&struct_name).cloned() {
-                for method in methods {
+            let methods = self.collect_methods_for_struct(&struct_name, &mut HashSet::new());
+            for method in methods {
                     write_indent(&mut self.out, 0);
                     self.out.push_str(&struct_name);
                     self.out.push_str(".impl(");
@@ -605,6 +665,10 @@ impl<'a> Emitter<'a> {
                         self.out.push_str(param);
                     }
                     self.out.push_str(") {\n");
+                    write_indent(&mut self.out, 2);
+                    self.out.push_str("const ");
+                    self.out.push_str(&method.receiver_name);
+                    self.out.push_str(" = this;\n");
                     for stmt in method.body.iter() {
                         self.emit_stmt(stmt)?;
                         self.out.push('\n');
@@ -612,7 +676,6 @@ impl<'a> Emitter<'a> {
                     write_indent(&mut self.out, 0);
                     self.out.push_str("});\n");
                 }
-            }
         }
         Ok(())
     }

@@ -151,7 +151,7 @@ impl<'a> Parser<'a> {
         // Receiver method: `fn (p Point) distance<T>(...): Ret { ... }`
         if self.at(TokenKind::LParen) {
             self.advance(); // `(`
-            let _receiver_name = self.expect_identifier()?;
+            let receiver_name = self.expect_identifier()?;
             let receiver_type = self.expect_identifier()?;
             self.expect(TokenKind::RParen)?;
 
@@ -179,6 +179,7 @@ impl<'a> Parser<'a> {
 
             return Some(Stmt::ReceiverMethod {
                 receiver_type,
+                receiver_name,
                 name,
                 type_params,
                 params,

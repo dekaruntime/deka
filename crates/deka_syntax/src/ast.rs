@@ -77,6 +77,7 @@ pub enum Stmt<'a> {
     /// Receiver method: `fn StructName.method<T>(args): Ret { body }`
     ReceiverMethod {
         receiver_type: &'a str,
+        receiver_name: &'a str,
         name: &'a str,
         type_params: &'a [TypeParam<'a>],
         params: &'a [Param<'a>],

@@ -195,6 +195,7 @@ fn transform_stmt<'a>(
         }
         Stmt::ReceiverMethod {
             receiver_type,
+            receiver_name,
             name,
             type_params,
             params,
@@ -209,6 +210,7 @@ fn transform_stmt<'a>(
                 .collect();
             Stmt::ReceiverMethod {
                 receiver_type,
+                receiver_name,
                 name,
                 type_params,
                 params,
@@ -730,6 +732,7 @@ fn lower_stmt<'a>(
         }
         Stmt::ReceiverMethod {
             receiver_type,
+            receiver_name,
             name,
             type_params,
             params,
@@ -744,6 +747,7 @@ fn lower_stmt<'a>(
                 .collect();
             Stmt::ReceiverMethod {
                 receiver_type,
+                receiver_name,
                 name,
                 type_params,
                 params,

@@ -29,6 +29,7 @@ impl<'a> Checker<'a> {
                 } => self.check_function(name, type_params, params, return_type.as_ref(), body, *is_async, *span),
                 ast::Stmt::ReceiverMethod {
                     receiver_type,
+                    receiver_name,
                     name,
                     params,
                     return_type,
@@ -37,6 +38,7 @@ impl<'a> Checker<'a> {
                     ..
                 } => self.check_receiver_method(
                     receiver_type,
+                    receiver_name,
                     name,
                     params,
                     return_type.as_ref(),
@@ -566,6 +568,7 @@ impl<'a> Checker<'a> {
     pub(super) fn check_receiver_method(
         &mut self,
         receiver_type: &'a str,
+        receiver_name: &'a str,
         name: &'a str,
         params: &'a [ast::Param<'a>],
         return_type: Option<&ast::Type<'a>>,
@@ -595,8 +598,8 @@ impl<'a> Checker<'a> {
 
         self.scopes.push(HashMap::new());
 
-        // Bind `this` to the receiver type inside the method body.
-        self.declare_var("this", Type::Struct { name: receiver_type });
+        // Bind the receiver name to the receiver type inside the method body.
+        self.declare_var(receiver_name, Type::Struct { name: receiver_type });
 
         for (p, t) in params.iter().zip(param_types.iter()) {
             self.declare_var(p.name, t.clone());

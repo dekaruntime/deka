@@ -502,7 +502,7 @@ mod tests {
         let mut files = HashMap::new();
         files.insert(
             person.clone(),
-            "struct Person { name: string }\nfn (p Person) greet(): string { return this.name }\nexport { Person }".to_string(),
+            "struct Person { name: string }\nfn (p Person) greet(): string { return p.name }\nexport { Person }".to_string(),
         );
         files.insert(
             main.clone(),
