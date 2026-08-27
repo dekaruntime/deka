@@ -110,6 +110,19 @@ function parsePackages(raw) {
   return names.length > 0 ? names : undefined;
 }
 
+function currentCompiler() {
+  const value = process.env.DEKA_COMPILER;
+  if (typeof value === "string" && value.trim().toLowerCase() === "v2") {
+    return "v2";
+  }
+  return "v1";
+}
+
+function parseCompiler(raw) {
+  if (raw === "v1" || raw === "v2") return raw;
+  return undefined;
+}
+
 function readMaybe(dir, filename) {
   const filePath = join(dir, filename);
   if (!existsSync(filePath)) return undefined;
@@ -134,6 +147,7 @@ function readMetadata(dir, name) {
           ? raw.dekaJson
           : undefined,
       packages: parsePackages(raw.packages),
+      compiler: parseCompiler(raw.compiler),
       notes: typeof raw.notes === "string" ? raw.notes : undefined,
     };
   } catch {
@@ -190,6 +204,7 @@ function loadAllTests() {
         expectedDiagnosticContains: metadata.expectedDiagnosticContains,
         dekaJson: metadata.dekaJson,
         packages: metadata.packages,
+        compiler: metadata.compiler,
         notes: metadata.notes,
       });
     }
@@ -541,12 +556,17 @@ async function main() {
     console.log(`fixtures: ${filtered.length}  jobs: ${args.jobs}`);
   }
 
+  const activeCompiler = currentCompiler();
+
   const results = await mapPool(filtered, args.jobs, async (test) => {
     if (!test.hosts.includes("native")) {
       return { test, skipped: true, reason: "hosts does not include native" };
     }
     if (test.packages && test.packages.length > 0) {
       return { test, skipped: true, reason: "index packages are exercised by the dump, not the language gate" };
+    }
+    if (test.compiler && test.compiler !== activeCompiler) {
+      return { test, skipped: true, reason: `compiler mismatch: fixture requires ${test.compiler}, running ${activeCompiler}` };
     }
     const native = runNative(cliBinary, test);
     const evaled = evaluate(test, native);

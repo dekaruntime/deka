@@ -556,11 +556,12 @@ fn ds_match_prelude_result_and_option_patterns() {
     "#;
     let js = ds_to_js(source).expect("prelude enum match patterns should compile");
     assert!(
-        js.contains("r.__case === \"Ok\"") && js.contains("o.__case === \"Some\""),
+        js.contains("__case === \"Ok\"") && js.contains("__case === \"Some\""),
         "match guards must discriminate on __case for prelude enums:\n{js}"
     );
     assert!(
-        js.contains("const v = r[\"value\"]") || js.contains("const v = r['value']"),
+        js.contains("const v = __deka_match[\"value\"]")
+            || js.contains("const v = __deka_match['value']"),
         "Ok payload binding must read the value field:\n{js}"
     );
 }
@@ -579,15 +580,15 @@ fn ds_nested_match_patterns_emit_inner_tags() {
     "#;
     let js = ds_to_js(source).expect("nested match patterns should compile");
     assert!(
-        js.contains("r.__case === \"Ok\"")
+        js.contains("__case === \"Ok\"")
             && js.contains("__case === \"Some\"")
             && js.contains("__case === \"None\""),
         "nested match must discriminate inner Option tags:\n{js}"
     );
     assert!(
-        js.contains("const v = r[\"value\"][\"value\"]")
-            || js.contains("const v = r['value']['value']")
-            || js.contains("r[\"value\"][\"value\"]"),
+        js.contains("const v = __deka_match[\"value\"][\"value\"]")
+            || js.contains("const v = __deka_match['value']['value']")
+            || js.contains("__deka_match[\"value\"][\"value\"]"),
         "Ok(Some(v)) must bind through both payload fields:\n{js}"
     );
 }

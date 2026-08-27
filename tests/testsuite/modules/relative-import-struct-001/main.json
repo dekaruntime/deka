@@ -1,4 +1,5 @@
 {
   "title": "relative-import-struct-001",
-  "stage": "run"
+  "stage": "run",
+  "compiler": "v2"
 }
