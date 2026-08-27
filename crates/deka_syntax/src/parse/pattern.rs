@@ -53,6 +53,31 @@ impl<'a> Parser<'a> {
                     });
                 }
 
+                // Enum-qualified constructor: `Color.Red` or `Color.Red(p)`.
+                if self.at(TokenKind::Dot) {
+                    self.advance();
+                    let case_name = self.expect_field_name()?;
+                    if self.at(TokenKind::LParen) {
+                        self.advance();
+                        let payload = if self.at(TokenKind::RParen) {
+                            None
+                        } else {
+                            Some(crate::ast::alloc(self.arena, self.parse_pattern()?))
+                        };
+                        self.expect(TokenKind::RParen)?;
+                        return Some(Pattern::Constructor {
+                            name: case_name,
+                            payload,
+                            span: self.span_from(start, start_byte),
+                        });
+                    }
+                    return Some(Pattern::Constructor {
+                        name: case_name,
+                        payload: None,
+                        span: self.span_from(start, start_byte),
+                    });
+                }
+
                 if self.at(TokenKind::LBrace) {
                     // Struct pattern: `Name { field, field: p }`
                     self.advance();

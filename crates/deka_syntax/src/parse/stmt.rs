@@ -1,6 +1,6 @@
 //! Statement parsing.
 
-use crate::ast::{alloc_slice, EnumCase, ForInit, Param, Pos, Program, StructField, Stmt, TypeParam};
+use crate::ast::{alloc, alloc_slice, EnumCase, ForInit, Param, Pos, Program, StructField, Stmt, Type, TypeParam};
 use crate::lexer::TokenKind;
 
 use super::util::token_name;
@@ -317,11 +317,26 @@ impl<'a> Parser<'a> {
             let (field_start, field_start_byte) = self.span_start();
             let field_name = self.expect_identifier()?;
 
-            // If the identifier is followed by `:`, this is a regular field.
+            // If the identifier is followed by `:` or `?:`, this is a regular field.
             // Otherwise it names an embedded struct (e.g. `struct Outer { Inner }`).
-            if self.at(TokenKind::Colon) {
-                self.advance();
+            if self.at(TokenKind::Colon) || self.at(TokenKind::Question) {
+                let is_optional = if self.eat(TokenKind::Question) {
+                    self.expect(TokenKind::Colon)?;
+                    true
+                } else {
+                    self.expect(TokenKind::Colon)?;
+                    false
+                };
                 let field_type = self.parse_type()?;
+                let field_span = field_type.span();
+                let field_type = if is_optional {
+                    Type::Option {
+                        inner: alloc(self.arena, field_type),
+                        span: field_span,
+                    }
+                } else {
+                    field_type
+                };
                 let default_value = if self.eat(TokenKind::Eq) {
                     Some(self.parse_expression()?)
                 } else {

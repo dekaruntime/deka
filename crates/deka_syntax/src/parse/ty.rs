@@ -8,7 +8,15 @@ use super::Parser;
 
 impl<'a> Parser<'a> {
     pub(super) fn parse_type(&mut self) -> Option<Type<'a>> {
-        self.parse_type_primary()
+        let ty = self.parse_type_primary()?;
+        if self.eat(TokenKind::Question) {
+            let span = ty.span();
+            return Some(Type::Option {
+                inner: alloc(self.arena, ty),
+                span,
+            });
+        }
+        Some(ty)
     }
 
     fn parse_type_primary(&mut self) -> Option<Type<'a>> {

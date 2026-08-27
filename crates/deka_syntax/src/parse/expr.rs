@@ -29,7 +29,7 @@ impl<'a> Parser<'a> {
             if next_kind == TokenKind::Dot {
                 self.skip_newlines();
                 self.advance(); // `.`
-                let field = self.expect_identifier()?;
+                let field = self.expect_field_name()?;
                 let span = self.span_from(start, start_byte);
                 left = Expr::FieldAccess {
                     object: alloc(self.arena, left),
