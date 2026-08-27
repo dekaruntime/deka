@@ -324,6 +324,22 @@ impl<'a> Emitter<'a> {
             self.out.push_str("const None = Option.None;\n");
         }
 
+        if self.needs_jsx_helper() {
+            self.out.push_str(r#"const __deka_ui = {
+  Fragment: Symbol("Fragment"),
+  jsx: (tag, props) => {
+    if (typeof tag === "function") return tag(props);
+    const children = props.children;
+    delete props.children;
+    const attrs = Object.entries(props).map(([k, v]) => ` ${k}="${v}"`).join("");
+    const childStr = Array.isArray(children) ? children.join("") : (children ?? "");
+    return `<${tag}${attrs}>${childStr}</${tag}>`;
+  },
+  jsxs: (tag, props) => __deka_ui.jsx(tag, props)
+};
+"#);
+        }
+
         Ok(())
     }
 
@@ -339,6 +355,18 @@ impl<'a> Emitter<'a> {
                     if *enum_name == "Option" || *enum_name == "Result" {
                         found = true;
                     }
+                }
+            });
+            found
+        })
+    }
+
+    fn needs_jsx_helper(&self) -> bool {
+        self.program.statements.iter().any(|stmt| {
+            let mut found = false;
+            visit_stmt_exprs(stmt, &mut |expr| {
+                if matches!(expr, Expr::JsxElement { .. } | Expr::JsxFragment { .. }) {
+                    found = true;
                 }
             });
             found
@@ -1342,7 +1370,7 @@ impl<'a> Emitter<'a> {
         }
 
         let fn_name = if child_values.len() > 1 { "jsxs" } else { "jsx" };
-        self.out.push_str("deka.ui.");
+        self.out.push_str("__deka_ui.");
         self.out.push_str(fn_name);
         self.out.push('(');
         self.out.push_str(&tag_expr);
@@ -1363,9 +1391,9 @@ impl<'a> Emitter<'a> {
         }
 
         let fn_name = if child_values.len() > 1 { "jsxs" } else { "jsx" };
-        self.out.push_str("deka.ui.");
+        self.out.push_str("__deka_ui.");
         self.out.push_str(fn_name);
-        self.out.push_str("(deka.ui.Fragment, {");
+        self.out.push_str("(__deka_ui.Fragment, {");
         if !child_values.is_empty() {
             if child_values.len() == 1 {
                 self.out.push_str("\"children\": ");
