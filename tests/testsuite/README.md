@@ -23,12 +23,16 @@ bun tests/testsuite/run.mjs
 bun tests/testsuite/run.mjs --filter json
 ```
 
-`./run.sh` is the one-command gate (tour + Hats), same role as the old
-testsuite-repo `./run.sh`.
+`./run.sh` is the one-command gate (tour + Hats snippets + ADHOC). Same role
+as the old testsuite-repo `./run.sh`.
 
-Uses `target/release/cli` or `DEKA_NATIVE`. Native isolate only (`deka run`).
-Browser/WASM remains the live playground on the site; dump-time browser
-results are produced in runtime CI when we publish the results JSON.
+Snippets use `target/release/cli` or `DEKA_NATIVE` (`deka run`). ADHOC
+scenarios are not snippets: `deka init`, `deka serve` + HTTP, WASM compile of
+`import { echo } from "io"`. Dump records them as category **ADHOC** (cached
+commands + stdout on testsuite.deka.gg).
+
+Browser/WASM playground stays live for snippet cases. ADHOC squares are
+CACHED RESULTS only.
 
 ```
 bun tests/testsuite/run.mjs --list
