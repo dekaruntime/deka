@@ -10,7 +10,7 @@ use deka_syntax::{check_program_with_imports, parse, resolve_imported_enum_const
 
 /// Module metadata extracted from a DekaScript source file.
 ///
-/// This is the v2 equivalent of `deka_js::SourceModuleMeta`. It is populated by
+/// This is the v2 equivalent of the old `SourceModuleMeta` type. It is populated by
 /// parsing import/export statements at the top level of a `.ds` file. There is
 /// no frontmatter stage (RFD 24).
 #[derive(Debug, Clone, Default)]
