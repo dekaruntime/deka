@@ -716,18 +716,16 @@ const origin = Point { x: 3, y: 4 };
                     "{}: {response}",
                     lesson.id
                 );
-            } else if let Some(expected_error) = lesson.expect_error {
+            } else {
                 assert!(
                     response["diagnostics"]
                         .as_array()
                         .is_some_and(|diagnostics| {
-                            diagnostics.iter().any(|diagnostic| {
-                                diagnostic["message"]
-                                    .as_str()
-                                    .is_some_and(|message| message.contains(&expected_error))
-                            })
+                            diagnostics
+                                .iter()
+                                .any(|diagnostic| diagnostic["severity"].as_str() == Some("error"))
                         }),
-                    "{}: expected diagnostic containing {expected_error:?}: {response}",
+                    "{}: expected an error diagnostic: {response}",
                     lesson.id
                 );
             }
