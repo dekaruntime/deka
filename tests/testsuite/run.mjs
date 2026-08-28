@@ -112,10 +112,10 @@ function parsePackages(raw) {
 
 function currentCompiler() {
   const value = process.env.DEKA_COMPILER;
-  if (typeof value === "string" && value.trim().toLowerCase() === "v2") {
-    return "v2";
+  if (typeof value === "string" && value.trim().toLowerCase() === "v1") {
+    return "v1";
   }
-  return "v1";
+  return "v2";
 }
 
 function parseCompiler(raw) {

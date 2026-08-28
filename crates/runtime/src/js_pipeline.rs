@@ -21,16 +21,16 @@ use runtime_core::modules::MODULES_DIR;
 
 /// Compiler version selector for the runtime pipeline.
 ///
-/// Reads `DEKA_COMPILER` from the environment. Anything other than `v2` selects
-/// the legacy v1 compiler. The CLI `--compiler` flag is expected to be mirrored
+/// Reads `DEKA_COMPILER` from the environment. Anything other than `v1` selects
+/// the v2 compiler. The CLI `--compiler` flag is expected to be mirrored
 /// into this environment variable by the invoking command handler.
 fn selected_compiler_version() -> deka_compile::CompilerVersion {
     if let Ok(value) = std::env::var("DEKA_COMPILER") {
-        if value.trim().eq_ignore_ascii_case("v2") {
-            return deka_compile::CompilerVersion::V2;
+        if value.trim().eq_ignore_ascii_case("v1") {
+            return deka_compile::CompilerVersion::V1;
         }
     }
-    deka_compile::CompilerVersion::V1
+    deka_compile::CompilerVersion::V2
 }
 
 /// Compile a single `.ds` source file to JavaScript using the selected
