@@ -120,6 +120,7 @@ impl PhpxEsmLoader {
 
         let v2_modules = if !entry_is_app_directory
             && selected_compiler_version() == deka_compile::CompilerVersion::V2
+            && entry_module_path.is_file()
         {
             let loader = deka_compile::module_graph::FsModuleLoader::new(project_root.clone());
             match deka_compile::module_graph::compile_module_graph(&entry_module_path, &loader) {
@@ -578,7 +579,6 @@ fn is_stdlib_module_spec(spec: &str) -> bool {
                 | "auth"
                 | "db"
                 | "time"
-                | "test"
                 | "io"
         )
 }
