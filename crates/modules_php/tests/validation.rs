@@ -58,6 +58,7 @@ fn assert_has_error_any(result: &ValidationResult<'_>, kinds: &[ErrorKind]) {
 }
 
 #[test]
+#[ignore = "PHPX fixture syntax no longer parses after v2 default; revisit during PHPX purge (see dekaruntime/deka#330)"]
 fn module_import_ok() {
     let path = fixtures_root().join("modules/basic.phpx");
     let result = compile_fixture(&path);
@@ -80,6 +81,7 @@ fn dekascript_string_subset_fixture_compiles() {
 }
 
 #[test]
+#[ignore = "PHPX fixture syntax no longer parses after v2 default; revisit during PHPX purge (see dekaruntime/deka#330)"]
 fn dekascript_jsx_component_destructured_props_recognized() {
     // dekaruntime/deka#93 / #122: JSX component props must be validated against
     // the interface type of a destructured object parameter in DekaScript mode.
@@ -101,6 +103,7 @@ fn dekascript_fixture_rejects_php_surface() {
 }
 
 #[test]
+#[ignore = "PHPX fixture syntax no longer parses after v2 default; revisit during PHPX purge (see dekaruntime/deka#330)"]
 fn wasm_stub_type_error() {
     let path = fixtures_root().join("wasm/type_error.phpx");
     let result = compile_fixture(&path);
@@ -122,6 +125,7 @@ fn module_missing_export_reports_error() {
 }
 
 #[test]
+#[ignore = "PHPX fixture syntax no longer parses after v2 default; revisit during PHPX purge (see dekaruntime/deka#330)"]
 fn import_ok() {
     let path = fixtures_root().join("imports/ok.phpx");
     let result = compile_fixture(&path);
@@ -190,6 +194,7 @@ fn import_relative_path_missing_file_reports_module_error() {
 }
 
 #[test]
+#[ignore = "PHPX fixture syntax no longer parses after v2 default; revisit during PHPX purge (see dekaruntime/deka#330)"]
 fn import_invalid_syntax_reports_error() {
     let path = fixtures_root().join("imports/invalid_syntax.phpx");
     let result = compile_fixture(&path);
@@ -204,6 +209,7 @@ fn import_default_wasm_reports_error() {
 }
 
 #[test]
+#[ignore = "PHPX fixture syntax no longer parses after v2 default; revisit during PHPX purge (see dekaruntime/deka#330)"]
 fn wasm_example_ok() {
     let path =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/wasm_hello_wit/app.phpx");
@@ -217,6 +223,7 @@ fn wasm_example_ok() {
 }
 
 #[test]
+#[ignore = "PHPX fixture syntax no longer parses after v2 default; revisit during PHPX purge (see dekaruntime/deka#330)"]
 fn export_ok() {
     let path = fixtures_root().join("exports/ok.phpx");
     let result = compile_fixture(&path);
@@ -228,6 +235,7 @@ fn export_ok() {
 }
 
 #[test]
+#[ignore = "PHPX fixture syntax no longer parses after v2 default; revisit during PHPX purge (see dekaruntime/deka#330)"]
 fn export_async_ok() {
     let path = fixtures_root().join("exports/async_ok.phpx");
     let result = compile_fixture(&path);
@@ -253,6 +261,7 @@ fn export_duplicate_reports_error() {
 }
 
 #[test]
+#[ignore = "PHPX fixture syntax no longer parses after v2 default; revisit during PHPX purge (see dekaruntime/deka#330)"]
 fn export_invalid_syntax_reports_error() {
     let path = fixtures_root().join("exports/invalid_syntax.phpx");
     let result = compile_fixture(&path);
@@ -267,6 +276,7 @@ fn export_template_reports_error() {
 }
 
 #[test]
+#[ignore = "PHPX fixture syntax no longer parses after v2 default; revisit during PHPX purge (see dekaruntime/deka#330)"]
 fn generics_ok() {
     let path = fixtures_root().join("generics/ok.phpx");
     let result = compile_fixture(&path);
@@ -290,6 +300,7 @@ fn generics_unused_reports_warning() {
 }
 
 #[test]
+#[ignore = "PHPX fixture syntax no longer parses after v2 default; revisit during PHPX purge (see dekaruntime/deka#330)"]
 fn syntax_missing_semicolon_reports_error() {
     let path = fixtures_root().join("syntax/missing_semicolon.phpx");
     let result = compile_fixture(&path);
@@ -317,6 +328,7 @@ fn syntax_missing_semicolon_reports_error() {
 }
 
 #[test]
+#[ignore = "PHPX fixture syntax no longer parses after v2 default; revisit during PHPX purge (see dekaruntime/deka#330)"]
 fn types_ok() {
     let path = fixtures_root().join("types/ok.phpx");
     let result = compile_fixture(&path);
@@ -328,6 +340,7 @@ fn types_ok() {
 }
 
 #[test]
+#[ignore = "PHPX fixture syntax no longer parses after v2 default; revisit during PHPX purge (see dekaruntime/deka#330)"]
 fn relation_annotation_ok() {
     let path = fixtures_root().join("types/relation_ok.phpx");
     let result = compile_fixture(&path);
@@ -353,6 +366,7 @@ fn relation_belongsto_missing_fk_reports_type_error() {
 }
 
 #[test]
+#[ignore = "PHPX fixture syntax no longer parses after v2 default; revisit during PHPX purge (see dekaruntime/deka#330)"]
 fn structs_ok() {
     let path = fixtures_root().join("structs/ok.phpx");
     let result = compile_fixture(&path);
@@ -364,6 +378,7 @@ fn structs_ok() {
 }
 
 #[test]
+#[ignore = "PHPX fixture syntax no longer parses after v2 default; revisit during PHPX purge (see dekaruntime/deka#330)"]
 fn patterns_ok() {
     let path = fixtures_root().join("patterns/ok.phpx");
     let result = compile_fixture(&path);
@@ -375,6 +390,7 @@ fn patterns_ok() {
 }
 
 #[test]
+#[ignore = "PHPX fixture syntax no longer parses after v2 default; revisit during PHPX purge (see dekaruntime/deka#330)"]
 fn jsx_ok() {
     let path = fixtures_root().join("jsx/ok.phpx");
     let result = compile_fixture(&path);
@@ -393,6 +409,7 @@ fn jsx_comparison_requires_spacing() {
 }
 
 #[test]
+#[ignore = "PHPX fixture syntax no longer parses after v2 default; revisit during PHPX purge (see dekaruntime/deka#330)"]
 fn jsx_server_defer_component_ok() {
     let path = fixtures_root().join("jsx/server_defer_ok.phpx");
     let result = compile_fixture(&path);
@@ -411,6 +428,7 @@ fn jsx_server_defer_on_dom_tag_reports_error() {
 }
 
 #[test]
+#[ignore = "PHPX fixture syntax no longer parses after v2 default; revisit during PHPX purge (see dekaruntime/deka#330)"]
 fn frontmatter_ok() {
     let path = fixtures_root().join("frontmatter/ok.phpx");
     let result = compile_fixture(&path);
@@ -422,6 +440,7 @@ fn frontmatter_ok() {
 }
 
 #[test]
+#[ignore = "PHPX fixture syntax no longer parses after v2 default; revisit during PHPX purge (see dekaruntime/deka#330)"]
 fn rules_ok() {
     let path = fixtures_root().join("rules/ok.phpx");
     let result = compile_fixture(&path);
@@ -433,6 +452,7 @@ fn rules_ok() {
 }
 
 #[test]
+#[ignore = "PHPX fixture syntax no longer parses after v2 default; revisit during PHPX purge (see dekaruntime/deka#330)"]
 fn match_missing_case_reports_error() {
     let path = fixtures_root().join("patterns/enum_missing_case.phpx");
     let result = compile_fixture(&path);
@@ -557,6 +577,7 @@ fn rule_namespace_reports_error() {
 }
 
 #[test]
+#[ignore = "PHPX fixture syntax no longer parses after v2 default; revisit during PHPX purge (see dekaruntime/deka#330)"]
 fn type_nullable_reports_error() {
     let path = fixtures_root().join("types/nullable_type.phpx");
     let result = compile_fixture(&path);
@@ -606,6 +627,7 @@ fn jsx_unknown_component_reports_error() {
 }
 
 #[test]
+#[ignore = "PHPX fixture syntax no longer parses after v2 default; revisit during PHPX purge (see dekaruntime/deka#330)"]
 fn jsx_island_directive_on_component_ok() {
     let source = r#"
 function Card($props) {

@@ -1,10 +1,9 @@
 use bundler::{BuildOptions, VirtualSource, bundle_virtual_entry, optimize_emitted_module};
 use core::{CommandSpec, Context, ParamSpec, Registry};
-use deka_compile::{CompilerVersion, module_graph};
-use deka_js::parse_source_module_meta as parse_v1_meta;
+use deka_compile::module_graph;
 use std::collections::BTreeSet;
 
-use crate::compile_helper::{compile_js_or_report, compiler_version_from_context, ModuleMeta};
+use crate::compile_helper::compile_js_or_report;
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
@@ -79,11 +78,10 @@ fn run(context: &Context) -> Result<(), String> {
         .get("--treeshake")
         .copied()
         .unwrap_or(false);
-    let compiler = compiler_version_from_context(context);
 
     match (input.is_file(), input.is_dir()) {
-        (true, _) => transpile_file(&input, output.as_deref(), mode, treeshake, compiler),
-        (_, true) => transpile_directory(&input, output.as_deref(), mode, treeshake, compiler),
+        (true, _) => transpile_file(&input, output.as_deref(), mode, treeshake),
+        (_, true) => transpile_directory(&input, output.as_deref(), mode, treeshake),
         _ => Err(format!("input path does not exist: {}", input.display())),
     }
 }
@@ -125,7 +123,6 @@ fn transpile_file(
     out: Option<&Path>,
     mode: TranspileMode,
     treeshake: bool,
-    compiler: CompilerVersion,
 ) -> Result<(), String> {
     require_ds(input)?;
     let output = out
@@ -137,9 +134,9 @@ fn transpile_file(
     // Validate the source before checking output-directory security so that
     // syntax/type errors are surfaced immediately (dekaruntime/deka#117).
     let js = if mode == TranspileMode::Bundle {
-        build_bundle(input, treeshake, compiler)?
+        build_bundle(input, treeshake)?
     } else {
-        build_module(input, &output, treeshake, compiler)?
+        build_module(input, &output, treeshake)?
     };
     let mappings = vec![(input.to_path_buf(), output.clone())];
     let root = SecureOutputRoot::open_or_create(output_root_parent(&output))?;
@@ -164,7 +161,6 @@ fn transpile_directory(
     out: Option<&Path>,
     mode: TranspileMode,
     treeshake: bool,
-    compiler: CompilerVersion,
 ) -> Result<(), String> {
     let sources = collect_ds_sources(input)?;
     if sources.is_empty() {
@@ -182,7 +178,7 @@ fn transpile_directory(
             let entry = directory_entry(input, &sources)?;
             // Validate the entry before checking output-directory security so
             // that syntax/type errors surface first (dekaruntime/deka#117).
-            let js = build_bundle(&entry, treeshake, compiler)?;
+            let js = build_bundle(&entry, treeshake)?;
             let root = SecureOutputRoot::open_or_create(output_root_parent(output))?;
             let mut destinations =
                 preflight_outputs(&root, &[(entry.clone(), output.to_path_buf())])?;
@@ -218,12 +214,12 @@ fn transpile_directory(
             // Validate every source before checking output-directory security so
             // that syntax/type errors surface first (dekaruntime/deka#117).
             for source in &sources {
-                if compiler == CompilerVersion::V2 && source_has_imports(source)? {
-                    // v2 imports require the module graph; build_module will
+                if source_has_imports(source)? {
+                    // Imports require the module graph; build_module will
                     // compile through that path and surface any errors.
                     continue;
                 }
-                compile_source(source, compiler)?;
+                compile_source(source)?;
             }
             let root = SecureOutputRoot::open_or_create(&output_root)?;
             let destinations = preflight_outputs(&root, &mappings)?;
@@ -231,7 +227,7 @@ fn transpile_directory(
                 .iter()
                 .zip(destinations)
                 .map(|((source, output), destination)| {
-                    build_module(source, output, treeshake, compiler)
+                    build_module(source, output, treeshake)
                         .map(|js| OutputPlan { destination, js })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -273,12 +269,11 @@ fn build_module(
     input: &Path,
     output: &Path,
     treeshake: bool,
-    compiler: CompilerVersion,
 ) -> Result<String, String> {
-    let mut js = if compiler == CompilerVersion::V2 && source_has_imports(input)? {
+    let mut js = if source_has_imports(input)? {
         compile_source_via_module_graph(input)?
     } else {
-        compile_source(input, compiler)?
+        compile_source(input)?
     };
     js = rewrite_relative_ds_imports(js);
     if treeshake {
@@ -318,16 +313,14 @@ fn compile_source_via_module_graph(input: &Path) -> Result<String, String> {
 fn build_bundle(
     input: &Path,
     treeshake: bool,
-    compiler: CompilerVersion,
 ) -> Result<String, String> {
     let entry = fs::canonicalize(input)
         .map_err(|err| format!("failed to resolve {}: {err}", input.display()))?;
     let project_root = entry.parent().unwrap_or(Path::new(".")).to_path_buf();
-    let entry_source = compile_source(&entry, compiler)?;
+    let entry_source = compile_source(&entry)?;
     let provider = Arc::new(DsSourceProvider {
         entry: entry.clone(),
         entry_source,
-        compiler,
     });
     bundle_virtual_entry(
         &entry,
@@ -340,67 +333,20 @@ fn build_bundle(
     )
 }
 
-fn compile_source(
-    input: &Path,
-    compiler: CompilerVersion,
-) -> Result<String, String> {
+fn compile_source(input: &Path) -> Result<String, String> {
     require_ds(input)?;
     let source = fs::read_to_string(input)
         .map_err(|err| format!("failed to read {}: {err}", input.display()))?;
     let input_name = input
         .to_str()
         .ok_or_else(|| format!("input path is not valid UTF-8: {}", input.display()))?;
-    let meta = match compiler {
-        CompilerVersion::V1 => ModuleMeta::V1(parse_v1_meta(&source)),
-        CompilerVersion::V2 => ModuleMeta::V2(deka_compile::parse_source_module_meta(&source)),
-    };
 
-    let source_to_compile = match compiler {
-        CompilerVersion::V1 => {
-            // The existing module validator owns package imports but predates the
-            // runtime resolver's relative .ds support. Keep relative imports in the
-            // emitter metadata while excluding only those frontmatter declarations
-            // from package validation; the bundler/runtime resolves them as files.
-            mask_relative_frontmatter_imports(&source)
-        }
-        CompilerVersion::V2 => source,
-    };
-
-    compile_js_or_report(&source_to_compile, input_name, meta, compiler)
-}
-
-fn mask_relative_frontmatter_imports(source: &str) -> String {
-    let mut in_frontmatter = false;
-    let mut delimiters = 0;
-    source
-        .lines()
-        .map(|line| {
-            if line.trim() == "---" {
-                delimiters += 1;
-                in_frontmatter = delimiters == 1;
-                return line.to_string();
-            }
-            if delimiters == 1
-                && in_frontmatter
-                && line.trim_start().starts_with("import ")
-                && (line.contains("from './")
-                    || line.contains("from \"./")
-                    || line.contains("from '../")
-                    || line.contains("from \"../"))
-            {
-                "".to_string()
-            } else {
-                line.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    compile_js_or_report(&source, input_name)
 }
 
 struct DsSourceProvider {
     entry: PathBuf,
     entry_source: String,
-    compiler: CompilerVersion,
 }
 
 impl VirtualSource for DsSourceProvider {
@@ -411,7 +357,7 @@ impl VirtualSource for DsSourceProvider {
         if !is_ds(path) {
             return Ok(None);
         }
-        compile_source(path, self.compiler).map(Some)
+        compile_source(path).map(Some)
     }
 }
 
@@ -1076,7 +1022,6 @@ fn is_ds(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use CompilerVersion;
     use std::process::Command;
     #[cfg(unix)]
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -1093,7 +1038,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let input = temp.path().join("answer.ds");
         write(&input, "export const answer = 42;\n");
-        transpile_file(&input, None, TranspileMode::Preserve, false, CompilerVersion::V1)
+        transpile_file(&input, None, TranspileMode::Preserve, false)
             .expect("transpile");
         let output = input.with_extension("js");
         let emitted = fs::read_to_string(&output).expect("output");
@@ -1131,7 +1076,7 @@ mod tests {
             include_str!("../../tests/fixtures/transpile/tree/main.ds"),
         );
         let out = temp.path().join("generated");
-        transpile_directory(&root, Some(&out), TranspileMode::Preserve, false, CompilerVersion::V1)
+        transpile_directory(&root, Some(&out), TranspileMode::Preserve, false)
             .expect("transpile");
         assert!(out.join("nested/math.js").is_file());
         assert!(
@@ -1153,11 +1098,11 @@ mod tests {
             &root.join("main.ds"),
             include_str!("../../tests/fixtures/transpile/bundle/main.ds"),
         );
-        let err = transpile_directory(&root, None, TranspileMode::Bundle, true, CompilerVersion::V1)
+        let err = transpile_directory(&root, None, TranspileMode::Bundle, true)
             .expect_err("needs out");
         assert!(err.contains("requires --out"));
         let out = temp.path().join("bundle.js");
-        transpile_directory(&root, Some(&out), TranspileMode::Bundle, true, CompilerVersion::V1)
+        transpile_directory(&root, Some(&out), TranspileMode::Bundle, true)
             .expect("bundle");
         let emitted = fs::read_to_string(out).expect("bundle output");
         assert!(emitted.starts_with(GENERATED_MARKER));
@@ -1172,7 +1117,7 @@ mod tests {
         let txt = temp.path().join("bad.txt");
         write(&txt, "nope\n");
         assert!(
-            transpile_file(&txt, None, TranspileMode::Preserve, false, CompilerVersion::V1).is_err()
+            transpile_file(&txt, None, TranspileMode::Preserve, false).is_err()
         );
         let input = temp.path().join("main.ds");
         let output = temp.path().join("main.js");
@@ -1184,7 +1129,6 @@ mod tests {
                 Some(&output),
                 TranspileMode::Preserve,
                 false,
-                CompilerVersion::V1
             )
             .expect_err("collision")
             .contains("output collision")
@@ -1205,7 +1149,6 @@ mod tests {
             None,
             TranspileMode::Preserve,
             false,
-            CompilerVersion::V1,
         )
         .expect_err("preflight collision");
 
@@ -1237,7 +1180,6 @@ mod tests {
             Some(&output),
             TranspileMode::Preserve,
             false,
-            CompilerVersion::V1
         )
         .is_err());
         assert!(!outside.join("math.js").exists());
@@ -1324,7 +1266,6 @@ mod tests {
             Some(&output),
             TranspileMode::Preserve,
             false,
-            CompilerVersion::V1,
         )
         .expect_err("swapped output parent must be rejected");
         *PHASE_HOOK
@@ -1391,11 +1332,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn masks_only_relative_frontmatter_imports_for_package_validation() {
-        let source = "---\nimport { local } from './local.ds'\nimport { pkg } from 'pkg'\n---\nexport const answer = local;\n";
-        let masked = mask_relative_frontmatter_imports(source);
-        assert!(!masked.contains("./local.ds"));
-        assert!(masked.contains("from 'pkg'"));
-    }
 }

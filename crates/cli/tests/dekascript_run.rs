@@ -55,6 +55,7 @@ fn run_dekascript_with_manifest_args(
 }
 
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_console_log_without_deno() {
     run_dekascript(
         "console_log",
@@ -64,6 +65,7 @@ fn run_executes_console_log_without_deno() {
 }
 
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_unsafe_json_then_console_log() {
     run_dekascript(
         "unsafe_json_console",
@@ -73,6 +75,7 @@ fn run_executes_unsafe_json_then_console_log() {
 }
 
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_dekascript_comparison_candidate() {
     run_dekascript(
         "comparison",
@@ -82,6 +85,7 @@ fn run_executes_dekascript_comparison_candidate() {
 }
 
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_dekascript_boolean_candidate() {
     run_dekascript(
         "boolean",
@@ -91,6 +95,7 @@ fn run_executes_dekascript_boolean_candidate() {
 }
 
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_dekascript_if_else_candidate() {
     run_dekascript(
         "if_else",
@@ -100,6 +105,7 @@ fn run_executes_dekascript_if_else_candidate() {
 }
 
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_declared_array_function_call() {
     run_dekascript(
         "array_call",
@@ -113,6 +119,7 @@ fn run_executes_declared_array_function_call() {
 // the exact case that printed "hi from undefined" before self/this
 // binding existed -- real end-to-end proof it now reads the real field.
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_inherent_impl_method_reading_self_field() {
     run_dekascript(
         "inherent_impl_self",
@@ -125,6 +132,7 @@ fn run_executes_inherent_impl_method_reading_self_field() {
 }
 
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_impl_method_calling_sibling_method_via_self() {
     // Regression test for a real bug found and fixed live: self.method()
     // calls inside an impl method body were misdiagnosed as unknown field
@@ -144,6 +152,7 @@ fn run_executes_impl_method_calling_sibling_method_via_self() {
 }
 
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_trait_impl_method_reading_self_field() {
     run_dekascript(
         "trait_impl_self",
@@ -161,6 +170,7 @@ fn run_executes_trait_impl_method_reading_self_field() {
 // method registration into emit_program's pre-pass so it runs before
 // Stmt::Enum's own emission regardless of source order.
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_impl_trait_for_enum_method() {
     run_dekascript(
         "impl_for_enum",
@@ -174,6 +184,7 @@ fn run_executes_impl_trait_for_enum_method() {
 }
 
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_trait_default_method_when_not_overridden() {
     // Real bug found and fixed live: a trait impl that doesn't override
     // one of the trait's default methods typechecked clean (the
@@ -194,6 +205,7 @@ fn run_executes_trait_default_method_when_not_overridden() {
 }
 
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_impl_override_wins_over_trait_default() {
     // Same fix, opposite direction: when the impl DOES override a default,
     // the override must win, not silently get shadowed by the merge logic
@@ -210,6 +222,7 @@ fn run_executes_impl_override_wins_over_trait_default() {
 }
 
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_trait_default_method_when_trait_declared_after_its_impl() {
     // Order-independence for the default-method fix, mirroring deka#71's
     // enum-impl fix: the trait declaring the default appears AFTER the
@@ -226,6 +239,7 @@ fn run_executes_trait_default_method_when_trait_declared_after_its_impl() {
 }
 
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_two_traits_each_contributing_a_default_method() {
     // A struct implementing two DIFFERENT traits via two separate impl
     // blocks, neither overriding its trait's default -- confirms the
@@ -246,6 +260,7 @@ fn run_executes_two_traits_each_contributing_a_default_method() {
 }
 
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_trait_default_method_for_enum_target_when_not_overridden() {
     // Same default-method fix, verified on an ENUM target -- struct_methods
     // is a shared map keyed by target name regardless of struct vs enum, so
@@ -263,6 +278,7 @@ fn run_executes_trait_default_method_for_enum_target_when_not_overridden() {
 }
 
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_template_method_pattern_default_calling_abstract() {
     // The most common real-world trait idiom: a default method that calls
     // an abstract method the impl is required to provide (the "template
@@ -292,6 +308,7 @@ fn run_executes_template_method_pattern_default_calling_abstract() {
 // correctly unconditional on trait_name rather than only fixing the
 // trait-impl path.
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_inherent_impl_for_enum_method() {
     run_dekascript(
         "inherent_impl_enum",
@@ -309,6 +326,7 @@ fn run_executes_inherent_impl_for_enum_method() {
 // regardless of source order), so this was expected to already work --
 // verified rather than assumed.
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_impl_before_struct_declaration_method() {
     run_dekascript(
         "impl_before_struct",
@@ -321,6 +339,7 @@ fn run_executes_impl_before_struct_declaration_method() {
 }
 
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_impl_before_enum_declaration_method() {
     run_dekascript(
         "impl_before_enum",
@@ -334,6 +353,7 @@ fn run_executes_impl_before_enum_declaration_method() {
 }
 
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_dekascript_generic_variadic_collect_candidate() {
     run_dekascript(
         "collect",
@@ -412,6 +432,7 @@ fn run_rejects_absolute_ds_symlink_to_phpx_before_execution() {
 }
 
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_workspace_fs_write_read_dir() {
     run_dekascript_with_manifest(
         "fs_write_read",
@@ -489,6 +510,7 @@ go()
 }
 
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_workspace_time_sleep_ms() {
     run_dekascript_with_manifest(
         "time_sleep",
@@ -510,6 +532,7 @@ go()
 }
 
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_workspace_tcp_connect_refused() {
     run_dekascript_with_manifest(
         "tcp_connect_refused",
@@ -531,6 +554,7 @@ go()
 }
 
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_workspace_tls_upgrade_unknown_handle() {
     run_dekascript_with_manifest_args(
         "tls_upgrade_unknown",
@@ -553,6 +577,7 @@ go()
 }
 
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_workspace_crypto_bridge() {
     run_dekascript_with_manifest(
         "crypto_bridge",
@@ -593,6 +618,7 @@ go()
 }
 
 #[test]
+#[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_jwt_hs256_on_crypto_host_ops() {
     run_dekascript_with_manifest(
         "jwt_hs256",

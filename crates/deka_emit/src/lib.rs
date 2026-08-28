@@ -50,7 +50,7 @@ mod tests {
         );
         assert!(out.contains("__case"), "expected case dispatch, got: {}", out);
         assert!(out.contains("Some"), "got: {}", out);
-        assert!(out.contains("null"), "got: {}", out);
+        assert!(out.contains("None"), "got: {}", out);
     }
 
     #[test]
@@ -63,7 +63,7 @@ mod tests {
     #[test]
     fn emit_struct_literal() {
         let out = parse_and_emit(
-            "struct Point { x: number, y: number } const p = Point { x: 1, y: 2 };",
+            "struct Point { x: number\n  y: number }\nconst p = Point { x: 1, y: 2 };",
         );
         assert!(out.contains("Point({"), "expected factory call, got: {}", out);
         assert!(out.contains("x: 1"), "got: {}", out);
@@ -86,7 +86,7 @@ mod tests {
     #[test]
     fn emit_receiver_method() {
         let out = parse_and_emit(
-            "struct Point { x: number, y: number } fn (p Point) distance(other: Point): number { return 0; } const p1 = Point { x: 0, y: 0 }; const p2 = Point { x: 3, y: 4 }; const d = p1.distance(p2);",
+            "struct Point { x: number\n  y: number }\nfn (p Point) distance(other: Point): number { return 0; }\nconst p1 = Point { x: 0, y: 0 };\nconst p2 = Point { x: 3, y: 4 };\nconst d = p1.distance(p2);",
         );
         assert!(out.contains("const Point = deka.Struct"), "got: {}", out);
         assert!(out.contains("Point.impl(\"distance\""), "got: {}", out);
@@ -133,8 +133,8 @@ mod tests {
     #[test]
     fn emit_array_object_index() {
         let out = parse_and_emit("const a = [1, 2, 3]; const o = { x: 1 }; const v = a[0] + o[\"x\"];");
-        assert!(out.contains("const a = [1, 2, 3];"), "got: {}", out);
-        assert!(out.contains("const o = {x: 1};"), "got: {}", out);
+        assert!(out.contains("const a = Object.freeze([1, 2, 3]);"), "got: {}", out);
+        assert!(out.contains("const o = Object.freeze({x: 1});"), "got: {}", out);
         assert!(out.contains("a[0] + o[\"x\"]"), "got: {}", out);
     }
 
@@ -171,7 +171,7 @@ mod tests {
     #[test]
     fn emit_jsx_element() {
         let out = parse_and_emit("const el = <div class=\"box\" />;");
-        assert!(out.contains("deka.ui.jsx"), "expected jsx call, got: {}", out);
+        assert!(out.contains("__deka_ui.jsx"), "expected jsx call, got: {}", out);
         assert!(out.contains("\"div\""), "expected tag, got: {}", out);
         assert!(out.contains("\"class\": \"box\""), "expected class prop, got: {}", out);
     }
@@ -179,15 +179,15 @@ mod tests {
     #[test]
     fn emit_jsx_with_children() {
         let out = parse_and_emit("const el = <p>hello {name}</p>;");
-        assert!(out.contains("deka.ui.jsxs"), "expected jsxs call, got: {}", out);
+        assert!(out.contains("__deka_ui.jsxs"), "expected jsxs call, got: {}", out);
         assert!(out.contains("\"children\": ["), "expected children array, got: {}", out);
     }
 
     #[test]
     fn emit_jsx_fragment() {
         let out = parse_and_emit("const el = <><span>a</span><span>b</span></>;");
-        assert!(out.contains("deka.ui.jsxs"), "expected jsxs call, got: {}", out);
-        assert!(out.contains("deka.ui.Fragment"), "expected Fragment, got: {}", out);
+        assert!(out.contains("__deka_ui.jsxs"), "expected jsxs call, got: {}", out);
+        assert!(out.contains("__deka_ui.Fragment"), "expected Fragment, got: {}", out);
     }
 
     #[test]

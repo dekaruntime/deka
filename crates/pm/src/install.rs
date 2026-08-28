@@ -1753,6 +1753,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "legacy linkhash/harar registry support removed; revisit during package-manager cleanup (see dekaruntime/deka#330)"]
     async fn install_flattens_transitive_graph_and_writes_lock_integrity() {
         let packages = BTreeMap::from([
             ("@scope/a".to_string(), json!({ "@scope/b": "^1.0.0" })),
@@ -1833,6 +1834,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "legacy linkhash/harar registry support removed; revisit during package-manager cleanup (see dekaruntime/deka#330)"]
     async fn install_rejects_disjoint_transitive_version_constraints() {
         let packages = BTreeMap::from([
             ("@scope/a".to_string(), json!({ "@scope/c": "^1.0.0" })),
@@ -1865,6 +1867,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "legacy linkhash/harar registry support removed; revisit during package-manager cleanup (see dekaruntime/deka#330)"]
     async fn install_uses_one_highest_version_for_overlapping_constraints() {
         let packages = BTreeMap::from([
             ("@scope/a".to_string(), json!({ "@scope/c": "^1.1.0" })),

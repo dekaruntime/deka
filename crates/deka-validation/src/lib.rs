@@ -217,31 +217,31 @@ fn format_error_impl(
         message,
     );
 
-    if let Some(extra) = extra {
-        let help_trimmed = help.trim();
-        let suggestion = extra
+    let help_trimmed = help.trim();
+    let suggestion = extra.as_ref().and_then(|extra| {
+        extra
             .suggestion
             .as_ref()
             .map(|value| value.trim())
             .filter(|value| !value.is_empty())
-            .map(|value| value.to_string());
-        let mut show_help = !help_trimmed.is_empty();
-        if let Some(suggestion_value) = &suggestion {
-            if suggestion_value == help_trimmed {
-                show_help = false;
-            }
+            .map(|value| value.to_string())
+    });
+    let mut show_help = !help_trimmed.is_empty();
+    if let Some(suggestion_value) = &suggestion {
+        if suggestion_value == help_trimmed {
+            show_help = false;
         }
-        if show_help {
-            out.push_str(&format!("= help: {}\n", help));
-        }
-        if let Some(suggestion_value) = suggestion {
-            let suggestion_label = colorize("suggestion", "\x1b[36m", use_color);
-            out.push_str(&format!("= {}: {}\n", suggestion_label, suggestion_value));
-        }
-        if let Some(link) = extra.docs_link {
-            let docs_label = colorize("docs", "\x1b[36m", use_color);
-            out.push_str(&format!("= {}: {}\n", docs_label, link));
-        }
+    }
+    if show_help {
+        out.push_str(&format!("= help: {}\n", help));
+    }
+    if let Some(suggestion_value) = suggestion {
+        let suggestion_label = colorize("suggestion", "\x1b[36m", use_color);
+        out.push_str(&format!("= {}: {}\n", suggestion_label, suggestion_value));
+    }
+    if let Some(link) = extra.as_ref().and_then(|extra| extra.docs_link.clone()) {
+        let docs_label = colorize("docs", "\x1b[36m", use_color);
+        out.push_str(&format!("= {}: {}\n", docs_label, link));
     }
     out.push_str("│\n└─\n");
     out

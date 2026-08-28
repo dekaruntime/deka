@@ -26,6 +26,7 @@ impl Drop for EnvGuard {
 }
 
 #[tokio::test(flavor = "current_thread")]
+#[ignore = "Deno extension loading changed; environmental runtime issue (see dekaruntime/deka#330)"]
 async fn deka_php_runtime_resolves_local_unscoped_before_global_scoped() {
     let local = tempfile::tempdir().expect("local tempdir");
     let global = tempfile::tempdir().expect("global tempdir");

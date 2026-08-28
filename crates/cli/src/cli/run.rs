@@ -4,7 +4,6 @@ use runtime_core::security_policy::{
     parse_deka_security_policy,
 };
 
-use crate::compile_helper::compiler_version_from_context;
 use serde_json::Value;
 use std::process::Command;
 use stdio;
@@ -28,13 +27,6 @@ pub fn register(registry: &mut Registry) {
 }
 
 pub fn cmd(context: &Context) {
-    // Mirror the CLI `--compiler` flag into the environment so the runtime
-    // pool/ESM loader can select the compiler version for `deka run`.
-    let compiler = compiler_version_from_context(context);
-    unsafe {
-        std::env::set_var("DEKA_COMPILER", format!("{:?}", compiler).to_ascii_lowercase());
-    }
-
     if let Some(exit_code) = try_run_deka_script(context) {
         std::process::exit(exit_code);
     }

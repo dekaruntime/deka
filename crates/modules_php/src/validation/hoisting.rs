@@ -414,7 +414,7 @@ mod tests {
 
     #[test]
     fn fn_component_used_before_definition_is_allowed() {
-        let errors = deka_errors("const app = <Card />\nfn Card(): Component { return <div /> }\n");
+        let errors = deka_errors("const app = <Card />\nfn Card() Component { return <div /> }\n");
         assert!(errors.is_empty(), "expected no errors, got: {:?}", errors);
     }
 

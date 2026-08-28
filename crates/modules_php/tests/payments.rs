@@ -52,66 +52,77 @@ fn compile_module_file(name: &str) -> Vec<String> {
 }
 
 #[test]
+#[ignore = "php_modules/payments does not exist; stdlib moved out of runtime (see dekaruntime/deka#330)"]
 fn payments_index_compiles() {
     let errs = compile_module_file("index.phpx");
     assert!(errs.is_empty(), "index.phpx errors: {:#?}", errs);
 }
 
 #[test]
+#[ignore = "php_modules/payments does not exist; stdlib moved out of runtime (see dekaruntime/deka#330)"]
 fn payments_fees_compiles() {
     let errs = compile_module_file("fees.phpx");
     assert!(errs.is_empty(), "fees.phpx errors: {:#?}", errs);
 }
 
 #[test]
+#[ignore = "php_modules/payments does not exist; stdlib moved out of runtime (see dekaruntime/deka#330)"]
 fn payments_types_compiles() {
     let errs = compile_module_file("types.phpx");
     assert!(errs.is_empty(), "types.phpx errors: {:#?}", errs);
 }
 
 #[test]
+#[ignore = "php_modules/payments does not exist; stdlib moved out of runtime (see dekaruntime/deka#330)"]
 fn payments_webhook_compiles() {
     let errs = compile_module_file("webhook.phpx");
     assert!(errs.is_empty(), "webhook.phpx errors: {:#?}", errs);
 }
 
 #[test]
+#[ignore = "php_modules/payments does not exist; stdlib moved out of runtime (see dekaruntime/deka#330)"]
 fn payments_stripe_stub_compiles() {
     let errs = compile_module_file("stripe.phpx");
     assert!(errs.is_empty(), "stripe.phpx errors: {:#?}", errs);
 }
 
 #[test]
+#[ignore = "php_modules/payments does not exist; stdlib moved out of runtime (see dekaruntime/deka#330)"]
 fn payments_paypal_stub_compiles() {
     let errs = compile_module_file("paypal.phpx");
     assert!(errs.is_empty(), "paypal.phpx errors: {:#?}", errs);
 }
 
 #[test]
+#[ignore = "php_modules/payments does not exist; stdlib moved out of runtime (see dekaruntime/deka#330)"]
 fn payments_square_stub_compiles() {
     let errs = compile_module_file("square.phpx");
     assert!(errs.is_empty(), "square.phpx errors: {:#?}", errs);
 }
 
 #[test]
+#[ignore = "php_modules/payments does not exist; stdlib moved out of runtime (see dekaruntime/deka#330)"]
 fn payments_oauth_state_compiles() {
     let errs = compile_module_file("oauth_state.phpx");
     assert!(errs.is_empty(), "oauth_state.phpx errors: {:#?}", errs);
 }
 
 #[test]
+#[ignore = "php_modules/payments does not exist; stdlib moved out of runtime (see dekaruntime/deka#330)"]
 fn payments_return_url_compiles() {
     let errs = compile_module_file("return_url.phpx");
     assert!(errs.is_empty(), "return_url.phpx errors: {:#?}", errs);
 }
 
 #[test]
+#[ignore = "php_modules/payments does not exist; stdlib moved out of runtime (see dekaruntime/deka#330)"]
 fn payments_refund_auth_compiles() {
     let errs = compile_module_file("refund_auth.phpx");
     assert!(errs.is_empty(), "refund_auth.phpx errors: {:#?}", errs);
 }
 
 #[test]
+#[ignore = "php_modules/payments does not exist; stdlib moved out of runtime (see dekaruntime/deka#330)"]
 fn payments_token_vault_compiles() {
     let errs = compile_module_file("token_vault.phpx");
     assert!(errs.is_empty(), "token_vault.phpx errors: {:#?}", errs);

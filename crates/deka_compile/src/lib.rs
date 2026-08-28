@@ -8,18 +8,6 @@ use bumpalo::Bump;
 use deka_emit::emit_js_with_imports;
 use deka_syntax::{check_program_with_imports, parse, resolve_imported_enum_constructors, Diagnostic, ModuleExports};
 
-/// Compiler pipeline version selector.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CompilerVersion {
-    V1,
-    V2,
-}
-
-/// Options controlling the compile pipeline.
-pub struct CompileOptions {
-    pub compiler: CompilerVersion,
-}
-
 /// Module metadata extracted from a DekaScript source file.
 ///
 /// This is the v2 equivalent of `deka_js::SourceModuleMeta`. It is populated by
@@ -254,7 +242,7 @@ mod tests {
     #[test]
     fn compile_struct_literal() {
         let result = compile_to_js(
-            "struct Point { x: number, y: number } const p = Point { x: 1, y: 2 };",
+            "struct Point { x: number\n  y: number }\nconst p = Point { x: 1, y: 2 };",
             "test.ds",
         )
         .expect("compile should succeed");
@@ -276,7 +264,7 @@ mod tests {
     #[test]
     fn compile_receiver_method() {
         let result = compile_to_js(
-            "struct Point { x: number, y: number } fn (p Point) distance(other: Point): number { return 0; } const p1: Point = Point { x: 0, y: 0 }; const p2: Point = Point { x: 3, y: 4 }; const d: number = p1.distance(p2);",
+            "struct Point { x: number\n  y: number }\nfn (p Point) distance(other: Point): number { return 0; }\nconst p1: Point = Point { x: 0, y: 0 };\nconst p2: Point = Point { x: 3, y: 4 };\nconst d: number = p1.distance(p2);",
             "test.ds",
         )
         .expect("compile should succeed");
@@ -403,14 +391,14 @@ mod tests {
     fn compile_jsx_element() {
         let result = compile_to_js("const el = <div class=\"box\" />;", "test.dsx")
             .expect("compile should succeed");
-        assert!(result.js.contains("deka.ui.jsx"), "got: {}", result.js);
+        assert!(result.js.contains("__deka_ui.jsx"), "got: {}", result.js);
     }
 
     #[test]
     fn compile_jsx_fragment() {
         let result = compile_to_js("const el = <><span>a</span><span>b</span></>;", "test.dsx")
             .expect("compile should succeed");
-        assert!(result.js.contains("deka.ui.Fragment"), "got: {}", result.js);
+        assert!(result.js.contains("__deka_ui.Fragment"), "got: {}", result.js);
     }
 
     #[test]
@@ -420,7 +408,7 @@ mod tests {
             "test.dsx",
         )
         .expect("compile should succeed");
-        assert!(result.js.contains("deka.ui.jsx(Greeting"), "got: {}", result.js);
+        assert!(result.js.contains("__deka_ui.jsx(Greeting"), "got: {}", result.js);
         assert!(result.js.contains("\"name\": \"Deka\""), "got: {}", result.js);
     }
 

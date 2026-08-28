@@ -5,22 +5,10 @@
 //! formatter and never buried under generic wrappers like
 //! `Run failed: Failed to load module:`.
 
-use core::Context;
-use deka_compile::{CompilerVersion, compile_to_js, format_diagnostic};
-use deka_js::{
-    CompileError, CompileOutcome,
-    compile_phpx_source_to_js_with_warnings_detailed,
-};
+use deka_compile::{compile_to_js, format_diagnostic};
 
-/// Module metadata for either compiler version.
-///
-/// v1 and v2 use different metadata shapes. This enum lets callers pass the
-/// right metadata for the compiler they selected without leaking v1 types into
-/// the v2 path.
-pub enum ModuleMeta {
-    V1(deka_js::SourceModuleMeta),
-    V2(deka_compile::SourceModuleMeta),
-}
+/// Module metadata extracted from a DekaScript source file.
+pub use deka_compile::SourceModuleMeta as ModuleMeta;
 
 /// Outcome of a successful compile that the CLI may want to act on.
 pub struct CompileReport {
@@ -28,84 +16,29 @@ pub struct CompileReport {
     pub warnings: Vec<String>,
 }
 
-/// Resolve the compiler version requested by the user.
-///
-/// The `--compiler <v1|v2>` command-line parameter takes precedence; if it is
-/// absent, the `DEKA_COMPILER` environment variable is consulted.  Anything
-/// other than `v1` defaults to the v2 compiler.
-pub fn compiler_version_from_context(context: &Context) -> CompilerVersion {
-    if let Some(value) = context.args.params.get("--compiler") {
-        if value.trim().eq_ignore_ascii_case("v1") {
-            return CompilerVersion::V1;
-        }
-        return CompilerVersion::V2;
-    }
-
-    if let Ok(value) = std::env::var("DEKA_COMPILER") {
-        if value.trim().eq_ignore_ascii_case("v1") {
-            return CompilerVersion::V1;
-        }
-    }
-
-    CompilerVersion::V2
-}
-
-/// Compile a DekaScript/PHPX source and return the emitted JS plus warnings.
+/// Compile a DekaScript source and return the emitted JS plus warnings.
 ///
 /// Validation errors are returned as the already-formatted diagnostic string,
 /// suitable for printing directly via `stdio::error` without further wrapping.
 /// All other errors are passed through unchanged.
-pub fn compile_or_report(
-    source: &str,
-    input: &str,
-    meta: ModuleMeta,
-    compiler: CompilerVersion,
-) -> Result<CompileReport, String> {
-    match compiler {
-        CompilerVersion::V1 => {
-            let meta = match meta {
-                ModuleMeta::V1(meta) => meta,
-                ModuleMeta::V2(_) => {
-                    return Err("v2 module metadata passed to v1 compiler".to_string())
-                }
-            };
-            match compile_phpx_source_to_js_with_warnings_detailed(source, input, meta) {
-                Ok(CompileOutcome { js, warnings }) => Ok(CompileReport { js, warnings }),
-                Err(CompileError::Validation { diagnostics }) => Err(diagnostics),
-                Err(CompileError::Other(msg)) => Err(msg),
-            }
+pub fn compile_or_report(source: &str, input: &str) -> Result<CompileReport, String> {
+    match compile_to_js(source, input) {
+        Ok(result) => {
+            let warnings = result.diagnostics.iter().map(format_diagnostic).collect();
+            Ok(CompileReport {
+                js: result.js,
+                warnings,
+            })
         }
-        CompilerVersion::V2 => {
-            let _meta = match meta {
-                ModuleMeta::V2(meta) => meta,
-                ModuleMeta::V1(_) => {
-                    return Err("v1 module metadata passed to v2 compiler".to_string())
-                }
-            };
-            match compile_to_js(source, input) {
-                Ok(result) => {
-                    let warnings = result.diagnostics.iter().map(format_diagnostic).collect();
-                    Ok(CompileReport {
-                        js: result.js,
-                        warnings,
-                    })
-                }
-                Err(diagnostics) => Err(diagnostics
-                    .iter()
-                    .map(format_diagnostic)
-                    .collect::<Vec<_>>()
-                    .join("\n")),
-            }
-        }
+        Err(diagnostics) => Err(diagnostics
+            .iter()
+            .map(format_diagnostic)
+            .collect::<Vec<_>>()
+            .join("\n")),
     }
 }
 
 /// Compile and return only the emitted JS, discarding warnings.
-pub fn compile_js_or_report(
-    source: &str,
-    input: &str,
-    meta: ModuleMeta,
-    compiler: CompilerVersion,
-) -> Result<String, String> {
-    compile_or_report(source, input, meta, compiler).map(|report| report.js)
+pub fn compile_js_or_report(source: &str, input: &str) -> Result<String, String> {
+    compile_or_report(source, input).map(|report| report.js)
 }
