@@ -1,7 +1,7 @@
 import { echo } from "io"
 type Mapper = fn(number) number
 
-fn transform(values: array<number>, f: Mapper) array<number> {
+fn transform(values: Array<number>, f: Mapper) Array<number> {
   let result = []
   for (const v of values) {
     result.push(f(v))

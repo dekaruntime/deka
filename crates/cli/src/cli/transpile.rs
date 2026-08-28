@@ -1,5 +1,6 @@
 use bundler::{BuildOptions, VirtualSource, bundle_virtual_entry, optimize_emitted_module};
 use core::{CommandSpec, Context, ParamSpec, Registry};
+use deka_compile::{CompilerVersion, module_graph};
 use deka_js::parse_source_module_meta as parse_v1_meta;
 use std::collections::BTreeSet;
 
@@ -124,7 +125,7 @@ fn transpile_file(
     out: Option<&Path>,
     mode: TranspileMode,
     treeshake: bool,
-    compiler: deka_compile::CompilerVersion,
+    compiler: CompilerVersion,
 ) -> Result<(), String> {
     require_ds(input)?;
     let output = out
@@ -163,7 +164,7 @@ fn transpile_directory(
     out: Option<&Path>,
     mode: TranspileMode,
     treeshake: bool,
-    compiler: deka_compile::CompilerVersion,
+    compiler: CompilerVersion,
 ) -> Result<(), String> {
     let sources = collect_ds_sources(input)?;
     if sources.is_empty() {
@@ -217,6 +218,11 @@ fn transpile_directory(
             // Validate every source before checking output-directory security so
             // that syntax/type errors surface first (dekaruntime/deka#117).
             for source in &sources {
+                if compiler == CompilerVersion::V2 && source_has_imports(source)? {
+                    // v2 imports require the module graph; build_module will
+                    // compile through that path and surface any errors.
+                    continue;
+                }
                 compile_source(source, compiler)?;
             }
             let root = SecureOutputRoot::open_or_create(&output_root)?;
@@ -267,9 +273,13 @@ fn build_module(
     input: &Path,
     output: &Path,
     treeshake: bool,
-    compiler: deka_compile::CompilerVersion,
+    compiler: CompilerVersion,
 ) -> Result<String, String> {
-    let mut js = compile_source(input, compiler)?;
+    let mut js = if compiler == CompilerVersion::V2 && source_has_imports(input)? {
+        compile_source_via_module_graph(input)?
+    } else {
+        compile_source(input, compiler)?
+    };
     js = rewrite_relative_ds_imports(js);
     if treeshake {
         js = optimize_emitted_module(&js, output)?;
@@ -277,10 +287,38 @@ fn build_module(
     Ok(js)
 }
 
+fn source_has_imports(input: &Path) -> Result<bool, String> {
+    let source = fs::read_to_string(input)
+        .map_err(|err| format!("failed to read {}: {err}", input.display()))?;
+    let meta = deka_compile::parse_source_module_meta(&source);
+    Ok(!meta.imports.is_empty())
+}
+
+fn compile_source_via_module_graph(input: &Path) -> Result<String, String> {
+    let project_root = input
+        .parent()
+        .unwrap_or(Path::new("."))
+        .to_path_buf();
+    let loader = module_graph::FsModuleLoader::new(project_root);
+    let graph = module_graph::compile_module_graph(input, &loader)
+        .map_err(|diagnostics| {
+            diagnostics
+                .iter()
+                .map(|d| format!("{}:{}: {}", d.line, d.column, d.message))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })?;
+    graph
+        .modules
+        .get(&graph.entry)
+        .cloned()
+        .ok_or_else(|| "module graph did not emit entry module".to_string())
+}
+
 fn build_bundle(
     input: &Path,
     treeshake: bool,
-    compiler: deka_compile::CompilerVersion,
+    compiler: CompilerVersion,
 ) -> Result<String, String> {
     let entry = fs::canonicalize(input)
         .map_err(|err| format!("failed to resolve {}: {err}", input.display()))?;
@@ -304,7 +342,7 @@ fn build_bundle(
 
 fn compile_source(
     input: &Path,
-    compiler: deka_compile::CompilerVersion,
+    compiler: CompilerVersion,
 ) -> Result<String, String> {
     require_ds(input)?;
     let source = fs::read_to_string(input)
@@ -313,19 +351,19 @@ fn compile_source(
         .to_str()
         .ok_or_else(|| format!("input path is not valid UTF-8: {}", input.display()))?;
     let meta = match compiler {
-        deka_compile::CompilerVersion::V1 => ModuleMeta::V1(parse_v1_meta(&source)),
-        deka_compile::CompilerVersion::V2 => ModuleMeta::V2(deka_compile::parse_source_module_meta(&source)),
+        CompilerVersion::V1 => ModuleMeta::V1(parse_v1_meta(&source)),
+        CompilerVersion::V2 => ModuleMeta::V2(deka_compile::parse_source_module_meta(&source)),
     };
 
     let source_to_compile = match compiler {
-        deka_compile::CompilerVersion::V1 => {
+        CompilerVersion::V1 => {
             // The existing module validator owns package imports but predates the
             // runtime resolver's relative .ds support. Keep relative imports in the
             // emitter metadata while excluding only those frontmatter declarations
             // from package validation; the bundler/runtime resolves them as files.
             mask_relative_frontmatter_imports(&source)
         }
-        deka_compile::CompilerVersion::V2 => source,
+        CompilerVersion::V2 => source,
     };
 
     compile_js_or_report(&source_to_compile, input_name, meta, compiler)
@@ -362,7 +400,7 @@ fn mask_relative_frontmatter_imports(source: &str) -> String {
 struct DsSourceProvider {
     entry: PathBuf,
     entry_source: String,
-    compiler: deka_compile::CompilerVersion,
+    compiler: CompilerVersion,
 }
 
 impl VirtualSource for DsSourceProvider {
@@ -1038,7 +1076,7 @@ fn is_ds(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use deka_compile::CompilerVersion;
+    use CompilerVersion;
     use std::process::Command;
     #[cfg(unix)]
     use std::sync::atomic::{AtomicBool, Ordering};

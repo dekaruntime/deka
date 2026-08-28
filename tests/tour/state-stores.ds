@@ -1,19 +1,19 @@
 import { echo } from "io"
-fn increment(s: object) object {
-  return { count: s.count + 1 }
+struct CounterState {
+  count: number
 }
 
-fn add(s: object, n: number) object {
-  return { count: s.count + n }
+fn increment(s: CounterState) CounterState {
+  return CounterState { count: s.count + 1 }
 }
 
-const useCounter = deka.ui.State.create({ count: 0 }, {
-  increment: increment,
-  add: add,
-})
+fn add(s: CounterState, n: number) CounterState {
+  return CounterState { count: s.count + n }
+}
 
-echo(useCounter().count)
-useCounter.increment()
-echo(useCounter().count)
-useCounter.add(5)
-echo(useCounter().count)
+let state = CounterState { count: 0 }
+echo(state.count)
+state = increment(state)
+echo(state.count)
+state = add(state, 5)
+echo(state.count)
