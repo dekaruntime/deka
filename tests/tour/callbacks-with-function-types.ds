@@ -1,7 +1,9 @@
 import { echo } from "io"
-interface ButtonProps {
+type OnClick = fn() void
+
+struct ButtonProps {
   label: string
-  fn onClick() void
+  onClick: OnClick
 }
 
 fn Button(props: ButtonProps) Component {
