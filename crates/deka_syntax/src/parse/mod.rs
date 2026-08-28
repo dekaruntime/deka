@@ -147,6 +147,23 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Accept `identifier` or the `none` keyword as a field/enum-case name.
+    /// This lets `Option.None` parse so canonicalization can resolve it.
+    fn expect_field_name(&mut self) -> Option<&'a str> {
+        self.skip_newlines();
+        if self.at(TokenKind::Identifier) || self.at(TokenKind::None) {
+            let name = self.bump_str(self.current_text());
+            self.advance();
+            Some(name)
+        } else {
+            self.error(format!(
+                "expected identifier, found `{}`",
+                util::token_name(self.current_kind())
+            ));
+            None
+        }
+    }
+
     fn span_from(&self, start: crate::ast::Pos, start_byte: usize) -> Span {
         Span {
             start,
@@ -199,7 +216,7 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{BinOp, Expr, Stmt, TemplatePart, Type, UnOp};
+    use crate::ast::{BinOp, Expr, Pattern, Stmt, TemplatePart, Type, UnOp};
 
     #[test]
     fn parse_const_number() {
@@ -496,7 +513,7 @@ mod tests {
     fn parse_struct_declaration_and_literal() {
         let arena = Bump::new();
         let result = parse(
-            "struct Point { x: number, y: number } const p = Point { x: 1, y: 2 };",
+            "struct Point { x: number; y: number } const p = Point { x: 1, y: 2 };",
             &arena,
         );
         assert!(result.errors.is_empty(), "{:?}", result.errors);
@@ -533,6 +550,117 @@ mod tests {
     }
 
     #[test]
+    fn parse_struct_fields_without_commas() {
+        let arena = Bump::new();
+        let result = parse(
+            "struct Point {\n  x: number\n  y: number\n}",
+            &arena,
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Struct { fields, .. } => assert_eq!(fields.len(), 2),
+            _ => panic!("expected struct declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_empty_statement() {
+        let arena = Bump::new();
+        let result = parse("const x = 1;;", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        assert!(matches!(program.statements[1], Stmt::Empty { .. }));
+    }
+
+    #[test]
+    fn parse_unary_plus() {
+        let arena = Bump::new();
+        let result = parse("const x = +5;", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { value, .. } => match value {
+                Expr::Unary { op: UnOp::Plus, .. } => {}
+                _ => panic!("expected unary plus, got {:?}", value),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_struct_optional_field_postfix() {
+        let arena = Bump::new();
+        let result = parse("struct User { name: string; email: string? }", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Struct { fields, .. } => {
+                assert_eq!(fields.len(), 2);
+                assert!(matches!(fields[1].ty, Type::Option { .. }));
+            }
+            _ => panic!("expected struct declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_struct_optional_field_prefix() {
+        let arena = Bump::new();
+        let result = parse("struct User { name: string; email?: string }", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Struct { fields, .. } => {
+                assert_eq!(fields.len(), 2);
+                assert!(!fields[0].optional);
+                assert!(fields[1].optional);
+                assert!(matches!(fields[1].ty, Type::Option { .. }));
+            }
+            _ => panic!("expected struct declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_option_none_field_access() {
+        let arena = Bump::new();
+        let result = parse("const n = Option.None;", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { value, .. } => match value {
+                Expr::EnumConstructor { enum_name, case_name, .. } => {
+                    assert_eq!(*enum_name, "Option");
+                    assert_eq!(*case_name, "None");
+                }
+                _ => panic!("expected enum constructor, got {:?}", value),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_enum_qualified_pattern() {
+        let arena = Bump::new();
+        let result = parse(
+            "enum Color { Red, Green } const c = Color.Red; const out = match (c) { Color.Red => 1, Color.Green => 2 };",
+            &arena,
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[2] {
+            Stmt::Const { value, .. } => match value {
+                Expr::Match { arms, .. } => {
+                    assert_eq!(arms.len(), 2);
+                    assert!(matches!(arms[0].pattern, Pattern::Constructor { name: "Red", .. }));
+                    assert!(matches!(arms[1].pattern, Pattern::Constructor { name: "Green", .. }));
+                }
+                _ => panic!("expected match expression"),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
     fn parse_user_defined_enum_constructor() {
         let arena = Bump::new();
         let result = parse(
@@ -563,7 +691,7 @@ mod tests {
     fn parse_receiver_method() {
         let arena = Bump::new();
         let result = parse(
-            "struct Point { x: number, y: number } fn (p Point) distance(other: Point): number { return 0; }",
+            "struct Point { x: number; y: number } fn (p Point) distance(other: Point): number { return 0; }",
             &arena,
         );
         assert!(result.errors.is_empty(), "{:?}", result.errors);

@@ -1,5 +1,5 @@
 {
   "title": "Async arrow function is rejected",
   "stage": "parse",
-  "expectedDiagnosticContains": "Missing semicolon"
+  "expectedDiagnosticContains": "expected `fn` after `async`"
 }

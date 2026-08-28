@@ -1,6 +1,6 @@
 {
   "title": "Reading an undefined global fails",
-  "stage": "run",
-  "expectedDiagnosticContains": "is not defined",
+  "stage": "parse",
+  "expectedDiagnosticContains": "unknown identifier",
   "notes": "Undeclared globals produce a runtime reference error."
 }

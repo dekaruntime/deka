@@ -14,11 +14,33 @@ impl<'a> Parser<'a> {
 
         while !self.at(TokenKind::RBrace) && !self.at_end() {
             arms.push(self.parse_match_arm()?);
-            if !self.eat(TokenKind::Comma) {
-                // Allow trailing comma or newline-separated arms.
+
+            if self.at(TokenKind::RBrace) {
                 break;
             }
-            self.skip_newlines();
+            if self.eat(TokenKind::Comma) {
+                self.skip_newlines();
+                if self.at(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            if self.eat(TokenKind::Semicolon) {
+                self.skip_newlines();
+                if self.at(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            if self.at(TokenKind::Newline) {
+                self.skip_newlines();
+                if self.at(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            self.error("expected `,` or newline between match arms");
+            break;
         }
 
         self.expect(TokenKind::RBrace)?;
@@ -49,6 +71,31 @@ impl<'a> Parser<'a> {
 
                 if name == "_" {
                     return Some(Pattern::Wildcard {
+                        span: self.span_from(start, start_byte),
+                    });
+                }
+
+                // Enum-qualified constructor: `Color.Red` or `Color.Red(p)`.
+                if self.at(TokenKind::Dot) {
+                    self.advance();
+                    let case_name = self.expect_field_name()?;
+                    if self.at(TokenKind::LParen) {
+                        self.advance();
+                        let payload = if self.at(TokenKind::RParen) {
+                            None
+                        } else {
+                            Some(crate::ast::alloc(self.arena, self.parse_pattern()?))
+                        };
+                        self.expect(TokenKind::RParen)?;
+                        return Some(Pattern::Constructor {
+                            name: case_name,
+                            payload,
+                            span: self.span_from(start, start_byte),
+                        });
+                    }
+                    return Some(Pattern::Constructor {
+                        name: case_name,
+                        payload: None,
                         span: self.span_from(start, start_byte),
                     });
                 }
@@ -110,7 +157,16 @@ impl<'a> Parser<'a> {
                 })
             }
 
-            TokenKind::Number | TokenKind::String | TokenKind::True | TokenKind::False | TokenKind::None => {
+            TokenKind::None => {
+                self.advance();
+                Some(Pattern::Constructor {
+                    name: "None",
+                    payload: None,
+                    span: self.span_from(start, start_byte),
+                })
+            }
+
+            TokenKind::Number | TokenKind::String | TokenKind::True | TokenKind::False => {
                 let expr = self.parse_expression()?;
                 Some(Pattern::Literal {
                     expr,

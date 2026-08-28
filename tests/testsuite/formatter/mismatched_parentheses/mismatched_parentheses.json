@@ -2,5 +2,5 @@
   "title": "Mismatched parentheses",
   "stage": "parse",
   "notes": "An opening parenthesis without a matching close is a parse error.",
-  "expectedDiagnosticContains": "Missing semicolon"
+  "expectedDiagnosticContains": "expected `;` or newline, found ``)``"
 }

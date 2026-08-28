@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast;
 
-use super::types::{is_assignable, Type};
+use super::types::Type;
 use super::Checker;
 
 impl<'a> Checker<'a> {
@@ -67,19 +67,30 @@ impl<'a> Checker<'a> {
                 span,
             } => self.check_enum_constructor(enum_name, case_name, payload.as_deref(), *span),
             ast::Expr::Array { elements, .. } => {
+                let mut elem_type = None;
                 for element in elements.iter() {
-                    self.check_expr(element);
+                    let ty = self.check_expr(element);
+                    if ty.is_error() {
+                        return Type::Error;
+                    }
+                    if elem_type.is_none() {
+                        elem_type = Some(ty);
+                    }
                 }
-                // TODO: infer element type and return Array<T> once the type
-                // system has a dedicated array type.
-                Type::Infer
+                Type::Array {
+                    elem: Box::new(elem_type.unwrap_or(Type::Infer)),
+                }
             }
             ast::Expr::Object { fields, .. } => {
+                let mut field_types = Vec::new();
                 for field in fields.iter() {
-                    self.check_expr(&field.value);
+                    let ty = self.check_expr(&field.value);
+                    if ty.is_error() {
+                        return Type::Error;
+                    }
+                    field_types.push((field.key, ty));
                 }
-                // TODO: return a concrete object/record type.
-                Type::Infer
+                Type::Object { fields: field_types }
             }
             ast::Expr::IndexAccess { object, index, .. } => {
                 self.check_expr(object);
@@ -108,7 +119,20 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            ast::Expr::JsxElement { element, .. } => {
+            ast::Expr::JsxElement { element, span } => {
+                // Uppercase JSX tags are component references and must be in
+                // scope; lowercase tags are plain HTML element names.
+                if let Some(first) = element.tag.chars().next() {
+                    if first.is_uppercase() && self.lookup_var(element.tag).is_none() {
+                        self.error_span(
+                            *span,
+                            format!(
+                                "`{}` is used here but is not initialized until later",
+                                element.tag
+                            ),
+                        );
+                    }
+                }
                 for attr in element.attributes.iter() {
                     if let Some(value) = &attr.value {
                         self.check_expr(value);
@@ -133,6 +157,30 @@ impl<'a> Checker<'a> {
                 Type::Generic {
                     base: "Result",
                     args: vec![Type::Infer, Type::Infer],
+                }
+            }
+            ast::Expr::Ternary {
+                condition,
+                then_branch,
+                else_branch,
+                span,
+            } => {
+                let cond_type = self.check_expr(condition);
+                if !Self::is_boolean(&cond_type) && !cond_type.is_error() && !matches!(cond_type, Type::Infer) {
+                    self.error_span(*span, format!("ternary condition must be boolean, found type `{cond_type}`"));
+                }
+                let then_type = self.check_expr(then_branch);
+                let else_type = self.check_expr(else_branch);
+                if self.is_assignable(&then_type, &else_type) {
+                    then_type
+                } else if self.is_assignable(&else_type, &then_type) {
+                    else_type
+                } else {
+                    self.error_span(
+                        *span,
+                        format!("ternary branches have incompatible types `{then_type}` and `{else_type}`"),
+                    );
+                    Type::Error
                 }
             }
             ast::Expr::TemplateLiteral { .. } => Type::Named { name: "string" },
@@ -177,6 +225,7 @@ impl<'a> Checker<'a> {
             self.function_return_context(is_async, explicit_ret.clone(), span);
 
         self.scopes.push(HashMap::new());
+        self.mutables.push(HashSet::new());
 
         for (p, t) in params.iter().zip(param_types.iter()) {
             self.declare_var(p.name, t.clone());
@@ -217,10 +266,18 @@ impl<'a> Checker<'a> {
         self.in_function = saved_in_function;
         self.return_type = saved_return_type;
         self.scopes.pop();
+        self.mutables.pop();
+
+        let optional = params
+            .iter()
+            .rev()
+            .take_while(|p| p.default_value.is_some())
+            .count();
 
         Type::Function {
             params: param_types,
             ret: Box::new(final_ret),
+            optional,
         }
     }
 
@@ -238,42 +295,62 @@ impl<'a> Checker<'a> {
             }
         };
 
+        let fields: Vec<( &'a str, &ast::Expr<'a>, ast::Span)> = fields
+            .iter()
+            .map(|f| (f.name, &f.value, f.span))
+            .collect();
+        self.check_struct_literal_fields(name, &info, &fields, span);
+        Type::Struct { name }
+    }
+
+    fn check_struct_literal_fields(
+        &mut self,
+        name: &'a str,
+        info: &super::StructInfo<'a>,
+        fields: &[( &'a str, &ast::Expr<'a>, ast::Span)],
+        span: ast::Span,
+    ) {
         let embed_names: HashSet<&str> = info.embeds.iter().map(|e| e.name).collect();
         let mut seen_fields = HashSet::new();
-        for field in fields {
-            if !seen_fields.insert(field.name) {
+        for (field_name, value, field_span) in fields {
+            if !seen_fields.insert(*field_name) {
                 self.error_span(
-                    field.span,
-                    format!("duplicate field `{}` in struct literal", field.name),
+                    *field_span,
+                    format!("duplicate field `{}` in struct literal", field_name),
                 );
             }
 
-            let expected_type = if let Some(f) = info.fields.iter().find(|f| f.name == field.name) {
+            let expected_type = if let Some(f) = info.fields.iter().find(|f| f.name == *field_name) {
                 self.resolve_ast_type(&f.ty)
-            } else if embed_names.contains(field.name) {
-                Type::Struct { name: field.name }
+            } else if embed_names.contains(field_name) {
+                Type::Struct { name: field_name }
             } else {
                 self.error_span(
-                    field.span,
-                    format!("struct `{name}` has no field or embed `{}`", field.name),
+                    *field_span,
+                    format!("struct `{name}` has no field or embed `{}`", field_name),
                 );
                 Type::Error
             };
 
-            let value_type = self.check_expr(&field.value);
-            if !is_assignable(&expected_type, &value_type) {
+            let value_type = self.check_expr(value);
+            if !self.is_assignable(&expected_type, &value_type) {
                 self.error_span(
-                    field.span,
+                    *field_span,
                     format!(
                         "field `{}` expected type `{expected_type}`, found type `{value_type}`",
-                        field.name
+                        field_name
                     ),
                 );
             }
         }
 
         for field in info.fields {
-            if field.default_value.is_none() && !seen_fields.contains(field.name) {
+            let is_optional_type = matches!(field.ty, ast::Type::Option { .. });
+            if field.default_value.is_none()
+                && !field.optional
+                && !is_optional_type
+                && !seen_fields.contains(field.name)
+            {
                 self.error_span(
                     span,
                     format!(
@@ -285,18 +362,33 @@ impl<'a> Checker<'a> {
         }
 
         for embed in info.embeds {
-            if !seen_fields.contains(embed.name) {
-                self.error_span(
-                    span,
-                    format!(
-                        "missing embedded struct `{}` in struct literal for `{name}`",
-                        embed.name
-                    ),
-                );
+            if seen_fields.contains(embed.name) {
+                continue;
             }
+            // Empty embedded structs (no fields and only empty embeds) are
+            // auto-filled by the emitter, so they need not be supplied literally.
+            if self.is_empty_embed_struct(embed.name) {
+                continue;
+            }
+            self.error_span(
+                span,
+                format!(
+                    "missing embedded struct `{}` in struct literal for `{name}`",
+                    embed.name
+                ),
+            );
         }
+    }
 
-        Type::Struct { name }
+    fn is_empty_embed_struct(&self, name: &'a str) -> bool {
+        let info = match self.structs.get(name) {
+            Some(i) => i,
+            None => return false,
+        };
+        if !info.fields.is_empty() {
+            return false;
+        }
+        info.embeds.iter().all(|e| self.is_empty_embed_struct(e.name))
     }
 
     fn check_field_access(
@@ -310,24 +402,251 @@ impl<'a> Checker<'a> {
             return Type::Error;
         }
 
-        let struct_name = match &object_type {
-            Type::Struct { name } => *name,
+        match &object_type {
+            Type::Infer => {
+                // An externally-provided or unresolved value may have any field.
+                // Returning Infer preserves the opaque type through the access.
+                Type::Infer
+            }
+            Type::Struct { name } => {
+                let struct_name = *name;
+                match self.resolve_field_type(struct_name, field) {
+                    Some(ty) => ty,
+                    None => {
+                        self.error_span(
+                            span,
+                            format!("struct `{struct_name}` has no field `{field}`"),
+                        );
+                        Type::Error
+                    }
+                }
+            }
+            Type::Object { fields } => {
+                if let Some((_, ty)) = fields.iter().find(|(name, _)| *name == field) {
+                    ty.clone()
+                } else {
+                    self.error_span(
+                        span,
+                        format!("object has no field `{field}`"),
+                    );
+                    Type::Error
+                }
+            }
+            Type::Array { elem } => self.resolve_array_field(field, elem, span),
+            Type::Interface { name } => self.resolve_interface_field(name, field).unwrap_or_else(|| {
+                self.error_span(span, format!("interface `{name}` has no field `{field}`"));
+                Type::Error
+            }),
+            Type::Named { name } => self.resolve_primitive_field(name, field, span),
             _ => {
+                // Enum namespace access: `Color.Red` where `Color` is an enum name.
+                if let ast::Expr::Identifier { name: enum_name, .. } = object {
+                    if let Some(info) = self.enums.get(enum_name).cloned() {
+                        if info.cases.iter().any(|c| c.name == field) {
+                            return Type::Named { name: enum_name };
+                        }
+                        self.error_span(
+                            span,
+                            format!("case `{field}` not found in enum `{enum_name}`"),
+                        );
+                        return Type::Error;
+                    }
+                }
                 self.error_span(
                     span,
                     format!("cannot access field `{field}` on type `{object_type}`"),
                 );
-                return Type::Error;
+                Type::Error
             }
+        }
+    }
+
+    fn resolve_primitive_field(
+        &mut self,
+        type_name: &'a str,
+        field: &'a str,
+        span: ast::Span,
+    ) -> Type<'a> {
+        let string_ty = Type::Named { name: "string" };
+        let number_ty = Type::Named { name: "number" };
+        let boolean_ty = Type::Named { name: "boolean" };
+
+        let fn0 = |ret: Type<'a>| Type::Function {
+            params: Vec::new(),
+            ret: Box::new(ret),
+            optional: 0,
+        };
+        let fn1 = |p: Type<'a>, ret: Type<'a>| Type::Function {
+            params: vec![p],
+            ret: Box::new(ret),
+            optional: 0,
+        };
+        let fn2 = |p1: Type<'a>, p2: Type<'a>, ret: Type<'a>| Type::Function {
+            params: vec![p1, p2],
+            ret: Box::new(ret),
+            optional: 0,
         };
 
-        match self.resolve_field_type(struct_name, field) {
-            Some(ty) => ty,
-            None => {
+        match type_name {
+            "string" => match field {
+                "length" => number_ty,
+                "toUpperCase" | "toLowerCase" | "trim" => fn0(string_ty.clone()),
+                "charAt" | "indexOf" | "lastIndexOf" => fn1(number_ty.clone(), number_ty.clone()),
+                "includes" | "startsWith" | "endsWith" => fn1(string_ty.clone(), boolean_ty.clone()),
+                "slice" => fn2(number_ty.clone(), number_ty.clone(), string_ty.clone()),
+                "split" => fn1(string_ty.clone(), Type::Array { elem: Box::new(string_ty.clone()) }),
+                "replace" | "replaceAll" | "concat" => fn2(string_ty.clone(), string_ty.clone(), string_ty.clone()),
+                "substring" => fn2(number_ty.clone(), number_ty.clone(), string_ty.clone()),
+                _ => {
+                    self.error_span(span, format!("string has no field `{field}`"));
+                    Type::Error
+                }
+            },
+            "number" | "boolean" => {
+                self.error_span(span, format!("{type_name} has no field `{field}`"));
+                Type::Error
+            }
+            _ => {
+                // Enum values expose a small reflective surface.
+                if self.enums.contains_key(type_name) {
+                    return match field {
+                        "name" => string_ty,
+                        "index" => number_ty,
+                        _ => {
+                            self.error_span(
+                                span,
+                                format!("enum `{type_name}` has no field `{field}`"),
+                            );
+                            Type::Error
+                        }
+                    };
+                }
                 self.error_span(
                     span,
-                    format!("struct `{struct_name}` has no field `{field}`"),
+                    format!("cannot access field `{field}` on type `{type_name}`"),
                 );
+                Type::Error
+            }
+        }
+    }
+
+    fn resolve_interface_field(
+        &mut self,
+        interface_name: &'a str,
+        field: &'a str,
+    ) -> Option<Type<'a>> {
+        let info = self.interfaces.get(interface_name)?;
+        for member in info.members.iter() {
+            match member {
+                ast::InterfaceMember::Field { name, ty, .. } if *name == field => {
+                    return Some(self.resolve_ast_type(ty));
+                }
+                ast::InterfaceMember::Method { name, params, return_type, .. } if *name == field => {
+                    let param_types: Vec<Type<'a>> = params
+                        .iter()
+                        .map(|p| {
+                            p.ty.as_ref()
+                                .map(|t| self.resolve_ast_type(t))
+                                .unwrap_or(Type::Infer)
+                        })
+                        .collect();
+                    let ret = return_type
+                        .as_ref()
+                        .map(|t| self.resolve_ast_type(t))
+                        .unwrap_or(Type::Named { name: "void" });
+                    return Some(Type::Function {
+                        params: param_types,
+                        ret: Box::new(ret),
+                        optional: 0,
+                    });
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    fn resolve_array_field(
+        &mut self,
+        field: &'a str,
+        elem: &Type<'a>,
+        span: ast::Span,
+    ) -> Type<'a> {
+        let number_ty = Type::Named { name: "number" };
+        let boolean_ty = Type::Named { name: "boolean" };
+        let array_ty = Type::Array { elem: Box::new(elem.clone()) };
+
+        let fn0 = |ret: Type<'a>| Type::Function {
+            params: Vec::new(),
+            ret: Box::new(ret),
+            optional: 0,
+        };
+        let fn1 = |p: Type<'a>, ret: Type<'a>| Type::Function {
+            params: vec![p],
+            ret: Box::new(ret),
+            optional: 0,
+        };
+        let fn2 = |p1: Type<'a>, p2: Type<'a>, ret: Type<'a>| Type::Function {
+            params: vec![p1, p2],
+            ret: Box::new(ret),
+            optional: 0,
+        };
+
+        match field {
+            "length" => number_ty,
+            "includes" => fn2(elem.clone(), number_ty.clone(), boolean_ty.clone()),
+            "slice" => fn2(number_ty.clone(), number_ty.clone(), array_ty.clone()),
+            "push" => fn1(elem.clone(), number_ty.clone()),
+            "pop" => fn0(Type::Option { inner: Box::new(elem.clone()) }),
+            "shift" => fn0(Type::Option { inner: Box::new(elem.clone()) }),
+            "unshift" => fn1(elem.clone(), number_ty.clone()),
+            "concat" => fn1(array_ty.clone(), array_ty.clone()),
+            "join" => fn1(Type::Named { name: "string" }, Type::Named { name: "string" }),
+            "reverse" | "sort" => fn0(array_ty.clone()),
+            "filter" => fn1(
+                Type::Function {
+                    params: vec![elem.clone()],
+                    ret: Box::new(boolean_ty.clone()),
+                    optional: 0,
+                },
+                array_ty.clone(),
+            ),
+            "map" => Type::Function {
+                params: vec![Type::Function {
+                    params: vec![elem.clone()],
+                    ret: Box::new(Type::Infer),
+                    optional: 0,
+                }],
+                ret: Box::new(Type::Array { elem: Box::new(Type::Infer) }),
+                optional: 0,
+            },
+            "find" => fn1(
+                Type::Function {
+                    params: vec![elem.clone()],
+                    ret: Box::new(boolean_ty.clone()),
+                    optional: 0,
+                },
+                Type::Option { inner: Box::new(elem.clone()) },
+            ),
+            "forEach" => fn1(
+                Type::Function {
+                    params: vec![elem.clone()],
+                    ret: Box::new(Type::None),
+                    optional: 0,
+                },
+                Type::None,
+            ),
+            "reduce" => Type::Function {
+                params: vec![Type::Function {
+                    params: vec![Type::Infer, elem.clone()],
+                    ret: Box::new(Type::Infer),
+                    optional: 0,
+                }],
+                ret: Box::new(Type::Infer),
+                optional: 0,
+            },
+            _ => {
+                self.error_span(span, format!("array has no field `{field}`"));
                 Type::Error
             }
         }
@@ -387,7 +706,7 @@ impl<'a> Checker<'a> {
         match (&case.payload, payload_type) {
             (Some(expected), Some(actual)) => {
                 let expected_ty = self.resolve_ast_type(expected);
-                if !is_assignable(&expected_ty, &actual) {
+                if !self.is_assignable(&expected_ty, &actual) {
                     self.error_span(
                         span,
                         format!(
@@ -427,7 +746,9 @@ impl<'a> Checker<'a> {
                 if payload.is_some() {
                     self.error_span(span, "`None` cannot have a payload");
                 }
-                Type::None
+                // `None` is polymorphic; return Option<Infer> so it can match
+                // any Option<T> in the surrounding context.
+                Type::Option { inner: Box::new(Type::Infer) }
             }
             _ => {
                 self.error_span(span, format!("unknown Option case `{case_name}`"));
@@ -484,16 +805,27 @@ impl<'a> Checker<'a> {
 
         let scrutinee_type = self.check_expr(scrutinee);
         let mut result_type: Option<Type<'a>> = None;
+        let mut covered_cases: HashSet<&'a str> = HashSet::new();
+        let mut has_catch_all = false;
 
         for arm in arms {
             self.scopes.push(HashMap::new());
+            self.mutables.push(HashSet::new());
             self.check_pattern(&arm.pattern, &scrutinee_type);
+            if !has_catch_all {
+                if Self::pattern_is_catch_all(&arm.pattern) {
+                    has_catch_all = true;
+                } else if let ast::Pattern::Constructor { name, .. } = &arm.pattern {
+                    covered_cases.insert(*name);
+                }
+            }
             let arm_type = self.check_expr(&arm.body);
             self.scopes.pop();
+            self.mutables.pop();
 
             match &result_type {
                 Some(expected) => {
-                    if !is_assignable(expected, &arm_type) {
+                    if !self.is_assignable(expected, &arm_type) {
                         self.error_at_expr(
                             &arm.body,
                             format!(
@@ -506,7 +838,57 @@ impl<'a> Checker<'a> {
             }
         }
 
+        if !has_catch_all && !scrutinee_type.is_error() {
+            self.check_match_exhaustiveness(span, &scrutinee_type, &covered_cases);
+        }
+
         result_type.unwrap_or(Type::None)
+    }
+
+    fn pattern_is_catch_all(pattern: &ast::Pattern<'_>) -> bool {
+        matches!(
+            pattern,
+            ast::Pattern::Wildcard { .. } | ast::Pattern::Identifier { .. }
+        )
+    }
+
+    fn check_match_exhaustiveness(
+        &mut self,
+        span: ast::Span,
+        scrutinee_type: &Type<'a>,
+        covered_cases: &HashSet<&'a str>,
+    ) {
+        let enum_name = match scrutinee_type {
+            Type::Named { name } => *name,
+            Type::Option { .. } => return, // Option is exhaustive via Some/None; already checked.
+            Type::Generic { base: "Result", .. } => return, // Result is exhaustive via Ok/Err.
+            _ => return,
+        };
+
+        let Some(info) = self.enums.get(enum_name) else {
+            return;
+        };
+
+        let missing: Vec<&'a str> = info
+            .cases
+            .iter()
+            .map(|c| c.name)
+            .filter(|name| !covered_cases.contains(*name))
+            .collect();
+
+        if !missing.is_empty() {
+            let missing_qualified: Vec<String> = missing
+                .iter()
+                .map(|name| format!("{enum_name}::{name}"))
+                .collect();
+            self.error_span(
+                span,
+                format!(
+                    "non-exhaustive match: missing {}",
+                    missing_qualified.join(", ")
+                ),
+            );
+        }
     }
 
     fn check_pattern(&mut self, pattern: &ast::Pattern<'a>, scrutinee_type: &Type<'a>) {
@@ -517,7 +899,7 @@ impl<'a> Checker<'a> {
             }
             ast::Pattern::Literal { expr, span } => {
                 let literal_type = self.check_expr(expr);
-                if !is_assignable(scrutinee_type, &literal_type) {
+                if !self.is_assignable(scrutinee_type, &literal_type) {
                     self.error_span(
                         *span,
                         format!(
@@ -649,7 +1031,13 @@ impl<'a> Checker<'a> {
         span: ast::Span,
     ) -> Type<'a> {
         let left_type = self.check_expr(left);
-        let right_type = self.check_expr(right);
+        // Pipe checks its right-hand side specially (it desugars into a call),
+        // so avoid the generic check_expr here.
+        let right_type = if op == ast::BinOp::Pipe {
+            Type::Infer
+        } else {
+            self.check_expr(right)
+        };
 
         use ast::BinOp::*;
         match op {
@@ -662,7 +1050,13 @@ impl<'a> Checker<'a> {
                 }
                 if Self::is_number(&left_type) && Self::is_number(&right_type) {
                     Type::Named { name: "number" }
-                } else if Self::is_string(&left_type) && Self::is_string(&right_type) {
+                } else if Self::is_string(&left_type) || Self::is_string(&right_type) {
+                    // String concatenation: JS coerces the other operand to string.
+                    Type::Named { name: "string" }
+                } else if Self::is_promise(&left_type)
+                    || Self::is_promise(&right_type)
+                {
+                    // Promise<T> + primitive coerces to string in JS.
                     Type::Named { name: "string" }
                 } else {
                     self.error_span(
@@ -716,29 +1110,165 @@ impl<'a> Checker<'a> {
                 Type::Named { name: "boolean" }
             }
             Pipe => {
-                self.check_expr(left);
-                self.check_expr(right);
-                Type::Infer
+                // Pipe desugars at emit time. Type-check the effective call.
+                match right {
+                    ast::Expr::Identifier { name, span } => {
+                        let callee_type = self.lookup_var(name).unwrap_or(Type::Infer);
+                        if let Type::Function { params, ret, optional } = callee_type {
+                            let required = params.len().saturating_sub(optional);
+                            if params.len() < 1 || required > 1 {
+                                self.error_span(
+                                    *span,
+                                    format!(
+                                        "pipe right-hand side expects 1 argument, found {} parameters",
+                                        params.len()
+                                    ),
+                                );
+                            }
+                            if !params.is_empty()
+                                && !self.is_assignable(&params[0], &left_type)
+                                && !matches!(left_type, Type::Infer)
+                                && !matches!(params[0], Type::Infer)
+                            {
+                                self.error_span(
+                                    *span,
+                                    format!(
+                                        "pipe expected argument type `{}`, found type `{left_type}`",
+                                        params[0]
+                                    ),
+                                );
+                            }
+                            *ret
+                        } else {
+                            Type::Infer
+                        }
+                    }
+                    ast::Expr::Call { callee, type_args, args, span } => {
+                        let callee_type = self.check_expr(callee);
+                        if let Type::Function { params, ret, optional } = callee_type {
+                            let subst = if params.iter().any(|p| contains_param(p)) || contains_param(&ret) {
+                                self.infer_substitution(type_args, &params, args)
+                            } else {
+                                HashMap::new()
+                            };
+                            let substituted_params: Vec<Type<'a>> = params
+                                .iter()
+                                .map(|p| substitute_type(p, &subst))
+                                .collect();
+                            let substituted_ret = substitute_type(&ret, &subst);
+
+                            let has_hole = args.iter().any(|a| Self::is_hole_expr(a));
+                            let provided: Vec<&ast::Expr<'a>> = args.iter().collect();
+                            let expected_provided: Vec<&Type<'a>> = if has_hole {
+                                substituted_params.iter().collect()
+                            } else {
+                                substituted_params.iter().skip(1).collect()
+                            };
+
+                            for (expected, arg) in expected_provided.iter().zip(provided.iter()) {
+                                if Self::is_hole_expr(arg) {
+                                    continue;
+                                }
+                                let arg_type = self.check_expr(arg);
+                                if !self.is_assignable(expected, &arg_type) {
+                                    self.error_at_expr(
+                                        arg,
+                                        format!(
+                                            "expected argument type `{expected}`, found type `{arg_type}`"
+                                        ),
+                                    );
+                                }
+                            }
+
+                            if !has_hole {
+                                if substituted_params.is_empty() {
+                                    self.error_span(*span, "pipe right-hand call takes no arguments");
+                                } else if !self.is_assignable(&substituted_params[0], &left_type)
+                                    && !matches!(left_type, Type::Infer)
+                                    && !matches!(substituted_params[0], Type::Infer)
+                                {
+                                    self.error_span(
+                                        left.span(),
+                                        format!(
+                                            "pipe expected argument type `{}`, found type `{left_type}`",
+                                            substituted_params[0]
+                                        ),
+                                    );
+                                }
+                            }
+
+                            let required = substituted_params.len().saturating_sub(optional);
+                            let effective_count = if has_hole { args.len() } else { args.len() + 1 };
+                            if effective_count < required || effective_count > substituted_params.len() {
+                                self.error_span(
+                                    *span,
+                                    format!(
+                                        "pipe right-hand call expected {} to {} arguments, found {}",
+                                        required,
+                                        substituted_params.len(),
+                                        effective_count
+                                    ),
+                                );
+                            }
+
+                            substituted_ret
+                        } else if matches!(callee_type, Type::Infer) {
+                            for arg in args.iter() {
+                                self.check_expr(arg);
+                            }
+                            Type::Infer
+                        } else {
+                            self.error_span(*span, format!("value of type `{callee_type}` is not callable"));
+                            Type::Error
+                        }
+                    }
+                    _ => {
+                        self.error_span(span, "pipe right-hand side must be a function or call");
+                        Type::Error
+                    }
+                }
             }
             Assign => {
-                let name = match left {
-                    ast::Expr::Identifier { name, .. } => *name,
+                match left {
+                    ast::Expr::Identifier { name, .. } => {
+                        if !self
+                            .mutables
+                            .iter()
+                            .rev()
+                            .any(|scope| scope.contains(*name))
+                        {
+                            self.error_span(
+                                left.span(),
+                                format!("cannot assign to immutable variable `{name}`"),
+                            );
+                        }
+                    }
+                    ast::Expr::IndexAccess { object, .. } => {
+                        self.check_expr(object);
+                    }
+                    ast::Expr::FieldAccess { object, field, .. } => {
+                        let object_type = self.check_expr(object);
+                        let field_mutable = self.field_is_mutable(&object_type, field);
+                        if !self.is_mutable_expr(object) && !field_mutable {
+                            self.error_span(
+                                left.span(),
+                                format!(
+                                    "cannot assign to field `{field}` of immutable value"
+                                ),
+                            );
+                        }
+                    }
                     _ => {
                         self.error_span(
                             span,
-                            "assignment target must be a mutable local variable",
+                            "assignment target must be a mutable local variable, field, or index",
                         );
                         return right_type;
                     }
-                };
-                if !self.mutables.contains(name) {
-                    self.error_span(
-                        left.span(),
-                        format!("cannot assign to immutable variable `{name}`"),
-                    );
-                } else if !left_type.is_error()
+                }
+                if !left_type.is_error()
                     && !right_type.is_error()
-                    && !is_assignable(&left_type, &right_type)
+                    && !self.is_assignable(&left_type, &right_type)
                 {
                     self.error_span(
                         span,
@@ -749,7 +1279,12 @@ impl<'a> Checker<'a> {
             }
             AddAssign | SubAssign | MulAssign | DivAssign | ModAssign => {
                 if let ast::Expr::Identifier { name, .. } = left {
-                    if !self.mutables.contains(*name) {
+                    if !self
+                        .mutables
+                        .iter()
+                        .rev()
+                        .any(|scope| scope.contains(*name))
+                    {
                         self.error_span(
                             left.span(),
                             format!("cannot assign to immutable variable `{name}`"),
@@ -792,6 +1327,10 @@ impl<'a> Checker<'a> {
                 self.expect_boolean(&operand_type, operand.span());
                 Type::Named { name: "boolean" }
             }
+            ast::UnOp::Plus => {
+                self.expect_number(&operand_type, operand.span());
+                Type::Named { name: "number" }
+            }
         }
     }
 
@@ -808,6 +1347,68 @@ impl<'a> Checker<'a> {
         };
 
         let object_type = self.check_expr(object);
+
+        // Interface receiver: dispatch is dynamic; validate against the
+        // interface signature and enforce mutable-method requirements inferred
+        // from satisfying structs.
+        if let Type::Interface { name: iface_name } = &object_type {
+            let info = self.interfaces.get(iface_name)?;
+            let method = info.members.iter().find(|m| match m {
+                ast::InterfaceMember::Method { name, .. } => *name == method_name,
+                _ => false,
+            })?;
+            let method_mutable = matches!(
+                method,
+                ast::InterfaceMember::Method { mutable: true, .. }
+            );
+            if method_mutable && !self.is_mutable_expr(object) {
+                self.error_at_expr(
+                    object,
+                    format!(
+                        "cannot call mutable method `{method_name}` on an immutable receiver"
+                    ),
+                );
+            }
+            let (params, return_type) = match method {
+                ast::InterfaceMember::Method { params, return_type, .. } => (*params, return_type.as_ref()),
+                _ => unreachable!(),
+            };
+            let expected_params: Vec<Type<'a>> = params
+                .iter()
+                .map(|p| match &p.ty {
+                    Some(t) => self.resolve_ast_type(t),
+                    None => Type::Error,
+                })
+                .collect();
+            if expected_params.len() != args.len() {
+                self.error_span(
+                    span,
+                    format!(
+                        "method `{method_name}` on `{iface_name}` expected {} argument{}, found {}",
+                        expected_params.len(),
+                        if expected_params.len() == 1 { "" } else { "s" },
+                        args.len()
+                    ),
+                );
+            } else {
+                for (expected, arg) in expected_params.iter().zip(args.iter()) {
+                    let arg_type = self.check_expr(arg);
+                    if !self.is_assignable(expected, &arg_type) {
+                        self.error_at_expr(
+                            arg,
+                            format!(
+                                "expected argument type `{expected}`, found type `{arg_type}`"
+                            ),
+                        );
+                    }
+                }
+            }
+            return return_type
+                .map(|t| self.resolve_ast_type(t))
+                .unwrap_or(Type::None)
+                .into();
+        }
+
         let receiver_type = match &object_type {
             Type::Struct { name } => *name,
             _ => return None,
@@ -815,6 +1416,15 @@ impl<'a> Checker<'a> {
 
         let mut embed_path = Vec::new();
         let info = self.find_receiver_method(receiver_type, method_name, &mut embed_path)?;
+
+        if info.mutable && !self.is_mutable_expr(object) {
+            self.error_at_expr(
+                object,
+                format!(
+                    "cannot call mutable method `{method_name}` on an immutable receiver"
+                ),
+            );
+        }
 
         // Record this call site so the emitter can lower it to a mangled call.
         // The owner of the method is the embedded struct (or the receiver itself).
@@ -847,7 +1457,7 @@ impl<'a> Checker<'a> {
         } else {
             for (expected, arg) in expected_params.iter().zip(args.iter()) {
                 let arg_type = self.check_expr(arg);
-                if !is_assignable(expected, &arg_type) {
+                if !self.is_assignable(expected, &arg_type) {
                     self.error_at_expr(
                         arg,
                         format!(
@@ -888,6 +1498,42 @@ impl<'a> Checker<'a> {
         None
     }
 
+    /// Returns true if the expression denotes a mutable location.
+    fn is_mutable_expr(&self, expr: &ast::Expr<'a>) -> bool {
+        match expr {
+            ast::Expr::Identifier { name, .. } => self
+                .mutables
+                .iter()
+                .rev()
+                .any(|scope| scope.contains(*name)),
+            ast::Expr::FieldAccess { object, .. } => self.is_mutable_expr(object),
+            _ => false,
+        }
+    }
+
+    /// Returns true if `field` is declared mutable on `receiver_type`.
+    /// Struct fields are never mutable in isolation; interface fields may be
+    /// declared with `mut`.
+    fn field_is_mutable(&self, receiver_type: &Type<'a>, field: &str) -> bool {
+        match receiver_type {
+            Type::Interface { name } => self
+                .interfaces
+                .get(name)
+                .and_then(|info| {
+                    info.members.iter().find(|m| match m {
+                        ast::InterfaceMember::Field { name: n, .. } => n == &field,
+                        _ => false,
+                    })
+                })
+                .map(|m| match m {
+                    ast::InterfaceMember::Field { mutable, .. } => *mutable,
+                    _ => false,
+                })
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+
     fn check_call(
         &mut self,
         callee: &ast::Expr<'a>,
@@ -895,10 +1541,18 @@ impl<'a> Checker<'a> {
         args: &'a [ast::Expr<'a>],
         span: ast::Span,
     ) -> Type<'a> {
+        // Built-in special forms that need a concrete return type.
+        if let ast::Expr::Identifier { name: "isset", .. } = callee {
+            for arg in args.iter() {
+                self.check_expr(arg);
+            }
+            return Type::Named { name: "boolean" };
+        }
+
         let callee_type = self.check_expr(callee);
 
         match callee_type {
-            Type::Function { params, ret } => {
+            Type::Function { params, ret, optional } => {
                 // Build a substitution for any type parameters appearing in the
                 // function signature. Explicit type args are used when present;
                 // otherwise we try to infer from the first argument.
@@ -914,20 +1568,67 @@ impl<'a> Checker<'a> {
                     .collect();
                 let substituted_ret = substitute_type(&ret, &subst);
 
-                if substituted_params.len() != args.len() {
+                let hole_positions: Vec<usize> = args
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, a)| Self::is_hole_expr(a))
+                    .map(|(i, _)| i)
+                    .collect();
+
+                if hole_positions.len() > 1 {
                     self.error_span(
                         span,
+                        "function capture requires exactly one hole, found multiple".to_string(),
+                    );
+                }
+
+                if !hole_positions.is_empty() {
+                    // Partial application: `add(1, _)` becomes a function that
+                    // takes the hole arguments and forwards them.
+                    for (i, (expected, arg)) in substituted_params.iter().zip(args.iter()).enumerate() {
+                        if Self::is_hole_expr(arg) {
+                            continue;
+                        }
+                        let arg_type = self.check_expr(arg);
+                        if !self.is_assignable(expected, &arg_type) {
+                            self.error_at_expr(
+                                arg,
+                                format!(
+                                    "expected argument type `{expected}`, found type `{arg_type}`"
+                                ),
+                            );
+                        }
+                    }
+                    let hole_types: Vec<Type<'a>> = hole_positions
+                        .iter()
+                        .map(|i| substituted_params[*i].clone())
+                        .collect();
+                    return Type::Function {
+                        params: hole_types,
+                        ret: Box::new(substituted_ret),
+                        optional: 0,
+                    };
+                }
+
+                let required = substituted_params.len().saturating_sub(optional);
+                if args.len() < required || args.len() > substituted_params.len() {
+                    let expected_msg = if optional > 0 {
+                        format!("{} to {} arguments", required, substituted_params.len())
+                    } else {
                         format!(
-                            "expected {} argument{}, found {}",
+                            "{} argument{}",
                             substituted_params.len(),
-                            if substituted_params.len() == 1 { "" } else { "s" },
-                            args.len()
-                        ),
+                            if substituted_params.len() == 1 { "" } else { "s" }
+                        )
+                    };
+                    self.error_span(
+                        span,
+                        format!("expected {}, found {}", expected_msg, args.len()),
                     );
                 } else {
                     for (expected, arg) in substituted_params.iter().zip(args.iter()) {
                         let arg_type = self.check_expr(arg);
-                        if !is_assignable(expected, &arg_type) {
+                        if !self.is_assignable(expected, &arg_type) {
                             self.error_at_expr(
                                 arg,
                                 format!(
@@ -947,6 +1648,43 @@ impl<'a> Checker<'a> {
                     self.check_expr(arg);
                 }
                 Type::Infer
+            }
+            Type::Struct { name } => {
+                // Factory-call syntax: Person({ name: "Ada" }) is equivalent to
+                // Person { name: "Ada" }.
+                if args.len() != 1 {
+                    self.error_span(
+                        span,
+                        format!("struct factory `{name}` expects exactly one argument"),
+                    );
+                    return Type::Error;
+                }
+                let info = match self.structs.get(name).cloned() {
+                    Some(info) => info,
+                    None => {
+                        self.error_span(span, format!("unknown struct `{name}`"));
+                        return Type::Error;
+                    }
+                };
+                let arg = &args[0];
+                match arg {
+                    ast::Expr::Object { fields, .. } => {
+                        let mapped: Vec<(&'a str, &ast::Expr<'a>, ast::Span)> = fields
+                            .iter()
+                            .map(|f| (f.key, &f.value, f.span))
+                            .collect();
+                        self.check_struct_literal_fields(name, &info, &mapped, span);
+                    }
+                    _ => {
+                        self.error_at_expr(
+                            arg,
+                            format!(
+                                "struct factory `{name}` expects an object literal argument"
+                            ),
+                        );
+                    }
+                }
+                Type::Struct { name }
             }
             other => {
                 self.error_span(span, format!("value of type `{other}` is not callable"));
@@ -1009,7 +1747,7 @@ fn collect_param_names_rec<'a>(ty: &Type<'a>, names: &mut Vec<&'a str>, seen: &m
             }
         }
         Type::Option { inner } => collect_param_names_rec(inner, names, seen),
-        Type::Function { params, ret } => {
+        Type::Function { params, ret, .. } => {
             for p in params {
                 collect_param_names_rec(p, names, seen);
             }
@@ -1028,7 +1766,7 @@ fn contains_param(ty: &Type<'_>) -> bool {
     match ty {
         Type::Param { .. } => true,
         Type::Option { inner } => contains_param(inner),
-        Type::Function { params, ret } => {
+        Type::Function { params, ret, .. } => {
             params.iter().any(contains_param) || contains_param(ret)
         }
         Type::Generic { args, .. } => args.iter().any(contains_param),
@@ -1043,9 +1781,10 @@ fn substitute_type<'a>(ty: &Type<'a>, subst: &HashMap<&'a str, Type<'a>>) -> Typ
         Type::Option { inner } => Type::Option {
             inner: Box::new(substitute_type(inner, subst)),
         },
-        Type::Function { params, ret } => Type::Function {
+        Type::Function { params, ret, optional } => Type::Function {
             params: params.iter().map(|p| substitute_type(p, subst)).collect(),
             ret: Box::new(substitute_type(ret, subst)),
+            optional: *optional,
         },
         Type::Generic { base, args } => Type::Generic {
             base,

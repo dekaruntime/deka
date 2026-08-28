@@ -36,6 +36,7 @@ pub fn un_op_str(op: UnOp) -> &'static str {
     match op {
         UnOp::Neg => "-",
         UnOp::Not => "!",
+        UnOp::Plus => "+",
     }
 }
 

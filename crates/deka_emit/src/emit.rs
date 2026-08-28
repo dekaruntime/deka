@@ -36,7 +36,9 @@ pub fn emit_js_with_imports<'a>(
 struct StructMeta {
     fields: HashSet<String>,
     embeds: Vec<String>,
-    optional: HashSet<String>,
+    /// Optional fields: `None` means auto-fill with `Option.None`;
+    /// `Some(expr)` means auto-fill with the pre-emitted default value.
+    optional: HashMap<String, Option<String>>,
     empty_embeds: HashSet<String>,
 }
 
@@ -49,6 +51,8 @@ struct EnumMeta {
 #[derive(Clone)]
 struct ReceiverMethod<'a> {
     name: String,
+    receiver_name: String,
+    receiver_mutable: bool,
     params: Vec<String>,
     body: Vec<deka_syntax::Stmt<'a>>,
     is_async: bool,
@@ -83,14 +87,52 @@ impl<'a> Emitter<'a> {
 
     fn emit(&mut self) -> Result<String, String> {
         self.emit_prelude()?;
-        for (i, stmt) in self.program.statements.iter().enumerate() {
-            if i > 0 {
-                self.out.push('\n');
+
+        // First pass: emit struct/enum/function declarations so that all
+        // factories exist before receiver methods are registered.
+        let mut first = true;
+        for stmt in self.program.statements.iter() {
+            if !Self::is_runtime_statement(stmt) {
+                if !first {
+                    self.out.push('\n');
+                }
+                first = false;
+                self.emit_stmt(stmt)?;
             }
-            self.emit_stmt(stmt)?;
         }
+
+        // Register receiver methods after all struct factories are declared.
         self.emit_method_registrations()?;
+
+        // Second pass: emit executable top-level statements (const/let/expr).
+        for stmt in self.program.statements.iter() {
+            if Self::is_runtime_statement(stmt) {
+                if !first {
+                    self.out.push('\n');
+                }
+                first = false;
+                self.emit_stmt(stmt)?;
+            }
+        }
+
         Ok(std::mem::take(&mut self.out))
+    }
+
+    /// Returns true for statements whose initializers run at module load time.
+    fn is_runtime_statement(stmt: &Stmt<'_>) -> bool {
+        matches!(
+            stmt,
+            Stmt::Const { .. }
+                | Stmt::Let { .. }
+                | Stmt::Expr { .. }
+                | Stmt::Return { .. }
+                | Stmt::If { .. }
+                | Stmt::Block { .. }
+                | Stmt::For { .. }
+                | Stmt::ForOf { .. }
+                | Stmt::Break { .. }
+                | Stmt::Continue { .. }
+        )
     }
 
     // ------------------------------------------------------------------
@@ -108,8 +150,18 @@ impl<'a> Emitter<'a> {
                     let mut meta = StructMeta::default();
                     for field in fields.iter() {
                         meta.fields.insert(field.name.to_string());
-                        if field.default_value.is_some() || is_optional_type(&field.ty) {
-                            meta.optional.insert(field.name.to_string());
+                        if field.default_value.is_some() || field.optional || is_optional_type(&field.ty) {
+                            let default = field.default_value.as_ref().map(|v| {
+                                // If a default value cannot be pre-emitted, fall back to null.
+                                self.emit_expr_to_string(v).unwrap_or_else(|_| "null".to_string())
+                            });
+                            if default.is_none() {
+                                // Omitted optional fields auto-fill to Option.None, so the
+                                // prelude enum helpers are required even if the source never
+                                // mentions Some/None explicitly.
+                                self.uses_prelude_enums = true;
+                            }
+                            meta.optional.insert(field.name.to_string(), default);
                         }
                     }
                     for embed in embeds.iter() {
@@ -130,6 +182,8 @@ impl<'a> Emitter<'a> {
                 }
                 Stmt::ReceiverMethod {
                     receiver_type,
+                    receiver_name,
+                    receiver_mutable,
                     name,
                     params,
                     body,
@@ -141,6 +195,8 @@ impl<'a> Emitter<'a> {
                         .or_default()
                         .push(ReceiverMethod {
                             name: name.to_string(),
+                            receiver_name: receiver_name.to_string(),
+                            receiver_mutable: *receiver_mutable,
                             params: params.iter().map(|p| p.name.to_string()).collect(),
                             body: body.to_vec(),
                             is_async: *is_async,
@@ -161,8 +217,13 @@ impl<'a> Emitter<'a> {
                 let mut meta = StructMeta::default();
                 for field in info.fields.iter() {
                     meta.fields.insert(field.name.to_string());
-                    if field.default_value.is_some() || is_optional_type(&field.ty) {
-                        meta.optional.insert(field.name.to_string());
+                    if field.default_value.is_some() || field.optional || is_optional_type(&field.ty) {
+                        // Imported struct defaults are not pre-emitted here;
+                        // omitting the field produces Option.None for Option-typed fields.
+                        if field.default_value.is_none() {
+                            self.uses_prelude_enums = true;
+                        }
+                        meta.optional.insert(field.name.to_string(), None);
                     }
                 }
                 for embed in info.embeds.iter() {
@@ -231,13 +292,15 @@ impl<'a> Emitter<'a> {
     // Prelude
     // ------------------------------------------------------------------
     fn emit_prelude(&mut self) -> Result<(), String> {
+        self.out.push_str("\"use strict\";\n");
+
         // Determine which helpers are needed by scanning the AST.
         self.uses_struct = self.needs_struct_helper();
-        self.uses_prelude_enums = self.needs_prelude_enums();
+        self.uses_prelude_enums = self.uses_prelude_enums || self.needs_prelude_enums();
 
         if self.uses_struct {
             self.out.push_str("const __deka = {");
-                        self.out.push_str(r###"Struct:(id,embeds)=>{function f(fields){const o=Object.create(f.prototype);Object.assign(o,fields);Object.defineProperty(o,'__deka_struct',{value:id,enumerable:false,writable:false,configurable:false});return o;}f.id=id;Object.defineProperty(f,'name',{value:id,configurable:true});f.prototype=Object.create(null);f.prototype.constructor=f;f.impl=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){return b(this,...x);};}else{for(const k in a)f.prototype[k]=a[k];}return f;};f.implMut=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka.MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return b(this,...x);};}else{for(const k in a){const fn=a[k];f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka.MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return fn.apply(this,x);};}}return f;};if(embeds){for(const [embedName,embedFactory] of Object.entries(embeds)){for(const key of Object.keys(embedFactory.prototype)){f.prototype[key]=function(...args){return this[embedName][key](...args);};}}}return f;},"###);
+                        self.out.push_str(r###"Struct:(id,embeds)=>{function f(fields){const o=Object.create(f.prototype);Object.assign(o,fields);Object.defineProperty(o,'__deka_struct',{value:id,enumerable:false,writable:false,configurable:false});return o;}f.id=id;Object.defineProperty(f,'name',{value:id,configurable:true});f.prototype=Object.create(null);f.prototype.constructor=f;f.impl=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){return b.apply(this,x);};}else{for(const k in a)f.prototype[k]=a[k];}return f;};f.implMut=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka.MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return b.apply(this,x);};}else{for(const k in a){const fn=a[k];f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka.MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return fn.apply(this,x);};}}return f;};if(embeds){for(const [embedName,embedFactory] of Object.entries(embeds)){for(const key of Object.keys(embedFactory.prototype)){f.prototype[key]=function(...args){return this[embedName][key](...args);};}}}return f;},"###);
             self.out.push_str("getStructId:(v)=>v?.__deka_struct,");
             self.out.push_str(
                 "MutationError:class extends Error{constructor(m){super(m);this.name='MutationError';}}",
@@ -261,6 +324,22 @@ impl<'a> Emitter<'a> {
             self.out.push_str("const None = Option.None;\n");
         }
 
+        if self.needs_jsx_helper() {
+            self.out.push_str(r#"const __deka_ui = {
+  Fragment: Symbol("Fragment"),
+  jsx: (tag, props) => {
+    if (typeof tag === "function") return tag(props);
+    const children = props.children;
+    delete props.children;
+    const attrs = Object.entries(props).map(([k, v]) => ` ${k}="${v}"`).join("");
+    const childStr = Array.isArray(children) ? children.join("") : (children ?? "");
+    return `<${tag}${attrs}>${childStr}</${tag}>`;
+  },
+  jsxs: (tag, props) => __deka_ui.jsx(tag, props)
+};
+"#);
+        }
+
         Ok(())
     }
 
@@ -282,6 +361,18 @@ impl<'a> Emitter<'a> {
         })
     }
 
+    fn needs_jsx_helper(&self) -> bool {
+        self.program.statements.iter().any(|stmt| {
+            let mut found = false;
+            visit_stmt_exprs(stmt, &mut |expr| {
+                if matches!(expr, Expr::JsxElement { .. } | Expr::JsxFragment { .. }) {
+                    found = true;
+                }
+            });
+            found
+        })
+    }
+
     // ------------------------------------------------------------------
     // Statements
     // ------------------------------------------------------------------
@@ -292,7 +383,16 @@ impl<'a> Emitter<'a> {
                 self.out.push_str("const ");
                 self.out.push_str(name);
                 self.out.push_str(" = ");
+                // Const bindings in DekaScript are immutable. Freeze array and
+                // object literals at creation so mutations throw at runtime.
+                let needs_freeze = matches!(value, Expr::Array { .. } | Expr::Object { .. });
+                if needs_freeze {
+                    self.out.push_str("Object.freeze(");
+                }
                 self.emit_expr(value)?;
+                if needs_freeze {
+                    self.out.push_str(")");
+                }
                 self.out.push_str(";");
             }
             Stmt::Let { name, value, .. } => {
@@ -322,9 +422,12 @@ impl<'a> Emitter<'a> {
                     if i > 0 {
                         self.out.push_str(", ");
                     }
-                    self.out.push_str(param.name);
+                    self.emit_param(param, !is_async)?;
                 }
                 self.out.push_str(") {\n");
+                if *is_async {
+                    self.emit_default_param_assignments(params, 1)?;
+                }
                 for stmt in body.iter() {
                     self.emit_stmt(stmt)?;
                     self.out.push('\n');
@@ -375,9 +478,12 @@ impl<'a> Emitter<'a> {
                             if i > 0 {
                                 self.out.push_str(", ");
                             }
-                            self.out.push_str(param.name);
+                            self.emit_param(param, !is_async)?;
                         }
                         self.out.push_str(") {\n");
+                        if *is_async {
+                            self.emit_default_param_assignments(params, 1)?;
+                        }
                         for stmt in body.iter() {
                             self.emit_stmt(stmt)?;
                             self.out.push('\n');
@@ -452,6 +558,16 @@ impl<'a> Emitter<'a> {
                     self.out.push('}');
                 }
             }
+            Stmt::Block { body, .. } => {
+                write_indent(&mut self.out, 0);
+                self.out.push_str("{\n");
+                for stmt in body.iter() {
+                    self.emit_stmt(stmt)?;
+                    self.out.push('\n');
+                }
+                write_indent(&mut self.out, 0);
+                self.out.push('}');
+            }
             Stmt::For {
                 init,
                 condition,
@@ -472,6 +588,31 @@ impl<'a> Emitter<'a> {
                 if let Some(step) = step {
                     self.emit_expr(step)?;
                 }
+                self.out.push_str(") {\n");
+                for stmt in body.iter() {
+                    self.emit_stmt(stmt)?;
+                    self.out.push('\n');
+                }
+                write_indent(&mut self.out, 0);
+                self.out.push('}');
+            }
+            Stmt::ForOf {
+                name,
+                is_const,
+                iterable,
+                body,
+                ..
+            } => {
+                write_indent(&mut self.out, 0);
+                self.out.push_str("for (");
+                if *is_const {
+                    self.out.push_str("const ");
+                } else {
+                    self.out.push_str("let ");
+                }
+                self.out.push_str(name);
+                self.out.push_str(" of ");
+                self.emit_expr(iterable)?;
                 self.out.push_str(") {\n");
                 for stmt in body.iter() {
                     self.emit_stmt(stmt)?;
@@ -506,6 +647,9 @@ impl<'a> Emitter<'a> {
             Stmt::TypeAlias { .. } => {
                 // Erased at runtime.
             }
+            Stmt::Interface { .. } => {
+                // Erased at runtime.
+            }
             Stmt::Break { .. } => {
                 write_indent(&mut self.out, 0);
                 self.out.push_str("break;");
@@ -517,6 +661,9 @@ impl<'a> Emitter<'a> {
             Stmt::ReceiverMethod { .. } => {
                 // Collected in the pre-pass and emitted after all struct
                 // factories have been declared.
+            }
+            Stmt::Empty { .. } => {
+                // No output.
             }
         }
         Ok(())
@@ -535,14 +682,14 @@ impl<'a> Emitter<'a> {
             write_indent(&mut self.out, 2);
             self.out.push_str(&case.name);
             if let Some(payload_ty) = &case.payload {
-                self.out.push_str("(value) => Object.freeze({ ");
+                self.out.push_str("(value) { return Object.freeze({ ");
                 self.out.push_str("__enum: ");
                 self.out.push_str(&json_string(name));
                 self.out.push_str(", __case: ");
                 self.out.push_str(&json_string(&case.name));
                 self.out.push_str(", name: ");
                 self.out.push_str(&json_string(&case.name));
-                self.out.push_str(", value })");
+                self.out.push_str(", value }); }");
                 let _ = payload_ty; // type-only, no runtime effect
             } else {
                 self.out.push_str(": Object.freeze({ ");
@@ -564,14 +711,35 @@ impl<'a> Emitter<'a> {
         Ok(())
     }
 
+    fn collect_methods_for_struct(
+        &self,
+        struct_name: &str,
+        visited: &mut HashSet<String>,
+    ) -> Vec<ReceiverMethod<'a>> {
+        if !visited.insert(struct_name.to_string()) {
+            return Vec::new();
+        }
+        let mut methods = Vec::new();
+        if let Some(meta) = self.structs.get(struct_name) {
+            let embeds = meta.embeds.clone();
+            for embed in embeds {
+                methods.extend(self.collect_methods_for_struct(&embed, visited));
+            }
+        }
+        if let Some(own) = self.receiver_methods.get(struct_name) {
+            methods.extend(own.iter().cloned());
+        }
+        methods
+    }
+
     fn emit_method_registrations(&mut self) -> Result<(), String> {
         let order = self.struct_order.clone();
         for struct_name in order {
-            if let Some(methods) = self.receiver_methods.get(&struct_name).cloned() {
-                for method in methods {
+            let methods = self.collect_methods_for_struct(&struct_name, &mut HashSet::new());
+            for method in methods {
                     write_indent(&mut self.out, 0);
                     self.out.push_str(&struct_name);
-                    self.out.push_str(".impl(");
+                    self.out.push_str(if method.receiver_mutable { ".implMut(" } else { ".impl(" });
                     self.out.push_str(&json_string(&method.name));
                     self.out.push_str(", ");
                     if method.is_async {
@@ -585,6 +753,10 @@ impl<'a> Emitter<'a> {
                         self.out.push_str(param);
                     }
                     self.out.push_str(") {\n");
+                    write_indent(&mut self.out, 2);
+                    self.out.push_str("const ");
+                    self.out.push_str(&method.receiver_name);
+                    self.out.push_str(" = this;\n");
                     for stmt in method.body.iter() {
                         self.emit_stmt(stmt)?;
                         self.out.push('\n');
@@ -592,7 +764,6 @@ impl<'a> Emitter<'a> {
                     write_indent(&mut self.out, 0);
                     self.out.push_str("});\n");
                 }
-            }
         }
         Ok(())
     }
@@ -621,6 +792,15 @@ impl<'a> Emitter<'a> {
     // ------------------------------------------------------------------
     // Expressions
     // ------------------------------------------------------------------
+    fn emit_expr_to_string(&mut self, expr: &Expr<'a>) -> Result<String, String> {
+        let mut tmp = String::new();
+        std::mem::swap(&mut self.out, &mut tmp);
+        let res = self.emit_expr(expr);
+        std::mem::swap(&mut self.out, &mut tmp);
+        res?;
+        Ok(tmp)
+    }
+
     fn emit_expr(&mut self, expr: &Expr<'a>) -> Result<(), String> {
         match expr {
             Expr::Number { value, .. } => {
@@ -658,11 +838,29 @@ impl<'a> Emitter<'a> {
             }
             Expr::Binary { op, left, right, .. } => {
                 if *op == BinOp::Pipe {
-                    self.out.push('(');
-                    self.emit_expr(right)?;
-                    self.out.push_str(")(");
-                    self.emit_expr(left)?;
-                    self.out.push(')');
+                    // Desugar pipe into a call. The left-hand value becomes
+                    // argument 0 unless the right-hand call contains a hole.
+                    match right {
+                        Expr::Call { callee, args, .. }
+                            if !args.iter().any(|a| is_hole_expr(a)) =>
+                        {
+                            self.emit_expr(callee)?;
+                            self.out.push('(');
+                            self.emit_expr(left)?;
+                            for arg in args.iter() {
+                                self.out.push_str(", ");
+                                self.emit_expr(arg)?;
+                            }
+                            self.out.push(')');
+                        }
+                        _ => {
+                            self.out.push('(');
+                            self.emit_expr(right)?;
+                            self.out.push_str(")(");
+                            self.emit_expr(left)?;
+                            self.out.push(')');
+                        }
+                    }
                 } else {
                     self.emit_expr(left)?;
                     self.out.push(' ');
@@ -676,15 +874,53 @@ impl<'a> Emitter<'a> {
                 self.emit_expr(operand)?;
             }
             Expr::Call { callee, args, .. } => {
-                self.emit_expr(callee)?;
-                self.out.push('(');
-                for (i, arg) in args.iter().enumerate() {
-                    if i > 0 {
-                        self.out.push_str(", ");
+                let hole_count = args.iter().filter(|a| is_hole_expr(a)).count();
+                if hole_count > 0 {
+                    // Partial application: emit a wrapper function.
+                    self.out.push('(');
+                    for i in 0..hole_count {
+                        if i > 0 {
+                            self.out.push_str(", ");
+                        }
+                        self.out.push_str("__deka_hole_");
+                        self.out.push_str(&i.to_string());
                     }
-                    self.emit_expr(arg)?;
+                    self.out.push_str(") => ");
+                    self.emit_expr(callee)?;
+                    self.out.push('(');
+                    let mut hole_idx = 0;
+                    for (i, arg) in args.iter().enumerate() {
+                        if i > 0 {
+                            self.out.push_str(", ");
+                        }
+                        if is_hole_expr(arg) {
+                            self.out.push_str("__deka_hole_");
+                            self.out.push_str(&hole_idx.to_string());
+                            hole_idx += 1;
+                        } else {
+                            self.emit_expr(arg)?;
+                        }
+                    }
+                    self.out.push(')');
+                } else if is_builtin_call(callee, "isset") {
+                    // isset(x) returns true when x is a concrete value.
+                    // For Option, None is considered unset.
+                    self.out.push_str("((__deka_isset_arg) => (__deka_isset_arg !== undefined && __deka_isset_arg !== null && !(__deka_isset_arg.__case === \"None\")))(");
+                    if let Some(arg) = args.first() {
+                        self.emit_expr(arg)?;
+                    }
+                    self.out.push(')');
+                } else {
+                    self.emit_expr(callee)?;
+                    self.out.push('(');
+                    for (i, arg) in args.iter().enumerate() {
+                        if i > 0 {
+                            self.out.push_str(", ");
+                        }
+                        self.emit_expr(arg)?;
+                    }
+                    self.out.push(')');
                 }
-                self.out.push(')');
             }
             Expr::FieldAccess { object, field, .. } => {
                 self.emit_expr(object)?;
@@ -738,6 +974,18 @@ impl<'a> Emitter<'a> {
             }
             Expr::Unsafe { source, .. } => {
                 self.emit_unsafe(source)?;
+            }
+            Expr::Ternary {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                self.emit_expr(condition)?;
+                self.out.push_str(" ? ");
+                self.emit_expr(then_branch)?;
+                self.out.push_str(" : ");
+                self.emit_expr(else_branch)?;
             }
             Expr::EnumConstructor {
                 enum_name,
@@ -804,14 +1052,48 @@ impl<'a> Emitter<'a> {
                     if i > 0 {
                         self.out.push_str(", ");
                     }
-                    self.out.push_str(param.name);
+                    self.emit_param(param, !is_async)?;
                 }
                 self.out.push_str(") {\n");
+                if *is_async {
+                    self.emit_default_param_assignments(params, 1)?;
+                }
                 for stmt in body.iter() {
                     self.emit_stmt(stmt)?;
                     self.out.push('\n');
                 }
                 self.out.push('}');
+            }
+        }
+        Ok(())
+    }
+
+    fn emit_param(&mut self, param: &deka_syntax::Param<'a>, emit_default: bool) -> Result<(), String> {
+        self.out.push_str(param.name);
+        if emit_default {
+            if let Some(default) = &param.default_value {
+                self.out.push_str(" = ");
+                self.emit_expr(default)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn emit_default_param_assignments(
+        &mut self,
+        params: &[deka_syntax::Param<'a>],
+        indent: usize,
+    ) -> Result<(), String> {
+        for param in params.iter() {
+            if param.default_value.is_some() {
+                write_indent(&mut self.out, indent);
+                self.out.push_str("if (");
+                self.out.push_str(param.name);
+                self.out.push_str(" === undefined) { ");
+                self.out.push_str(param.name);
+                self.out.push_str(" = ");
+                self.emit_expr(param.default_value.as_ref().unwrap())?;
+                self.out.push_str("; }\n");
             }
         }
         Ok(())
@@ -853,10 +1135,17 @@ impl<'a> Emitter<'a> {
             }
         }
 
-        // Auto-fill optional fields with null.
-        for opt in &meta.optional {
+        // Auto-fill omitted optional fields.
+        for (opt, default) in &meta.optional {
             if !seen.contains(opt) {
-                entries.push(format!("{}: null", opt));
+                let value = match default {
+                    Some(expr) => expr.clone(),
+                    None => {
+                        self.uses_prelude_enums = true;
+                        "None".to_string()
+                    }
+                };
+                entries.push(format!("{}: {}", opt, value));
             }
         }
 
@@ -870,7 +1159,7 @@ impl<'a> Emitter<'a> {
     fn emit_unsafe(&mut self, source: &str) -> Result<(), String> {
         let trimmed = source.trim();
         if trimmed.is_empty() {
-            self.out.push_str("(function() { try { return { __case: \"Ok\", value: undefined }; } catch (err) { return { __case: \"Err\", value: err }; } })()");
+            self.out.push_str("(function() { try { return { __case: \"Ok\", value: undefined }; } catch (err) { return { __case: \"Err\", error: err }; } })()");
             return Ok(());
         }
 
@@ -894,7 +1183,7 @@ impl<'a> Emitter<'a> {
         self.out.push_str(fn_kw);
         self.out.push_str("() { try { return { __case: \"Ok\", value: ");
         self.out.push_str(&awaited);
-        self.out.push_str(" }; } catch (err) { return { __case: \"Err\", value: err }; } })()");
+        self.out.push_str(" }; } catch (err) { return { __case: \"Err\", error: err }; } })()");
 
         Ok(())
     }
@@ -973,8 +1262,19 @@ impl<'a> Emitter<'a> {
                 literal = tmp.out;
                 format!("{} === {}", scrutinee_var, literal)
             }
-            Pattern::Constructor { name, .. } => {
-                format!("{}.__case === \"{}\"", scrutinee_var, name)
+            Pattern::Constructor { name, payload, .. } => {
+                let mut conditions = vec![format!("{}.__case === \"{}\"", scrutinee_var, name)];
+                if let Some(payload) = payload {
+                    if let Pattern::Constructor { name: payload_name, .. } = payload {
+                        let payload_access = if *name == "Err" {
+                            format!("{}.error", scrutinee_var)
+                        } else {
+                            format!("{}.value", scrutinee_var)
+                        };
+                        conditions.push(format!("{}.__case === \"{}\"", payload_access, payload_name));
+                    }
+                }
+                conditions.join(" && ")
             }
             Pattern::Struct { .. } | Pattern::Tuple { .. } => "false".to_string(),
         }
@@ -1001,6 +1301,8 @@ impl<'a> Emitter<'a> {
                 if let Some(payload) = payload {
                     let payload_access = if *name == "None" {
                         scrutinee_var.to_string()
+                    } else if *name == "Err" {
+                        format!("{}.error", scrutinee_var)
                     } else {
                         format!("{}.value", scrutinee_var)
                     };
@@ -1068,7 +1370,7 @@ impl<'a> Emitter<'a> {
         }
 
         let fn_name = if child_values.len() > 1 { "jsxs" } else { "jsx" };
-        self.out.push_str("deka.ui.");
+        self.out.push_str("__deka_ui.");
         self.out.push_str(fn_name);
         self.out.push('(');
         self.out.push_str(&tag_expr);
@@ -1089,9 +1391,9 @@ impl<'a> Emitter<'a> {
         }
 
         let fn_name = if child_values.len() > 1 { "jsxs" } else { "jsx" };
-        self.out.push_str("deka.ui.");
+        self.out.push_str("__deka_ui.");
         self.out.push_str(fn_name);
-        self.out.push_str("(deka.ui.Fragment, {");
+        self.out.push_str("(__deka_ui.Fragment, {");
         if !child_values.is_empty() {
             if child_values.len() == 1 {
                 self.out.push_str("\"children\": ");
@@ -1125,6 +1427,14 @@ fn is_js_identifier(s: &str) -> bool {
         return false;
     }
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+}
+
+fn is_hole_expr(expr: &Expr) -> bool {
+    matches!(expr, Expr::Identifier { name: "_", .. })
+}
+
+fn is_builtin_call<'a>(callee: &Expr<'a>, name: &str) -> bool {
+    matches!(callee, Expr::Identifier { name: n, .. } if *n == name)
 }
 
 fn raw_js_looks_like_statements(raw: &str) -> bool {
@@ -1183,7 +1493,8 @@ fn visit_stmt_exprs(stmt: &Stmt, visitor: &mut dyn FnMut(&Expr)) {
         },
         Stmt::Function { body, .. }
         | Stmt::ReceiverMethod { body, .. }
-        | Stmt::For { body, .. } => {
+        | Stmt::For { body, .. }
+        | Stmt::ForOf { body, .. } => {
             for s in body.iter() {
                 visit_stmt_exprs(s, visitor);
             }
@@ -1193,6 +1504,11 @@ fn visit_stmt_exprs(stmt: &Stmt, visitor: &mut dyn FnMut(&Expr)) {
                 visit_stmt_exprs(s, visitor);
             }
             for s in else_body.iter() {
+                visit_stmt_exprs(s, visitor);
+            }
+        }
+        Stmt::Block { body, .. } => {
+            for s in body.iter() {
                 visit_stmt_exprs(s, visitor);
             }
         }

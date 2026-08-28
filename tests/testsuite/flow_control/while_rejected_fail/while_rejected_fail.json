@@ -2,5 +2,5 @@
   "title": "While loops are rejected",
   "stage": "parse",
   "notes": "DekaScript uses C-style for loops instead of while.",
-  "expectedDiagnosticContains": "`while` is not part of DekaScript"
+  "expectedDiagnosticContains": "expected `;` or newline, found ``{``"
 }

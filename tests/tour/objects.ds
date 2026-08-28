@@ -1,8 +1,5 @@
 import { echo } from "io"
-const person = {
-  name: "Deka",
-  age: 3,
-}
+const person = { name: "Deka", age: 3 }
 echo(person.name)
 echo(person.age)
 

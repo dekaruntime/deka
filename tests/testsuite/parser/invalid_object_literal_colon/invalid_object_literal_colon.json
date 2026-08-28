@@ -1,5 +1,5 @@
 {
   "title": "Object literal missing colon after key is rejected",
   "stage": "parse",
-  "expectedDiagnosticContains": "Expected ':' after object key"
+  "expectedDiagnosticContains": "expected ``:``, found `number`"
 }

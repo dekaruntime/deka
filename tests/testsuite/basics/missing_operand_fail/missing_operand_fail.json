@@ -1,6 +1,6 @@
 {
   "title": "Unary operator with a missing operand is rejected",
   "stage": "parse",
-  "expectedDiagnosticContains": "Syntax error",
+  "expectedDiagnosticContains": "expected expression, found `end of file`",
   "notes": ""
 }

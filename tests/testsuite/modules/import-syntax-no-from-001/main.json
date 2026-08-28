@@ -1,5 +1,5 @@
 {
   "title": "import missing from clause is rejected",
   "stage": "parse",
-  "expectedDiagnosticContains": "Expected 'from' after import specifiers"
+  "expectedDiagnosticContains": "expected ``from``, found ``;``"
 }

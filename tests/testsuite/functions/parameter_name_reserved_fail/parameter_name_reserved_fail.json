@@ -2,5 +2,5 @@
   "title": "Using a reserved keyword as a parameter name fails",
   "stage": "parse",
   "notes": "",
-  "expectedDiagnosticContains": "DekaScript parameters use bare identifiers"
+  "expectedDiagnosticContains": "expected identifier, found ``fn``"
 }

@@ -1,5 +1,5 @@
 {
   "title": "Async function with bare Promise return type fails",
   "stage": "parse",
-  "expectedDiagnosticContains": "Unknown type 'Promise' in DekaScript; classes are not allowed"
+  "expectedDiagnosticContains": "unknown type `Promise`"
 }

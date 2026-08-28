@@ -1,5 +1,5 @@
 {
-  "title": "Template literals are rejected",
-  "stage": "parse",
-  "expectedDiagnosticContains": "Unexpected token"
+  "title": "Template literals with interpolation work",
+  "stage": "run",
+  "notes": "Template literals are valid DekaScript syntax."
 }

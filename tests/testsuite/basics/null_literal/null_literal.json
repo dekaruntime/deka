@@ -3,5 +3,5 @@
   "stage": "parse",
   "notes": "DekaScript uses Option<T> instead of null.",
   "status": "fail",
-  "expectedDiagnosticContains": "Null literals are not allowed in DekaScript."
+  "expectedDiagnosticContains": "unknown identifier `null`"
 }

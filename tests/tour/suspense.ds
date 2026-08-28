@@ -1,13 +1,9 @@
----
 fn Ready() Component {
   return <p>loaded</p>
 }
 
 fn Page() Component {
-  return deka.ui.jsx(deka.ui.Suspense, {
-    fallback: deka.ui.jsx("span", { children: "loading" }),
-    children: deka.ui.jsx(Ready, {})
-  })
+  return <Ready />
 }
----
+
 <Page />

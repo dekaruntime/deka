@@ -1,14 +1,13 @@
----
 interface CardProps {
-  title: string;
+  title: string
   subtitle?: string
 }
 
-fn Card({ title, subtitle }: CardProps) Component {
+fn Card(props: CardProps) Component {
   return <div>
-    <h2>{title}</h2>
-    {isset(subtitle) ? <p>{subtitle}</p> : <></>}
+    <h2>{props.title}</h2>
+    <p>{props.subtitle}</p>
   </div>
 }
----
+
 <Card title="Hello" subtitle="DekaScript" />

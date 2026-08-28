@@ -77,6 +77,8 @@ pub enum Stmt<'a> {
     /// Receiver method: `fn StructName.method<T>(args): Ret { body }`
     ReceiverMethod {
         receiver_type: &'a str,
+        receiver_name: &'a str,
+        receiver_mutable: bool,
         name: &'a str,
         type_params: &'a [TypeParam<'a>],
         params: &'a [Param<'a>],
@@ -107,6 +109,13 @@ pub enum Stmt<'a> {
         value: Type<'a>,
         span: Span,
     },
+    /// `interface Name { field: Type; fn method() Ret }`
+    Interface {
+        name: &'a str,
+        type_params: &'a [TypeParam<'a>],
+        members: &'a [InterfaceMember<'a>],
+        span: Span,
+    },
     /// Expression statement, e.g. `console.log(x);`
     Expr { expr: Expr<'a>, span: Span },
     /// `return expr;`
@@ -118,11 +127,26 @@ pub enum Stmt<'a> {
         else_body: &'a [Stmt<'a>],
         span: Span,
     },
+    /// `{ ... }` block statement introducing a new scope.
+    Block {
+        body: &'a [Stmt<'a>],
+        span: Span,
+    },
+    /// An empty statement: just `;`.
+    Empty { span: Span },
     /// `for (init; cond; step) { ... }`
     For {
         init: Option<ForInit<'a>>,
         condition: Option<Expr<'a>>,
         step: Option<Expr<'a>>,
+        body: &'a [Stmt<'a>],
+        span: Span,
+    },
+    /// `for (const x of iterable) { ... }`
+    ForOf {
+        name: &'a str,
+        is_const: bool,
+        iterable: Expr<'a>,
         body: &'a [Stmt<'a>],
         span: Span,
     },
@@ -190,6 +214,8 @@ pub struct StructField<'a> {
     pub name: &'a str,
     pub ty: Type<'a>,
     pub default_value: Option<Expr<'a>>,
+    /// True for `field?: T` syntax: the field may be omitted in literals.
+    pub optional: bool,
     pub span: Span,
 }
 
@@ -197,6 +223,24 @@ pub struct StructField<'a> {
 pub struct Embed<'a> {
     pub name: &'a str,
     pub span: Span,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub enum InterfaceMember<'a> {
+    Field {
+        name: &'a str,
+        ty: Type<'a>,
+        mutable: bool,
+        optional: bool,
+        span: Span,
+    },
+    Method {
+        name: &'a str,
+        params: &'a [Param<'a>],
+        return_type: Option<Type<'a>>,
+        mutable: bool,
+        span: Span,
+    },
 }
 
 /// Lowering target for a receiver-method call that has been resolved by the
@@ -334,6 +378,12 @@ pub enum Expr<'a> {
         source: &'a str,
         span: Span,
     },
+    Ternary {
+        condition: &'a Expr<'a>,
+        then_branch: &'a Expr<'a>,
+        else_branch: &'a Expr<'a>,
+        span: Span,
+    },
     Await {
         expr: &'a Expr<'a>,
         span: Span,
@@ -419,6 +469,7 @@ pub enum BinOp {
 pub enum UnOp {
     Neg,
     Not,
+    Plus,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -525,6 +576,7 @@ impl<'a> Expr<'a> {
             Expr::EnumConstructor { span, .. } => *span,
             Expr::Match { span, .. } => *span,
             Expr::Unsafe { span, .. } => *span,
+            Expr::Ternary { span, .. } => *span,
             Expr::Await { span, .. } => *span,
             Expr::JsxElement { span, .. } => *span,
             Expr::JsxFragment { span, .. } => *span,

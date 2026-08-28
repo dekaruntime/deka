@@ -1,6 +1,6 @@
 {
   "title": "Property access on null fails",
   "stage": "parse",
-  "expectedDiagnosticContains": "Null literals are not allowed in DekaScript.",
+  "expectedDiagnosticContains": "unknown identifier `null`",
   "notes": "DekaScript objects may be null; property access throws."
 }

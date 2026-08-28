@@ -1,5 +1,8 @@
 {
   "title": "Fragment with undefined child fails",
   "stage": "run",
-  "notes": "A fragment whose children are an undefined variable should fail at runtime."
+  "notes": "A fragment whose children are an undefined variable should fail at runtime.",
+  "hosts": [
+    "browser"
+  ]
 }

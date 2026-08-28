@@ -1,5 +1,5 @@
 {
   "title": "Component returning array fails",
   "stage": "parse",
-  "expectedDiagnosticContains": "Return type mismatch: expected object, got array"
+  "expectedDiagnosticContains": "unknown type `object`"
 }

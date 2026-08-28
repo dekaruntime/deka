@@ -1,6 +1,6 @@
 {
   "title": "Array literal with string elements passed to number array parameter fails",
   "stage": "parse",
-  "expectedDiagnosticContains": "Argument 1 type mismatch: expected number, got array<string>",
+  "expectedDiagnosticContains": "expected argument type `number`, found type `Array<string>`",
   "notes": "Array literal element types are checked against the declared parameter type."
 }

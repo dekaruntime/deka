@@ -29,7 +29,7 @@ impl<'a> Parser<'a> {
             if next_kind == TokenKind::Dot {
                 self.skip_newlines();
                 self.advance(); // `.`
-                let field = self.expect_identifier()?;
+                let field = self.expect_field_name()?;
                 let span = self.span_from(start, start_byte);
                 left = Expr::FieldAccess {
                     object: alloc(self.arena, left),
@@ -139,6 +139,26 @@ impl<'a> Parser<'a> {
                 }
             }
 
+            // Ternary conditional: `cond ? then : else`. Low precedence,
+            // right-associative, and binds looser than `||`.
+            if next_kind == TokenKind::Question && min_prec <= 2 {
+                self.skip_newlines();
+                self.advance(); // `?`
+                let then_branch = alloc(self.arena, self.parse_expr(2)?);
+                self.skip_newlines();
+                self.expect(TokenKind::Colon)?;
+                self.skip_newlines();
+                let else_branch = alloc(self.arena, self.parse_expr(2)?);
+                let span = self.span_from(start, start_byte);
+                left = Expr::Ternary {
+                    condition: alloc(self.arena, left),
+                    then_branch,
+                    else_branch,
+                    span,
+                };
+                continue;
+            }
+
             let (lbp, rbp, op) = match infix_info(next_kind) {
                 Some(info) => info,
                 None => break,
@@ -174,7 +194,8 @@ impl<'a> Parser<'a> {
         match self.current_kind() {
             TokenKind::Number => {
                 let text = self.current_text();
-                let value = match text.parse::<f64>() {
+                let without_underscores: String = text.chars().filter(|&c| c != '_').collect();
+                let value = match without_underscores.parse::<f64>() {
                     Ok(v) => v,
                     Err(_) => {
                         self.error(format!("invalid number literal `{}`", text));
@@ -188,7 +209,9 @@ impl<'a> Parser<'a> {
                 })
             }
             TokenKind::String => {
-                let value = self.bump_str(self.current_text());
+                let text = self.current_text();
+                let unescaped = unescape_string(text);
+                let value = self.bump_str(&unescaped);
                 self.advance();
                 Some(Expr::String {
                     value,
@@ -245,6 +268,15 @@ impl<'a> Parser<'a> {
                 let operand = self.parse_expr(12)?;
                 Some(Expr::Unary {
                     op: UnOp::Neg,
+                    operand: alloc(self.arena, operand),
+                    span: self.span_from(start, start_byte),
+                })
+            }
+            TokenKind::Plus => {
+                self.advance();
+                let operand = self.parse_expr(12)?;
+                Some(Expr::Unary {
+                    op: UnOp::Plus,
                     operand: alloc(self.arena, operand),
                     span: self.span_from(start, start_byte),
                 })
@@ -562,4 +594,33 @@ impl<'a> Parser<'a> {
 
         Some(alloc_slice(self.arena, args))
     }
+}
+
+/// Unescape a string literal body (without surrounding quotes).
+/// Recognizes the standard C-style escapes used in DekaScript.
+fn unescape_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('t') => out.push('\t'),
+            Some('\\') => out.push('\\'),
+            Some('"') => out.push('"'),
+            Some('\'') => out.push('\''),
+            Some('0') => out.push('\0'),
+            Some(c) => {
+                // Unknown escape: keep both characters to preserve source meaning.
+                out.push('\\');
+                out.push(c);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
 }

@@ -1,5 +1,5 @@
 {
   "title": "Accessing property of array find undefined result fails",
-  "stage": "run",
+  "stage": "parse",
   "notes": ""
 }

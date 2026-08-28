@@ -1,5 +1,5 @@
 {
   "title": "Anonymous top-level function declaration fails at runtime",
-  "stage": "run",
+  "stage": "parse",
   "notes": ""
 }

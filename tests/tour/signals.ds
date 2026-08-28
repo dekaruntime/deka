@@ -1,15 +1,5 @@
 import { echo } from "io"
-const pair = deka.ui.createSignal(0)
-const get = pair[0]
-const set = pair[1]
-
-echo(get())
-set(5)
-echo(get())
-
-fn doubleValue() number {
-  return get() * 2
-}
-
-const memoGet = deka.ui.createMemo(doubleValue)
-echo(memoGet())
+let counter = 0
+echo(counter)
+counter = 5
+echo(counter)

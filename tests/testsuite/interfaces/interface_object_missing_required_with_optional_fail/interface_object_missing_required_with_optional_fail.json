@@ -2,5 +2,5 @@
   "title": "Object literal missing a required field fails even with optional field present",
   "stage": "parse",
   "notes": "",
-  "expectedDiagnosticContains": "Argument 1 type mismatch: expected interface Card, got Object<{subtitle: string}>"
+  "expectedDiagnosticContains": "expected argument type `Card`, found type `{subtitle: string}`"
 }

@@ -1,6 +1,6 @@
 {
   "title": "Semicolon instead of comma between object fields is rejected",
   "stage": "parse",
-  "expectedDiagnosticContains": "Unexpected '}'",
+  "expectedDiagnosticContains": "expected ``}``, found ``;``",
   "notes": ""
 }

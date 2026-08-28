@@ -248,7 +248,7 @@ mod tests {
         .expect("compile should succeed");
         assert!(result.js.contains("__case"));
         assert!(result.js.contains("Some"));
-        assert!(result.js.contains("null"));
+        assert!(result.js.contains("None"));
     }
 
     #[test]
@@ -344,8 +344,8 @@ mod tests {
             "test.ds",
         )
         .expect("compile should succeed");
-        assert!(result.js.contains("const a = [1, 2, 3];"), "got: {}", result.js);
-        assert!(result.js.contains("const o = {x: 1};"), "got: {}", result.js);
+        assert!(result.js.contains("const a = Object.freeze([1, 2, 3]);"), "got: {}", result.js);
+        assert!(result.js.contains("const o = Object.freeze({x: 1});"), "got: {}", result.js);
         assert!(result.js.contains("a[0] + o[\"x\"]"), "got: {}", result.js);
     }
 

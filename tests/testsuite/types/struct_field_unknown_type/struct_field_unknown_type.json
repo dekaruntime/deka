@@ -1,6 +1,6 @@
 {
   "title": "Unknown type name in struct field fails",
   "stage": "parse",
-  "expectedDiagnosticContains": "Unknown type 'NotAType' in DekaScript; classes are not allowed",
+  "expectedDiagnosticContains": "unknown type `NotAType`",
   "notes": "Struct field types must refer to defined types."
 }

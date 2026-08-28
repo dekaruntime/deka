@@ -1,6 +1,6 @@
 //! Statement parsing.
 
-use crate::ast::{alloc_slice, EnumCase, ForInit, Param, Pos, Program, StructField, Stmt, TypeParam};
+use crate::ast::{alloc, alloc_slice, EnumCase, ForInit, InterfaceMember, Param, Pos, Program, StructField, Stmt, Type, TypeParam};
 use crate::lexer::TokenKind;
 
 use super::util::token_name;
@@ -38,6 +38,12 @@ impl<'a> Parser<'a> {
         self.skip_newlines();
         let (start, start_byte) = self.span_start();
 
+        if self.eat(TokenKind::Semicolon) {
+            return Some(Stmt::Empty {
+                span: self.span_from(start, start_byte),
+            });
+        }
+
         match self.current_kind() {
             TokenKind::Const | TokenKind::Let => {
                 let is_const = self.current_kind() == TokenKind::Const;
@@ -71,10 +77,20 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            TokenKind::Fn => self.parse_fn_statement(start, start_byte),
+            TokenKind::Fn => {
+                if in_block {
+                    self.error("function declarations are only allowed at the top level in DekaScript");
+                    return None;
+                }
+                self.parse_fn_statement(start, start_byte)
+            }
 
             TokenKind::Async => {
                 if self.tokens.get(self.pos + 1).map(|t| t.kind) == Some(TokenKind::Fn) {
+                    if in_block {
+                        self.error("function declarations are only allowed at the top level in DekaScript");
+                        return None;
+                    }
                     self.parse_fn_statement(start, start_byte)
                 } else {
                     self.error("expected `fn` after `async`");
@@ -85,6 +101,14 @@ impl<'a> Parser<'a> {
             TokenKind::For => self.parse_for_statement(start, start_byte),
 
             TokenKind::If => self.parse_if_statement(start, start_byte),
+
+            TokenKind::LBrace => {
+                let body = self.parse_block()?;
+                Some(Stmt::Block {
+                    body,
+                    span: self.span_from(start, start_byte),
+                })
+            }
 
             TokenKind::Break => {
                 self.advance();
@@ -102,9 +126,29 @@ impl<'a> Parser<'a> {
                 })
             }
 
-            TokenKind::Struct => self.parse_struct_statement(start, start_byte),
+            TokenKind::Struct => {
+                if in_block {
+                    self.error("struct declarations are only allowed at the top level in DekaScript");
+                    return None;
+                }
+                self.parse_struct_statement(start, start_byte)
+            }
 
-            TokenKind::Enum => self.parse_enum_statement(start, start_byte),
+            TokenKind::Enum => {
+                if in_block {
+                    self.error("enum declarations are only allowed at the top level in DekaScript");
+                    return None;
+                }
+                self.parse_enum_statement(start, start_byte)
+            }
+
+            TokenKind::Interface => {
+                if in_block {
+                    self.error("interface declarations are only allowed at the top level in DekaScript");
+                    return None;
+                }
+                self.parse_interface_statement(start, start_byte)
+            }
 
             TokenKind::Type => self.parse_type_alias_statement(start, start_byte),
 
@@ -145,7 +189,8 @@ impl<'a> Parser<'a> {
         // Receiver method: `fn (p Point) distance<T>(...): Ret { ... }`
         if self.at(TokenKind::LParen) {
             self.advance(); // `(`
-            let _receiver_name = self.expect_identifier()?;
+            let receiver_name = self.expect_identifier()?;
+            let receiver_mutable = self.eat(TokenKind::Mut);
             let receiver_type = self.expect_identifier()?;
             self.expect(TokenKind::RParen)?;
 
@@ -173,6 +218,8 @@ impl<'a> Parser<'a> {
 
             return Some(Stmt::ReceiverMethod {
                 receiver_type,
+                receiver_name,
+                receiver_mutable,
                 name,
                 type_params,
                 params,
@@ -220,20 +267,56 @@ impl<'a> Parser<'a> {
         self.advance(); // `for`
         self.expect(TokenKind::LParen)?;
 
+        // for-of: `for (const x of iterable) { ... }` or `for (let x of iterable) { ... }`
+        if self.at(TokenKind::Const) || self.at(TokenKind::Let) {
+            let is_const = self.at(TokenKind::Const);
+            self.advance();
+            let name = self.expect_identifier()?;
+            if self.eat(TokenKind::Of) {
+                let iterable = self.parse_expression()?;
+                self.expect(TokenKind::RParen)?;
+                let body = self.parse_block()?;
+                return Some(Stmt::ForOf {
+                    name,
+                    is_const,
+                    iterable,
+                    body,
+                    span: self.span_from(start, start_byte),
+                });
+            }
+            // Otherwise fall back to C-style for with const/let init.
+            self.expect(TokenKind::Eq)?;
+            let value = self.parse_expression()?;
+            let init = if is_const {
+                ForInit::Const { name, value }
+            } else {
+                ForInit::Let { name, value }
+            };
+            self.expect(TokenKind::Semicolon)?;
+            let condition = if self.at(TokenKind::Semicolon) {
+                None
+            } else {
+                Some(self.parse_expression()?)
+            };
+            self.expect(TokenKind::Semicolon)?;
+            let step = if self.at(TokenKind::RParen) {
+                None
+            } else {
+                Some(self.parse_expression()?)
+            };
+            self.expect(TokenKind::RParen)?;
+            let body = self.parse_block()?;
+            return Some(Stmt::For {
+                init: Some(init),
+                condition,
+                step,
+                body,
+                span: self.span_from(start, start_byte),
+            });
+        }
+
         let init = if self.at(TokenKind::Semicolon) {
             None
-        } else if self.at(TokenKind::Const) {
-            self.advance();
-            let name = self.expect_identifier()?;
-            self.expect(TokenKind::Eq)?;
-            let value = self.parse_expression()?;
-            Some(ForInit::Const { name, value })
-        } else if self.at(TokenKind::Let) {
-            self.advance();
-            let name = self.expect_identifier()?;
-            self.expect(TokenKind::Eq)?;
-            let value = self.parse_expression()?;
-            Some(ForInit::Let { name, value })
         } else {
             Some(ForInit::Expr(self.parse_expression()?))
         };
@@ -311,11 +394,26 @@ impl<'a> Parser<'a> {
             let (field_start, field_start_byte) = self.span_start();
             let field_name = self.expect_identifier()?;
 
-            // If the identifier is followed by `:`, this is a regular field.
+            // If the identifier is followed by `:` or `?:`, this is a regular field.
             // Otherwise it names an embedded struct (e.g. `struct Outer { Inner }`).
-            if self.at(TokenKind::Colon) {
-                self.advance();
+            if self.at(TokenKind::Colon) || self.at(TokenKind::Question) {
+                let is_optional = if self.eat(TokenKind::Question) {
+                    self.expect(TokenKind::Colon)?;
+                    true
+                } else {
+                    self.expect(TokenKind::Colon)?;
+                    false
+                };
                 let field_type = self.parse_type()?;
+                let field_span = field_type.span();
+                let field_type = if is_optional {
+                    Type::Option {
+                        inner: alloc(self.arena, field_type),
+                        span: field_span,
+                    }
+                } else {
+                    field_type
+                };
                 let default_value = if self.eat(TokenKind::Eq) {
                     Some(self.parse_expression()?)
                 } else {
@@ -325,6 +423,7 @@ impl<'a> Parser<'a> {
                     name: field_name,
                     ty: field_type,
                     default_value,
+                    optional: is_optional,
                     span: self.span_from(field_start, field_start_byte),
                 });
             } else {
@@ -334,9 +433,29 @@ impl<'a> Parser<'a> {
                 });
             }
 
-            if !self.eat(TokenKind::Comma) {
+            if self.at(TokenKind::RBrace) {
                 break;
             }
+            if self.at(TokenKind::Comma) {
+                self.error("Missing semicolon: struct fields must be separated by ';' or a newline");
+                return None;
+            }
+            if self.eat(TokenKind::Semicolon) {
+                self.skip_newlines();
+                if self.at(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            if self.at(TokenKind::Newline) {
+                self.skip_newlines();
+                if self.at(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            self.error("expected `;` or newline between struct fields");
+            break;
         }
 
         self.skip_newlines();
@@ -379,9 +498,38 @@ impl<'a> Parser<'a> {
                 payload,
                 span: self.span_from(case_start, case_start_byte),
             });
-            if !self.eat(TokenKind::Comma) {
+
+            if self.at(TokenKind::RBrace) {
                 break;
             }
+            if self.eat(TokenKind::Comma) {
+                self.skip_newlines();
+                if self.at(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            if self.eat(TokenKind::Semicolon) {
+                self.skip_newlines();
+                if self.at(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            if self.at(TokenKind::Newline) {
+                self.skip_newlines();
+                if self.at(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            // Allow space-separated enum cases for v1 parity:
+            // enum Color { Red Green Blue }
+            if self.at(TokenKind::Identifier) {
+                continue;
+            }
+            self.error("expected `,` or newline between enum cases");
+            break;
         }
 
         self.skip_newlines();
@@ -391,6 +539,107 @@ impl<'a> Parser<'a> {
             name,
             type_params,
             cases: alloc_slice(self.arena, cases),
+            span: self.span_from(start, start_byte),
+        })
+    }
+
+    fn parse_interface_statement(&mut self, start: Pos, start_byte: usize) -> Option<Stmt<'a>> {
+        self.advance(); // `interface`
+
+        let name = self.expect_identifier()?;
+        let type_params = if self.at(TokenKind::Lt) {
+            self.parse_type_params()?
+        } else {
+            &[]
+        };
+
+        self.expect(TokenKind::LBrace)?;
+        let mut members = Vec::new();
+
+        while !self.at(TokenKind::RBrace) && !self.at_end() {
+            self.skip_newlines();
+            if self.at(TokenKind::RBrace) {
+                break;
+            }
+
+            let (member_start, member_start_byte) = self.span_start();
+
+            // Optional `mut` for mutable fields.
+            let mutable = self.eat(TokenKind::Mut);
+
+            if self.at(TokenKind::Fn) {
+                // Method signature: fn name(params) Ret
+                self.advance(); // `fn`
+                let method_name = self.expect_identifier()?;
+                self.expect(TokenKind::LParen)?;
+                let params = self.parse_params()?;
+                self.expect(TokenKind::RParen)?;
+                let return_type = if !self.at(TokenKind::Semicolon)
+                    && !self.at(TokenKind::Newline)
+                    && !self.at(TokenKind::RBrace)
+                    && !self.at(TokenKind::Comma)
+                {
+                    Some(self.parse_type()?)
+                } else {
+                    None
+                };
+                members.push(InterfaceMember::Method {
+                    name: method_name,
+                    params: alloc_slice(self.arena, params.to_vec()),
+                    return_type,
+                    mutable,
+                    span: self.span_from(member_start, member_start_byte),
+                });
+            } else {
+                // Field declaration.
+                let field_name = self.expect_identifier()?;
+                let optional = self.eat(TokenKind::Question);
+                self.expect(TokenKind::Colon)?;
+                let field_type = self.parse_type()?;
+                members.push(InterfaceMember::Field {
+                    name: field_name,
+                    ty: field_type,
+                    mutable,
+                    optional,
+                    span: self.span_from(member_start, member_start_byte),
+                });
+            }
+
+            if self.at(TokenKind::RBrace) {
+                break;
+            }
+            if self.eat(TokenKind::Comma) {
+                self.skip_newlines();
+                if self.at(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            if self.eat(TokenKind::Semicolon) {
+                self.skip_newlines();
+                if self.at(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            if self.at(TokenKind::Newline) {
+                self.skip_newlines();
+                if self.at(TokenKind::RBrace) {
+                    break;
+                }
+                continue;
+            }
+            self.error("expected `,` or newline between interface members");
+            break;
+        }
+
+        self.skip_newlines();
+        self.expect(TokenKind::RBrace)?;
+
+        Some(Stmt::Interface {
+            name,
+            type_params,
+            members: alloc_slice(self.arena, members),
             span: self.span_from(start, start_byte),
         })
     }

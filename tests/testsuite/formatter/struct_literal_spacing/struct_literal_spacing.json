@@ -2,5 +2,5 @@
   "title": "Missing comma in struct literal",
   "stage": "parse",
   "notes": "Struct literal fields must be separated by commas; omitting one is a parse error.",
-  "expectedDiagnosticContains": "Missing semicolon"
+  "expectedDiagnosticContains": "expected ``}``, found `identifier`"
 }

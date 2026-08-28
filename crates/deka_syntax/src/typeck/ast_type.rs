@@ -20,7 +20,9 @@ impl<'a> Checker<'a> {
     ) -> Type<'a> {
         match ty {
             ast::Type::Named { name, span } => match *name {
-                "number" | "string" | "boolean" | "never" => Type::Named { name },
+                "number" | "string" | "boolean" | "never" | "void" | "bytes" | "Component" => {
+                    Type::Named { name }
+                }
                 "Option" => {
                     self.error_span(
                         *span,
@@ -36,6 +38,8 @@ impl<'a> Checker<'a> {
                         Type::Struct { name }
                     } else if self.enums.contains_key(name) {
                         Type::Named { name }
+                    } else if self.interfaces.contains_key(name) {
+                        Type::Interface { name }
                     } else if let Some(alias) = self.aliases.get(name).cloned() {
                         if !seen.insert(name) {
                             self.error_span(*span, format!("cyclic type alias `{name}`"));
@@ -71,6 +75,15 @@ impl<'a> Checker<'a> {
                         self.error_span(*span, "Promise requires exactly one type argument");
                         Type::Error
                     }
+                } else if base == &"Array" {
+                    if args.len() == 1 {
+                        Type::Array {
+                            elem: Box::new(self.resolve_ast_type_rec(&args[0], seen)),
+                        }
+                    } else {
+                        self.error_span(*span, "Array requires exactly one type argument");
+                        Type::Error
+                    }
                 } else if base == &"Result" {
                     if args.len() == 2 {
                         Type::Generic {
@@ -104,6 +117,7 @@ impl<'a> Checker<'a> {
                     .map(|p| self.resolve_ast_type_rec(p, seen))
                     .collect(),
                 ret: Box::new(self.resolve_ast_type_rec(ret, seen)),
+                optional: 0,
             },
 
             ast::Type::Option { inner, .. } => Type::Option {

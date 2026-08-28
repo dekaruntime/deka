@@ -1,6 +1,6 @@
 {
   "title": "typeof operator is not supported",
   "stage": "parse",
-  "expectedDiagnosticContains": "Missing semicolon",
+  "expectedDiagnosticContains": "expected ``)``, found `identifier`",
   "notes": ""
 }

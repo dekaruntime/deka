@@ -26,15 +26,15 @@ use runtime_core::modules::{resolve_modules_dir, MODULES_DIR};
 
 /// Runtime compiler version selector.
 ///
-/// Reads `DEKA_COMPILER` from the environment. Anything other than `v2` selects
-/// the legacy v1 compiler.
+/// Reads `DEKA_COMPILER` from the environment. Anything other than `v1` selects
+/// the v2 compiler.
 fn selected_compiler_version() -> deka_compile::CompilerVersion {
     if let Ok(value) = std::env::var("DEKA_COMPILER") {
-        if value.trim().eq_ignore_ascii_case("v2") {
-            return deka_compile::CompilerVersion::V2;
+        if value.trim().eq_ignore_ascii_case("v1") {
+            return deka_compile::CompilerVersion::V1;
         }
     }
-    deka_compile::CompilerVersion::V1
+    deka_compile::CompilerVersion::V2
 }
 
 /// Compile a single `.ds` source file to JavaScript using the selected compiler.
@@ -120,6 +120,7 @@ impl PhpxEsmLoader {
 
         let v2_modules = if !entry_is_app_directory
             && selected_compiler_version() == deka_compile::CompilerVersion::V2
+            && entry_module_path.is_file()
         {
             let loader = deka_compile::module_graph::FsModuleLoader::new(project_root.clone());
             match deka_compile::module_graph::compile_module_graph(&entry_module_path, &loader) {
@@ -578,7 +579,6 @@ fn is_stdlib_module_spec(spec: &str) -> bool {
                 | "auth"
                 | "db"
                 | "time"
-                | "test"
                 | "io"
         )
 }

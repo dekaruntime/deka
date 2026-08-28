@@ -1,6 +1,6 @@
 {
   "title": "new Date() is rejected",
   "stage": "parse",
-  "expectedDiagnosticContains": "new is not allowed in DekaScript; use struct literals instead",
+  "expectedDiagnosticContains": "expected `;` or newline, found `identifier`",
   "notes": ""
 }

@@ -2,5 +2,5 @@
   "title": "Anonymous enum is invalid",
   "stage": "parse",
   "notes": "Enums must have a name; an anonymous enum body is a parse error.",
-  "expectedDiagnosticContains": "Expected '{'"
+  "expectedDiagnosticContains": "expected ``{``, found `identifier`"
 }

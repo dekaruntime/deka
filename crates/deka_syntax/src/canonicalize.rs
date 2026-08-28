@@ -195,6 +195,8 @@ fn transform_stmt<'a>(
         }
         Stmt::ReceiverMethod {
             receiver_type,
+            receiver_name,
+            receiver_mutable,
             name,
             type_params,
             params,
@@ -209,6 +211,8 @@ fn transform_stmt<'a>(
                 .collect();
             Stmt::ReceiverMethod {
                 receiver_type,
+                receiver_name,
+                receiver_mutable: *receiver_mutable,
                 name,
                 type_params,
                 params,
@@ -234,6 +238,7 @@ fn transform_stmt<'a>(
                         .default_value
                         .as_ref()
                         .map(|v| transform_expr(v, arena, enums).clone()),
+                    optional: f.optional,
                     span: f.span,
                 })
                 .collect();
@@ -245,7 +250,10 @@ fn transform_stmt<'a>(
                 span: *span,
             }
         }
-        Stmt::Enum { .. } | Stmt::TypeAlias { .. } => return stmt.clone(),
+        Stmt::Empty { .. }
+        | Stmt::Enum { .. }
+        | Stmt::TypeAlias { .. }
+        | Stmt::Interface { .. } => return stmt.clone(),
         Stmt::Break { .. } | Stmt::Continue { .. } => return stmt.clone(),
         Stmt::Expr { expr, span } => Stmt::Expr {
             expr: transform_expr(expr, arena, enums).clone(),
@@ -273,6 +281,35 @@ fn transform_stmt<'a>(
                 condition: transform_expr(condition, arena, enums).clone(),
                 then_body: ast::alloc_slice(arena, new_then),
                 else_body: ast::alloc_slice(arena, new_else),
+                span: *span,
+            }
+        }
+        Stmt::Block { body, span } => {
+            let new_body: Vec<Stmt<'a>> = body
+                .iter()
+                .map(|s| transform_stmt(s, arena, enums))
+                .collect();
+            Stmt::Block {
+                body: ast::alloc_slice(arena, new_body),
+                span: *span,
+            }
+        }
+        Stmt::ForOf {
+            name,
+            is_const,
+            iterable,
+            body,
+            span,
+        } => {
+            let new_body: Vec<Stmt<'a>> = body
+                .iter()
+                .map(|s| transform_stmt(s, arena, enums))
+                .collect();
+            Stmt::ForOf {
+                name,
+                is_const: *is_const,
+                iterable: transform_expr(iterable, arena, enums).clone(),
+                body: ast::alloc_slice(arena, new_body),
                 span: *span,
             }
         }
@@ -391,6 +428,17 @@ fn transform_expr<'a>(
         },
         Expr::Unsafe { source, span } => Expr::Unsafe {
             source,
+            span: *span,
+        },
+        Expr::Ternary {
+            condition,
+            then_branch,
+            else_branch,
+            span,
+        } => Expr::Ternary {
+            condition: transform_expr(condition, arena, enums),
+            then_branch: transform_expr(then_branch, arena, enums),
+            else_branch: transform_expr(else_branch, arena, enums),
             span: *span,
         },
         Expr::Await { expr, span } => Expr::Await {
@@ -727,6 +775,8 @@ fn lower_stmt<'a>(
         }
         Stmt::ReceiverMethod {
             receiver_type,
+            receiver_name,
+            receiver_mutable,
             name,
             type_params,
             params,
@@ -741,6 +791,8 @@ fn lower_stmt<'a>(
                 .collect();
             Stmt::ReceiverMethod {
                 receiver_type,
+                receiver_name,
+                receiver_mutable: *receiver_mutable,
                 name,
                 type_params,
                 params,
@@ -766,6 +818,7 @@ fn lower_stmt<'a>(
                         .default_value
                         .as_ref()
                         .map(|v| lower_expr(v, arena, method_calls).clone()),
+                    optional: f.optional,
                     span: f.span,
                 })
                 .collect();
@@ -777,7 +830,10 @@ fn lower_stmt<'a>(
                 span: *span,
             }
         }
-        Stmt::Enum { .. } | Stmt::TypeAlias { .. } => stmt.clone(),
+        Stmt::Empty { .. }
+        | Stmt::Enum { .. }
+        | Stmt::TypeAlias { .. }
+        | Stmt::Interface { .. } => stmt.clone(),
         Stmt::Break { .. } | Stmt::Continue { .. } => stmt.clone(),
         Stmt::Expr { expr, span } => Stmt::Expr {
             expr: lower_expr(expr, arena, method_calls).clone(),
@@ -807,6 +863,35 @@ fn lower_stmt<'a>(
                 condition: lower_expr(condition, arena, method_calls).clone(),
                 then_body: ast::alloc_slice(arena, new_then),
                 else_body: ast::alloc_slice(arena, new_else),
+                span: *span,
+            }
+        }
+        Stmt::Block { body, span } => {
+            let new_body: Vec<Stmt<'a>> = body
+                .iter()
+                .map(|s| lower_stmt(s, arena, method_calls))
+                .collect();
+            Stmt::Block {
+                body: ast::alloc_slice(arena, new_body),
+                span: *span,
+            }
+        }
+        Stmt::ForOf {
+            name,
+            is_const,
+            iterable,
+            body,
+            span,
+        } => {
+            let new_body: Vec<Stmt<'a>> = body
+                .iter()
+                .map(|s| lower_stmt(s, arena, method_calls))
+                .collect();
+            Stmt::ForOf {
+                name,
+                is_const: *is_const,
+                iterable: lower_expr(iterable, arena, method_calls).clone(),
+                body: ast::alloc_slice(arena, new_body),
                 span: *span,
             }
         }
@@ -959,6 +1044,17 @@ fn lower_expr<'a>(
         },
         Expr::Unsafe { source, span } => Expr::Unsafe {
             source,
+            span: *span,
+        },
+        Expr::Ternary {
+            condition,
+            then_branch,
+            else_branch,
+            span,
+        } => Expr::Ternary {
+            condition: lower_expr(condition, arena, method_calls),
+            then_branch: lower_expr(then_branch, arena, method_calls),
+            else_branch: lower_expr(else_branch, arena, method_calls),
             span: *span,
         },
         Expr::Await { expr, span } => Expr::Await {

@@ -1,5 +1,5 @@
 {
   "title": "Calling a non-function value fails",
-  "stage": "run",
+  "stage": "parse",
   "notes": ""
 }

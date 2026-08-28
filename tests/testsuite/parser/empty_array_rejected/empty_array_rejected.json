@@ -1,5 +1,5 @@
 {
   "title": "Empty array literal is rejected",
   "stage": "parse",
-  "expectedDiagnosticContains": "Expected '='"
+  "expectedDiagnosticContains": "expected ``=``, found ``[``"
 }

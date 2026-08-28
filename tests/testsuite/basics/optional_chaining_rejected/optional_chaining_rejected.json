@@ -2,5 +2,5 @@
   "title": "Optional chaining is rejected",
   "stage": "parse",
   "notes": "",
-  "expectedDiagnosticContains": "Syntax error"
+  "expectedDiagnosticContains": "expected expression, found ``.``"
 }

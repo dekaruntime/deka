@@ -1,5 +1,5 @@
 {
   "title": "Struct initializer missing comma between fields",
   "stage": "parse",
-  "expectedDiagnosticContains": "Missing semicolon"
+  "expectedDiagnosticContains": "expected `;` or newline between struct fields"
 }

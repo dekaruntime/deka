@@ -1,6 +1,6 @@
 {
   "title": "Nested object literal field with wrong type fails",
   "stage": "parse",
-  "expectedDiagnosticContains": "Argument 1 type mismatch: expected interface Line, got Object<{end: Object<{x: number, y: number}>, start: Object<{x: number, y: string}>}>",
+  "expectedDiagnosticContains": "expected argument type `Line`, found type `{start: {x: number, y: string}, end: {x: number, y: number}}`",
   "notes": "Type checking recurses into nested object literals for interface compatibility."
 }

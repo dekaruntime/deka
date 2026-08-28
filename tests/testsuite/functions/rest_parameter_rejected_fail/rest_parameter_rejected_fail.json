@@ -2,5 +2,5 @@
   "title": "Rest parameters are rejected",
   "stage": "parse",
   "notes": "",
-  "expectedDiagnosticContains": "Destructuring parameters require at least one variable binding"
+  "expectedDiagnosticContains": "expected identifier, found ``...``"
 }

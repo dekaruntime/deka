@@ -1,5 +1,5 @@
 {
   "title": "Async method without Promise<T> return type fails",
   "stage": "parse",
-  "expectedDiagnosticContains": "Async function must declare Promise<T> return type, got number"
+  "expectedDiagnosticContains": "async function must return Promise<T>, found type `number`"
 }

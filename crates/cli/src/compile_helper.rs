@@ -32,22 +32,22 @@ pub struct CompileReport {
 ///
 /// The `--compiler <v1|v2>` command-line parameter takes precedence; if it is
 /// absent, the `DEKA_COMPILER` environment variable is consulted.  Anything
-/// other than `v2` defaults to the legacy v1 compiler.
+/// other than `v1` defaults to the v2 compiler.
 pub fn compiler_version_from_context(context: &Context) -> CompilerVersion {
     if let Some(value) = context.args.params.get("--compiler") {
-        if value.trim().eq_ignore_ascii_case("v2") {
-            return CompilerVersion::V2;
+        if value.trim().eq_ignore_ascii_case("v1") {
+            return CompilerVersion::V1;
         }
-        return CompilerVersion::V1;
+        return CompilerVersion::V2;
     }
 
     if let Ok(value) = std::env::var("DEKA_COMPILER") {
-        if value.trim().eq_ignore_ascii_case("v2") {
-            return CompilerVersion::V2;
+        if value.trim().eq_ignore_ascii_case("v1") {
+            return CompilerVersion::V1;
         }
     }
 
-    CompilerVersion::V1
+    CompilerVersion::V2
 }
 
 /// Compile a DekaScript/PHPX source and return the emitted JS plus warnings.

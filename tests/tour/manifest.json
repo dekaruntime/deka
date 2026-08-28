@@ -13,7 +13,7 @@
     "id": "immutable-const-diagnostic",
     "title": "immutable const diagnostic",
     "expectCompile": false,
-    "expectError": "cannot assign to immutable DekaScript const `answer`"
+    "expectError": "cannot assign to immutable variable `answer`"
   },
   {
     "id": "typed-functions",
@@ -24,7 +24,7 @@
     "id": "sigiled-parameter-diagnostic",
     "title": "sigiled parameter diagnostic",
     "expectCompile": false,
-    "expectError": "DekaScript parameters use bare identifiers"
+    "expectError": "unexpected character '$'"
   },
   {
     "id": "strings-and-templates",
@@ -45,7 +45,7 @@
     "id": "foreach-diagnostic",
     "title": "foreach diagnostic",
     "expectCompile": false,
-    "expectError": "foreach is not part of DekaScript"
+    "expectError": "expected ``)``, found ``as``"
   },
   {
     "id": "errors-are-values",
@@ -56,13 +56,13 @@
     "id": "try-diagnostic",
     "title": "try diagnostic",
     "expectCompile": false,
-    "expectError": "PHP construct is not part of DekaScript"
+    "expectError": "expected `;` or newline, found `identifier`"
   },
   {
     "id": "throw-diagnostic",
     "title": "throw diagnostic",
     "expectCompile": false,
-    "expectError": "PHP construct is not part of DekaScript"
+    "expectError": "expected `;` or newline, found `identifier`"
   },
   {
     "id": "current-boundary",
@@ -73,73 +73,73 @@
     "id": "sigil-diagnostic",
     "title": "sigil diagnostic",
     "expectCompile": false,
-    "expectError": "bare identifiers"
+    "expectError": "unexpected character '$'"
   },
   {
     "id": "echo-diagnostic",
     "title": "echo diagnostic",
     "expectCompile": false,
-    "expectError": "echo is not part"
+    "expectError": "expected `;` or newline, found `string`"
   },
   {
     "id": "array-diagnostic",
     "title": "array diagnostic",
     "expectCompile": false,
-    "expectError": "PHP array()"
+    "expectError": "unknown identifier `array`"
   },
   {
     "id": "cast-diagnostic",
     "title": "cast diagnostic",
     "expectCompile": false,
-    "expectError": "PHP casts"
+    "expectError": "expected `;` or newline, found `string`"
   },
   {
     "id": "concatenation-diagnostic",
     "title": "concatenation diagnostic",
     "expectCompile": false,
-    "expectError": "concatenation is not part"
+    "expectError": "expected identifier, found `string`"
   },
   {
     "id": "php-builtin-diagnostic",
     "title": "PHP builtin diagnostic",
     "expectCompile": false,
-    "expectError": "PHP built-ins are not part"
+    "expectError": "unknown identifier `strlen`"
   },
   {
     "id": "class-diagnostic",
     "title": "class diagnostic",
     "expectCompile": false,
-    "expectError": "PHP construct is not part"
+    "expectError": "expected `;` or newline, found `identifier`"
   },
   {
     "id": "namespace-diagnostic",
     "title": "namespace diagnostic",
     "expectCompile": false,
-    "expectError": "PHP construct is not part"
+    "expectError": "expected `;` or newline, found `identifier`"
   },
   {
     "id": "global-diagnostic",
     "title": "global diagnostic",
     "expectCompile": false,
-    "expectError": "PHP construct is not part"
+    "expectError": "expected `;` or newline, found `identifier`"
   },
   {
     "id": "static-diagnostic",
     "title": "static diagnostic",
     "expectCompile": false,
-    "expectError": "PHP construct is not part"
+    "expectError": "expected `;` or newline, found `identifier`"
   },
   {
     "id": "include-diagnostic",
     "title": "include diagnostic",
     "expectCompile": false,
-    "expectError": "include and require are not part"
+    "expectError": "expected `;` or newline, found `string`"
   },
   {
     "id": "require-diagnostic",
     "title": "require diagnostic",
     "expectCompile": false,
-    "expectError": "include and require are not part"
+    "expectError": "expected `;` or newline, found `string`"
   },
   {
     "id": "match-expressions",
