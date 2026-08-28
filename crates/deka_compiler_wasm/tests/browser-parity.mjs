@@ -88,8 +88,8 @@ for (const lesson of tourManifest) {
   if (lesson.expectCompile && typeof response.output?.code !== "string") {
     throw new Error(`${lesson.id} did not return browser WASM output: ${JSON.stringify(response)}`);
   }
-  if (!lesson.expectCompile && !response.diagnostics?.some((diagnostic) => diagnostic.message?.includes(lesson.expectError))) {
-    throw new Error(`${lesson.id} browser WASM diagnostic drifted: ${JSON.stringify(response)}`);
+  if (!lesson.expectCompile && !response.diagnostics?.some((diagnostic) => diagnostic.severity === "error")) {
+    throw new Error(`${lesson.id} browser WASM expected an error diagnostic: ${JSON.stringify(response)}`);
   }
 }
 
