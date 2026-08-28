@@ -2,19 +2,17 @@
 //!
 //! A project is a virtual file system of DekaScript modules. The browser can
 //! write source files into the project, compile the whole graph, and read back
-//! per-module JavaScript output. Imports and exports are lowered to a factory-
-//! function convention (`__dekaRequire` / `exports.*`) so the browser loader can
-//! link modules inside the existing sandbox without native ES module evaluation.
+//! per-module JavaScript output. The v2 compiler emits real ES modules, which
+//! the browser loader can evaluate directly or wrap as needed.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use bumpalo::Bump;
-use modules_php::compiler_api::compile_deka_project_module;
+use deka_compile::module_graph::{compile_module_graph, ModuleLoader};
 use runtime_core::module_spec::ds_source_candidates;
 use serde::Serialize;
 
-use crate::{Diagnostic, WasmResult, box_result, json};
+use crate::{Diagnostic, WasmResult, box_result, internal_diagnostic, json};
 
 /// A project holds a virtual file system and the results of the last compile.
 pub struct ProjectState {
@@ -69,14 +67,12 @@ impl ProjectState {
         self.diagnostics.clear();
         self.ok = true;
 
-        let paths: Vec<String> = self.files.keys().cloned().collect();
-        for path in &paths {
-            match self.compile_module(path) {
+        // Each file in the project is treated as its own entry. The v2 module
+        // graph discovers relative imports within the virtual file system.
+        for path in self.files.keys().cloned().collect::<Vec<_>>() {
+            match self.compile_module(&path) {
                 Ok(code) => {
-                    self.compiled.insert(
-                        path.clone(),
-                        CompiledModule { code },
-                    );
+                    self.compiled.insert(path.clone(), CompiledModule { code });
                 }
                 Err(diagnostic) => {
                     self.diagnostics.push(diagnostic);
@@ -122,7 +118,7 @@ impl ProjectState {
             abi_version: crate::ABI_VERSION,
             ok: false,
             output: None,
-            diagnostics: vec![crate::internal_diagnostic(
+            diagnostics: vec![internal_diagnostic(
                 path,
                 "",
                 format!("Module '{}' has not been compiled or does not exist in the project.", path),
@@ -134,61 +130,55 @@ impl ProjectState {
         let source = self
             .files
             .get(path)
-            .ok_or_else(|| crate::internal_diagnostic(path, "", format!("File '{}' not found in project.", path)))?;
+            .ok_or_else(|| internal_diagnostic(path, "", format!("File '{}' not found in project.", path)))?;
 
-        // Validate that every import resolves to another virtual file in the project.
-        let meta = deka_js::parse_source_module_meta(source);
-        for decl in &meta.imports {
-            if let Err(message) = self.resolve_import(path, &decl.from) {
-                return Err(crate::internal_diagnostic(
-                    path,
-                    source,
-                    format!(
-                        "Cannot resolve import '{}' from '{}': {}",
-                        decl.from, path, message
-                    ),
-                ));
+        let entry = PathBuf::from(path);
+        let loader = ProjectModuleLoader {
+            files: &self.files,
+        };
+
+        match compile_module_graph(&entry, &loader) {
+            Ok(result) => {
+                // The graph contains the entry and all reachable modules. Return
+                // the emitted JS for the requested entry file.
+                let entry_canon = std::fs::canonicalize(&entry).unwrap_or_else(|_| entry.clone());
+                result
+                    .modules
+                    .get(&entry_canon)
+                    .cloned()
+                    .or_else(|| result.modules.get(&entry).cloned())
+                    .ok_or_else(|| {
+                        internal_diagnostic(
+                            path,
+                            source,
+                            "entry module was not emitted by the compiler graph".to_string(),
+                        )
+                    })
+            }
+            Err(diagnostics) => {
+                let message = diagnostics
+                    .iter()
+                    .map(|d| d.message.clone())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                Err(internal_diagnostic(path, source, message))
             }
         }
-
-        let arena = Bump::new();
-        let result = compile_deka_project_module(source, path, &arena);
-
-        if !result.errors.is_empty() {
-            return Err(crate::internal_diagnostic(
-                path,
-                source,
-                result
-                    .errors
-                    .iter()
-                    .map(|e| e.message.clone())
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            ));
-        }
-
-        let program = result.ast.ok_or_else(|| {
-            crate::internal_diagnostic(path, source, "no AST available after validation".to_string())
-        })?;
-
-        let mut meta = deka_js::parse_source_module_meta(source);
-        meta.is_ds = true;
-        meta.host_is_browser = true;
-        meta.project_mode = true;
-
-        match deka_js::emit_js_from_ast_with_warnings(&program, source.as_bytes(), meta) {
-            Ok((code, _warnings)) => Ok(code),
-            Err(message) => Err(crate::internal_diagnostic(path, source, message)),
-        }
     }
+}
 
-    fn resolve_import(&self, current_path: &str, specifier: &str) -> Result<(), String> {
+struct ProjectModuleLoader<'a> {
+    files: &'a HashMap<String, String>,
+}
+
+impl<'a> ModuleLoader for ProjectModuleLoader<'a> {
+    fn resolve(&self, specifier: &str, referrer: &Path) -> Result<PathBuf, String> {
         if specifier.starts_with("./") || specifier.starts_with("../") {
-            let resolved = resolve_relative_path(current_path, specifier)?;
+            let resolved = resolve_relative_path(referrer, specifier)?;
             let candidates = relative_candidates(&resolved);
             for candidate in &candidates {
                 if self.files.contains_key(candidate) {
-                    return Ok(());
+                    return Ok(PathBuf::from(candidate));
                 }
             }
             return Err(format!(
@@ -198,9 +188,17 @@ impl ProjectState {
             ));
         }
         Err(format!(
-            "non-relative import '{}' is not supported in project-mode spike; use './foo.ds'",
+            "non-relative import '{}' is not supported in project mode; use './foo.ds'",
             specifier
         ))
+    }
+
+    fn load(&self, path: &Path) -> Result<String, String> {
+        let key = path.to_string_lossy().replace('\\', "/");
+        self.files
+            .get(&key)
+            .cloned()
+            .ok_or_else(|| format!("missing virtual file '{}'", path.display()))
     }
 }
 
@@ -211,10 +209,10 @@ fn normalize_path(path: &str) -> String {
     normalized.strip_prefix("./").unwrap_or(&normalized).to_string()
 }
 
-fn resolve_relative_path(current_path: &str, specifier: &str) -> Result<PathBuf, String> {
-    let parent = Path::new(current_path)
+fn resolve_relative_path(current_path: &Path, specifier: &str) -> Result<PathBuf, String> {
+    let parent = current_path
         .parent()
-        .ok_or_else(|| format!("'{}' has no parent directory", current_path))?;
+        .ok_or_else(|| format!("'{}' has no parent directory", current_path.display()))?;
     let joined = parent.join(specifier);
     let normalized = normalize_path(&joined.to_string_lossy());
     Ok(PathBuf::from(normalized))
@@ -286,7 +284,7 @@ pub unsafe extern "C" fn deka_compiler_project_compile(project_id: u32) -> *mut 
                 abi_version: crate::ABI_VERSION,
                 ok: false,
                 modules: HashMap::new(),
-                diagnostics: vec![crate::internal_diagnostic(
+                diagnostics: vec![internal_diagnostic(
                     "<project>",
                     "",
                     "invalid project handle".to_string(),
@@ -316,7 +314,7 @@ pub unsafe extern "C" fn deka_compiler_project_read(
                 abi_version: crate::ABI_VERSION,
                 ok: false,
                 output: None,
-                diagnostics: vec![crate::internal_diagnostic(
+                diagnostics: vec![internal_diagnostic(
                     "<project>",
                     "",
                     "invalid project handle".to_string(),
@@ -331,7 +329,7 @@ pub unsafe extern "C" fn deka_compiler_project_read(
             abi_version: crate::ABI_VERSION,
             ok: false,
             output: None,
-            diagnostics: vec![crate::internal_diagnostic("<project>", "", message.to_string())],
+            diagnostics: vec![internal_diagnostic("<project>", "", message.to_string())],
         }),
     };
     box_result(&json)
@@ -350,7 +348,7 @@ mod tests {
     use serde_json::Value;
 
     #[test]
-    fn project_compiles_relative_import_and_emits_factory_functions() {
+    fn project_compiles_relative_import_and_emits_es_modules() {
         let mut project = ProjectState::new();
         project.write(
             "math.ds",
@@ -358,7 +356,7 @@ mod tests {
         );
         project.write(
             "main.ds",
-            "import { add } from \"./math.ds\";\nconsole.log(add(1, 2));\n",
+            "import { add } from \"./math.ds\";\nconst result: number = add(1, 2);\n",
         );
 
         let json = project.compile();
@@ -370,15 +368,15 @@ mod tests {
 
         let main = response["modules"]["main.ds"]["code"].as_str().unwrap();
         assert!(
-            main.contains("const { add } = __dekaRequire(\"./math.ds\")"),
-            "expected factory import, got:\n{}",
+            main.contains("import { add } from \"./math.ds\""),
+            "expected ES import, got:\n{}",
             main
         );
 
         let math = response["modules"]["math.ds"]["code"].as_str().unwrap();
         assert!(
-            math.contains("exports.add = add"),
-            "expected factory export, got:\n{}",
+            math.contains("export function add"),
+            "expected ES export, got:\n{}",
             math
         );
     }
@@ -402,7 +400,7 @@ mod tests {
             .filter_map(|d| d["message"].as_str())
             .collect();
         assert!(
-            messages.iter().any(|m| m.contains("Cannot resolve import")),
+            messages.iter().any(|m| m.contains("no module")),
             "expected unresolved import diagnostic, got: {:?}",
             messages
         );

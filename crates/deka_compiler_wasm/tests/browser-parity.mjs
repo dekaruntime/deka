@@ -38,7 +38,7 @@ function compile(source, filename, mode) {
 }
 
 const success = compile("const answer = 42;", "lesson.ds", "auto");
-if (!success.ok || success.metadata.language !== "deka" || !success.output?.code?.includes("const answer = deka.freeze(42)")) {
+if (!success.ok || success.metadata.language !== "deka" || !success.output?.code?.includes("const answer = 42")) {
   throw new Error(`successful .ds compile did not match the ABI contract: ${JSON.stringify(success)}`);
 }
 
@@ -99,7 +99,7 @@ const structSource = `struct Point {
 }
 
 const origin = Point { x: 3, y: 4 };
-console.log(origin.x + origin.y);`;
+origin.x + origin.y`;
 const structResponse = compile(structSource, "structs.ds", "deka");
 if (!structResponse.ok || !structResponse.output?.code) {
   throw new Error(`struct compile failed: ${JSON.stringify(structResponse)}`);
@@ -110,19 +110,16 @@ if (!structResponse.ok || !structResponse.output?.code) {
 const structCode = structResponse.output.code
   .replace(/^export const \w+ = [^;]+;\n?/gm, "")
   .replace(/^export async function \w+[\s\S]*$/m, "");
-const stdout = [];
 try {
   const run = new Function(
-    "console",
-    "stdout",
-    `"use strict";\n${structCode}\nreturn stdout;`,
+    `"use strict";\n${structCode}\nreturn origin.x + origin.y;`,
   );
-  run({ log: (...args) => stdout.push(args.join(" ")) }, stdout);
+  const result = run();
+  if (result !== 7) {
+    throw new Error(`expected struct output to be 7, got: ${JSON.stringify(result)}`);
+  }
 } catch (error) {
   throw new Error(`strict-mode struct execution failed: ${error.message}\n${structCode}`);
-}
-if (!stdout.some((line) => line.includes("7"))) {
-  throw new Error(`expected struct output to contain 7, got: ${JSON.stringify(stdout)}`);
 }
 
 console.log("browser WASM parity fixtures passed");
