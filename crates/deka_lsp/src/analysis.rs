@@ -3,9 +3,8 @@
 //! The native LSP and a future WASM worker can consume these plain data types
 //! without depending on a protocol transport.
 
-use bumpalo::Bump;
-use modules_php::compiler_api::compile_deka;
-use modules_php::validation::{Severity as CompilerSeverity, ValidationError};
+use deka_compile::compile_to_js;
+use deka_syntax::{Diagnostic as CompilerDiagnostic, Severity as CompilerSeverity};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -53,48 +52,35 @@ pub struct AnalysisDiagnostic {
     pub message: String,
 }
 
-/// Analyzes DekaScript via `compile_deka` with no filesystem, async-runtime, or
-/// transport dependency. Ranges are clamped to valid UTF-16 positions in source.
+/// Analyzes DekaScript via the v2 compiler with no filesystem, async-runtime,
+/// or transport dependency. Ranges are clamped to valid UTF-16 positions in source.
 pub fn analyze(source: &str, context: &AnalysisContext) -> Vec<AnalysisDiagnostic> {
     if !is_dekascript_context(context) {
         return Vec::new();
     }
-    let arena = Bump::new();
-    let result = compile_deka(source, &context.uri_or_path, &arena);
-    result
-        .errors
+
+    let diagnostics = match compile_to_js(source, &context.uri_or_path) {
+        Ok(result) => result.diagnostics,
+        Err(diagnostics) => diagnostics,
+    };
+
+    diagnostics
         .into_iter()
-        .filter(|error| !should_skip_template_html_diagnostic(error))
-        .map(|error| AnalysisDiagnostic {
-            range: source_range(source, error.line, error.column, error.underline_length),
-            severity: severity(error.severity),
-            code: error.kind.as_str().to_string(),
+        .filter(|diagnostic| !should_skip_diagnostic(diagnostic))
+        .map(|diagnostic| AnalysisDiagnostic {
+            range: source_range(
+                source,
+                diagnostic.line,
+                diagnostic.column,
+                diagnostic.underline_length,
+            ),
+            severity: severity(diagnostic.severity),
+            code: "compiler".to_string(),
             message: plain_message(
-                &error.message,
-                &error.help_text,
-                error.suggestion.as_deref(),
+                &diagnostic.message,
+                diagnostic.help_text.as_deref().unwrap_or(""),
             ),
         })
-        .chain(
-            result
-                .warnings
-                .into_iter()
-                .map(|warning| AnalysisDiagnostic {
-                    range: source_range(
-                        source,
-                        warning.line,
-                        warning.column,
-                        warning.underline_length,
-                    ),
-                    severity: severity(warning.severity),
-                    code: warning.kind.as_str().to_string(),
-                    message: plain_message(
-                        &warning.message,
-                        &warning.help_text,
-                        warning.suggestion.as_deref(),
-                    ),
-                }),
-        )
         .collect()
 }
 
@@ -110,9 +96,11 @@ pub fn is_dekascript_context(context: &AnalysisContext) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case("ds"))
 }
 
-fn should_skip_template_html_diagnostic(error: &ValidationError) -> bool {
-    error
+fn should_skip_diagnostic(diagnostic: &CompilerDiagnostic) -> bool {
+    diagnostic
         .help_text
+        .as_deref()
+        .unwrap_or("")
         .contains("Fix JSX/template syntax in the template section.")
 }
 
@@ -124,13 +112,10 @@ fn severity(severity: CompilerSeverity) -> AnalysisSeverity {
     }
 }
 
-fn plain_message(message: &str, help_text: &str, suggestion: Option<&str>) -> String {
+fn plain_message(message: &str, help_text: &str) -> String {
     let mut parts = vec![message.trim()];
     if !help_text.trim().is_empty() {
         parts.push(help_text.trim());
-    }
-    if let Some(suggestion) = suggestion.map(str::trim).filter(|value| !value.is_empty()) {
-        parts.push(suggestion);
     }
     parts.join("\n")
 }
@@ -196,19 +181,21 @@ mod tests {
     }
 
     #[test]
-    fn match_number_without_wildcard_is_reported() {
+    fn match_enum_missing_case_is_reported() {
         let source = r#"
-            fn label(n: number) string {
-                return match (n) {
-                    1 => "one",
-                    2 => "two",
+            enum Color { Red, Green, Blue }
+
+            fn label(c: Color) string {
+                return match (c) {
+                    Color.Red => "red",
+                    Color.Green => "green",
                 }
             }
         "#;
         let diagnostics = analyze(source, &AnalysisContext::new("file:///workspace/main.ds"));
         assert!(
             diagnostics.iter().any(|d| {
-                d.message.contains("not exhaustive") && d.message.contains("`_`")
+                d.message.contains("non-exhaustive match") && d.message.contains("Blue")
             }),
             "LSP must surface typeck exhaustiveness (deka#281), got: {diagnostics:?}"
         );
