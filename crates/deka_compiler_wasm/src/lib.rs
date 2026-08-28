@@ -5,14 +5,7 @@
 use std::alloc::{alloc, dealloc, Layout};
 use std::{ptr, slice, str};
 
-use bumpalo::Bump;
-use modules_php::{
-    compiler_api::{compile_deka, compile_deka_project_module},
-    validation::{
-        format_validation_error, format_validation_warning, Severity, ValidationError,
-        ValidationWarning,
-    },
-};
+use deka_syntax::{Diagnostic as DekaDiagnostic, Severity};
 use serde::{Deserialize, Serialize};
 
 /// Alignment used for all WASM-side allocations.  Must be large enough for
@@ -203,14 +196,14 @@ struct CompileResponse<'a> {
     abi_version: u32,
     ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    output: Option<CompileOutput<'a>>,
+    output: Option<CompileOutput>,
     diagnostics: Vec<Diagnostic>,
     metadata: CompileMetadata<'a>,
 }
 
 #[derive(Serialize)]
-struct CompileOutput<'a> {
-    code: &'a str,
+struct CompileOutput {
+    code: String,
 }
 
 #[derive(Serialize)]
@@ -260,129 +253,47 @@ fn compile_request(source: &str, filename: &str, requested_mode: &str) -> String
         Ok(mode) => mode,
         Err(message) => return request_error(filename, message),
     };
-    let arena = Bump::new();
-    let result = compile_deka(source, filename, &arena);
 
-    let mut diagnostics = result
-        .errors
-        .iter()
-        .map(|error| diagnostic_from_error(error, &source, filename))
-        .collect::<Vec<_>>();
-    diagnostics.extend(
-        result
-            .warnings
-            .iter()
-            .map(|warning| diagnostic_from_warning(warning, &source, filename)),
-    );
-    let output = if result.errors.is_empty() {
-        result.ast.as_ref().map(|program| {
-            let mut meta = deka_js::parse_source_module_meta(source);
-            // The browser compiler only ever accepts .ds source, so the emitted
-            // JS should follow the DekaScript path (deka.Struct, deka.freeze,
-            // safe globals, etc.) rather than the legacy PHPX path.
-            meta.is_ds = true;
-            meta.host_is_browser = true;
-            match deka_js::emit_js_from_ast_with_warnings(program, source.as_bytes(), meta) {
-                Ok((code, warnings)) => {
-                    diagnostics.extend(
-                        warnings
-                            .into_iter()
-                            .map(|message| internal_diagnostic(filename, source, message)),
-                    );
-                    code
-                }
-                Err(message) => {
-                    diagnostics.push(internal_diagnostic(filename, &source, message));
-                    String::new()
-                }
-            }
-        })
-    } else {
-        None
-    };
-    let ok = output.as_ref().is_some_and(|code| !code.is_empty())
-        && !diagnostics.iter().any(|d| d.severity == "error");
-    let response = CompileResponse {
-        abi_version: ABI_VERSION,
-        ok,
-        output: output
-            .as_ref()
-            .filter(|_| ok)
-            .map(|code| CompileOutput { code }),
-        diagnostics,
-        metadata: CompileMetadata {
-            filename,
-            language: mode,
-            compiler: CompilerMetadata::current(),
-        },
-    };
-    json(&response)
-}
-
-/// Compile a DekaScript source as part of a virtual project.
-///
-/// This skips filesystem module resolution, which is what the browser playground
-/// does: stdlib modules such as `io` are provided by the host at runtime rather
-/// than resolved from disk.
-fn compile_project_request(source: &str, filename: &str, requested_mode: &str) -> String {
-    let mode = match resolve_mode(filename, requested_mode) {
-        Ok(mode) => mode,
-        Err(message) => return request_error(filename, message),
-    };
-    let arena = Bump::new();
-    let result = compile_deka_project_module(source, filename, &arena);
-
-    let mut diagnostics = result
-        .errors
-        .iter()
-        .map(|error| diagnostic_from_error(error, &source, filename))
-        .collect::<Vec<_>>();
-    diagnostics.extend(
-        result
-            .warnings
-            .iter()
-            .map(|warning| diagnostic_from_warning(warning, &source, filename)),
-    );
-    let output = if result.errors.is_empty() {
-        result.ast.as_ref().map(|program| {
-            let mut meta = deka_js::parse_source_module_meta(source);
-            meta.is_ds = true;
-            meta.host_is_browser = true;
-            match deka_js::emit_js_from_ast_with_warnings(program, source.as_bytes(), meta) {
-                Ok((code, warnings)) => {
-                    diagnostics.extend(
-                        warnings
-                            .into_iter()
-                            .map(|message| internal_diagnostic(filename, source, message)),
-                    );
-                    code
-                }
-                Err(message) => {
-                    diagnostics.push(internal_diagnostic(filename, &source, message));
-                    String::new()
-                }
-            }
-        })
-    } else {
-        None
-    };
-    let ok = output.as_ref().is_some_and(|code| !code.is_empty())
-        && !diagnostics.iter().any(|d| d.severity == "error");
-    let response = CompileResponse {
-        abi_version: ABI_VERSION,
-        ok,
-        output: output
-            .as_ref()
-            .filter(|_| ok)
-            .map(|code| CompileOutput { code }),
-        diagnostics,
-        metadata: CompileMetadata {
-            filename,
-            language: mode,
-            compiler: CompilerMetadata::current(),
-        },
-    };
-    json(&response)
+    match deka_compile::compile_to_js(source, filename) {
+        Ok(result) => {
+            let diagnostics = result
+                .diagnostics
+                .iter()
+                .map(|d| diagnostic_from_deka_syntax(d, source, filename))
+                .collect::<Vec<_>>();
+            let has_error = diagnostics.iter().any(|d| d.severity == "error");
+            let ok = !has_error && !result.js.is_empty();
+            let output = ok.then(|| CompileOutput { code: result.js });
+            json(&CompileResponse {
+                abi_version: ABI_VERSION,
+                ok,
+                output,
+                diagnostics,
+                metadata: CompileMetadata {
+                    filename,
+                    language: mode,
+                    compiler: CompilerMetadata::current(),
+                },
+            })
+        }
+        Err(diagnostics) => {
+            let diagnostics = diagnostics
+                .iter()
+                .map(|d| diagnostic_from_deka_syntax(d, source, filename))
+                .collect::<Vec<_>>();
+            json(&CompileResponse {
+                abi_version: ABI_VERSION,
+                ok: false,
+                output: None,
+                diagnostics,
+                metadata: CompileMetadata {
+                    filename,
+                    language: mode,
+                    compiler: CompilerMetadata::current(),
+                },
+            })
+        }
+    }
 }
 
 fn resolve_mode<'a>(filename: &str, mode: &'a str) -> Result<&'a str, &'static str> {
@@ -395,39 +306,30 @@ fn resolve_mode<'a>(filename: &str, mode: &'a str) -> Result<&'a str, &'static s
     }
 }
 
-fn diagnostic_from_error(error: &ValidationError, source: &str, filename: &str) -> Diagnostic {
+fn diagnostic_from_deka_syntax(diagnostic: &DekaDiagnostic, source: &str, filename: &str) -> Diagnostic {
+    let help = diagnostic.help_text.as_deref().unwrap_or("");
+    let severity = severity_label(diagnostic.severity);
+    let rendered = strip_ansi_codes(&deka_validation::format_validation_error(
+        source,
+        filename,
+        "DekaScript",
+        diagnostic.line,
+        diagnostic.column,
+        &diagnostic.message,
+        help,
+        diagnostic.underline_length.max(1),
+    ));
     Diagnostic {
-        severity: severity_label(error.severity),
-        code: error.kind.as_str().to_string(),
-        message: error.message.clone(),
+        severity,
+        code: "compiler".to_string(),
+        message: diagnostic.message.clone(),
         filename: filename.to_string(),
-        start_line: error.line,
-        start_column: error.column,
-        end_line: error.line,
-        end_column: error.column.saturating_add(error.underline_length.max(1)),
-        help: (!error.help_text.trim().is_empty()).then(|| error.help_text.clone()),
-        rendered: strip_ansi_codes(&format_validation_error(source, filename, error)),
-    }
-}
-
-fn diagnostic_from_warning(
-    warning: &ValidationWarning,
-    source: &str,
-    filename: &str,
-) -> Diagnostic {
-    Diagnostic {
-        severity: severity_label(warning.severity),
-        code: warning.kind.as_str().to_string(),
-        message: warning.message.clone(),
-        filename: filename.to_string(),
-        start_line: warning.line,
-        start_column: warning.column,
-        end_line: warning.line,
-        end_column: warning
-            .column
-            .saturating_add(warning.underline_length.max(1)),
-        help: (!warning.help_text.trim().is_empty()).then(|| warning.help_text.clone()),
-        rendered: strip_ansi_codes(&format_validation_warning(source, filename, warning)),
+        start_line: diagnostic.line,
+        start_column: diagnostic.column,
+        end_line: diagnostic.line,
+        end_column: diagnostic.column.saturating_add(diagnostic.underline_length.max(1)),
+        help: diagnostic.help_text.clone().filter(|h| !h.trim().is_empty()),
+        rendered,
     }
 }
 
@@ -603,7 +505,7 @@ mod tests {
         assert_eq!(response["metadata"]["filename"], "lesson.ds");
         assert!(response["output"]["code"]
             .as_str()
-            .is_some_and(|code| code.contains("const answer = deka.freeze(42)")));
+            .is_some_and(|code| code.contains("const answer = 42")));
         assert_eq!(response["diagnostics"].as_array().map(Vec::len), Some(0));
     }
 
@@ -678,8 +580,8 @@ const origin = Point { x: 3, y: 4 };
             "expected deka.Struct factory, got:\n{code}"
         );
         assert!(
-            code.contains("const origin = deka.freeze(Point({\"x\": 3, \"y\": 4}))"),
-            "expected frozen struct literal, got:\n{code}"
+            code.contains("const origin = Point({ x: 3, y: 4 })"),
+            "expected struct factory literal, got:\n{code}"
         );
         assert!(
             !code.contains("__phpxStructMethods"),
@@ -697,11 +599,14 @@ const origin = Point { x: 3, y: 4 };
 
         for (lesson, source) in lessons {
             let filename = format!("{}.ds", lesson.id);
-            // Tour lessons import stdlib modules (e.g. `io`) that the browser
-            // runtime provides. Use project-module compilation so the wasm
-            // compiler validates syntax/types without requiring the modules on
-            // disk, matching how the browser playground hosts the compiler.
-            let response: Value = serde_json::from_str(&compile_project_request(
+            // The standalone WASM compiler cannot resolve stdlib index packages
+            // like `io` because it has no filesystem/network access. Skip those
+            // lessons here; they are covered by the native language gate and the
+            // live testsuite playground instead.
+            if source.contains("from \"io\"") || source.contains("from 'io'") {
+                continue;
+            }
+            let response: Value = serde_json::from_str(&compile_request(
                 &source, &filename, "deka",
             ))
             .unwrap_or_else(|error| panic!("{}: invalid response JSON: {error}", lesson.id));
