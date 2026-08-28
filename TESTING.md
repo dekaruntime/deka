@@ -23,8 +23,10 @@ stable id / slug.
 
 That is the testsuite-repo `./run.sh` equivalent for this tree. It finds bun,
 builds `target/release/cli` (or uses `DEKA_NATIVE`), compiles every tour
-lesson, then runs Hats natively. Same files CI runs. Fail locally. Do not
-discover a language break on a Hats deploy.
+lesson, runs Hats snippets natively, then ADHOC (`deka init`, `deka serve`,
+WASM `import` from `"io"` when `DEKA_WASM` or a built artifact is present).
+Same files CI runs. Fail locally. Do not discover a language break on a Hats
+deploy.
 
 Native isolate only (`deka run`). Browser WASM stays the live playground on the
 site; dump-time browser results are a website concern until this repo publishes
@@ -108,6 +110,24 @@ matches by slug (`category-name`), never by title. Fixtures with `hosts` that
 do not include `native` are skipped (JSX that needs `deka.ui` in the Worker,
 `console.assert`, and similar). Index `packages` fixtures run in the dump, not
 this language gate.
+
+### ADHOC
+
+Product paths that are not a `.ds` snippet. `./run.sh` runs them after the
+snippet grid. Dump emits a category named `ADHOC`; each square on
+testsuite.deka.gg is cached commands + stdout (not a live playground).
+
+```bash
+bun tests/testsuite/adhoc/run.mjs
+bun tests/testsuite/adhoc/run.mjs --filter init
+DEKA_WASM=dist/deka-compiler-wasm/deka_compiler.wasm bun tests/testsuite/adhoc/run.mjs --filter wasm
+```
+
+| slug | What it runs |
+|---|---|
+| `adhoc-deka-init` | `deka init` then `deka check ./app/main.ds` |
+| `adhoc-deka-serve` | `deka init` then `deka serve --port N` then `GET /` |
+| `adhoc-wasm-io` | WASM compile of `import { echo } from "io"` (skipped if no wasm artifact) |
 
 ### Adding a Hats fixture
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Run this checkout's language suite. Native isolate (`deka run`).
+# Run this checkout's language suite: tour, Hats snippets (`deka run`), ADHOC.
 #
 #   ./run.sh                 build the CLI, compile every tour lesson, run Hats
 #   ./run.sh --filter json   subset (id / slug / title)
@@ -136,13 +136,16 @@ REPORT="$REPO_ROOT/.cache/report.txt"
 
 tour_cmd=(bun tests/tour/run.mjs)
 suite_cmd=(bun tests/testsuite/run.mjs)
+adhoc_cmd=(bun tests/testsuite/adhoc/run.mjs)
 if [[ -n "$FILTER" ]]; then
   tour_cmd+=(--filter "$FILTER")
   suite_cmd+=(--filter "$FILTER")
+  adhoc_cmd+=(--filter "$FILTER")
 fi
 if [[ "$LIST" -eq 1 ]]; then
   tour_cmd+=(--list)
   suite_cmd+=(--list)
+  adhoc_cmd+=(--list)
 fi
 if [[ -n "$JOBS" ]]; then
   suite_cmd+=(--jobs "$JOBS")
@@ -153,6 +156,7 @@ fi
 
 tour_status=0
 suite_status=0
+adhoc_status=0
 
 say "tour: ${tour_cmd[*]}"
 echo
@@ -170,16 +174,24 @@ suite_status=${PIPESTATUS[0]}
 set -e
 
 echo
-if [[ "$tour_status" -eq 0 && "$suite_status" -eq 0 ]]; then
-  say "suite ran -- tour + tests/testsuite  (full log: .cache/report.txt)"
+say "ADHOC: ${adhoc_cmd[*]}"
+echo
+set +e
+"${adhoc_cmd[@]}" 2>&1 | tee -a "$REPORT"
+adhoc_status=${PIPESTATUS[0]}
+set -e
+
+echo
+if [[ "$tour_status" -eq 0 && "$suite_status" -eq 0 && "$adhoc_status" -eq 0 ]]; then
+  say "suite ran -- tour + tests/testsuite + ADHOC  (full log: .cache/report.txt)"
   exit 0
 fi
 
-if [[ "$tour_status" -eq 2 || "$suite_status" -eq 2 ]]; then
+if [[ "$tour_status" -eq 2 || "$suite_status" -eq 2 || "$adhoc_status" -eq 2 ]]; then
   say "BLOCKED -- environment unfit to run; this is not a result for your runtime"
   say "full log: .cache/report.txt"
   exit 2
 fi
 
-say "FAILED  tour=$tour_status  testsuite=$suite_status  (full log: .cache/report.txt)"
+say "FAILED  tour=$tour_status  testsuite=$suite_status  ADHOC=$adhoc_status  (full log: .cache/report.txt)"
 exit 1

@@ -2,8 +2,8 @@
 
 Produces the dual-host Hats dump (`hats-results.json`) for
 https://testsuite.deka.gg. Native isolate + Chromium Worker. The language
-gate is `./run.sh` (native only). This dump is what the website fills in
-(#292 step 2).
+gate is `./run.sh` (tour + snippets + ADHOC). This dump is what the website
+fills in (#292 step 2), including the **ADHOC** category.
 
 ```sh
 cargo build --release -p cli
