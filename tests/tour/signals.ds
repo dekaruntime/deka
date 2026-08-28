@@ -1,5 +1,5 @@
 import { echo } from "io"
-let count = 0
-echo(count)
-count = 5
-echo(count)
+let counter = 0
+echo(counter)
+counter = 5
+echo(counter)
