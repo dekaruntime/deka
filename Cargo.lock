@@ -1670,6 +1670,8 @@ version = "0.34.0"
 dependencies = [
  "anyhow",
  "bumpalo",
+ "deka_compile",
+ "deka_syntax",
  "modules_php",
  "php-rs",
  "serde",
