@@ -17,6 +17,7 @@ use runtime_core::handler::{
 use runtime_core::modules::ensure_deka_module_root_env_with;
 use runtime_core::process::parse_exit_code;
 use runtime_core::validation::validate_deka_handler_with;
+use runtime_core::DEKA_VALIDATION_ERROR_MARKER;
 
 pub fn run(context: &Context) {
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -162,8 +163,8 @@ async fn run_async(context: &Context) -> Result<(), String> {
             }
             // If the runtime surfaced a validation report, print it directly
             // without the generic "Run failed:" wrapper (dekaruntime/deka#117).
-            if let Some(marker_start) = error.find(deka_js::DEKA_VALIDATION_ERROR_MARKER) {
-                let rest = &error[marker_start + deka_js::DEKA_VALIDATION_ERROR_MARKER.len()..];
+            if let Some(marker_start) = error.find(DEKA_VALIDATION_ERROR_MARKER) {
+                let rest = &error[marker_start + DEKA_VALIDATION_ERROR_MARKER.len()..];
                 return Err(rest.to_string());
             }
             return Err(format!("Run failed: {}", error));

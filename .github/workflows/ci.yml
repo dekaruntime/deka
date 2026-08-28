@@ -163,7 +163,7 @@ jobs:
           echo "RUSTY_V8_ARCHIVE=${{ github.workspace }}/target/debug/gn_out/obj/librusty_v8.a.gz" >> "$GITHUB_ENV"
 
       - name: Build tested crates
-        run: cargo build -p deka_http -p pool -p engine -p deka_js -p php-rs -p bundler
+        run: cargo build -p deka_http -p pool -p engine -p php-rs -p bundler
 
       - name: Test deka_http
         run: cargo test -p deka_http
@@ -173,9 +173,6 @@ jobs:
 
       - name: Test engine
         run: cargo test -p engine
-
-      - name: Test deka_js compiler (incl. integration tests)
-        run: cargo test -p deka_js
 
       - name: Test bundler
         run: cargo test -p bundler

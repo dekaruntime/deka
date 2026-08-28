@@ -973,7 +973,6 @@ dependencies = [
  "ctrlc",
  "deka-fmt",
  "deka_compile",
- "deka_js",
  "deka_syntax",
  "dekascript_lsp",
  "deno_task_shell",
@@ -1643,16 +1642,6 @@ dependencies = [
  "tokio",
  "tower 0.5.3",
  "tracing",
-]
-
-[[package]]
-name = "deka_js"
-version = "0.34.0"
-dependencies = [
- "bumpalo",
- "modules_php",
- "php-rs",
- "serde_json",
 ]
 
 [[package]]
@@ -6008,7 +5997,6 @@ dependencies = [
  "core_affinity",
  "deka-validation",
  "deka_compile",
- "deka_js",
  "deno_core",
  "deno_error",
  "libc",
@@ -6845,7 +6833,6 @@ dependencies = [
  "core",
  "deka_compile",
  "deka_http",
- "deka_js",
  "deno_core",
  "engine",
  "flate2",

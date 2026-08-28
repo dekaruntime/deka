@@ -16,9 +16,12 @@ use deno_core::ResolutionKind;
 use deno_core::resolve_import;
 use deno_error::JsErrorBox;
 
-use deka_js::DEKA_VALIDATION_ERROR_MARKER;
-use runtime_core::module_spec::{
-    ds_source_candidates, is_bare_module_specifier, module_spec_aliases, resolve_ds_source_file,
+use runtime_core::{
+    module_spec::{
+        ds_source_candidates, is_bare_module_specifier, module_spec_aliases,
+        resolve_ds_source_file,
+    },
+    DEKA_VALIDATION_ERROR_MARKER,
 };
 use runtime_core::modules::{resolve_modules_dir, MODULES_DIR};
 

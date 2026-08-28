@@ -21,10 +21,10 @@ Downstream repos you will touch regularly:
 cargo build --release -p cli
 
 # Check the main crates
-cargo check -p deka_js -p modules_php -p php-rs -p deka-fmt -p runtime
+cargo check -p deka_compile -p deka_emit -p modules_php -p php-rs -p deka-fmt -p runtime
 
 # Run the main Rust tests
-cargo test -p deka_js -p modules_php -p php-rs -p deka-fmt -p runtime
+cargo test -p deka_compile -p deka_emit -p modules_php -p php-rs -p deka-fmt -p runtime
 ```
 
 ## Repository layout
@@ -33,8 +33,8 @@ cargo test -p deka_js -p modules_php -p php-rs -p deka-fmt -p runtime
 Cargo.toml              # workspace root
 crates/
   cli/                  # native CLI (`deka run`, `deka build`, `deka transpile`)
-  deka_js/              # JS emitter (DekaScript → JS)
-    src/emitter/        # expr.rs, mod.rs, program.rs, jsx.rs, schema.rs
+  deka_compile/         # compiler v2 driver (parse + typecheck + module graph)
+  deka_emit/            # JS emitter (DekaScript → JS)
   deka_compiler_wasm/   # browser compiler WASM target
   deka-fmt/             # DekaScript formatter
   deka_lsp/             # native LSP
@@ -55,7 +55,7 @@ assets/                 # shared CSS bundle
 |---|---|
 | Parser / syntax | `crates/modules_php/src/parser/`, `crates/php-rs/src/parser/` |
 | Typechecker | `crates/php-rs/src/phpx/typeck/check/` |
-| JS emission | `crates/deka_js/src/emitter/` |
+| JS emission | `crates/deka_emit/src/emit.rs` |
 | Formatter | `crates/deka-fmt/src/ds.rs`, `crates/deka-fmt/src/js.rs` |
 | Validation / diagnostics | `crates/modules_php/src/validation/`, `crates/deka-validation/` |
 | Native execution | `crates/runtime/src/`, `crates/cli/src/` |
@@ -110,7 +110,7 @@ cargo run --release -p deka-fmt -- path/to/file.ds
 1. **Make the change** in the relevant crate(s).
 2. **Run Rust tests:**
    ```bash
-   cargo test -p deka_js -p modules_php -p php-rs -p deka-fmt -p runtime
+   cargo test -p deka_compile -p deka_emit -p modules_php -p php-rs -p deka-fmt -p runtime
    cargo test -p cli --lib -- --test-threads=1
    ```
 3. **Run the in-tree language suite**, then WASM parity if you touched emit:
@@ -144,11 +144,11 @@ gh workflow run "Deploy deka test suite" --repo dekaruntime/testsuite --ref main
 
 ```bash
 # Fast compile check of the whole language stack
-cargo check -p deka_js -p modules_php -p php-rs -p deka-fmt -p runtime -p cli
+cargo check -p deka_compile -p deka_emit -p modules_php -p php-rs -p deka-fmt -p runtime -p cli
 
 # Full Rust test stack (excluding WASM browser build)
-cargo build -p deka_http -p pool -p engine -p deka_js -p php-rs -p bundler
-cargo test -p deka_http -p pool -p engine -p deka_js -p php-rs -p bundler
+cargo build -p deka_http -p pool -p engine -p php-rs -p bundler
+cargo test -p deka_http -p pool -p engine -p php-rs -p bundler
 cargo test -p cli --lib -- --test-threads=1
 ```
 

@@ -1099,9 +1099,8 @@ pub(crate) fn span_text(source: &[u8], span: &Span) -> String {
     String::from_utf8_lossy(span.as_str(source)).to_string()
 }
 
-// Keep in sync with `decode_string_key` in
-// runtime/crates/deka_js/src/lib.rs and `parse_string_key` in
-// runtime/crates/php-rs/src/phpx/typeck/check.rs. ObjectKey::String tokens
+// Keep in sync with `parse_string_key` in
+// crates/php-rs/src/phpx/typeck/check.rs. ObjectKey::String tokens
 // retain their surrounding quotes and embedded escapes — we strip the matched
 // quote pair and decode the few escapes the lexer accepts inside string keys.
 pub(crate) fn decode_string_key(raw: &str) -> String {

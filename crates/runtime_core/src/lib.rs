@@ -13,3 +13,8 @@ pub mod storefront_envelope;
 pub mod validation;
 
 pub use security_policy::merge_policy_with_cli_manifest_net_env;
+
+/// Marker prefixed to validation error messages that are propagated from the
+/// compiler through the isolate loader so the runtime can print them without
+/// its own "Run failed:" wrapper.
+pub const DEKA_VALIDATION_ERROR_MARKER: &str = "DEKA_VALIDATION_ERROR:";
