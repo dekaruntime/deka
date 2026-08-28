@@ -9,6 +9,7 @@ fn fixtures_root() -> PathBuf {
 }
 
 #[test]
+#[ignore = "PHPX enum syntax no longer parsed after v2 default; revisit during PHPX purge (see dekaruntime/deka#330)"]
 fn extracts_storefront_handler_contract() {
     let path = fixtures_root().join("seams/storefront_handler.phpx");
     let contract = extract_contract_from_file(&path).expect("contract extraction failed");

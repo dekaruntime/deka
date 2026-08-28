@@ -1,10 +1,9 @@
 use bundler::{BuildOptions, VirtualSource, bundle_virtual_entry};
 use core::{CommandSpec, Context, ParamSpec, Registry};
-use deka_js::{SourceModuleMeta as V1SourceModuleMeta, parse_source_module_meta as parse_v1_meta};
 use runtime_core::module_spec::{ds_source_candidates, module_spec_aliases};
 use runtime_core::modules::{resolve_modules_dir, MODULES_DIR};
 
-use crate::compile_helper::{compile_js_or_report, compiler_version_from_context, ModuleMeta};
+use crate::compile_helper::compile_js_or_report;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -72,7 +71,6 @@ fn run_single_file_build(context: &Context, input: &str) -> Result<(), String> {
         ));
     }
 
-    let compiler = compiler_version_from_context(context);
     let input_path = PathBuf::from(input);
     let output_path = resolve_output_path(output_arg(context), &input_path)?;
     if bundle_enabled(context) {
@@ -80,10 +78,9 @@ fn run_single_file_build(context: &Context, input: &str) -> Result<(), String> {
             &input_path,
             &output_path,
             minify_enabled(context),
-            compiler,
         )?;
     } else {
-        build_single_file_to_path(&input_path, &output_path, compiler)?;
+        build_single_file_to_path(&input_path, &output_path)?;
     }
 
     stdio::success(&format!(
@@ -105,7 +102,6 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     let project_root = resolve_project_root(&root_hint)?;
     ensure_web_project_layout(&project_root)?;
 
-    let compiler = compiler_version_from_context(context);
     let app_dir = project_root.join("app");
     let public_dir = project_root.join("public");
     let entry_path = resolve_web_entry(&project_root)?;
@@ -122,7 +118,7 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     // (see copy_dir_recursive below) -- so a project with a syntactically
     // invalid non-entry file, or an invalid entry file with no hydration
     // component, would "build" successfully. Validate everything up front.
-    validate_app_dir_sources(&app_dir, compiler)?;
+    validate_app_dir_sources(&app_dir)?;
 
     let dist_root = project_root.join("dist");
     let dist_client = dist_root.join("client");
@@ -148,9 +144,9 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
 
         let client_js = dist_assets.join("main.js");
         if bundle {
-            build_single_file_bundle_to_path(&entry_path, &client_js, minify, compiler)?;
+            build_single_file_bundle_to_path(&entry_path, &client_js, minify)?;
         } else {
-            build_single_file_to_path(&entry_path, &client_js, compiler)?;
+            build_single_file_to_path(&entry_path, &client_js)?;
         }
 
         if !bundle {
@@ -249,11 +245,11 @@ fn resolve_import_map_path(output_path: &Path) -> PathBuf {
         .join("importmap.json")
 }
 
-fn emit_import_map_json(meta: &V1SourceModuleMeta, output_path: &Path) -> String {
+fn emit_import_map_json(meta: &deka_compile::SourceModuleMeta, output_path: &Path) -> String {
     let mut imports = default_import_map();
 
     for decl in &meta.imports {
-        let spec = decl.from.trim();
+        let spec = decl.path.trim();
         if !is_bare_specifier(spec) {
             continue;
         }
@@ -358,12 +354,12 @@ fn project_root_search_start(input_path: &Path) -> PathBuf {
         .to_path_buf()
 }
 
-fn ensure_project_layout(project_root: &Path, meta: &V1SourceModuleMeta) -> Result<(), String> {
-    // PHPX_MODULE_ROOT bypass (#220): when set, the tenant relies on the runtime stdlib at
+fn ensure_project_layout(project_root: &Path, meta: &deka_compile::SourceModuleMeta) -> Result<(), String> {
+    // DEKA_MODULE_ROOT bypass (#220): when set, the tenant relies on the runtime stdlib at
     // that root and we trust the runtime-provided modules without requiring a local
     // deka.lock or php_modules/. Tenant-local packages would still need a lockfile, but
     // stdlib-only tenants (id.tana.gg) deploy without ceremony.
-    if std::env::var_os("PHPX_MODULE_ROOT").is_some() {
+    if std::env::var_os("DEKA_MODULE_ROOT").is_some() {
         return Ok(());
     }
 
@@ -406,10 +402,10 @@ fn ensure_project_layout(project_root: &Path, meta: &V1SourceModuleMeta) -> Resu
     }
 }
 
-fn collect_stdlib_imports(meta: &V1SourceModuleMeta) -> Vec<String> {
+fn collect_stdlib_imports(meta: &deka_compile::SourceModuleMeta) -> Vec<String> {
     let mut seen = BTreeSet::new();
     for decl in &meta.imports {
-        let spec = decl.from.trim();
+        let spec = decl.path.trim();
         if is_stdlib_module_spec(spec) {
             seen.insert(spec.to_string());
         }
@@ -448,7 +444,6 @@ fn is_stdlib_module_spec(spec: &str) -> bool {
                 | "auth"
                 | "db"
                 | "time"
-                | "test"
                 | "io"
         )
 }
@@ -616,27 +611,19 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
 }
 
 /// Recursively finds every `.ds` file under `app_dir` and compiles it with
-/// the same `compile_phpx_source_to_js` call `deka check` uses, discarding
-/// the emitted JS. This is validation only -- dist/server/app still receives
+/// the same v2 compiler call `deka check` uses, discarding the emitted JS. This is validation only -- dist/server/app still receives
 /// the original source bytes via `copy_dir_recursive`, unchanged. The point
 /// is solely to make `deka build` fail closed (non-zero exit, no dist/
 /// output written) on any source under app/ that the compiler itself would
 /// reject, matching what `deka check` already reports for that same file.
-fn validate_app_dir_sources(
-    app_dir: &Path,
-    compiler: deka_compile::CompilerVersion,
-) -> Result<(), String> {
+fn validate_app_dir_sources(app_dir: &Path) -> Result<(), String> {
     for path in collect_deka_source_files(app_dir)? {
         let input = path
             .to_str()
             .ok_or_else(|| format!("invalid utf-8 path: {}", path.display()))?;
         let source = fs::read_to_string(&path)
             .map_err(|err| format!("failed to read {}: {}", path.display(), err))?;
-        let meta = match compiler {
-            deka_compile::CompilerVersion::V1 => ModuleMeta::V1(parse_v1_meta(&source)),
-            deka_compile::CompilerVersion::V2 => ModuleMeta::V2(deka_compile::parse_source_module_meta(&source)),
-        };
-        compile_js_or_report(&source, input, meta, compiler)
+        compile_js_or_report(&source, input)
             .map_err(|err| format!("{}: {}", path.display(), err))?;
     }
     Ok(())
@@ -818,16 +805,15 @@ fn inject_app_html(index_html: &str, app_html: &str) -> String {
 
 struct JsBuildOutput {
     js: String,
-    meta: V1SourceModuleMeta,
+    meta: deka_compile::SourceModuleMeta,
     project_root: PathBuf,
 }
 
 fn build_single_file_to_path(
     input_path: &Path,
     output_path: &Path,
-    compiler: deka_compile::CompilerVersion,
 ) -> Result<(), String> {
-    let output = build_single_file_to_string(input_path, compiler)?;
+    let output = build_single_file_to_string(input_path)?;
     let js = deka_fmt::format_js(&output.js)?;
 
     if let Some(parent) = output_path.parent() {
@@ -850,13 +836,12 @@ fn build_single_file_bundle_to_path(
     input_path: &Path,
     output_path: &Path,
     minify: bool,
-    compiler: deka_compile::CompilerVersion,
 ) -> Result<(), String> {
-    let output = build_single_file_to_string(input_path, compiler)?;
+    let output = build_single_file_to_string(input_path)?;
     let entry_js = output.js.clone();
     let entry_path = fs::canonicalize(input_path)
         .map_err(|err| format!("failed to resolve {}: {}", input_path.display(), err))?;
-    let provider = Arc::new(PhpxProvider::new(entry_path.clone(), entry_js, compiler));
+    let provider = Arc::new(PhpxProvider::new(entry_path.clone(), entry_js));
     let bundle = bundle_virtual_entry(
         &entry_path,
         BuildOptions {
@@ -886,7 +871,6 @@ fn build_single_file_bundle_to_path(
 
 fn build_single_file_to_string(
     input_path: &Path,
-    compiler: deka_compile::CompilerVersion,
 ) -> Result<JsBuildOutput, String> {
     let input = input_path
         .to_str()
@@ -894,31 +878,19 @@ fn build_single_file_to_string(
 
     let source = fs::read_to_string(input_path)
         .map_err(|err| format!("failed to read {}: {}", input_path.display(), err))?;
-    let (compile_meta, layout_meta) = match compiler {
-        deka_compile::CompilerVersion::V1 => {
-            let meta = parse_v1_meta(&source);
-            (ModuleMeta::V1(meta.clone()), meta)
-        }
-        deka_compile::CompilerVersion::V2 => {
-            let v1_meta = V1SourceModuleMeta::empty();
-            (
-                ModuleMeta::V2(deka_compile::parse_source_module_meta(&source)),
-                v1_meta,
-            )
-        }
-    };
+    let meta = deka_compile::parse_source_module_meta(&source);
 
     // Validate the source before checking project layout so that syntax/type
     // errors are surfaced immediately instead of being blocked by a missing
     // deka.lock or php_modules/ directory (dekaruntime/deka#117).
-    let js = compile_js_or_report(&source, input, compile_meta, compiler)?;
+    let js = compile_js_or_report(&source, input)?;
 
     let project_root = resolve_project_root(input_path)?;
-    ensure_project_layout(&project_root, &layout_meta)?;
+    ensure_project_layout(&project_root, &meta)?;
 
     Ok(JsBuildOutput {
         js,
-        meta: layout_meta,
+        meta,
         project_root,
     })
 }
@@ -926,19 +898,13 @@ fn build_single_file_to_string(
 struct PhpxProvider {
     entry_path: PathBuf,
     entry_source: String,
-    compiler: deka_compile::CompilerVersion,
 }
 
 impl PhpxProvider {
-    fn new(
-        entry_path: PathBuf,
-        entry_source: String,
-        compiler: deka_compile::CompilerVersion,
-    ) -> Self {
+    fn new(entry_path: PathBuf, entry_source: String) -> Self {
         Self {
             entry_path,
             entry_source,
-            compiler,
         }
     }
 }
@@ -958,11 +924,7 @@ impl VirtualSource for PhpxProvider {
             .ok_or_else(|| format!("invalid utf-8 path: {}", path.display()))?;
         let source =
             fs::read_to_string(path).map_err(|err| format!("failed to read {}: {}", input, err))?;
-        let meta = match self.compiler {
-            deka_compile::CompilerVersion::V1 => ModuleMeta::V1(parse_v1_meta(&source)),
-            deka_compile::CompilerVersion::V2 => ModuleMeta::V2(deka_compile::parse_source_module_meta(&source)),
-        };
-        let js = compile_js_or_report(&source, input, meta, self.compiler)?;
+        let js = compile_js_or_report(&source, input)?;
         Ok(Some(js))
     }
 }

@@ -16,70 +16,34 @@ use deno_core::ResolutionKind;
 use deno_core::resolve_import;
 use deno_error::JsErrorBox;
 
-use deka_js::compile_phpx_source_to_js_with_warnings_detailed;
-use deka_js::parse_source_module_meta as parse_v1_source_module_meta;
-use deka_js::{CompileError, DEKA_VALIDATION_ERROR_MARKER};
+use deka_js::DEKA_VALIDATION_ERROR_MARKER;
 use runtime_core::module_spec::{
     ds_source_candidates, is_bare_module_specifier, module_spec_aliases, resolve_ds_source_file,
 };
 use runtime_core::modules::{resolve_modules_dir, MODULES_DIR};
 
-/// Runtime compiler version selector.
-///
-/// Reads `DEKA_COMPILER` from the environment. Anything other than `v1` selects
-/// the v2 compiler.
-fn selected_compiler_version() -> deka_compile::CompilerVersion {
-    if let Ok(value) = std::env::var("DEKA_COMPILER") {
-        if value.trim().eq_ignore_ascii_case("v1") {
-            return deka_compile::CompilerVersion::V1;
-        }
-    }
-    deka_compile::CompilerVersion::V2
-}
-
-/// Compile a single `.ds` source file to JavaScript using the selected compiler.
+/// Compile a single `.ds` source file to JavaScript using compiler v2.
 fn compile_ds_source_to_js(source: &str, input: &str) -> Result<String, JsErrorBox> {
-    match selected_compiler_version() {
-        deka_compile::CompilerVersion::V1 => {
-            let meta = parse_v1_source_module_meta(source);
-            match compile_phpx_source_to_js_with_warnings_detailed(source, input, meta) {
-                Ok(outcome) => Ok(outcome.js),
-                Err(CompileError::Validation { diagnostics }) => Err(JsErrorBox::generic(format!(
-                    "{}{}",
-                    DEKA_VALIDATION_ERROR_MARKER, diagnostics
-                ))),
-                Err(CompileError::Other(msg)) => Err(JsErrorBox::generic(msg)),
-            }
+    match deka_compile::compile_to_js(source, input) {
+        Ok(result) => Ok(result.js),
+        Err(diagnostics) => {
+            let message = diagnostics
+                .iter()
+                .map(|d| d.message.clone())
+                .collect::<Vec<_>>()
+                .join("\n");
+            Err(JsErrorBox::generic(format!(
+                "{}{}",
+                DEKA_VALIDATION_ERROR_MARKER, message
+            )))
         }
-        deka_compile::CompilerVersion::V2 => match deka_compile::compile_to_js(source, input) {
-            Ok(result) => Ok(result.js),
-            Err(diagnostics) => {
-                let message = diagnostics
-                    .iter()
-                    .map(|d| d.message.clone())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                Err(JsErrorBox::generic(format!(
-                    "{}{}",
-                    DEKA_VALIDATION_ERROR_MARKER, message
-                )))
-            }
-        },
     }
 }
 
-/// Parse module imports from a `.ds` source using the selected compiler's parser.
+/// Parse module imports from a `.ds` source using the v2 parser.
 fn parse_module_imports(source: &str) -> Vec<String> {
-    match selected_compiler_version() {
-        deka_compile::CompilerVersion::V1 => {
-            let meta = parse_v1_source_module_meta(source);
-            meta.imports.iter().map(|decl| decl.from.clone()).collect()
-        }
-        deka_compile::CompilerVersion::V2 => {
-            let meta = deka_compile::parse_source_module_meta(source);
-            meta.imports.iter().map(|decl| decl.path.clone()).collect()
-        }
-    }
+    let meta = deka_compile::parse_source_module_meta(source);
+    meta.imports.iter().map(|decl| decl.path.clone()).collect()
 }
 
 #[derive(Clone)]
@@ -118,10 +82,7 @@ impl PhpxEsmLoader {
         let wrapper_specifier = ModuleSpecifier::from_file_path(entry_wrapper_path(&project_root))
             .map_err(|_| JsErrorBox::generic("invalid entry wrapper path"))?;
 
-        let v2_modules = if !entry_is_app_directory
-            && selected_compiler_version() == deka_compile::CompilerVersion::V2
-            && entry_module_path.is_file()
-        {
+        let v2_modules = if !entry_is_app_directory && entry_module_path.is_file() {
             let loader = deka_compile::module_graph::FsModuleLoader::new(project_root.clone());
             match deka_compile::module_graph::compile_module_graph(&entry_module_path, &loader) {
                 Ok(graph) => Some(graph.modules),
@@ -171,7 +132,7 @@ impl PhpxEsmLoader {
         Ok(ModuleSourceCode::String(text.into()))
     }
 
-    fn load_phpx_source(&self, path: &Path) -> Result<ModuleSourceCode, JsErrorBox> {
+    fn load_ds_source(&self, path: &Path) -> Result<ModuleSourceCode, JsErrorBox> {
         if let Some(v2_modules) = &self.v2_modules {
             let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
             if let Some(js) = v2_modules.get(&key) {
@@ -285,7 +246,7 @@ impl PhpxEsmLoader {
         };
         let ext = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
         let mut code = match ext {
-            "ds" | "phpx" => self.load_phpx_source(&path)?,
+            "ds" => self.load_ds_source(&path)?,
             _ => self.load_js_source(&path)?,
         };
         if specifier == &self.entry_specifier {

@@ -542,6 +542,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires local redis service; environmental test (see dekaruntime/deka#330)"]
     fn connect_and_set_get() {
         let conn = redis_connect(&json!({ "url": "redis://localhost:6380" }));
         assert_eq!(
@@ -581,6 +582,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires local redis service; environmental test (see dekaruntime/deka#330)"]
     fn hash_operations() {
         let conn = redis_connect(&json!({ "url": "redis://localhost:6380" }));
         let handle = conn.get("handle").and_then(|v| v.as_u64()).unwrap();
@@ -606,6 +608,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires local redis service; environmental test (see dekaruntime/deka#330)"]
     fn list_operations() {
         let conn = redis_connect(&json!({ "url": "redis://localhost:6380" }));
         let handle = conn.get("handle").and_then(|v| v.as_u64()).unwrap();

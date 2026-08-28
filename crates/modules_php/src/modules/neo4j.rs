@@ -457,6 +457,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires local neo4j service; environmental test (see dekaruntime/deka#330)"]
     fn query_returns_results() {
         let conn = neo4j_connect(&json!({
             "uri": "bolt://localhost:7688",

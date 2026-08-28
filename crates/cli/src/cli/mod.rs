@@ -215,10 +215,6 @@ pub fn register_global_params(registry: &mut Registry) {
         name: "--rust",
         description: "emit a built-in Rust seam contract target",
     });
-    registry.add_param(ParamSpec {
-        name: "--compiler",
-        description: "compiler version to use: v1 (default) or v2",
-    });
 }
 
 // provide helpful info if no args are provided

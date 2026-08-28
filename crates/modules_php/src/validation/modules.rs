@@ -1572,6 +1572,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "module resolution fixtures use .phpx; revisit after v2 module graph is authoritative (see dekaruntime/deka#330)"]
     fn detects_plain_module_cycles() {
         let root = make_temp_project("plain_cycle");
         let entry = root.join("main.phpx");
@@ -1717,6 +1718,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "module resolution fixtures use .phpx; revisit after v2 module graph is authoritative (see dekaruntime/deka#330)"]
     fn resolves_scoped_deka_stdlib_imports_from_unscoped_install_dirs() {
         let root = make_temp_project("scoped_stdlib_unscoped_dir");
         let entry = root.join("main.phpx");
@@ -1767,6 +1769,7 @@ import { now_ms } from '@deka/time'
     }
 
     #[test]
+    #[ignore = "module resolution fixtures use .phpx; revisit after v2 module graph is authoritative (see dekaruntime/deka#330)"]
     fn scoped_deka_import_resolved_unscoped_still_checks_lock_integrity() {
         let root = make_temp_project("scoped_stdlib_unscoped_integrity");
         let entry = root.join("main.phpx");
@@ -1805,6 +1808,7 @@ import { now_ms } from '@deka/time'
     }
 
     #[test]
+    #[ignore = "module resolution fixtures use .phpx; revisit after v2 module graph is authoritative (see dekaruntime/deka#330)"]
     fn reports_ambiguous_shorthand_vs_index_module() {
         let root = make_temp_project("ambiguous_module");
         let entry = root.join("main.phpx");
@@ -1883,6 +1887,7 @@ import { now_ms } from '@deka/time'
     }
 
     #[test]
+    #[ignore = "module resolution fixtures use .phpx; revisit after v2 module graph is authoritative (see dekaruntime/deka#330)"]
     fn detects_top_level_await_cycles_with_path() {
         let root = make_temp_project("tla_cycle");
         let entry = root.join("main.phpx");

@@ -202,11 +202,11 @@ fn default_app_page_ds() -> &'static str {
 }
 
 fn default_main_ds() -> &'static str {
-    "export fn App(request: Object) Object {\n    return {\n        status: 200,\n        headers: { 'content-type': 'text/html; charset=utf-8' },\n        body: \"<!doctype html>\\n<html lang=\\\"en\\\">\\n<body>\\n  <main id=\\\"app\\\">Deka App</main>\\n</body>\\n</html>\",\n    };\n}\n"
+    "interface Request { url: string }\ninterface Response { status: number, body: string }\nexport fn App(request: Request): Response {\n    return { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: \"<!doctype html>\\n<html lang=\\\"en\\\">\\n<body>\\n  <main id=\\\"app\\\">Deka App</main>\\n</body>\\n</html>\" };\n}\n"
 }
 
 fn default_app_layout_ds() -> &'static str {
-    "export fn Layout(props: Object) string {\n    return \"<html lang=\\\"en\\\">\\n<head>\\n  <meta charset=\\\"utf-8\\\" />\\n  <meta name=\\\"viewport\\\" content=\\\"width=device-width, initial-scale=1\\\" />\\n  <title>Deka App</title>\\n</head>\\n<body>\\n  <main id=\\\"app\\\">\" + props.children + \"</main>\\n</body>\\n</html>\";\n}\n"
+    "interface LayoutProps { children: string }\nexport fn Layout(props: LayoutProps) string {\n    return \"<html lang=\\\"en\\\">\\n<head>\\n  <meta charset=\\\"utf-8\\\" />\\n  <meta name=\\\"viewport\\\" content=\\\"width=device-width, initial-scale=1\\\" />\\n  <title>Deka App</title>\\n</head>\\n<body>\\n  <main id=\\\"app\\\">\" + props.children + \"</main>\\n</body>\\n</html>\";\n}\n"
 }
 
 fn default_public_index_html() -> &'static str {
@@ -220,7 +220,9 @@ mod tests {
     #[test]
     fn default_main_uses_dekascript_page_layout_entry() {
         let template = default_main_ds();
-        assert!(template.contains("export fn App(request: Object) Object"));
+        assert!(template.contains("interface Request { url: string }"));
+        assert!(template.contains("interface Response { status: number, body: string }"));
+        assert!(template.contains("export fn App(request: Request): Response"));
         assert!(template.contains("body: \"<!doctype html>\\n<html"));
         assert!(!template.contains('$'));
         assert!(!template.contains("component/router"));
