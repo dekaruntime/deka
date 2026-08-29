@@ -25,6 +25,30 @@ impl<'a> Parser<'a> {
             // without consuming a statement terminator.
             let next_kind = self.peek_after_newlines();
 
+            // Juxtaposition call syntax: `fn arg` is sugar for `fn(arg)`.
+            // The callee must be a bare identifier, the argument must start on
+            // the same line, and it cannot be an operator that would conflict
+            // with infix parsing (`-`, `+`, `|`).
+            if let Expr::Identifier {
+                span: callee_span, ..
+            } = &left
+            {
+                let current = self.current();
+                if callee_span.end.line == current.span.start.line
+                    && can_start_juxtaposition_arg(current.kind)
+                {
+                    let arg = self.parse_expr(JUXTAPOSITION_ARG_PREC)?;
+                    let span = self.span_from(start, start_byte);
+                    left = Expr::Call {
+                        callee: alloc(self.arena, left),
+                        type_args: &[],
+                        args: alloc_slice(self.arena, vec![arg]),
+                        span,
+                    };
+                    continue;
+                }
+            }
+
             // Postfix member access: allow newline before `.` for chaining.
             if next_kind == TokenKind::Dot {
                 self.skip_newlines();
@@ -623,4 +647,22 @@ fn unescape_string(s: &str) -> String {
         }
     }
     out
+}
+
+/// Precedence used when parsing a juxtaposition argument. It is higher than
+/// every binary operator so that `fn arg + 1` parses as `(fn arg) + 1`.
+const JUXTAPOSITION_ARG_PREC: u8 = 13;
+
+/// True when `kind` can start a primary expression that is valid as a
+/// juxtaposition call argument. Only literals and identifiers are allowed,
+/// which avoids ambiguity with struct literals (`Point { ... }`), index
+/// access (`arr[0]`), normal call syntax (`fn()`), and JSX (`<div />`).
+/// `-`, `+`, and `|` are excluded because they would be mistaken for infix
+/// operators.
+fn can_start_juxtaposition_arg(kind: TokenKind) -> bool {
+    use TokenKind::*;
+    matches!(
+        kind,
+        Number | String | BacktickString | True | False | None | Identifier
+    )
 }

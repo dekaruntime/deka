@@ -1,6 +1,6 @@
 //! Statement parsing.
 
-use crate::ast::{alloc, alloc_slice, EnumCase, ForInit, InterfaceMember, Param, Pos, Program, StructField, Stmt, Type, TypeParam};
+use crate::ast::{alloc, alloc_slice, EnumCase, ExportDecl, Expr, ForInit, InterfaceMember, Param, Pos, Program, StructField, Stmt, TemplatePart, Type, TypeParam};
 use crate::lexer::TokenKind;
 
 use super::util::token_name;
@@ -28,9 +28,12 @@ impl<'a> Parser<'a> {
             self.skip_newlines();
         }
 
+        let statements = alloc_slice(self.arena, statements);
+        let has_top_level_await = program_has_top_level_await(statements);
         Some(Program {
-            statements: alloc_slice(self.arena, statements),
+            statements,
             span: self.span_from(start, start_byte),
+            has_top_level_await,
         })
     }
 
@@ -912,5 +915,137 @@ impl<'a> Parser<'a> {
             ));
             None
         }
+    }
+}
+
+/// True when any statement at the top level of the program contains an
+/// `await` expression outside of a function or closure body.
+pub(crate) fn program_has_top_level_await(statements: &[Stmt<'_>]) -> bool {
+    statements.iter().any(|stmt| stmt_has_top_level_await(stmt))
+}
+
+fn stmt_has_top_level_await(stmt: &Stmt<'_>) -> bool {
+    match stmt {
+        Stmt::Const { value, .. }
+        | Stmt::Let { value, .. }
+        | Stmt::Expr { expr: value, .. } => expr_has_top_level_await(value),
+        Stmt::Return { value: Some(value), .. } => expr_has_top_level_await(value),
+        Stmt::Return { value: None, .. } => false,
+        // Top-level function declarations are boundaries: await inside them is
+        // not top-level await.
+        Stmt::Function { .. } | Stmt::ReceiverMethod { .. } => false,
+        Stmt::Export { decl, .. } => match decl {
+            ExportDecl::Const { value, .. } => expr_has_top_level_await(value),
+            ExportDecl::Function { .. } | ExportDecl::NamedGroup { .. } => false,
+        },
+        Stmt::If {
+            condition,
+            then_body,
+            else_body,
+            ..
+        } => {
+            expr_has_top_level_await(condition)
+                || then_body.iter().any(|s| stmt_has_top_level_await(s))
+                || else_body.iter().any(|s| stmt_has_top_level_await(s))
+        }
+        Stmt::Block { body, .. } => body.iter().any(|s| stmt_has_top_level_await(s)),
+        Stmt::For {
+            init,
+            condition,
+            step,
+            body,
+            ..
+        } => {
+            init.as_ref().map_or(false, |i| match i {
+                ForInit::Const { value, .. }
+                | ForInit::Let { value, .. }
+                | ForInit::Expr(value) => expr_has_top_level_await(value),
+            })
+                || condition.as_ref().map_or(false, |e| expr_has_top_level_await(e))
+                || step.as_ref().map_or(false, |e| expr_has_top_level_await(e))
+                || body.iter().any(|s| stmt_has_top_level_await(s))
+        }
+        Stmt::ForOf { iterable, body, .. } => {
+            expr_has_top_level_await(iterable) || body.iter().any(|s| stmt_has_top_level_await(s))
+        }
+        Stmt::Break { .. } | Stmt::Continue { .. } | Stmt::Empty { .. } => false,
+        Stmt::Struct { .. }
+        | Stmt::Enum { .. }
+        | Stmt::TypeAlias { .. }
+        | Stmt::Interface { .. }
+        | Stmt::Import { .. } => false,
+    }
+}
+
+fn expr_has_top_level_await(expr: &Expr<'_>) -> bool {
+    match expr {
+        Expr::Await { .. } => true,
+        // Closures are function boundaries.
+        Expr::Function { .. } => false,
+        Expr::Binary { left, right, .. } => {
+            expr_has_top_level_await(left) || expr_has_top_level_await(right)
+        }
+        Expr::Unary { operand, .. } => expr_has_top_level_await(operand),
+        Expr::Call { callee, args, .. } => {
+            expr_has_top_level_await(callee)
+                || args.iter().any(|a| expr_has_top_level_await(a))
+        }
+        Expr::FieldAccess { object, .. }
+        | Expr::IndexAccess { object, .. }
+        | Expr::Paren { expr: object, .. }
+        | Expr::Spread { expr: object, .. } => expr_has_top_level_await(object),
+        Expr::StructLiteral { fields, .. } => {
+            fields.iter().any(|f| expr_has_top_level_await(&f.value))
+        }
+        Expr::EnumConstructor { payload, .. } => {
+            payload.as_ref().map_or(false, |p| expr_has_top_level_await(p))
+        }
+        Expr::Match { scrutinee, arms, .. } => {
+            expr_has_top_level_await(scrutinee)
+                || arms.iter().any(|arm| {
+                    arm.guard
+                        .as_ref()
+                        .map_or(false, |g| expr_has_top_level_await(g))
+                        || expr_has_top_level_await(&arm.body)
+                })
+        }
+        Expr::Ternary {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            expr_has_top_level_await(condition)
+                || expr_has_top_level_await(then_branch)
+                || expr_has_top_level_await(else_branch)
+        }
+        Expr::Array { elements, .. } => {
+            elements.iter().any(|e| expr_has_top_level_await(e))
+        }
+        Expr::Object { fields, .. } => {
+            fields.iter().any(|f| expr_has_top_level_await(&f.value))
+        }
+        Expr::TemplateLiteral { parts, .. } => parts.iter().any(|p| match p {
+            TemplatePart::Text(_) => false,
+            TemplatePart::Expr(e) => expr_has_top_level_await(e),
+        }),
+        Expr::Unsafe { .. } => false,
+        Expr::JsxElement { element, .. } => {
+            element.attributes.iter().any(|attr| {
+                attr.value
+                    .as_ref()
+                    .map_or(false, |v| expr_has_top_level_await(v))
+            }) || element.children.iter().any(|c| expr_has_top_level_await(c))
+        }
+        Expr::JsxFragment { children, .. } => {
+            children.iter().any(|c| expr_has_top_level_await(c))
+        }
+        Expr::JsxText { .. }
+        | Expr::Number { .. }
+        | Expr::BigInt { .. }
+        | Expr::String { .. }
+        | Expr::Boolean { .. }
+        | Expr::None { .. }
+        | Expr::Identifier { .. } => false,
     }
 }

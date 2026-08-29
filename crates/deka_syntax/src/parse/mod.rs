@@ -887,6 +887,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_mixed_keyed_unkeyed_array_rejected() {
+        let arena = Bump::new();
+        let result = parse("const x = [\"a\", 1: \"b\"];", &arena);
+        assert!(!result.errors.is_empty(), "expected a parse error");
+        assert!(
+            result.errors.iter().any(|e| {
+                e.message.contains("expected") && e.message.contains("]") && e.message.contains(":")
+            }),
+            "{:?}",
+            result.errors
+        );
+    }
+
+    #[test]
     fn parse_object_literal() {
         let arena = Bump::new();
         let result = parse("const o = { a: 1, b: \"two\" };", &arena);
@@ -1273,6 +1287,166 @@ mod tests {
                 _ => panic!("expected async function expression"),
             },
             _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
+    fn top_level_await_detected() {
+        let arena = Bump::new();
+        let result = parse(
+            "async fn main() Promise<number> { return 1 } const n = await main();",
+            &arena,
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        assert!(program.has_top_level_await);
+    }
+
+    #[test]
+    fn await_inside_function_is_not_top_level() {
+        let arena = Bump::new();
+        let result = parse(
+            "async fn main() Promise<number> { return await other() }",
+            &arena,
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        assert!(!program.has_top_level_await);
+    }
+
+    #[test]
+    fn await_inside_closure_is_not_top_level() {
+        let arena = Bump::new();
+        let result = parse(
+            "const f = fn () Promise<number> { return await other() }",
+            &arena,
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        assert!(!program.has_top_level_await);
+    }
+
+    #[test]
+    fn await_inside_top_level_for_loop_is_top_level() {
+        let arena = Bump::new();
+        let result = parse(
+            "async fn work() Promise<number> { return 1 } for (let i = 0; i < 3; i = i + 1) { await work() }",
+            &arena,
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        assert!(program.has_top_level_await);
+    }
+
+    #[test]
+    fn no_await_means_no_top_level_await() {
+        let arena = Bump::new();
+        let result = parse("const x = 1; fn f() number { return x }", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        assert!(!program.has_top_level_await);
+    }
+
+    #[test]
+    fn juxtaposition_call_with_string() {
+        let arena = Bump::new();
+        let result = parse("echo \"hello\";", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Expr { expr, .. } => match expr {
+                Expr::Call { callee, args, .. } => {
+                    assert!(matches!(callee, Expr::Identifier { name, .. } if name.to_string() == "echo"));
+                    assert_eq!(args.len(), 1);
+                    assert!(matches!(args[0], Expr::String { value, .. } if value.to_string() == "hello"));
+                }
+                _ => panic!("expected call, got {:?}", expr),
+            },
+            _ => panic!("expected expr statement"),
+        }
+    }
+
+    #[test]
+    fn juxtaposition_call_with_identifier() {
+        let arena = Bump::new();
+        let result = parse("echo message;", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Expr { expr, .. } => match expr {
+                Expr::Call { callee, args, .. } => {
+                    assert!(matches!(callee, Expr::Identifier { name, .. } if name.to_string() == "echo"));
+                    assert_eq!(args.len(), 1);
+                    assert!(matches!(args[0], Expr::Identifier { name, .. } if name.to_string() == "message"));
+                }
+                _ => panic!("expected call, got {:?}", expr),
+            },
+            _ => panic!("expected expr statement"),
+        }
+    }
+
+    #[test]
+    fn juxtaposition_call_respects_precedence() {
+        let arena = Bump::new();
+        let result = parse("echo x + 1;", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Expr { expr, .. } => match expr {
+                Expr::Binary { op: BinOp::Add, left, right, .. } => {
+                    assert!(matches!(left, Expr::Call { .. }));
+                    assert!(matches!(right, Expr::Number { value, .. } if *value == 1.0));
+                }
+                _ => panic!("expected binary add, got {:?}", expr),
+            },
+            _ => panic!("expected expr statement"),
+        }
+    }
+
+    #[test]
+    fn juxtaposition_call_does_not_span_newline() {
+        let arena = Bump::new();
+        let result = parse("echo\n\"hello\";", &arena);
+        // `echo` as a standalone expression statement is syntactically valid but
+        // unknown at typecheck time; parsing should not swallow the string as an
+        // argument.
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        assert_eq!(program.statements.len(), 2);
+        assert!(matches!(program.statements[0], Stmt::Expr { expr: Expr::Identifier { name, .. }, .. } if name.to_string() == "echo"));
+        assert!(matches!(program.statements[1], Stmt::Expr { expr: Expr::String { .. }, .. }));
+    }
+
+    #[test]
+    fn juxtaposition_call_excludes_minus() {
+        let arena = Bump::new();
+        let result = parse("echo -1;", &arena);
+        // Should parse as binary subtraction `echo - 1`, not a call.
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Expr { expr, .. } => {
+                assert!(matches!(expr, Expr::Binary { op: BinOp::Sub, .. }));
+            }
+            _ => panic!("expected expr statement"),
+        }
+    }
+
+    #[test]
+    fn normal_call_syntax_still_works() {
+        let arena = Bump::new();
+        let result = parse("echo(\"hello\");", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Expr { expr, .. } => match expr {
+                Expr::Call { callee, args, .. } => {
+                    assert!(matches!(callee, Expr::Identifier { name, .. } if name.to_string() == "echo"));
+                    assert_eq!(args.len(), 1);
+                }
+                _ => panic!("expected call, got {:?}", expr),
+            },
+            _ => panic!("expected expr statement"),
         }
     }
 }

@@ -38,6 +38,10 @@ pub struct Pos {
 pub struct Program<'a> {
     pub statements: &'a [Stmt<'a>],
     pub span: Span,
+    /// True when the program uses `await` at the top level (outside of any
+    /// function or closure body). Computed during parsing so consumers do not
+    /// need to re-scan source text.
+    pub has_top_level_await: bool,
 }
 
 /// Top-level or block statement.

@@ -3,6 +3,7 @@
 pub mod module_graph;
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use bumpalo::Bump;
 use deka_emit::emit_js_with_options;
@@ -166,13 +167,19 @@ pub struct CompileResult {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-/// Options controlling compiler emission.
+/// Options controlling compiler emission and module resolution.
 #[derive(Debug, Default, Clone)]
 pub struct CompileOptions {
     /// Base URL for bare module specifiers. When set, imports like
     /// `import { echo } from "io"` are emitted as
     /// `import { echo } from "<module_base>/io.mjs"`.
     pub module_base: Option<String>,
+    /// Explicit project root used for module resolution. When set, bare
+    /// stdlib imports are resolved against `<module_root>/ds_modules` before
+    /// falling back to the current working directory. This removes the need
+    /// for the process-global `DEKA_MODULE_ROOT` environment variable in the
+    /// v2 compiler path.
+    pub module_root: Option<PathBuf>,
 }
 
 /// Compile a DekaScript source to JavaScript using the v2 pipeline.

@@ -38,14 +38,29 @@ pub trait ModuleLoader {
 /// 2. `/abs/path` → absolute path (must still lie inside the project root).
 /// 3. `./path` or `../path` → relative to the importing file's directory.
 /// 4. Bare specifier (e.g. `json`, `@deka/crypto`) → `ds_modules/` (with
-///    `@deka/` aliases), falling back to `DEKA_MODULE_ROOT` if set.
+///    `@deka/` aliases), falling back to `module_root` when provided.
 pub struct FsModuleLoader {
     project_root: PathBuf,
+    module_root: Option<PathBuf>,
 }
 
 impl FsModuleLoader {
     pub fn new(project_root: PathBuf) -> Self {
-        Self { project_root }
+        Self {
+            project_root,
+            module_root: None,
+        }
+    }
+
+    /// Create a loader with an explicit module root for resolving bare stdlib
+    /// imports. When a bare specifier cannot be found under the project's
+    /// `ds_modules/`, the loader tries `<module_root>/ds_modules/` before
+    /// giving up.
+    pub fn with_module_root(project_root: PathBuf, module_root: PathBuf) -> Self {
+        Self {
+            project_root,
+            module_root: Some(module_root),
+        }
     }
 
     fn resolve_ds_file(&self, base: &Path) -> Option<PathBuf> {
@@ -130,11 +145,11 @@ impl ModuleLoader for FsModuleLoader {
             }
         }
 
-        // DEKA_MODULE_ROOT fallback for stdlib-only tenants.
-        if let Some(root_os) = std::env::var_os("DEKA_MODULE_ROOT") {
-            let root = PathBuf::from(root_os);
+        // Explicit module_root fallback for stdlib-only tenants.
+        if let Some(module_root) = &self.module_root {
+            let modules_dir = runtime_core::modules::resolve_modules_dir(module_root);
             for alias in &aliases {
-                let base = root.join(alias);
+                let base = modules_dir.join(alias);
                 if let Some(resolved) = self.resolve_ds_file(&base) {
                     return Ok(resolved);
                 }
