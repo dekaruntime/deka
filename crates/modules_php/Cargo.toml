@@ -6,7 +6,7 @@ build = "build.rs"
 
 [features]
 default = ["compiler", "runtime"]
-compiler = []
+compiler = ["dep:php-rs", "php-rs/pcre2"]
 runtime = [
     "dep:deno_core",
     "dep:tokio",
@@ -29,7 +29,6 @@ runtime = [
     "dep:sha3",
     "dep:blake3",
     "dep:stdio",
-    "php-rs/pcre2",
 ]
 
 [dependencies]
@@ -37,7 +36,7 @@ deno_core = { workspace = true, optional = true }
 bumpalo = "3"
 bytes = "1"
 chrono = { version = "0.4", features = ["clock"] }
-php-rs = { path = "../php-rs", default-features = false }
+php-rs = { path = "../php-rs", default-features = false, optional = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 prost = "0.13"

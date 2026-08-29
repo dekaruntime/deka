@@ -1,11 +1,11 @@
 use core::{CommandSpec, Context, Registry, SubcommandSpec};
 use stdio::error;
 
-use super::{
-    generate::cmd_generate,
-    migrate::{cmd_flush, cmd_info, cmd_migrate},
-};
+#[cfg(feature = "lsp")]
+use super::generate::cmd_generate;
+use super::migrate::{cmd_flush, cmd_info, cmd_migrate};
 
+#[cfg(feature = "lsp")]
 const GENERATE: SubcommandSpec = SubcommandSpec {
     name: "generate",
     summary: "generate db client and migration artifacts from DekaScript struct models",
@@ -34,7 +34,10 @@ const FLUSH: SubcommandSpec = SubcommandSpec {
     handler: cmd_flush,
 };
 
+#[cfg(feature = "lsp")]
 const SUBCOMMANDS: &[SubcommandSpec] = &[GENERATE, MIGRATE, INFO, FLUSH];
+#[cfg(not(feature = "lsp"))]
+const SUBCOMMANDS: &[SubcommandSpec] = &[MIGRATE, INFO, FLUSH];
 
 const COMMAND: CommandSpec = CommandSpec {
     name: "db",

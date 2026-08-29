@@ -5,11 +5,9 @@ use deno_core::Extension;
 
 #[cfg(feature = "compiler")]
 pub mod compiler_api;
-#[cfg(feature = "compiler")]
 pub mod integrity;
 #[cfg(feature = "runtime")]
 pub mod modules;
-#[cfg(feature = "compiler")]
 pub mod validation;
 
 #[cfg(feature = "runtime")]

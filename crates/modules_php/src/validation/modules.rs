@@ -9,7 +9,7 @@ use runtime_core::module_spec::ds_source_candidates;
 use runtime_core::modules::{existing_modules_dirs, is_modules_dir_name, MODULES_DIR};
 
 use super::{ErrorKind, Severity, ValidationError};
-use crate::validation::exports::{parse_export_function, parse_export_list_line};
+use crate::validation::export_parsers::{parse_export_function, parse_export_list_line};
 use crate::validation::imports::{
     ImportKind, ImportSpec, consume_comment_line, frontmatter_bounds, is_ident, parse_import_line,
     strip_php_tags_inline,

@@ -1,20 +1,28 @@
+pub mod export_parsers;
 pub mod exports;
-pub mod generics;
-pub mod hoisting;
 pub mod imports;
-pub mod jsx;
 pub mod modules;
+
+#[cfg(feature = "compiler")]
+pub mod generics;
+#[cfg(feature = "compiler")]
+pub mod hoisting;
+#[cfg(feature = "compiler")]
+pub mod jsx;
+#[cfg(feature = "compiler")]
 pub mod patterns;
+#[cfg(feature = "compiler")]
 pub mod phpx_rules;
+#[cfg(feature = "compiler")]
 pub mod structs;
+#[cfg(feature = "compiler")]
 pub mod syntax;
+#[cfg(feature = "compiler")]
 pub mod type_checker;
+#[cfg(feature = "compiler")]
 pub mod type_syntax;
 
-use php_rs::parser::ast::Program;
-use php_rs::phpx::typeck::ExternalFunctionSig;
 use serde::Serialize;
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum Severity {
@@ -98,14 +106,6 @@ pub struct ValidationWarning {
     pub severity: Severity,
 }
 
-#[derive(Debug)]
-pub struct ValidationResult<'a> {
-    pub errors: Vec<ValidationError>,
-    pub warnings: Vec<ValidationWarning>,
-    pub ast: Option<Program<'a>>,
-    pub wasm_functions: HashMap<String, ExternalFunctionSig>,
-}
-
 pub fn format_validation_error(source: &str, file_path: &str, error: &ValidationError) -> String {
     deka_validation::format_validation_error_with_suggestion(
         source,
@@ -183,62 +183,80 @@ fn docs_link_for_kind(kind: ErrorKind) -> Option<String> {
         ErrorKind::JsxError => "docs/phpx/jsx",
         ErrorKind::StructError => "docs/phpx/structs",
         ErrorKind::EnumError | ErrorKind::PatternError => "docs/phpx/enums",
-        ErrorKind::TypeError | ErrorKind::TypeMismatch | ErrorKind::UnknownType => {
-            "docs/phpx/types"
-        }
+        ErrorKind::TypeError | ErrorKind::TypeMismatch | ErrorKind::UnknownType => "docs/phpx/types",
         ErrorKind::CypherError => return None,
     };
     Some(path.to_string())
 }
 
-pub fn parse_errors_to_validation_errors(
-    source: &str,
-    errors: &[php_rs::parser::ast::ParseError],
-) -> Vec<ValidationError> {
-    errors
-        .iter()
-        .map(|error| {
-            let (line, column, underline_len) = if let Some(info) =
-                error.span.line_info(source.as_bytes())
-            {
-                let padding = std::cmp::min(info.line_text.len(), info.column.saturating_sub(1));
-                let highlight_len = std::cmp::max(
-                    1,
-                    std::cmp::min(
-                        error.span.len(),
-                        info.line_text.len().saturating_sub(padding),
-                    ),
-                );
-                (info.line, info.column, highlight_len)
-            } else {
-                (1, 1, 1)
-            };
+#[cfg(feature = "compiler")]
+mod compiler_types {
+    use super::{ErrorKind, Severity, ValidationError};
+    use php_rs::parser::ast::Program;
+    use php_rs::phpx::typeck::ExternalFunctionSig;
+    use serde::Serialize;
+    use std::collections::HashMap;
 
-            ValidationError {
-                kind: ErrorKind::from_parse_error(error),
-                line,
-                column,
-                message: error.message.to_string(),
-                help_text: error.help_text.to_string(),
-                suggestion: if error.help_text.trim().is_empty() {
-                    None
+    #[derive(Debug)]
+    pub struct ValidationResult<'a> {
+        pub errors: Vec<ValidationError>,
+        pub warnings: Vec<super::ValidationWarning>,
+        pub ast: Option<Program<'a>>,
+        pub wasm_functions: HashMap<String, ExternalFunctionSig>,
+    }
+
+    pub fn parse_errors_to_validation_errors(
+        source: &str,
+        errors: &[php_rs::parser::ast::ParseError],
+    ) -> Vec<ValidationError> {
+        errors
+            .iter()
+            .map(|error| {
+                let (line, column, underline_len) = if let Some(info) =
+                    error.span.line_info(source.as_bytes())
+                {
+                    let padding = std::cmp::min(info.line_text.len(), info.column.saturating_sub(1));
+                    let highlight_len = std::cmp::max(
+                        1,
+                        std::cmp::min(
+                            error.span.len(),
+                            info.line_text.len().saturating_sub(padding),
+                        ),
+                    );
+                    (info.line, info.column, highlight_len)
                 } else {
-                    Some(error.help_text.to_string())
-                },
-                underline_length: underline_len,
-                severity: Severity::Error,
-            }
-        })
-        .collect()
-}
+                    (1, 1, 1)
+                };
 
-impl ErrorKind {
-    pub fn from_parse_error(error: &php_rs::parser::ast::ParseError) -> Self {
-        match error.error_kind {
-            "Syntax Error" => ErrorKind::SyntaxError,
-            "Unexpected Token" => ErrorKind::UnexpectedToken,
-            "Invalid Token" => ErrorKind::InvalidToken,
-            _ => ErrorKind::SyntaxError,
+                ValidationError {
+                    kind: ErrorKind::from_parse_error(error),
+                    line,
+                    column,
+                    message: error.message.to_string(),
+                    help_text: error.help_text.to_string(),
+                    suggestion: if error.help_text.trim().is_empty() {
+                        None
+                    } else {
+                        Some(error.help_text.to_string())
+                    },
+                    underline_length: underline_len,
+                    severity: Severity::Error,
+                }
+            })
+            .collect()
+    }
+
+    impl ErrorKind {
+        pub fn from_parse_error(error: &php_rs::parser::ast::ParseError) -> Self {
+            match error.error_kind {
+                "Syntax Error" => ErrorKind::SyntaxError,
+                "Unexpected Token" => ErrorKind::UnexpectedToken,
+                "Invalid Token" => ErrorKind::InvalidToken,
+                _ => ErrorKind::SyntaxError,
+            }
         }
     }
 }
+
+#[cfg(feature = "compiler")]
+pub use compiler_types::{ValidationResult, parse_errors_to_validation_errors};

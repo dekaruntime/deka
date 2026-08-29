@@ -15,7 +15,7 @@ reqwest = { version = "0.11", features = ["stream"] }
 bytes = { workspace = true }
 deka_http = { path = "../http" }
 stdio = { path = "../stdio" }
-modules_php = { path = "../modules_php" }
+modules_php = { path = "../modules_php", default-features = false, features = ["runtime"] }
 deka_compile = { path = "../deka_compile" }
 bundler = { path = "../bundler" }
 compile = { path = "../compile" }
