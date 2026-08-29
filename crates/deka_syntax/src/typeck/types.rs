@@ -81,6 +81,28 @@ pub enum UnwrapKind {
     Payload,
 }
 
+/// Which operand of a mixed newtype/primitive operation is the newtype.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NewtypeSide {
+    Left,
+    Right,
+}
+
+/// How a binary or unary operator on newtypes should be lowered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OperatorRewrite<'a> {
+    /// Same-newtype arithmetic (+, -): wrap raw primitive result in constructor.
+    NewtypeBinary { name: &'a str },
+    /// Same-newtype division: returns number (payload / payload).
+    NewtypeDiv,
+    /// Newtype-op-primitive arithmetic (*, /, %): wrap raw result in constructor.
+    NewtypeScalar { name: &'a str, side: NewtypeSide },
+    /// Same-newtype comparison (==, !=, <, <=, >, >=): compare payloads.
+    NewtypeCompare,
+    /// Unary arithmetic on a newtype (-, +): wrap raw result in constructor.
+    NewtypeUnary { name: &'a str },
+}
+
 impl fmt::Display for Type<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

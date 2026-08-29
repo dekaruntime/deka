@@ -23,7 +23,7 @@ mod expr;
 mod stmt;
 mod types;
 
-pub use types::{Type, UnwrapKind};
+pub use types::{NewtypeSide, OperatorRewrite, Type, UnwrapKind};
 
 #[derive(Debug)]
 pub struct TypeError {
@@ -40,6 +40,9 @@ pub struct TypeckResult<'a> {
     /// Map from primitive conversion call expression pointer to how it should
     /// be lowered (`number(x)`, `string(x)`, `bool(x)`).
     pub unwrap_calls: HashMap<*const ast::Expr<'a>, types::UnwrapKind>,
+    /// Map from binary/unary operator expression pointer to how a newtype
+    /// operation should be lowered.
+    pub operator_rewrites: HashMap<*const ast::Expr<'a>, types::OperatorRewrite<'a>>,
 }
 
 pub fn check_program<'a>(program: &'a Program<'a>, _source: &str) -> TypeckResult<'a> {
@@ -89,6 +92,7 @@ pub fn check_program_with_imports<'a>(
         warnings: checker.warnings,
         method_calls: checker.method_calls,
         unwrap_calls: checker.unwrap_calls,
+        operator_rewrites: checker.operator_rewrites,
     }
 }
 
@@ -255,6 +259,8 @@ struct Checker<'a> {
     method_calls: HashMap<*const ast::Expr<'a>, MethodTarget<'a>>,
     /// Primitive conversion call sites to lower, keyed by call expression pointer.
     unwrap_calls: HashMap<*const ast::Expr<'a>, types::UnwrapKind>,
+    /// Operator expression sites that need newtype-aware lowering.
+    operator_rewrites: HashMap<*const ast::Expr<'a>, types::OperatorRewrite<'a>>,
     /// Local scopes. The first scope is the top-level scope.
     scopes: Vec<HashMap<&'a str, Type<'a>>>,
     /// Bindings that were introduced with `let` and may be reassigned.
@@ -288,6 +294,7 @@ impl<'a> Checker<'a> {
             receiver_methods: HashMap::new(),
             method_calls: HashMap::new(),
             unwrap_calls: HashMap::new(),
+            operator_rewrites: HashMap::new(),
             scopes: vec![HashMap::new()],
             mutables: vec![HashSet::new()],
             type_scopes: Vec::new(),

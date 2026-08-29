@@ -27,12 +27,12 @@ impl<'a> Checker<'a> {
                 left,
                 right,
                 span,
-            } => self.check_binary(*op, left, right, *span),
+            } => self.check_binary(expr, *op, left, right, *span),
             ast::Expr::Unary {
                 op,
                 operand,
                 span,
-            } => self.check_unary(*op, operand, *span),
+            } => self.check_unary(expr, *op, operand, *span),
             ast::Expr::Call {
                 callee,
                 type_args,
@@ -1025,6 +1025,7 @@ impl<'a> Checker<'a> {
 
     fn check_binary(
         &mut self,
+        expr: &ast::Expr<'a>,
         op: ast::BinOp,
         left: &ast::Expr<'a>,
         right: &ast::Expr<'a>,
@@ -1048,6 +1049,9 @@ impl<'a> Checker<'a> {
                 if matches!(left_type, Type::Infer) || matches!(right_type, Type::Infer) {
                     return Type::Infer;
                 }
+                if let Some(ty) = self.check_newtype_arithmetic(expr, op, &left_type, &right_type, span) {
+                    return ty;
+                }
                 if Self::is_number(&left_type) && Self::is_number(&right_type) {
                     Type::Named { name: "number" }
                 } else if Self::is_string(&left_type) || Self::is_string(&right_type) {
@@ -1058,6 +1062,14 @@ impl<'a> Checker<'a> {
                 {
                     // Promise<T> + primitive coerces to string in JS.
                     Type::Named { name: "string" }
+                } else if matches!(left_type, Type::Newtype { .. }) || matches!(right_type, Type::Newtype { .. }) {
+                    self.error_span(
+                        span,
+                        format!(
+                            "cannot add types `{left_type}` and `{right_type}`"
+                        ),
+                    );
+                    Type::Error
                 } else {
                     self.error_span(
                         span,
@@ -1069,6 +1081,9 @@ impl<'a> Checker<'a> {
                 }
             }
             Sub | Mul | Div | Mod => {
+                if let Some(rewrite) = self.check_newtype_arithmetic(expr, op, &left_type, &right_type, span) {
+                    return rewrite;
+                }
                 if !matches!(left_type, Type::Infer) {
                     self.expect_number(&left_type, left.span());
                 }
@@ -1083,6 +1098,9 @@ impl<'a> Checker<'a> {
                 }
                 if matches!(left_type, Type::Infer) || matches!(right_type, Type::Infer) {
                     return Type::Named { name: "boolean" };
+                }
+                if let Some(rewrite) = self.check_newtype_comparison(expr, op, &left_type, &right_type, span) {
+                    return rewrite;
                 }
                 if left_type == right_type
                     && (Self::is_number(&left_type)
@@ -1311,25 +1329,162 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Try to typecheck an arithmetic operator where one or both operands are
+    /// newtypes. Returns the result type and records an operator rewrite when
+    /// applicable. Returns None when no newtype is involved.
+    fn check_newtype_arithmetic(
+        &mut self,
+        expr: &ast::Expr<'a>,
+        op: ast::BinOp,
+        left_type: &Type<'a>,
+        right_type: &Type<'a>,
+        span: ast::Span,
+    ) -> Option<Type<'a>> {
+        use ast::BinOp::*;
+        let newtype_name = |t: &Type<'a>| match t {
+            Type::Newtype { name, repr: crate::ast::NewtypeRepr::Number } => Some(*name),
+            _ => None,
+        };
+
+        let same_newtype = match (left_type, right_type) {
+            (
+                Type::Newtype {
+                    name: l,
+                    repr: crate::ast::NewtypeRepr::Number,
+                },
+                Type::Newtype {
+                    name: r,
+                    repr: crate::ast::NewtypeRepr::Number,
+                },
+            ) if l == r => Some(*l),
+            _ => None,
+        };
+
+        if let Some(name) = same_newtype {
+            let rewrite = match op {
+                Add | Sub => Some(super::types::OperatorRewrite::NewtypeBinary { name }),
+                Div => Some(super::types::OperatorRewrite::NewtypeDiv),
+                Mul | Mod => {
+                    self.error_span(
+                        span,
+                        format!("cannot multiply or modulo two `{name}` values; use the payload instead"),
+                    );
+                    return Some(Type::Error);
+                }
+                _ => None,
+            };
+            if let Some(rewrite) = rewrite {
+                self.operator_rewrites.insert(expr as *const ast::Expr<'a>, rewrite);
+            }
+            return Some(match op {
+                Div => Type::Named { name: "number" },
+                _ => Type::Newtype { name, repr: crate::ast::NewtypeRepr::Number },
+            });
+        }
+
+        if let Some(name) = newtype_name(left_type) {
+            if Self::is_number(right_type) {
+                let rewrite = match op {
+                    Mul | Div | Mod => Some(super::types::OperatorRewrite::NewtypeScalar {
+                        name,
+                        side: super::types::NewtypeSide::Left,
+                    }),
+                    Add | Sub => {
+                        self.error_span(
+                            span,
+                            format!("cannot add or subtract a `{name}` and a raw number"),
+                        );
+                        return Some(Type::Error);
+                    }
+                    _ => None,
+                };
+                if let Some(rewrite) = rewrite {
+                    self.operator_rewrites.insert(expr as *const ast::Expr<'a>, rewrite);
+                }
+                return Some(Type::Newtype { name, repr: crate::ast::NewtypeRepr::Number });
+            }
+        }
+
+        if let Some(name) = newtype_name(right_type) {
+            if Self::is_number(left_type) {
+                let rewrite = match op {
+                    Mul | Div | Mod => Some(super::types::OperatorRewrite::NewtypeScalar {
+                        name,
+                        side: super::types::NewtypeSide::Right,
+                    }),
+                    Add | Sub => {
+                        self.error_span(
+                            span,
+                            format!("cannot add or subtract a raw number and a `{name}`"),
+                        );
+                        return Some(Type::Error);
+                    }
+                    _ => None,
+                };
+                if let Some(rewrite) = rewrite {
+                    self.operator_rewrites.insert(expr as *const ast::Expr<'a>, rewrite);
+                }
+                return Some(Type::Newtype { name, repr: crate::ast::NewtypeRepr::Number });
+            }
+        }
+
+        None
+    }
+
+    /// Try to typecheck a comparison where one or both operands are newtypes.
+    /// Same-newtype comparisons compare payloads. Returns None when no newtype
+    /// is involved.
+    fn check_newtype_comparison(
+        &mut self,
+        expr: &ast::Expr<'a>,
+        op: ast::BinOp,
+        left_type: &Type<'a>,
+        right_type: &Type<'a>,
+        span: ast::Span,
+    ) -> Option<Type<'a>> {
+        let _ = op;
+        match (left_type, right_type) {
+            (Type::Newtype { name: l, .. }, Type::Newtype { name: r, .. }) if l == r => {
+                self.operator_rewrites.insert(
+                    expr as *const ast::Expr<'a>,
+                    super::types::OperatorRewrite::NewtypeCompare,
+                );
+                Some(Type::Named { name: "boolean" })
+            }
+            (Type::Newtype { name, .. }, other) | (other, Type::Newtype { name, .. }) => {
+                self.error_span(
+                    span,
+                    format!("cannot compare `{name}` with `{other}`"),
+                );
+                Some(Type::Named { name: "boolean" })
+            }
+            _ => None,
+        }
+    }
+
     fn check_unary(
         &mut self,
+        expr: &ast::Expr<'a>,
         op: ast::UnOp,
         operand: &ast::Expr<'a>,
         _span: ast::Span,
     ) -> Type<'a> {
         let operand_type = self.check_expr(operand);
         match op {
-            ast::UnOp::Neg => {
+            ast::UnOp::Neg | ast::UnOp::Plus => {
+                if let Type::Newtype { name, repr: crate::ast::NewtypeRepr::Number } = &operand_type {
+                    self.operator_rewrites.insert(
+                        expr as *const ast::Expr<'a>,
+                        super::types::OperatorRewrite::NewtypeUnary { name: *name },
+                    );
+                    return Type::Newtype { name: *name, repr: crate::ast::NewtypeRepr::Number };
+                }
                 self.expect_number(&operand_type, operand.span());
                 Type::Named { name: "number" }
             }
             ast::UnOp::Not => {
                 self.expect_boolean(&operand_type, operand.span());
                 Type::Named { name: "boolean" }
-            }
-            ast::UnOp::Plus => {
-                self.expect_number(&operand_type, operand.span());
-                Type::Named { name: "number" }
             }
         }
     }

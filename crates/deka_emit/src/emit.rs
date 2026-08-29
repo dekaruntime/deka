@@ -28,6 +28,7 @@ pub fn emit_js_with_imports<'a>(
     _source: &str,
     imports: &HashMap<&str, &deka_syntax::ModuleExports<'a>>,
     unwrap_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::UnwrapKind>,
+    operator_rewrites: &HashMap<*const Expr<'a>, deka_syntax::typeck::OperatorRewrite<'a>>,
 ) -> Result<String, String> {
     emit_js_with_options(
         program,
@@ -884,6 +885,101 @@ impl<'a> Emitter<'a> {
         Ok(())
     }
 
+    fn emit_newtype_binary(
+        &mut self,
+        rewrite: &deka_syntax::typeck::OperatorRewrite<'a>,
+        op: BinOp,
+        left: &Expr<'a>,
+        right: &Expr<'a>,
+    ) -> Result<(), String> {
+        use deka_syntax::typeck::{NewtypeSide, OperatorRewrite};
+        match rewrite {
+            OperatorRewrite::NewtypeBinary { name } => {
+                self.out.push_str(name);
+                self.out.push_str("(");
+                self.out.push_str("(");
+                self.emit_expr(left)?;
+                self.out.push_str("[__p]");
+                self.out.push(' ');
+                self.out.push_str(bin_op_str(op));
+                self.out.push(' ');
+                self.emit_expr(right)?;
+                self.out.push_str("[__p]");
+                self.out.push_str("))");
+            }
+            OperatorRewrite::NewtypeDiv => {
+                self.out.push_str("(");
+                self.emit_expr(left)?;
+                self.out.push_str("[__p]");
+                self.out.push(' ');
+                self.out.push_str(bin_op_str(op));
+                self.out.push(' ');
+                self.emit_expr(right)?;
+                self.out.push_str("[__p])");
+            }
+            OperatorRewrite::NewtypeScalar { name, side } => {
+                self.out.push_str(name);
+                self.out.push_str("(");
+                self.out.push_str("(");
+                match side {
+                    NewtypeSide::Left => {
+                        self.emit_expr(left)?;
+                        self.out.push_str("[__p]");
+                        self.out.push(' ');
+                        self.out.push_str(bin_op_str(op));
+                        self.out.push(' ');
+                        self.emit_expr(right)?;
+                    }
+                    NewtypeSide::Right => {
+                        self.emit_expr(left)?;
+                        self.out.push(' ');
+                        self.out.push_str(bin_op_str(op));
+                        self.out.push(' ');
+                        self.emit_expr(right)?;
+                        self.out.push_str("[__p]");
+                    }
+                }
+                self.out.push_str("))");
+            }
+            OperatorRewrite::NewtypeCompare => {
+                self.out.push_str("(");
+                self.emit_expr(left)?;
+                self.out.push_str("[__p]");
+                self.out.push(' ');
+                self.out.push_str(bin_op_str(op));
+                self.out.push(' ');
+                self.emit_expr(right)?;
+                self.out.push_str("[__p])");
+            }
+            _ => {
+                return Err(format!("unexpected unary rewrite for binary expression"));
+            }
+        }
+        Ok(())
+    }
+
+    fn emit_newtype_unary(
+        &mut self,
+        rewrite: &deka_syntax::typeck::OperatorRewrite<'a>,
+        op: deka_syntax::UnOp,
+        operand: &Expr<'a>,
+    ) -> Result<(), String> {
+        use deka_syntax::typeck::OperatorRewrite;
+        match rewrite {
+            OperatorRewrite::NewtypeUnary { name } => {
+                self.out.push_str(name);
+                self.out.push_str("((");
+                self.out.push_str(un_op_str(op));
+                self.emit_expr(operand)?;
+                self.out.push_str("[__p]))");
+            }
+            _ => {
+                return Err(format!("unexpected binary rewrite for unary expression"));
+            }
+        }
+        Ok(())
+    }
+
     fn emit_for_init(&mut self, init: &ForInit<'a>) -> Result<(), String> {
         match init {
             ForInit::Const { name, value } => {
@@ -953,6 +1049,12 @@ impl<'a> Emitter<'a> {
                 self.out.push_str(name);
             }
             Expr::Binary { op, left, right, .. } => {
+                let expr_ptr = expr as *const Expr<'a>;
+                let rewrite = self.operator_rewrites.get(&expr_ptr).copied();
+                if let Some(rewrite) = rewrite {
+                    self.emit_newtype_binary(&rewrite, *op, left, right)?;
+                    return Ok(());
+                }
                 if *op == BinOp::Pipe {
                     // Desugar pipe into a call. The left-hand value becomes
                     // argument 0 unless the right-hand call contains a hole.
@@ -986,6 +1088,12 @@ impl<'a> Emitter<'a> {
                 }
             }
             Expr::Unary { op, operand, .. } => {
+                let expr_ptr = expr as *const Expr<'a>;
+                let rewrite = self.operator_rewrites.get(&expr_ptr).copied();
+                if let Some(rewrite) = rewrite {
+                    self.emit_newtype_unary(&rewrite, *op, operand)?;
+                    return Ok(());
+                }
                 self.out.push_str(un_op_str(*op));
                 self.emit_expr(operand)?;
             }
