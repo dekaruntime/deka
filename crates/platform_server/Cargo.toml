@@ -11,4 +11,4 @@ deno_core = { workspace = true }
 deno_napi = { workspace = true }
 deno_permissions = { workspace = true }
 modules_common = { path = "../modules_common" }
-modules_php = { path = "../modules_php" }
+deka_host = { path = "../deka_host", default-features = false, features = ["runtime"] }

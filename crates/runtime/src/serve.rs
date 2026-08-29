@@ -9,7 +9,7 @@ use crate::extensions::extensions_for_mode;
 use crate::security::resolve_security_policy;
 use core::Context;
 use engine::{RuntimeEngine, RuntimeState, config as runtime_config, set_engine};
-use modules_php::validation::{format_validation_error, modules::validate_module_resolution};
+use deka_host::validation::{format_validation_error, modules::validate_module_resolution};
 use notify::Watcher;
 use platform::Platform;
 use platform_server::ServerPlatform;

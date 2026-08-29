@@ -206,7 +206,7 @@ fn vendor_test_lib(cwd: &Path) -> Result<VendorGuard, String> {
         None
     };
 
-    let integrity = modules_php::integrity::compute_package_integrity(&pkg)
+    let integrity = deka_host::integrity::compute_package_integrity(&pkg)
         .map_err(|err| format!("failed to hash {TEST_PACKAGE}: {err}"))?;
     write_lock_entry(
         &lock_path,

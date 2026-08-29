@@ -289,7 +289,7 @@ mod tests {
         PANIC_DURING_VIRTUAL_LOAD, build_deka_handler_bundle, ensure_project_layout,
         resolve_project_root, MODULES_DIR,
     };
-    use modules_php::integrity::compute_package_integrity;
+    use deka_host::integrity::compute_package_integrity;
     use std::path::Path;
     use std::sync::Mutex;
 

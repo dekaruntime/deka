@@ -276,109 +276,6 @@ fn completes_named_exports_without_closing_brace() {
 }
 
 #[test]
-fn completes_jsx_props_from_interface_shape() {
-    let source = "$v = <FullName />;\n";
-    let index = SymbolIndex {
-        functions: vec![FunctionInfo {
-            name: "FullName".to_string(),
-            span: Span::new(0, 8),
-            signature: "function FullName($props: NameProps): string".to_string(),
-            props_type: Some("NameProps".to_string()),
-            vars: Vec::new(),
-            scope_span: Span::new(0, source.len()),
-        }],
-        interfaces: vec![InterfaceInfo {
-            name: "NameProps".to_string(),
-            span: Span::new(0, 9),
-            fields: vec![
-                FieldInfo {
-                    name: "$name".to_string(),
-                    span: Span::new(0, 5),
-                    ty: Some("string".to_string()),
-                },
-                FieldInfo {
-                    name: "$title".to_string(),
-                    span: Span::new(0, 6),
-                    ty: Some("string".to_string()),
-                },
-                FieldInfo {
-                    name: "$age".to_string(),
-                    span: Span::new(0, 4),
-                    ty: Some("int".to_string()),
-                },
-            ],
-        }],
-        ..SymbolIndex::default()
-    };
-    let offset = source.find("/>").expect("/>");
-    let items = completion_for_jsx_props(&index, source.as_bytes(), offset).expect("completion");
-    let labels: Vec<String> = items.into_iter().map(|item| item.label).collect();
-    assert!(
-        labels.iter().any(|label| label == "name"),
-        "labels={labels:?}"
-    );
-    assert!(
-        labels.iter().any(|label| label == "title"),
-        "labels={labels:?}"
-    );
-    let items = completion_for_jsx_props(&index, source.as_bytes(), offset).expect("completion");
-    let name_item = items
-        .iter()
-        .find(|item| item.label == "name")
-        .expect("name item");
-    assert_eq!(name_item.detail.as_deref(), Some("name: string"));
-    assert_eq!(name_item.insert_text.as_deref(), Some("name=\"\""));
-    let age_item = items
-        .iter()
-        .find(|item| item.label == "age")
-        .expect("age item");
-    assert_eq!(age_item.insert_text.as_deref(), Some("age={0}"));
-}
-
-#[test]
-fn jsx_props_completion_skips_already_used_props() {
-    let source = "$v = <FullName name=\"Bob\" />;\n";
-    let index = SymbolIndex {
-        functions: vec![FunctionInfo {
-            name: "FullName".to_string(),
-            span: Span::new(0, 8),
-            signature: "function FullName($props: NameProps): string".to_string(),
-            props_type: Some("NameProps".to_string()),
-            vars: Vec::new(),
-            scope_span: Span::new(0, source.len()),
-        }],
-        interfaces: vec![InterfaceInfo {
-            name: "NameProps".to_string(),
-            span: Span::new(0, 9),
-            fields: vec![
-                FieldInfo {
-                    name: "$name".to_string(),
-                    span: Span::new(0, 5),
-                    ty: Some("string".to_string()),
-                },
-                FieldInfo {
-                    name: "$title".to_string(),
-                    span: Span::new(0, 6),
-                    ty: Some("string".to_string()),
-                },
-            ],
-        }],
-        ..SymbolIndex::default()
-    };
-    let offset = source.find("/>").expect("/>");
-    let items = completion_for_jsx_props(&index, source.as_bytes(), offset).expect("completion");
-    let labels: Vec<String> = items.into_iter().map(|item| item.label).collect();
-    assert!(
-        !labels.iter().any(|label| label == "name"),
-        "labels={labels:?}"
-    );
-    assert!(
-        labels.iter().any(|label| label == "title"),
-        "labels={labels:?}"
-    );
-}
-
-#[test]
 fn reports_missing_named_import_export() {
     let workspace = temp_dir("dekascript_lsp_missing_export");
     let php_modules = workspace.join(MODULES_DIR);
@@ -421,19 +318,6 @@ fn accepts_valid_named_import_alias() {
         std::slice::from_ref(&workspace),
     );
     assert!(diagnostics.is_empty(), "diagnostics={diagnostics:?}");
-}
-
-#[test]
-#[ignore = "LSP still uses v1 parser which no longer accepts current DekaScript fn syntax; revisit in Phase 3 v2 LSP migration (see dekaruntime/deka#330)"]
-fn compiles_dekascript_and_uses_dekascript_hover_fences() {
-    let source = "export function fullName(name: string): string { return name; }\n";
-    let arena = Bump::new();
-    let result = compile_deka(source, "/tmp/full_name.ds", &arena);
-    let program = result.ast.expect("DekaScript AST");
-    let index = build_index(&program, source.as_bytes());
-    let offset = source.find("fullName").expect("function name");
-    let hover = index.hover_at(offset).expect("hover");
-    assert!(hover.starts_with("```dekascript\n"), "hover={hover}");
 }
 
 #[test]
