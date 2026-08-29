@@ -9,7 +9,6 @@ use runtime_core::module_spec::ds_source_candidates;
 use runtime_core::modules::{existing_modules_dirs, is_modules_dir_name, MODULES_DIR};
 
 use super::{ErrorKind, Severity, ValidationError};
-use crate::validation::export_parsers::{parse_export_function, parse_export_list_line};
 use crate::validation::imports::{
     ImportKind, ImportSpec, consume_comment_line, frontmatter_bounds, is_ident, parse_import_line,
     strip_php_tags_inline,
@@ -384,7 +383,7 @@ pub(crate) fn collect_import_specs(source: &str, file_path: &str) -> Vec<ImportS
     specs
 }
 
-fn collect_exports(source: &str, file_path: &str) -> HashSet<String> {
+fn collect_exports(source: &str, _file_path: &str) -> HashSet<String> {
     let lines: Vec<&str> = source.lines().collect();
     let bounds = frontmatter_bounds(&lines);
     let scan_end = bounds.map(|(_, end)| end).unwrap_or(lines.len());
@@ -404,14 +403,28 @@ fn collect_exports(source: &str, file_path: &str) -> HashSet<String> {
         if consume_comment_line(trimmed, &mut in_block_comment) {
             continue;
         }
-        if trimmed.starts_with("export function")
-            || trimmed.starts_with("export async function")
-            || trimmed.starts_with("export fn")
-            || trimmed.starts_with("export async fn")
-        {
-            if let Ok(spec) = parse_export_function(trimmed, line, idx + 1, file_path) {
-                exports.insert(spec.name);
-            }
+        if let Some(name) = export_name_after_keyword(trimmed, "export function") {
+            exports.insert(name);
+            continue;
+        }
+        if let Some(name) = export_name_after_keyword(trimmed, "export async function") {
+            exports.insert(name);
+            continue;
+        }
+        if let Some(name) = export_name_after_keyword(trimmed, "export fn") {
+            exports.insert(name);
+            continue;
+        }
+        if let Some(name) = export_name_after_keyword(trimmed, "export async fn") {
+            exports.insert(name);
+            continue;
+        }
+        if let Some(name) = export_name_after_keyword(trimmed, "export struct") {
+            exports.insert(name);
+            continue;
+        }
+        if let Some(name) = export_name_after_keyword(trimmed, "export enum") {
+            exports.insert(name);
             continue;
         }
         if trimmed.starts_with("export const ") {
@@ -424,14 +437,37 @@ fn collect_exports(source: &str, file_path: &str) -> HashSet<String> {
             continue;
         }
         if trimmed.starts_with("export {") {
-            if let Ok(specs) = parse_export_list_line(trimmed, line, idx + 1, file_path) {
-                for spec in specs {
-                    exports.insert(spec.name);
+            if let Some(inner) = trimmed.strip_prefix("export {").and_then(|s| s.split_once('}')) {
+                for part in inner.0.split(',') {
+                    let token = part.trim();
+                    if token.is_empty() {
+                        continue;
+                    }
+                    // Support `original as alias` — exported name is the alias.
+                    let name = token
+                        .split_whitespace()
+                        .last()
+                        .unwrap_or(token);
+                    if is_ident(name) {
+                        exports.insert(name.to_string());
+                    }
                 }
             }
         }
     }
     exports
+}
+
+fn export_name_after_keyword(line: &str, keyword: &str) -> Option<String> {
+    let rest = line.strip_prefix(keyword)?.trim_start();
+    let name = rest
+        .split(|ch: char| ch == '<' || ch == '(' || ch.is_whitespace())
+        .next()?;
+    if is_ident(name) {
+        Some(name.to_string())
+    } else {
+        None
+    }
 }
 
 fn is_template_module(source: &str) -> bool {

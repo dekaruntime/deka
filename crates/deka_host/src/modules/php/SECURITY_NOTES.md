@@ -22,7 +22,7 @@ making `dekaFsNormPath`'s base safe to use.
 
 ### 1. `op_php_cwd` reads the kernel-tracked cwd
 
-`crates/modules_php/src/modules/php/mod.rs:4540-4546`
+`crates/deka_host/src/modules/php/mod.rs:4540-4546`
 
 ```rust
 #[op2]
@@ -42,7 +42,7 @@ would not steer the result.
 ### 2. No `chdir` op or JS-callable cwd mutator is exposed
 
 The PHPX op surface is enumerated at
-`crates/modules_php/src/modules/php/mod.rs:4775-4813`. The only
+`crates/deka_host/src/modules/php/mod.rs:4775-4813`. The only
 cwd-related op is `op_php_cwd` (read). There is no `op_php_chdir`,
 `op_php_set_cwd`, or equivalent. A repo-wide grep for
 `set_current_dir|chdir|op_set_cwd|setCwd|set_cwd` finds no op definition that
@@ -63,7 +63,7 @@ There is no matching `Capability::Write` entry for cwd anywhere in
 
 ### 3. `process.chdir` is not bridged
 
-`crates/modules_php/src/modules/php/php.js:262-264` exposes only the
+`crates/deka_host/src/modules/php/php.js:262-264` exposes only the
 read side:
 
 ```js

@@ -66,7 +66,7 @@ async fn deka_fs_read_file_sync_rejects_symlink_escape() {
     let _policy_guard = EnvGuard::set("DEKA_SECURITY_POLICY", policy);
 
     let mut runtime = JsRuntime::new(RuntimeOptions {
-        extensions: modules_php::extensions(),
+        extensions: deka_host::extensions(),
         ..Default::default()
     });
 

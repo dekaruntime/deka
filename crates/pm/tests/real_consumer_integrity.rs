@@ -1,4 +1,4 @@
-use modules_php::integrity::compute_package_integrity;
+use deka_host::integrity::compute_package_integrity;
 use pm::{InstallPayload, run_install};
 use serde_json::json;
 use std::{

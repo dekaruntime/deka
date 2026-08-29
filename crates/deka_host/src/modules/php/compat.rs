@@ -20,7 +20,7 @@ pub(super) fn op_neo4j_call(
 }
 
 /// @deka/http — outbound HTTP/1.1 + HTTP/2, streaming, cookie jars,
-/// WebSocket client. See `crates/modules_php/src/modules/http.rs` for
+/// WebSocket client. See `crates/deka_host/src/modules/http.rs` for
 /// the full action list and the DoD in issue #128.
 #[op2]
 #[serde]

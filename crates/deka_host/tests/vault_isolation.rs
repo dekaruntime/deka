@@ -24,7 +24,7 @@ fn run_shop_isolate(
     crafted_name: &str,
 ) -> serde_json::Value {
     let mut runtime = JsRuntime::new(RuntimeOptions {
-        extensions: modules_php::extensions(),
+        extensions: deka_host::extensions(),
         ..Default::default()
     });
 

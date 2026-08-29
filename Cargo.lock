@@ -973,13 +973,13 @@ dependencies = [
  "ctrlc",
  "deka-fmt",
  "deka_compile",
+ "deka_host",
  "deka_syntax",
  "dekascript_lsp",
  "deno_task_shell",
  "glob",
  "introspect",
  "libc",
- "modules_php",
  "php-rs",
  "pm",
  "postgres",
@@ -1619,6 +1619,52 @@ dependencies = [
 ]
 
 [[package]]
+name = "deka_host"
+version = "0.35.1"
+dependencies = [
+ "aes-gcm",
+ "base64 0.22.1",
+ "bcrypt",
+ "blake3",
+ "bumpalo",
+ "bytes",
+ "chrono",
+ "deka-validation",
+ "deka_syntax",
+ "deno_core",
+ "futures-util",
+ "getrandom 0.2.17",
+ "hex",
+ "hmac 0.12.1",
+ "mysql",
+ "neo4rs",
+ "php-rs",
+ "postgres",
+ "prost",
+ "prost-build",
+ "protoc-bin-vendored",
+ "rcgen",
+ "redis",
+ "reqwest",
+ "runtime_core",
+ "rusqlite",
+ "rustls 0.21.12",
+ "rustls-pemfile 1.0.4",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sha3",
+ "stdio",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "tokio-tungstenite 0.21.0",
+ "url",
+ "webpki-roots 0.25.4",
+ "wit-parser",
+]
+
+[[package]]
 name = "deka_http"
 version = "0.35.1"
 dependencies = [
@@ -1660,8 +1706,8 @@ dependencies = [
  "anyhow",
  "bumpalo",
  "deka_compile",
+ "deka_host",
  "deka_syntax",
- "modules_php",
  "php-rs",
  "serde",
  "serde_json",
@@ -4815,52 +4861,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "modules_php"
-version = "0.35.1"
-dependencies = [
- "aes-gcm",
- "base64 0.22.1",
- "bcrypt",
- "blake3",
- "bumpalo",
- "bytes",
- "chrono",
- "deka-validation",
- "deka_syntax",
- "deno_core",
- "futures-util",
- "getrandom 0.2.17",
- "hex",
- "hmac 0.12.1",
- "mysql",
- "neo4rs",
- "php-rs",
- "postgres",
- "prost",
- "prost-build",
- "protoc-bin-vendored",
- "rcgen",
- "redis",
- "reqwest",
- "runtime_core",
- "rusqlite",
- "rustls 0.21.12",
- "rustls-pemfile 1.0.4",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "sha3",
- "stdio",
- "tempfile",
- "tokio",
- "tokio-stream",
- "tokio-tungstenite 0.21.0",
- "url",
- "webpki-roots 0.25.4",
- "wit-parser",
-]
-
-[[package]]
 name = "moka"
 version = "0.12.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5949,11 +5949,11 @@ name = "platform_server"
 version = "0.35.1"
 dependencies = [
  "anyhow",
+ "deka_host",
  "deno_core",
  "deno_napi",
  "deno_permissions",
  "modules_common",
- "modules_php",
  "platform",
  "rand 0.8.5",
 ]
@@ -5965,10 +5965,10 @@ dependencies = [
  "anyhow",
  "axum",
  "base64 0.21.7",
+ "deka_host",
  "dirs",
  "json5",
  "libc",
- "modules_php",
  "reqwest",
  "runtime_core",
  "semver",
@@ -6833,11 +6833,11 @@ dependencies = [
  "compile",
  "core",
  "deka_compile",
+ "deka_host",
  "deka_http",
  "deno_core",
  "engine",
  "flate2",
- "modules_php",
  "notify",
  "num_cpus",
  "platform",

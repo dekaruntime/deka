@@ -7,10 +7,10 @@
 //!
 //! Tests that hit `httpbin.org` are marked `#[ignore]` so they don't
 //! flake CI on air-gapped machines. Run them with
-//! `cargo test --release -p modules_php --test http_module -- --ignored`.
+//! `cargo test --release -p deka_host --test http_module -- --ignored`.
 //! The local-loopback tests (capability gate, WS echo) are always on.
 
-use modules_php::modules::http::http_call;
+use deka_host::modules::http::http_call;
 use serde_json::json;
 use std::net::TcpListener;
 use std::sync::{Mutex, OnceLock};

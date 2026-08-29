@@ -252,7 +252,7 @@ async fn run_query(
     Ok(rows)
 }
 
-/// Extract a row column value to JSON — mirrors the logic in modules_php/neo4j.rs.
+/// Extract a row column value to JSON — mirrors the logic in deka_host/neo4j.rs.
 fn row_to_json(row: &neo4rs::Row, key: &str) -> Value {
     if let Ok(v) = row.get::<String>(key) {
         return Value::String(v);

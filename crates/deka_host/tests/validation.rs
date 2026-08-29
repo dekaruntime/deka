@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 
 use bumpalo::Bump;
 
-use modules_php::compiler_api::compile_deka;
-use modules_php::validation::imports::validate_imports;
-use modules_php::validation::{ErrorKind, ValidationResult};
+use deka_host::compiler_api::compile_deka;
+use deka_host::validation::imports::validate_imports;
+use deka_host::validation::{ErrorKind, ValidationResult};
 
 fn fixtures_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")

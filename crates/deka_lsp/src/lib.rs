@@ -3,7 +3,7 @@
 #[cfg(feature = "native")]
 use bumpalo::Bump;
 #[cfg(feature = "native")]
-use modules_php::compiler_api::compile_deka;
+use deka_host::compiler_api::compile_deka;
 #[cfg(feature = "native")]
 use php_rs::parser::ast::{
     BinaryOp, ClassKind, ClassMember, Expr, ExprId, Name, ObjectKey, Param, Program, Stmt, StmtId,

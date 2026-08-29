@@ -1,5 +1,5 @@
 [package]
-name = "modules_php"
+name = "deka_host"
 version.workspace = true
 edition = "2024"
 build = "build.rs"

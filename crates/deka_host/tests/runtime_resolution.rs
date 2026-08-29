@@ -100,7 +100,7 @@ async fn deka_php_runtime_resolves_local_unscoped_before_global_scoped() {
     let _policy_guard = EnvGuard::set("DEKA_SECURITY_POLICY", policy);
 
     let mut runtime = JsRuntime::new(RuntimeOptions {
-        extensions: modules_php::extensions(),
+        extensions: deka_host::extensions(),
         ..Default::default()
     });
 

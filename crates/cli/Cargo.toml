@@ -12,14 +12,14 @@ native = [
   "dep:introspect",
   "dep:tokio",
   "dep:postgres",
-  "dep:modules_php",
+  "dep:deka_host",
   "dep:deka_compile",
   "dep:deka_syntax",
   "dep:bundler",
   "dep:rusqlite",
   "dep:deka-fmt",
 ]
-lsp = ["dep:dekascript_lsp", "dep:php-rs", "modules_php/compiler"]
+lsp = ["dep:dekascript_lsp", "dep:php-rs", "deka_host/compiler"]
 
 [dependencies]
 runtime = { path = "../runtime", optional = true }
@@ -38,7 +38,7 @@ tokio = { version = "1.35", features = ["rt-multi-thread", "net", "io-util"], op
 postgres = { version = "0.19", optional = true }
 php-rs = { path = "../php-rs", optional = true }
 dekascript_lsp = { path = "../deka_lsp", optional = true }
-modules_php = { path = "../modules_php", optional = true, default-features = false, features = ["runtime"] }
+deka_host = { path = "../deka_host", optional = true, default-features = false, features = ["runtime"] }
 deka_compile = { path = "../deka_compile", optional = true }
 deka_syntax = { path = "../deka_syntax", optional = true }
 bumpalo = "3.12"

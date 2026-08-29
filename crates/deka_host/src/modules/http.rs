@@ -9,7 +9,7 @@
 //!
 //! Every network call is gated by the shared `enforce_net` policy the
 //! rest of the runtime already uses (`crates/runtime_core`
-//! + `match_rule_item` in `crates/modules_php/src/modules/php/mod.rs`),
+//! + `match_rule_item` in `crates/deka_host/src/modules/php/mod.rs`),
 //! with one extension: wildcard DNS labels like `*.squareup.com` are
 //! accepted in the `net.allow` list. That extension lives next to the
 //! existing matcher so TCP / DNS / Redis clients pick it up too.

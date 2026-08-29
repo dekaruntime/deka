@@ -1,4 +1,6 @@
+#[cfg(feature = "compiler")]
 pub mod export_parsers;
+#[cfg(feature = "compiler")]
 pub mod exports;
 pub mod imports;
 pub mod modules;

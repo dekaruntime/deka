@@ -26,8 +26,8 @@
 //!   enterprise    0.0%      —           0
 
 use bumpalo::Bump;
-use modules_php::compiler_api::compile_deka;
-use modules_php::validation::Severity;
+use deka_host::compiler_api::compile_deka;
+use deka_host::validation::Severity;
 use std::fs;
 use std::path::PathBuf;
 
