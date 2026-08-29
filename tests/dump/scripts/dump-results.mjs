@@ -2,11 +2,23 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { loadAndRunAllTests } from '../lib/build-tests.ts'
+import { runAdhocScenarios, toHatsCategory } from '../../testsuite/adhoc/cases.mjs'
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 
 const { nativeAvailable, browserAvailable, version, wasmSourceCommit, categories } =
   await loadAndRunAllTests()
+
+const adhoc = await runAdhocScenarios({
+  cli: process.env.DEKA_NATIVE || undefined,
+  wasmPath: process.env.DEKA_WASM || undefined,
+})
+const adhocCategory = toHatsCategory(adhoc.results)
+categories.unshift(adhocCategory)
+console.log(`[hats] ADHOC scenarios=${adhoc.results.length}`)
+for (const test of adhocCategory.tests) {
+  console.log(`[hats] ${test.slug}: overall=${test.overallStatus}`)
+}
 
 console.log(
   `[hats] nativeAvailable=${nativeAvailable} browserAvailable=${browserAvailable} version=${version}` +

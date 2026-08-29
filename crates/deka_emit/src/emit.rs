@@ -961,7 +961,12 @@ impl<'a> Emitter<'a> {
                         self.out.push_str("...");
                         self.emit_expr(&field.value)?;
                     } else {
-                        self.out.push_str(field.key);
+                        let key = if is_js_identifier(field.key) {
+                            field.key.to_string()
+                        } else {
+                            json_string(field.key)
+                        };
+                        self.out.push_str(&key);
                         self.out.push_str(": ");
                         self.emit_expr(&field.value)?;
                     }
