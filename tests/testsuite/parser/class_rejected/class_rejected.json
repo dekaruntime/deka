@@ -1,5 +1,5 @@
 {
   "title": "class declaration is rejected",
   "stage": "parse",
-  "expectedDiagnosticContains": "expected `;` or newline, found `identifier`"
+  "expectedDiagnosticContains": "unknown identifier `class`"
 }

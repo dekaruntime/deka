@@ -1,5 +1,5 @@
 {
   "title": "void operator is rejected",
   "stage": "parse",
-  "expectedDiagnosticContains": "expected ``)``, found `number`"
+  "expectedDiagnosticContains": "unknown identifier `void`"
 }
