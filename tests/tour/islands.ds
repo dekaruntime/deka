@@ -8,5 +8,9 @@ fn Counter(props: CounterProps) Component {
   return <button>{props.start}</button>
 }
 
-const result = unsafe { deka.ui.renderToString(<Counter client:load start={5} />) }
-echo(unsafe { result.html })
+const element = <Counter client="load" start={5} />
+const result = unsafe { deka.ui.renderToString(element) }
+match (result) {
+  Ok(r) => echo(r.html),
+  Err(e) => echo(e.message),
+}

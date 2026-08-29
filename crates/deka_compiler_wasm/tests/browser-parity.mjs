@@ -74,13 +74,6 @@ if (tourManifest.length === 0) {
 }
 for (const lesson of tourManifest) {
   const source = await readFile(join(tourDir, `${lesson.id}.ds`), "utf-8");
-  // The standalone WASM compiler cannot resolve stdlib index packages like
-  // "io" because it has no filesystem/network access. Skip parity checks for
-  // those lessons; they are covered by the native language gate and the live
-  // testsuite playground instead.
-  if (/from\s+["']io["']/.test(source)) {
-    continue;
-  }
   const response = compile(source, `${lesson.id}.ds`, "deka");
   if (response.ok !== lesson.expectCompile) {
     throw new Error(`${lesson.id} browser WASM compile result drifted: ${JSON.stringify(response)}`);
@@ -120,6 +113,25 @@ try {
   }
 } catch (error) {
   throw new Error(`strict-mode struct execution failed: ${error.message}\n${structCode}`);
+}
+
+// Stdlib imports are typed as `Infer` in the single-file WASM compiler, so a
+// function that calls `echo` (imported from "io") should compile.
+const ioInsideFunction = `import { echo } from "io"
+fn greet(name: string) {
+  echo("hello " + name)
+}
+greet("deka")`;
+const ioResponse = compile(ioInsideFunction, "io-function.ds", "deka");
+if (!ioResponse.ok || !ioResponse.output?.code?.includes('import { echo }')) {
+  throw new Error(`stdlib io import inside function failed: ${JSON.stringify(ioResponse)}`);
+}
+
+// .dsx files are DS + JSX and must be accepted by the browser compiler ABI.
+const dsxSource = `const el = <div class="box"><span>hi</span></div>`;
+const dsxResponse = compile(dsxSource, "component.dsx", "deka");
+if (!dsxResponse.ok || !dsxResponse.output?.code) {
+  throw new Error(".dsx filename was rejected by browser compiler");
 }
 
 console.log("browser WASM parity fixtures passed");
