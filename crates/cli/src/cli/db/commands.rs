@@ -1,17 +1,7 @@
 use core::{CommandSpec, Context, Registry, SubcommandSpec};
 use stdio::error;
 
-#[cfg(feature = "lsp")]
-use super::generate::cmd_generate;
 use super::migrate::{cmd_flush, cmd_info, cmd_migrate};
-
-#[cfg(feature = "lsp")]
-const GENERATE: SubcommandSpec = SubcommandSpec {
-    name: "generate",
-    summary: "generate db client and migration artifacts from DekaScript struct models",
-    aliases: &["gen"],
-    handler: cmd_generate,
-};
 
 const MIGRATE: SubcommandSpec = SubcommandSpec {
     name: "migrate",
@@ -34,9 +24,6 @@ const FLUSH: SubcommandSpec = SubcommandSpec {
     handler: cmd_flush,
 };
 
-#[cfg(feature = "lsp")]
-const SUBCOMMANDS: &[SubcommandSpec] = &[GENERATE, MIGRATE, INFO, FLUSH];
-#[cfg(not(feature = "lsp"))]
 const SUBCOMMANDS: &[SubcommandSpec] = &[MIGRATE, INFO, FLUSH];
 
 const COMMAND: CommandSpec = CommandSpec {
@@ -55,6 +42,6 @@ pub fn register(registry: &mut Registry) {
 fn cmd(_context: &Context) {
     error(
         "db",
-        "missing subcommand. use: deka db generate|migrate|info|flush",
+        "missing subcommand. use: deka db migrate|info|flush",
     );
 }

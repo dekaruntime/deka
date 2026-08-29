@@ -3,8 +3,6 @@
 #[cfg(feature = "runtime")]
 use deno_core::Extension;
 
-#[cfg(feature = "compiler")]
-pub mod compiler_api;
 pub mod integrity;
 #[cfg(feature = "runtime")]
 pub mod modules;
