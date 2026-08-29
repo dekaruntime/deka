@@ -1,21 +1,6 @@
 #![allow(clippy::all)]
 
 #[cfg(feature = "native")]
-use bumpalo::Bump;
-#[cfg(feature = "native")]
-use deka_host::compiler_api::compile_deka;
-#[cfg(feature = "native")]
-use php_rs::parser::ast::{
-    BinaryOp, ClassKind, ClassMember, Expr, ExprId, Name, ObjectKey, Param, Program, Stmt, StmtId,
-    Type,
-};
-#[cfg(feature = "native")]
-use php_rs::parser::lexer::token::Token;
-#[cfg(feature = "native")]
-use php_rs::parser::span::Span;
-#[cfg(feature = "native")]
-use php_rs::phpx::typeck::{ExternalFunctionSig, Type as PhpType};
-#[cfg(feature = "native")]
 use std::collections::HashMap;
 #[cfg(feature = "native")]
 use std::fs;
@@ -30,12 +15,12 @@ use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse,
     Diagnostic, DiagnosticOptions, DiagnosticServerCapabilities, DiagnosticSeverity,
     DidChangeTextDocumentParams, DidOpenTextDocumentParams, DocumentDiagnosticParams,
-    DocumentDiagnosticReport, DocumentDiagnosticReportResult, DocumentSymbol, DocumentSymbolParams,
-    Documentation, FullDocumentDiagnosticReport, Hover, HoverContents, InitializeParams,
-    InitializeResult, InitializedParams, InsertTextFormat, Location, MarkupContent, MarkupKind,
-    MessageType, OneOf, Position, Range, ReferenceParams, RelatedFullDocumentDiagnosticReport,
-    RenameParams, ServerCapabilities, SymbolKind, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextEdit, Url, WorkspaceEdit,
+    DocumentDiagnosticReport, DocumentDiagnosticReportResult, Documentation,
+    FullDocumentDiagnosticReport, Hover, HoverContents, InitializeParams, InitializeResult,
+    InitializedParams, InsertTextFormat, Location, MarkupContent, MarkupKind, MessageType, OneOf,
+    Position, Range, ReferenceParams, RelatedFullDocumentDiagnosticReport, RenameParams,
+    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url,
+    WorkspaceEdit,
 };
 #[cfg(feature = "native")]
 use tower_lsp::{Client, LanguageServer, LspService, Server};

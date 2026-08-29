@@ -1704,11 +1704,8 @@ name = "dekascript_lsp"
 version = "0.35.1"
 dependencies = [
  "anyhow",
- "bumpalo",
  "deka_compile",
- "deka_host",
  "deka_syntax",
- "php-rs",
  "serde",
  "serde_json",
  "tokio",
