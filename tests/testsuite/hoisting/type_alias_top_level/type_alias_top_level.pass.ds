@@ -1,4 +1,4 @@
 import { echo } from "io"
-type ID = number
+alias ID = number
 const id: ID = 7
 echo(id)

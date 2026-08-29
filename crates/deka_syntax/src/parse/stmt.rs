@@ -1,6 +1,7 @@
 //! Statement parsing.
 
-use crate::ast::{alloc, alloc_slice, EnumCase, ExportDecl, Expr, ForInit, InterfaceMember, Param, Pos, Program, StructField, Stmt, TemplatePart, Type, TypeParam};
+use crate::ast::{alloc, alloc_slice, EnumCase, ForInit, InterfaceMember, Param, Pos, Program, StructField, Stmt, Type, TypeParam};
+use crate::diagnostics::Diagnostic;
 use crate::lexer::TokenKind;
 
 use super::util::token_name;
@@ -153,7 +154,9 @@ impl<'a> Parser<'a> {
                 self.parse_interface_statement(start, start_byte)
             }
 
-            TokenKind::Type => self.parse_type_alias_statement(start, start_byte),
+            TokenKind::Type | TokenKind::Alias => {
+                self.parse_type_alias_statement(start, start_byte)
+            }
 
             TokenKind::Import => self.parse_import_statement(start, start_byte),
 
@@ -648,7 +651,20 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type_alias_statement(&mut self, start: Pos, start_byte: usize) -> Option<Stmt<'a>> {
-        self.advance(); // `type`
+        let is_deprecated_type_keyword = self.at(TokenKind::Type);
+        self.advance(); // `type` or `alias`
+
+        if is_deprecated_type_keyword {
+            let pos = self.current_span().start;
+            self.errors.push(
+                Diagnostic::warning(
+                    pos.line,
+                    pos.column,
+                    "`type X = Y` is deprecated; use `alias X = Y` instead",
+                )
+                .with_help("replace `type` with `alias`"),
+            );
+        }
 
         let name = self.expect_identifier()?;
         let type_params = if self.at(TokenKind::Lt) {

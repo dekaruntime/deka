@@ -1,5 +1,5 @@
 import { echo } from "io"
-type OnClick = fn() void
+alias OnClick = fn() void
 
 struct ButtonProps {
   label: string

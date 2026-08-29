@@ -261,7 +261,7 @@ impl<'src> Formatter<'src> {
                 value,
                 ..
             } => {
-                self.write("type ");
+                self.write("alias ");
                 self.write(name);
                 if !type_params.is_empty() {
                     self.write("<");
@@ -1453,9 +1453,9 @@ mod tests {
 
     #[test]
     fn formats_type_alias() {
-        let input = "type UserId=string;";
+        let input = "alias UserId=string;";
         let output = format_ds(input).unwrap();
-        assert_eq!(output, "type UserId = string\n");
+        assert_eq!(output, "alias UserId = string\n");
     }
 
     #[test]

@@ -61,6 +61,7 @@ pub(super) fn token_name(kind: TokenKind) -> &'static str {
         Enum => "`enum`",
         Interface => "`interface`",
         Type => "`type`",
+        Alias => "`alias`",
         Import => "`import`",
         Export => "`export`",
         From => "`from`",
