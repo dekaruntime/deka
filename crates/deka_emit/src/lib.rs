@@ -8,7 +8,7 @@
 mod emit;
 mod util;
 
-pub use emit::{emit_js, emit_js_with_imports};
+pub use emit::{emit_js, emit_js_with_imports, emit_js_with_options};
 
 #[cfg(test)]
 mod tests {

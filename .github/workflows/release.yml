@@ -427,7 +427,7 @@ jobs:
                 name: "deka-browser-compiler",
                 version: $version,
                 sourceCommit: $commit,
-                abiVersion: 1
+                abiVersion: 2
               },
               producer: {
                 schemaVersion: 1,
@@ -475,8 +475,16 @@ jobs:
             --arg cargo_lock "${CARGO_LOCK_SHA256}" \
             --arg name "deka-browser-compiler" \
             --arg version "${VERSION}" \
-            --argjson abi_version 1 \
+            --argjson abi_version 2 \
             '{
+              schema_version: 1,
+              artifact: $artifact,
+              sha256: $sha256,
+              source_commit: $source_commit,
+              target: $target,
+              cargo_lock_sha256: $cargo_lock,
+              compiler: { name: $name, version: $version, abi_version: $abi_version }
+            }' > "release/${VERSION}/deka_compiler.wasm.metadata.json"
               schema_version: 1,
               artifact: $artifact,
               sha256: $sha256,

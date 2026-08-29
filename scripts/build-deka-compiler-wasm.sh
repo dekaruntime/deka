@@ -49,7 +49,7 @@ cat > "$out_dir/$artifact_name.metadata.json" <<EOF
   "artifact": "$artifact_name",
   "sha256": "$artifact_sha256",
   "source_commit": "$source_commit",
-  "compiler": {"name": "deka", "version": "$deka_version", "abi_version": 1},
+  "compiler": {"name": "deka", "version": "$deka_version", "abi_version": 2},
   "target": "wasm32-unknown-unknown",
   "cargo_lock_sha256": "$cargo_lock_sha256",
   "rustc": "$rustc_version",
