@@ -10,8 +10,6 @@ pub mod integrity;
 #[cfg(feature = "runtime")]
 pub mod modules;
 #[cfg(feature = "compiler")]
-pub mod seam_contract;
-#[cfg(feature = "compiler")]
 pub mod validation;
 
 #[cfg(feature = "runtime")]
