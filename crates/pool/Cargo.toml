@@ -16,6 +16,7 @@ tokio = { workspace = true, features = ["full"] }
 tracing = "0.1"
 deka-stdio = { path = "../stdio", package = "stdio" }
 deka_compile = { path = "../deka_compile" }
+deka_ui = { path = "../deka_ui" }
 runtime_core = { path = "../runtime_core" }
 
 # Validation

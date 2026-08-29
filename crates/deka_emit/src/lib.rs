@@ -171,7 +171,8 @@ mod tests {
     #[test]
     fn emit_jsx_element() {
         let out = parse_and_emit("const el = <div class=\"box\" />;");
-        assert!(out.contains("__deka_ui.jsx"), "expected jsx call, got: {}", out);
+        assert!(out.contains("import { jsx, jsxs, Fragment } from \"ui/jsx\""), "got: {}", out);
+        assert!(out.contains("jsx("), "expected jsx call, got: {}", out);
         assert!(out.contains("\"div\""), "expected tag, got: {}", out);
         assert!(out.contains("\"class\": \"box\""), "expected class prop, got: {}", out);
     }
@@ -179,15 +180,24 @@ mod tests {
     #[test]
     fn emit_jsx_with_children() {
         let out = parse_and_emit("const el = <p>hello {name}</p>;");
-        assert!(out.contains("__deka_ui.jsxs"), "expected jsxs call, got: {}", out);
+        assert!(out.contains("jsxs("), "expected jsxs call, got: {}", out);
         assert!(out.contains("\"children\": ["), "expected children array, got: {}", out);
     }
 
     #[test]
     fn emit_jsx_fragment() {
         let out = parse_and_emit("const el = <><span>a</span><span>b</span></>;");
-        assert!(out.contains("__deka_ui.jsxs"), "expected jsxs call, got: {}", out);
-        assert!(out.contains("__deka_ui.Fragment"), "expected Fragment, got: {}", out);
+        assert!(out.contains("jsxs("), "expected jsxs call, got: {}", out);
+        assert!(out.contains("Fragment"), "expected Fragment, got: {}", out);
+    }
+
+    #[test]
+    fn emit_jsx_does_not_concat_html() {
+        let out = parse_and_emit("const el = <div class=\"box\" />;");
+        assert!(!out.contains("__deka_ui"), "got: {}", out);
+        assert!(!out.contains("`<${tag}"), "got: {}", out);
+        assert!(out.contains("\"data-deka-id\""), "expected tagged id, got: {}", out);
+        assert!(out.contains("i0"), "expected i0 path segment, got: {}", out);
     }
 
     #[test]
