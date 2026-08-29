@@ -1,5 +1,5 @@
 import { echo } from "io"
-type ProcessFunc = fn(string) string
+alias ProcessFunc = fn(string) string
 fn shout(s: string) string {
   return s + "!"
 }

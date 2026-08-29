@@ -1,4 +1,4 @@
 import { echo } from "io"
-type Name = string
+alias Name = string
 const n: Name = "hi"
 echo(n)
