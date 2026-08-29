@@ -160,24 +160,24 @@ export function compileWithWasm(
 
   const sourceBytes = textEncoder.encode(source)
   const filenameBytes = textEncoder.encode(filename)
-  const modeBytes = textEncoder.encode('deka')
+  const optionsBytes = textEncoder.encode(JSON.stringify({ mode: 'deka' }))
 
   const sourcePtr = allocate(sourceBytes.length)
   const filenamePtr = allocate(filenameBytes.length)
-  const modePtr = allocate(modeBytes.length)
+  const optionsPtr = allocate(optionsBytes.length)
 
   const memory = new Uint8Array(exports.memory.buffer)
   memory.set(sourceBytes, sourcePtr)
   memory.set(filenameBytes, filenamePtr)
-  memory.set(modeBytes, modePtr)
+  memory.set(optionsBytes, optionsPtr)
 
   const resultPtr = exports.deka_compiler_compile(
     sourcePtr,
     sourceBytes.length,
     filenamePtr,
     filenameBytes.length,
-    modePtr,
-    modeBytes.length
+    optionsPtr,
+    optionsBytes.length
   )
 
   const resultView = new DataView(exports.memory.buffer)
@@ -195,14 +195,14 @@ export function compileWithWasm(
     free(resultPtr, 8 + jsonLen)
     free(sourcePtr, sourceBytes.length)
     free(filenamePtr, filenameBytes.length)
-    free(modePtr, modeBytes.length)
+    free(optionsPtr, optionsBytes.length)
     return { ok: false, error, diagnostics: [] }
   }
 
   free(resultPtr, 8 + jsonLen)
   free(sourcePtr, sourceBytes.length)
   free(filenamePtr, filenameBytes.length)
-  free(modePtr, modeBytes.length)
+  free(optionsPtr, optionsBytes.length)
 
   const diagnostics = normalizeDiagnostics(parsed.diagnostics)
   const error =

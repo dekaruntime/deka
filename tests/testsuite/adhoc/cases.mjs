@@ -221,15 +221,16 @@ async function scenarioWasmIo(wasmPath) {
   };
   const [sourcePtr, sourceLen] = write(source);
   const [filenamePtr, filenameLen] = write("io-echo.ds");
-  const [modePtr, modeLen] = write("deka");
-  const resultPtr = e.deka_compiler_compile(sourcePtr, sourceLen, filenamePtr, filenameLen, modePtr, modeLen);
+  const optionsJson = JSON.stringify({ mode: "deka" });
+  const [optionsPtr, optionsLen] = write(optionsJson);
+  const resultPtr = e.deka_compiler_compile(sourcePtr, sourceLen, filenamePtr, filenameLen, optionsPtr, optionsLen);
   const header = new DataView(e.memory.buffer, resultPtr, 8);
   const jsonPtr = header.getUint32(0, true);
   const jsonLen = header.getUint32(4, true);
   const response = JSON.parse(new TextDecoder().decode(new Uint8Array(e.memory.buffer, jsonPtr, jsonLen)));
   e.deka_compiler_free(sourcePtr, sourceLen);
   e.deka_compiler_free(filenamePtr, filenameLen);
-  e.deka_compiler_free(modePtr, modeLen);
+  e.deka_compiler_free(optionsPtr, optionsLen);
   e.deka_compiler_free(resultPtr, 8 + jsonLen);
 
   const diag = (response.diagnostics ?? []).map((d) => d.message || d.rendered || "").join("\n");
