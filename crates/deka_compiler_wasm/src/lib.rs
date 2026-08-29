@@ -297,8 +297,8 @@ fn compile_request(source: &str, filename: &str, requested_mode: &str) -> String
 }
 
 fn resolve_mode<'a>(filename: &str, mode: &'a str) -> Result<&'a str, &'static str> {
-    if !filename.ends_with(".ds") {
-        return Err("Deka browser compiler only accepts .ds source files");
+    if !filename.ends_with(".ds") && !filename.ends_with(".dsx") {
+        return Err("Deka browser compiler only accepts .ds or .dsx source files");
     }
     match mode {
         "" | "auto" | "deka" => Ok("deka"),

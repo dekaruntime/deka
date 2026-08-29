@@ -7,6 +7,71 @@ use std::collections::HashMap;
 use bumpalo::Bump;
 use deka_emit::emit_js_with_imports;
 use deka_syntax::{check_program_with_imports, parse, resolve_imported_enum_constructors, Diagnostic, ModuleExports};
+use deka_syntax::typeck::Type;
+
+/// Bare specifiers that are treated as stdlib modules in the single-file WASM
+/// compiler path. Imports from these modules are accepted with `Type::Infer`
+/// so that tour and testsuite fixtures can compile without a full package graph.
+fn is_stdlib_module_spec(spec: &str) -> bool {
+    if spec.starts_with("@user/") {
+        return false;
+    }
+    let bare = spec.strip_prefix("@deka/").unwrap_or(spec);
+    matches!(
+        bare,
+        "json"
+            | "postgres"
+            | "mysql"
+            | "sqlite"
+            | "bytes"
+            | "buffer"
+            | "http"
+            | "tcp"
+            | "tls"
+            | "fs"
+            | "crypto"
+            | "jwt"
+            | "test"
+            | "cookies"
+            | "auth"
+            | "db"
+            | "time"
+            | "io"
+    ) || bare.starts_with("component/")
+        || bare.starts_with("deka/")
+        || bare.starts_with("encoding/")
+        || bare.starts_with("db/")
+}
+
+/// Build a map of imported module signatures for known stdlib bare specifiers.
+///
+/// Every imported name is typed as `Type::Infer` so the single-file compiler can
+/// compile tour and testsuite fixtures that import stdlib functions. This is a
+/// pragmatic bridge: the browser sandbox / native runtime supplies the actual
+/// implementations, and the full module graph path collects real signatures.
+pub fn infer_stdlib_imports_for_source<'a>(
+    source: &'a str,
+    arena: &'a Bump,
+) -> HashMap<&'a str, ModuleExports<'a>> {
+    let mut exports_by_spec: HashMap<&'a str, ModuleExports<'a>> = HashMap::new();
+    let parse_result = parse(source, arena);
+    let Some(program) = parse_result.program else {
+        return exports_by_spec;
+    };
+    for stmt in program.statements.iter() {
+        let deka_syntax::Stmt::Import { specifiers, source: spec, .. } = stmt else {
+            continue;
+        };
+        if !is_stdlib_module_spec(spec) {
+            continue;
+        }
+        let exports = exports_by_spec.entry(spec).or_default();
+        for spec_item in specifiers.iter() {
+            exports.values.insert(spec_item.imported, Type::Infer);
+        }
+    }
+    exports_by_spec
+}
 
 /// Module metadata extracted from a DekaScript source file.
 ///
@@ -108,7 +173,11 @@ pub struct CompileResult {
 /// single diagnostic.
 pub fn compile_to_js(source: &str, file_path: &str) -> Result<CompileResult, Vec<Diagnostic>> {
     let arena = Bump::new();
-    let imports = HashMap::new();
+    let stdlib_exports = infer_stdlib_imports_for_source(source, &arena);
+    let imports: HashMap<&str, &ModuleExports> = stdlib_exports
+        .iter()
+        .map(|(k, v)| (*k, v))
+        .collect();
     compile_to_js_with_imports(source, file_path, &arena, &imports)
 }
 
