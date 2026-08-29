@@ -230,7 +230,7 @@ impl<'a> Checker<'a> {
                 ..
             } = stmt
             {
-                if !self.structs.contains_key(receiver_type) {
+                if !self.structs.contains_key(receiver_type) && !self.newtypes.contains_key(receiver_type) {
                     self.error_span(*span, format!("unknown receiver type `{receiver_type}`"));
                     continue;
                 }
@@ -820,6 +820,15 @@ impl<'a> Checker<'a> {
         is_async: bool,
         _span: ast::Span,
     ) {
+        if receiver_mutable && self.newtypes.contains_key(receiver_type) {
+            self.error_span(
+                _span,
+                format!(
+                    "mutable receiver methods are not allowed on newtype `{receiver_type}`"
+                ),
+            );
+        }
+
         let info = match self.receiver_methods.get(&(receiver_type, name)) {
             Some(i) => i.clone(),
             None => return,
@@ -847,10 +856,18 @@ impl<'a> Checker<'a> {
         self.mutables.push(HashSet::new());
 
         // Bind the receiver name to the receiver type inside the method body.
-        if receiver_mutable {
-            self.declare_mutable_var(receiver_name, Type::Struct { name: receiver_type });
+        let receiver_binding_type = if let Some(info) = self.newtypes.get(receiver_type) {
+            Type::Newtype {
+                name: receiver_type,
+                repr: info.repr,
+            }
         } else {
-            self.declare_var(receiver_name, Type::Struct { name: receiver_type });
+            Type::Struct { name: receiver_type }
+        };
+        if receiver_mutable {
+            self.declare_mutable_var(receiver_name, receiver_binding_type);
+        } else {
+            self.declare_var(receiver_name, receiver_binding_type);
         }
 
         for (p, t) in params.iter().zip(param_types.iter()) {

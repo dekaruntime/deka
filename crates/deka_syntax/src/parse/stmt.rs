@@ -1,8 +1,8 @@
 //! Statement parsing.
 
 use crate::ast::{
-    alloc, alloc_slice, EnumCase, ForInit, InterfaceMember, NewtypeRepr, Param, Pos, Program,
-    StructField, Stmt, Type, TypeParam,
+    alloc, alloc_slice, EnumCase, ExportDecl, Expr, ForInit, InterfaceMember, NewtypeRepr, Param,
+    Pos, Program, StructField, Stmt, TemplatePart, Type, TypeParam,
 };
 use crate::diagnostics::Diagnostic;
 use crate::lexer::TokenKind;
@@ -1017,6 +1017,7 @@ fn stmt_has_top_level_await(stmt: &Stmt<'_>) -> bool {
         Stmt::Struct { .. }
         | Stmt::Enum { .. }
         | Stmt::TypeAlias { .. }
+        | Stmt::Newtype { .. }
         | Stmt::Interface { .. }
         | Stmt::Import { .. } => false,
     }

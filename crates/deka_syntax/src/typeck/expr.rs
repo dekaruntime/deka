@@ -1566,6 +1566,7 @@ impl<'a> Checker<'a> {
 
         let receiver_type = match &object_type {
             Type::Struct { name } => *name,
+            Type::Newtype { name, .. } => *name,
             _ => return None,
         };
 
@@ -1641,6 +1642,10 @@ impl<'a> Checker<'a> {
     ) -> Option<super::MethodInfo<'a>> {
         if let Some(info) = self.receiver_methods.get(&(receiver_type, method_name)) {
             return Some(info.clone());
+        }
+        // Newtypes do not support embedding, so there is nothing else to search.
+        if self.newtypes.contains_key(receiver_type) {
+            return None;
         }
         let info = self.structs.get(receiver_type)?;
         for embed in info.embeds {

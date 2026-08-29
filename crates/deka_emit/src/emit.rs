@@ -882,6 +882,48 @@ impl<'a> Emitter<'a> {
                     self.out.push_str("});\n");
                 }
         }
+
+        // Newtype receiver methods are installed directly on the newtype
+        // factory's prototype object.
+        let newtype_methods: Vec<(String, Vec<ReceiverMethod<'a>>)> = self
+            .newtypes
+            .keys()
+            .filter_map(|name| {
+                self.receiver_methods
+                    .get(name)
+                    .map(|methods| (name.clone(), methods.clone()))
+            })
+            .collect();
+        for (newtype_name, methods) in newtype_methods {
+            for method in methods {
+                write_indent(&mut self.out, 0);
+                self.out.push_str(&newtype_name);
+                self.out.push_str("$proto.");
+                self.out.push_str(&method.name);
+                self.out.push_str(" = ");
+                if method.is_async {
+                    self.out.push_str("async ");
+                }
+                self.out.push_str("function(");
+                for (i, param) in method.params.iter().enumerate() {
+                    if i > 0 {
+                        self.out.push_str(", ");
+                    }
+                    self.out.push_str(param);
+                }
+                self.out.push_str(") {\n");
+                write_indent(&mut self.out, 2);
+                self.out.push_str("const ");
+                self.out.push_str(&method.receiver_name);
+                self.out.push_str(" = this;\n");
+                for stmt in method.body.iter() {
+                    self.emit_stmt(stmt)?;
+                    self.out.push('\n');
+                }
+                write_indent(&mut self.out, 0);
+                self.out.push_str("};\n");
+            }
+        }
         Ok(())
     }
 

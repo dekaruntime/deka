@@ -704,4 +704,58 @@ mod tests {
             err
         );
     }
+
+    #[test]
+    fn compile_newtype_receiver_method() {
+        let result = compile_to_js(
+            "type Cents number\nfn (c Cents) toDollars() number { return number(c) / 100 }\nconst c: Cents = Cents(500)\nconst d: number = c.toDollars()",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("const Cents$proto"), "got: {}", result.js);
+        assert!(
+            result.js.contains("Cents$proto.toDollars = function()"),
+            "got: {}",
+            result.js
+        );
+        assert!(result.js.contains("const c = Cents(500)"), "got: {}", result.js);
+        assert!(result.js.contains("c.toDollars()"), "got: {}", result.js);
+    }
+
+    #[test]
+    fn compile_newtype_receiver_method_uses_self() {
+        let result = compile_to_js(
+            "type Cents number\nfn (c Cents) doubled() Cents { return Cents(number(c) * 2) }\nconst c: Cents = Cents(50)\nconst d: Cents = c.doubled()",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("Cents$proto.doubled = function()"), "got: {}", result.js);
+        assert!(result.js.contains("const c = this"), "got: {}", result.js);
+        assert!(result.js.contains("Cents(c[__p] * 2)"), "got: {}", result.js);
+    }
+
+    #[test]
+    fn compile_newtype_receiver_method_param() {
+        let result = compile_to_js(
+            "type Cents number\nfn (c Cents) add(other: Cents) Cents { return Cents(number(c) + number(other)) }\nconst a: Cents = Cents(100)\nconst b: Cents = Cents(200)\nconst c: Cents = a.add(b)",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("Cents$proto.add = function(other)"), "got: {}", result.js);
+        assert!(result.js.contains("a.add(b)"), "got: {}", result.js);
+    }
+
+    #[test]
+    fn compile_newtype_mutable_receiver_rejected() {
+        let err = compile_to_js(
+            "type Cents number\nfn (c mut Cents) setValue(v: number) { c = Cents(v) }",
+            "test.ds",
+        )
+        .expect_err("compile should fail");
+        assert!(
+            err.iter().any(|d| d.message.contains("mutable") && d.message.contains("newtype")),
+            "expected mutable newtype receiver error, got: {:?}",
+            err
+        );
+    }
 }

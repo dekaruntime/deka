@@ -188,6 +188,15 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                     }
                     if let Some(info) = declared_newtypes.get(local) {
                         exports.newtypes.insert(external, info.clone());
+                        // Promote receiver methods declared on the local
+                        // newtype to the exported name.
+                        for ((rt, mn), mi) in receiver_methods.iter() {
+                            if *rt == local {
+                                exports
+                                    .receiver_methods
+                                    .insert((external, *mn), mi.clone());
+                            }
+                        }
                     }
                     if let Some(ty) = exports.values.get(local).cloned() {
                         exports.values.insert(external, ty);
@@ -351,6 +360,11 @@ impl<'a> Checker<'a> {
 
                 if let Some(info) = exports.newtypes.get(imported) {
                     self.newtypes.insert(local, info.clone());
+                    for ((rt, mn), mi) in exports.receiver_methods.iter() {
+                        if *rt == imported {
+                            self.receiver_methods.insert((local, *mn), mi.clone());
+                        }
+                    }
                 }
 
                 if let Some(ty) = exports.values.get(imported) {
