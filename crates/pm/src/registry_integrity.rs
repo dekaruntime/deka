@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use modules_php::integrity::PackageIntegrity;
+use deka_host::integrity::PackageIntegrity;
 use reqwest::Url;
 use serde_json::Value;
 

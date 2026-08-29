@@ -1,6 +1,6 @@
 mod commands;
 mod config;
-mod generate;
 mod migrate;
+mod model;
 
 pub use commands::register;

@@ -354,12 +354,15 @@ fn project_root_search_start(input_path: &Path) -> PathBuf {
         .to_path_buf()
 }
 
-fn ensure_project_layout(project_root: &Path, meta: &deka_compile::SourceModuleMeta) -> Result<(), String> {
-    // DEKA_MODULE_ROOT bypass (#220): when set, the tenant relies on the runtime stdlib at
-    // that root and we trust the runtime-provided modules without requiring a local
-    // deka.lock or php_modules/. Tenant-local packages would still need a lockfile, but
-    // stdlib-only tenants (id.tana.gg) deploy without ceremony.
-    if std::env::var_os("DEKA_MODULE_ROOT").is_some() {
+fn ensure_project_layout(
+    project_root: &Path,
+    module_root: Option<&Path>,
+    meta: &deka_compile::SourceModuleMeta,
+) -> Result<(), String> {
+    // When an explicit external module_root is provided, trust it for stdlib
+    // modules and skip the local ds_modules/ check. Tenant-local packages still
+    // require a lockfile and local ds_modules/.
+    if module_root.is_some_and(|root| root != project_root) {
         return Ok(());
     }
 
@@ -886,7 +889,7 @@ fn build_single_file_to_string(
     let js = compile_js_or_report(&source, input)?;
 
     let project_root = resolve_project_root(input_path)?;
-    ensure_project_layout(&project_root, &meta)?;
+    ensure_project_layout(&project_root, None, &meta)?;
 
     Ok(JsBuildOutput {
         js,

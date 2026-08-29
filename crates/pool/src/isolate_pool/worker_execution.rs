@@ -684,7 +684,7 @@ impl WorkerThread {
                             // (ALPN h2), streaming req/resp bodies,
                             // opt-in cookie jars, WebSocket client.
                             // All dispatched through a single Rust op;
-                            // see crates/modules_php/src/modules/http.rs
+                            // see crates/deka_host/src/modules/http.rs
                             // for the action list and issue #128 for
                             // the DoD.
                             if (typeof ops.op_deka_http_call !== 'function') {

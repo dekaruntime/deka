@@ -1,10 +1,9 @@
 #[cfg(test)]
 use std::cell::Cell;
 use std::collections::{BTreeSet, HashMap};
-use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Arc;
 
 use bundler::{BundleOptions, VirtualSource, bundle_virtual_entry};
 use runtime_core::module_spec::{
@@ -30,14 +29,7 @@ pub fn build_deka_handler_bundle(handler_path: &str) -> Result<String, String> {
         .map_err(|err| format!("failed to read {}: {}", input_path.display(), err))?;
 
     let project_root = resolve_project_root(input_path)?;
-    // `DEKA_MODULE_ROOT` is process-global because it is also consumed by the
-    // module validator. A platform process has many project roots, however: the
-    // store root and every tenant are separate projects. Keep the global
-    // platform default from selecting the wrong lockfile while this handler
-    // (and its virtual imports) are compiled.
-    with_project_module_root(&project_root, || {
-        build_deka_handler_bundle_in_project(input_path, source, project_root.clone())
-    })
+    build_deka_handler_bundle_in_project(input_path, source, project_root)
 }
 
 fn build_deka_handler_bundle_in_project(
@@ -46,7 +38,7 @@ fn build_deka_handler_bundle_in_project(
     project_root: PathBuf,
 ) -> Result<String, String> {
     let imports = parse_module_imports(&source);
-    ensure_project_layout(&project_root, &imports)?;
+    ensure_project_layout(&project_root, Some(&project_root), &imports)?;
 
     let canonical_root = fs::canonicalize(&project_root).unwrap_or_else(|_| project_root.clone());
     let root_json = serde_json::to_string(&canonical_root.to_string_lossy().to_string())
@@ -56,7 +48,12 @@ fn build_deka_handler_bundle_in_project(
     let entry_path = fs::canonicalize(input_path)
         .map_err(|err| format!("failed to resolve {}: {}", input_path.display(), err))?;
 
-    let loader = deka_compile::module_graph::FsModuleLoader::new(project_root.clone());
+    // Pass the project root explicitly as the module root so the v2 module
+    // graph does not depend on the process-global DEKA_MODULE_ROOT env var.
+    let loader = deka_compile::module_graph::FsModuleLoader::with_module_root(
+        project_root.clone(),
+        project_root.clone(),
+    );
     let graph = deka_compile::module_graph::compile_module_graph(&entry_path, &loader).map_err(|diagnostics| {
         deka_compile::format_diagnostics(&diagnostics)
     })?;
@@ -73,50 +70,6 @@ fn build_deka_handler_bundle_in_project(
     )
 }
 
-/// Serializes the short period in which the process-global module-root
-/// setting is pointed at one handler's project. This includes virtual module
-/// compilation performed by the bundler, so package integrity is checked
-/// against the same nearest `deka.lock` that `deka build <handler>` uses.
-fn with_project_module_root<T>(
-    project_root: &Path,
-    action: impl FnOnce() -> Result<T, String>,
-) -> Result<T, String> {
-    static MODULE_ROOT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    let _guard = MODULE_ROOT_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-
-    let _module_root = ModuleRootRestoreGuard::replace(project_root);
-    action()
-}
-
-/// Restores the process-global module root when the tenant bundling scope
-/// exits, including when compilation or the bundler unwinds through a panic.
-struct ModuleRootRestoreGuard {
-    previous: Option<OsString>,
-}
-
-impl ModuleRootRestoreGuard {
-    fn replace(module_root: &Path) -> Self {
-        let previous = std::env::var_os("DEKA_MODULE_ROOT");
-        unsafe {
-            std::env::set_var("DEKA_MODULE_ROOT", module_root);
-        }
-        Self { previous }
-    }
-}
-
-impl Drop for ModuleRootRestoreGuard {
-    fn drop(&mut self) {
-        unsafe {
-            match self.previous.take() {
-                Some(value) => std::env::set_var("DEKA_MODULE_ROOT", value),
-                None => std::env::remove_var("DEKA_MODULE_ROOT"),
-            }
-        }
-    }
-}
 
 #[cfg(test)]
 thread_local! {
@@ -209,13 +162,15 @@ pub fn resolve_project_root(input_path: &Path) -> Result<PathBuf, String> {
 
 pub fn ensure_project_layout(
     project_root: &Path,
+    module_root: Option<&Path>,
     imports: &[String],
 ) -> Result<(), String> {
-    // DEKA_MODULE_ROOT bypass (#220): when set, the tenant relies on the runtime stdlib at
-    // that root and we trust the runtime-provided modules without requiring a local
-    // deka.lock or php_modules/. Tenant-local packages would still need a lockfile, but
-    // stdlib-only tenants (id.tana.gg) deploy without ceremony.
-    if std::env::var_os("DEKA_MODULE_ROOT").is_some() {
+    // When an explicit module_root is provided and differs from the project
+    // root, the tenant relies on an external stdlib root and we skip the local
+    // ds_modules/ check. Tenant-local packages still require a lockfile and
+    // local ds_modules/. This replaces the process-global DEKA_MODULE_ROOT
+    // bypass for the runtime v2 path.
+    if module_root.is_some_and(|root| root != project_root) {
         return Ok(());
     }
 
@@ -334,7 +289,7 @@ mod tests {
         PANIC_DURING_VIRTUAL_LOAD, build_deka_handler_bundle, ensure_project_layout,
         resolve_project_root, MODULES_DIR,
     };
-    use modules_php::integrity::compute_package_integrity;
+    use deka_host::integrity::compute_package_integrity;
     use std::path::Path;
     use std::sync::Mutex;
 
@@ -429,7 +384,7 @@ mod tests {
             vec!["@deka/crypto", "@deka/http", "@deka/time"]
         );
 
-        ensure_project_layout(tmp.path(), &imports).expect("layout should pass");
+        ensure_project_layout(tmp.path(), Some(tmp.path()), &imports).expect("layout should pass");
     }
 
     #[test]
@@ -497,20 +452,16 @@ mod tests {
     }
 
     #[test]
-    fn bundle_panic_restores_module_root_before_next_tenant_bundle() {
-        let _env_lock = TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+    fn bundle_panic_in_one_tenant_does_not_break_the_next_tenant_bundle() {
         let tmp = tempfile::tempdir().expect("tmp");
-        let platform_root = tmp.path().join("platform");
         let tenant_a_root = tmp.path().join("tenant-a");
         let tenant_b_root = tmp.path().join("tenant-b");
-        std::fs::create_dir_all(&platform_root).expect("platform root");
         std::fs::create_dir_all(&tenant_a_root).expect("tenant A root");
         std::fs::create_dir_all(&tenant_b_root).expect("tenant B root");
 
         for root in [&tenant_a_root, &tenant_b_root] {
             std::fs::write(root.join("deka.json"), "{}").expect("tenant manifest");
+            std::fs::write(root.join("deka.lock"), "{}").expect("tenant lock");
         }
 
         let tenant_a_handler = tenant_a_root.join("main.ds");
@@ -532,19 +483,11 @@ mod tests {
         )
         .expect("tenant B handler");
 
-        let previous_root = std::env::var_os("DEKA_MODULE_ROOT");
-        unsafe { std::env::set_var("DEKA_MODULE_ROOT", &platform_root) };
-
         PANIC_DURING_VIRTUAL_LOAD.with(|panic_once| panic_once.set(true));
         let panic = std::panic::catch_unwind(|| {
             build_deka_handler_bundle(tenant_a_handler.to_str().expect("utf-8 handler"))
         });
         assert!(panic.is_err(), "tenant A bundle should panic mid-bundle");
-        assert_eq!(
-            std::env::var_os("DEKA_MODULE_ROOT").as_deref(),
-            Some(platform_root.as_os_str()),
-            "a panicking tenant bundle must restore the platform module root"
-        );
 
         let tenant_b_bundle =
             build_deka_handler_bundle(tenant_b_handler.to_str().expect("utf-8 handler"));
@@ -552,17 +495,5 @@ mod tests {
             tenant_b_bundle.is_ok(),
             "tenant B must still bundle after tenant A unwinds: {tenant_b_bundle:?}"
         );
-        assert_eq!(
-            std::env::var_os("DEKA_MODULE_ROOT").as_deref(),
-            Some(platform_root.as_os_str()),
-            "tenant B bundle must not inherit tenant A's module root"
-        );
-
-        unsafe {
-            match previous_root {
-                Some(value) => std::env::set_var("DEKA_MODULE_ROOT", value),
-                None => std::env::remove_var("DEKA_MODULE_ROOT"),
-            }
-        }
     }
 }

@@ -79,7 +79,7 @@
     "id": "echo-diagnostic",
     "title": "echo diagnostic",
     "expectCompile": false,
-    "expectError": "expected `;` or newline, found `string`"
+    "expectError": "unknown identifier `echo`"
   },
   {
     "id": "array-diagnostic",

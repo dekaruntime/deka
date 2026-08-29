@@ -4,7 +4,7 @@ use crate::{
     spec::parse_package_spec,
 };
 use anyhow::{anyhow, bail, Context, Result};
-use modules_php::integrity::compute_package_integrity;
+use deka_host::integrity::compute_package_integrity;
 use runtime_core::module_spec::canonical_php_package_spec;
 use runtime_core::modules::{install_modules_dir, is_modules_dir_name, MODULES_DIR};
 use serde::{Deserialize, Serialize};
@@ -922,7 +922,7 @@ fn verify_locked_integrity(
     name: &str,
     locked: &LockedPackage,
     installed: &InstalledSource,
-    integrity: &modules_php::integrity::PackageIntegrity,
+    integrity: &deka_host::integrity::PackageIntegrity,
 ) -> Result<()> {
     if installed.version != locked.version {
         bail!(
@@ -1157,7 +1157,7 @@ mod tests {
         RegistryPackage, MODULES_DIR,
     };
     use crate::{lock, payload::InstallPayload};
-    use modules_php::integrity::{compute_package_integrity, PackageIntegrity};
+    use deka_host::integrity::{compute_package_integrity, PackageIntegrity};
     use serde_json::json;
     use std::{collections::BTreeMap, fs};
 

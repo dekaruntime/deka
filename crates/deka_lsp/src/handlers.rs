@@ -130,10 +130,7 @@ impl LanguageServer for Backend {
                     trigger_characters: Some(vec![
                         "'".to_string(),
                         "\"".to_string(),
-                        ".".to_string(),
-                        "\\".to_string(),
-                        "<".to_string(),
-                        " ".to_string(),
+                        "@".to_string(),
                     ]),
                     ..CompletionOptions::default()
                 }),
@@ -145,8 +142,6 @@ impl LanguageServer for Backend {
                         work_done_progress_options: Default::default(),
                     },
                 )),
-                definition_provider: Some(OneOf::Left(true)),
-                document_symbol_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
                 rename_provider: Some(OneOf::Left(true)),
                 ..ServerCapabilities::default()
@@ -258,40 +253,14 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        let file_path = uri
-            .to_file_path()
-            .ok()
-            .and_then(|path| path.to_str().map(|path| path.to_string()))
-            .unwrap_or_else(|| uri.to_string());
-
         let line_index = LineIndex::new(&text);
         let offset = match line_index.position_to_offset(position) {
             Some(offset) => offset,
             None => return Ok(None),
         };
 
-        let arena = Bump::new();
-        let result = compile_deka(&text, &file_path, &arena);
-        let mut hover_text = None;
-        if let Some(program) = result.ast.as_ref() {
-            let index = build_index(program, text.as_bytes());
-            hover_text = index.hover_at(offset);
-        }
-
-        if hover_text.is_none() {
-            if let Some(word) = word_at_offset(text.as_bytes(), offset) {
-                if let Some(sig) = result.wasm_functions.get(&word) {
-                    let signature = format_external_signature(&word, sig);
-                    hover_text = Some(format!("```dekascript\n{}\n```", signature));
-                }
-            }
-        }
-        if hover_text.is_none() {
-            hover_text = hover_for_annotation(&text, offset);
-        }
-        if hover_text.is_none() {
-            hover_text = hover_from_import(&text, offset);
-        }
+        let hover_text = hover_for_annotation(&text, offset)
+            .or_else(|| hover_from_import(&text, offset));
 
         let Some(value) = hover_text else {
             return Ok(None);
@@ -330,24 +299,6 @@ impl LanguageServer for Backend {
             None => return Ok(None),
         };
 
-        let mut dot_items = None;
-        with_program(&text, &file_path, |program, source| {
-            let index = build_index(program, source);
-            dot_items = completion_for_dot(&index, source, offset);
-        });
-        if let Some(items) = dot_items {
-            return Ok(Some(CompletionResponse::Array(items)));
-        }
-
-        let mut jsx_prop_items = None;
-        with_program(&text, &file_path, |program, source| {
-            let index = build_index(program, source);
-            jsx_prop_items = completion_for_jsx_props(&index, source, offset);
-        });
-        if let Some(items) = jsx_prop_items {
-            return Ok(Some(CompletionResponse::Array(items)));
-        }
-
         let workspace_roots = self.workspace_roots.read().await.clone();
         if let Some(items) = completion_for_import(&text, &file_path, offset, &workspace_roots) {
             return Ok(Some(CompletionResponse::Array(items)));
@@ -360,92 +311,6 @@ impl LanguageServer for Backend {
         items.extend(stdlib_completion_items());
         items.extend(snippet_completion_items());
         Ok(Some(CompletionResponse::Array(items)))
-    }
-
-    async fn goto_definition(
-        &self,
-        params: tower_lsp::lsp_types::GotoDefinitionParams,
-    ) -> tower_lsp::jsonrpc::Result<Option<tower_lsp::lsp_types::GotoDefinitionResponse>> {
-        let uri = params.text_document_position_params.text_document.uri;
-        if !is_dekascript_uri(&uri) {
-            return Ok(None);
-        }
-        let position = params.text_document_position_params.position;
-        let Some(text) = self.get_document(&uri).await else {
-            return Ok(None);
-        };
-        let file_path = uri
-            .to_file_path()
-            .ok()
-            .and_then(|path| path.to_str().map(|path| path.to_string()))
-            .unwrap_or_else(|| uri.to_string());
-
-        let line_index = LineIndex::new(&text);
-        let offset = match line_index.position_to_offset(position) {
-            Some(offset) => offset,
-            None => return Ok(None),
-        };
-
-        let mut location = None;
-        with_program(&text, &file_path, |program, source| {
-            let index = build_index(program, source);
-            location = index.definition_at(offset, &uri, &line_index, source);
-        });
-
-        if let Some(loc) = location {
-            return Ok(Some(tower_lsp::lsp_types::GotoDefinitionResponse::Scalar(
-                loc,
-            )));
-        }
-
-        let workspace_roots = self.workspace_roots.read().await.clone();
-        if let Some(word) = word_at_offset(text.as_bytes(), offset) {
-            if let Some(loc) =
-                definition_for_imported_symbol(&text, &file_path, &word, &workspace_roots)
-            {
-                return Ok(Some(tower_lsp::lsp_types::GotoDefinitionResponse::Scalar(
-                    loc,
-                )));
-            }
-        }
-
-        if let Some(loc) = definition_for_import_module(&text, &file_path, offset, &workspace_roots)
-        {
-            return Ok(Some(tower_lsp::lsp_types::GotoDefinitionResponse::Scalar(
-                loc,
-            )));
-        }
-
-        Ok(None)
-    }
-
-    async fn document_symbol(
-        &self,
-        params: DocumentSymbolParams,
-    ) -> tower_lsp::jsonrpc::Result<Option<tower_lsp::lsp_types::DocumentSymbolResponse>> {
-        let uri = params.text_document.uri;
-        if !is_dekascript_uri(&uri) {
-            return Ok(None);
-        }
-        let Some(text) = self.get_document(&uri).await else {
-            return Ok(None);
-        };
-        let file_path = uri
-            .to_file_path()
-            .ok()
-            .and_then(|path| path.to_str().map(|path| path.to_string()))
-            .unwrap_or_else(|| uri.to_string());
-
-        let line_index = LineIndex::new(&text);
-        let mut symbols = Vec::new();
-        with_program(&text, &file_path, |program, source| {
-            let index = build_index(program, source);
-            symbols = index.document_symbols(&line_index);
-        });
-
-        Ok(Some(tower_lsp::lsp_types::DocumentSymbolResponse::Nested(
-            symbols,
-        )))
     }
 
     async fn references(

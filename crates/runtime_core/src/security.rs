@@ -21,7 +21,7 @@ pub struct OperationCapability {
 // Single source of truth for operation -> capability classification.
 // New runtime operations must be added here first.
 pub const OPERATION_CAPABILITY_MATRIX: &[OperationCapability] = &[
-    // Registered php host ops (crates/modules_php/src/modules/php/mod.rs).
+    // Registered php host ops (crates/deka_host/src/modules/php/mod.rs).
     OperationCapability {
         op_id: "php.op_php_parse_phpx_types",
         capability: Capability::Unknown,

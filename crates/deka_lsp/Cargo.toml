@@ -8,7 +8,7 @@ crate-type = ["rlib"]
 
 [features]
 default = ["native"]
-native = ["dep:anyhow", "dep:php-rs", "dep:tokio", "dep:tower-lsp"]
+native = ["dep:anyhow", "dep:tokio", "dep:tower-lsp"]
 
 [dependencies]
 tower-lsp = { version = "0.20", optional = true }
@@ -16,8 +16,5 @@ tokio = { workspace = true, optional = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
 anyhow = { version = "1", optional = true }
-modules_php = { path = "../modules_php", default-features = false, features = ["compiler"] }
 deka_compile = { path = "../deka_compile" }
 deka_syntax = { path = "../deka_syntax" }
-bumpalo = "3"
-php-rs = { path = "../php-rs", optional = true }

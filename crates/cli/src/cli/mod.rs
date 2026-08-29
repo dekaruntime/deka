@@ -26,7 +26,7 @@ pub mod fmt;
 pub mod init;
 #[cfg(feature = "native")]
 pub mod install;
-#[cfg(feature = "native")]
+#[cfg(feature = "lsp")]
 pub mod lsp;
 #[cfg(feature = "native")]
 pub mod pipeline_yaml;

@@ -649,7 +649,7 @@ fn rehash_phpx_packages(project_dir: &Path, specs: &[String]) -> Result<Vec<Stri
                 target.display()
             ));
         }
-        let integrity = modules_php::integrity::compute_package_integrity(&target)
+        let integrity = deka_host::integrity::compute_package_integrity(&target)
             .map_err(|err| anyhow::anyhow!("integrity hash failed for {}: {}", name, err))?;
         update_deka_lock(
             project_dir,
