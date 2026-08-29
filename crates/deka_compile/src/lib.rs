@@ -248,8 +248,15 @@ pub fn compile_to_js_with_imports_and_options<'a>(
         return Err(typeck_result.errors);
     }
 
-    let js = emit_js_with_options(&program, source, imports, options.module_base)
-        .map_err(|message| vec![Diagnostic::error(0, 0, message)])?;
+    let js = emit_js_with_options(
+        &program,
+        source,
+        imports,
+        options.module_base,
+        &typeck_result.unwrap_calls,
+        &typeck_result.operator_rewrites,
+    )
+    .map_err(|message| vec![Diagnostic::error(0, 0, message)])?;
 
     Ok(CompileResult {
         js,
@@ -531,5 +538,43 @@ mod tests {
         assert_eq!(meta.exports.len(), 2);
         assert_eq!(meta.exports[0].name, "x");
         assert_eq!(meta.exports[1].name, "double");
+    }
+
+    #[test]
+    fn compile_newtype_construct_and_unwrap() {
+        let result = compile_to_js(
+            "type Cents number\nconst c: Cents = Cents(500)\nconst n: number = number(c)",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("const Cents$proto"), "got: {}", result.js);
+        assert!(result.js.contains("function Cents(v)"), "got: {}", result.js);
+        assert!(result.js.contains("const c = Cents(500)"), "got: {}", result.js);
+        assert!(result.js.contains("const n = c[__p]"), "got: {}", result.js);
+    }
+
+    #[test]
+    fn compile_newtype_ascription_rejected() {
+        let err = compile_to_js("type Cents number\nconst c: Cents = 500", "test.ds")
+            .expect_err("compile should fail");
+        assert!(
+            err.iter().any(|d| d.message.contains("Cents")),
+            "expected ascription error, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn compile_newtype_unwrap_wrong_repr_rejected() {
+        let err = compile_to_js(
+            "type Cents number\nconst c: Cents = Cents(500)\nconst s: string = string(c)",
+            "test.ds",
+        )
+        .expect_err("compile should fail");
+        assert!(
+            err.iter().any(|d| d.message.contains("cannot convert")),
+            "expected conversion error, got: {:?}",
+            err
+        );
     }
 }

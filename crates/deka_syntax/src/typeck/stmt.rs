@@ -144,6 +144,15 @@ impl<'a> Checker<'a> {
                     self.error_span(*span, format!("duplicate interface definition `{name}`"));
                 }
             }
+            if let ast::Stmt::Newtype { name, repr, span } = stmt {
+                if self.newtypes.insert(name, super::NewtypeInfo { repr: *repr }).is_some() {
+                    self.error_span(*span, format!("duplicate newtype definition `{name}`"));
+                    continue;
+                }
+                if self.aliases.contains_key(name) || self.structs.contains_key(name) || self.enums.contains_key(name) || self.interfaces.contains_key(name) {
+                    self.error_span(*span, format!("`{name}` conflicts with an existing type declaration"));
+                }
+            }
         }
     }
 
@@ -537,6 +546,7 @@ impl<'a> Checker<'a> {
             }
             ast::Stmt::Empty { .. }
             | ast::Stmt::TypeAlias { .. }
+            | ast::Stmt::Newtype { .. }
             | ast::Stmt::Interface { .. }
             | ast::Stmt::ReceiverMethod { .. } => {
                 // Already collected and validated lazily at use sites (or no-op).

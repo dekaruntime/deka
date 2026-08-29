@@ -271,6 +271,16 @@ impl<'src> Formatter<'src> {
                 self.write(" = ");
                 self.fmt_type(value);
             }
+            Stmt::Newtype { name, repr, .. } => {
+                self.write("type ");
+                self.write(name);
+                self.write(" ");
+                self.write(match repr {
+                    deka_syntax::NewtypeRepr::Number => "number",
+                    deka_syntax::NewtypeRepr::String => "string",
+                    deka_syntax::NewtypeRepr::Bool => "bool",
+                });
+            }
             Stmt::Interface {
                 name,
                 type_params,
@@ -1229,6 +1239,7 @@ fn stmt_span(stmt: &Stmt<'_>) -> Span {
         Stmt::Struct { span, .. } => *span,
         Stmt::Enum { span, .. } => *span,
         Stmt::TypeAlias { span, .. } => *span,
+        Stmt::Newtype { span, .. } => *span,
         Stmt::Interface { span, .. } => *span,
         Stmt::Expr { span, .. } => *span,
         Stmt::Return { span, .. } => *span,
