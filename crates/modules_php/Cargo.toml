@@ -47,6 +47,7 @@ mysql = { version = "26", optional = true }
 rusqlite = { version = "0.32", features = ["bundled"], optional = true }
 wit-parser = "0.219.2"
 deka-validation = { path = "../deka-validation", default-features = false }
+deka_syntax = { path = "../deka_syntax" }
 runtime_core = { path = "../runtime_core" }
 stdio = { path = "../stdio", optional = true }
 rustls = { version = "0.21", optional = true }

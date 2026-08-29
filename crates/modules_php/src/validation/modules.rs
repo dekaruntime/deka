@@ -3,10 +3,6 @@ use std::path::{Path, PathBuf};
 
 use crate::integrity::compute_package_integrity;
 use bumpalo::Bump;
-use php_rs::parser::ast::visitor::{Visitor, walk_expr};
-use php_rs::parser::ast::{Expr, ExprId, Program, Stmt};
-use php_rs::parser::lexer::Lexer;
-use php_rs::parser::parser::{Parser, ParserMode};
 use serde_json::Value;
 
 use runtime_core::module_spec::ds_source_candidates;
@@ -350,57 +346,13 @@ impl ModuleGraph {
     }
 }
 
-struct AwaitFinder {
-    found: bool,
-}
-
-impl<'ast> Visitor<'ast> for AwaitFinder {
-    fn visit_expr(&mut self, expr: ExprId<'ast>) {
-        if self.found {
-            return;
-        }
-        if matches!(*expr, Expr::Await { .. }) {
-            self.found = true;
-            return;
-        }
-        walk_expr(self, expr);
-    }
-}
-
-fn expr_has_await(expr: ExprId<'_>) -> bool {
-    let mut finder = AwaitFinder { found: false };
-    finder.visit_expr(expr);
-    finder.found
-}
-
-fn stmt_is_tla_candidate(stmt: &Stmt<'_>) -> bool {
-    match stmt {
-        Stmt::Expression { expr, .. } => expr_has_await(*expr),
-        Stmt::Return {
-            expr: Some(expr), ..
-        } => expr_has_await(*expr),
-        Stmt::Echo { exprs, .. } => exprs.iter().any(|expr| expr_has_await(*expr)),
-        _ => false,
-    }
-}
-
 fn has_top_level_await(source: &str) -> bool {
-    let filtered = source
-        .lines()
-        .filter(|line| {
-            let trimmed = line.trim();
-            !(trimmed.starts_with("import ") || trimmed.starts_with("export "))
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
     let arena = Bump::new();
-    let mut parser =
-        Parser::new_with_mode(Lexer::new(filtered.as_bytes()), &arena, ParserMode::Ds);
-    let program: Program<'_> = parser.parse_program();
-    program
-        .statements
-        .iter()
-        .any(|stmt| stmt_is_tla_candidate(stmt))
+    let result = deka_syntax::parse(source, &arena);
+    result
+        .program
+        .map(|program| program.has_top_level_await)
+        .unwrap_or(false)
 }
 
 pub(crate) fn collect_import_specs(source: &str, file_path: &str) -> Vec<ImportSpec> {
