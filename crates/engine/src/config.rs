@@ -11,6 +11,7 @@ pub struct RuntimeConfig {
 #[serde(rename_all = "lowercase")]
 pub enum ServeMode {
     Static,
+    #[serde(alias = "ds")]
     Php,
 }
 
