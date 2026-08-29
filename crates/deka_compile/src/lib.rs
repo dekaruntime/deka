@@ -5,7 +5,7 @@ pub mod module_graph;
 use std::collections::HashMap;
 
 use bumpalo::Bump;
-use deka_emit::emit_js_with_imports;
+use deka_emit::emit_js_with_options;
 use deka_syntax::{check_program_with_imports, parse, resolve_imported_enum_constructors, Diagnostic, ModuleExports};
 use deka_syntax::typeck::Type;
 
@@ -166,19 +166,37 @@ pub struct CompileResult {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+/// Options controlling compiler emission.
+#[derive(Debug, Default, Clone)]
+pub struct CompileOptions {
+    /// Base URL for bare module specifiers. When set, imports like
+    /// `import { echo } from "io"` are emitted as
+    /// `import { echo } from "<module_base>/io.mjs"`.
+    pub module_base: Option<String>,
+}
+
 /// Compile a DekaScript source to JavaScript using the v2 pipeline.
 ///
 /// The pipeline is: parse -> typecheck -> emit.  If parsing or typechecking
 /// produce errors they are returned directly.  Emit errors are converted to a
 /// single diagnostic.
 pub fn compile_to_js(source: &str, file_path: &str) -> Result<CompileResult, Vec<Diagnostic>> {
+    compile_to_js_with_options(source, file_path, CompileOptions::default())
+}
+
+/// Compile a DekaScript source to JavaScript with full options.
+pub fn compile_to_js_with_options(
+    source: &str,
+    file_path: &str,
+    options: CompileOptions,
+) -> Result<CompileResult, Vec<Diagnostic>> {
     let arena = Bump::new();
     let stdlib_exports = infer_stdlib_imports_for_source(source, &arena);
     let imports: HashMap<&str, &ModuleExports> = stdlib_exports
         .iter()
         .map(|(k, v)| (*k, v))
         .collect();
-    compile_to_js_with_imports(source, file_path, &arena, &imports)
+    compile_to_js_with_imports_and_options(source, file_path, &arena, &imports, options)
 }
 
 /// Compile a DekaScript source to JavaScript with imported module signatures.
@@ -190,6 +208,18 @@ pub fn compile_to_js_with_imports<'a>(
     file_path: &str,
     arena: &'a Bump,
     imports: &HashMap<&str, &ModuleExports<'a>>,
+) -> Result<CompileResult, Vec<Diagnostic>> {
+    compile_to_js_with_imports_and_options(source, file_path, arena, imports, CompileOptions::default())
+}
+
+/// Compile a DekaScript source to JavaScript with imported module signatures
+/// and emission options.
+pub fn compile_to_js_with_imports_and_options<'a>(
+    source: &str,
+    file_path: &str,
+    arena: &'a Bump,
+    imports: &HashMap<&str, &ModuleExports<'a>>,
+    options: CompileOptions,
 ) -> Result<CompileResult, Vec<Diagnostic>> {
     let parse_result = parse(source, arena);
     if !parse_result.errors.is_empty() {
@@ -211,7 +241,7 @@ pub fn compile_to_js_with_imports<'a>(
         return Err(typeck_result.errors);
     }
 
-    let js = emit_js_with_imports(&program, source, imports)
+    let js = emit_js_with_options(&program, source, imports, options.module_base)
         .map_err(|message| vec![Diagnostic::error(0, 0, message)])?;
 
     Ok(CompileResult {

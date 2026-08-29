@@ -27,7 +27,24 @@ pub fn emit_js_with_imports<'a>(
     _source: &str,
     imports: &HashMap<&str, &deka_syntax::ModuleExports<'a>>,
 ) -> Result<String, String> {
+    emit_js_with_options(program, _source, imports, None)
+}
+
+/// Emit JavaScript with imported module metadata and a base URL for bare
+/// module specifiers.
+///
+/// When `module_base` is provided, bare import specifiers (those not starting
+/// with `.`, `/`, or a URL scheme) are rewritten to
+/// `<module_base>/<spec>.mjs`. This lets a host serve stdlib modules as real
+/// ESM files instead of string-rewriting compiled output.
+pub fn emit_js_with_options<'a>(
+    program: &'a Program<'a>,
+    _source: &str,
+    imports: &HashMap<&str, &deka_syntax::ModuleExports<'a>>,
+    module_base: Option<String>,
+) -> Result<String, String> {
     let mut emitter = Emitter::new(program);
+    emitter.module_base = module_base;
     emitter.seed_imports(imports);
     emitter.emit()
 }
@@ -67,6 +84,7 @@ struct Emitter<'a> {
     structs: HashMap<String, StructMeta>,
     enums: HashMap<String, EnumMeta>,
     receiver_methods: HashMap<String, Vec<ReceiverMethod<'a>>>,
+    module_base: Option<String>,
 }
 
 impl<'a> Emitter<'a> {
@@ -80,6 +98,7 @@ impl<'a> Emitter<'a> {
             structs: HashMap::new(),
             enums: HashMap::new(),
             receiver_methods: HashMap::new(),
+            module_base: None,
         };
         emitter.prepass();
         emitter
@@ -206,6 +225,26 @@ impl<'a> Emitter<'a> {
             }
         }
         self.compute_empty_embeds();
+    }
+
+    /// Rewrite a bare module specifier to a resolvable URL when `module_base`
+    /// is configured. Bare specifiers are those that do not start with `.`,
+    /// `/`, or a URL scheme. The `@deka/` prefix is stripped so both `io` and
+    /// `@deka/io` map to `<base>/io.mjs`.
+    fn resolve_module_source(&self, source: &str) -> String {
+        let Some(base) = &self.module_base else {
+            return source.to_string();
+        };
+        if source.starts_with('.') || source.starts_with('/') {
+            return source.to_string();
+        }
+        if source.contains(':') {
+            // URL scheme (e.g. https://, data:)
+            return source.to_string();
+        }
+        let name = source.strip_prefix("@deka/").unwrap_or(source);
+        let base = base.trim_end_matches('/');
+        format!("{}/{}.mjs", base, name)
     }
 
     fn seed_imports(&mut self, imports: &HashMap<&str, &deka_syntax::ModuleExports<'a>>) {
@@ -509,9 +548,10 @@ impl<'a> Emitter<'a> {
             }
             Stmt::Import { specifiers, source, .. } => {
                 write_indent(&mut self.out, 0);
+                let resolved_source = self.resolve_module_source(source);
                 if specifiers.is_empty() {
                     self.out.push_str("import \"");
-                    self.out.push_str(source);
+                    self.out.push_str(&resolved_source);
                     self.out.push_str("\";");
                 } else {
                     self.out.push_str("import { ");
@@ -528,7 +568,7 @@ impl<'a> Emitter<'a> {
                         }
                     }
                     self.out.push_str(" } from \"");
-                    self.out.push_str(source);
+                    self.out.push_str(&resolved_source);
                     self.out.push_str("\";");
                 }
             }
@@ -1262,6 +1302,7 @@ impl<'a> Emitter<'a> {
                     structs: HashMap::new(),
                     enums: HashMap::new(),
                     receiver_methods: HashMap::new(),
+                    module_base: self.module_base.clone(),
                 };
                 tmp.emit_expr(expr).expect("literal emission");
                 literal = tmp.out;

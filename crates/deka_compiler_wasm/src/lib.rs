@@ -12,7 +12,10 @@ use serde::{Deserialize, Serialize};
 /// `WasmResult` (two `u32`s, align 4) as well as arbitrary byte buffers.
 const ALLOC_ALIGN: usize = 8;
 /// Version of the allocation and JSON response ABI.
-pub const ABI_VERSION: u32 = 1;
+///
+/// 1: initial ABI with `mode` passed as a plain string ("auto" / "deka").
+/// 2: `mode` replaced by a JSON options blob `{ "mode": "deka", "moduleBase": "..." }`.
+pub const ABI_VERSION: u32 = 2;
 const COMPILER_NAME: &str = "deka";
 const SOURCE_COMMIT: &str = match option_env!("DEKA_SOURCE_COMMIT") {
     Some(commit) => commit,
@@ -54,8 +57,12 @@ pub unsafe extern "C" fn deka_compiler_free(ptr: *mut u8, size: u32) {
     unsafe { dealloc(ptr, layout) }
 }
 
-/// Compile DekaScript source using `mode` (`auto` or `deka`) and return a
+/// Compile DekaScript source using a JSON options blob and return a
 /// JSON-encoded `WasmResult`.
+///
+/// The options blob has the form `{ "mode": "deka", "moduleBase": "..." }`.
+/// `mode` is required; `moduleBase` is optional. When `moduleBase` is supplied,
+/// bare import specifiers are rewritten to `<moduleBase>/<spec>.mjs`.
 ///
 /// # Safety
 /// Non-empty pointer/length pairs must point to valid, immutable UTF-8 buffers
@@ -66,20 +73,20 @@ pub extern "C" fn deka_compiler_compile(
     source_len: u32,
     filename_ptr: *const u8,
     filename_len: u32,
-    mode_ptr: *const u8,
-    mode_len: u32,
+    options_ptr: *const u8,
+    options_len: u32,
 ) -> *mut WasmResult {
     let source = read_utf8(source_ptr, source_len, "source");
     let filename = read_utf8(filename_ptr, filename_len, "filename");
-    let mode = read_utf8(mode_ptr, mode_len, "mode");
-    let json = match (source, filename, mode) {
-        (Ok(source), Ok(filename), Ok(mode)) => compile_request(source, filename, mode),
-        (source, filename, mode) => request_error(
+    let options = read_utf8(options_ptr, options_len, "options");
+    let json = match (source, filename, options) {
+        (Ok(source), Ok(filename), Ok(options)) => compile_request(source, filename, options),
+        (source, filename, options) => request_error(
             filename.unwrap_or("<unknown>"),
             source
                 .err()
                 .or(filename.err())
-                .or(mode.err())
+                .or(options.err())
                 .unwrap_or("invalid request"),
         ),
     };
@@ -178,7 +185,7 @@ pub(crate) fn read_utf8<'a>(
         return Err(match label {
             "source" => "source pointer is null",
             "filename" => "filename pointer is null",
-            _ => "mode pointer is null",
+            _ => "options pointer is null",
         });
     }
     // SAFETY: non-empty buffers have been checked for a non-null pointer; the
@@ -187,7 +194,7 @@ pub(crate) fn read_utf8<'a>(
     str::from_utf8(bytes).map_err(|_| match label {
         "source" => "source is not valid UTF-8",
         "filename" => "filename is not valid UTF-8",
-        _ => "mode is not valid UTF-8",
+        _ => "options is not valid UTF-8",
     })
 }
 
@@ -248,13 +255,24 @@ pub(crate) struct Diagnostic {
     rendered: String,
 }
 
-fn compile_request(source: &str, filename: &str, requested_mode: &str) -> String {
-    let mode = match resolve_mode(filename, requested_mode) {
-        Ok(mode) => mode,
+#[derive(Debug, Deserialize)]
+struct CompileRequestOptions {
+    mode: String,
+    #[serde(rename = "moduleBase")]
+    module_base: Option<String>,
+}
+
+fn compile_request(source: &str, filename: &str, options_json: &str) -> String {
+    let options = match parse_compile_options(filename, options_json) {
+        Ok(options) => options,
         Err(message) => return request_error(filename, message),
     };
 
-    match deka_compile::compile_to_js(source, filename) {
+    let compile_options = deka_compile::CompileOptions {
+        module_base: options.module_base,
+    };
+
+    match deka_compile::compile_to_js_with_options(source, filename, compile_options) {
         Ok(result) => {
             let diagnostics = result
                 .diagnostics
@@ -271,7 +289,7 @@ fn compile_request(source: &str, filename: &str, requested_mode: &str) -> String
                 diagnostics,
                 metadata: CompileMetadata {
                     filename,
-                    language: mode,
+                    language: &options.mode,
                     compiler: CompilerMetadata::current(),
                 },
             })
@@ -288,7 +306,7 @@ fn compile_request(source: &str, filename: &str, requested_mode: &str) -> String
                 diagnostics,
                 metadata: CompileMetadata {
                     filename,
-                    language: mode,
+                    language: &options.mode,
                     compiler: CompilerMetadata::current(),
                 },
             })
@@ -296,12 +314,20 @@ fn compile_request(source: &str, filename: &str, requested_mode: &str) -> String
     }
 }
 
-fn resolve_mode<'a>(filename: &str, mode: &'a str) -> Result<&'a str, &'static str> {
+fn parse_compile_options(filename: &str, options_json: &str) -> Result<CompileRequestOptions, &'static str> {
     if !filename.ends_with(".ds") && !filename.ends_with(".dsx") {
         return Err("Deka browser compiler only accepts .ds or .dsx source files");
     }
-    match mode {
-        "" | "auto" | "deka" => Ok("deka"),
+    let mut options: CompileRequestOptions = serde_json::from_str(options_json)
+        .map_err(|_| "invalid compile options JSON; expected `{ \"mode\": \"deka\" }`")?;
+    if options.mode.is_empty() {
+        options.mode = "deka".to_string();
+    }
+    match options.mode.as_str() {
+        "auto" | "deka" => {
+            options.mode = "deka".to_string();
+            Ok(options)
+        }
         _ => Err("unsupported language mode; supported modes are `auto` and `deka`"),
     }
 }
@@ -496,7 +522,7 @@ mod tests {
     #[test]
     fn deka_mode_compiles_a_ds_fixture_with_structured_metadata() {
         let response: Value =
-            serde_json::from_str(&compile_request("const answer = 42;", "lesson.ds", "auto"))
+            serde_json::from_str(&compile_request("const answer = 42;", "lesson.ds", r#"{"mode":"auto"}"#))
                 .expect("response JSON");
 
         assert_eq!(response["abi_version"], ABI_VERSION);
@@ -510,11 +536,49 @@ mod tests {
     }
 
     #[test]
+    fn module_base_rewrites_bare_stdlib_imports() {
+        let response: Value = serde_json::from_str(&compile_request(
+            r#"import { echo } from "io"; echo("hello");"#,
+            "lesson.ds",
+            r#"{"mode":"deka","moduleBase":"/tour/modules"}"#,
+        ))
+        .expect("response JSON");
+
+        assert_eq!(response["ok"], true, "{response}");
+        let code = response["output"]["code"]
+            .as_str()
+            .expect("compiled code should be present");
+        assert!(
+            code.contains(r#"import { echo } from "/tour/modules/io.mjs";"#),
+            "expected moduleBase rewrite, got:\n{code}"
+        );
+    }
+
+    #[test]
+    fn module_base_leaves_relative_imports_untouched() {
+        let response: Value = serde_json::from_str(&compile_request(
+            r#"import { add } from "./math.ds"; const r = add(1, 2);"#,
+            "lesson.ds",
+            r#"{"mode":"deka","moduleBase":"/tour/modules"}"#,
+        ))
+        .expect("response JSON");
+
+        assert_eq!(response["ok"], true, "{response}");
+        let code = response["output"]["code"]
+            .as_str()
+            .expect("compiled code should be present");
+        assert!(
+            code.contains(r#"import { add } from "./math.ds";"#),
+            "expected relative import unchanged, got:\n{code}"
+        );
+    }
+
+    #[test]
     fn rejects_phpx_mode_and_filename_without_fallback() {
         let filename_response: Value = serde_json::from_str(&compile_request(
             "function greeting($name: string): string { return $name; }",
             "legacy.phpx",
-            "phpx",
+            r#"{"mode":"phpx"}"#,
         ))
         .expect("response JSON");
 
@@ -525,7 +589,7 @@ mod tests {
             .is_some_and(|message| message.contains("only accepts .ds")));
 
         let mode_response: Value =
-            serde_json::from_str(&compile_request("const answer = 42;", "lesson.ds", "phpx"))
+            serde_json::from_str(&compile_request("const answer = 42;", "lesson.ds", r#"{"mode":"phpx"}"#))
                 .expect("response JSON");
         assert_eq!(mode_response["ok"], false);
         assert!(mode_response["diagnostics"][0]["message"]
@@ -536,9 +600,9 @@ mod tests {
     #[test]
     fn diagnostics_are_monaco_ready_and_native_parity_is_stable() {
         let source = "function broken(";
-        let native: Value = serde_json::from_str(&compile_request(source, "broken.ds", "deka"))
+        let native: Value = serde_json::from_str(&compile_request(source, "broken.ds", r#"{"mode":"deka"}"#))
             .expect("native response JSON");
-        let wasm_abi: Value = serde_json::from_str(&compile_request(source, "broken.ds", "auto"))
+        let wasm_abi: Value = serde_json::from_str(&compile_request(source, "broken.ds", r#"{"mode":"auto"}"#))
             .expect("WASM ABI response JSON");
 
         assert_eq!(native["ok"], false);
@@ -552,7 +616,7 @@ mod tests {
 
     #[test]
     fn mode_and_filename_errors_are_structured() {
-        let response: Value = serde_json::from_str(&compile_request("", "lesson.txt", "auto"))
+        let response: Value = serde_json::from_str(&compile_request("", "lesson.txt", r#"{"mode":"auto"}"#))
             .expect("response JSON");
         assert_eq!(response["ok"], false);
         assert_eq!(response["diagnostics"][0]["code"], "emitter");
@@ -568,7 +632,7 @@ mod tests {
 
 const origin = Point { x: 3, y: 4 };
 "#;
-        let response: Value = serde_json::from_str(&compile_request(source, "struct.ds", "deka"))
+        let response: Value = serde_json::from_str(&compile_request(source, "struct.ds", r#"{"mode":"deka"}"#))
             .expect("response JSON");
 
         assert_eq!(response["ok"], true, "{response}");
@@ -607,7 +671,7 @@ const origin = Point { x: 3, y: 4 };
                 continue;
             }
             let response: Value = serde_json::from_str(&compile_request(
-                &source, &filename, "deka",
+                &source, &filename, r#"{"mode":"deka"}"#,
             ))
             .unwrap_or_else(|error| panic!("{}: invalid response JSON: {error}", lesson.id));
             assert_eq!(
