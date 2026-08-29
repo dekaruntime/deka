@@ -109,6 +109,12 @@ pub enum Stmt<'a> {
         value: Type<'a>,
         span: Span,
     },
+    /// `type Name Repr` — a boxed newtype over a primitive representation.
+    Newtype {
+        name: &'a str,
+        repr: NewtypeRepr,
+        span: Span,
+    },
     /// `interface Name { field: Type; fn method() Ret }`
     Interface {
         name: &'a str,
@@ -158,6 +164,14 @@ pub enum Stmt<'a> {
     Continue {
         span: Span,
     },
+}
+
+/// Primitive representation allowed for a newtype declaration.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+pub enum NewtypeRepr {
+    Number,
+    String,
+    Bool,
 }
 
 #[derive(Clone, Debug, Serialize)]

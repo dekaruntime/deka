@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast;
 
-use super::types::Type;
+use super::types::{newtype_repr_from_name, Type};
 use super::Checker;
 
 impl<'a> Checker<'a> {
@@ -43,7 +43,7 @@ impl<'a> Checker<'a> {
                 if let Some(ret) = self.try_check_method_call(expr, callee, args, *span) {
                     ret
                 } else {
-                    self.check_call(callee, type_args, args, *span)
+                    self.check_call(expr, callee, type_args, args, *span)
                 }
             }
             ast::Expr::FieldAccess { object, field, span } => {
@@ -1536,6 +1536,7 @@ impl<'a> Checker<'a> {
 
     fn check_call(
         &mut self,
+        expr: &ast::Expr<'a>,
         callee: &ast::Expr<'a>,
         type_args: &'a [ast::Type<'a>],
         args: &'a [ast::Expr<'a>],
@@ -1547,6 +1548,59 @@ impl<'a> Checker<'a> {
                 self.check_expr(arg);
             }
             return Type::Named { name: "boolean" };
+        }
+
+        // Newtype constructor: `Cents(500)` is only legal in the declaring module.
+        if let ast::Expr::Identifier { name, .. } = callee {
+            if let Some(info) = self.newtypes.get(name).cloned() {
+                if args.len() != 1 {
+                    self.error_span(
+                        span,
+                        format!("newtype constructor `{name}` expects exactly one argument"),
+                    );
+                    return Type::Error;
+                }
+                let arg_type = self.check_expr(&args[0]);
+                let expected = Type::from_newtype_repr(info.repr);
+                if !self.is_assignable(&expected, &arg_type) {
+                    self.error_at_expr(
+                        &args[0],
+                        format!("expected `{expected}` for newtype `{name}`, found `{arg_type}`"),
+                    );
+                }
+                return Type::Newtype { name, repr: info.repr };
+            }
+        }
+
+        // Primitive unwrap: `number(c)`, `string(c)`, `bool(c)`.
+        if let ast::Expr::Identifier { name, .. } = callee {
+            if let Some(repr) = newtype_repr_from_name(name) {
+                if args.len() != 1 {
+                    self.error_span(
+                        span,
+                        format!("`{name}` conversion expects exactly one argument"),
+                    );
+                    return Type::Error;
+                }
+                let arg_type = self.check_expr(&args[0]);
+                let expected = Type::from_newtype_repr(repr);
+                let kind = match &arg_type {
+                    Type::Newtype { repr: arg_repr, .. } if *arg_repr == repr => {
+                        Some(super::types::UnwrapKind::Payload)
+                    }
+                    other if *other == expected => Some(super::types::UnwrapKind::Identity),
+                    _ => None,
+                };
+                if let Some(kind) = kind {
+                    self.unwrap_calls.insert(expr as *const ast::Expr<'a>, kind);
+                } else if !arg_type.is_error() {
+                    self.error_at_expr(
+                        &args[0],
+                        format!("cannot convert `{arg_type}` to `{name}`"),
+                    );
+                }
+                return Type::Named { name };
+            }
         }
 
         let callee_type = self.check_expr(callee);

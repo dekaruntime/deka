@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use deka_syntax::{BinOp, ExportDecl, Expr, ForInit, Pattern, Program, Stmt, Type};
+use deka_syntax::{BinOp, ExportDecl, Expr, ForInit, NewtypeRepr, Pattern, Program, Stmt, Type};
 
 use crate::util::{bin_op_str, escape_string, un_op_str, write_indent};
 
@@ -21,14 +21,17 @@ pub fn emit_js(program: &Program, _source: &str) -> Result<String, String> {
 ///
 /// Imported structs and enums are seeded into the emitter so that struct
 /// literals and enum constructors defined in other modules can be emitted
-/// correctly in the current file.
+/// correctly in the current file. `unwrap_calls` maps primitive conversion
+/// call sites (`number(x)`, `string(x)`, `bool(x)`) to their lowering kind.
 pub fn emit_js_with_imports<'a>(
     program: &'a Program<'a>,
     _source: &str,
     imports: &HashMap<&str, &deka_syntax::ModuleExports<'a>>,
+    unwrap_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::UnwrapKind>,
 ) -> Result<String, String> {
     let mut emitter = Emitter::new(program);
     emitter.seed_imports(imports);
+    emitter.unwrap_calls = unwrap_calls.clone();
     emitter.emit()
 }
 
@@ -62,11 +65,15 @@ struct Emitter<'a> {
     program: &'a Program<'a>,
     out: String,
     uses_struct: bool,
+    uses_newtype: bool,
     uses_prelude_enums: bool,
     struct_order: Vec<String>,
     structs: HashMap<String, StructMeta>,
     enums: HashMap<String, EnumMeta>,
+    newtypes: HashMap<String, NewtypeRepr>,
     receiver_methods: HashMap<String, Vec<ReceiverMethod<'a>>>,
+    /// Primitive conversion calls lowered by the typechecker.
+    unwrap_calls: HashMap<*const Expr<'a>, deka_syntax::typeck::UnwrapKind>,
 }
 
 impl<'a> Emitter<'a> {
@@ -75,11 +82,14 @@ impl<'a> Emitter<'a> {
             program,
             out: String::new(),
             uses_struct: false,
+            uses_newtype: false,
             uses_prelude_enums: false,
             struct_order: Vec::new(),
             structs: HashMap::new(),
             enums: HashMap::new(),
+            newtypes: HashMap::new(),
             receiver_methods: HashMap::new(),
+            unwrap_calls: HashMap::new(),
         };
         emitter.prepass();
         emitter
@@ -202,6 +212,10 @@ impl<'a> Emitter<'a> {
                             is_async: *is_async,
                         });
                 }
+                Stmt::Newtype { name, repr, .. } => {
+                    self.newtypes.insert(name.to_string(), *repr);
+                    self.uses_newtype = true;
+                }
                 _ => {}
             }
         }
@@ -243,6 +257,13 @@ impl<'a> Emitter<'a> {
                     }
                 }
                 self.enums.insert(name.to_string(), meta);
+            }
+            for (name, info) in exports.newtypes.iter() {
+                if self.newtypes.contains_key(*name) {
+                    continue;
+                }
+                self.newtypes.insert(name.to_string(), info.repr);
+                self.uses_newtype = true;
             }
         }
         self.compute_empty_embeds();
@@ -298,15 +319,26 @@ impl<'a> Emitter<'a> {
         self.uses_struct = self.needs_struct_helper();
         self.uses_prelude_enums = self.uses_prelude_enums || self.needs_prelude_enums();
 
-        if self.uses_struct {
+        if self.uses_struct || self.uses_newtype {
             self.out.push_str("const __deka = {");
-                        self.out.push_str(r###"Struct:(id,embeds)=>{function f(fields){const o=Object.create(f.prototype);Object.assign(o,fields);Object.defineProperty(o,'__deka_struct',{value:id,enumerable:false,writable:false,configurable:false});return o;}f.id=id;Object.defineProperty(f,'name',{value:id,configurable:true});f.prototype=Object.create(null);f.prototype.constructor=f;f.impl=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){return b.apply(this,x);};}else{for(const k in a)f.prototype[k]=a[k];}return f;};f.implMut=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka.MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return b.apply(this,x);};}else{for(const k in a){const fn=a[k];f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka.MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return fn.apply(this,x);};}}return f;};if(embeds){for(const [embedName,embedFactory] of Object.entries(embeds)){for(const key of Object.keys(embedFactory.prototype)){f.prototype[key]=function(...args){return this[embedName][key](...args);};}}}return f;},"###);
-            self.out.push_str("getStructId:(v)=>v?.__deka_struct,");
-            self.out.push_str(
-                "MutationError:class extends Error{constructor(m){super(m);this.name='MutationError';}}",
-            );
+            if self.uses_struct {
+                self.out.push_str(r###"Struct:(id,embeds)=>{function f(fields){const o=Object.create(f.prototype);Object.assign(o,fields);Object.defineProperty(o,'__deka_struct',{value:id,enumerable:false,writable:false,configurable:false});return o;}f.id=id;Object.defineProperty(f,'name',{value:id,configurable:true});f.prototype=Object.create(null);f.prototype.constructor=f;f.impl=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){return b.apply(this,x);};}else{for(const k in a)f.prototype[k]=a[k];}return f;};f.implMut=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka.MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return b.apply(this,x);};}else{for(const k in a){const fn=a[k];f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka.MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return fn.apply(this,x);};}}return f;};if(embeds){for(const [embedName,embedFactory] of Object.entries(embeds)){for(const key of Object.keys(embedFactory.prototype)){f.prototype[key]=function(...args){return this[embedName][key](...args);};}}}return f;},"###);
+                self.out.push_str("getStructId:(v)=>v?.__deka_struct,");
+                self.out.push_str(
+                    "MutationError:class extends Error{constructor(m){super(m);this.name='MutationError';}}",
+                );
+            }
+            if self.uses_newtype {
+                if self.uses_struct {
+                    self.out.push_str(",");
+                }
+                self.out.push_str("__nt:Symbol.for('deka.nt')");
+            }
             self.out.push_str("};\n");
             self.out.push_str("const deka = globalThis.deka = { ...globalThis.deka, ...__deka };\n");
+            if self.uses_newtype {
+                self.out.push_str("const __p = deka.__nt;\n");
+            }
         }
 
         if self.uses_prelude_enums {
@@ -647,6 +679,9 @@ impl<'a> Emitter<'a> {
             Stmt::TypeAlias { .. } => {
                 // Erased at runtime.
             }
+            Stmt::Newtype { name, repr, .. } => {
+                self.emit_newtype_factory(name, *repr)?;
+            }
             Stmt::Interface { .. } => {
                 // Erased at runtime.
             }
@@ -708,6 +743,33 @@ impl<'a> Emitter<'a> {
         }
         write_indent(&mut self.out, 0);
         self.out.push_str("});");
+        Ok(())
+    }
+
+    fn emit_newtype_factory(
+        &mut self,
+        name: &str,
+        _repr: NewtypeRepr,
+    ) -> Result<(), String> {
+        write_indent(&mut self.out, 0);
+        self.out.push_str("const ");
+        self.out.push_str(name);
+        self.out.push_str("$proto = Object.create(null);\n");
+        write_indent(&mut self.out, 0);
+        self.out.push_str("Object.defineProperty(");
+        self.out.push_str(name);
+        self.out.push_str("$proto, '__deka_newtype', { value: ");
+        self.out.push_str(&json_string(name));
+        self.out.push_str(", enumerable: false, writable: false, configurable: false });\n");
+        write_indent(&mut self.out, 0);
+        self.out.push_str(name);
+        self.out.push_str("$proto.toJSON = function () { return this[__p]; };\n");
+        write_indent(&mut self.out, 0);
+        self.out.push_str("function ");
+        self.out.push_str(name);
+        self.out.push_str("(v) { const o = Object.create(");
+        self.out.push_str(name);
+        self.out.push_str("$proto); Object.defineProperty(o, __p, { value: v, enumerable: false, writable: false, configurable: false }); return o; }");
         Ok(())
     }
 
@@ -873,7 +935,38 @@ impl<'a> Emitter<'a> {
                 self.out.push_str(un_op_str(*op));
                 self.emit_expr(operand)?;
             }
-            Expr::Call { callee, args, .. } => {
+            Expr::Call { callee, args, span, .. } => {
+                let expr_ptr = expr as *const Expr<'a>;
+                if let Some(kind) = self.unwrap_calls.get(&expr_ptr) {
+                    if let Some(arg) = args.first() {
+                        match kind {
+                            deka_syntax::typeck::UnwrapKind::Identity => {
+                                self.emit_expr(arg)?;
+                            }
+                            deka_syntax::typeck::UnwrapKind::Payload => {
+                                self.emit_expr(arg)?;
+                                self.out.push_str("[__p]");
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
+
+                if let Expr::Identifier { name, .. } = callee {
+                    if self.newtypes.contains_key(*name) {
+                        self.out.push_str(name);
+                        self.out.push('(');
+                        for (i, arg) in args.iter().enumerate() {
+                            if i > 0 {
+                                self.out.push_str(", ");
+                            }
+                            self.emit_expr(arg)?;
+                        }
+                        self.out.push(')');
+                        return Ok(());
+                    }
+                }
+
                 let hole_count = args.iter().filter(|a| is_hole_expr(a)).count();
                 if hole_count > 0 {
                     // Partial application: emit a wrapper function.
@@ -921,6 +1014,7 @@ impl<'a> Emitter<'a> {
                     }
                     self.out.push(')');
                 }
+                let _ = span;
             }
             Expr::FieldAccess { object, field, .. } => {
                 self.emit_expr(object)?;
@@ -1257,11 +1351,14 @@ impl<'a> Emitter<'a> {
                     program: self.program,
                     out: literal,
                     uses_struct: false,
+                    uses_newtype: false,
                     uses_prelude_enums: false,
                     struct_order: Vec::new(),
                     structs: HashMap::new(),
                     enums: HashMap::new(),
+                    newtypes: HashMap::new(),
                     receiver_methods: HashMap::new(),
+                    unwrap_calls: HashMap::new(),
                 };
                 tmp.emit_expr(expr).expect("literal emission");
                 literal = tmp.out;

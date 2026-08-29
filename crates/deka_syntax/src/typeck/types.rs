@@ -42,6 +42,8 @@ pub enum Type<'a> {
     Object { fields: Vec<(&'a str, Type<'a>)> },
     /// A declared interface type.
     Interface { name: &'a str },
+    /// A boxed newtype over a primitive representation.
+    Newtype { name: &'a str, repr: crate::ast::NewtypeRepr },
     /// A type parameter, e.g. `T` inside a generic function or type.
     Param { name: &'a str },
 }
@@ -50,6 +52,33 @@ impl<'a> Type<'a> {
     pub fn is_error(&self) -> bool {
         matches!(self, Type::Error)
     }
+
+    pub fn from_newtype_repr(repr: crate::ast::NewtypeRepr) -> Self {
+        match repr {
+            crate::ast::NewtypeRepr::Number => Type::Named { name: "number" },
+            crate::ast::NewtypeRepr::String => Type::Named { name: "string" },
+            crate::ast::NewtypeRepr::Bool => Type::Named { name: "boolean" },
+        }
+    }
+}
+
+pub fn newtype_repr_from_name(name: &str) -> Option<crate::ast::NewtypeRepr> {
+    match name {
+        "number" => Some(crate::ast::NewtypeRepr::Number),
+        "string" => Some(crate::ast::NewtypeRepr::String),
+        "bool" => Some(crate::ast::NewtypeRepr::Bool),
+        _ => None,
+    }
+}
+
+/// How a primitive conversion call (`number(x)`, `string(x)`, `bool(x)`) should
+/// be lowered after typechecking.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnwrapKind {
+    /// The argument is already the primitive; erase the call.
+    Identity,
+    /// The argument is a newtype; access its payload via `__p`.
+    Payload,
 }
 
 impl fmt::Display for Type<'_> {
@@ -98,6 +127,7 @@ impl fmt::Display for Type<'_> {
                 write!(f, "}}")
             }
             Type::Interface { name } => write!(f, "{name}"),
+            Type::Newtype { name, .. } => write!(f, "{name}"),
             Type::Param { name } => write!(f, "{name}"),
         }
     }

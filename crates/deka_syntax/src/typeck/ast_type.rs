@@ -40,6 +40,8 @@ impl<'a> Checker<'a> {
                         Type::Named { name }
                     } else if self.interfaces.contains_key(name) {
                         Type::Interface { name }
+                    } else if let Some(info) = self.newtypes.get(name).cloned() {
+                        Type::Newtype { name, repr: info.repr }
                     } else if let Some(alias) = self.aliases.get(name).cloned() {
                         if !seen.insert(name) {
                             self.error_span(*span, format!("cyclic type alias `{name}`"));

@@ -1,6 +1,9 @@
 //! Statement parsing.
 
-use crate::ast::{alloc, alloc_slice, EnumCase, ForInit, InterfaceMember, Param, Pos, Program, StructField, Stmt, Type, TypeParam};
+use crate::ast::{
+    alloc, alloc_slice, EnumCase, ForInit, InterfaceMember, NewtypeRepr, Param, Pos, Program,
+    StructField, Stmt, Type, TypeParam,
+};
 use crate::diagnostics::Diagnostic;
 use crate::lexer::TokenKind;
 
@@ -648,22 +651,33 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type_alias_statement(&mut self, start: Pos, start_byte: usize) -> Option<Stmt<'a>> {
-        let is_deprecated_type_keyword = self.at(TokenKind::Type);
+        let keyword = self.current_kind();
         self.advance(); // `type` or `alias`
 
-        if is_deprecated_type_keyword {
-            let pos = self.current_span().start;
+        let name = self.expect_identifier()?;
+
+        // Newtype: `type Name Repr` (no `=`).
+        if keyword == TokenKind::Type && !self.at(TokenKind::Eq) {
+            let repr = self.parse_newtype_repr()?;
+            self.expect_statement_end(false)?;
+            return Some(Stmt::Newtype {
+                name,
+                repr,
+                span: self.span_from(start, start_byte),
+            });
+        }
+
+        if keyword == TokenKind::Type {
             self.errors.push(
                 Diagnostic::warning(
-                    pos.line,
-                    pos.column,
+                    start.line,
+                    start.column,
                     "`type X = Y` is deprecated; use `alias X = Y` instead",
                 )
                 .with_help("replace `type` with `alias`"),
             );
         }
 
-        let name = self.expect_identifier()?;
         let type_params = if self.at(TokenKind::Lt) {
             self.parse_type_params()?
         } else {
@@ -679,6 +693,21 @@ impl<'a> Parser<'a> {
             type_params,
             value,
             span: self.span_from(start, start_byte),
+        })
+    }
+
+    fn parse_newtype_repr(&mut self) -> Option<NewtypeRepr> {
+        let repr_name = self.expect_identifier()?;
+        Some(match repr_name {
+            "number" => NewtypeRepr::Number,
+            "string" => NewtypeRepr::String,
+            "bool" => NewtypeRepr::Bool,
+            _ => {
+                self.error(format!(
+                    "newtype representation must be `number`, `string`, or `bool`, found `{repr_name}`"
+                ));
+                NewtypeRepr::Number
+            }
         })
     }
 
