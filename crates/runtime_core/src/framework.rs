@@ -666,7 +666,7 @@ fn generate_serve_entry(
         .iter()
         .filter(|e| e.kind == FrameworkEntryKind::Loading)
     {
-        import_alias(&loading.file, "Loading", &alias("Loading", &loading.route));
+        import_alias(&loading.file, "Loading", &alias("Loading", &loading.route))?;
     }
     if let Some(not_found) = &manifest.not_found {
         import_alias(&not_found.file, "Page", "Page_not_found")?;
@@ -1126,20 +1126,40 @@ fn static_prefix(route: &str) -> String {
 
 fn wrap_layouts(entries: &[FrameworkEntry], route: &str, page_alias: &str) -> String {
     let mut expr = page_call(route, page_alias);
-    if let Some(loading) = loading_at(entries, route) {
-        expr = suspense_wrap(&alias("Loading", &loading.route), &expr);
-    }
-    for layout in layout_chain(entries, route).into_iter().rev() {
-        let mut inner = expr;
-        if layout.route != route {
-            if let Some(loading) = loading_at(entries, &layout.route) {
-                inner = suspense_wrap(&alias("Loading", &loading.route), &inner);
-            }
+    for seg in ancestor_routes(route) {
+        if let Some(loading) = loading_at(entries, &seg) {
+            expr = suspense_wrap(&alias("Loading", &loading.route), &expr);
         }
-        let name = alias("Layout", &layout.route);
-        expr = format!("{name}({{ children: {inner} }})");
+        if let Some(layout) = layout_at(entries, &seg) {
+            let name = alias("Layout", &layout.route);
+            expr = format!("<{name}>{expr}</{name}>");
+        }
     }
     expr
+}
+
+fn ancestor_routes(route: &str) -> Vec<String> {
+    if route == "/" {
+        return vec!["/".to_string()];
+    }
+    let parts: Vec<&str> = route.trim_matches('/').split('/').filter(|p| !p.is_empty()).collect();
+    let mut out = Vec::new();
+    out.push(if route.starts_with('/') {
+        route.to_string()
+    } else {
+        format!("/{route}")
+    });
+    for i in (0..parts.len().saturating_sub(1)).rev() {
+        out.push(format!("/{}", parts[..=i].join("/")));
+    }
+    out.push("/".to_string());
+    out
+}
+
+fn layout_at<'a>(entries: &'a [FrameworkEntry], route: &str) -> Option<&'a FrameworkEntry> {
+    entries
+        .iter()
+        .find(|entry| entry.kind == FrameworkEntryKind::Layout && entry.route == route)
 }
 
 fn loading_at<'a>(entries: &'a [FrameworkEntry], route: &str) -> Option<&'a FrameworkEntry> {
@@ -1149,20 +1169,20 @@ fn loading_at<'a>(entries: &'a [FrameworkEntry], route: &str) -> Option<&'a Fram
 }
 
 fn suspense_wrap(loading_alias: &str, children: &str) -> String {
-    format!("Suspense({{ fallback: {loading_alias}(), children: {children} }})")
+    format!("<Suspense fallback={{<{loading_alias} />}}>{children}</Suspense>")
 }
 
 fn page_call(route: &str, page_alias: &str) -> String {
     let params = dynamic_param_names(route);
     if params.is_empty() {
-        format!("{page_alias}()")
+        format!("<{page_alias} />")
     } else {
-        let fields = params
+        let attrs = params
             .iter()
-            .map(|name| format!("{name}: last_segment(path)"))
+            .map(|name| format!("{name}={{last_segment(path)}}"))
             .collect::<Vec<_>>()
-            .join(", ");
-        format!("{page_alias}({{ {fields} }})")
+            .join(" ");
+        format!("<{page_alias} {attrs} />")
     }
 }
 
@@ -1413,10 +1433,10 @@ mod tests {
 
     #[test]
     fn page_call_passes_slug_from_last_segment() {
-        assert_eq!(page_call("/", "Page_root"), "Page_root()");
+        assert_eq!(page_call("/", "Page_root"), "<Page_root />");
         assert_eq!(
             page_call("/blog/[slug]", "Page_blog__slug_"),
-            "Page_blog__slug_({ slug: last_segment(path) })"
+            "<Page_blog__slug_ slug={last_segment(path)} />"
         );
         assert_eq!(dynamic_param_names("/blog/[slug]"), vec!["slug".to_string()]);
         assert!(dynamic_param_names("/about").is_empty());
@@ -1463,7 +1483,7 @@ mod tests {
             "generated entry should define last_segment: {source}"
         );
         assert!(
-            source.contains("slug: last_segment(path)"),
+            source.contains("slug={last_segment(path)}"),
             "generated [slug] page call should pass params: {source}"
         );
         let _ = std::fs::remove_dir_all(&tmp);
@@ -1617,16 +1637,42 @@ mod tests {
         ];
         let tree = wrap_layouts(&entries, "/blog", "Page_blog");
         assert!(
-            tree.contains("Suspense({ fallback: Loading__blog(), children: Page_blog() })"),
+            tree.contains("<Suspense fallback={<Loading__blog />}><Page_blog /></Suspense>"),
             "blog loading wraps the page, not the blog layout: {tree}"
         );
         assert!(
-            tree.contains("Layout_root({ children: Suspense({ fallback: Loading_root()"),
+            tree.contains("<Layout_root>") && tree.contains("<Suspense fallback={<Loading_root />}"),
             "root loading wraps the child of the root layout: {tree}"
         );
         assert!(
-            !tree.starts_with("Suspense("),
+            !tree.starts_with("<Suspense"),
             "root loading must not wrap the root layout chrome: {tree}"
+        );
+    }
+
+    #[test]
+    fn wrap_layouts_applies_loading_without_a_layout_at_that_segment() {
+        let entries = vec![
+            FrameworkEntry {
+                kind: FrameworkEntryKind::Layout,
+                route: "/".into(),
+                file: "app/layout.dsx".into(),
+            },
+            FrameworkEntry {
+                kind: FrameworkEntryKind::Loading,
+                route: "/blog".into(),
+                file: "app/blog/loading.dsx".into(),
+            },
+            FrameworkEntry {
+                kind: FrameworkEntryKind::Page,
+                route: "/blog/post".into(),
+                file: "app/blog/post/page.dsx".into(),
+            },
+        ];
+        let tree = wrap_layouts(&entries, "/blog/post", "Page_blog_post");
+        assert!(
+            tree.contains("<Suspense fallback={<Loading__blog />}><Page_blog_post /></Suspense>"),
+            "blog loading.dsx must wrap the child even without blog/layout.dsx: {tree}"
         );
     }
 
@@ -1667,7 +1713,7 @@ mod tests {
             "generated entry should import Suspense: {source}"
         );
         assert!(
-            source.contains("Suspense({ fallback: Loading_root()"),
+            source.contains("<Suspense fallback={<Loading_root />}"),
             "generated entry should desugar loading.dsx: {source}"
         );
         let _ = std::fs::remove_dir_all(&tmp);
