@@ -681,7 +681,7 @@ fn generate_serve_entry(
         let tree = wrap_layouts(&manifest.entries, &page.route, &alias("Page", &page.route));
         let head = head_concat(&manifest.entries, page, false);
         branches.push_str(&format!(
-            "    if ({cond}) {{\n        return respond({tree}, 200, fragment, {head})\n    }}\n"
+            "    if ({cond}) {{\n        return await respond({tree}, 200, fragment, {head})\n    }}\n"
         ));
     }
     let not_found_tree = if manifest.not_found.is_some() {
@@ -766,28 +766,40 @@ fn head_html(node: Component): string {{
     }}
 }}
 
-fn respond(tree: Component, status: number, fragment: boolean, headHtml: string): Response {{
-    const result = unsafe {{ deka.ui.renderToString(tree) }}
-    const appHtml = match (result) {{
-        Ok(rendered) => rendered.html,
-        Err(err) => err.message,
+async fn stream_html(tree: Component): Promise<string> {{
+    const boxed = unsafe {{ deka.ui.renderToStreamHtml(tree) }}
+    const prom = match (boxed) {{
+        Ok(p) => p,
+        Err(e) => e.message,
+        _ => "",
     }}
+    return await prom
+}}
+
+async fn respond(tree: Component, status: number, fragment: boolean, headHtml: string): Promise<Response> {{
     if (fragment) {{
+        const result = unsafe {{ deka.ui.renderToString(tree) }}
+        const appHtml = match (result) {{
+            Ok(rendered) => rendered.html,
+            Err(err) => err.message,
+        }}
         const payload = unsafe {{ JSON.stringify({{ html: appHtml, head: headHtml }}) }}
         return match (payload) {{
             Ok(json) => {{ status: status, body: json }},
             Err(err) => {{ status: 500, body: err.message }},
         }}
     }}
+    const appHtml = await stream_html(tree)
     return {{ status: status, body: {doc_head} + headHtml + {doc_mid} + appHtml + {doc_tail} }}
 }}
 
-export fn App(request: Request): Response {{
+async fn App(request: Request): Promise<Response> {{
     const path = request.pathname == "" ? "/" : request.pathname
     const accept = request.headers.accept
     const fragment = accept == "{FRAGMENT_ACCEPT}" || accept == "{FRAGMENT_ACCEPT_LEGACY}"
-{branches}    return respond({not_found_tree}, 404, fragment, {not_found_head})
+{branches}    return await respond({not_found_tree}, 404, fragment, {not_found_head})
 }}
+export {{ App }}
 "#
     ))
 }

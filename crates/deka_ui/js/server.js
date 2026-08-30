@@ -93,10 +93,10 @@ function createCtx() {
   return { boundaryId: 0, stack: [], pending: [] };
 }
 
-function handlePromiseSync(ctx) {
+function handlePromiseSync(ctx, promise) {
   if (ctx.stack.length === 0) return "";
   const id = ctx.stack[ctx.stack.length - 1];
-  ctx.pending.push({ id });
+  ctx.pending.push({ id, promise });
   return "";
 }
 
@@ -127,7 +127,7 @@ function renderNode(node, ctx) {
     }
     const { rest, directives } = extractDirectives(props);
     const result = tag({ ...rest, children });
-    if (isPromise(result)) return handlePromiseSync(ctx);
+    if (isPromise(result)) return handlePromiseSync(ctx, result);
     const html = forwardClass(renderNode(result, ctx), rest.class);
     if (directives.length === 0) return html;
     const islandName = tag.name || "Anonymous";
@@ -225,6 +225,140 @@ export function renderToString(node) {
 
 export async function renderToStringAsync(node) {
   return { html: await renderNodeAsync(node), boundaries: [] };
+}
+
+function swapChunk(id, html) {
+  const templateId = "deka-swap-" + id;
+  const tid = JSON.stringify(templateId);
+  const sid = JSON.stringify(id);
+  return `<template id="${escapeHtml(templateId)}">${html}</template><script>(() => { const t = document.getElementById(${tid}); const slot = document.getElementById(${sid}); if (slot && t) slot.replaceWith(t.content.cloneNode(true)); t && t.remove(); document.currentScript && document.currentScript.remove(); })();</script>`;
+}
+
+function encodeChunk(text) {
+  if (typeof TextEncoder === "function") return new TextEncoder().encode(text);
+  return text;
+}
+
+async function nextResolved(queue) {
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    for (const item of queue) {
+      Promise.resolve(item.promise).then(
+        (value) => {
+          if (settled) return;
+          settled = true;
+          resolve({ item, value });
+        },
+        (error) => {
+          if (settled) return;
+          settled = true;
+          reject(error);
+        }
+      );
+    }
+  });
+}
+
+async function* iterateChunks(node) {
+  const ctx = createCtx();
+  yield renderNode(node, ctx);
+  const queue = ctx.pending.slice();
+  ctx.pending.length = 0;
+  while (queue.length > 0) {
+    const selected = await nextResolved(queue);
+    const index = queue.indexOf(selected.item);
+    if (index >= 0) queue.splice(index, 1);
+    const html = renderNode(selected.value, ctx);
+    for (const extra of ctx.pending) queue.push(extra);
+    ctx.pending.length = 0;
+    if (selected.item.id) yield swapChunk(selected.item.id, html);
+  }
+}
+
+function createByteStream(start) {
+  if (typeof ReadableStream === "function") {
+    return new ReadableStream({ start });
+  }
+  const chunks = [];
+  let done = false;
+  let failure = null;
+  let wake = null;
+  const controller = {
+    enqueue(chunk) {
+      chunks.push(chunk);
+      if (wake) {
+        const w = wake;
+        wake = null;
+        w();
+      }
+    },
+    close() {
+      done = true;
+      if (wake) {
+        const w = wake;
+        wake = null;
+        w();
+      }
+    },
+    error(err) {
+      failure = err;
+      done = true;
+      if (wake) {
+        const w = wake;
+        wake = null;
+        w();
+      }
+    },
+  };
+  const started = Promise.resolve(start(controller));
+  return {
+    getReader() {
+      let i = 0;
+      return {
+        async read() {
+          await started;
+          while (i >= chunks.length && !done) {
+            await new Promise((resolve) => {
+              wake = resolve;
+            });
+          }
+          if (failure) throw failure;
+          if (i >= chunks.length) return { done: true, value: undefined };
+          return { done: false, value: chunks[i++] };
+        },
+      };
+    },
+  };
+}
+
+export function renderToStream(node) {
+  return createByteStream(async (controller) => {
+    for await (const text of iterateChunks(node)) {
+      controller.enqueue(encodeChunk(text));
+    }
+    controller.close();
+  });
+}
+
+export async function collectStream(stream) {
+  const reader = stream.getReader();
+  const decoder = typeof TextDecoder === "function" ? new TextDecoder() : null;
+  let out = "";
+  for (;;) {
+    const step = await reader.read();
+    if (step.done) break;
+    const value = step.value;
+    if (typeof value === "string") out += value;
+    else if (decoder) out += decoder.decode(value, { stream: true });
+  }
+  if (decoder) out += decoder.decode();
+  return out;
+}
+
+export async function renderToStreamHtml(node) {
+  let out = "";
+  for await (const text of iterateChunks(node)) out += text;
+  return out;
 }
 
 export { escapeHtml, Suspense };
