@@ -69,6 +69,9 @@ pub const FRAGMENT_ACCEPT_LEGACY: &str = "text/x-phpx-fragment";
 
 /// Fill the three document holes. Missing holes are left unchanged.
 pub fn fill_document(index_html: &str, head: &str, app: &str, scripts: &str) -> String {
+    // Replace holes in template order, each once. App HTML is escaped by
+    // renderToString so it cannot contain a raw `<!--deka-scripts-->` that
+    // would steal the later pass.
     let mut out = index_html.to_string();
     if out.contains(DEKA_HEAD_HOLE) {
         out = out.replacen(DEKA_HEAD_HOLE, head, 1);
@@ -324,13 +327,14 @@ fn generate_serve_entry(
 
     let mut imports = String::new();
     let mut imported: Vec<String> = Vec::new();
-    let mut import_alias = |path: &str, name: &str, alias: &str| {
+    let mut import_alias = |path: &str, name: &str, alias: &str| -> Result<(), String> {
         if imported.iter().any(|k| k == alias) {
-            return;
+            return Ok(());
         }
         imported.push(alias.to_string());
-        let rel = pathdiff_dsx(entry, Path::new(path));
-        imports.push_str(&format!("import {{ {name} as {alias} }} from \"{rel}\"\n"));
+        let rel = json_str(&pathdiff_dsx(entry, Path::new(path)))?;
+        imports.push_str(&format!("import {{ {name} as {alias} }} from {rel}\n"));
+        Ok(())
     };
 
     let mut pages: Vec<&FrameworkEntry> = manifest
@@ -341,9 +345,9 @@ fn generate_serve_entry(
     pages.sort_by_key(|e| dynamic_rank(&e.route));
 
     for page in &pages {
-        import_alias(&page.file, "Page", &alias("Page", &page.route));
+        import_alias(&page.file, "Page", &alias("Page", &page.route))?;
         if exports_head(Path::new(&page.file)) {
-            import_alias(&page.file, "head", &alias("head", &page.route));
+            import_alias(&page.file, "head", &alias("head", &page.route))?;
         }
     }
     for layout in manifest
@@ -351,21 +355,21 @@ fn generate_serve_entry(
         .iter()
         .filter(|e| e.kind == FrameworkEntryKind::Layout)
     {
-        import_alias(&layout.file, "Layout", &alias("Layout", &layout.route));
+        import_alias(&layout.file, "Layout", &alias("Layout", &layout.route))?;
         if exports_head(Path::new(&layout.file)) {
-            import_alias(&layout.file, "head", &alias("headL", &layout.route));
+            import_alias(&layout.file, "head", &alias("headL", &layout.route))?;
         }
     }
     if let Some(not_found) = &manifest.not_found {
-        import_alias(&not_found.file, "Page", "Page_not_found");
+        import_alias(&not_found.file, "Page", "Page_not_found")?;
         if exports_head(Path::new(&not_found.file)) {
-            import_alias(&not_found.file, "head", "head_not_found");
+            import_alias(&not_found.file, "head", "head_not_found")?;
         }
     }
 
     let mut branches = String::new();
     for page in &pages {
-        let cond = path_condition(&page.route);
+        let cond = path_condition(&page.route)?;
         let tree = wrap_layouts(&manifest.entries, &page.route, &alias("Page", &page.route));
         let head = head_concat(&manifest.entries, page, false);
         branches.push_str(&format!(
@@ -520,15 +524,15 @@ fn alias(prefix: &str, route: &str) -> String {
     out
 }
 
-fn path_condition(route: &str) -> String {
+fn path_condition(route: &str) -> Result<String, String> {
     if route == "/" {
-        return "path == \"/\" || path == \"\"".to_string();
+        return Ok("path == \"/\" || path == \"\"".to_string());
     }
     if !route.contains('[') {
-        return format!("path == \"{}\"", route);
+        return Ok(format!("path == {}", json_str(route)?));
     }
     let prefix = static_prefix(route);
-    format!("one_segment_after(path, \"{prefix}\")")
+    Ok(format!("one_segment_after(path, {})", json_str(&prefix)?))
 }
 
 fn static_prefix(route: &str) -> String {
@@ -870,5 +874,18 @@ mod tests {
             "generated [slug] page call should pass params: {source}"
         );
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn path_condition_escapes_quotes_in_route() {
+        let cond = path_condition("/foo\"bar").expect("escape route");
+        assert!(
+            cond.contains("\\\"") || cond.contains("\\u0022"),
+            "route with a quote must be escaped: {cond}"
+        );
+        assert!(
+            !cond.contains("path == \"/foo\"bar\""),
+            "unescaped quote would break generated source: {cond}"
+        );
     }
 }
