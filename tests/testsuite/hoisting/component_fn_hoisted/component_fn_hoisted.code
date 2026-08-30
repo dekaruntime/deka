@@ -3,4 +3,8 @@ const app = <Card />
 fn Card() Component {
   return <div>hi</div>
 }
-echo(app)
+const result = unsafe { deka.ui.renderToString(app) }
+match (result) {
+  Ok(r) => echo(r.html),
+  Err(e) => echo(e.message),
+}

@@ -200,6 +200,20 @@ jobs:
       - name: Run tour + public conformance suite (native)
         run: ./run.sh --skip-build
 
+      - name: Install dump harness deps + Chromium
+        working-directory: tests/dump
+        run: |
+          bun install
+          bunx playwright install chromium
+
+      # The full dump only runs on release; without this smoke, harness
+      # breakage (bad shim paths, import-transform regressions) ships red.
+      - name: Dump harness smoke (browser + native)
+        env:
+          DEKA_NATIVE: ${{ github.workspace }}/target/release/cli
+          DEKA_WASM: ${{ github.workspace }}/dist/deka-compiler-wasm/deka_compiler.wasm
+        run: bun tests/dump/scripts/smoke.mjs
+
       - name: Upload browser compiler WASM provenance
         uses: actions/upload-artifact@v7
         with:
