@@ -298,3 +298,32 @@ fn build_emits_worker_for_middleware() {
         "worker must compile middleware redirect: {worker}"
     );
 }
+
+#[test]
+fn build_desugars_loading_dsx_to_suspense() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    fs::write(
+        project.path().join("app").join("loading.dsx"),
+        "export fn Loading() {\n    return <p>Loading...</p>;\n}\n",
+    )
+    .expect("write loading.dsx");
+    let (success, combined) = run_build(project.path());
+    assert!(success, "deka build should succeed with loading.dsx: {combined}");
+    let entry = fs::read_to_string(
+        project
+            .path()
+            .join(".cache")
+            .join("dekascript")
+            .join("serve-entry.dsx"),
+    )
+    .expect("read generated serve-entry");
+    assert!(
+        entry.contains("import { Suspense } from \"ui/suspense\""),
+        "serve-entry should import Suspense: {entry}"
+    );
+    assert!(
+        entry.contains("Suspense({ fallback: Loading_root()"),
+        "loading.dsx should wrap the child segment: {entry}"
+    );
+}
