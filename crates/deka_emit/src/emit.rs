@@ -1244,6 +1244,28 @@ impl<'a> Emitter<'a> {
                                 self.emit_expr(arg)?;
                                 self.out.push_str("[__p]");
                             }
+                            deka_syntax::typeck::UnwrapKind::WidenToString => {
+                                self.out.push_str("String(");
+                                self.emit_expr(arg)?;
+                                self.out.push(')');
+                            }
+                            deka_syntax::typeck::UnwrapKind::WidenToNumber => {
+                                self.out.push_str("Number(");
+                                self.emit_expr(arg)?;
+                                self.out.push(')');
+                            }
+                            deka_syntax::typeck::UnwrapKind::WidenToBool => {
+                                self.out.push_str("Boolean(");
+                                self.emit_expr(arg)?;
+                                self.out.push(')');
+                            }
+                            deka_syntax::typeck::UnwrapKind::StringToOptionNumber => {
+                                // `number(s)` on a string can produce NaN;
+                                // surface it as Option<number>.
+                                self.out.push_str("(() => { const __n = Number(");
+                                self.emit_expr(arg)?;
+                                self.out.push_str("); return isNaN(__n) ? { __enum: \"Option\", __case: \"None\", name: \"None\" } : { __enum: \"Option\", __case: \"Some\", name: \"Some\", value: __n }; })()");
+                            }
                         }
                     }
                     return Ok(());
