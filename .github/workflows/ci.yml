@@ -1,13 +1,10 @@
 name: CI
 
 on:
+  # PRs always run: main has branch protection requiring these checks, and a
+  # paths-ignore here would leave docs-only PRs permanently unmergeable.
   pull_request:
     branches: [main]
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - '.github/ISSUE_TEMPLATE/**'
-      - '.github/PULL_REQUEST_TEMPLATE.md'
   push:
     branches: [main]
     paths-ignore:
