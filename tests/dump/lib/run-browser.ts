@@ -108,7 +108,7 @@ type HarnessRun = {
 // module is served straight from the deka_ui crate so the harness never
 // drifts from the real JSX runtime.
 const JSX_RUNTIME_SOURCE = fs.readFileSync(
-  path.join(DUMP_ROOT, '..', 'crates', 'deka_ui', 'js', 'jsx.js'),
+  path.join(DUMP_ROOT, '..', '..', 'crates', 'deka_ui', 'js', 'jsx.js'),
   'utf8',
 )
 const MODULE_SHIMS: Record<string, string> = {
