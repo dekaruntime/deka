@@ -7,6 +7,7 @@ const DUMP_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 import type { Browser, Page } from 'playwright'
 import { compileDekaProject } from '@dekaruntime/web-ide-kit/runtime'
 import type { HatsTestStage } from './tests'
+import { projectLoaderJs } from './project-loader'
 
 export interface BrowserRunResult {
   ok: boolean
@@ -181,44 +182,6 @@ export async function runCompiledJsInBrowser(jsCode: string): Promise<BrowserRun
   }
 }
 
-function normalizePath(filePath: string): string {
-  return filePath.replace(/\\/g, '/').replace(/^\.\//, '')
-}
-
-function projectLoaderJs(entryPath: string, modules: Record<string, { code: string }>): string {
-  const normalizedEntry = normalizePath(entryPath)
-  const moduleEntries = Object.entries(modules).map(([modulePath, module]) => {
-    const safePath = JSON.stringify(modulePath)
-    const escapedCode = module.code.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$\{/g, '\\${')
-    return `  ${safePath}: function(exports, __dekaRequire, module) {\n${escapedCode}\n}`
-  })
-  return `
-const __dekaModules = {\n${moduleEntries.join(',\n')}\n};
-const __dekaCache = new Map();
-function __dekaResolve(spec, currentPath) {
-  if (!spec.startsWith('./') && !spec.startsWith('../')) return spec;
-  const base = currentPath.includes('/') ? currentPath.slice(0, currentPath.lastIndexOf('/') + 1) : '';
-  const parts = (base + spec).split('/').filter(Boolean);
-  const resolved = [];
-  for (const part of parts) {
-    if (part === '..') resolved.pop();
-    else if (part !== '.') resolved.push(part);
-  }
-  return resolved.join('/');
-}
-function __dekaRequire(spec, currentPath) {
-  const normalized = __dekaResolve(spec, currentPath || ${JSON.stringify(normalizedEntry)});
-  if (__dekaCache.has(normalized)) return __dekaCache.get(normalized);
-  const factory = __dekaModules[normalized];
-  if (!factory) throw new Error('Module not found: ' + spec + ' (resolved to ' + normalized + ')');
-  const module = { exports: {} };
-  factory(module.exports, (s) => __dekaRequire(s, normalized), module);
-  __dekaCache.set(normalized, module.exports);
-  return module.exports;
-}
-__dekaRequire(${JSON.stringify(normalizedEntry)});
-`
-}
 
 export async function runProjectInBrowser(
   entryPath: string,
