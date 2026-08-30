@@ -233,9 +233,13 @@ async function runAllTestsOnce(): Promise<HatsBuildResults> {
   try {
     for (const category of categories) {
       const tests: HatsTestWithBuildResult[] = []
-      const filter = process.env.HATS_FILTER
+      // Comma-separated slug substrings; a fixture runs when it matches any.
+      const filters = (process.env.HATS_FILTER ?? '')
+        .split(',')
+        .map((f) => f.trim())
+        .filter(Boolean)
       for (const test of category.tests) {
-        if (filter && !test.slug.includes(filter)) continue
+        if (filters.length > 0 && !filters.some((f) => test.slug.includes(f))) continue
         const wantNative = test.hosts.includes('native')
         const wantBrowser = test.hosts.includes('browser')
 
