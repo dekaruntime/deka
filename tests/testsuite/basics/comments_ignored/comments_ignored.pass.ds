@@ -2,4 +2,4 @@
 /* this is
    a block comment */
 import { echo } from "io"
-echo("" + (1))
+echo(string(1))

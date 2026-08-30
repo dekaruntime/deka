@@ -1,3 +1,4 @@
 import { echo } from "io"
 const arr = [3, 1, 2]
-echo("" + (arr.reverse()))
+arr.reverse()
+echo(string(arr.length))

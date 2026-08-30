@@ -1,4 +1,4 @@
 import { echo } from "io"
 const arr = [3, 1, 2]
 arr.sort()
-echo("" + (arr))
+echo(string(arr.length))

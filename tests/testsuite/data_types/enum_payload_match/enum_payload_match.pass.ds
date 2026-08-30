@@ -5,6 +5,6 @@ enum Shape {
 }
 const s = Shape.Circle(5)
 match (s) {
-  Shape.Circle(r) => echo("" + (r))
-  Shape.Square(side) => echo("" + (side))
+  Shape.Circle(r) => echo(string(r))
+  Shape.Square(side) => echo(string(side))
 }

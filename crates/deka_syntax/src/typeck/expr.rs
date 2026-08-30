@@ -1774,6 +1774,10 @@ impl<'a> Checker<'a> {
                         Type::Named {
                             name: "number" | "boolean",
                         } => (Some(super::types::UnwrapKind::WidenToString), ret.clone()),
+                        // The checker does not know the type (e.g. an array
+                        // method result); JS `String` is total, so widening is
+                        // still safe.
+                        Type::Infer => (Some(super::types::UnwrapKind::WidenToString), ret.clone()),
                         _ => (None, ret.clone()),
                     },
                     Repr::Number => match &arg_type {
@@ -1787,6 +1791,12 @@ impl<'a> Checker<'a> {
                             Some(super::types::UnwrapKind::StringToOptionNumber),
                             number_ret(),
                         ),
+                        // Unknown input can also produce NaN at runtime, so it
+                        // gets the same Option<number> guard as strings.
+                        Type::Infer => (
+                            Some(super::types::UnwrapKind::StringToOptionNumber),
+                            number_ret(),
+                        ),
                         _ => (None, ret.clone()),
                     },
                     Repr::Bool => match &arg_type {
@@ -1796,6 +1806,8 @@ impl<'a> Checker<'a> {
                         Type::Named { name: "boolean" } => {
                             (Some(super::types::UnwrapKind::Identity), ret.clone())
                         }
+                        // JS `Boolean` is total, so unknown types widen safely.
+                        Type::Infer => (Some(super::types::UnwrapKind::WidenToBool), ret.clone()),
                         _ => (None, ret.clone()),
                     },
                 };

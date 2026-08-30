@@ -10,4 +10,4 @@ fn makeMultiplier(factor: number) fn(number) number {
 }
 
 const triple = makeMultiplier(3)
-echo("" + (apply(7, triple)))
+echo(string(apply(7, triple)))

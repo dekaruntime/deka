@@ -4,5 +4,5 @@ async fn value() Promise<number> {
 }
 
 for (let i = await value(); i < 3; i = i + 1) {
-  echo("" + (i))
+  echo(string(i))
 }

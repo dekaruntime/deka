@@ -6,7 +6,7 @@ async fn delayed() Promise<number> {
 async fn main() Promise<void> {
   const promise = delayed()
   const value = await promise
-  echo("" + (value))
+  echo(string(value))
 }
 
 main()

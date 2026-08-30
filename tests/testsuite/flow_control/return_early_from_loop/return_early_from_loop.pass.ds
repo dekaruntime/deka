@@ -7,5 +7,5 @@ fn find(xs: Array<number>, target: number) number {
   }
   return -1
 }
-echo("" + (find([1, 2, 3], 2)))
-echo("" + (find([1, 2, 3], 5)))
+echo(string(find([1, 2, 3], 2)))
+echo(string(find([1, 2, 3], 5)))

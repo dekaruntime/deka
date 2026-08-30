@@ -11,5 +11,5 @@ const b = match (none) {
   None => 0,
   _ => -1
 }
-echo("" + (a))
-echo("" + (b))
+echo(string(a))
+echo(string(b))
