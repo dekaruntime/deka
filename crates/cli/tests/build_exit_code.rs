@@ -327,3 +327,27 @@ fn build_desugars_loading_dsx_to_suspense() {
         "loading.dsx should wrap the child segment as a ComponentNode: {entry}"
     );
 }
+
+#[test]
+fn build_serve_entry_uses_render_to_stream_for_documents() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    let (success, combined) = run_build(project.path());
+    assert!(success, "deka build should succeed: {combined}");
+    let entry = fs::read_to_string(
+        project
+            .path()
+            .join(".cache")
+            .join("dekascript")
+            .join("serve-entry.dsx"),
+    )
+    .expect("read generated serve-entry");
+    assert!(
+        entry.contains("renderToStreamHtml"),
+        "documents should stream via renderToStreamHtml: {entry}"
+    );
+    assert!(
+        entry.contains("async fn App"),
+        "App must be async so stream chunks can flush: {entry}"
+    );
+}
