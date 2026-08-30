@@ -117,9 +117,21 @@ fn build_exits_zero_on_valid_source() {
         "deka build should exit 0 for the unmodified `deka init` scaffold: {combined}"
     );
 
+    let index = fs::read_to_string(
+        project.path().join("dist").join("client").join("index.html"),
+    )
+    .expect("read dist/client/index.html");
     assert!(
-        project.path().join("dist").join("client").join("index.html").is_file(),
-        "successful build should produce dist/client/index.html: {combined}"
+        index.contains("Deka App"),
+        "dist HTML should be filled, got: {index}"
+    );
+    assert!(
+        !index.contains("<!--deka-app-->"),
+        "dist HTML should not leave the app hole empty: {index}"
+    );
+    assert!(
+        !index.contains("<script"),
+        "a page with no client:* must not emit a script tag: {index}"
     );
     assert!(
         project.path().join("dist").join("server").join("app").join("page.dsx").is_file(),

@@ -132,56 +132,75 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     copy_dir_recursive(&public_dir, &dist_client)?;
 
     let client_index = dist_client.join("index.html");
-    let index_src = project_root.join("index.html");
-    if index_src.is_file() {
-        fs::copy(&index_src, &client_index).map_err(|err| {
-            format!(
-                "failed to copy {} -> {}: {}",
-                index_src.display(),
-                client_index.display(),
-                err
-            )
-        })?;
-    }
-    let index_raw = fs::read_to_string(&client_index)
-        .map_err(|err| format!("failed to read {}: {}", client_index.display(), err))?;
-    let template_html = extract_template_html(&entry_source).unwrap_or_default();
-    let with_app = inject_app_html(&index_raw, &template_html);
-
-    let final_index = if hydration_enabled {
-        let dist_assets = dist_client.join("assets");
-        fs::create_dir_all(&dist_assets)
-            .map_err(|err| format!("failed to create {}: {}", dist_assets.display(), err))?;
-
-        let client_js = dist_assets.join("main.js");
-        if bundle {
-            build_single_file_bundle_to_path(&entry_path, &client_js, minify)?;
-        } else {
-            build_single_file_to_path(&entry_path, &client_js)?;
-        }
-
-        if !bundle {
-            let assets_importmap = dist_assets.join("importmap.json");
-            let client_importmap = dist_client.join("importmap.json");
-            if assets_importmap.is_file() {
-                fs::copy(&assets_importmap, &client_importmap).map_err(|err| {
+    if runtime_core::framework::is_app_router_project(&project_root) {
+        #[cfg(feature = "native")]
+        runtime::prerender_static_pages(&project_root, &dist_client)?;
+        #[cfg(not(feature = "native"))]
+        {
+            let index_src = project_root.join("index.html");
+            if index_src.is_file() {
+                fs::copy(&index_src, &client_index).map_err(|err| {
                     format!(
                         "failed to copy {} -> {}: {}",
-                        assets_importmap.display(),
-                        client_importmap.display(),
+                        index_src.display(),
+                        client_index.display(),
                         err
                     )
                 })?;
             }
         }
-
-        inject_web_bootstrap_tags(&with_app, true, bundle)
     } else {
-        inject_web_bootstrap_tags(&with_app, false, bundle)
-    };
+        let index_src = project_root.join("index.html");
+        if index_src.is_file() {
+            fs::copy(&index_src, &client_index).map_err(|err| {
+                format!(
+                    "failed to copy {} -> {}: {}",
+                    index_src.display(),
+                    client_index.display(),
+                    err
+                )
+            })?;
+        }
+        let index_raw = fs::read_to_string(&client_index)
+            .map_err(|err| format!("failed to read {}: {}", client_index.display(), err))?;
+        let template_html = extract_template_html(&entry_source).unwrap_or_default();
+        let with_app = inject_app_html(&index_raw, &template_html);
 
-    fs::write(&client_index, final_index)
-        .map_err(|err| format!("failed to write {}: {}", client_index.display(), err))?;
+        let final_index = if hydration_enabled {
+            let dist_assets = dist_client.join("assets");
+            fs::create_dir_all(&dist_assets)
+                .map_err(|err| format!("failed to create {}: {}", dist_assets.display(), err))?;
+
+            let client_js = dist_assets.join("main.js");
+            if bundle {
+                build_single_file_bundle_to_path(&entry_path, &client_js, minify)?;
+            } else {
+                build_single_file_to_path(&entry_path, &client_js)?;
+            }
+
+            if !bundle {
+                let assets_importmap = dist_assets.join("importmap.json");
+                let client_importmap = dist_client.join("importmap.json");
+                if assets_importmap.is_file() {
+                    fs::copy(&assets_importmap, &client_importmap).map_err(|err| {
+                        format!(
+                            "failed to copy {} -> {}: {}",
+                            assets_importmap.display(),
+                            client_importmap.display(),
+                            err
+                        )
+                    })?;
+                }
+            }
+
+            inject_web_bootstrap_tags(&with_app, true, bundle)
+        } else {
+            inject_web_bootstrap_tags(&with_app, false, bundle)
+        };
+
+        fs::write(&client_index, final_index)
+            .map_err(|err| format!("failed to write {}: {}", client_index.display(), err))?;
+    }
 
     copy_dir_recursive(&app_dir, &dist_server.join("app"))?;
 

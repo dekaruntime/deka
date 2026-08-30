@@ -10,6 +10,7 @@ mod env;
 mod extensions;
 mod js_pipeline;
 mod platform;
+mod prerender;
 mod run;
 mod security;
 mod serve;
@@ -20,6 +21,13 @@ pub fn run(context: &Context) {
 
 pub fn serve(context: &Context) {
     serve::serve(context);
+}
+
+pub fn prerender_static_pages(
+    project_root: &std::path::Path,
+    dist_client: &std::path::Path,
+) -> Result<(), String> {
+    prerender::prerender_static_pages(project_root, dist_client)
 }
 
 pub fn platform(context: &Context) {

@@ -161,7 +161,7 @@ async fn render_hmr_payload(
     changed_paths: &[String],
 ) -> String {
     let mut headers = Vec::new();
-    headers.push(("accept".to_string(), "text/x-phpx-fragment".to_string()));
+    headers.push(("accept".to_string(), "text/x-deka-fragment".to_string()));
     let uri = if path.starts_with('/') {
         path.to_string()
     } else {
@@ -329,7 +329,11 @@ fn partial_html_from_response(response: &engine::ResponseEnvelope) -> Option<Str
         .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
         .map(|(_, v)| v.to_ascii_lowercase())
         .unwrap_or_default();
-    if !content_type.contains("json") {
+    let looks_json = content_type.contains("json")
+        || content_type.contains("x-deka-fragment")
+        || content_type.contains("x-phpx-fragment")
+        || response.body.trim_start().starts_with('{');
+    if !looks_json {
         return None;
     }
     let value = serde_json::from_str::<serde_json::Value>(&response.body).ok()?;
