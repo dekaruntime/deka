@@ -689,7 +689,7 @@ dependencies = [
 
 [[package]]
 name = "bundler"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -929,7 +929,7 @@ dependencies = [
 
 [[package]]
 name = "cli"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "anyhow",
  "bumpalo",
@@ -1002,7 +1002,7 @@ dependencies = [
 
 [[package]]
 name = "compile"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "anyhow",
  "core",
@@ -1110,7 +1110,7 @@ dependencies = [
 
 [[package]]
 name = "core"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -1503,7 +1503,7 @@ dependencies = [
 
 [[package]]
 name = "deka-fmt"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "bumpalo",
  "deka_syntax",
@@ -1513,7 +1513,7 @@ dependencies = [
 
 [[package]]
 name = "deka-router"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "axum",
  "tokio",
@@ -1521,7 +1521,7 @@ dependencies = [
 
 [[package]]
 name = "deka-validation"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-test",
@@ -1529,7 +1529,7 @@ dependencies = [
 
 [[package]]
 name = "deka-wasm-guest"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "deka-wasm-guest-macros",
  "serde",
@@ -1538,7 +1538,7 @@ dependencies = [
 
 [[package]]
 name = "deka-wasm-guest-macros"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1547,7 +1547,7 @@ dependencies = [
 
 [[package]]
 name = "deka_compile"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "bumpalo",
  "deka_emit",
@@ -1560,7 +1560,7 @@ dependencies = [
 
 [[package]]
 name = "deka_compiler_wasm"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "bumpalo",
  "deka-fmt",
@@ -1574,7 +1574,7 @@ dependencies = [
 
 [[package]]
 name = "deka_emit"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "bumpalo",
  "deka_syntax",
@@ -1585,7 +1585,7 @@ dependencies = [
 
 [[package]]
 name = "deka_host"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -1630,7 +1630,7 @@ dependencies = [
 
 [[package]]
 name = "deka_http"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -1656,7 +1656,7 @@ dependencies = [
 
 [[package]]
 name = "deka_syntax"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "bumpalo",
  "insta",
@@ -1665,11 +1665,11 @@ dependencies = [
 
 [[package]]
 name = "deka_ui"
-version = "0.37.2"
+version = "0.37.3"
 
 [[package]]
 name = "dekascript_lsp"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "anyhow",
  "deka_compile",
@@ -1682,7 +1682,7 @@ dependencies = [
 
 [[package]]
 name = "dekascript_lsp_wasm"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "dekascript_lsp",
  "serde",
@@ -3017,7 +3017,7 @@ dependencies = [
 
 [[package]]
 name = "engine"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "deno_core",
  "pool",
@@ -4214,7 +4214,7 @@ dependencies = [
 
 [[package]]
 name = "introspect"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "core",
  "runtime",
@@ -4782,7 +4782,7 @@ dependencies = [
 
 [[package]]
 name = "modules_common"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "deno_core",
  "deno_permissions",
@@ -5773,14 +5773,14 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "platform"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "anyhow",
 ]
 
 [[package]]
 name = "platform_browser"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "anyhow",
  "platform",
@@ -5789,7 +5789,7 @@ dependencies = [
 
 [[package]]
 name = "platform_server"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "anyhow",
  "deka_host",
@@ -5803,7 +5803,7 @@ dependencies = [
 
 [[package]]
 name = "pm"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "anyhow",
  "axum",
@@ -5836,7 +5836,7 @@ dependencies = [
 
 [[package]]
 name = "pool"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "core_affinity",
  "deka-validation",
@@ -6653,7 +6653,7 @@ dependencies = [
 
 [[package]]
 name = "runtime"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "axum",
  "base64 0.21.7",
@@ -6684,7 +6684,7 @@ dependencies = [
 
 [[package]]
 name = "runtime_core"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -7504,7 +7504,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "stdio"
-version = "0.37.2"
+version = "0.37.3"
 
 [[package]]
 name = "strck"
@@ -9048,7 +9048,7 @@ dependencies = [
 
 [[package]]
 name = "transport"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "axum",
  "deka_http",
@@ -9490,7 +9490,7 @@ dependencies = [
 
 [[package]]
 name = "wasm_cli"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "core",
  "serde_json",
@@ -9961,7 +9961,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "wit-deka"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "anyhow",
  "wit-parser",
