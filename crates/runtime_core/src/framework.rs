@@ -966,10 +966,10 @@ fn generate_defer_entry(
     project_root: &Path,
     deferred: &[DeferredIsland],
 ) -> Result<String, String> {
-    let mut imports =
-        "import { renderToString, verifyDeferIsland } from \"ui/server\"\n".to_string();
-    let mut branches = String::new();
+    let mut imports = String::new();
+    let mut registry = String::from("{ ");
     let mut seen = BTreeSet::new();
+    let mut first = true;
     for (idx, item) in deferred.iter().enumerate() {
         let key = format!("{}:{}", item.file, item.component);
         if !seen.insert(key) {
@@ -982,12 +982,14 @@ fn generate_defer_entry(
             "import {{ {} as {alias} }} from {rel}\n",
             item.component
         ));
-        branches.push_str(&format!(
-            "                    if (item.name === {name}) tree = {alias}(item.props || {{}});\n"
-        ));
+        if !first {
+            registry.push_str(", ");
+        }
+        first = false;
+        registry.push_str(&format!("{name}: {alias}"));
     }
+    registry.push_str(" }");
     let cache_control = json_str(&format!("private, {}", defer_cache_header(deferred)))?;
-    let bad_json = json_str(r#"{"error":"invalid json"}"#)?;
     let secret = json_str(&ensure_defer_secret(project_root)?)?;
     Ok(format!(
         r#"{imports}
@@ -996,30 +998,7 @@ interface Request {{ url: string, pathname: string, method: string, headers: Req
 interface Response {{ status: number, body: string }}
 
 async fn App(request: Request): Promise<Response> {{
-    const boxed = unsafe {{
-        return (async () => {{
-            globalThis.__DEKA_DEFER_SECRET = {secret};
-            let payload = {{}};
-            try {{ payload = JSON.parse(request.body || "{{}}"); }} catch (err) {{
-                return {{ status: 400, body: {bad_json}, headers: {{ "content-type": "application/json", "cache-control": "private, no-store" }} }};
-            }}
-            const islands = Array.isArray(payload.islands) ? payload.islands.slice(0, 32) : [];
-            const fragments = {{}};
-            const seen = {{}};
-            for (const item of islands) {{
-                const key = String(item && (item.id || item.name) || "");
-                if (!key || seen[key]) continue;
-                seen[key] = true;
-                const propsJson = JSON.stringify(item && item.props ? item.props : {{}});
-                if (!verifyDeferIsland(item && item.name, propsJson, item && item.id, item && item.mac)) continue;
-                let tree = null;
-{branches}                if (!tree) continue;
-                const rendered = renderToString(tree);
-                fragments[key] = rendered && rendered.html ? rendered.html : "";
-            }}
-            return {{ status: 200, body: JSON.stringify({{ fragments }}), headers: {{ "content-type": "application/json", "cache-control": {cache_control}, "vary": "cookie" }} }};
-        }})();
-    }}
+    const boxed = unsafe {{ deka.ui.runDeferBatch(request.body, {secret}, {registry}, {cache_control}) }}
     const prom = match (boxed) {{
         Ok(p) => p,
         Err(_) => {{ status: 500, body: "Internal Server Error" }},
@@ -2874,10 +2853,8 @@ mod tests {
         .unwrap();
         let entry = write_defer_router_entry(&tmp).expect("write defer-entry");
         let source = std::fs::read_to_string(&entry).expect("read defer-entry");
-        assert!(source.contains("return (async () =>"));
-        assert!(source.contains("slice(0, 32)"));
-        assert!(source.contains("verifyDeferIsland"));
-        assert!(source.contains("from \"ui/server\""));
+        assert!(source.contains("runDeferBatch"));
+        assert!(source.contains("deka.ui.runDeferBatch"));
         assert!(!source.contains("headers: { \\\"cache-control\\\""));
         let _ = std::fs::remove_dir_all(&tmp);
     }
