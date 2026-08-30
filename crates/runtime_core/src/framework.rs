@@ -1043,4 +1043,62 @@ mod tests {
         assert_eq!(methods, vec!["GET".to_string()]);
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+    #[test]
+    fn page_call_passes_slug_from_last_segment() {
+        assert_eq!(page_call("/", "Page_root"), "Page_root()");
+        assert_eq!(
+            page_call("/blog/[slug]", "Page_blog__slug_"),
+            "Page_blog__slug_({ slug: last_segment(path) })"
+        );
+        assert_eq!(dynamic_param_names("/blog/[slug]"), vec!["slug".to_string()]);
+        assert!(dynamic_param_names("/about").is_empty());
+    }
+
+    #[test]
+    fn generated_serve_entry_merges_head_and_passes_slug() {
+        let tmp = std::env::temp_dir().join(format!(
+            "deka_gen_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(tmp.join("app/blog/[slug]")).unwrap();
+        std::fs::write(
+            tmp.join("index.html"),
+            "<!doctype html><html><head><!--deka-head--></head><body><div id=\"app\"><!--deka-app--></div><!--deka-scripts--></body></html>\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.join("app/layout.dsx"),
+            "interface LayoutProps { children: Component }\nexport fn Layout(props: LayoutProps) {\n    return <main>{props.children}</main>;\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.join("app/page.dsx"),
+            "export fn head() {\n    return <title>Head Merge</title>;\n}\nexport fn Page() {\n    return <section><h1>Home</h1></section>;\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.join("app/blog/[slug]/page.dsx"),
+            "interface PageProps { slug: string }\nexport fn Page(props: PageProps) {\n    return <article>{props.slug}</article>;\n}\n",
+        )
+        .unwrap();
+        let entry = write_app_router_entry(&tmp).expect("generate serve-entry");
+        let source = std::fs::read_to_string(&entry).expect("read serve-entry");
+        assert!(
+            source.contains("head_html(head_root())"),
+            "generated entry should merge page head(): {source}"
+        );
+        assert!(
+            source.contains("last_segment"),
+            "generated entry should define last_segment: {source}"
+        );
+        assert!(
+            source.contains("slug: last_segment(path)"),
+            "generated [slug] page call should pass params: {source}"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }
