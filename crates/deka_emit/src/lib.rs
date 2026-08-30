@@ -193,6 +193,16 @@ mod tests {
     }
 
     #[test]
+    fn emit_skips_css_imports() {
+        let out = parse_and_emit("import \"./card.css\";\nconst x = 1;");
+        assert!(
+            !out.contains("card.css"),
+            "CSS imports must not emit JS import: {out}"
+        );
+        assert!(out.contains("const x = 1;"), "got: {out}");
+    }
+
+    #[test]
     fn emit_jsx_client_directive() {
         let out = parse_and_emit("const el = <Cart client:load userId={id} />;");
         assert!(

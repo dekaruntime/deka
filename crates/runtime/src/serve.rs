@@ -79,6 +79,7 @@ async fn serve_async(context: &Context) -> Result<(), String> {
         .or_else(|| crate::islands::find_app_router_root(&resolved.path))
     {
         crate::islands::write_island_client_assets_for_project(&root)?;
+        crate::css::write_route_css_assets_for_project(&root)?;
     }
 
     let handler_path = resolved.path.to_string_lossy().to_string();

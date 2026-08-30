@@ -30,6 +30,42 @@ pub fn inject_utility_css(html: &str) -> String {
     inject_utility_css_with_config(html, config)
 }
 
+/// Generate a stylesheet for the given utility class names. Preflight is
+/// included only when requested. Empty class lists yield empty CSS unless
+/// preflight is on.
+pub fn utility_css_for_classes(classes: &[String], preflight: bool) -> String {
+    if classes.is_empty() && !preflight {
+        return String::new();
+    }
+    let html = format!(
+        "<html><head></head><body><div class=\"{}\"></div></body></html>",
+        classes.join(" ")
+    );
+    let out = inject_utility_css_with_config(
+        &html,
+        UtilityCssConfig {
+            enabled: true,
+            preflight,
+        },
+    );
+    extract_style_text(&out)
+}
+
+fn extract_style_text(html: &str) -> String {
+    let Some(start_tag) = html.find("<style") else {
+        return String::new();
+    };
+    let rest = &html[start_tag..];
+    let Some(inner_start) = rest.find('>') else {
+        return String::new();
+    };
+    let inner = &rest[inner_start + 1..];
+    let Some(end) = inner.find("</style>") else {
+        return inner.to_string();
+    };
+    inner[..end].to_string()
+}
+
 pub fn inject_utility_css_with_config(html: &str, config: UtilityCssConfig) -> String {
     if !config.enabled {
         return html.to_string();
@@ -166,6 +202,14 @@ fn parse_config(contents: &str) -> UtilityCssConfig {
 #[cfg(test)]
 mod tests {
     use super::{collect_classes, inject_utility_css, inject_utility_css_with_config, UtilityCssConfig};
+
+    #[test]
+    fn utility_css_for_classes_emits_rules() {
+        let css = super::utility_css_for_classes(&["p-4".to_string(), "bg-white".to_string()], false);
+        assert!(css.contains(".p-4{padding:1rem;}"), "{css}");
+        assert!(css.contains(".bg-white{background-color:#ffffff;}"), "{css}");
+        assert!(!css.contains("box-sizing:border-box"), "{css}");
+    }
 
     #[test]
     fn injects_style_for_basic_classes() {

@@ -279,6 +279,21 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
         inject_island_scripts(&dist_client, &islands)?;
     }
 
+    let styles = runtime_core::framework::collect_route_styles(
+        &app_dir,
+        &runtime_core::framework::scan_app_dir(&app_dir),
+    );
+    if styles.iter().any(|style| !style.classes.is_empty() || !style.files.is_empty()) {
+        #[cfg(feature = "native")]
+        {
+            runtime::write_route_css_assets(&dist_client.join("assets"), &styles)?;
+            runtime::write_route_css_assets(
+                &project_root.join(".cache").join("dekascript").join("assets"),
+                &styles,
+            )?;
+        }
+    }
+
     let mut report = format!(
         "built web project {}\n  client: {}\n  server: {}\n  hydration: {}",
         project_root.display(),
