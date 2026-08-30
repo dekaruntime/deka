@@ -29,6 +29,7 @@ async fn prerender_static_pages_async(
         std::env::set_var("DEKA_SECURITY_NO_PROMPT", "1");
     }
     let entry = framework::write_app_router_entry(project_root)?;
+    crate::islands::write_island_client_assets_for_project(project_root)?;
     let handler_path = entry.to_string_lossy().to_string();
 
     let mut env_set = |key: &str, value: &str| {

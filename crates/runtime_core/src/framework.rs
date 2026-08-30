@@ -403,6 +403,118 @@ fn strip_ds_comments(src: &str) -> String {
     out
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientIsland {
+    pub component: String,
+    pub directive: String,
+    pub file: String,
+    pub props: Vec<String>,
+}
+
+pub fn scan_client_islands(app_dir: &Path) -> Vec<ClientIsland> {
+    let mut out = Vec::new();
+    if !app_dir.is_dir() {
+        return out;
+    }
+    let mut stack = vec![app_dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(reader) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in reader.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+                continue;
+            };
+            if ext != "dsx" && ext != "ds" {
+                continue;
+            }
+            let Ok(src) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            out.extend(islands_in_source(&src, path.to_string_lossy().as_ref()));
+        }
+    }
+    out
+}
+
+fn islands_in_source(src: &str, file: &str) -> Vec<ClientIsland> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < src.len() {
+        let rest = &src[i..];
+        let Some(rel) = ["client:load", "client:idle", "client:visible"]
+            .iter()
+            .filter_map(|needle| rest.find(needle).map(|at| (at, *needle)))
+            .min_by_key(|(at, _)| *at)
+        else {
+            break;
+        };
+        let at = i + rel.0;
+        let directive = rel.1.rsplit(':').next().unwrap_or("load").to_string();
+        let prefix = &src[..at];
+        let tag_start = prefix.rfind('<').unwrap_or(0);
+        let tag_end = src[tag_start..]
+            .find('>')
+            .map(|rel| tag_start + rel + 1)
+            .unwrap_or(at + rel.1.len());
+        let tag_src = &src[tag_start..tag_end];
+        let component = tag_src
+            .trim_start_matches('<')
+            .split(|c: char| c.is_whitespace() || c == '>' || c == '/')
+            .next()
+            .unwrap_or("")
+            .to_string();
+        let is_component = component
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_uppercase())
+            .unwrap_or(false);
+        if is_component {
+            let props = island_prop_names(tag_src);
+            out.push(ClientIsland {
+                component,
+                directive,
+                file: file.to_string(),
+                props,
+            });
+        }
+        i = at + rel.1.len();
+    }
+    out
+}
+
+fn island_prop_names(tag_src: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for raw in tag_src.split_whitespace() {
+        let name = raw.split('=').next().unwrap_or("").trim();
+        if name.is_empty() || name.starts_with('<') || name.starts_with("client:") || name.starts_with("server:") {
+            continue;
+        }
+        if name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+            names.push(name.to_string());
+        }
+    }
+    names
+}
+
+pub fn island_script_tags(islands: &[ClientIsland]) -> String {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut tags = String::new();
+    for directive in ["load", "idle", "visible"] {
+        if islands.iter().any(|i| i.directive == directive) && seen.insert(directive) {
+            tags.push_str(&format!(
+                "<script type=\"module\" src=\"/assets/islands-{directive}.js\"></script>"
+            ));
+        }
+    }
+    tags
+}
+
 pub fn static_page_routes(manifest: &FrameworkManifest) -> Vec<String> {
     manifest
         .entries
@@ -440,11 +552,13 @@ pub fn write_app_router_entry(project_root: &Path) -> Result<PathBuf, String> {
     }
     let index_html = std::fs::read_to_string(&index_path)
         .map_err(|err| format!("failed to read {}: {err}", index_path.display()))?;
+    let islands = scan_client_islands(&app_dir);
+    let scripts = island_script_tags(&islands);
     let cache_dir = project_root.join(".cache").join("dekascript");
     std::fs::create_dir_all(&cache_dir)
         .map_err(|err| format!("failed to create {}: {err}", cache_dir.display()))?;
     let entry = cache_dir.join("serve-entry.dsx");
-    let source = generate_serve_entry(&entry, &manifest, &index_html)?;
+    let source = generate_serve_entry(&entry, &manifest, &index_html, &scripts)?;
     std::fs::write(&entry, source.as_bytes())
         .map_err(|err| format!("failed to write {}: {err}", entry.display()))?;
     let _ = write_api_router_entry(project_root);
@@ -616,8 +730,9 @@ fn generate_serve_entry(
     entry: &Path,
     manifest: &FrameworkManifest,
     index_html: &str,
+    scripts: &str,
 ) -> Result<String, String> {
-    let (doc_head, doc_mid, doc_tail) = split_document(index_html);
+    let (doc_head, doc_mid, doc_tail) = split_document(index_html, scripts);
     let doc_head = json_str(&doc_head)?;
     let doc_mid = json_str(&doc_mid)?;
     let doc_tail = json_str(&doc_tail)?;
@@ -1065,8 +1180,8 @@ fn matcher_hits_fn(matcher: &Option<Vec<String>>) -> String {
     format!("fn matcher_hits(path: string): boolean {{\n{body}}}")
 }
 
-fn split_document(index_html: &str) -> (String, String, String) {
-    let no_scripts = index_html.replace(DEKA_SCRIPTS_HOLE, "");
+fn split_document(index_html: &str, scripts: &str) -> (String, String, String) {
+    let no_scripts = index_html.replace(DEKA_SCRIPTS_HOLE, scripts);
     let (before_app, after_app) = match no_scripts.split_once(DEKA_APP_HOLE) {
         Some((a, b)) => (a, b),
         None => (no_scripts.as_str(), ""),
@@ -1729,5 +1844,31 @@ mod tests {
             "generated entry should desugar loading.dsx: {source}"
         );
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn scan_client_islands_finds_directive_and_props() {
+        let src = "export fn Page() {\n    return <Cart client:load userId={id} />;\n}\n";
+        let found = islands_in_source(src, "app/page.dsx");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].component, "Cart");
+        assert_eq!(found[0].directive, "load");
+        assert!(found[0].props.contains(&"userId".to_string()));
+        let tags = island_script_tags(&found);
+        assert!(tags.contains("islands-load.js"));
+        assert!(!tags.contains("islands-idle.js"));
+    }
+
+    #[test]
+    fn scan_client_islands_ignores_server_defer() {
+        let src = "export fn Page() {\n    return <Cart server:defer userId={id} />;\n}\n";
+        let found = islands_in_source(src, "app/page.dsx");
+        assert!(found.is_empty());
+        assert_eq!(island_script_tags(&found), "");
+    }
+
+    #[test]
+    fn island_script_tags_empty_without_islands() {
+        assert_eq!(island_script_tags(&[]), "");
     }
 }

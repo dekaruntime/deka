@@ -1,0 +1,133 @@
+//! Compile `client:*` island modules into `/assets/islands-{directive}.js`.
+//!
+//! Never copies `ui/server`. Chunks register islands then call `hydrate()`.
+
+use std::collections::BTreeSet;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use runtime_core::framework::ClientIsland;
+
+pub fn find_app_router_root(start: &Path) -> Option<PathBuf> {
+    let mut cur = if start.is_dir() {
+        start.to_path_buf()
+    } else {
+        start.parent()?.to_path_buf()
+    };
+    loop {
+        if runtime_core::framework::is_app_router_project(&cur) {
+            return Some(cur);
+        }
+        if !cur.pop() {
+            return None;
+        }
+    }
+}
+
+pub fn write_island_client_assets_for_project(project_root: &Path) -> Result<(), String> {
+    if !runtime_core::framework::is_app_router_project(project_root) {
+        return Ok(());
+    }
+    let islands = runtime_core::framework::scan_client_islands(&project_root.join("app"));
+    if islands.is_empty() {
+        return Ok(());
+    }
+    write_island_client_assets(
+        &project_root.join(".cache").join("dekascript").join("assets"),
+        &islands,
+    )
+}
+
+pub fn write_island_client_assets(
+    assets_dir: &Path,
+    islands: &[ClientIsland],
+) -> Result<(), String> {
+    let ui_dir = assets_dir.join("ui");
+    fs::create_dir_all(&ui_dir)
+        .map_err(|err| format!("failed to create {}: {err}", ui_dir.display()))?;
+    for (name, source) in [
+        ("jsx.js", deka_ui::JSX),
+        ("reactive.js", deka_ui::REACTIVE),
+        ("client.js", deka_ui::CLIENT),
+    ] {
+        fs::write(ui_dir.join(name), source.as_bytes())
+            .map_err(|err| format!("failed to write {}: {err}", ui_dir.join(name).display()))?;
+    }
+
+    for directive in ["load", "idle", "visible"] {
+        let group: Vec<&ClientIsland> = islands
+            .iter()
+            .filter(|island| island.directive == directive)
+            .collect();
+        if group.is_empty() {
+            continue;
+        }
+        let mut imports = String::new();
+        let mut registers = String::new();
+        let mut seen_files = BTreeSet::new();
+        let mut idx = 0usize;
+        for island in &group {
+            if !seen_files.insert(island.file.clone()) {
+                continue;
+            }
+            let source = fs::read_to_string(&island.file).map_err(|err| {
+                format!("failed to read {}: {err}", island.file)
+            })?;
+            let mut js = compile_js(&source, &island.file)?;
+            js = rewrite_ui_imports(&js);
+            let mod_name = format!("island-{directive}-{idx}.js");
+            idx += 1;
+            fs::write(assets_dir.join(&mod_name), js.as_bytes()).map_err(|err| {
+                format!("failed to write {}: {err}", assets_dir.join(&mod_name).display())
+            })?;
+            let names: Vec<&str> = group
+                .iter()
+                .filter(|item| item.file == island.file)
+                .map(|item| item.component.as_str())
+                .collect();
+            let mut unique = Vec::new();
+            for name in names {
+                if !unique.contains(&name) {
+                    unique.push(name);
+                }
+            }
+            let spec_list = unique.join(", ");
+            imports.push_str(&format!(
+                "import {{ {spec_list} }} from \"./{mod_name}\";\n"
+            ));
+            for name in unique {
+                registers.push_str(&format!(
+                    "registerIsland({name_json}, {name});\n",
+                    name_json = serde_json::to_string(name).unwrap_or_else(|_| format!("\"{name}\"")),
+                    name = name
+                ));
+            }
+        }
+        let entry = format!(
+            "{imports}import {{ hydrate, registerIsland }} from \"./ui/client.js\";\n{registers}hydrate();\n"
+        );
+        let dest = assets_dir.join(format!("islands-{directive}.js"));
+        fs::write(&dest, entry.as_bytes())
+            .map_err(|err| format!("failed to write {}: {err}", dest.display()))?;
+    }
+    Ok(())
+}
+
+fn compile_js(source: &str, path: &str) -> Result<String, String> {
+    match deka_compile::compile_to_js(source, path) {
+        Ok(result) => Ok(result.js),
+        Err(diagnostics) => Err(diagnostics
+            .iter()
+            .map(deka_compile::format_diagnostic)
+            .collect::<Vec<_>>()
+            .join("\n")),
+    }
+}
+
+fn rewrite_ui_imports(js: &str) -> String {
+    js.replace("from \"ui/jsx\"", "from \"./ui/jsx.js\"")
+        .replace("from \"ui/reactive\"", "from \"./ui/reactive.js\"")
+        .replace("from \"ui/client\"", "from \"./ui/client.js\"")
+        .replace("from \"ui/form\"", "from \"./ui/form.js\"")
+        .replace("from \"ui/suspense\"", "from \"./ui/suspense.js\"")
+}

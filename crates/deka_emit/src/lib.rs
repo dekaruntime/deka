@@ -182,6 +182,31 @@ mod tests {
         let out = parse_and_emit("const el = <p>hello {name}</p>;");
         assert!(out.contains("jsxs("), "expected jsxs call, got: {}", out);
         assert!(out.contains("\"children\": ["), "expected children array, got: {}", out);
+        assert!(
+            out.contains("import { live } from \"ui/reactive\""),
+            "non-literal interpolations must import live: {out}"
+        );
+        assert!(
+            out.contains("live(function() { return name; })"),
+            "non-literal interpolations must wrap live(): {out}"
+        );
+    }
+
+    #[test]
+    fn emit_jsx_client_directive() {
+        let out = parse_and_emit("const el = <Cart client:load userId={id} />;");
+        assert!(
+            out.contains("\"client:load\": true"),
+            "namespaced client directive must emit as a prop: {out}"
+        );
+        assert!(
+            out.contains("\"userId\": id"),
+            "island props must emit: {out}"
+        );
+        assert!(
+            !out.contains("..."),
+            "island emit must not spread props: {out}"
+        );
     }
 
     #[test]

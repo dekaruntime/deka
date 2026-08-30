@@ -43,6 +43,9 @@ async fn handle_request(
     let method = request.method().as_str().to_string();
     let uri = request.uri().to_string();
     let path = request.uri().path().to_string();
+    if let Some(response) = try_asset_response(&state, &path) {
+        return response;
+    }
 
     // ── Built-in REST API (/api/*) — skip V8 isolate entirely ──
     // Only active when DEKA_PLATFORM_API=1 (set by `deka platform`).
@@ -229,6 +232,31 @@ fn handler_failure_body(detail: &str, dev_mode: bool) -> String {
     }
 }
 
+fn try_asset_response(state: &Arc<RuntimeState>, path: &str) -> Option<Response> {
+    if !path.starts_with("/assets/") {
+        return None;
+    }
+    let rel = path.trim_start_matches("/assets/");
+    if rel.is_empty() || rel.contains("..") {
+        return None;
+    }
+    let entry = state.handler_entry.as_ref()?;
+    let cache_assets = std::path::Path::new(entry).parent()?.join("assets");
+    let file = cache_assets.join(rel);
+    let bytes = std::fs::read(&file).ok()?;
+    let ctype = match file.extension().and_then(|e| e.to_str()) {
+        Some("js") => "text/javascript; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("json") => "application/json",
+        _ => "application/octet-stream",
+    };
+    Response::builder()
+        .status(200)
+        .header("content-type", ctype)
+        .body(axum::body::Body::from(bytes))
+        .ok()
+}
+
 fn is_html_response(headers: &std::collections::HashMap<String, String>) -> bool {
     for (key, value) in headers {
         if key.eq_ignore_ascii_case("content-type")
@@ -245,7 +273,7 @@ fn inject_hmr_client(html: &str) -> String {
     if html.contains(MARKER) {
         return html.to_string();
     }
-    const SCRIPT: &str = r#"<script id="__deka_hmr_client">(function(){try{var p=location.protocol==='https:'?'wss':'ws';var ws=new WebSocket(p+'://'+location.host+'/_deka/hmr');function c(s){return document.querySelector(s||'#app');}function e(v){return String(v||'').replace(/\\/g,'\\\\').replace(/"/g,'\\"');}function sf(){var a=document.activeElement;if(!a||!a.closest||!a.closest('#app')){return null;}return{id:a.id||'',name:a.getAttribute('name')||'',deka:a.getAttribute('data-deka-id')||'',start:typeof a.selectionStart==='number'?a.selectionStart:null,end:typeof a.selectionEnd==='number'?a.selectionEnd:null};}function rf(state){if(!state){return;}var el=null;if(state.id){el=document.getElementById(state.id);}if(!el&&state.deka){el=document.querySelector('#app [data-deka-id="'+e(state.deka)+'"]');}if(!el&&state.name){el=document.querySelector('#app [name="'+e(state.name)+'"]');}if(!el||typeof el.focus!=='function'){return;}el.focus();if(state.start!==null&&state.end!==null&&typeof el.setSelectionRange==='function'){try{el.setSelectionRange(state.start,state.end);}catch(_){}}}function fv(){var root=c('#app');if(!root){return [];}var out=[];var fields=root.querySelectorAll('input,textarea,select');for(var i=0;i<fields.length;i++){var f=fields[i];var id=f.id||'';var name=f.getAttribute('name')||'';var deka=f.getAttribute('data-deka-id')||'';if(!id&&!name&&!deka){continue;}var type=(f.getAttribute('type')||'').toLowerCase();var entry={id:id,name:name,deka:deka,type:type};if(type==='checkbox'||type==='radio'){entry.checked=!!f.checked;}else if(f.tagName==='SELECT'){entry.value=f.value;}else{entry.value=f.value;}out.push(entry);}return out;}function fr(list){if(!Array.isArray(list)||list.length===0){return;}for(var i=0;i<list.length;i++){var s=list[i]||{};var el=null;if(s.id){el=document.getElementById(s.id);}if(!el&&s.deka){el=document.querySelector('#app [data-deka-id="'+e(s.deka)+'"]');}if(!el&&s.name){el=document.querySelector('#app [name="'+e(s.name)+'"]');}if(!el){continue;}if((s.type==='checkbox'||s.type==='radio')&&typeof s.checked==='boolean'){el.checked=s.checked;continue;}if(typeof s.value!=='undefined'){el.value=s.value;}}}function nh(h){return String(h||'').replace(/shadowrootmode=/gi,'data-shadowrootmode=');}function ap(selector,html){var n=c(selector||'#app');if(!n){location.reload();return;}var y=window.scrollY||window.pageYOffset||0;var f=sf();var v=fv();var h=nh(html);if(n.matches&&n.matches('[data-deka-island-id],deka-island')&&n.shadowRoot){n.shadowRoot.innerHTML=h;}else{n.innerHTML=h;}if(typeof window.__dekaMountDeclarativeShadows==='function'){window.__dekaMountDeclarativeShadows(n);}if(typeof window.__dekaHydrateIslands==='function'){window.__dekaHydrateIslands(n);}window.scrollTo(0,y);fr(v);rf(f);}function sr(){var u=location.pathname+location.search;fetch(u,{headers:{Accept:'text/x-deka-fragment'},credentials:'same-origin'}).then(function(r){if(!r.ok){return null;}return r.json();}).then(function(p){if(p&&typeof p.html==='string'){ap('#app',p.html);if(typeof p.title==='string'&&p.title!==''){document.title=p.title;}if(typeof p.head==='string'&&p.head!==''){document.head.insertAdjacentHTML('beforeend',p.head);}return;}location.reload();}).catch(function(){location.reload();});}function sub(){try{ws.send(JSON.stringify({type:'subscribe',path:location.pathname+location.search}));}catch(_){}}function a(m){if(!m||!Array.isArray(m.ops)||m.ops.length===0){sr();return;}for(var i=0;i<m.ops.length;i++){var op=m.ops[i]||{};if(op.op==='set_html'){ap(op.selector||'#app',op.html||'');continue;}sr();return;}}ws.onopen=function(){sub();};ws.onmessage=function(ev){try{var m=JSON.parse(ev.data||'{}');if(m.type==='patch'){a(m);return;}if(m.type==='reload'){sr();return;}}catch(_){sr();}};window.addEventListener('popstate',function(){sub();});ws.onclose=function(){};}catch(_){}})();</script>"#;
+    const SCRIPT: &str = r#"<script id="__deka_hmr_client">(function(){try{var p=location.protocol==='https:'?'wss':'ws';var ws=new WebSocket(p+'://'+location.host+'/_deka/hmr');function c(s){return document.querySelector(s||'#app');}function e(v){return String(v||'').replace(/\\/g,'\\\\').replace(/"/g,'\\"');}function sf(){var a=document.activeElement;if(!a||!a.closest||!a.closest('#app')){return null;}return{id:a.id||'',name:a.getAttribute('name')||'',deka:a.getAttribute('data-deka-id')||'',start:typeof a.selectionStart==='number'?a.selectionStart:null,end:typeof a.selectionEnd==='number'?a.selectionEnd:null};}function rf(state){if(!state){return;}var el=null;if(state.id){el=document.getElementById(state.id);}if(!el&&state.deka){el=document.querySelector('#app [data-deka-id="'+e(state.deka)+'"]');}if(!el&&state.name){el=document.querySelector('#app [name="'+e(state.name)+'"]');}if(!el||typeof el.focus!=='function'){return;}el.focus();if(state.start!==null&&state.end!==null&&typeof el.setSelectionRange==='function'){try{el.setSelectionRange(state.start,state.end);}catch(_){}}}function fv(){var root=c('#app');if(!root){return [];}var out=[];var fields=root.querySelectorAll('input,textarea,select');for(var i=0;i<fields.length;i++){var f=fields[i];var id=f.id||'';var name=f.getAttribute('name')||'';var deka=f.getAttribute('data-deka-id')||'';if(!id&&!name&&!deka){continue;}var type=(f.getAttribute('type')||'').toLowerCase();var entry={id:id,name:name,deka:deka,type:type};if(type==='checkbox'||type==='radio'){entry.checked=!!f.checked;}else if(f.tagName==='SELECT'){entry.value=f.value;}else{entry.value=f.value;}out.push(entry);}return out;}function fr(list){if(!Array.isArray(list)||list.length===0){return;}for(var i=0;i<list.length;i++){var s=list[i]||{};var el=null;if(s.id){el=document.getElementById(s.id);}if(!el&&s.deka){el=document.querySelector('#app [data-deka-id="'+e(s.deka)+'"]');}if(!el&&s.name){el=document.querySelector('#app [name="'+e(s.name)+'"]');}if(!el){continue;}if((s.type==='checkbox'||s.type==='radio')&&typeof s.checked==='boolean'){el.checked=s.checked;continue;}if(typeof s.value!=='undefined'){el.value=s.value;}}}function nh(h){return String(h||'').replace(/shadowrootmode=/gi,'data-shadowrootmode=');}function ap(selector,html){var n=c(selector||'#app');if(!n){location.reload();return;}var y=window.scrollY||window.pageYOffset||0;var f=sf();var v=fv();var h=nh(html);if(n.matches&&n.matches('[data-deka-island-id],deka-island')&&n.shadowRoot){n.shadowRoot.innerHTML=h;}else{n.innerHTML=h;}if(typeof window.__dekaMountDeclarativeShadows==='function'){window.__dekaMountDeclarativeShadows(n);}if(window.deka&&window.deka.ui&&typeof window.deka.ui.hydrate==='function'){window.deka.ui.hydrate(n);}window.scrollTo(0,y);fr(v);rf(f);}function sr(){var u=location.pathname+location.search;fetch(u,{headers:{Accept:'text/x-deka-fragment'},credentials:'same-origin'}).then(function(r){if(!r.ok){return null;}return r.json();}).then(function(p){if(p&&typeof p.html==='string'){ap('#app',p.html);if(typeof p.title==='string'&&p.title!==''){document.title=p.title;}if(typeof p.head==='string'&&p.head!==''){document.head.insertAdjacentHTML('beforeend',p.head);}return;}location.reload();}).catch(function(){location.reload();});}function sub(){try{ws.send(JSON.stringify({type:'subscribe',path:location.pathname+location.search}));}catch(_){}}function a(m){if(!m||!Array.isArray(m.ops)||m.ops.length===0){sr();return;}for(var i=0;i<m.ops.length;i++){var op=m.ops[i]||{};if(op.op==='set_html'){ap(op.selector||'#app',op.html||'');continue;}sr();return;}}ws.onopen=function(){sub();};ws.onmessage=function(ev){try{var m=JSON.parse(ev.data||'{}');if(m.type==='patch'){a(m);return;}if(m.type==='reload'){sr();return;}}catch(_){sr();}};window.addEventListener('popstate',function(){sub();});ws.onclose=function(){};}catch(_){}})();</script>"#;
 
     if let Some(idx) = html.rfind("</body>") {
         let mut out = String::with_capacity(html.len() + SCRIPT.len());
@@ -285,7 +313,7 @@ mod tests {
         let out = inject_hmr_client(html);
         assert!(out.contains("selectionStart"));
         assert!(out.contains("window.scrollTo"));
-        assert!(out.contains("__dekaHydrateIslands"));
+        assert!(out.contains("deka.ui.hydrate"));
         assert!(out.contains("querySelectorAll('input,textarea,select')"));
         assert!(out.contains("data-deka-id"));
         assert!(out.contains("setSelectionRange"));

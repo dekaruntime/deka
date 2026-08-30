@@ -266,17 +266,35 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
         _ => {}
     }
 
-    stdio::success(&format!(
+    let islands = runtime_core::framework::scan_client_islands(&app_dir);
+    if !islands.is_empty() {
+        #[cfg(feature = "native")]
+        {
+            runtime::write_island_client_assets(&dist_client.join("assets"), &islands)?;
+            runtime::write_island_client_assets(
+                &project_root.join(".cache").join("dekascript").join("assets"),
+                &islands,
+            )?;
+        }
+        inject_island_scripts(&dist_client, &islands)?;
+    }
+
+    let mut report = format!(
         "built web project {}\n  client: {}\n  server: {}\n  hydration: {}",
         project_root.display(),
         dist_client.display(),
         dist_server.display(),
-        if hydration_enabled {
+        if hydration_enabled || !islands.is_empty() {
             "enabled"
         } else {
             "disabled"
         }
-    ));
+    );
+    for line in island_report_lines(&islands) {
+        report.push('\n');
+        report.push_str(&line);
+    }
+    stdio::success(&report);
     Ok(())
 }
 
@@ -1076,6 +1094,65 @@ impl VirtualSource for GraphJsProvider {
         };
         Ok(self.modules.get(&key).cloned())
     }
+}
+
+fn inject_island_scripts(
+    dist_client: &Path,
+    islands: &[runtime_core::framework::ClientIsland],
+) -> Result<(), String> {
+    let tags = runtime_core::framework::island_script_tags(islands);
+    if tags.is_empty() {
+        return Ok(());
+    }
+    inject_before_body_close_walk(dist_client, &tags)
+}
+
+fn inject_before_body_close_walk(dir: &Path, tags: &str) -> Result<(), String> {
+    let Ok(reader) = fs::read_dir(dir) else {
+        return Ok(());
+    };
+    for entry in reader.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            inject_before_body_close_walk(&path, tags)?;
+            continue;
+        }
+        if path.extension().and_then(|e| e.to_str()) != Some("html") {
+            continue;
+        }
+        let mut html = fs::read_to_string(&path)
+            .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+        if html.contains("islands-load.js") || html.contains("islands-idle.js") {
+            continue;
+        }
+        if let Some(idx) = html.rfind("</body>") {
+            html.insert_str(idx, tags);
+        } else {
+            html.push_str(tags);
+        }
+        fs::write(&path, html.as_bytes())
+            .map_err(|err| format!("failed to write {}: {err}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn island_report_lines(islands: &[runtime_core::framework::ClientIsland]) -> Vec<String> {
+    islands
+        .iter()
+        .map(|island| {
+            let props = if island.props.is_empty() {
+                "(none)".to_string()
+            } else {
+                island.props.join(", ")
+            };
+            format!(
+                "  island {}: {} props — {}",
+                island.component,
+                island.props.len(),
+                props
+            )
+        })
+        .collect()
 }
 
 fn is_deka_source_path(path: &Path) -> bool {
