@@ -41,12 +41,12 @@ fn init_project(dir: &Path) {
         "deka init should scaffold deka.lock"
     );
     assert!(
-        dir.join("app").join("main.ds").is_file(),
-        "deka init should scaffold app/main.ds"
+        dir.join("app").join("page.dsx").is_file(),
+        "deka init should scaffold app/page.dsx"
     );
     assert!(
-        dir.join("public").join("index.html").is_file(),
-        "deka init should scaffold public/index.html"
+        dir.join("index.html").is_file(),
+        "deka init should scaffold index.html"
     );
 }
 
@@ -72,15 +72,15 @@ fn build_exits_nonzero_on_invalid_source() {
     // Same invalid snippet as the issue's reproduction: unterminated
     // function body, which `deka check` correctly rejects (exit 1).
     fs::write(
-        project.path().join("app").join("main.ds"),
+        project.path().join("app").join("page.dsx"),
         "export function f(): int { return\n",
     )
-    .expect("write invalid app/main.ds");
+    .expect("write invalid app/page.dsx");
 
     // Sanity: `deka check` rejects this file on its own, confirming the
     // fixture is genuinely invalid and not an environment quirk.
     let check = Command::new(cli_bin())
-        .args(["check", "app/main.ds"])
+        .args(["check", "app/page.dsx"])
         .current_dir(project.path())
         .output()
         .expect("run deka check");
@@ -95,7 +95,7 @@ fn build_exits_nonzero_on_invalid_source() {
         "deka build must exit non-zero on invalid source under app/, got success. output: {combined}"
     );
     assert!(
-        combined.contains("main.ds"),
+        combined.contains("page.dsx"),
         "build failure diagnostic should name the offending file: {combined}"
     );
 
@@ -122,7 +122,7 @@ fn build_exits_zero_on_valid_source() {
         "successful build should produce dist/client/index.html: {combined}"
     );
     assert!(
-        project.path().join("dist").join("server").join("app").join("main.ds").is_file(),
+        project.path().join("dist").join("server").join("app").join("page.dsx").is_file(),
         "successful build should copy app/ into dist/server/app: {combined}"
     );
 }
