@@ -134,6 +134,9 @@ impl<'a> Checker<'a> {
     }
 
     pub(super) fn error_span(&mut self, span: ast::Span, message: impl Into<String>) {
+        if self.infer_only {
+            return;
+        }
         self.errors.push(Diagnostic::error(
             span.start.line,
             span.start.column,

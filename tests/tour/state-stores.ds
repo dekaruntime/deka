@@ -12,8 +12,8 @@ fn add(s: CounterState, n: number) CounterState {
 }
 
 let state = CounterState { count: 0 }
-echo(state.count)
+echo("" + (state.count))
 state = increment(state)
-echo(state.count)
+echo("" + (state.count))
 state = add(state, 5)
-echo(state.count)
+echo("" + (state.count))

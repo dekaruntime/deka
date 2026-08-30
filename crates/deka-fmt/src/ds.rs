@@ -769,6 +769,17 @@ impl<'src> Formatter<'src> {
                 span,
             } => self.match_to_string(scrutinee, arms, *span),
             Expr::Unsafe { source, span } => self.unsafe_to_string(source, *span),
+            Expr::Bridge {
+                kind,
+                action,
+                args,
+                ..
+            } => {
+                let mut s = format!("bridge {}.{action}(", kind);
+                s.push_str(&args.iter().map(|a| self.expr_to_string(a)).collect::<Vec<_>>().join(", "));
+                s.push(')');
+                s
+            }
             Expr::Ternary {
                 condition,
                 then_branch,

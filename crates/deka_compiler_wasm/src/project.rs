@@ -409,7 +409,10 @@ mod tests {
     #[test]
     fn relative_candidates_are_ds_only() {
         let paths = relative_candidates(Path::new("src/foo"));
-        assert_eq!(paths, vec!["src/foo.ds", "src/foo/index.ds"]);
+        assert_eq!(
+            paths,
+            vec!["src/foo.ds", "src/foo.dsx", "src/foo/index.ds", "src/foo/index.dsx"]
+        );
         assert!(relative_candidates(Path::new("src/foo.phpx")).is_empty());
         assert_eq!(
             relative_candidates(Path::new("src/foo.ds")),

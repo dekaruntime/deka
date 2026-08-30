@@ -3,4 +3,4 @@ import { echo } from "io"
 type Cents number
 fn (c Cents) toDollars() number { return number(c) / 100 }
 const c = Cents(500)
-echo(c.toDollars())
+echo("" + (c.toDollars()))

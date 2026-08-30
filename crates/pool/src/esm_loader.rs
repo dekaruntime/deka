@@ -287,6 +287,7 @@ impl PhpxEsmLoader {
             "ds" | "dsx" => self.load_ds_source(&path)?,
             _ => self.load_js_source(&path)?,
         };
+        code = prepend_host_bindings(code);
         if specifier == &self.entry_specifier {
             code = append_entry_footer(code);
         }
@@ -724,6 +725,26 @@ fn resolve_internal_module_candidates(target: &Path) -> Option<PathBuf> {
 
 fn is_bare_specifier(spec: &str) -> bool {
     is_bare_module_specifier(spec)
+}
+
+const HOST_BINDINGS_PREAMBLE: &str = "const __dekaHostBindings = globalThis[Symbol.for('deka.host.internal')];
+const __deka_host = __dekaHostBindings && __dekaHostBindings.host;
+const __bridge = __dekaHostBindings && __dekaHostBindings.bridge;
+const __bridge_async = __dekaHostBindings && __dekaHostBindings.bridgeAsync;
+const __deka_wasm_call = __dekaHostBindings && __dekaHostBindings.wasmCall;
+const __deka_wasm_call_async = __dekaHostBindings && __dekaHostBindings.wasmCallAsync;
+";
+
+fn prepend_host_bindings(code: ModuleSourceCode) -> ModuleSourceCode {
+    match code {
+        ModuleSourceCode::String(source) => {
+            let mut text = String::with_capacity(HOST_BINDINGS_PREAMBLE.len() + source.len());
+            text.push_str(HOST_BINDINGS_PREAMBLE);
+            text.push_str(&source);
+            ModuleSourceCode::String(text.into())
+        }
+        other => other,
+    }
 }
 
 fn append_entry_footer(code: ModuleSourceCode) -> ModuleSourceCode {

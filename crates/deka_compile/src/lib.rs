@@ -575,6 +575,55 @@ mod tests {
     }
 
     #[test]
+    fn typeck_uses_imported_function_signature() {
+        use bumpalo::Bump;
+        use deka_syntax::{parse, collect_module_exports, check_program_with_imports};
+        use std::collections::HashMap;
+        let arena = Bump::new();
+        let crypto_src = "export fn random_bytes(n: number): Result<string, string> { return unsafe { String(n) } }";
+        let crypto_parse = parse(crypto_src, &arena);
+        let crypto_program = crypto_parse.program.unwrap();
+        let crypto_exports = collect_module_exports(&crypto_program, &arena);
+
+        let main_src = "import { random_bytes } from \"./crypto.ds\";\nconst r = match (random_bytes(32)) { Ok(v) => v, Err(e) => \"\" };";
+        let main_parse = parse(main_src, &arena);
+        let mut main_program = main_parse.program.unwrap();
+        let mut imports: HashMap<&str, &deka_syntax::typeck::ModuleExports> = HashMap::new();
+        imports.insert("./crypto.ds", &crypto_exports);
+        deka_syntax::resolve_imported_enum_constructors(&mut main_program, &arena, &imports);
+        let result = check_program_with_imports(&main_program, main_src, &imports);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+    }
+
+    #[test]
+    fn collect_exports_preserves_function_signature() {
+        use bumpalo::Bump;
+        use deka_syntax::{parse, collect_module_exports, typeck::Type};
+        let arena = Bump::new();
+        let source = "export fn random_bytes(n: number): Result<bytes, string> { return unsafe { new Uint8Array(n) } }";
+        let result = parse(source, &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        let exports = collect_module_exports(&program, &arena);
+        let ty = exports.values.get("random_bytes").expect("random_bytes export");
+        match ty {
+            Type::Function { params, ret, .. } => {
+                assert_eq!(params.len(), 1);
+                assert!(matches!(params[0], Type::Named { name: "number" }));
+                match ret.as_ref() {
+                    Type::Generic { base: "Result", args } => {
+                        assert_eq!(args.len(), 2);
+                        assert!(matches!(args[0], Type::Named { name: "bytes" }));
+                        assert!(matches!(args[1], Type::Named { name: "string" }));
+                    }
+                    other => panic!("expected Result generic, got {:?}", other),
+                }
+            }
+            other => panic!("expected function type, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn compile_array_object_index() {
         let result = compile_to_js(
             "const a = [1, 2, 3]; const o = { x: 1 }; const v = a[0] + o[\"x\"];",

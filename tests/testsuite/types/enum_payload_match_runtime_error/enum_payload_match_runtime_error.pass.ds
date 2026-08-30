@@ -9,4 +9,4 @@ const r = match (e) {
   B(s) => -1,
   _ => 0,
 }
-echo(r)
+echo("" + (r))

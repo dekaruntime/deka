@@ -10,6 +10,7 @@ pub enum TokenKind {
     BigInt,
     String,
     BacktickString,
+    RawJs,
     True,
     False,
     None,
@@ -39,6 +40,7 @@ pub enum TokenKind {
     Return,
     Match,
     Unsafe,
+    Bridge,
     Await,
     Async,
     Pub,
@@ -116,6 +118,16 @@ pub struct Lexer<'a> {
     line: usize,
     column: usize,
     diagnostics: Vec<Diagnostic>,
+    /// Set to true immediately after lexing the `unsafe` keyword so the next
+    /// non-whitespace token can switch the lexer into raw-JS mode for the
+    /// following `{ ... }` block.
+    unsafe_expect_brace: bool,
+    /// >0 while scanning the body of an `unsafe { }` block. The lexer emits a
+    /// single `RawJs` token for the body and returns to normal mode at the
+    /// matching `}`.
+    raw_depth: u32,
+    raw_start_pos: Pos,
+    raw_start_byte: usize,
 }
 
 impl<'a> Lexer<'a> {
@@ -127,6 +139,10 @@ impl<'a> Lexer<'a> {
             line: 1,
             column: 1,
             diagnostics: Vec::new(),
+            unsafe_expect_brace: false,
+            raw_depth: 0,
+            raw_start_pos: Pos { line: 1, column: 1 },
+            raw_start_byte: 0,
         }
     }
 
@@ -410,6 +426,7 @@ impl<'a> Lexer<'a> {
             "return" => TokenKind::Return,
             "match" => TokenKind::Match,
             "unsafe" => TokenKind::Unsafe,
+            "bridge" => TokenKind::Bridge,
             "await" => TokenKind::Await,
             "async" => TokenKind::Async,
             "pub" => TokenKind::Pub,
@@ -417,10 +434,250 @@ impl<'a> Lexer<'a> {
             "continue" => TokenKind::Continue,
             _ => TokenKind::Identifier,
         };
+        if kind == TokenKind::Unsafe {
+            self.unsafe_expect_brace = true;
+        }
         Token {
             kind,
             text,
             span: self.span_from(start, start_byte),
+        }
+    }
+
+    /// Scan the body of an `unsafe { ... }` block as raw JavaScript.
+    ///
+    /// The lexer enters this mode immediately after consuming the opening `{`.
+    /// It tracks brace depth while ignoring braces inside JS strings, comments,
+    /// regex literals and template literals, then emits a single `RawJs` token
+    /// spanning the body (excluding the surrounding braces).
+    fn read_raw_js_body(&mut self) -> Token<'a> {
+        let start = self.raw_start_pos;
+        let start_byte = self.raw_start_byte;
+        while let Some(ch) = self.current() {
+            match ch {
+                '{' => {
+                    self.raw_depth += 1;
+                    self.advance();
+                }
+                '}' => {
+                    if self.raw_depth == 1 {
+                        break;
+                    }
+                    self.raw_depth -= 1;
+                    self.advance();
+                }
+                '"' | '\'' => {
+                    self.skip_string_literal(ch);
+                }
+                '`' => {
+                    self.skip_template_literal();
+                }
+                '/' => {
+                    match self.peek(1) {
+                        Some('/') => self.skip_line_comment_raw(),
+                        Some('*') => self.skip_block_comment_raw(),
+                        _ => {
+                            if self.looks_like_regex_start() {
+                                self.skip_regex_literal();
+                            } else {
+                                self.advance();
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+        self.raw_depth = 0;
+        let text = &self.source[start_byte..self.pos];
+        Token {
+            kind: TokenKind::RawJs,
+            text,
+            span: self.span_from(start, start_byte),
+        }
+    }
+
+    /// Consume a single- or double-quoted string literal, including escaped
+    /// quotes. Used only inside raw JS bodies.
+    fn skip_string_literal(&mut self, quote: char) {
+        self.advance(); // opening quote
+        while let Some(ch) = self.current() {
+            match ch {
+                '\\' => {
+                    self.advance();
+                    self.advance();
+                }
+                c if c == quote => {
+                    self.advance();
+                    break;
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+    }
+
+    /// Consume a backtick-delimited template literal, including nested
+    /// `${...}` interpolations, as raw text.
+    fn skip_template_literal(&mut self) {
+        self.advance(); // opening backtick
+        while let Some(ch) = self.current() {
+            match ch {
+                '\\' => {
+                    self.advance();
+                    self.advance();
+                }
+                '`' => {
+                    self.advance();
+                    break;
+                }
+                '$' if self.peek(1) == Some('{') => {
+                    // Template interpolation: skip the `${` and scan the
+                    // expression as raw JS until the matching `}`. This keeps
+                    // brace counting correct for the *outer* unsafe block.
+                    self.advance();
+                    self.advance();
+                    let mut depth = 1u32;
+                    while let Some(c) = self.current() {
+                        match c {
+                            '{' => {
+                                depth += 1;
+                                self.advance();
+                            }
+                            '}' => {
+                                depth -= 1;
+                                self.advance();
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                            '"' | '\'' => self.skip_string_literal(c),
+                            '`' => self.skip_template_literal(),
+                            '/' => {
+                                match self.peek(1) {
+                                    Some('/') => self.skip_line_comment_raw(),
+                                    Some('*') => self.skip_block_comment_raw(),
+                                    _ => {
+                                        if self.looks_like_regex_start() {
+                                            self.skip_regex_literal();
+                                        } else {
+                                            self.advance();
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {
+                                self.advance();
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+    }
+
+    /// Heuristic: is the `/` at the current position likely the start of a JS
+    /// regex literal rather than a division operator?
+    fn looks_like_regex_start(&self) -> bool {
+        let prev = self.prev_non_space_char();
+        match prev {
+            None => true,
+            Some(c) => matches!(
+                c,
+                '(' | ',' | '=' | ':' | '[' | '{' | ';' | '!' | '&' | '|' | '+' | '-' | '*' | '%'
+                    | '<' | '>' | '?' | '~' | '^'
+            ),
+        }
+    }
+
+    /// Walk backwards over whitespace to find the character immediately
+    /// preceding the current `/` in the source.
+    fn prev_non_space_char(&self) -> Option<char> {
+        let mut i = self.pos;
+        if i == 0 {
+            return None;
+        }
+        loop {
+            i -= 1;
+            let c = self.source.as_bytes().get(i).copied()? as char;
+            if !c.is_whitespace() {
+                return Some(c);
+            }
+            if i == 0 {
+                return None;
+            }
+        }
+    }
+
+    /// Consume a `/.../[flags]` regex literal from raw JS. Does not validate
+    /// the regex; it only finds the closing `/` while respecting `[...]` classes.
+    fn skip_regex_literal(&mut self) {
+        self.advance(); // opening /
+        let mut in_class = false;
+        while let Some(ch) = self.current() {
+            match ch {
+                '\\' => {
+                    self.advance();
+                    self.advance();
+                }
+                '[' if !in_class => {
+                    in_class = true;
+                    self.advance();
+                }
+                ']' if in_class => {
+                    in_class = false;
+                    self.advance();
+                }
+                '/' if !in_class => {
+                    self.advance();
+                    break;
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+        // Regex flags.
+        while let Some(ch) = self.current() {
+            if ch.is_ascii_alphabetic() {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Consume a `//` line comment inside a raw JS body. Returns at newline or
+    /// EOF without emitting diagnostics.
+    fn skip_line_comment_raw(&mut self) {
+        self.advance(); // first /
+        self.advance(); // second /
+        while let Some(ch) = self.current() {
+            if ch == '\n' {
+                break;
+            }
+            self.advance();
+        }
+    }
+
+    /// Consume a `/* */` block comment inside a raw JS body. Returns at the
+    /// closing `*/` or EOF without emitting diagnostics.
+    fn skip_block_comment_raw(&mut self) {
+        self.advance(); // /
+        self.advance(); // *
+        while let Some(ch) = self.current() {
+            if ch == '*' && self.peek(1) == Some('/') {
+                self.advance();
+                self.advance();
+                break;
+            }
+            self.advance();
         }
     }
 
@@ -477,7 +734,28 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn next_token(&mut self) -> Token<'a> {
+        if self.raw_depth > 0 {
+            return self.read_raw_js_body();
+        }
         self.skip_whitespace();
+        if self.unsafe_expect_brace {
+            self.unsafe_expect_brace = false;
+            let start = self.pos_at();
+            let start_byte = self.pos;
+            if self.current() == Some('{') {
+                self.advance();
+                self.raw_depth = 1;
+                self.raw_start_pos = self.pos_at();
+                self.raw_start_byte = self.pos;
+                return Token {
+                    kind: TokenKind::LBrace,
+                    text: "{",
+                    span: self.span_from(start, start_byte),
+                };
+            } else {
+                return self.error("expected `{` after `unsafe`");
+            }
+        }
         let start = self.pos_at();
         let start_byte = self.pos;
         let ch = match self.current() {

@@ -4,4 +4,4 @@ struct User {
   email?: string
 }
 const u = User { name: "A", email: "a@b.com" }
-echo(u.email)
+echo("" + (u.email))

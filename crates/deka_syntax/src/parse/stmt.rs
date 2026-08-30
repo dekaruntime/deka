@@ -1075,7 +1075,7 @@ fn expr_has_top_level_await(expr: &Expr<'_>) -> bool {
             TemplatePart::Text(_) => false,
             TemplatePart::Expr(e) => expr_has_top_level_await(e),
         }),
-        Expr::Unsafe { .. } => false,
+        Expr::Unsafe { .. } | Expr::Bridge { .. } => false,
         Expr::JsxElement { element, .. } => {
             element.attributes.iter().any(|attr| {
                 attr.value

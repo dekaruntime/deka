@@ -5,4 +5,4 @@ fn applyTwice(f: fn(number) number, x: number) number {
 fn increment(n: number) number {
   return n + 1
 }
-echo(applyTwice(increment, 5))
+echo("" + (applyTwice(increment, 5)))

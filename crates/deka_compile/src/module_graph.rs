@@ -663,6 +663,33 @@ mod tests {
     }
 
     #[test]
+    fn graph_propagates_result_type_for_imported_function() {
+        let root = PathBuf::from("/project");
+        let crypto = root.join("crypto.ds");
+        let main = root.join("main.ds");
+
+        let mut files = HashMap::new();
+        files.insert(
+            crypto.clone(),
+            "export fn random_bytes(n: number): Result<string, string> {\n  return unsafe { String(n) }\n}".to_string(),
+        );
+        files.insert(
+            main.clone(),
+            "import { random_bytes } from \"./crypto.ds\";\nconst r = match (random_bytes(32)) { Ok(v) => v, Err(e) => \"\" };".to_string(),
+        );
+
+        let mut aliases = HashMap::new();
+        aliases.insert((main.clone(), "./crypto.ds".to_string()), crypto.clone());
+
+        let loader = InMemoryLoader { files, aliases };
+        let result = compile_module_graph(&main, &loader).expect("compile graph");
+        assert_eq!(result.modules.len(), 2);
+        let main_js = &result.modules[&main];
+        assert!(main_js.contains("random_bytes(32)"), "got: {}", main_js);
+        assert!(main_js.contains("__case"), "got: {}", main_js);
+    }
+
+    #[test]
     fn fs_loader_resolves_relative_and_index() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = tmp.path().to_path_buf();

@@ -435,6 +435,17 @@ fn transform_expr<'a>(
             source,
             span: *span,
         },
+        Expr::Bridge {
+            kind,
+            action,
+            args,
+            span,
+        } => Expr::Bridge {
+            kind,
+            action,
+            args: transform_exprs(args, arena, enums),
+            span: *span,
+        },
         Expr::Ternary {
             condition,
             then_branch,
@@ -1054,6 +1065,17 @@ fn lower_expr<'a>(
         },
         Expr::Unsafe { source, span } => Expr::Unsafe {
             source,
+            span: *span,
+        },
+        Expr::Bridge {
+            kind,
+            action,
+            args,
+            span,
+        } => Expr::Bridge {
+            kind,
+            action,
+            args: lower_exprs(args, arena, method_calls),
             span: *span,
         },
         Expr::Ternary {

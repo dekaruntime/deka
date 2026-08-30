@@ -159,6 +159,17 @@ impl<'a> Checker<'a> {
                     args: vec![Type::Infer, Type::Infer],
                 }
             }
+            ast::Expr::Bridge { args, .. } => {
+                // Host bridge calls are validated by the runtime catalog. The
+                // result shape is always Result<T, Error>.
+                for arg in args.iter() {
+                    self.check_expr(arg);
+                }
+                Type::Generic {
+                    base: "Result",
+                    args: vec![Type::Infer, Type::Infer],
+                }
+            }
             ast::Expr::Ternary {
                 condition,
                 then_branch,
@@ -768,7 +779,7 @@ impl<'a> Checker<'a> {
             "Ok" => match payload_type {
                 Some(t) => Type::Generic {
                     base: "Result",
-                    args: vec![t, Type::Never],
+                    args: vec![t, Type::Infer],
                 },
                 None => {
                     self.error_span(span, "`Ok` requires a payload");
@@ -778,7 +789,7 @@ impl<'a> Checker<'a> {
             "Err" => match payload_type {
                 Some(e) => Type::Generic {
                     base: "Result",
-                    args: vec![Type::Never, e],
+                    args: vec![Type::Infer, e],
                 },
                 None => {
                     self.error_span(span, "`Err` requires a payload");

@@ -96,6 +96,18 @@ pub fn check_program_with_imports<'a>(
     }
 }
 
+/// Infer function signatures for a single module without emitting diagnostics.
+///
+/// This is used by `collect_module_exports` so that unannotated exported
+/// functions (common in the stdlib, e.g. `export fn sha512() { digest(...) }`)
+/// still expose a usable return type to importers.
+pub fn infer_module_function_signatures<'a>(program: &'a Program<'a>) -> HashMap<&'a str, Type<'a>> {
+    let imports = HashMap::new();
+    let mut checker = Checker::new(program, &imports);
+    checker.infer_all_function_signatures();
+    checker.globals
+}
+
 /// Collect the exported type information from a parsed module.
 ///
 /// The returned `ModuleExports` references AST nodes allocated in `arena` (and
@@ -150,6 +162,146 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
         }
     }
 
+    // Helper: convert an AST type annotation into a typechecker type using the
+    // declaring module's own struct/enum/newtype/alias bindings.  This lets
+    // exported functions and constants carry real signatures across the module
+    // graph instead of the previous `Type::Infer` placeholders.
+    fn ast_type_to_export_type<'a>(
+        ty: &ast::Type<'a>,
+        structs: &HashMap<&'a str, StructInfo<'a>>,
+        enums: &HashMap<&'a str, EnumInfo<'a>>,
+        aliases: &HashMap<&'a str, ast::Type<'a>>,
+        newtypes: &HashMap<&'a str, NewtypeInfo>,
+        seen: &mut HashSet<&'a str>,
+    ) -> Type<'a> {
+        match ty {
+            ast::Type::Named { name, .. } => match *name {
+                "number" | "string" | "boolean" | "never" | "void" | "bytes" | "Component" => {
+                    Type::Named { name }
+                }
+                _ => {
+                    if structs.contains_key(name) {
+                        Type::Struct { name }
+                    } else if enums.contains_key(name) {
+                        Type::Named { name }
+                    } else if let Some(info) = newtypes.get(name) {
+                        Type::Newtype {
+                            name,
+                            repr: info.repr,
+                        }
+                    } else if let Some(alias) = aliases.get(name) {
+                        if !seen.insert(name) {
+                            return Type::Error;
+                        }
+                        let resolved = ast_type_to_export_type(alias, structs, enums, aliases, newtypes, seen);
+                        seen.remove(name);
+                        resolved
+                    } else {
+                        Type::Named { name }
+                    }
+                }
+            },
+            ast::Type::Generic { base, args, .. } => {
+                if *base == "Option" && args.len() == 1 {
+                    Type::Option {
+                        inner: Box::new(ast_type_to_export_type(
+                            &args[0], structs, enums, aliases, newtypes, seen,
+                        )),
+                    }
+                } else if *base == "Array" && args.len() == 1 {
+                    Type::Array {
+                        elem: Box::new(ast_type_to_export_type(
+                            &args[0], structs, enums, aliases, newtypes, seen,
+                        )),
+                    }
+                } else if (*base == "Result" || *base == "Promise") && args.len() <= 2 {
+                    Type::Generic {
+                        base,
+                        args: args
+                            .iter()
+                            .map(|arg| ast_type_to_export_type(arg, structs, enums, aliases, newtypes, seen))
+                            .collect(),
+                    }
+                } else if structs.contains_key(base) || enums.contains_key(base) {
+                    Type::Generic {
+                        base,
+                        args: args
+                            .iter()
+                            .map(|arg| ast_type_to_export_type(arg, structs, enums, aliases, newtypes, seen))
+                            .collect(),
+                    }
+                } else {
+                    Type::Named { name: base }
+                }
+            }
+            ast::Type::Function { params, ret, .. } => Type::Function {
+                params: params
+                    .iter()
+                    .map(|p| ast_type_to_export_type(p, structs, enums, aliases, newtypes, seen))
+                    .collect(),
+                ret: Box::new(ast_type_to_export_type(ret, structs, enums, aliases, newtypes, seen)),
+                optional: 0,
+            },
+            ast::Type::Option { inner, .. } => Type::Option {
+                inner: Box::new(ast_type_to_export_type(
+                    inner, structs, enums, aliases, newtypes, seen,
+                )),
+            },
+            ast::Type::Tuple { .. } | ast::Type::Record { .. } => Type::Error,
+        }
+    }
+
+    // Collect declared value signatures so `export { foo }` can re-export the
+    // type of a non-exported `fn foo` or `const foo`. Prefer inferred
+    // signatures (which resolve forward references and bridge/unsafe returns)
+    // over raw annotations when available.
+    let inferred_globals = infer_module_function_signatures(program);
+    let mut declared_values: HashMap<&'a str, Type<'a>> = HashMap::new();
+    for stmt in program.statements.iter() {
+        match stmt {
+            ast::Stmt::Function {
+                name,
+                type_params,
+                params,
+                return_type,
+                ..
+            } => {
+                if type_params.is_empty() {
+                    if let Some(ty) = inferred_globals.get(name) {
+                        declared_values.insert(*name, ty.clone());
+                    } else {
+                        let param_types: Vec<Type<'a>> = params
+                            .iter()
+                            .map(|p| {
+                                p.ty.as_ref()
+                                    .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
+                                    .unwrap_or(Type::Infer)
+                            })
+                            .collect();
+                        let ret = return_type
+                            .as_ref()
+                            .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
+                            .unwrap_or(Type::Infer);
+                        declared_values.insert(*name, Type::Function { params: param_types, ret: Box::new(ret), optional: 0 });
+                    }
+                } else {
+                    // Generic function signatures depend on type arguments; keep
+                    // the conservative Infer placeholder until we model polymorphism.
+                    declared_values.insert(*name, Type::Infer);
+                }
+            }
+            ast::Stmt::Const { name, ty, .. } | ast::Stmt::Let { name, ty, .. } => {
+                let value_ty = inferred_globals.get(name).cloned().unwrap_or_else(|| {
+                    ty.as_ref()
+                        .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
+                        .unwrap_or(Type::Infer)
+                });
+                declared_values.insert(*name, value_ty);
+            }
+            _ => {}
+        }
+    }
+
     let mut exports = ModuleExports::default();
 
     for stmt in program.statements.iter() {
@@ -157,11 +309,42 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
             continue;
         };
         match decl {
-            ast::ExportDecl::Const { name, .. } => {
-                exports.values.insert(*name, Type::Infer);
+            ast::ExportDecl::Const { name, ty, .. } => {
+                let value_ty = inferred_globals.get(name).cloned().unwrap_or_else(|| {
+                    ty.as_ref()
+                        .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
+                        .unwrap_or(Type::Infer)
+                });
+                exports.values.insert(*name, value_ty);
             }
-            ast::ExportDecl::Function { name, .. } => {
-                exports.values.insert(*name, Type::Infer);
+            ast::ExportDecl::Function {
+                name,
+                type_params,
+                params,
+                return_type,
+                ..
+            } => {
+                if type_params.is_empty() {
+                    if let Some(ty) = inferred_globals.get(name) {
+                        exports.values.insert(*name, ty.clone());
+                    } else {
+                        let param_types: Vec<Type<'a>> = params
+                            .iter()
+                            .map(|p| {
+                                p.ty.as_ref()
+                                    .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
+                                    .unwrap_or(Type::Infer)
+                            })
+                            .collect();
+                        let ret = return_type
+                            .as_ref()
+                            .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
+                            .unwrap_or(Type::Infer);
+                        exports.values.insert(*name, Type::Function { params: param_types, ret: Box::new(ret), optional: 0 });
+                    }
+                } else {
+                    exports.values.insert(*name, Type::Infer);
+                }
             }
             ast::ExportDecl::NamedGroup { names } => {
                 for export_name in names.iter() {
@@ -198,7 +381,7 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                             }
                         }
                     }
-                    if let Some(ty) = exports.values.get(local).cloned() {
+                    if let Some(ty) = declared_values.get(local).cloned() {
                         exports.values.insert(external, ty);
                     }
                 }
@@ -285,6 +468,9 @@ struct Checker<'a> {
     return_type: Option<Type<'a>>,
     /// How many nested loops currently enclose the checked statement?
     loop_depth: usize,
+    /// When true, diagnostics are suppressed. Used during the pre-check
+    /// inference pass that resolves forward-referenced function return types.
+    infer_only: bool,
 }
 
 impl<'a> Checker<'a> {
@@ -311,6 +497,7 @@ impl<'a> Checker<'a> {
             in_async_function: false,
             return_type: None,
             loop_depth: 0,
+            infer_only: false,
         };
         this.seed_imports(imports);
         this.seed_builtins();

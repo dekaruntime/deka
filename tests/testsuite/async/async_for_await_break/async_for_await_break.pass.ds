@@ -9,7 +9,7 @@ async fn main() {
     if (x > 10) {
       break
     }
-    echo(await double(x))
+    echo("" + (await double(x)))
   }
 }
 

@@ -1,4 +1,4 @@
 import { echo } from "io"
 alias ID = number
 const id: ID = 7
-echo(id)
+echo("" + (id))

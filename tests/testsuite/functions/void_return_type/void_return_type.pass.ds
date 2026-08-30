@@ -1,5 +1,5 @@
 import { echo } from "io"
 fn log(x: number) void {
-  echo(x)
+  echo("" + (x))
 }
 log(5)
