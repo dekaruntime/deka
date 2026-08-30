@@ -138,3 +138,102 @@ fn build_exits_zero_on_valid_source() {
         "successful build should copy app/ into dist/server/app: {combined}"
     );
 }
+
+#[test]
+fn build_merges_head_into_dist_html() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    fs::write(
+        project.path().join("app").join("page.dsx"),
+        "export fn head() {\n    return <title>Head Merge</title>;\n}\nexport fn Page() {\n    return <section><h1>Deka App</h1></section>;\n}\n",
+    )
+    .expect("write page with head()");
+
+    let (success, combined) = run_build(project.path());
+    assert!(success, "deka build should succeed with head(): {combined}");
+
+    let index = fs::read_to_string(project.path().join("dist").join("client").join("index.html"))
+        .expect("read dist/client/index.html");
+    assert!(
+        index.contains("Head Merge"),
+        "dist HTML should include rendered head(): {index}"
+    );
+    assert!(
+        index.contains("<title"),
+        "dist HTML should include a title from head(): {index}"
+    );
+    assert!(
+        !index.contains("<!--deka-head-->"),
+        "head hole should be filled: {index}"
+    );
+}
+
+#[test]
+fn build_passes_slug_params_in_generated_entry() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    let slug_dir = project.path().join("app").join("blog").join("[slug]");
+    fs::create_dir_all(&slug_dir).expect("mkdir [slug]");
+    fs::write(
+        slug_dir.join("page.dsx"),
+        "interface PageProps { slug: string }\nexport fn Page(props: PageProps) {\n    return <article>{props.slug}</article>;\n}\n",
+    )
+    .expect("write slug page");
+
+    let (success, combined) = run_build(project.path());
+    assert!(
+        success,
+        "deka build should succeed with a [slug] page: {combined}"
+    );
+
+    let entry = fs::read_to_string(
+        project
+            .path()
+            .join(".cache")
+            .join("dekascript")
+            .join("serve-entry.dsx"),
+    )
+    .expect("read generated serve-entry");
+    assert!(
+        entry.contains("slug: last_segment(path)"),
+        "generated matcher should pass [slug] into Page: {entry}"
+    );
+}
+
+#[test]
+fn build_bundles_api_handlers_into_worker() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    let api_dir = project.path().join("api").join("hello");
+    fs::create_dir_all(&api_dir).expect("mkdir api/hello");
+    fs::write(
+        api_dir.join("route.ds"),
+        "interface RequestHeaders { accept: string }\ninterface Request { url: string, pathname: string, method: string, headers: RequestHeaders }\ninterface Response { status: number, body: string }\nexport fn GET(request: Request): Response {\n    return { status: 200, body: \"hello-api\" }\n}\nexport fn POST(request: Request): Response {\n    return { status: 200, body: \"posted\" }\n}\n",
+    )
+    .expect("write api route");
+
+    let (success, combined) = run_build(project.path());
+    assert!(
+        success,
+        "deka build should succeed with api/route.ds: {combined}"
+    );
+
+    let worker = fs::read_to_string(project.path().join("dist").join("_worker.js"))
+        .expect("read dist/_worker.js");
+    assert!(
+        worker.contains("hello-api"),
+        "worker must include the compiled GET body, not a stub: {worker}"
+    );
+    assert!(
+        worker.contains("posted"),
+        "worker must include the compiled POST body: {worker}"
+    );
+    assert!(
+        !worker.contains("API route \" + method"),
+        "worker must not be the route-table stub: {worker}"
+    );
+    assert!(
+        worker.contains("export default"),
+        "worker must export a Cloudflare fetch handler: {worker}"
+    );
+}
