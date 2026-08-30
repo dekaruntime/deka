@@ -255,6 +255,7 @@ pub fn compile_to_js_with_imports_and_options<'a>(
         options.module_base,
         &typeck_result.unwrap_calls,
         &typeck_result.operator_rewrites,
+        file_path,
     )
     .map_err(|message| vec![Diagnostic::error(0, 0, message)])?;
 
@@ -504,14 +505,15 @@ mod tests {
     fn compile_jsx_element() {
         let result = compile_to_js("const el = <div class=\"box\" />;", "test.dsx")
             .expect("compile should succeed");
-        assert!(result.js.contains("__deka_ui.jsx"), "got: {}", result.js);
+        assert!(result.js.contains("import { jsx, jsxs, Fragment } from \"ui/jsx\""), "got: {}", result.js);
+        assert!(result.js.contains("jsx("), "got: {}", result.js);
     }
 
     #[test]
     fn compile_jsx_fragment() {
         let result = compile_to_js("const el = <><span>a</span><span>b</span></>;", "test.dsx")
             .expect("compile should succeed");
-        assert!(result.js.contains("__deka_ui.Fragment"), "got: {}", result.js);
+        assert!(result.js.contains("Fragment"), "got: {}", result.js);
     }
 
     #[test]
@@ -521,7 +523,7 @@ mod tests {
             "test.dsx",
         )
         .expect("compile should succeed");
-        assert!(result.js.contains("__deka_ui.jsx(Greeting"), "got: {}", result.js);
+        assert!(result.js.contains("jsx(Greeting"), "got: {}", result.js);
         assert!(result.js.contains("\"name\": \"Deka\""), "got: {}", result.js);
     }
 

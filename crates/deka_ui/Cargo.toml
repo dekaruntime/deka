@@ -1,0 +1,9 @@
+[package]
+name = "deka_ui"
+version.workspace = true
+edition = "2021"
+description = "DekaScript UI runtime modules (jsx / reactive / client / server)"
+license = "MIT"
+
+[lib]
+path = "src/lib.rs"

@@ -32,6 +32,7 @@ members = [
     "crates/deka_syntax",
     "crates/deka_emit",
     "crates/deka_compile",
+    "crates/deka_ui",
 ]
 
 [workspace.package]

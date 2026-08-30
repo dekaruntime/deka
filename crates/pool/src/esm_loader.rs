@@ -169,8 +169,37 @@ impl PhpxEsmLoader {
         resolve_phpx_module_spec(&self.project_root, specifier)
     }
 
+    /// Write compiler-provided `ui/*` modules into the cache so relative
+    /// imports between them (`./jsx.js`) resolve as real files.
+    fn materialize_ui_module(&self, specifier: &str) -> Option<PathBuf> {
+        let source = deka_ui::source_for(specifier)?;
+        let file_name = deka_ui::file_name_for(specifier)?;
+        let dir = self.cache_dir.join("ui");
+        let path = dir.join(file_name);
+        if let Err(err) = std::fs::create_dir_all(&dir) {
+            tracing::warn!("failed to create {}: {}", dir.display(), err);
+            return None;
+        }
+        if let Err(err) = std::fs::write(&path, source) {
+            tracing::warn!("failed to write {}: {}", path.display(), err);
+            return None;
+        }
+        // Ensure siblings exist so `import from "./jsx.js"` works.
+        for spec in deka_ui::SPECIFIERS {
+            if let (Some(src), Some(name)) = (deka_ui::source_for(spec), deka_ui::file_name_for(spec)) {
+                let sibling = dir.join(name);
+                let _ = std::fs::write(sibling, src);
+            }
+        }
+        Some(path)
+    }
+
     fn resolve_path(&self, specifier: &str, referrer: &str) -> Result<ModuleSpecifier, JsErrorBox> {
         if is_bare_specifier(specifier) {
+            if let Some(path) = self.materialize_ui_module(specifier) {
+                return ModuleSpecifier::from_file_path(path)
+                    .map_err(|_| JsErrorBox::generic("invalid ui module path"));
+            }
             if let Some(path) = self.resolve_phpx_module_spec(specifier) {
                 return ModuleSpecifier::from_file_path(path)
                     .map_err(|_| JsErrorBox::generic("invalid module path"));
@@ -265,7 +294,17 @@ impl PhpxEsmLoader {
 
     fn wrapper_source(&self) -> String {
         let entry = self.entry_specifier.to_string();
-        let template = "import * as __dekaMain from \"__ENTRY__\";\n\
+        let template = "import * as __jsx from \"ui/jsx\";\n\
+import * as __server from \"ui/server\";\n\
+import * as __reactive from \"ui/reactive\";\n\
+globalThis.deka = globalThis.deka || {};\n\
+globalThis.deka.ui = Object.freeze({\n\
+  ...(globalThis.deka.ui || {}),\n\
+  ...__jsx,\n\
+  ...__server,\n\
+  ...__reactive,\n\
+});\n\
+const __dekaMain = await import(\"__ENTRY__\");\n\
 const __candidate = typeof __dekaMain.default !== \"undefined\"\n\
   ? __dekaMain.default\n\
   : typeof __dekaMain.app !== \"undefined\"\n\

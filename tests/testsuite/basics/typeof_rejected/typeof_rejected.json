@@ -2,5 +2,5 @@
   "title": "typeof operator is rejected",
   "stage": "parse",
   "notes": "",
-  "expectedDiagnosticContains": "expected ``)``, found `number`"
+  "expectedDiagnosticContains": "unknown identifier `typeof`"
 }

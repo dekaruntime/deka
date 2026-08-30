@@ -6,6 +6,7 @@
 //! structs via the `deka.Struct` helper's embed map.
 
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use deka_syntax::{BinOp, ExportDecl, Expr, ForInit, NewtypeRepr, Pattern, Program, Stmt, Type};
 
@@ -13,8 +14,15 @@ use crate::util::{bin_op_str, escape_string, un_op_str, write_indent};
 
 /// Emit JavaScript for a parsed and type-checked program.
 pub fn emit_js(program: &Program, _source: &str) -> Result<String, String> {
-    let mut emitter = Emitter::new(program);
-    emitter.emit()
+    emit_js_with_options(
+        program,
+        _source,
+        &HashMap::new(),
+        None,
+        &HashMap::new(),
+        &HashMap::new(),
+        "module.ds",
+    )
 }
 
 /// Emit JavaScript with imported module metadata available.
@@ -36,7 +44,8 @@ pub fn emit_js_with_imports<'a>(
         imports,
         None,
         unwrap_calls,
-        &HashMap::new(),
+        operator_rewrites,
+        "module.ds",
     )
 }
 
@@ -54,13 +63,24 @@ pub fn emit_js_with_options<'a>(
     module_base: Option<String>,
     unwrap_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::UnwrapKind>,
     operator_rewrites: &HashMap<*const Expr<'a>, deka_syntax::typeck::OperatorRewrite<'a>>,
+    file_path: &str,
 ) -> Result<String, String> {
     let mut emitter = Emitter::new(program);
     emitter.module_base = module_base;
+    emitter.file_stem = file_stem_from_path(file_path);
     emitter.seed_imports(imports);
     emitter.unwrap_calls = unwrap_calls.clone();
     emitter.operator_rewrites = operator_rewrites.clone();
     emitter.emit()
+}
+
+fn file_stem_from_path(path: &str) -> String {
+    Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("module")
+        .to_string()
 }
 
 #[derive(Default, Clone)]
@@ -106,6 +126,11 @@ struct Emitter<'a> {
     unwrap_calls: HashMap<*const Expr<'a>, deka_syntax::typeck::UnwrapKind>,
     /// Newtype operator rewrites lowered by the typechecker.
     operator_rewrites: HashMap<*const Expr<'a>, deka_syntax::typeck::OperatorRewrite<'a>>,
+    file_stem: String,
+    fn_scope: String,
+    jsx_path: Vec<usize>,
+    jsx_siblings: Vec<usize>,
+    jsx_roots: usize,
 }
 
 impl<'a> Emitter<'a> {
@@ -124,18 +149,48 @@ impl<'a> Emitter<'a> {
             module_base: None,
             unwrap_calls: HashMap::new(),
             operator_rewrites: HashMap::new(),
+            file_stem: "module".to_string(),
+            fn_scope: "_".to_string(),
+            jsx_path: Vec::new(),
+            jsx_siblings: Vec::new(),
+            jsx_roots: 0,
         };
         emitter.prepass();
         emitter
     }
 
     fn emit(&mut self) -> Result<String, String> {
+        // Imports must precede other statements. Hoist user imports, then the
+        // jsx runtime import when this file contains JSX.
+        let mut first = true;
+        for stmt in self.program.statements.iter() {
+            if matches!(stmt, Stmt::Import { .. }) {
+                if !first {
+                    self.out.push('\n');
+                }
+                first = false;
+                self.emit_stmt(stmt)?;
+            }
+        }
+        if self.needs_jsx_helper() {
+            if !first {
+                self.out.push('\n');
+            }
+            first = false;
+            let spec = self.resolve_module_source("ui/jsx");
+            self.out.push_str("import { jsx, jsxs, Fragment } from \"");
+            self.out.push_str(&spec);
+            self.out.push_str("\";");
+        }
+
         self.emit_prelude()?;
 
         // First pass: emit struct/enum/function declarations so that all
         // factories exist before receiver methods are registered.
-        let mut first = true;
         for stmt in self.program.statements.iter() {
+            if matches!(stmt, Stmt::Import { .. }) {
+                continue;
+            }
             if !Self::is_runtime_statement(stmt) {
                 if !first {
                     self.out.push('\n');
@@ -410,23 +465,55 @@ impl<'a> Emitter<'a> {
             self.out.push_str("const None = Option.None;\n");
         }
 
-        if self.needs_jsx_helper() {
-            self.out.push_str(r#"const __deka_ui = {
-  Fragment: Symbol("Fragment"),
-  jsx: (tag, props) => {
-    if (typeof tag === "function") return tag(props);
-    const children = props.children;
-    delete props.children;
-    const attrs = Object.entries(props).map(([k, v]) => ` ${k}="${v}"`).join("");
-    const childStr = Array.isArray(children) ? children.join("") : (children ?? "");
-    return `<${tag}${attrs}>${childStr}</${tag}>`;
-  },
-  jsxs: (tag, props) => __deka_ui.jsx(tag, props)
-};
-"#);
-        }
-
         Ok(())
+    }
+
+    fn enter_jsx_node(&mut self) -> usize {
+        let index = if let Some(next) = self.jsx_siblings.last_mut() {
+            let i = *next;
+            *next += 1;
+            i
+        } else {
+            let i = self.jsx_roots;
+            self.jsx_roots += 1;
+            i
+        };
+        self.jsx_path.push(index);
+        self.jsx_siblings.push(0);
+        index
+    }
+
+    fn exit_jsx_node(&mut self) {
+        self.jsx_siblings.pop();
+        self.jsx_path.pop();
+    }
+
+    fn current_deka_id(&self) -> String {
+        let path = self
+            .jsx_path
+            .iter()
+            .map(|i| format!("i{i}"))
+            .collect::<Vec<_>>()
+            .join("/");
+        format!("{}:{}/{}", self.file_stem, self.fn_scope, path)
+    }
+
+    fn with_fn_scope<T>(
+        &mut self,
+        name: &str,
+        f: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let previous = std::mem::replace(&mut self.fn_scope, name.to_string());
+        let prev_roots = self.jsx_roots;
+        let prev_path = std::mem::take(&mut self.jsx_path);
+        let prev_sibs = std::mem::take(&mut self.jsx_siblings);
+        self.jsx_roots = 0;
+        let result = f(self);
+        self.fn_scope = previous;
+        self.jsx_roots = prev_roots;
+        self.jsx_path = prev_path;
+        self.jsx_siblings = prev_sibs;
+        result
     }
 
     fn needs_struct_helper(&self) -> bool {
@@ -514,10 +601,13 @@ impl<'a> Emitter<'a> {
                 if *is_async {
                     self.emit_default_param_assignments(params, 1)?;
                 }
-                for stmt in body.iter() {
-                    self.emit_stmt(stmt)?;
-                    self.out.push('\n');
-                }
+                self.with_fn_scope(name, |s| {
+                    for stmt in body.iter() {
+                        s.emit_stmt(stmt)?;
+                        s.out.push('\n');
+                    }
+                    Ok(())
+                })?;
                 write_indent(&mut self.out, 0);
                 self.out.push('}');
             }
@@ -570,10 +660,13 @@ impl<'a> Emitter<'a> {
                         if *is_async {
                             self.emit_default_param_assignments(params, 1)?;
                         }
-                        for stmt in body.iter() {
-                            self.emit_stmt(stmt)?;
-                            self.out.push('\n');
-                        }
+                        self.with_fn_scope(name, |s| {
+                            for stmt in body.iter() {
+                                s.emit_stmt(stmt)?;
+                                s.out.push('\n');
+                            }
+                            Ok(())
+                        })?;
                         write_indent(&mut self.out, 0);
                         self.out.push('}');
                     }
@@ -1361,10 +1454,13 @@ impl<'a> Emitter<'a> {
                 if *is_async {
                     self.emit_default_param_assignments(params, 1)?;
                 }
-                for stmt in body.iter() {
-                    self.emit_stmt(stmt)?;
-                    self.out.push('\n');
-                }
+                self.with_fn_scope("fn", |s| {
+                    for stmt in body.iter() {
+                        s.emit_stmt(stmt)?;
+                        s.out.push('\n');
+                    }
+                    Ok(())
+                })?;
                 self.out.push('}');
             }
         }
@@ -1565,6 +1661,11 @@ impl<'a> Emitter<'a> {
                     module_base: self.module_base.clone(),
                     unwrap_calls: HashMap::new(),
                     operator_rewrites: HashMap::new(),
+                    file_stem: self.file_stem.clone(),
+                    fn_scope: self.fn_scope.clone(),
+                    jsx_path: Vec::new(),
+                    jsx_siblings: Vec::new(),
+                    jsx_roots: 0,
                 };
                 tmp.emit_expr(expr).expect("literal emission");
                 literal = tmp.out;
@@ -1623,6 +1724,7 @@ impl<'a> Emitter<'a> {
     }
 
     fn emit_jsx_element(&mut self, element: &deka_syntax::JsxElement<'a>) -> Result<(), String> {
+        self.enter_jsx_node();
         let is_component = element
             .tag
             .chars()
@@ -1636,6 +1738,12 @@ impl<'a> Emitter<'a> {
         };
 
         let mut props = Vec::new();
+        if !is_component {
+            props.push(format!(
+                "\"data-deka-id\": {}",
+                json_string(&self.current_deka_id())
+            ));
+        }
         for attr in element.attributes.iter() {
             if attr.name.is_empty() {
                 if let Some(value) = &attr.value {
@@ -1678,17 +1786,18 @@ impl<'a> Emitter<'a> {
         }
 
         let fn_name = if child_values.len() > 1 { "jsxs" } else { "jsx" };
-        self.out.push_str("__deka_ui.");
         self.out.push_str(fn_name);
         self.out.push('(');
         self.out.push_str(&tag_expr);
         self.out.push_str(", {");
         self.out.push_str(&props.join(", "));
         self.out.push_str("})");
+        self.exit_jsx_node();
         Ok(())
     }
 
     fn emit_jsx_fragment(&mut self, children: &[Expr<'a>]) -> Result<(), String> {
+        self.enter_jsx_node();
         let mut child_values = Vec::new();
         for child in children.iter() {
             let mut buf = String::new();
@@ -1699,9 +1808,9 @@ impl<'a> Emitter<'a> {
         }
 
         let fn_name = if child_values.len() > 1 { "jsxs" } else { "jsx" };
-        self.out.push_str("__deka_ui.");
         self.out.push_str(fn_name);
-        self.out.push_str("(__deka_ui.Fragment, {");
+        self.out.push('(');
+        self.out.push_str("Fragment, {");
         if !child_values.is_empty() {
             if child_values.len() == 1 {
                 self.out.push_str("\"children\": ");
@@ -1713,6 +1822,7 @@ impl<'a> Emitter<'a> {
             }
         }
         self.out.push_str("})");
+        self.exit_jsx_node();
         Ok(())
     }
 }

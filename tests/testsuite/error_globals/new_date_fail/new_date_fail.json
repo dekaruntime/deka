@@ -1,6 +1,6 @@
 {
   "title": "new Date() is rejected",
   "stage": "parse",
-  "expectedDiagnosticContains": "expected `;` or newline, found `identifier`",
+  "expectedDiagnosticContains": "unknown identifier `new`",
   "notes": ""
 }
