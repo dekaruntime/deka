@@ -259,15 +259,21 @@ impl PhpxEsmLoader {
         // If the specifier has no extension, try DekaScript and JS candidates.
         let path = if raw_path.extension().is_none() {
             let ds = raw_path.with_extension("ds");
+            let dsx = raw_path.with_extension("dsx");
             let js = raw_path.with_extension("js");
             let idx_ds = raw_path.join("index.ds");
+            let idx_dsx = raw_path.join("index.dsx");
             let idx_js = raw_path.join("index.js");
             if ds.is_file() {
                 ds
+            } else if dsx.is_file() {
+                dsx
             } else if js.is_file() {
                 js
             } else if idx_ds.is_file() {
                 idx_ds
+            } else if idx_dsx.is_file() {
+                idx_dsx
             } else if idx_js.is_file() {
                 idx_js
             } else {
@@ -278,7 +284,7 @@ impl PhpxEsmLoader {
         };
         let ext = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
         let mut code = match ext {
-            "ds" => self.load_ds_source(&path)?,
+            "ds" | "dsx" => self.load_ds_source(&path)?,
             _ => self.load_js_source(&path)?,
         };
         if specifier == &self.entry_specifier {
@@ -446,7 +452,7 @@ pub fn hash_module_graph(entry_path: &Path) -> Result<u64, String> {
         source.hash(&mut hasher);
 
         let ext = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
-        if ext == "ds" {
+        if ext == "ds" || ext == "dsx" {
             let imports = parse_module_imports(&source);
             for spec in imports {
                 if let Some(resolved) = resolve_import_path(&project_root, &path, spec.trim()) {
@@ -486,7 +492,7 @@ fn collect_deka_source_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Re
         let is_deka_source = path
             .extension()
             .and_then(|ext| ext.to_str())
-            .map(|ext| ext.eq_ignore_ascii_case("ds"))
+            .map(|ext| ext.eq_ignore_ascii_case("ds") || ext.eq_ignore_ascii_case("dsx"))
             .unwrap_or(false);
         if is_deka_source {
             out.push(path);
@@ -705,7 +711,7 @@ fn resolve_public_source_candidates(target: &Path) -> Option<PathBuf> {
         candidates.push(target.join("index.js"));
     } else if matches!(
         target.extension().and_then(|ext| ext.to_str()),
-        Some("ds" | "js")
+        Some("ds" | "dsx" | "js")
     ) {
         candidates.push(target.to_path_buf());
     }

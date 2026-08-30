@@ -80,7 +80,7 @@ async fn run_async(context: &Context) -> Result<(), String> {
     }
 
     if !is_deka_entry(&normalized) {
-        return Err(format!("Run mode supports .ds entrypoints: {}", normalized));
+        return Err(format!("Run mode supports .ds/.dsx entrypoints: {}", normalized));
     }
     let mut env_set = |key: &str, value: &str| {
         let _ = platform.env().set(key, value);

@@ -7,12 +7,143 @@ use std::path::PathBuf;
 
 use bumpalo::Bump;
 use deka_emit::emit_js_with_options;
-use deka_syntax::{check_program_with_imports, parse, resolve_imported_enum_constructors, Diagnostic, ModuleExports};
+use deka_syntax::{check_program_with_imports, parse, resolve_imported_enum_constructors, Diagnostic, Expr, ModuleExports, Program, Stmt};
 use deka_syntax::typeck::Type;
 
 /// Bare specifiers that are treated as stdlib modules in the single-file WASM
 /// compiler path. Imports from these modules are accepted with `Type::Infer`
 /// so that tour and testsuite fixtures can compile without a full package graph.
+fn file_allows_jsx(file_path: &str) -> bool {
+    file_path.to_ascii_lowercase().ends_with(".dsx")
+}
+
+fn file_type_rule_error(file_path: &str, source: &str, program: &Program<'_>) -> Option<Diagnostic> {
+    if !file_allows_jsx(file_path) && program_contains_jsx(program) {
+        return Some(Diagnostic::error(
+            1,
+            1,
+            "JSX is only allowed in `.dsx` files; rename this file from `.ds` to `.dsx`".to_string(),
+        ));
+    }
+    let meta = parse_source_module_meta(source);
+    let is_dsx = file_allows_jsx(file_path);
+    for import in &meta.imports {
+        let spec = import.path.as_str();
+        if !is_dsx && (spec.ends_with(".dsx") || spec.ends_with(".DSX")) {
+            return Some(Diagnostic::error(
+                1,
+                1,
+                format!("`.ds` files cannot import `.dsx` modules (`{spec}`)"),
+            ));
+        }
+        if is_dsx && is_api_import(spec) {
+            return Some(Diagnostic::error(
+                1,
+                1,
+                format!("`.dsx` files cannot import the server `api/` tree (`{spec}`)"),
+            ));
+        }
+    }
+    None
+}
+
+fn is_api_import(spec: &str) -> bool {
+    let trimmed = spec.trim();
+    trimmed == "api"
+        || trimmed.starts_with("api/")
+        || trimmed.starts_with("@/api/")
+        || trimmed.contains("/api/")
+}
+
+fn program_contains_jsx(program: &Program<'_>) -> bool {
+    fn expr_has_jsx(expr: &Expr<'_>) -> bool {
+        match expr {
+            Expr::JsxElement { .. } | Expr::JsxFragment { .. } => true,
+            Expr::Call { callee, args, .. } => {
+                expr_has_jsx(callee) || args.iter().any(expr_has_jsx)
+            }
+            Expr::Binary { left, right, .. } => expr_has_jsx(left) || expr_has_jsx(right),
+            Expr::Unary { operand, .. } => expr_has_jsx(operand),
+            Expr::Await { expr, .. } | Expr::Paren { expr, .. } | Expr::Spread { expr, .. } => {
+                expr_has_jsx(expr)
+            }
+            Expr::Array { elements, .. } => elements.iter().any(expr_has_jsx),
+            Expr::Object { fields, .. } => fields.iter().any(|f| expr_has_jsx(&f.value)),
+            Expr::FieldAccess { object, .. } => expr_has_jsx(object),
+            Expr::IndexAccess { object, index, .. } => {
+                expr_has_jsx(object) || expr_has_jsx(index)
+            }
+            Expr::Ternary {
+                condition,
+                then_branch,
+                else_branch,
+                ..
+            } => expr_has_jsx(condition) || expr_has_jsx(then_branch) || expr_has_jsx(else_branch),
+            Expr::Function { body, .. } => body.iter().any(stmt_has_jsx),
+            Expr::Match { scrutinee, arms, .. } => {
+                expr_has_jsx(scrutinee)
+                    || arms.iter().any(|arm| expr_has_jsx(&arm.body))
+            }
+            Expr::EnumConstructor { payload, .. } => payload.is_some_and(|p| expr_has_jsx(p)),
+            Expr::StructLiteral { fields, .. } => fields.iter().any(|f| expr_has_jsx(&f.value)),
+            Expr::TemplateLiteral { parts, .. } => parts.iter().any(|part| match part {
+                deka_syntax::TemplatePart::Expr(e) => expr_has_jsx(e),
+                _ => false,
+            }),
+            _ => false,
+        }
+    }
+    fn stmt_has_jsx(stmt: &Stmt<'_>) -> bool {
+        match stmt {
+            Stmt::Const { value, .. } | Stmt::Let { value, .. } | Stmt::Expr { expr: value, .. } => {
+                expr_has_jsx(value)
+            }
+            Stmt::Return { value, .. } => value.as_ref().is_some_and(expr_has_jsx),
+            Stmt::Function { body, .. } | Stmt::ReceiverMethod { body, .. } => {
+                body.iter().any(stmt_has_jsx)
+            }
+            Stmt::Export { decl, .. } => match decl {
+                deka_syntax::ExportDecl::Const { value, .. } => expr_has_jsx(value),
+                deka_syntax::ExportDecl::Function { body, .. } => body.iter().any(stmt_has_jsx),
+                deka_syntax::ExportDecl::NamedGroup { .. } => false,
+            },
+            Stmt::If {
+                condition,
+                then_body,
+                else_body,
+                ..
+            } => {
+                expr_has_jsx(condition)
+                    || then_body.iter().any(stmt_has_jsx)
+                    || else_body.iter().any(stmt_has_jsx)
+            }
+            Stmt::Block { body, .. } => body.iter().any(stmt_has_jsx),
+            Stmt::For {
+                init,
+                condition,
+                step,
+                body,
+                ..
+            } => {
+                condition.as_ref().is_some_and(expr_has_jsx)
+                    || step.as_ref().is_some_and(expr_has_jsx)
+                    || body.iter().any(stmt_has_jsx)
+                    || match init {
+                        Some(deka_syntax::ForInit::Expr(e)) => expr_has_jsx(e),
+                        Some(deka_syntax::ForInit::Let { value, .. })
+                        | Some(deka_syntax::ForInit::Const { value, .. }) => expr_has_jsx(value),
+                        None => false,
+                    }
+            }
+            Stmt::ForOf { iterable, body, .. } => {
+                expr_has_jsx(iterable) || body.iter().any(stmt_has_jsx)
+            }
+            _ => false,
+        }
+    }
+    program.statements.iter().any(stmt_has_jsx)
+}
+
 fn is_stdlib_module_spec(spec: &str) -> bool {
     if spec.starts_with("@user/") {
         return false;
@@ -240,6 +371,10 @@ pub fn compile_to_js_with_imports_and_options<'a>(
             format!("parse produced no program for {}", file_path),
         )]
     })?;
+
+    if let Some(diagnostic) = file_type_rule_error(file_path, source, &program) {
+        return Err(vec![diagnostic]);
+    }
 
     resolve_imported_enum_constructors(&mut program, arena, imports);
 
@@ -525,6 +660,16 @@ mod tests {
         .expect("compile should succeed");
         assert!(result.js.contains("jsx(Greeting"), "got: {}", result.js);
         assert!(result.js.contains("\"name\": \"Deka\""), "got: {}", result.js);
+    }
+
+    #[test]
+    fn jsx_in_ds_is_rejected() {
+        let err = compile_to_js("const el = <div />;", "test.ds").expect_err("jsx in .ds");
+        assert!(
+            err.iter().any(|d| d.message.contains(".dsx")),
+            "got {:?}",
+            err
+        );
     }
 
     #[test]

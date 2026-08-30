@@ -705,85 +705,9 @@ fn has_hydration_component(source: &str) -> bool {
     source.contains("<Hydration") || source.contains("<Hydration/")
 }
 
-fn extract_template_html(source: &str) -> Option<String> {
-    let lines: Vec<&str> = source.lines().collect();
-    let (start, end) = frontmatter_range(&lines)?;
-    if end + 1 >= lines.len() {
-        return None;
-    }
-    let template = lines[end + 1..].join("\n");
-    let bindings = parse_frontmatter_bindings(&lines[start..end]);
-    let rendered = apply_frontmatter_bindings(&template, &bindings);
-    let trimmed = rendered.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
-fn frontmatter_range(lines: &[&str]) -> Option<(usize, usize)> {
-    let mut first = None;
-    let mut second = None;
-    for (idx, line) in lines.iter().enumerate() {
-        if line.trim() == "---" {
-            if first.is_none() {
-                first = Some(idx);
-            } else {
-                second = Some(idx);
-                break;
-            }
-        }
-    }
-    match (first, second) {
-        (Some(a), Some(b)) if b > a => Some((a + 1, b)),
-        _ => None,
-    }
-}
-
-fn unquote(input: &str) -> Option<&str> {
-    let s = input.trim();
-    if s.len() < 2 {
-        return None;
-    }
-    let first = s.as_bytes()[0] as char;
-    let last = s.as_bytes()[s.len() - 1] as char;
-    if (first == '\'' && last == '\'') || (first == '"' && last == '"') {
-        Some(&s[1..s.len() - 1])
-    } else {
-        None
-    }
-}
-
-fn parse_frontmatter_bindings(lines: &[&str]) -> BTreeMap<String, String> {
-    let mut out = BTreeMap::new();
-    for line in lines {
-        let trimmed = line.trim().trim_end_matches(';').trim();
-        if !trimmed.starts_with('$') {
-            continue;
-        }
-        let Some((lhs, rhs)) = trimmed.split_once('=') else {
-            continue;
-        };
-        let key = lhs.trim().trim_start_matches('$').trim();
-        if key.is_empty() {
-            continue;
-        }
-        let value = rhs.trim();
-        if let Some(unquoted) = unquote(value) {
-            out.insert(key.to_string(), unquoted.to_string());
-        }
-    }
-    out
-}
-
-fn apply_frontmatter_bindings(template: &str, bindings: &BTreeMap<String, String>) -> String {
-    let mut out = template.to_string();
-    for (key, value) in bindings {
-        let token = format!("{{${}}}", key);
-        out = out.replace(&token, value);
-    }
-    out
+fn extract_template_html(_source: &str) -> Option<String> {
+    // RFD 24: no frontmatter / trailing template capture.
+    None
 }
 
 fn inject_app_html(index_html: &str, app_html: &str) -> String {
@@ -933,6 +857,9 @@ impl VirtualSource for PhpxProvider {
 }
 
 fn is_deka_source_path(path: &Path) -> bool {
-    matches!(path.extension().and_then(|ext| ext.to_str()), Some("ds"))
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("ds") | Some("dsx")
+    )
 }
 

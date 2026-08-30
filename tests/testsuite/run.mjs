@@ -71,13 +71,13 @@ function findCliBinary() {
 }
 
 function parseStatusFromFilename(filename) {
-  if (filename.endsWith(".pass.ds")) return "pass";
-  if (filename.endsWith(".fail.ds")) return "fail";
+  if (filename.endsWith(".pass.ds") || filename.endsWith(".pass.dsx")) return "pass";
+  if (filename.endsWith(".fail.ds") || filename.endsWith(".fail.dsx")) return "fail";
   return null;
 }
 
 function baseNameFromFilename(filename) {
-  return filename.replace(/\.(pass|fail)\.ds$/, "");
+  return filename.replace(/\.(pass|fail)\.dsx?$/, "");
 }
 
 function slugFromParts(category, name) {
@@ -91,7 +91,7 @@ function collectDsFiles(dir, relativeTo) {
     const rel = relative(relativeTo, full).replace(/\\/g, "/");
     if (entry.isDirectory()) {
       results.push(...collectDsFiles(full, relativeTo));
-    } else if (entry.isFile() && entry.name.endsWith(".ds")) {
+    } else if (entry.isFile() && (entry.name.endsWith(".ds") || entry.name.endsWith(".dsx"))) {
       results.push(rel);
     }
   }
@@ -262,8 +262,9 @@ function parseNativeDiagnostics(stderr) {
 function writeProjectFiles(tmpDir, entryPath, source, files) {
   const isProject = files && Object.keys(files).length > 0;
   if (!isProject) {
-    writeFileSync(join(tmpDir, "test.ds"), source);
-    return { isProject: false };
+    const ext = String(entryPath || "test.ds").endsWith(".dsx") ? ".dsx" : ".ds";
+    writeFileSync(join(tmpDir, `test${ext}`), source);
+    return { isProject: false, ext };
   }
   mkdirSync(dirname(join(tmpDir, entryPath)), { recursive: true });
   writeFileSync(join(tmpDir, entryPath), source);
@@ -272,7 +273,7 @@ function writeProjectFiles(tmpDir, entryPath, source, files) {
     mkdirSync(dirname(fullPath), { recursive: true });
     writeFileSync(fullPath, content);
   }
-  return { isProject: true };
+  return { isProject: true, ext: ".ds" };
 }
 
 function restoreCachedModules(cacheDir, tmpDir) {
@@ -339,7 +340,7 @@ function runNative(cliPath, test) {
   const packages = packagesFor(test);
 
   try {
-    const { isProject } = writeProjectFiles(tmpDir, test.entryPath ?? "test.ds", test.source, test.files);
+    const { isProject, ext } = writeProjectFiles(tmpDir, test.entryPath ?? "test.ds", test.source, test.files);
     writeFileSync(join(tmpDir, "deka.lock"), DEFAULT_DEKA_LOCK);
     const dekaJson = test.dekaJson ?? (packages.length > 0 ? PACKAGE_DEKA_JSON : DEFAULT_DEKA_JSON);
     writeFileSync(join(tmpDir, "deka.json"), JSON.stringify(dekaJson, null, 2) + "\n");
@@ -358,7 +359,7 @@ function runNative(cliPath, test) {
       }
     }
 
-    const entryRel = isProject ? `./${test.entryPath ?? "main.ds"}` : "./test.ds";
+    const entryRel = isProject ? `./${test.entryPath ?? "main.ds"}` : `./test${ext ?? ".ds"}`;
     const spawned = spawnSync(cliPath, ["run", entryRel], {
       cwd: tmpDir,
       encoding: "utf-8",

@@ -61,7 +61,7 @@ if (failure.ok || diagnostic?.severity !== "error" || diagnostic.filename !== "b
 
 const tourDir = join(dirname(fileURLToPath(import.meta.url)), "../../../tests/tour");
 const tourManifest = JSON.parse(await readFile(join(tourDir, "manifest.json"), "utf-8"));
-const tourFiles = (await readdir(tourDir)).filter((name) => name.endsWith(".ds"));
+const tourFiles = (await readdir(tourDir)).filter((name) => name.endsWith(".ds") || name.endsWith(".dsx"));
 const manifestIds = new Set(tourManifest.map((lesson) => lesson.id));
 const fileIds = new Set(tourFiles.map((name) => name.replace(/\.ds$/, "")));
 for (const id of manifestIds) {

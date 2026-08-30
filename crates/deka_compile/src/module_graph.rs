@@ -228,6 +228,25 @@ pub fn compile_module_graph(
         for import in &meta.imports {
             match loader.resolve(&import.path, &path) {
                 Ok(dep) => {
+                    let from_ds = path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        == Some("ds");
+                    let to_dsx = dep
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        == Some("dsx");
+                    if from_ds && to_dsx {
+                        errors.push(diag(
+                            0,
+                            0,
+                            format!(
+                                "{}: `.ds` files cannot import `.dsx` modules (`{}`)",
+                                path.display(),
+                                import.path
+                            ),
+                        ));
+                    }
                     dependencies.insert(import.path.clone(), dep.clone());
                     if !modules.contains_key(&dep) {
                         queue.push_back(dep);

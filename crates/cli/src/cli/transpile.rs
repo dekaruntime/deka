@@ -375,9 +375,10 @@ fn rewrite_relative_ds_imports(mut js: String) -> String {
             let end = start + end;
             let specifier = &js[start..end];
             if (specifier.starts_with("./") || specifier.starts_with("../"))
-                && specifier.ends_with(".ds")
+                && (specifier.ends_with(".ds") || specifier.ends_with(".dsx"))
             {
-                js.replace_range(end - 3..end, ".js");
+                let ext_len = if specifier.ends_with(".dsx") { 4 } else { 3 };
+                js.replace_range(end - ext_len..end, ".js");
                 cursor = end - 1;
             } else {
                 cursor = end + 1;
@@ -1009,14 +1010,17 @@ fn require_ds(path: &Path) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "DekaScript uses .ds only; cannot transpile {}",
+            "DekaScript uses .ds or .dsx; cannot transpile {}",
             path.display()
         ))
     }
 }
 
 fn is_ds(path: &Path) -> bool {
-    path.extension().and_then(|ext| ext.to_str()) == Some("ds")
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("ds") | Some("dsx")
+    )
 }
 
 #[cfg(test)]
