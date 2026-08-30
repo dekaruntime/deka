@@ -1,4 +1,3 @@
-[build-wasm] using local compiler: /Users/sami/Projects/deka-website/public/tour/deka_compiler.wasm (4727665 bytes)
 import { echo } from "io"
 const app = <Card />
 fn Card() Component {
