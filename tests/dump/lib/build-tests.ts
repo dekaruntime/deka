@@ -12,6 +12,11 @@ import { setCompilerArtifactPath } from '@dekaruntime/web-ide-kit/runtime'
 import { loadAllTests, type HatsCategory, type HatsHost, type HatsTest, type HatsTestStage } from './tests'
 import { computeOverallStatus, type HatsOverallStatus } from './overall-status'
 
+// Bare stdlib imports (from "io") are rewritten by the compiler to this base;
+// the browser harness intercepts these URLs and serves the vendored shims
+// (see run-browser.ts), so the dump never depends on a live site.
+export const HARNESS_MODULE_BASE = 'https://hats.dump.invalid/modules'
+
 export { computeOverallStatus, type HatsOverallStatus } from './overall-status'
 
 export type RuntimeStatus = 'pass' | 'fail'
@@ -130,7 +135,9 @@ async function runBrowserTest(
     return { ...runResult, formattedCode }
   }
 
-  const compileResult = compileWithWasm(globalHatsCompiler, source, `${slug}.ds`)
+  const compileResult = compileWithWasm(globalHatsCompiler, source, `${slug}.ds`, {
+    moduleBase: HARNESS_MODULE_BASE,
+  })
   if (!compileResult.ok || !compileResult.js) {
     return {
       ok: false,

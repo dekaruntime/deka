@@ -103,6 +103,12 @@ type HarnessRun = {
   error?: string
 }
 
+// Vendored stdlib shims served to the browser harness. Keep in sync with the
+// real packages; io's echo is the console.log shim by design.
+const MODULE_SHIMS: Record<string, string> = {
+  'io.mjs': 'export function echo(message) {\n  console.log(message)\n}\n',
+}
+
 async function evaluateInFreshPage(jsCode: string): Promise<HarnessRun> {
   if (!browser || !harnessBundlePath) {
     throw new Error(browserUnavailableReason ?? 'browser host not started')
@@ -110,6 +116,24 @@ async function evaluateInFreshPage(jsCode: string): Promise<HarnessRun> {
 
   const context = await browser.newContext()
   context.setDefaultTimeout(EVALUATE_TIMEOUT_MS)
+  // The compiler rewrites bare stdlib imports to HARNESS_MODULE_BASE URLs.
+  // Intercept those and serve the vendored shims so the dump is
+  // self-contained — no dependency on a live site, and the CORS header lets
+  // the blob Worker (null origin) import them.
+  await context.route('**/modules/*.mjs', (route) => {
+    const url = new URL(route.request().url())
+    const name = url.pathname.split('/').pop() ?? ''
+    const body = MODULE_SHIMS[name]
+    if (body === undefined) {
+      return route.fulfill({ status: 404, body: `no harness shim for ${name}` })
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: 'text/javascript',
+      headers: { 'access-control-allow-origin': '*' },
+      body,
+    })
+  })
   const page = await context.newPage()
   try {
     await page.addScriptTag({ path: harnessBundlePath })

@@ -5,7 +5,7 @@
     "": {
       "name": "deka-conformance-dump",
       "dependencies": {
-        "@dekaruntime/web-ide-kit": "^0.1.8",
+        "@dekaruntime/web-ide-kit": "^0.2.1",
       },
       "devDependencies": {
         "playwright": "^1.62.1",
@@ -13,7 +13,7 @@
     },
   },
   "packages": {
-    "@dekaruntime/web-ide-kit": ["@dekaruntime/web-ide-kit@0.1.8", "", { "peerDependencies": { "@radix-ui/react-slot": "^1.0.0", "class-variance-authority": "^0.7.0", "clsx": "^2.0.0", "lucide-react": "^0.400.0 || ^1.0.0", "monaco-editor": "*", "next": "^16.0.0", "react": "^19.0.0", "react-dom": "^19.0.0", "tailwind-merge": "^2.0.0 || ^3.0.0" }, "bin": { "copy-deka-monaco": "bin/copy-monaco-assets.mjs" } }, "sha512-ktZ/TZjdxljX2DvU+lCdR0FrIQgy75qLCxrrn21sHhQ+GRY9Z9bPqmdsxcy+/08BdKdYFiHf8OXZ0cuZufYBWA=="],
+    "@dekaruntime/web-ide-kit": ["@dekaruntime/web-ide-kit@0.2.1", "", { "peerDependencies": { "@radix-ui/react-slot": "^1.0.0", "class-variance-authority": "^0.7.0", "clsx": "^2.0.0", "lucide-react": "^0.400.0 || ^1.0.0", "monaco-editor": "*", "next": "^16.0.0", "react": "^19.0.0", "react-dom": "^19.0.0", "tailwind-merge": "^2.0.0 || ^3.0.0" }, "bin": { "copy-deka-monaco": "bin/copy-monaco-assets.mjs" } }, "sha512-FflyTYNVn4VZXxQOvTvg7cc93KDVHaRCfqb+lFyWu1AoWsYJ5AlX1Tp4TZOUOky15LHhqwndCu02Y2hlD4lAnA=="],
 
     "@emnapi/runtime": ["@emnapi/runtime@1.11.3", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-Xz4Tpyki7XyrpbUK1jR1AhdAdaXyhhY4lZ3neLodmhpuWfy2PAQN5B46sAiU4liOXGLkHypn/qU+jvfWSCYYLA=="],
 
