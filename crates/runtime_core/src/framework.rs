@@ -513,6 +513,8 @@ pub struct RouteStyle {
 pub struct CssPlan {
     pub common: bool,
     pub routes: BTreeMap<String, bool>,
+    pub common_classes: BTreeSet<String>,
+    pub common_files: BTreeSet<String>,
 }
 
 pub fn route_css_slug(route: &str) -> String {
@@ -521,10 +523,14 @@ pub fn route_css_slug(route: &str) -> String {
     }
     let mut out = String::new();
     for ch in route.trim_matches('/').chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch);
-        } else {
-            out.push('_');
+        match ch {
+            '/' => out.push_str("-s-"),
+            '_' => out.push_str("-u-"),
+            '-' => out.push_str("-h-"),
+            '[' => out.push_str("-l-"),
+            ']' => out.push_str("-r-"),
+            c if c.is_ascii_alphanumeric() => out.push(c),
+            _ => out.push_str("-x-"),
         }
     }
     if out.is_empty() {
@@ -548,7 +554,7 @@ pub fn css_links_for_route(plan: &CssPlan, route: &str) -> String {
     tags
 }
 
-pub fn collect_route_styles(app_dir: &Path, manifest: &FrameworkManifest) -> Vec<RouteStyle> {
+pub fn collect_route_styles(manifest: &FrameworkManifest) -> Vec<RouteStyle> {
     let mut pages: Vec<&FrameworkEntry> = manifest
         .entries
         .iter()
@@ -578,7 +584,6 @@ pub fn collect_route_styles(app_dir: &Path, manifest: &FrameworkManifest) -> Vec
             files: scanned.1,
         });
     }
-    let _ = app_dir;
     out
 }
 
@@ -608,14 +613,22 @@ pub fn css_plan_from_styles(styles: &[RouteStyle]) -> CssPlan {
             common_files.insert(file.clone());
         }
     }
-    let common = !common_classes.is_empty() || !common_files.is_empty();
+    let any_styles = styles
+        .iter()
+        .any(|style| !style.classes.is_empty() || !style.files.is_empty());
+    let common = any_styles;
     let mut routes = BTreeMap::new();
     for style in styles {
         let unique_class = style.classes.iter().any(|c| !common_classes.contains(c));
         let unique_file = style.files.iter().any(|f| !common_files.contains(f));
         routes.insert(style.route.clone(), unique_class || unique_file);
     }
-    CssPlan { common, routes }
+    CssPlan {
+        common,
+        routes,
+        common_classes,
+        common_files,
+    }
 }
 
 fn scan_style_graph(entry_files: &[String]) -> (BTreeSet<String>, Vec<String>) {
@@ -633,14 +646,14 @@ fn scan_style_graph(entry_files: &[String]) -> (BTreeSet<String>, Vec<String>) {
             continue;
         };
         classes.extend(collect_class_literals(&src));
-        for css in collect_quoted_paths(&src, |p| p.to_ascii_lowercase().ends_with(".css")) {
+        for css in collect_import_paths(&src, |p| p.to_ascii_lowercase().ends_with(".css")) {
             if let Some(resolved) = resolve_relative(path, &css) {
-                if seen_css.insert(resolved.clone()) {
+                if Path::new(&resolved).is_file() && seen_css.insert(resolved.clone()) {
                     css_files.push(resolved);
                 }
             }
         }
-        for ds in collect_quoted_paths(&src, |p| {
+        for ds in collect_import_paths(&src, |p| {
             let lower = p.to_ascii_lowercase();
             lower.ends_with(".ds") || lower.ends_with(".dsx")
         }) {
@@ -701,24 +714,28 @@ fn push_classes(chunk: &str, out: &mut BTreeSet<String>) {
     }
 }
 
-fn collect_quoted_paths(src: &str, pred: impl Fn(&str) -> bool) -> Vec<String> {
+fn collect_import_paths(src: &str, pred: impl Fn(&str) -> bool) -> Vec<String> {
     let mut out = Vec::new();
-    let bytes = src.as_bytes();
-    let mut i = 0usize;
-    while i < bytes.len() {
-        let quote = bytes[i];
-        if quote == b'"' || quote == b'\'' {
-            i += 1;
-            let start = i;
-            while i < bytes.len() && bytes[i] != quote {
-                i += 1;
-            }
-            let path = &src[start..i.min(src.len())];
-            if pred(path) {
-                out.push(path.to_string());
-            }
+    for line in src.lines() {
+        let line = line.trim().trim_end_matches(';').trim();
+        let Some(rest) = line.strip_prefix("import ") else {
+            continue;
+        };
+        let rest = rest.trim();
+        let spec = if rest.starts_with('"') || rest.starts_with('\'') {
+            let quote = rest.as_bytes()[0] as char;
+            rest.trim_start_matches(quote)
+                .split(quote)
+                .next()
+                .unwrap_or("")
+        } else if let Some((_, from)) = rest.split_once(" from ") {
+            from.trim().trim_matches(|c| c == '"' || c == '\'')
+        } else {
+            continue;
+        };
+        if pred(spec) {
+            out.push(spec.to_string());
         }
-        i += 1;
     }
     out
 }
@@ -784,7 +801,7 @@ pub fn write_app_router_entry(project_root: &Path) -> Result<PathBuf, String> {
         .map_err(|err| format!("failed to read {}: {err}", index_path.display()))?;
     let islands = scan_client_islands(&app_dir);
     let scripts = island_script_tags(&islands);
-    let styles = collect_route_styles(&app_dir, &manifest);
+    let styles = collect_route_styles(&manifest);
     let css_plan = css_plan_from_styles(&styles);
     let cache_dir = project_root.join(".cache").join("dekascript");
     std::fs::create_dir_all(&cache_dir)
@@ -2151,5 +2168,28 @@ mod tests {
         assert!(home.contains("/assets/css/route-root.css"));
         let about = css_links_for_route(&plan, "/about");
         assert!(about.contains("route-about.css"));
+    }
+
+    #[test]
+    fn css_plan_emits_common_for_a_single_route() {
+        let styles = vec![RouteStyle {
+            route: "/".into(),
+            classes: ["p-4"].into_iter().map(str::to_string).collect(),
+            files: vec![],
+        }];
+        let plan = css_plan_from_styles(&styles);
+        assert!(plan.common, "preflight/common.css must exist for a one-page app");
+        assert!(css_links_for_route(&plan, "/").contains("/assets/css/common.css"));
+    }
+
+    #[test]
+    fn route_css_slug_does_not_collide() {
+        let a = route_css_slug("/a/b");
+        let b = route_css_slug("/a_b");
+        let c = route_css_slug("/a-b");
+        assert_ne!(a, b);
+        assert_ne!(a, c);
+        assert_ne!(b, c);
+        assert_ne!(route_css_slug("/blog/[id]"), route_css_slug("/blog/[slug]"));
     }
 }

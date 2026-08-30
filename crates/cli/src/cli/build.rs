@@ -280,7 +280,6 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     }
 
     let styles = runtime_core::framework::collect_route_styles(
-        &app_dir,
         &runtime_core::framework::scan_app_dir(&app_dir),
     );
     if styles.iter().any(|style| !style.classes.is_empty() || !style.files.is_empty()) {
