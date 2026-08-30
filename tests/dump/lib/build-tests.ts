@@ -135,7 +135,10 @@ async function runBrowserTest(
     return { ...runResult, formattedCode }
   }
 
-  const compileResult = compileWithWasm(globalHatsCompiler, source, `${slug}.ds`, {
+  // Keep the stem "test" (expected stdout embeds it via data-deka-id) but
+  // follow the fixture's extension — .dsx unlocks JSX in the compiler.
+  const entryExt = entryPath?.endsWith('.dsx') ? '.dsx' : '.ds'
+  const compileResult = compileWithWasm(globalHatsCompiler, source, `test${entryExt}`, {
     moduleBase: HARNESS_MODULE_BASE,
   })
   if (!compileResult.ok || !compileResult.js) {

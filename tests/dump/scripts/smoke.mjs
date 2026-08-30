@@ -10,7 +10,7 @@
 import { loadAndRunAllTests } from '../lib/build-tests.ts'
 
 process.env.HATS_FILTER =
-  process.env.HATS_FILTER || 'boolean-logic,component-fn-hoisted'
+  process.env.HATS_FILTER || 'string-concatenation,component-fn-hoisted'
 
 const { nativeAvailable, browserAvailable, categories } = await loadAndRunAllTests()
 
@@ -23,15 +23,25 @@ if (selected.length === 0) {
 let failed = 0
 for (const test of selected) {
   const problems = []
+  const describe = (label, test, result, matches, ignoreCode) => {
+    if (result.skipped) return `${label} run skipped: ${result.error ?? 'unknown'}`
+    if (matches) return null
+    if (result.error) return `${label} mismatch: ${result.error}`
+    if ((result.ok ? 'pass' : 'fail') !== test.status) return `${label} status mismatch: got ${result.ok ? 'pass' : 'fail'}, want ${test.status}`
+    const expected = test.expectedStdout ?? ''
+    if (result.stdout !== expected) return `${label} stdout mismatch: got ${JSON.stringify(result.stdout)}, want ${JSON.stringify(expected)}`
+    if (!ignoreCode && test.expectedCode !== undefined) return `${label} formatted-code mismatch (formatter drift, not runtime)`
+    return `${label} mismatch`
+  }
   if (!browserAvailable) {
     problems.push('browser host unavailable')
-  } else if (test.wasmResult.skipped) {
-    problems.push(`browser run skipped: ${test.wasmResult.error ?? 'unknown'}`)
-  } else if (!test.wasmMatches) {
-    problems.push(`browser mismatch: ${test.wasmResult.error ?? JSON.stringify(test.wasmResult.stdout)}`)
+  } else {
+    const problem = describe('browser', test, test.wasmResult, test.wasmMatches, false)
+    if (problem) problems.push(problem)
   }
-  if (nativeAvailable && !test.nativeResult.skipped && !test.nativeMatches) {
-    problems.push(`native mismatch: ${test.nativeResult.error ?? JSON.stringify(test.nativeResult.stdout)}`)
+  if (nativeAvailable) {
+    const problem = describe('native', test, test.nativeResult, test.nativeMatches, true)
+    if (problem) problems.push(problem)
   }
   if (problems.length > 0) {
     failed++
