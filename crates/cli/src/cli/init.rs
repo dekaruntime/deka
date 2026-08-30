@@ -179,7 +179,7 @@ fn default_not_found_dsx() -> &'static str {
 }
 
 fn default_index_html() -> &'static str {
-    "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>Deka</title>\n    <link rel=\"stylesheet\" href=\"/style.css\" />\n    <!--deka-head-->\n  </head>\n  <body>\n    <!--deka-app-->\n    <!--deka-scripts-->\n  </body>\n</html>\n"
+    "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>Deka</title>\n    <link rel=\"stylesheet\" href=\"/style.css\" />\n    <!--deka-head-->\n  </head>\n  <body>\n    <div id=\"app\"><!--deka-app--></div>\n    <!--deka-scripts-->\n  </body>\n</html>\n"
 }
 
 fn default_public_style_css() -> &'static str {
@@ -203,6 +203,6 @@ mod tests {
         assert!(index.contains("<!--deka-head-->"));
         assert!(index.contains("<!--deka-app-->"));
         assert!(index.contains("<!--deka-scripts-->"));
-        assert!(!index.contains("id=\"app\""));
+        assert!(index.contains("id=\"app\""));
     }
 }
