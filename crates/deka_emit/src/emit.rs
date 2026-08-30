@@ -131,6 +131,7 @@ struct Emitter<'a> {
     jsx_path: Vec<usize>,
     jsx_siblings: Vec<usize>,
     jsx_roots: usize,
+    needs_live: bool,
 }
 
 impl<'a> Emitter<'a> {
@@ -154,8 +155,10 @@ impl<'a> Emitter<'a> {
             jsx_path: Vec::new(),
             jsx_siblings: Vec::new(),
             jsx_roots: 0,
+            needs_live: false,
         };
         emitter.prepass();
+        emitter.needs_live = emitter.scan_needs_live();
         emitter
     }
 
@@ -185,6 +188,16 @@ impl<'a> Emitter<'a> {
             first = false;
             let spec = self.resolve_module_source("ui/jsx");
             self.out.push_str("import { jsx, jsxs, Fragment } from \"");
+            self.out.push_str(&spec);
+            self.out.push_str("\";");
+        }
+        if self.needs_live {
+            if !first {
+                self.out.push('\n');
+            }
+            first = false;
+            let spec = self.resolve_module_source("ui/reactive");
+            self.out.push_str("import { live } from \"");
             self.out.push_str(&spec);
             self.out.push_str("\";");
         }
@@ -558,6 +571,28 @@ impl<'a> Emitter<'a> {
         })
     }
 
+    fn scan_needs_live(&self) -> bool {
+        self.program.statements.iter().any(|stmt| {
+            let mut found = false;
+            visit_stmt_exprs(stmt, &mut |expr| {
+                match expr {
+                    Expr::JsxElement { element, .. } => {
+                        if element.children.iter().any(jsx_child_needs_live) {
+                            found = true;
+                        }
+                    }
+                    Expr::JsxFragment { children, .. } => {
+                        if children.iter().any(jsx_child_needs_live) {
+                            found = true;
+                        }
+                    }
+                    _ => {}
+                }
+            });
+            found
+        })
+    }
+
     // ------------------------------------------------------------------
     // Statements
     // ------------------------------------------------------------------
@@ -699,6 +734,11 @@ impl<'a> Emitter<'a> {
                 }
             }
             Stmt::Import { specifiers, source, .. } => {
+                if source_is_css(source) && specifiers.is_empty() {
+                    // Side-effect `import "./x.css"` is collected per-route as <link>.
+                    // Keep specifier imports (CSS modules) so the bundler can resolve them.
+                    return Ok(());
+                }
                 write_indent(&mut self.out, 0);
                 let resolved_source = self.resolve_module_source(source);
                 if specifiers.is_empty() {
@@ -1729,6 +1769,7 @@ impl<'a> Emitter<'a> {
                     jsx_path: Vec::new(),
                     jsx_siblings: Vec::new(),
                     jsx_roots: 0,
+                    needs_live: false,
                 };
                 tmp.emit_expr(expr).expect("literal emission");
                 literal = tmp.out;
@@ -1833,11 +1874,7 @@ impl<'a> Emitter<'a> {
 
         let mut child_values = Vec::new();
         for child in element.children.iter() {
-            let mut buf = String::new();
-            std::mem::swap(&mut self.out, &mut buf);
-            self.emit_expr(child)?;
-            std::mem::swap(&mut self.out, &mut buf);
-            child_values.push(buf);
+            child_values.push(self.emit_jsx_child(child)?);
         }
 
         if !child_values.is_empty() {
@@ -1859,15 +1896,25 @@ impl<'a> Emitter<'a> {
         Ok(())
     }
 
+    fn emit_jsx_child(&mut self, child: &Expr<'a>) -> Result<String, String> {
+        let mut buf = String::new();
+        std::mem::swap(&mut self.out, &mut buf);
+        if jsx_child_needs_live(child) {
+            self.out.push_str("live(function() { return ");
+            self.emit_expr(child)?;
+            self.out.push_str("; })");
+        } else {
+            self.emit_expr(child)?;
+        }
+        std::mem::swap(&mut self.out, &mut buf);
+        Ok(buf)
+    }
+
     fn emit_jsx_fragment(&mut self, children: &[Expr<'a>]) -> Result<(), String> {
         self.enter_jsx_node();
         let mut child_values = Vec::new();
         for child in children.iter() {
-            let mut buf = String::new();
-            std::mem::swap(&mut self.out, &mut buf);
-            self.emit_expr(child)?;
-            std::mem::swap(&mut self.out, &mut buf);
-            child_values.push(buf);
+            child_values.push(self.emit_jsx_child(child)?);
         }
 
         let fn_name = if child_values.len() > 1 { "jsxs" } else { "jsx" };
@@ -1955,6 +2002,37 @@ fn raw_js_looks_like_statements(raw: &str) -> bool {
 fn js_has_top_level_await(raw: &str) -> bool {
     raw.split(|c: char| !c.is_alphanumeric() && c != '_')
         .any(|word| word == "await")
+}
+
+fn source_is_css(source: &str) -> bool {
+    let trimmed = source.trim().trim_matches('"').trim_matches('\'');
+    let lower = trimmed.to_ascii_lowercase();
+    lower.ends_with(".css")
+}
+
+fn expr_contains_jsx(expr: &Expr) -> bool {
+    let mut found = false;
+    visit_expr(expr, &mut |e| {
+        if matches!(e, Expr::JsxElement { .. } | Expr::JsxFragment { .. }) {
+            found = true;
+        }
+    });
+    found
+}
+
+fn jsx_child_needs_live(expr: &Expr) -> bool {
+    match expr {
+        Expr::String { .. }
+        | Expr::Number { .. }
+        | Expr::Boolean { .. }
+        | Expr::JsxText { .. }
+        | Expr::JsxElement { .. }
+        | Expr::JsxFragment { .. }
+        | Expr::None { .. } => false,
+        Expr::Paren { expr, .. } => jsx_child_needs_live(expr),
+        _ if expr_contains_jsx(expr) => false,
+        _ => true,
+    }
 }
 
 fn visit_stmt_exprs(stmt: &Stmt, visitor: &mut dyn FnMut(&Expr)) {

@@ -97,7 +97,13 @@ impl<'a> Parser<'a> {
                 return None;
             }
 
-            let name = self.expect_identifier()?;
+            let first = self.expect_identifier()?;
+            let name = if self.eat(TokenKind::Colon) {
+                let second = self.expect_identifier()?;
+                self.bump_str(&format!("{first}:{second}"))
+            } else {
+                first
+            };
             let attr_start_byte = self.prev.span.byte_start;
             let value = if self.eat(TokenKind::Eq) {
                 if self.at(TokenKind::String) {

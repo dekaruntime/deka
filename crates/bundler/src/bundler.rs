@@ -926,6 +926,20 @@ impl Resolve for DekaResolver {
                 slug: None,
             });
         }
+        if let Some(name) = specifier.strip_prefix("ui/") {
+            let candidate = self
+                .root
+                .join(".cache")
+                .join("dekascript")
+                .join("ui")
+                .join(format!("{name}.js"));
+            if candidate.is_file() {
+                return Ok(Resolution {
+                    filename: FileName::Real(candidate),
+                    slug: None,
+                });
+            }
+        }
 
         let base_path = match base {
             FileName::Real(path) => path.clone(),

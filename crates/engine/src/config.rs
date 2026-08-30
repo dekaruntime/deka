@@ -15,11 +15,23 @@ pub enum ServeMode {
     Php,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ServeKind {
+    Static,
+    Worker,
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub struct ServeConfig {
     pub mode: Option<ServeMode>,
     pub entry: Option<String>,
     pub directory_listing: Option<bool>,
+    /// `"static"` or `"worker"`. Omitted → Worker iff `api/` or `middleware.ds` exist.
+    pub kind: Option<ServeKind>,
+    /// Canonical trailing slash. Default: no trailing slash except `/`.
+    #[serde(default, alias = "trailing_slash")]
+    pub trailing_slash: Option<bool>,
 }
 
 impl ServeConfig {
@@ -174,6 +186,15 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
         });
     }
 
+    if runtime_core::framework::is_app_router_project(&handler_dir) {
+        let entry_path = runtime_core::framework::write_app_router_entry(&handler_dir)?;
+        return Ok(ResolvedHandler {
+            path: entry_path,
+            mode: serve_config.mode.clone().unwrap_or(ServeMode::Php),
+            config: serve_config,
+        });
+    }
+
     // Convention: if an app/ folder exists, default to PHP app routing mode.
     let app_dir = abs_path.join("app");
     if app_dir.is_dir() {
@@ -213,7 +234,7 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
 fn detect_mode(path: &std::path::Path) -> ServeMode {
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
         match ext {
-            "ds" => ServeMode::Php,
+            "ds" | "dsx" => ServeMode::Php,
             "html" | "htm" => ServeMode::Static,
             _ => ServeMode::Static,
         }

@@ -304,12 +304,14 @@ impl PhpxEsmLoader {
         let template = "import * as __jsx from \"ui/jsx\";\n\
 import * as __server from \"ui/server\";\n\
 import * as __reactive from \"ui/reactive\";\n\
+import * as __suspense from \"ui/suspense\";\n\
 globalThis.deka = globalThis.deka || {};\n\
 globalThis.deka.ui = Object.freeze({\n\
   ...(globalThis.deka.ui || {}),\n\
   ...__jsx,\n\
   ...__server,\n\
   ...__reactive,\n\
+  ...__suspense,\n\
 });\n\
 const __dekaMain = await import(\"__ENTRY__\");\n\
 const __candidate = typeof __dekaMain.default !== \"undefined\"\n\

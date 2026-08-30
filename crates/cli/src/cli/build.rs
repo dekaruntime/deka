@@ -4,7 +4,7 @@ use runtime_core::module_spec::{ds_source_candidates, module_spec_aliases};
 use runtime_core::modules::{resolve_modules_dir, MODULES_DIR};
 
 use crate::compile_helper::compile_js_or_report;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -132,45 +132,75 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     copy_dir_recursive(&public_dir, &dist_client)?;
 
     let client_index = dist_client.join("index.html");
-    let index_raw = fs::read_to_string(&client_index)
-        .map_err(|err| format!("failed to read {}: {}", client_index.display(), err))?;
-    let template_html = extract_template_html(&entry_source).unwrap_or_default();
-    let with_app = inject_app_html(&index_raw, &template_html);
-
-    let final_index = if hydration_enabled {
-        let dist_assets = dist_client.join("assets");
-        fs::create_dir_all(&dist_assets)
-            .map_err(|err| format!("failed to create {}: {}", dist_assets.display(), err))?;
-
-        let client_js = dist_assets.join("main.js");
-        if bundle {
-            build_single_file_bundle_to_path(&entry_path, &client_js, minify)?;
-        } else {
-            build_single_file_to_path(&entry_path, &client_js)?;
-        }
-
-        if !bundle {
-            let assets_importmap = dist_assets.join("importmap.json");
-            let client_importmap = dist_client.join("importmap.json");
-            if assets_importmap.is_file() {
-                fs::copy(&assets_importmap, &client_importmap).map_err(|err| {
+    if runtime_core::framework::is_app_router_project(&project_root) {
+        #[cfg(feature = "native")]
+        runtime::prerender_static_pages(&project_root, &dist_client)?;
+        #[cfg(not(feature = "native"))]
+        {
+            let index_src = project_root.join("index.html");
+            if index_src.is_file() {
+                fs::copy(&index_src, &client_index).map_err(|err| {
                     format!(
                         "failed to copy {} -> {}: {}",
-                        assets_importmap.display(),
-                        client_importmap.display(),
+                        index_src.display(),
+                        client_index.display(),
                         err
                     )
                 })?;
             }
         }
-
-        inject_web_bootstrap_tags(&with_app, true, bundle)
     } else {
-        inject_web_bootstrap_tags(&with_app, false, bundle)
-    };
+        let index_src = project_root.join("index.html");
+        if index_src.is_file() {
+            fs::copy(&index_src, &client_index).map_err(|err| {
+                format!(
+                    "failed to copy {} -> {}: {}",
+                    index_src.display(),
+                    client_index.display(),
+                    err
+                )
+            })?;
+        }
+        let index_raw = fs::read_to_string(&client_index)
+            .map_err(|err| format!("failed to read {}: {}", client_index.display(), err))?;
+        let template_html = extract_template_html(&entry_source).unwrap_or_default();
+        let with_app = inject_app_html(&index_raw, &template_html);
 
-    fs::write(&client_index, final_index)
-        .map_err(|err| format!("failed to write {}: {}", client_index.display(), err))?;
+        let final_index = if hydration_enabled {
+            let dist_assets = dist_client.join("assets");
+            fs::create_dir_all(&dist_assets)
+                .map_err(|err| format!("failed to create {}: {}", dist_assets.display(), err))?;
+
+            let client_js = dist_assets.join("main.js");
+            if bundle {
+                build_single_file_bundle_to_path(&entry_path, &client_js, minify)?;
+            } else {
+                build_single_file_to_path(&entry_path, &client_js)?;
+            }
+
+            if !bundle {
+                let assets_importmap = dist_assets.join("importmap.json");
+                let client_importmap = dist_client.join("importmap.json");
+                if assets_importmap.is_file() {
+                    fs::copy(&assets_importmap, &client_importmap).map_err(|err| {
+                        format!(
+                            "failed to copy {} -> {}: {}",
+                            assets_importmap.display(),
+                            client_importmap.display(),
+                            err
+                        )
+                    })?;
+                }
+            }
+
+            inject_web_bootstrap_tags(&with_app, true, bundle)
+        } else {
+            inject_web_bootstrap_tags(&with_app, false, bundle)
+        };
+
+        fs::write(&client_index, final_index)
+            .map_err(|err| format!("failed to write {}: {}", client_index.display(), err))?;
+    }
 
     copy_dir_recursive(&app_dir, &dist_server.join("app"))?;
 
@@ -193,17 +223,114 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
         }
     }
 
-    stdio::success(&format!(
+    let api_dir = project_root.join("api");
+    if api_dir.is_dir() {
+        copy_dir_recursive(&api_dir, &dist_server.join("api"))?;
+    }
+    if let Some(mw) = runtime_core::framework::middleware_path(&project_root) {
+        let dest = dist_server.join("middleware.ds");
+        fs::copy(&mw, &dest).map_err(|err| {
+            format!(
+                "failed to copy {} -> {}: {err}",
+                mw.display(),
+                dest.display()
+            )
+        })?;
+    }
+
+    let want_trailing = read_trailing_slash(&project_root);
+    let redirects = runtime_core::framework::cloudflare_redirects(want_trailing);
+    fs::write(dist_root.join("_redirects"), redirects.as_bytes()).map_err(|err| {
+        format!(
+            "failed to write {}: {err}",
+            dist_root.join("_redirects").display()
+        )
+    })?;
+    fs::write(dist_client.join("_redirects"), redirects.as_bytes()).map_err(|err| {
+        format!(
+            "failed to write {}: {err}",
+            dist_client.join("_redirects").display()
+        )
+    })?;
+
+    let needs_worker = runtime_core::framework::project_needs_worker(&project_root);
+    match read_serve_kind(&project_root)? {
+        Some(ServeKind::Static) if needs_worker => {
+            return Err(
+                "serve.kind is \"static\" but api/ or middleware.ds exist; set serve.kind to \"worker\""
+                    .to_string(),
+            );
+        }
+        Some(ServeKind::Worker) => write_cloudflare_worker(&project_root, &dist_root)?,
+        None if needs_worker => write_cloudflare_worker(&project_root, &dist_root)?,
+        _ => {}
+    }
+
+    let islands = runtime_core::framework::scan_client_islands(&app_dir);
+    let deferred = runtime_core::framework::scan_server_defer(&app_dir);
+    if deferred.iter().any(|item| !item.has_fallback) {
+        let names: Vec<&str> = deferred
+            .iter()
+            .filter(|item| !item.has_fallback)
+            .map(|item| item.component.as_str())
+            .collect();
+        return Err(format!(
+            "server:defer requires a child with slot=\"fallback\" ({})",
+            names.join(", ")
+        ));
+    }
+    if !islands.is_empty() {
+        #[cfg(feature = "native")]
+        {
+            runtime::write_island_client_assets(&dist_client.join("assets"), &islands)?;
+            runtime::write_island_client_assets(
+                &project_root.join(".cache").join("dekascript").join("assets"),
+                &islands,
+            )?;
+        }
+        inject_island_scripts(&dist_client, &islands)?;
+    }
+    if !deferred.is_empty() {
+        #[cfg(feature = "native")]
+        {
+            runtime::write_defer_client_assets(&dist_client.join("assets"))?;
+            runtime::write_defer_client_assets(
+                &project_root.join(".cache").join("dekascript").join("assets"),
+            )?;
+        }
+        inject_defer_script(&dist_client)?;
+    }
+
+    let styles = runtime_core::framework::collect_route_styles(
+        &runtime_core::framework::scan_app_dir(&app_dir),
+    );
+    if styles.iter().any(|style| !style.classes.is_empty() || !style.files.is_empty()) {
+        #[cfg(feature = "native")]
+        {
+            runtime::write_route_css_assets(&dist_client.join("assets"), &styles)?;
+            runtime::write_route_css_assets(
+                &project_root.join(".cache").join("dekascript").join("assets"),
+                &styles,
+            )?;
+        }
+    }
+
+    let mut report = format!(
         "built web project {}\n  client: {}\n  server: {}\n  hydration: {}",
         project_root.display(),
         dist_client.display(),
         dist_server.display(),
-        if hydration_enabled {
+        if hydration_enabled || !islands.is_empty() {
             "enabled"
         } else {
             "disabled"
         }
-    ));
+    );
+    for line in island_report_lines(&islands) {
+        report.push('\n');
+        report.push_str(&line);
+    }
+    stdio::success(&report);
     Ok(())
 }
 
@@ -507,9 +634,17 @@ fn ensure_web_project_layout(project_root: &Path) -> Result<(), String> {
         }
     }
 
-    let index = project_root.join("public").join("index.html");
-    if !index.is_file() {
-        return Err(format!("missing required file: {}", index.display()));
+    if project_root.join("public").join("index.html").is_file() {
+        return Err(
+            "public/index.html collides with the root index.html document".to_string(),
+        );
+    }
+
+    if !project_root.join("index.html").is_file() {
+        return Err(format!(
+            "missing required file: {}",
+            project_root.join("index.html").display()
+        ));
     }
 
     let json = load_deka_json(project_root)?;
@@ -533,6 +668,16 @@ fn ensure_web_project_layout(project_root: &Path) -> Result<(), String> {
 fn resolve_web_entry(project_root: &Path) -> Result<PathBuf, String> {
     let json = load_deka_json(project_root)?;
 
+    if runtime_core::framework::is_app_router_project(project_root) {
+        let page = project_root.join("app").join("page.dsx");
+        let page = if page.is_file() {
+            page
+        } else {
+            project_root.join("app").join("page.ds")
+        };
+        return Ok(page);
+    }
+
     let entry = json
         .get("serve")
         .and_then(|v| v.get("entry"))
@@ -540,7 +685,7 @@ fn resolve_web_entry(project_root: &Path) -> Result<PathBuf, String> {
         .filter(|v| !v.trim().is_empty())
         .ok_or_else(|| {
             format!(
-                "web build requires deka.json serve.entry (example: \"app/main.ds\") in {}",
+                "web build requires index.html + app/page.dsx, or deka.json serve.entry, in {}",
                 project_root.join("deka.json").display()
             )
         })?;
@@ -854,6 +999,309 @@ impl VirtualSource for PhpxProvider {
         let js = compile_js_or_report(&source, input)?;
         Ok(Some(js))
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ServeKind {
+    Static,
+    Worker,
+}
+
+fn read_serve_kind(project_root: &Path) -> Result<Option<ServeKind>, String> {
+    let Some(serve) = read_serve_object(project_root)? else {
+        return Ok(None);
+    };
+    match serve.get("kind").and_then(|v| v.as_str()) {
+        None => Ok(None),
+        Some("static") => Ok(Some(ServeKind::Static)),
+        Some("worker") => Ok(Some(ServeKind::Worker)),
+        Some(other) => Err(format!(
+            "deka.json serve.kind must be \"static\" or \"worker\", got {other:?}"
+        )),
+    }
+}
+
+fn read_trailing_slash(project_root: &Path) -> bool {
+    read_serve_object(project_root)
+        .ok()
+        .flatten()
+        .and_then(|serve| {
+            serve
+                .get("trailingSlash")
+                .or_else(|| serve.get("trailing_slash"))
+                .and_then(|v| v.as_bool())
+        })
+        .unwrap_or(false)
+}
+
+fn read_serve_object(project_root: &Path) -> Result<Option<serde_json::Value>, String> {
+    let path = project_root.join("deka.json");
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&path)
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    let value: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|err| format!("failed to parse {}: {err}", path.display()))?;
+    Ok(value.get("serve").cloned())
+}
+
+fn write_ui_modules_for_worker(project_root: &Path) -> Result<(), String> {
+    let ui_dir = project_root.join(".cache").join("dekascript").join("ui");
+    fs::create_dir_all(&ui_dir)
+        .map_err(|err| format!("failed to create {}: {err}", ui_dir.display()))?;
+    for (name, source) in [
+        ("jsx.js", deka_ui::JSX),
+        ("reactive.js", deka_ui::REACTIVE),
+        ("server.js", deka_ui::SERVER),
+        ("suspense.js", deka_ui::SUSPENSE),
+        ("client.js", deka_ui::CLIENT),
+        ("form.js", deka_ui::FORM),
+    ] {
+        fs::write(ui_dir.join(name), source.as_bytes())
+            .map_err(|err| format!("failed to write {}: {err}", ui_dir.join(name).display()))?;
+    }
+    Ok(())
+}
+
+fn write_cloudflare_worker(project_root: &Path, dist_root: &Path) -> Result<(), String> {
+    write_ui_modules_for_worker(project_root)?;
+    let entry = runtime_core::framework::write_worker_router_entry(project_root)?;
+    let loader = deka_compile::module_graph::FsModuleLoader::new(project_root.to_path_buf());
+    let graph = deka_compile::module_graph::compile_module_graph(&entry, &loader)
+        .map_err(|diagnostics| deka_compile::format_diagnostics(&diagnostics))?;
+    let provider = Arc::new(GraphJsProvider {
+        modules: graph.modules,
+    });
+    let bundled = bundle_virtual_entry(
+        &entry,
+        BuildOptions {
+            project_root: project_root.to_path_buf(),
+            minify: false,
+            iife: false,
+        },
+        provider,
+    )?;
+    let mut defer_bundle = String::new();
+    let has_defer = !runtime_core::framework::scan_server_defer(&project_root.join("app")).is_empty();
+    if has_defer {
+        let defer_entry = runtime_core::framework::write_defer_router_entry(project_root)?;
+        let defer_loader = deka_compile::module_graph::FsModuleLoader::new(project_root.to_path_buf());
+        let defer_graph = deka_compile::module_graph::compile_module_graph(&defer_entry, &defer_loader)
+            .map_err(|diagnostics| deka_compile::format_diagnostics(&diagnostics))?;
+        let defer_provider = Arc::new(GraphJsProvider {
+            modules: defer_graph.modules,
+        });
+        let raw = bundle_virtual_entry(
+            &defer_entry,
+            BuildOptions {
+                project_root: project_root.to_path_buf(),
+                minify: false,
+                iife: false,
+            },
+            defer_provider,
+        )?;
+        defer_bundle = retarget_app_export(&raw, "DeferApp");
+    }
+    let public_files = runtime_core::framework::collect_public_rel_paths(project_root);
+    let public_json = serde_json::to_string(&public_files)
+        .map_err(|err| format!("failed to encode public paths: {err}"))?;
+    let want_trailing = if read_trailing_slash(project_root) {
+        "true"
+    } else {
+        "false"
+    };
+    let source = format!(
+        r#"// Generated by deka build. Worker in front of static assets (api/ and/or middleware.ds).
+{bundled}
+{defer_bundle}
+
+const PUBLIC_FILES = new Set({public_json});
+const WANT_TRAILING = {want_trailing};
+
+function canonicalizePath(pathname) {{
+  let path = String(pathname || "/");
+  if (!path.startsWith("/")) path = "/" + path;
+  path = path.replace(/\/{{2,}}/g, "/");
+  return path || "/";
+}}
+
+function dekaApiRequest(request, path, body) {{
+  const headers = {{ accept: request.headers.get("accept") || "" }};
+  try {{
+    for (const [key, value] of request.headers.entries()) {{
+      if (value != null) headers[String(key).toLowerCase()] = String(value);
+    }}
+  }} catch (_) {{}}
+  return {{
+    url: request.url,
+    pathname: path,
+    method: request.method,
+    headers,
+    body: body || "",
+  }};
+}}
+
+function workerResponse(result, method) {{
+  const status = result && result.status != null ? result.status : 200;
+  const body = method === "HEAD" ? "" : (result && result.body != null ? result.body : "");
+  const headers = {{}};
+  const rawHeaders = result && result.headers ? result.headers : {{}};
+  for (const key of Object.keys(rawHeaders)) {{
+    if (rawHeaders[key] != null) headers[key] = String(rawHeaders[key]);
+  }}
+  return new Response(body, {{ status, headers }});
+}}
+
+export default {{
+  async fetch(request, env) {{
+    const url = new URL(request.url);
+    let path = canonicalizePath(url.pathname);
+    const method = request.method || "GET";
+    const isGetHead = method === "GET" || method === "HEAD";
+    const skipSlashRedirect = path === "/api" || path.startsWith("/api/") || path === "/_deka/defer" || path.startsWith("/_deka/");
+    if (isGetHead && !skipSlashRedirect) {{
+      if (path.length > 1 && path.endsWith("/")) {{
+        if (!WANT_TRAILING) {{
+          url.pathname = path.slice(0, -1);
+          return Response.redirect(url.toString(), 301);
+        }}
+      }} else if (WANT_TRAILING && path.length > 1) {{
+        url.pathname = path + "/";
+        return Response.redirect(url.toString(), 301);
+      }}
+    }}
+    if (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
+    const body = isGetHead ? "" : await request.text();
+    const req = dekaApiRequest(request, path, body);
+    if ((path === "/_deka/defer") && typeof DeferApp === "function") {{
+      const gated = await Promise.resolve(App(req));
+      const gatedStatus = gated && gated.status != null ? gated.status : 200;
+      if (gatedStatus !== 0) {{
+        return workerResponse(gated, method);
+      }}
+      const result = await Promise.resolve(DeferApp(req));
+      return workerResponse(result, method);
+    }}
+    if (PUBLIC_FILES.has(path) && env && env.ASSETS) {{
+      return env.ASSETS.fetch(request);
+    }}
+    const result = await Promise.resolve(App(req));
+    const status = result && result.status != null ? result.status : 200;
+    if (status !== 0) {{
+      return workerResponse(result, request.method);
+    }}
+    if (path === "/api" || path.startsWith("/api/")) {{
+      return new Response("Not found", {{ status: 404 }});
+    }}
+    if (env && env.ASSETS) return env.ASSETS.fetch(request);
+    return new Response("Not found", {{ status: 404 }});
+  }}
+}};
+"#
+    );
+    let dest = dist_root.join("_worker.js");
+    fs::write(&dest, source.as_bytes())
+        .map_err(|err| format!("failed to write {}: {err}", dest.display()))?;
+    Ok(())
+}
+
+fn retarget_app_export(js: &str, name: &str) -> String {
+    js.replace("export async function App", &format!("async function {name}"))
+        .replace("export function App", &format!("function {name}"))
+        .replace("export { App }", &format!("var {name} = App"))
+        .replace("export { App as App }", &format!("var {name} = App"))
+}
+
+struct GraphJsProvider {
+    modules: HashMap<PathBuf, String>,
+}
+
+impl GraphJsProvider {
+    fn resolve_key(&self, path: &Path) -> Option<PathBuf> {
+        if let Ok(canon) = fs::canonicalize(path) {
+            if self.modules.contains_key(&canon) {
+                return Some(canon);
+            }
+        }
+        self.modules.keys().find(|k| *k == path).cloned()
+    }
+}
+
+impl VirtualSource for GraphJsProvider {
+    fn load_virtual(&self, path: &Path) -> Result<Option<String>, String> {
+        let Some(key) = self.resolve_key(path) else {
+            return Ok(None);
+        };
+        Ok(self.modules.get(&key).cloned())
+    }
+}
+
+fn inject_defer_script(dist_client: &Path) -> Result<(), String> {
+    let tags = runtime_core::framework::defer_script_tag(true);
+    inject_before_body_close_walk(dist_client, &tags)
+}
+
+fn inject_island_scripts(
+    dist_client: &Path,
+    islands: &[runtime_core::framework::ClientIsland],
+) -> Result<(), String> {
+    let tags = runtime_core::framework::island_script_tags(islands);
+    if tags.is_empty() {
+        return Ok(());
+    }
+    inject_before_body_close_walk(dist_client, &tags)
+}
+
+fn inject_before_body_close_walk(dir: &Path, tags: &str) -> Result<(), String> {
+    let Ok(reader) = fs::read_dir(dir) else {
+        return Ok(());
+    };
+    for entry in reader.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            inject_before_body_close_walk(&path, tags)?;
+            continue;
+        }
+        if path.extension().and_then(|e| e.to_str()) != Some("html") {
+            continue;
+        }
+        let mut html = fs::read_to_string(&path)
+            .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+        if html.contains("islands-load.js")
+            || html.contains("islands-idle.js")
+            || html.contains("islands-defer.js")
+        {
+            continue;
+        }
+        if let Some(idx) = html.rfind("</body>") {
+            html.insert_str(idx, tags);
+        } else {
+            html.push_str(tags);
+        }
+        fs::write(&path, html.as_bytes())
+            .map_err(|err| format!("failed to write {}: {err}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn island_report_lines(islands: &[runtime_core::framework::ClientIsland]) -> Vec<String> {
+    islands
+        .iter()
+        .map(|island| {
+            let props = if island.props.is_empty() {
+                "(none)".to_string()
+            } else {
+                island.props.join(", ")
+            };
+            format!(
+                "  island {}: {} props — {}",
+                island.component,
+                island.props.len(),
+                props
+            )
+        })
+        .collect()
 }
 
 fn is_deka_source_path(path: &Path) -> bool {
