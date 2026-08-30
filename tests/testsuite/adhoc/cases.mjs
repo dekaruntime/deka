@@ -91,12 +91,12 @@ async function scenarioInit(cli) {
   const commands = [
     `cd ${dir}`,
     `${cli} init`,
-    `${cli} check ./app/main.ds`,
+    `${cli} check ./app/page.dsx`,
   ];
   try {
     const init = runCli(cli, ["init"], dir);
-    const check = runCli(cli, ["check", "./app/main.ds"], dir);
-    const stdout = ["# deka init", init.stdout, init.stderr, "# deka check ./app/main.ds", check.stdout, check.stderr]
+    const check = runCli(cli, ["check", "./app/page.dsx"], dir);
+    const stdout = ["# deka init", init.stdout, init.stderr, "# deka check ./app/page.dsx", check.stdout, check.stderr]
       .filter((s) => s && s.length)
       .join("\n");
     const ok = init.status === 0 && check.status === 0;

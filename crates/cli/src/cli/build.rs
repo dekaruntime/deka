@@ -132,6 +132,17 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     copy_dir_recursive(&public_dir, &dist_client)?;
 
     let client_index = dist_client.join("index.html");
+    let index_src = project_root.join("index.html");
+    if index_src.is_file() {
+        fs::copy(&index_src, &client_index).map_err(|err| {
+            format!(
+                "failed to copy {} -> {}: {}",
+                index_src.display(),
+                client_index.display(),
+                err
+            )
+        })?;
+    }
     let index_raw = fs::read_to_string(&client_index)
         .map_err(|err| format!("failed to read {}: {}", client_index.display(), err))?;
     let template_html = extract_template_html(&entry_source).unwrap_or_default();
@@ -507,9 +518,17 @@ fn ensure_web_project_layout(project_root: &Path) -> Result<(), String> {
         }
     }
 
-    let index = project_root.join("public").join("index.html");
-    if !index.is_file() {
-        return Err(format!("missing required file: {}", index.display()));
+    if project_root.join("public").join("index.html").is_file() {
+        return Err(
+            "public/index.html collides with the root index.html document".to_string(),
+        );
+    }
+
+    if !project_root.join("index.html").is_file() {
+        return Err(format!(
+            "missing required file: {}",
+            project_root.join("index.html").display()
+        ));
     }
 
     let json = load_deka_json(project_root)?;
@@ -533,6 +552,16 @@ fn ensure_web_project_layout(project_root: &Path) -> Result<(), String> {
 fn resolve_web_entry(project_root: &Path) -> Result<PathBuf, String> {
     let json = load_deka_json(project_root)?;
 
+    if runtime_core::framework::is_app_router_project(project_root) {
+        let page = project_root.join("app").join("page.dsx");
+        let page = if page.is_file() {
+            page
+        } else {
+            project_root.join("app").join("page.ds")
+        };
+        return Ok(page);
+    }
+
     let entry = json
         .get("serve")
         .and_then(|v| v.get("entry"))
@@ -540,7 +569,7 @@ fn resolve_web_entry(project_root: &Path) -> Result<PathBuf, String> {
         .filter(|v| !v.trim().is_empty())
         .ok_or_else(|| {
             format!(
-                "web build requires deka.json serve.entry (example: \"app/main.ds\") in {}",
+                "web build requires index.html + app/page.dsx, or deka.json serve.entry, in {}",
                 project_root.join("deka.json").display()
             )
         })?;
