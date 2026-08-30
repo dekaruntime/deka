@@ -61,6 +61,16 @@ pub fn write_island_client_assets(
         fs::write(ui_dir.join(name), source.as_bytes())
             .map_err(|err| format!("failed to write {}: {err}", ui_dir.join(name).display()))?;
     }
+    fs::write(
+        ui_dir.join("server-stub.js"),
+        b"export function renderToString() { throw new Error(\"ui/server is not available in the browser\"); }\n",
+    )
+    .map_err(|err| {
+        format!(
+            "failed to write {}: {err}",
+            ui_dir.join("server-stub.js").display()
+        )
+    })?;
 
     for directive in ["load", "idle", "visible"] {
         let group: Vec<&ClientIsland> = islands
@@ -85,9 +95,6 @@ pub fn write_island_client_assets(
             js = rewrite_ui_imports(&js);
             let mod_name = format!("island-{directive}-{idx}.js");
             idx += 1;
-            fs::write(assets_dir.join(&mod_name), js.as_bytes()).map_err(|err| {
-                format!("failed to write {}: {err}", assets_dir.join(&mod_name).display())
-            })?;
             let names: Vec<&str> = group
                 .iter()
                 .filter(|item| item.file == island.file)
@@ -100,6 +107,12 @@ pub fn write_island_client_assets(
                 }
             }
             let spec_list = unique.join(", ");
+            if !spec_list.is_empty() {
+                js.push_str(&format!("\nexport {{ {spec_list} }};\n"));
+            }
+            fs::write(assets_dir.join(&mod_name), js.as_bytes()).map_err(|err| {
+                format!("failed to write {}: {err}", assets_dir.join(&mod_name).display())
+            })?;
             imports.push_str(&format!(
                 "import {{ {spec_list} }} from \"./{mod_name}\";\n"
             ));
@@ -157,4 +170,5 @@ fn rewrite_ui_imports(js: &str) -> String {
         .replace("from \"ui/client\"", "from \"./ui/client.js\"")
         .replace("from \"ui/form\"", "from \"./ui/form.js\"")
         .replace("from \"ui/suspense\"", "from \"./ui/suspense.js\"")
+        .replace("from \"ui/server\"", "from \"./ui/server-stub.js\"")
 }

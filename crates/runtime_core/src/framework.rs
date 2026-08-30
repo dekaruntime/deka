@@ -68,6 +68,7 @@ pub const DEKA_APP_HOLE: &str = "<!--deka-app-->";
 pub const DEKA_SCRIPTS_HOLE: &str = "<!--deka-scripts-->";
 pub const FRAGMENT_ACCEPT: &str = "text/x-deka-fragment";
 pub const FRAGMENT_ACCEPT_LEGACY: &str = "text/x-phpx-fragment";
+pub const STATIC_ACCEPT: &str = "text/x-deka-static";
 pub const MIDDLEWARE_FILE: &str = "middleware.ds";
 /// Middleware App() uses status 0 to mean "continue to api/ or app/".
 pub const MIDDLEWARE_NEXT_STATUS: u16 = 0;
@@ -102,11 +103,7 @@ pub fn normalize_request_path(raw: &str) -> String {
     if trimmed.is_empty() {
         return "/".to_string();
     }
-    let mut path = if trimmed.starts_with('/') {
-        trimmed.to_string()
-    } else {
-        format!("/{trimmed}")
-    };
+    let mut path = format!("/{}", trimmed.trim_start_matches('/'));
     if path.len() > 1 {
         while path.ends_with('/') {
             path.pop();
@@ -343,9 +340,24 @@ pub fn exported_http_methods(path: &Path) -> Vec<String> {
 }
 
 fn exports_fn_named(src: &str, name: &str) -> bool {
-    let needle = format!("export fn {name}");
+    export_fn_needles(name)
+        .into_iter()
+        .any(|needle| contains_export_fn(src, &needle))
+        || export_list_contains(src, name)
+}
+
+fn export_fn_needles(name: &str) -> Vec<String> {
+    vec![
+        format!("export fn {name}"),
+        format!("export async fn {name}"),
+        format!("export function {name}"),
+        format!("export async function {name}"),
+    ]
+}
+
+fn contains_export_fn(src: &str, needle: &str) -> bool {
     let mut rest = src;
-    while let Some(at) = rest.find(&needle) {
+    while let Some(at) = rest.find(needle) {
         let after = &rest[at + needle.len()..];
         let boundary = match after.chars().next() {
             None => true,
@@ -355,6 +367,29 @@ fn exports_fn_named(src: &str, name: &str) -> bool {
             return true;
         }
         rest = &rest[at + 1..];
+    }
+    false
+}
+
+fn export_list_contains(src: &str, name: &str) -> bool {
+    let mut rest = src;
+    while let Some(at) = rest.find("export {") {
+        let after = &rest[at + "export {".len()..];
+        let Some(end) = after.find('}') else {
+            break;
+        };
+        for part in after[..end].split(',') {
+            let ident = part
+                .trim()
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim_matches('|');
+            if ident == name {
+                return true;
+            }
+        }
+        rest = &after[end.saturating_add(1)..];
     }
     false
 }
@@ -715,29 +750,42 @@ fn push_classes(chunk: &str, out: &mut BTreeSet<String>) {
 }
 
 fn collect_import_paths(src: &str, pred: impl Fn(&str) -> bool) -> Vec<String> {
+    let stripped = strip_ds_comments(src);
     let mut out = Vec::new();
-    for line in src.lines() {
-        let line = line.trim().trim_end_matches(';').trim();
-        let Some(rest) = line.strip_prefix("import ") else {
-            continue;
-        };
-        let rest = rest.trim();
-        let spec = if rest.starts_with('"') || rest.starts_with('\'') {
-            let quote = rest.as_bytes()[0] as char;
-            rest.trim_start_matches(quote)
-                .split(quote)
-                .next()
-                .unwrap_or("")
-        } else if let Some((_, from)) = rest.split_once(" from ") {
-            from.trim().trim_matches(|c| c == '"' || c == '\'')
-        } else {
-            continue;
-        };
-        if pred(spec) {
-            out.push(spec.to_string());
+    let mut rest = stripped.as_str();
+    while let Some(at) = rest.find("import ") {
+        let after = rest[at + "import ".len()..].trim_start();
+        if let Some(spec) = import_specifier(after) {
+            if pred(spec) {
+                out.push(spec.to_string());
+            }
         }
+        rest = &rest[at + 1..];
     }
     out
+}
+
+fn import_specifier(after_import: &str) -> Option<&str> {
+    let trimmed = after_import.trim_start();
+    if trimmed.starts_with('"') || trimmed.starts_with('\'') {
+        return quoted_prefix(trimmed);
+    }
+    let from = trimmed.find(" from ")?;
+    quoted_prefix(trimmed[from + 6..].trim_start())
+}
+
+fn quoted_prefix(s: &str) -> Option<&str> {
+    let bytes = s.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+    let quote = bytes[0];
+    if quote != b'"' && quote != b'\'' {
+        return None;
+    }
+    let rest = &s[1..];
+    let end = rest.find(quote as char)?;
+    Some(&rest[..end])
 }
 
 fn resolve_relative(from_file: &Path, spec: &str) -> Option<String> {
@@ -897,14 +945,19 @@ pub fn write_defer_router_entry(project_root: &Path) -> Result<PathBuf, String> 
     std::fs::create_dir_all(&cache_dir)
         .map_err(|err| format!("failed to create {}: {err}", cache_dir.display()))?;
     let entry = cache_dir.join("defer-entry.dsx");
-    let source = generate_defer_entry(&entry, &deferred)?;
+    let source = generate_defer_entry(&entry, project_root, &deferred)?;
     std::fs::write(&entry, source.as_bytes())
         .map_err(|err| format!("failed to write {}: {err}", entry.display()))?;
     Ok(entry)
 }
 
-fn generate_defer_entry(entry: &Path, deferred: &[DeferredIsland]) -> Result<String, String> {
-    let mut imports = String::new();
+fn generate_defer_entry(
+    entry: &Path,
+    project_root: &Path,
+    deferred: &[DeferredIsland],
+) -> Result<String, String> {
+    let mut imports =
+        "import { renderToString, verifyDeferIsland } from \"ui/server\"\n".to_string();
     let mut branches = String::new();
     let mut seen = BTreeSet::new();
     for (idx, item) in deferred.iter().enumerate() {
@@ -913,17 +966,19 @@ fn generate_defer_entry(entry: &Path, deferred: &[DeferredIsland]) -> Result<Str
             continue;
         }
         let alias = format!("Defer_{idx}");
-        let rel = pathdiff_dsx(entry, Path::new(&item.file));
+        let rel = json_str(&pathdiff_dsx(entry, Path::new(&item.file)))?;
+        let name = json_str(&item.component)?;
         imports.push_str(&format!(
-            "import {{ {} as {alias} }} from \"{rel}\"\n",
+            "import {{ {} as {alias} }} from {rel}\n",
             item.component
         ));
         branches.push_str(&format!(
-            "                    if (item.name === \"{}\") tree = {alias}(item.props || {{}});\n",
-            item.component
+            "                    if (item.name === {name}) tree = {alias}(item.props || {{}});\n"
         ));
     }
-    let cache_control = json_str(&defer_cache_header(deferred))?;
+    let cache_control = json_str(&format!("private, {}", defer_cache_header(deferred)))?;
+    let bad_json = json_str(r#"{"error":"invalid json"}"#)?;
+    let secret = json_str(&ensure_defer_secret(project_root)?)?;
     Ok(format!(
         r#"{imports}
 interface RequestHeaders {{ accept: string }}
@@ -932,20 +987,34 @@ interface Response {{ status: number, body: string }}
 
 async fn App(request: Request): Promise<Response> {{
     const boxed = unsafe {{
-        (async () => {{
-            const payload = JSON.parse(request.body || "{{}}");
-            const islands = Array.isArray(payload.islands) ? payload.islands : [];
+        return (async () => {{
+            globalThis.__DEKA_DEFER_SECRET = {secret};
+            let payload = {{}};
+            try {{ payload = JSON.parse(request.body || "{{}}"); }} catch (err) {{
+                return {{ status: 400, body: {bad_json}, headers: {{ "content-type": "application/json", "cache-control": "private, no-store" }} }};
+            }}
+            const islands = Array.isArray(payload.islands) ? payload.islands.slice(0, 32) : [];
             const fragments = {{}};
+            const seen = {{}};
             for (const item of islands) {{
+                const key = String(item && (item.id || item.name) || "");
+                if (!key || seen[key]) continue;
+                seen[key] = true;
+                const propsJson = JSON.stringify(item && item.props ? item.props : {{}});
+                if (!verifyDeferIsland(item && item.name, propsJson, item && item.id, item && item.mac)) continue;
                 let tree = null;
 {branches}                if (!tree) continue;
-                const rendered = deka.ui.renderToString(tree);
-                fragments[item.id || item.name] = rendered && rendered.html ? rendered.html : "";
+                const rendered = renderToString(tree);
+                fragments[key] = rendered && rendered.html ? rendered.html : "";
             }}
-            return {{ status: 200, body: JSON.stringify({{ fragments }}), headers: {{ "cache-control": {cache_control} }} }};
-        }})()
+            return {{ status: 200, body: JSON.stringify({{ fragments }}), headers: {{ "content-type": "application/json", "cache-control": {cache_control}, "vary": "cookie" }} }};
+        }})();
     }}
-    return await boxed
+    const prom = match (boxed) {{
+        Ok(p) => p,
+        Err(_) => {{ status: 500, body: "Internal Server Error" }},
+    }}
+    return await prom
 }}
 export {{ App }}
 "#
@@ -1021,11 +1090,34 @@ pub fn write_app_router_entry(project_root: &Path) -> Result<PathBuf, String> {
     std::fs::create_dir_all(&cache_dir)
         .map_err(|err| format!("failed to create {}: {err}", cache_dir.display()))?;
     let entry = cache_dir.join("serve-entry.dsx");
-    let source = generate_serve_entry(&entry, &manifest, &index_html, &scripts, &css_plan)?;
+    let defer_secret_js = if deferred.is_empty() {
+        String::new()
+    } else {
+        let secret = json_str(&ensure_defer_secret(project_root)?)?;
+        format!("    unsafe {{ globalThis.__DEKA_DEFER_SECRET = {secret} }}\n")
+    };
+    let source = generate_serve_entry(
+        &entry,
+        &manifest,
+        &index_html,
+        &scripts,
+        &css_plan,
+        &defer_secret_js,
+    )?;
     std::fs::write(&entry, source.as_bytes())
         .map_err(|err| format!("failed to write {}: {err}", entry.display()))?;
-    let _ = write_api_router_entry(project_root);
-    let _ = write_middleware_router_entry(project_root);
+    if !scan_api_dir(&project_root.join("api")).is_empty() {
+        write_api_router_entry(project_root)?;
+    }
+    if middleware_path(project_root).is_some() {
+        write_middleware_router_entry(project_root)?;
+    } else {
+        let stale = project_root
+            .join(".cache")
+            .join("dekascript")
+            .join("middleware-entry.ds");
+        let _ = std::fs::remove_file(stale);
+    }
     Ok(entry)
 }
 
@@ -1066,7 +1158,23 @@ pub fn request_path_from_url(url: &str) -> String {
     } else {
         "/"
     };
-    path.to_string()
+    collapse_leading_slashes(path)
+}
+
+fn collapse_leading_slashes(path: &str) -> String {
+    if path.is_empty() {
+        return "/".to_string();
+    }
+    let trailing = path.len() > 1 && path.ends_with('/');
+    let trimmed = path.trim_start_matches('/');
+    if trimmed.is_empty() {
+        return "/".to_string();
+    }
+    let mut out = format!("/{trimmed}");
+    if trailing && !out.ends_with('/') {
+        out.push('/');
+    }
+    out
 }
 
 /// If the request path is not in canonical trailing-slash form, return the
@@ -1099,7 +1207,9 @@ pub fn trailing_slash_redirect(url: &str, want_trailing: bool) -> Option<String>
 
 pub fn cloudflare_redirects(want_trailing: bool) -> &'static str {
     if want_trailing {
-        "# Generated by deka build. Canonical: trailing slash (except /).\n/* /:splat/ 301\n"
+        // A splat add-slash rule loops (`/blog/` → `/blog//`). Serve and the
+        // Worker own the add-slash 301 instead.
+        "# Generated by deka build. Canonical: trailing slash (except /).\n# Add-slash is handled by the Worker / deka serve; a splat rule would loop.\n"
     } else {
         "# Generated by deka build. Canonical: no trailing slash (except /).\n/*/ /:splat 301\n"
     }
@@ -1152,18 +1262,95 @@ pub fn pattern_hits(pattern: &str, path: &str) -> bool {
 
 pub fn skip_middleware_path(path: &str) -> bool {
     let path = normalize_request_path(path);
-    path == "/assets"
-        || path.starts_with("/assets/")
-        || path == "/_deka/defer"
-        || path.starts_with("/_deka/")
+    path == "/assets" || path.starts_with("/assets/")
 }
 
 pub fn public_file_exists(project_root: &Path, path: &str) -> bool {
     let rel = path.trim_start_matches('/');
-    if rel.is_empty() || rel.contains("..") {
+    if rel.is_empty() || rel.contains('\0') {
         return false;
     }
-    project_root.join("public").join(rel).is_file()
+    let rel_path = Path::new(rel);
+    if rel_path.is_absolute()
+        || rel_path
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        return false;
+    }
+    let root = project_root.join("public");
+    let file = root.join(rel_path);
+    match (file.canonicalize(), root.canonicalize()) {
+        (Ok(file), Ok(root)) => file.starts_with(&root) && file.is_file(),
+        _ => file.is_file(),
+    }
+}
+
+pub fn collect_public_rel_paths(project_root: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    let root = project_root.join("public");
+    collect_public_rel_paths_walk(&root, &root, &mut out);
+    out.sort();
+    out
+}
+
+fn collect_public_rel_paths_walk(dir: &Path, base: &Path, out: &mut Vec<String>) {
+    let Ok(reader) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in reader.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_public_rel_paths_walk(&path, base, out);
+            continue;
+        }
+        if let Ok(rel) = path.strip_prefix(base) {
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            if !rel.is_empty() {
+                out.push(format!("/{rel}"));
+            }
+        }
+    }
+}
+
+fn ensure_defer_secret(project_root: &Path) -> Result<String, String> {
+    let cache_dir = project_root.join(".cache").join("dekascript");
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|err| format!("failed to create {}: {err}", cache_dir.display()))?;
+    let path = cache_dir.join("defer.key");
+    if let Ok(existing) = std::fs::read_to_string(&path) {
+        let trimmed = existing.trim();
+        if trimmed.len() >= 32 {
+            return Ok(trimmed.to_string());
+        }
+    }
+    let secret = random_hex_32();
+    std::fs::write(&path, secret.as_bytes())
+        .map_err(|err| format!("failed to write {}: {err}", path.display()))?;
+    Ok(secret)
+}
+
+fn random_hex_32() -> String {
+    let mut buf = [0u8; 32];
+    #[cfg(unix)]
+    {
+        if let Ok(mut file) = std::fs::File::open("/dev/urandom") {
+            use std::io::Read;
+            let _ = file.read_exact(&mut buf);
+        }
+    }
+    if buf.iter().all(|b| *b == 0) {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(1);
+        let mut state = nanos as u64 ^ std::process::id() as u64;
+        for byte in &mut buf {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            *byte = (state >> 32) as u8;
+        }
+    }
+    buf.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// `.dsx` cannot import `.ds`, so middleware dispatch lives in a sibling file.
@@ -1199,6 +1386,7 @@ fn generate_serve_entry(
     index_html: &str,
     scripts: &str,
     css_plan: &CssPlan,
+    defer_secret_js: &str,
 ) -> Result<String, String> {
     let (doc_head, doc_mid, doc_tail) = split_document(index_html, scripts);
     let doc_head = json_str(&doc_head)?;
@@ -1264,7 +1452,7 @@ fn generate_serve_entry(
         let tree = wrap_layouts(&manifest.entries, &page.route, &alias("Page", &page.route));
         let head = with_css_links(css_plan, &page.route, head_concat(&manifest.entries, page, false))?;
         branches.push_str(&format!(
-            "    if ({cond}) {{\n        return await respond({tree}, 200, fragment, {head})\n    }}\n"
+            "    if ({cond}) {{\n        return await respond({tree}, 200, fragment, staticBuild, {head})\n    }}\n"
         ));
     }
     let not_found_tree = if manifest.not_found.is_some() {
@@ -1359,13 +1547,29 @@ async fn stream_html(tree: Component): Promise<string> {{
     const boxed = unsafe {{ deka.ui.renderToStreamHtml(tree) }}
     const prom = match (boxed) {{
         Ok(p) => p,
-        Err(e) => e.message,
+        Err(_) => "",
         _ => "",
     }}
     return await prom
 }}
 
-async fn respond(tree: Component, status: number, fragment: boolean, headHtml: string): Promise<Response> {{
+async fn static_html(tree: Component): Promise<string> {{
+    const boxed = unsafe {{ deka.ui.renderToStringAsync(tree) }}
+    const prom = match (boxed) {{
+        Ok(p) => p,
+        Err(_) => {{ html: "" }},
+        _ => {{ html: "" }},
+    }}
+    const rendered = await prom
+    const html = unsafe {{ rendered.html }}
+    return match (html) {{
+        Ok(h) => h,
+        Err(_) => "",
+        _ => "",
+    }}
+}}
+
+async fn respond(tree: Component, status: number, fragment: boolean, staticBuild: boolean, headHtml: string): Promise<Response> {{
     if (fragment) {{
         const result = unsafe {{ deka.ui.renderToString(tree) }}
         const appHtml = match (result) {{
@@ -1378,15 +1582,20 @@ async fn respond(tree: Component, status: number, fragment: boolean, headHtml: s
             Err(_) => {{ status: 500, body: "Internal Server Error" }},
         }}
     }}
+    if (staticBuild) {{
+        const appHtml = await static_html(tree)
+        return {{ status: status, body: {doc_head} + headHtml + {doc_mid} + appHtml + {doc_tail} }}
+    }}
     const appHtml = await stream_html(tree)
     return {{ status: status, body: {doc_head} + headHtml + {doc_mid} + appHtml + {doc_tail} }}
 }}
 
 async fn App(request: Request): Promise<Response> {{
-    const path = request.pathname == "" ? "/" : request.pathname
+{defer_secret_js}    const path = request.pathname == "" ? "/" : request.pathname
     const accept = request.headers.accept
     const fragment = accept == "{FRAGMENT_ACCEPT}" || accept == "{FRAGMENT_ACCEPT_LEGACY}"
-{branches}    return await respond({not_found_tree}, 404, fragment, {not_found_head})
+    const staticBuild = accept == "{STATIC_ACCEPT}"
+{branches}    return await respond({not_found_tree}, 404, fragment, staticBuild, {not_found_head})
 }}
 export {{ App }}
 "#
@@ -1422,26 +1631,27 @@ fn generate_api_entry(entry: &Path, api_entries: &[FrameworkEntry]) -> Result<St
         for method in &methods {
             let fn_name = format!("{method}_{stem}");
             inner.push_str(&format!(
-                "        if (request.method == \"{method}\") {{\n            const res = unsafe {{ {fn_name}(request) }}\n            return match (res) {{\n                Ok(r) => r,\n                Err(_) => {{ status: 500, body: \"Internal Server Error\" }},\n            }}\n        }}\n"
+                "        if (request.method == \"{method}\") {{\n            const boxed = unsafe {{ {fn_name}(request) }}\n            return match (boxed) {{\n                Ok(r) => r,\n                Err(_) => {{ status: 500, body: \"Internal Server Error\", headers: {{ location: \"\" }} }},\n            }}\n        }}\n"
             ));
         }
         if has_get && !has_head {
             inner.push_str(&format!(
-                "        if (request.method == \"HEAD\") {{\n            const res = unsafe {{ GET_{stem}(request) }}\n            return match (res) {{\n                Ok(r) => unsafe {{ {{ status: r.status, headers: r.headers, body: \"\" }} }},\n                Err(_) => {{ status: 500, body: \"Internal Server Error\" }},\n            }}\n        }}\n"
+                "        if (request.method == \"HEAD\") {{\n            const boxed = unsafe {{ GET_{stem}(request) }}\n            return match (boxed) {{\n                Ok(r) => r,\n                Err(_) => {{ status: 500, body: \"Internal Server Error\", headers: {{ location: \"\" }} }},\n            }}\n        }}\n"
             ));
         }
-        inner.push_str("        return { status: 405, body: \"Method not allowed\" }\n");
+        inner.push_str("        return { status: 405, body: \"Method not allowed\", headers: { location: \"\" } }\n");
         branches.push_str(&format!("    if ({cond}) {{\n{inner}    }}\n"));
     }
     Ok(format!(
         r#"{imports}
 interface RequestHeaders {{ accept: string }}
-interface Request {{ url: string, pathname: string, method: string, headers: RequestHeaders }}
-interface Response {{ status: number, body: string }}
+interface ResponseHeaders {{ location: string }}
+interface Request {{ url: string, pathname: string, method: string, headers: RequestHeaders, body: string }}
+interface Response {{ status: number, body: string, headers: ResponseHeaders }}
 
 export fn App(request: Request): Response {{
     const path = request.pathname == "" ? "/" : request.pathname
-{branches}    return {{ status: 404, body: "Not found" }}
+{branches}    return {{ status: 404, body: "Not found", headers: {{ location: "" }} }}
 }}
 "#
     ))
@@ -1494,12 +1704,12 @@ fn generate_worker_entry(entry: &Path, project_root: &Path) -> Result<String, St
             for method in &methods {
                 let fn_name = format!("{method}_{stem}");
                 inner.push_str(&format!(
-                    "        if (request.method == \"{method}\") {{\n            const res = unsafe {{ {fn_name}(request) }}\n            return match (res) {{\n                Ok(r) => r,\n                Err(_) => {{ status: 500, body: \"Internal Server Error\", headers: {{ location: \"\" }} }},\n            }}\n        }}\n"
+                    "        if (request.method == \"{method}\") {{\n            const boxed = unsafe {{ {fn_name}(request) }}\n            return match (boxed) {{\n                Ok(r) => r,\n                Err(_) => {{ status: 500, body: \"Internal Server Error\", headers: {{ location: \"\" }} }},\n            }}\n        }}\n"
                 ));
             }
             if has_get && !has_head {
                 inner.push_str(&format!(
-                    "        if (request.method == \"HEAD\") {{\n            const res = unsafe {{ GET_{stem}(request) }}\n            return match (res) {{\n                Ok(r) => unsafe {{ {{ status: r.status, body: \"\", headers: r.headers }} }},\n                Err(_) => {{ status: 500, body: \"Internal Server Error\", headers: {{ location: \"\" }} }},\n            }}\n        }}\n"
+                    "        if (request.method == \"HEAD\") {{\n            const boxed = unsafe {{ GET_{stem}(request) }}\n            return match (boxed) {{\n                Ok(r) => r,\n                Err(_) => {{ status: 500, body: \"Internal Server Error\", headers: {{ location: \"\" }} }},\n            }}\n        }}\n"
                 ));
             }
             inner.push_str(
@@ -1549,7 +1759,7 @@ fn generate_worker_entry(entry: &Path, project_root: &Path) -> Result<String, St
         r#"{imports}
 interface RequestHeaders {{ accept: string }}
 interface ResponseHeaders {{ location: string }}
-interface Request {{ url: string, pathname: string, method: string, headers: RequestHeaders }}
+interface Request {{ url: string, pathname: string, method: string, headers: RequestHeaders, body: string }}
 interface Response {{ status: number, body: string, headers: ResponseHeaders }}
 
 {starts_with}
@@ -1614,12 +1824,12 @@ export fn App(request: Request): Response {{
     const raw = unsafe {{ middleware(request) }}
     const opt = match (raw) {{
         Ok(v) => v,
-        Err(e) => {{ __case: "Some", value: {{ status: 500, body: e.message, headers: {{ location: "" }} }} }},
+        Err(_) => {{ __case: "Some", value: {{ status: 500, body: "Internal Server Error", headers: {{ location: "" }} }} }},
     }}
     const unwrapped = unsafe {{ opt.__case == "Some" ? opt.value : {{ status: 0, body: "", headers: {{ location: "" }} }} }}
     return match (unwrapped) {{
         Ok(r) => r,
-        Err(e) => {{ status: 500, body: e.message, headers: {{ location: "" }} }},
+        Err(_) => {{ status: 500, body: "Internal Server Error", headers: {{ location: "" }} }},
     }}
 }}
 "#,
@@ -1697,17 +1907,57 @@ fn alias(prefix: &str, route: &str) -> String {
         return out;
     }
     out.push('_');
-    for ch in route.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch);
-        } else {
-            out.push('_');
-        }
-    }
+    out.push_str(&ident_slug(route));
     out
 }
 
+fn ident_slug(route: &str) -> String {
+    let mut out = String::new();
+    for ch in route.trim_matches('/').chars() {
+        match ch {
+            '/' => out.push_str("_s_"),
+            '_' => out.push_str("_u_"),
+            '-' => out.push_str("_h_"),
+            '[' => out.push_str("_l_"),
+            ']' => out.push_str("_r_"),
+            c if c.is_ascii_alphanumeric() => out.push(c),
+            _ => out.push_str("_x_"),
+        }
+    }
+    if out.is_empty() {
+        "root".to_string()
+    } else {
+        out
+    }
+}
+
+fn assert_dynamic_route_supported(route: &str) -> Result<(), String> {
+    let parts: Vec<&str> = route
+        .trim_matches('/')
+        .split('/')
+        .filter(|p| !p.is_empty())
+        .collect();
+    let dynamic: Vec<(usize, &str)> = parts
+        .iter()
+        .enumerate()
+        .filter(|(_, part)| part.starts_with('['))
+        .map(|(i, part)| (i, *part))
+        .collect();
+    if dynamic.len() > 1 {
+        return Err(format!(
+            "v1 dynamic routes support one [param] at the end ({route})"
+        ));
+    }
+    if dynamic.len() == 1 && dynamic[0].0 != parts.len() - 1 {
+        return Err(format!(
+            "v1 dynamic routes require [param] as the last segment ({route})"
+        ));
+    }
+    Ok(())
+}
+
 fn path_condition(route: &str) -> Result<String, String> {
+    assert_dynamic_route_supported(route)?;
     if route == "/" {
         return Ok("path == \"/\" || path == \"\"".to_string());
     }
@@ -2246,7 +2496,7 @@ mod tests {
         ];
         let tree = wrap_layouts(&entries, "/blog", "Page_blog");
         assert!(
-            tree.contains("<Suspense fallback={<Loading__blog />}><Page_blog /></Suspense>"),
+            tree.contains("<Suspense fallback={<Loading_blog />}><Page_blog /></Suspense>"),
             "blog loading wraps the page, not the blog layout: {tree}"
         );
         assert!(
@@ -2280,7 +2530,7 @@ mod tests {
         ];
         let tree = wrap_layouts(&entries, "/blog/post", "Page_blog_post");
         assert!(
-            tree.contains("<Suspense fallback={<Loading__blog />}><Page_blog_post /></Suspense>"),
+            tree.contains("<Suspense fallback={<Loading_blog />}><Page_blog_post /></Suspense>"),
             "blog loading.dsx must wrap the child even without blog/layout.dsx: {tree}"
         );
     }
@@ -2428,5 +2678,149 @@ mod tests {
         assert_ne!(a, c);
         assert_ne!(b, c);
         assert_ne!(route_css_slug("/blog/[id]"), route_css_slug("/blog/[slug]"));
+    }
+
+    #[test]
+    fn alias_uses_ident_slug_so_paths_do_not_collide() {
+        assert_ne!(alias("Page", "/a/b"), alias("Page", "/a_b"));
+        assert_ne!(alias("Page", "/a-b"), alias("Page", "/a_b"));
+        assert!(
+            alias("Page", "/blog/[slug]")
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_'),
+            "generated import aliases must be identifiers: {}",
+            alias("Page", "/blog/[slug]")
+        );
+    }
+
+    #[test]
+    fn dynamic_routes_must_be_a_single_trailing_param() {
+        assert!(path_condition("/blog/[slug]").is_ok());
+        assert!(path_condition("/blog/[id]/comments").is_err());
+        assert!(path_condition("/[a]/[b]").is_err());
+    }
+
+    #[test]
+    fn trailing_slash_redirect_does_not_open_redirect() {
+        assert_eq!(
+            trailing_slash_redirect("//evil.com/foo/", false),
+            Some("/evil.com/foo".to_string())
+        );
+        assert_eq!(
+            trailing_slash_redirect("http://localhost//evil.com/foo/", false),
+            Some("/evil.com/foo".to_string())
+        );
+        let dest = trailing_slash_redirect("//evil.com/foo", true).unwrap();
+        assert!(dest.starts_with('/'));
+        assert!(!dest.starts_with("//"));
+    }
+
+    #[test]
+    fn cloudflare_redirects_true_does_not_emit_looping_splat() {
+        let rules = cloudflare_redirects(true);
+        assert!(!rules.contains("/* /:splat/"));
+        assert!(cloudflare_redirects(false).contains("/*/ /:splat 301"));
+    }
+
+    #[test]
+    fn skip_middleware_does_not_bypass_deka_defer() {
+        assert!(!skip_middleware_path("/_deka/defer"));
+        assert!(skip_middleware_path("/assets/islands-load.js"));
+    }
+
+    #[test]
+    fn public_file_exists_rejects_traversal() {
+        let tmp = std::env::temp_dir().join(format!(
+            "deka_pub_trav_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(tmp.join("public")).unwrap();
+        std::fs::write(tmp.join("secret.env"), "nope").unwrap();
+        std::fs::write(tmp.join("public/ok.css"), "body{}").unwrap();
+        assert!(public_file_exists(&tmp, "/ok.css"));
+        assert!(!public_file_exists(&tmp, "/../secret.env"));
+        assert!(!public_file_exists(&tmp, "//secret.env"));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn exports_head_does_not_match_header() {
+        let tmp = std::env::temp_dir().join(format!(
+            "deka_head_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("page.dsx");
+        std::fs::write(&path, "export fn header() { return 1 }\n").unwrap();
+        assert!(!exports_head(&path));
+        std::fs::write(&path, "export fn head() { return <title>x</title> }\n").unwrap();
+        assert!(exports_head(&path));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn exported_http_methods_sees_async_and_export_list() {
+        let tmp = std::env::temp_dir().join(format!(
+            "deka_api_async_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("route.ds");
+        std::fs::write(
+            &path,
+            "async fn GET(request: Request): Promise<Response> { return { status: 200, body: \"ok\" } }\nexport { GET }\n",
+        )
+        .unwrap();
+        assert_eq!(exported_http_methods(&path), vec!["GET".to_string()]);
+        std::fs::write(
+            &path,
+            "export async fn POST(request: Request): Promise<Response> { return { status: 200, body: \"ok\" } }\n",
+        )
+        .unwrap();
+        assert_eq!(exported_http_methods(&path), vec!["POST".to_string()]);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn collect_import_paths_reads_multiline_from() {
+        let src = "import {\n  Card\n} from \"./Card.dsx\"\nimport \"./theme.css\"\n";
+        let ds = collect_import_paths(src, |p| p.ends_with(".dsx"));
+        assert_eq!(ds, vec!["./Card.dsx".to_string()]);
+        let css = collect_import_paths(src, |p| p.ends_with(".css"));
+        assert_eq!(css, vec!["./theme.css".to_string()]);
+    }
+
+    #[test]
+    fn generate_defer_entry_returns_async_iife_and_caps_batch() {
+        let tmp = std::env::temp_dir().join(format!(
+            "deka_defer_gen_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(tmp.join("app")).unwrap();
+        std::fs::write(
+            tmp.join("app/page.dsx"),
+            "export fn Badge() { return <strong>42</strong> }\nexport fn Page() { return <Badge server:defer><span slot=\"fallback\">.</span></Badge> }\n",
+        )
+        .unwrap();
+        let entry = write_defer_router_entry(&tmp).expect("write defer-entry");
+        let source = std::fs::read_to_string(&entry).expect("read defer-entry");
+        assert!(source.contains("return (async () =>"));
+        assert!(source.contains("slice(0, 32)"));
+        assert!(source.contains("verifyDeferIsland"));
+        assert!(source.contains("from \"ui/server\""));
+        assert!(!source.contains("headers: { \\\"cache-control\\\""));
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

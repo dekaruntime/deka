@@ -941,6 +941,7 @@ dependencies = [
  "deka_compile",
  "deka_host",
  "deka_syntax",
+ "deka_ui",
  "dekascript_lsp",
  "deno_task_shell",
  "flate2",

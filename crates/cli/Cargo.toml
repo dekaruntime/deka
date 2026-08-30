@@ -49,6 +49,7 @@ glob = "0.3.1"
 serde_yaml = "0.9"
 bundler = { path = "../bundler", optional = true }
 deka-fmt = { path = "../deka-fmt", optional = true }
+deka_ui = { path = "../deka_ui" }
 libc = "0.2"
 
 [dev-dependencies]

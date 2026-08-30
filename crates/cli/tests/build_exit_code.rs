@@ -347,6 +347,10 @@ fn build_serve_entry_uses_render_to_stream_for_documents() {
         "documents should stream via renderToStreamHtml: {entry}"
     );
     assert!(
+        entry.contains("renderToStringAsync") && entry.contains("staticBuild"),
+        "dist/ prerender should use renderToStringAsync via staticBuild: {entry}"
+    );
+    assert!(
         entry.contains("async fn App"),
         "App must be async so stream chunks can flush: {entry}"
     );
@@ -615,6 +619,60 @@ fn build_server_defer_without_fallback_fails() {
     assert!(
         combined.contains("slot=\"fallback\"") || combined.contains("fallback"),
         "error should mention the required fallback slot: {combined}"
+    );
+}
+
+#[test]
+fn build_worker_dispatches_defer_and_copies_headers() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    fs::write(
+        project.path().join("app").join("page.dsx"),
+        "export fn Badge() {\n    return <strong>42</strong>;\n}\nexport fn Page() {\n    return <main><Badge server:defer cache=\"60s\"><span slot=\"fallback\">.</span></Badge></main>;\n}\n",
+    )
+    .expect("write defer page");
+    fs::create_dir_all(project.path().join("public")).expect("mkdir public");
+    fs::write(project.path().join("public").join("ok.css"), "body{}").expect("write public css");
+    let (success, combined) = run_build(project.path());
+    assert!(success, "deka build should succeed with server:defer: {combined}");
+    let worker = fs::read_to_string(project.path().join("dist").join("_worker.js"))
+        .expect("read dist/_worker.js");
+    assert!(
+        worker.contains("/_deka/defer"),
+        "worker must dispatch the defer endpoint: {worker}"
+    );
+    assert!(
+        worker.contains("request.text()") || worker.contains("await request.text()"),
+        "worker must read POST bodies: {worker}"
+    );
+    assert!(
+        worker.contains("ok.css") || worker.contains("/ok.css"),
+        "worker must skip middleware for public files: {worker}"
+    );
+    assert!(
+        worker.contains("for (const key of Object.keys(rawHeaders))")
+            || worker.contains("Object.keys(rawHeaders)"),
+        "worker must copy response headers: {worker}"
+    );
+}
+
+#[test]
+fn build_trailing_slash_true_does_not_loop_redirects() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    let deka = fs::read_to_string(project.path().join("deka.json")).expect("read deka.json");
+    let patched = deka.replace(
+        "\"serve\": { \"mode\": \"ds\" }",
+        "\"serve\": { \"mode\": \"ds\", \"trailingSlash\": true }",
+    );
+    fs::write(project.path().join("deka.json"), patched).expect("write deka.json");
+    let (success, combined) = run_build(project.path());
+    assert!(success, "deka build should succeed: {combined}");
+    let redirects = fs::read_to_string(project.path().join("dist").join("_redirects"))
+        .expect("read dist/_redirects");
+    assert!(
+        !redirects.contains("/* /:splat/"),
+        "add-slash splat loops on Cloudflare: {redirects}"
     );
 }
 

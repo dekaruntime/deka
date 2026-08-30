@@ -81,13 +81,13 @@ async fn prerender_static_pages_async(
                     request_value: serde_json::json!({
                         "url": url,
                         "method": "GET",
-                        "headers": {},
+                        "headers": { "accept": "text/x-deka-static" },
                         "body": "",
                     }),
                     request_parts: Some(RequestParts {
                         url,
                         method: "GET".to_string(),
-                        headers: Vec::new(),
+                        headers: vec![("accept".to_string(), "text/x-deka-static".to_string())],
                         body: None,
                     }),
                     mode: ExecutionMode::Request,

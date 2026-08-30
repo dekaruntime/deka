@@ -16,16 +16,67 @@ export function registerIsland(name, component) {
 }
 
 function decodeB64(value) {
+  const raw = String(value || "");
+  if (!raw) return "";
+  let binary = "";
   try {
-    if (typeof atob === "function") return atob(value);
-  } catch (_) {}
-  return "";
+    if (typeof atob === "function") binary = atob(raw);
+  } catch (_) {
+    binary = "";
+  }
+  if (!binary) {
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const cleaned = raw.replace(/[^A-Za-z0-9+/=]/g, "");
+    const bytes = [];
+    for (let i = 0; i < cleaned.length; i += 4) {
+      const a = alphabet.indexOf(cleaned[i]);
+      const b = alphabet.indexOf(cleaned[i + 1]);
+      const c = alphabet.indexOf(cleaned[i + 2]);
+      const d = alphabet.indexOf(cleaned[i + 3]);
+      const triple = ((a & 63) << 18) | ((b & 63) << 12) | ((c & 63) << 6) | (d & 63);
+      bytes.push((triple >> 16) & 255);
+      if (cleaned[i + 2] !== "=") bytes.push((triple >> 8) & 255);
+      if (cleaned[i + 3] !== "=") bytes.push(triple & 255);
+    }
+    binary = String.fromCharCode.apply(null, bytes);
+  }
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i) & 255;
+  if (typeof TextDecoder === "function") {
+    try {
+      return new TextDecoder("utf-8").decode(bytes);
+    } catch (_) {}
+  }
+  let out = "";
+  for (let i = 0; i < bytes.length; i++) {
+    const c = bytes[i];
+    if (c < 0x80) out += String.fromCharCode(c);
+    else if (c < 0xe0 && i + 1 < bytes.length) {
+      out += String.fromCharCode(((c & 0x1f) << 6) | (bytes[i + 1] & 0x3f));
+      i += 1;
+    } else if (c < 0xf0 && i + 2 < bytes.length) {
+      out += String.fromCharCode(((c & 0x0f) << 12) | ((bytes[i + 1] & 0x3f) << 6) | (bytes[i + 2] & 0x3f));
+      i += 2;
+    } else if (i + 3 < bytes.length) {
+      const u = ((c & 0x07) << 18) | ((bytes[i + 1] & 0x3f) << 12) | ((bytes[i + 2] & 0x3f) << 6) | (bytes[i + 3] & 0x3f);
+      const v = u - 0x10000;
+      out += String.fromCharCode(0xd800 + (v >> 10), 0xdc00 + (v & 0x3ff));
+      i += 3;
+    }
+  }
+  return out;
+}
+
+function liveText(value) {
+  if (value == null || typeof value === "boolean") return "\u200b";
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  return "\u200b";
 }
 
 function parseMarker(text) {
   const raw = String(text || "").trim();
   const match = raw.match(
-    /^deka-island start:([A-Za-z0-9+/=]+) directive:([A-Za-z0-9+/=]+) props:([A-Za-z0-9+/=]+)(?: id:([A-Za-z0-9+/=]+))?(?: cache:([A-Za-z0-9+/=]+))?$/
+    /^deka-island start:([A-Za-z0-9+/=]+) directive:([A-Za-z0-9+/=]+) props:([A-Za-z0-9+/=]+)(?: id:([A-Za-z0-9+/=]+))?(?: cache:([A-Za-z0-9+/=]+))?(?: mac:([A-Za-z0-9+/=]+))?$/
   );
   if (!match) return null;
   let props = {};
@@ -40,6 +91,7 @@ function parseMarker(text) {
     props,
     id: match[4] ? decodeB64(match[4]) : "",
     cache: match[5] ? decodeB64(match[5]) : "",
+    mac: match[6] ? decodeB64(match[6]) : "",
   };
 }
 
@@ -111,9 +163,19 @@ function mismatch(diagnostics, message) {
 function walk(node, dom, diagnostics) {
   if (node == null || typeof node === "boolean") return;
   if (isLive(node)) {
+    let raw;
+    try {
+      raw = node.read();
+    } catch (_) {
+      return;
+    }
+    if (isComponentNode(raw) || Array.isArray(raw)) {
+      walk(raw, dom, diagnostics);
+      return;
+    }
     let value = "";
     try {
-      value = String(node.read());
+      value = liveText(raw);
     } catch (_) {
       return;
     }
@@ -137,7 +199,7 @@ function walk(node, dom, diagnostics) {
     }
     effect(() => {
       try {
-        textNode.textContent = String(node.read());
+        textNode.textContent = liveText(node.read());
       } catch (_) {}
     });
     return;
@@ -252,6 +314,7 @@ function fetchDeferred(items) {
       id: item.id || item.name,
       name: item.name,
       props: item.props || {},
+      mac: item.mac || "",
     })),
   });
   fetch("/_deka/defer", {

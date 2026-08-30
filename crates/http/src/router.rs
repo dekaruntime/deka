@@ -237,12 +237,25 @@ fn try_asset_response(state: &Arc<RuntimeState>, path: &str) -> Option<Response>
         return None;
     }
     let rel = path.trim_start_matches("/assets/");
-    if rel.is_empty() || rel.contains("..") {
+    if rel.is_empty() || rel.contains('\0') {
+        return None;
+    }
+    let rel_path = std::path::Path::new(rel);
+    if rel_path.is_absolute()
+        || rel_path
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
         return None;
     }
     let entry = state.handler_entry.as_ref()?;
     let cache_assets = std::path::Path::new(entry).parent()?.join("assets");
-    let file = cache_assets.join(rel);
+    let file = cache_assets.join(rel_path);
+    let file = std::fs::canonicalize(&file).ok()?;
+    let root = std::fs::canonicalize(&cache_assets).ok()?;
+    if !file.starts_with(&root) {
+        return None;
+    }
     let bytes = std::fs::read(&file).ok()?;
     let ctype = match file.extension().and_then(|e| e.to_str()) {
         Some("js") => "text/javascript; charset=utf-8",

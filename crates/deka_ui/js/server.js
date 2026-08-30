@@ -14,21 +14,140 @@ function escapeHtml(text) {
     .replace(/'/g, "&#39;");
 }
 
+function utf8Bytes(str) {
+  if (typeof TextEncoder === "function") return Array.from(new TextEncoder().encode(String(str)));
+  const s = String(str);
+  const out = [];
+  for (let i = 0; i < s.length; i++) {
+    let c = s.charCodeAt(i);
+    if (c < 0x80) out.push(c);
+    else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 0x3f));
+    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length) {
+      i += 1;
+      c = 0x10000 + ((c & 0x3ff) << 10) + (s.charCodeAt(i) & 0x3ff);
+      out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 0x3f), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f));
+    } else {
+      out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f));
+    }
+  }
+  return out;
+}
+
 function base64Encode(str) {
-  if (typeof btoa === "function") return btoa(str);
+  const bytes = utf8Bytes(str);
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   let output = "";
-  for (let i = 0; i < str.length; i += 3) {
-    const a = str.charCodeAt(i);
-    const b = i + 1 < str.length ? str.charCodeAt(i + 1) : 0;
-    const c = i + 2 < str.length ? str.charCodeAt(i + 2) : 0;
+  for (let i = 0; i < bytes.length; i += 3) {
+    const a = bytes[i];
+    const b = i + 1 < bytes.length ? bytes[i + 1] : 0;
+    const c = i + 2 < bytes.length ? bytes[i + 2] : 0;
     const triple = (a << 16) | (b << 8) | c;
     output += alphabet[(triple >> 18) & 63];
     output += alphabet[(triple >> 12) & 63];
-    output += i + 1 < str.length ? alphabet[(triple >> 6) & 63] : "=";
-    output += i + 2 < str.length ? alphabet[triple & 63] : "=";
+    output += i + 1 < bytes.length ? alphabet[(triple >> 6) & 63] : "=";
+    output += i + 2 < bytes.length ? alphabet[triple & 63] : "=";
   }
   return output;
+}
+
+function liveText(value) {
+  if (value == null || typeof value === "boolean") return "\u200b";
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  return "\u200b";
+}
+
+function getDeferSecret() {
+  try {
+    if (typeof globalThis !== "undefined" && globalThis.__DEKA_DEFER_SECRET) {
+      return String(globalThis.__DEKA_DEFER_SECRET);
+    }
+  } catch (_) {}
+  return "";
+}
+
+function rotr(n, x) {
+  return (x >>> n) | (x << (32 - n));
+}
+
+function sha256(bytes) {
+  const K = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+  ];
+  const h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+  const bitLen = bytes.length * 8;
+  const withOne = bytes.concat([0x80]);
+  while ((withOne.length % 64) !== 56) withOne.push(0);
+  const hi = Math.floor(bitLen / 0x100000000);
+  const lo = bitLen >>> 0;
+  withOne.push((hi >>> 24) & 255, (hi >>> 16) & 255, (hi >>> 8) & 255, hi & 255);
+  withOne.push((lo >>> 24) & 255, (lo >>> 16) & 255, (lo >>> 8) & 255, lo & 255);
+  for (let i = 0; i < withOne.length; i += 64) {
+    const w = new Array(64);
+    for (let t = 0; t < 16; t++) {
+      const o = i + t * 4;
+      w[t] = ((withOne[o] << 24) | (withOne[o + 1] << 16) | (withOne[o + 2] << 8) | withOne[o + 3]) >>> 0;
+    }
+    for (let t = 16; t < 64; t++) {
+      const s0 = rotr(7, w[t - 15]) ^ rotr(18, w[t - 15]) ^ (w[t - 15] >>> 3);
+      const s1 = rotr(17, w[t - 2]) ^ rotr(19, w[t - 2]) ^ (w[t - 2] >>> 10);
+      w[t] = (w[t - 16] + s0 + w[t - 7] + s1) >>> 0;
+    }
+    let a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
+    for (let t = 0; t < 64; t++) {
+      const S1 = rotr(6, e) ^ rotr(11, e) ^ rotr(25, e);
+      const ch = (e & f) ^ (~e & g);
+      const temp1 = (hh + S1 + ch + K[t] + w[t]) >>> 0;
+      const S0 = rotr(2, a) ^ rotr(13, a) ^ rotr(22, a);
+      const maj = (a & b) ^ (a & c) ^ (b & c);
+      const temp2 = (S0 + maj) >>> 0;
+      hh = g; g = f; f = e; e = (d + temp1) >>> 0; d = c; c = b; b = a; a = (temp1 + temp2) >>> 0;
+    }
+    h[0] = (h[0] + a) >>> 0; h[1] = (h[1] + b) >>> 0; h[2] = (h[2] + c) >>> 0; h[3] = (h[3] + d) >>> 0;
+    h[4] = (h[4] + e) >>> 0; h[5] = (h[5] + f) >>> 0; h[6] = (h[6] + g) >>> 0; h[7] = (h[7] + hh) >>> 0;
+  }
+  let out = "";
+  for (let i = 0; i < 8; i++) out += ("00000000" + h[i].toString(16)).slice(-8);
+  return out;
+}
+
+function sha256Bytes(bytes) {
+  const hex = sha256(bytes);
+  const out = [];
+  for (let i = 0; i < hex.length; i += 2) out.push(parseInt(hex.slice(i, i + 2), 16));
+  return out;
+}
+
+function hmacSha256Hex(secret, message) {
+  let key = utf8Bytes(secret);
+  if (key.length > 64) key = sha256Bytes(key);
+  while (key.length < 64) key.push(0);
+  const oKey = key.map((b) => b ^ 0x5c);
+  const iKey = key.map((b) => b ^ 0x36);
+  const inner = sha256Bytes(iKey.concat(utf8Bytes(message)));
+  return sha256(oKey.concat(inner));
+}
+
+export function signDeferIsland(name, propsJson, id) {
+  const secret = getDeferSecret();
+  if (!secret) return "";
+  return hmacSha256Hex(secret, String(name) + "\n" + String(propsJson) + "\n" + String(id));
+}
+
+export function verifyDeferIsland(name, propsJson, id, mac) {
+  const want = signDeferIsland(name, propsJson, id);
+  if (!want) return true;
+  const got = String(mac || "");
+  if (got.length !== want.length) return false;
+  let diff = 0;
+  for (let i = 0; i < want.length; i++) diff |= want.charCodeAt(i) ^ got.charCodeAt(i);
+  return diff === 0;
 }
 
 const VOID = new Set([
@@ -95,12 +214,17 @@ function fallbackNodes(children) {
 
 function wrapDeferred(name, directive, props, cache, id, html) {
   const cachePart = cache ? ` cache:${base64Encode(String(cache))}` : "";
-  return `<!--deka-island start:${base64Encode(name)} directive:${base64Encode(directive)} props:${base64Encode(serializeIslandProps(props))} id:${base64Encode(id)}${cachePart}--><span data-deka-defer="${escapeHtml(id)}">${html}</span><!--deka-island end:${base64Encode(name)}-->`;
+  const propsJson = serializeIslandProps(props);
+  const mac = signDeferIsland(name, propsJson, id);
+  const macPart = mac ? ` mac:${base64Encode(mac)}` : "";
+  return `<!--deka-island start:${base64Encode(name)} directive:${base64Encode(directive)} props:${base64Encode(propsJson)} id:${base64Encode(id)}${cachePart}${macPart}--><span data-deka-defer="${escapeHtml(id)}">${html}</span><!--deka-island end:${base64Encode(name)}-->`;
 }
 
 function renderAttributes(props) {
   let attrs = "";
   for (const [key, value] of Object.entries(props ?? {})) {
+    if (typeof value === "function") continue;
+    if (key.length > 2 && key.startsWith("on")) continue;
     if (value === true) {
       attrs += ` ${escapeHtml(key)}`;
     } else if (value === false || value == null) {
@@ -141,19 +265,37 @@ function nextDeferId() {
 }
 
 function createCtx() {
-  return { boundaryId: 0, stack: [], pending: [] };
+  return { boundaryId: 0, stack: [], pending: [], boundaryChildren: {} };
 }
 
 function handlePromiseSync(ctx, promise) {
   if (ctx.stack.length === 0) return "";
   const id = ctx.stack[ctx.stack.length - 1];
-  ctx.pending.push({ id, promise });
+  const existing = ctx.pending.find((item) => item.id === id);
+  if (existing) {
+    existing.promise = Promise.all([existing.promise, promise]);
+    return "";
+  }
+  ctx.pending.push({
+    id,
+    promise,
+    children: ctx.boundaryChildren ? ctx.boundaryChildren[id] : null,
+  });
   return "";
 }
 
 function renderNode(node, ctx) {
   if (node == null || typeof node === "boolean") return "";
-  if (isLive(node)) return renderNode(node.read(), ctx);
+  if (isLive(node)) {
+    let value;
+    try {
+      value = node.read();
+    } catch (_) {
+      return "";
+    }
+    if (isComponentNode(value) || Array.isArray(value)) return renderNode(value, ctx);
+    return escapeHtml(liveText(value));
+  }
   if (typeof node === "string" || typeof node === "number") {
     return escapeHtml(String(node));
   }
@@ -210,6 +352,7 @@ function renderNode(node, ctx) {
 function renderSuspenseSync(node, ctx) {
   const id = "S:" + (++ctx.boundaryId);
   ctx.stack.push(id);
+  ctx.boundaryChildren[id] = node.children;
   const inner = renderNode(node.children, ctx);
   ctx.stack.pop();
   if (ctx.pending.some((item) => item.id === id)) {
@@ -221,7 +364,16 @@ function renderSuspenseSync(node, ctx) {
 
 async function renderNodeAsync(node) {
   if (node == null || typeof node === "boolean") return "";
-  if (isLive(node)) return await renderNodeAsync(node.read());
+  if (isLive(node)) {
+    let value;
+    try {
+      value = node.read();
+    } catch (_) {
+      return "";
+    }
+    if (isComponentNode(value) || Array.isArray(value)) return await renderNodeAsync(value);
+    return escapeHtml(liveText(value));
+  }
   if (typeof node === "string" || typeof node === "number") {
     return escapeHtml(String(node));
   }
@@ -328,7 +480,8 @@ async function* iterateChunks(node) {
     const selected = await nextResolved(queue);
     const index = queue.indexOf(selected.item);
     if (index >= 0) queue.splice(index, 1);
-    const html = renderNode(selected.value, ctx);
+    const source = selected.item.children != null ? selected.item.children : selected.value;
+    const html = await renderNodeAsync(source);
     for (const extra of ctx.pending) queue.push(extra);
     ctx.pending.length = 0;
     if (selected.item.id) yield swapChunk(selected.item.id, html);
@@ -421,4 +574,4 @@ export async function renderToStreamHtml(node) {
   return out;
 }
 
-export { escapeHtml, Suspense };
+export { escapeHtml, liveText, Suspense };

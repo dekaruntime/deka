@@ -203,6 +203,15 @@ mod tests {
     }
 
     #[test]
+    fn emit_keeps_css_module_specifier_imports() {
+        let out = parse_and_emit("import { styles } from \"./card.module.css\";\nconst x = styles;");
+        assert!(
+            out.contains("card.module.css"),
+            "CSS module specifier imports must stay in the JS graph: {out}"
+        );
+    }
+
+    #[test]
     fn emit_jsx_client_directive() {
         let out = parse_and_emit("const el = <Cart client:load userId={id} />;");
         assert!(

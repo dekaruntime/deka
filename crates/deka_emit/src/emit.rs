@@ -734,8 +734,9 @@ impl<'a> Emitter<'a> {
                 }
             }
             Stmt::Import { specifiers, source, .. } => {
-                if source_is_css(source) {
-                    // CSS is collected per-route and injected as <link> tags.
+                if source_is_css(source) && specifiers.is_empty() {
+                    // Side-effect `import "./x.css"` is collected per-route as <link>.
+                    // Keep specifier imports (CSS modules) so the bundler can resolve them.
                     return Ok(());
                 }
                 write_indent(&mut self.out, 0);

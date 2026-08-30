@@ -109,6 +109,7 @@ pub async fn execute_request_parts(
     }
 
     let handler_entry = api_entry_override(state.handler_entry.clone(), &url);
+    let is_head = method.eq_ignore_ascii_case("HEAD");
     let request_parts = RequestParts {
         url,
         method,
@@ -124,7 +125,12 @@ pub async fn execute_request_parts(
         mode: ExecutionMode::Request,
     };
 
-    execute_request_data(state, request_data).await
+    let mut response = execute_request_data(state, request_data).await?;
+    if is_head {
+        response.body.clear();
+        response.body_base64 = None;
+    }
+    Ok(response)
 }
 
 async fn run_middleware_if_needed(

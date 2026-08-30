@@ -800,7 +800,10 @@ fn start_watch(
     dev_mode: bool,
 ) -> Result<(), String> {
     let path = FsPath::new(handler_path);
-    let watch_root = path.parent().unwrap_or_else(|| FsPath::new("."));
+    let project_root = project_root_from_handler(handler_path);
+    let watch_root = project_root
+        .as_deref()
+        .unwrap_or_else(|| path.parent().unwrap_or_else(|| FsPath::new(".")));
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<notify::Result<notify::Event>>();
 
     let mut watcher = notify::recommended_watcher(move |res| {
@@ -835,6 +838,23 @@ fn start_watch(
                         continue;
                     }
 
+                    if let Some(root) = project_root.as_ref() {
+                        if runtime_core::framework::is_app_router_project(root) {
+                            match runtime_core::framework::write_app_router_entry(root) {
+                                Ok(_) => {
+                                    let _ = crate::islands::write_island_client_assets_for_project(
+                                        root,
+                                    );
+                                }
+                                Err(err) => {
+                                    tracing::warn!(
+                                        "failed to regenerate serve-entry after {}: {err}",
+                                        changed.join(", ")
+                                    );
+                                }
+                            }
+                        }
+                    }
                     if dev_mode {
                         stdio_log::log("hmr", &format!("changed {}", changed.join(", ")));
                         transport::notify_hmr_changed(&changed);
@@ -853,6 +873,16 @@ fn start_watch(
     });
 
     Ok(())
+}
+
+fn project_root_from_handler(handler_path: &str) -> Option<std::path::PathBuf> {
+    let mut current = std::path::Path::new(handler_path).parent()?;
+    loop {
+        if current.join("deka.json").is_file() {
+            return Some(current.to_path_buf());
+        }
+        current = current.parent()?;
+    }
 }
 
 fn should_ignore_watch_path(path: &FsPath) -> bool {
