@@ -478,6 +478,11 @@ pub fn scan_client_islands(app_dir: &Path) -> Vec<ClientIsland> {
 }
 
 fn islands_in_source(src: &str, file: &str) -> Vec<ClientIsland> {
+    let stripped = strip_ds_comments(src);
+    islands_in_source_raw(&stripped, file)
+}
+
+fn islands_in_source_raw(src: &str, file: &str) -> Vec<ClientIsland> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < src.len() {
@@ -851,6 +856,11 @@ pub fn scan_server_defer(app_dir: &Path) -> Vec<DeferredIsland> {
 }
 
 fn defer_in_source(src: &str, file: &str) -> Vec<DeferredIsland> {
+    let stripped = strip_ds_comments(src);
+    defer_in_source_raw(&stripped, file)
+}
+
+fn defer_in_source_raw(src: &str, file: &str) -> Vec<DeferredIsland> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < src.len() {
@@ -1021,6 +1031,8 @@ export {{ App }}
     ))
 }
 
+// Shared-cache `cache="60s"` shells reuse one signed marker. Do not put
+// viewer-specific props on those islands; the MAC binds name+props, not a session.
 fn defer_cache_header(deferred: &[DeferredIsland]) -> String {
     let mut max_age: Option<u64> = None;
     for item in deferred {
@@ -1180,6 +1192,25 @@ fn collapse_leading_slashes(path: &str) -> String {
 /// If the request path is not in canonical trailing-slash form, return the
 /// Location value (path + query) to 301 to. Default is no trailing slash
 /// except `/`.
+pub fn trailing_slash_redirect_for_request(
+    method: &str,
+    url: &str,
+    want_trailing: bool,
+) -> Option<String> {
+    if !method.eq_ignore_ascii_case("GET") && !method.eq_ignore_ascii_case("HEAD") {
+        return None;
+    }
+    let path = request_path_from_url(url);
+    if path == "/api"
+        || path.starts_with("/api/")
+        || path == "/_deka/defer"
+        || path.starts_with("/_deka/")
+    {
+        return None;
+    }
+    trailing_slash_redirect(url, want_trailing)
+}
+
 pub fn trailing_slash_redirect(url: &str, want_trailing: bool) -> Option<String> {
     let path = request_path_from_url(url);
     let query = url.split_once('?').map(|(_, q)| q);
@@ -2698,6 +2729,33 @@ mod tests {
         assert!(path_condition("/blog/[slug]").is_ok());
         assert!(path_condition("/blog/[id]/comments").is_err());
         assert!(path_condition("/[a]/[b]").is_err());
+    }
+
+    #[test]
+    fn trailing_slash_redirect_skips_post_and_api() {
+        assert_eq!(
+            trailing_slash_redirect_for_request("POST", "http://localhost/_deka/defer", true),
+            None
+        );
+        assert_eq!(
+            trailing_slash_redirect_for_request("POST", "http://localhost/api/hello/", false),
+            None
+        );
+        assert_eq!(
+            trailing_slash_redirect_for_request("GET", "http://localhost/blog/", false),
+            Some("/blog".to_string())
+        );
+        assert_eq!(
+            trailing_slash_redirect_for_request("HEAD", "http://localhost/blog/", false),
+            Some("/blog".to_string())
+        );
+    }
+
+    #[test]
+    fn scan_skips_commented_island_and_defer_directives() {
+        let src = "// <Cart client:load />\n/* <Badge server:defer></Badge> */\nexport fn Page() { return <div /> }\n";
+        assert!(islands_in_source(src, "app/page.dsx").is_empty());
+        assert!(defer_in_source(src, "app/page.dsx").is_empty());
     }
 
     #[test]

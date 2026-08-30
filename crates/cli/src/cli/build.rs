@@ -1157,21 +1157,31 @@ export default {{
   async fetch(request, env) {{
     const url = new URL(request.url);
     let path = canonicalizePath(url.pathname);
-    if (path.length > 1 && path.endsWith("/")) {{
-      if (!WANT_TRAILING) {{
-        url.pathname = path.slice(0, -1);
+    const method = request.method || "GET";
+    const isGetHead = method === "GET" || method === "HEAD";
+    const skipSlashRedirect = path === "/api" || path.startsWith("/api/") || path === "/_deka/defer" || path.startsWith("/_deka/");
+    if (isGetHead && !skipSlashRedirect) {{
+      if (path.length > 1 && path.endsWith("/")) {{
+        if (!WANT_TRAILING) {{
+          url.pathname = path.slice(0, -1);
+          return Response.redirect(url.toString(), 301);
+        }}
+      }} else if (WANT_TRAILING && path.length > 1) {{
+        url.pathname = path + "/";
         return Response.redirect(url.toString(), 301);
       }}
-      path = path.slice(0, -1);
-    }} else if (WANT_TRAILING && path.length > 1) {{
-      url.pathname = path + "/";
-      return Response.redirect(url.toString(), 301);
     }}
-    const body = request.method === "GET" || request.method === "HEAD" ? "" : await request.text();
+    if (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
+    const body = isGetHead ? "" : await request.text();
     const req = dekaApiRequest(request, path, body);
-    if (path === "/_deka/defer" && typeof DeferApp === "function") {{
+    if ((path === "/_deka/defer") && typeof DeferApp === "function") {{
+      const gated = await Promise.resolve(App(req));
+      const gatedStatus = gated && gated.status != null ? gated.status : 200;
+      if (gatedStatus !== 0) {{
+        return workerResponse(gated, method);
+      }}
       const result = await Promise.resolve(DeferApp(req));
-      return workerResponse(result, request.method);
+      return workerResponse(result, method);
     }}
     if (PUBLIC_FILES.has(path) && env && env.ASSETS) {{
       return env.ASSETS.fetch(request);

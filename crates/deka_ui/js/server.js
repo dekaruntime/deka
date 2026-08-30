@@ -51,7 +51,7 @@ function base64Encode(str) {
 }
 
 function liveText(value) {
-  if (value == null || typeof value === "boolean") return "\u200b";
+  if (value == null || typeof value === "boolean" || value === "") return "\u200b";
   if (typeof value === "string" || typeof value === "number") return String(value);
   return "\u200b";
 }
@@ -142,7 +142,7 @@ export function signDeferIsland(name, propsJson, id) {
 
 export function verifyDeferIsland(name, propsJson, id, mac) {
   const want = signDeferIsland(name, propsJson, id);
-  if (!want) return true;
+  if (!want) return false;
   const got = String(mac || "");
   if (got.length !== want.length) return false;
   let diff = 0;

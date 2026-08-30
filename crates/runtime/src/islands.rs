@@ -107,8 +107,27 @@ pub fn write_island_client_assets(
                 }
             }
             let spec_list = unique.join(", ");
-            if !spec_list.is_empty() {
-                js.push_str(&format!("\nexport {{ {spec_list} }};\n"));
+            let mut missing = Vec::new();
+            let mut to_export = Vec::new();
+            for name in &unique {
+                if js_exports_ident(&js, name) {
+                    continue;
+                }
+                if js_has_ident_binding(&js, name) {
+                    to_export.push(*name);
+                } else {
+                    missing.push(*name);
+                }
+            }
+            if !missing.is_empty() {
+                return Err(format!(
+                    "client island {} is not exported from {}",
+                    missing.join(", "),
+                    island.file
+                ));
+            }
+            if !to_export.is_empty() {
+                js.push_str(&format!("\nexport {{ {} }};\n", to_export.join(", ")));
             }
             fs::write(assets_dir.join(&mod_name), js.as_bytes()).map_err(|err| {
                 format!("failed to write {}: {err}", assets_dir.join(&mod_name).display())
@@ -162,6 +181,68 @@ pub fn write_defer_client_assets(assets_dir: &Path) -> Result<(), String> {
     fs::write(&dest, entry.as_bytes())
         .map_err(|err| format!("failed to write {}: {err}", dest.display()))?;
     Ok(())
+}
+
+fn ident_boundary_after(src: &str, _name: &str) -> bool {
+    match src.chars().next() {
+        None => true,
+        Some(c) => !c.is_ascii_alphanumeric() && c != '_',
+    }
+}
+
+fn contains_prefixed_ident(src: &str, prefix: &str, name: &str) -> bool {
+    let needle = format!("{prefix}{name}");
+    let mut rest = src;
+    while let Some(at) = rest.find(&needle) {
+        let before_ok = at == 0
+            || rest[..at]
+                .chars()
+                .next_back()
+                .map(|c| !c.is_ascii_alphanumeric() && c != '_')
+                .unwrap_or(true);
+        let after = &rest[at + needle.len()..];
+        if before_ok && ident_boundary_after(after, name) {
+            return true;
+        }
+        rest = &rest[at + 1..];
+    }
+    false
+}
+
+fn js_exports_ident(js: &str, name: &str) -> bool {
+    contains_prefixed_ident(js, "export function ", name)
+        || contains_prefixed_ident(js, "export async function ", name)
+        || contains_prefixed_ident(js, "export const ", name)
+        || contains_prefixed_ident(js, "export let ", name)
+        || contains_prefixed_ident(js, "export var ", name)
+        || js_export_list_contains(js, name)
+}
+
+fn js_has_ident_binding(js: &str, name: &str) -> bool {
+    js_exports_ident(js, name)
+        || contains_prefixed_ident(js, "function ", name)
+        || contains_prefixed_ident(js, "async function ", name)
+        || contains_prefixed_ident(js, "const ", name)
+        || contains_prefixed_ident(js, "let ", name)
+        || contains_prefixed_ident(js, "var ", name)
+}
+
+fn js_export_list_contains(js: &str, name: &str) -> bool {
+    let mut rest = js;
+    while let Some(at) = rest.find("export {") {
+        let after = &rest[at + "export {".len()..];
+        let Some(end) = after.find('}') else {
+            break;
+        };
+        for part in after[..end].split(',') {
+            let ident = part.trim().split_whitespace().next().unwrap_or("");
+            if ident == name {
+                return true;
+            }
+        }
+        rest = &after[end.saturating_add(1)..];
+    }
+    false
 }
 
 fn rewrite_ui_imports(js: &str) -> String {

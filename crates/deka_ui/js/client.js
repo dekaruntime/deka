@@ -68,7 +68,7 @@ function decodeB64(value) {
 }
 
 function liveText(value) {
-  if (value == null || typeof value === "boolean") return "\u200b";
+  if (value == null || typeof value === "boolean" || value === "") return "\u200b";
   if (typeof value === "string" || typeof value === "number") return String(value);
   return "\u200b";
 }
@@ -309,6 +309,14 @@ export function stopObserver() {
 
 function fetchDeferred(items) {
   if (typeof fetch !== "function" || items.length === 0) return;
+  const chunkSize = 32;
+  for (let i = 0; i < items.length; i += chunkSize) {
+    fetchDeferredChunk(items.slice(i, i + chunkSize));
+  }
+}
+
+function fetchDeferredChunk(items) {
+  if (items.length === 0) return;
   const payload = JSON.stringify({
     islands: items.map((item) => ({
       id: item.id || item.name,

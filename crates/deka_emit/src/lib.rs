@@ -178,6 +178,16 @@ mod tests {
     }
 
     #[test]
+    fn emit_jsx_does_not_live_wrap_conditional_elements() {
+        let out = parse_and_emit("const el = <div>{cond && <b>hi</b>}</div>;");
+        assert!(
+            !out.contains("live(function() { return cond &&"),
+            "JSX-producing interpolations must not be live() text bindings: {out}"
+        );
+        assert!(out.contains("cond &&"), "conditional jsx child should still emit: {out}");
+    }
+
+    #[test]
     fn emit_jsx_with_children() {
         let out = parse_and_emit("const el = <p>hello {name}</p>;");
         assert!(out.contains("jsxs("), "expected jsxs call, got: {}", out);

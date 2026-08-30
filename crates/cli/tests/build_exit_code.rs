@@ -383,6 +383,25 @@ fn build_emits_island_chunk_without_server_renderer() {
         !js.contains("renderToString") && !js.contains("ui/server"),
         "island chunk must not include the server renderer: {js}"
     );
+    let island_mod = fs::read_to_string(
+        project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("assets")
+            .join("island-load-0.js"),
+    )
+    .expect("read compiled island module");
+    assert!(
+        island_mod.contains("export function Counter") || island_mod.contains("export { Counter }"),
+        "compiled island must export Counter: {island_mod}"
+    );
+    let export_fn = island_mod.matches("export function Counter").count();
+    let export_list = island_mod.matches("export { Counter }").count();
+    assert!(
+        export_fn + export_list == 1,
+        "duplicate export of Counter would kill the island chunk: {island_mod}"
+    );
     assert!(
         !project
             .path()
@@ -640,6 +659,10 @@ fn build_worker_dispatches_defer_and_copies_headers() {
     assert!(
         worker.contains("/_deka/defer"),
         "worker must dispatch the defer endpoint: {worker}"
+    );
+    assert!(
+        worker.contains("isGetHead") || worker.contains("method === \"GET\""),
+        "worker must not 301 POST /_deka/defer: {worker}"
     );
     assert!(
         worker.contains("request.text()") || worker.contains("await request.text()"),

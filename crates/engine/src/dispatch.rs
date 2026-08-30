@@ -8,7 +8,7 @@ use pool::RequestParts;
 use pool::{ExecutionMode, RequestData};
 use runtime_core::framework::{
     self, matcher_hits, parse_middleware_matcher, public_file_exists, skip_middleware_path,
-    trailing_slash_redirect, MIDDLEWARE_NEXT_STATUS,
+    trailing_slash_redirect_for_request, MIDDLEWARE_NEXT_STATUS,
 };
 use runtime_core::storefront_envelope::StorefrontResponse;
 
@@ -81,7 +81,7 @@ pub async fn execute_request_parts(
         .as_deref()
         .map(read_trailing_slash)
         .unwrap_or(false);
-    if let Some(location) = trailing_slash_redirect(&url, want_trailing) {
+    if let Some(location) = trailing_slash_redirect_for_request(&method, &url, want_trailing) {
         let mut location_headers = HashMap::new();
         location_headers.insert("location".to_string(), location);
         return Ok(StorefrontResponse {

@@ -2010,6 +2010,16 @@ fn source_is_css(source: &str) -> bool {
     lower.ends_with(".css")
 }
 
+fn expr_contains_jsx(expr: &Expr) -> bool {
+    let mut found = false;
+    visit_expr(expr, &mut |e| {
+        if matches!(e, Expr::JsxElement { .. } | Expr::JsxFragment { .. }) {
+            found = true;
+        }
+    });
+    found
+}
+
 fn jsx_child_needs_live(expr: &Expr) -> bool {
     match expr {
         Expr::String { .. }
@@ -2020,6 +2030,7 @@ fn jsx_child_needs_live(expr: &Expr) -> bool {
         | Expr::JsxFragment { .. }
         | Expr::None { .. } => false,
         Expr::Paren { expr, .. } => jsx_child_needs_live(expr),
+        _ if expr_contains_jsx(expr) => false,
         _ => true,
     }
 }
