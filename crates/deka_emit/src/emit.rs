@@ -160,6 +160,12 @@ impl<'a> Emitter<'a> {
     }
 
     fn emit(&mut self) -> Result<String, String> {
+        // "use strict" belongs in the directive prologue, before even the
+        // hoisted imports: after an import it degrades to a dead expression
+        // statement, and the kit's RAW display strips it only when it is the
+        // first line. (Redundant but legal in ES modules, which are always
+        // strict.)
+        self.out.push_str("\"use strict\";\n");
         // Imports must precede other statements. Hoist user imports, then the
         // jsx runtime import when this file contains JSX.
         let mut first = true;
@@ -430,8 +436,6 @@ impl<'a> Emitter<'a> {
     // Prelude
     // ------------------------------------------------------------------
     fn emit_prelude(&mut self) -> Result<(), String> {
-        self.out.push_str("\"use strict\";\n");
-
         // Determine which helpers are needed by scanning the AST.
         self.uses_struct = self.needs_struct_helper();
         self.uses_prelude_enums = self.uses_prelude_enums || self.needs_prelude_enums();
