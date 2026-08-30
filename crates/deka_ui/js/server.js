@@ -2,6 +2,7 @@
 // Function tags are invoked here. Text and attributes are escaped.
 
 import { Fragment, isComponentNode } from "./jsx.js";
+import { isLive } from "./reactive.js";
 import { Suspense } from "./suspense.js";
 
 function escapeHtml(text) {
@@ -35,12 +36,39 @@ const VOID = new Set([
   "link", "meta", "param", "source", "track", "wbr",
 ]);
 
+function jsonSafe(value) {
+  if (value == null) return value;
+  const t = typeof value;
+  if (t === "string" || t === "number" || t === "boolean") return value;
+  if (Array.isArray(value)) {
+    return value.map(jsonSafe).filter((item) => item !== undefined);
+  }
+  if (t !== "object") return undefined;
+  if (value.__componentNode || value.__live) return undefined;
+  const out = {};
+  for (const [key, child] of Object.entries(value)) {
+    const next = jsonSafe(child);
+    if (next !== undefined) out[key] = next;
+  }
+  return out;
+}
+
+function serializeIslandProps(props) {
+  try {
+    return JSON.stringify(jsonSafe(props) ?? {});
+  } catch (_) {
+    return "{}";
+  }
+}
+
 function extractDirectives(props) {
   const rest = {};
   const directives = [];
   for (const [key, value] of Object.entries(props ?? {})) {
     if (key.startsWith("client:") && value !== false && value != null) {
       directives.push(key.slice(7));
+    } else if (key.startsWith("server:")) {
+      // server:defer is phase 11; do not treat it as a client island.
     } else if (typeof value === "function" && key.startsWith("on")) {
       // event handlers are client-only
     } else {
@@ -71,10 +99,6 @@ function forwardClass(html, className) {
     if (/\sclass\s*=/.test(attrs)) return m;
     return `<${tag}${attrs} class="${escaped}"${close}`;
   });
-}
-
-function isLive(node) {
-  return node != null && typeof node === "object" && node.__live === true && typeof node.read === "function";
 }
 
 function isPromise(value) {
@@ -132,7 +156,7 @@ function renderNode(node, ctx) {
     if (directives.length === 0) return html;
     const islandName = tag.name || "Anonymous";
     const directive = directives[0];
-    const serializedProps = JSON.stringify(rest);
+    const serializedProps = serializeIslandProps(rest);
     return `<!--deka-island start:${base64Encode(islandName)} directive:${base64Encode(directive)} props:${base64Encode(serializedProps)}-->${html}<!--deka-island end:${base64Encode(islandName)}-->`;
   }
 
@@ -197,7 +221,7 @@ async function renderNodeAsync(node) {
     if (directives.length === 0) return html;
     const islandName = tag.name || "Anonymous";
     const directive = directives[0];
-    const serializedProps = JSON.stringify(rest);
+    const serializedProps = serializeIslandProps(rest);
     return `<!--deka-island start:${base64Encode(islandName)} directive:${base64Encode(directive)} props:${base64Encode(serializedProps)}-->${html}<!--deka-island end:${base64Encode(islandName)}-->`;
   }
 

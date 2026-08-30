@@ -8,6 +8,7 @@ use std::sync::OnceLock;
 
 mod env;
 mod extensions;
+mod islands;
 mod js_pipeline;
 mod platform;
 mod prerender;
@@ -28,6 +29,19 @@ pub fn prerender_static_pages(
     dist_client: &std::path::Path,
 ) -> Result<(), String> {
     prerender::prerender_static_pages(project_root, dist_client)
+}
+
+pub fn write_island_client_assets(
+    assets_dir: &std::path::Path,
+    islands: &[runtime_core::framework::ClientIsland],
+) -> Result<(), String> {
+    islands::write_island_client_assets(assets_dir, islands)
+}
+
+pub fn write_island_client_assets_for_project(
+    project_root: &std::path::Path,
+) -> Result<(), String> {
+    islands::write_island_client_assets_for_project(project_root)
 }
 
 pub fn platform(context: &Context) {

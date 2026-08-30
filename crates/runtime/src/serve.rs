@@ -75,6 +75,11 @@ async fn serve_async(context: &Context) -> Result<(), String> {
         resolved.path.parent().unwrap_or(&resolved.path)
     };
     runtime_config::load_database_config(config_dir);
+    if let Some(root) = crate::islands::find_app_router_root(FsPath::new(&context.handler.input))
+        .or_else(|| crate::islands::find_app_router_root(&resolved.path))
+    {
+        crate::islands::write_island_client_assets_for_project(&root)?;
+    }
 
     let handler_path = resolved.path.to_string_lossy().to_string();
     if handler_path.to_ascii_lowercase().ends_with(".phpx") {

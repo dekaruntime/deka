@@ -351,3 +351,149 @@ fn build_serve_entry_uses_render_to_stream_for_documents() {
         "App must be async so stream chunks can flush: {entry}"
     );
 }
+
+#[test]
+fn build_emits_island_chunk_without_server_renderer() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    fs::write(
+        project.path().join("app").join("page.dsx"),
+        "export fn Counter() {\n    return <button>0</button>;\n}\nexport fn Page() {\n    return <main><Counter client:load count={1} /></main>;\n}\n",
+    )
+    .expect("write island page");
+    let (success, combined) = run_build(project.path());
+    assert!(success, "deka build should succeed with client:load: {combined}");
+    assert!(
+        combined.contains("island Counter"),
+        "build should print an island serialization report: {combined}"
+    );
+    let chunk = project
+        .path()
+        .join("dist")
+        .join("client")
+        .join("assets")
+        .join("islands-load.js");
+    assert!(chunk.is_file(), "client:load must emit islands-load.js");
+    let js = fs::read_to_string(&chunk).expect("read islands-load.js");
+    assert!(
+        !js.contains("renderToString") && !js.contains("ui/server"),
+        "island chunk must not include the server renderer: {js}"
+    );
+    assert!(
+        !project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("assets")
+            .join("ui")
+            .join("server.js")
+            .is_file(),
+        "ui/server.js must not be copied into the client assets"
+    );
+    let index = fs::read_to_string(
+        project.path().join("dist").join("client").join("index.html"),
+    )
+    .expect("read dist html");
+    assert!(
+        index.contains("islands-load.js"),
+        "html must load the island chunk: {index}"
+    );
+    let jsx = fs::read_to_string(
+        project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("assets")
+            .join("ui")
+            .join("jsx.js"),
+    )
+    .expect("read ui/jsx");
+    let client = fs::read_to_string(
+        project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("assets")
+            .join("ui")
+            .join("client.js"),
+    )
+    .expect("read ui/client");
+    let reactive = fs::read_to_string(
+        project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("assets")
+            .join("ui")
+            .join("reactive.js"),
+    )
+    .expect("read ui/reactive");
+    let mut payload = jsx.clone();
+    payload.push_str(&client);
+    payload.push_str(&reactive);
+    payload.push_str(&js);
+    let island_mod = project
+        .path()
+        .join("dist")
+        .join("client")
+        .join("assets")
+        .join("island-load-0.js");
+    if island_mod.is_file() {
+        let mod_js = fs::read_to_string(&island_mod).expect("read island module");
+        assert!(
+            !mod_js.contains("renderToString") && !mod_js.contains("from \"ui/server\""),
+            "compiled island module must not import the server renderer: {mod_js}"
+        );
+        payload.push_str(&mod_js);
+    }
+    assert!(
+        gzip_len(jsx.as_bytes()) < 2_048,
+        "ui/jsx gzip budget is 2KiB, got {}",
+        gzip_len(jsx.as_bytes())
+    );
+    assert!(
+        gzip_len(payload.as_bytes()) < 16_384,
+        "one-button island gzip budget is 16KiB, got {}",
+        gzip_len(payload.as_bytes())
+    );
+}
+
+#[test]
+fn build_without_islands_emits_no_island_script() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    let (success, combined) = run_build(project.path());
+    assert!(success, "deka build should succeed without islands: {combined}");
+    assert!(
+        !combined.contains("island "),
+        "build report must not list islands when none exist: {combined}"
+    );
+    let index = fs::read_to_string(
+        project.path().join("dist").join("client").join("index.html"),
+    )
+    .expect("read dist html");
+    assert!(
+        !index.contains("islands-load.js")
+            && !index.contains("islands-idle.js")
+            && !index.contains("islands-visible.js"),
+        "a page with no client:* must emit no island script tag: {index}"
+    );
+    assert!(
+        !project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("assets")
+            .join("ui")
+            .join("server.js")
+            .is_file(),
+        "ui/server.js must not be copied when there are no islands"
+    );
+}
+
+fn gzip_len(bytes: &[u8]) -> usize {
+    use std::io::Write;
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(bytes).expect("gzip write");
+    encoder.finish().expect("gzip finish").len()
+}

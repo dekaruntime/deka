@@ -58,5 +58,9 @@ export function live(fn) {
   return Object.freeze({ __live: true, read: fn });
 }
 
+export function isLive(node) {
+  return node != null && typeof node === "object" && node.__live === true && typeof node.read === "function";
+}
+
 export const createSignal = signal;
 export const createEffect = effect;

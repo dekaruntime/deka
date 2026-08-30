@@ -1046,6 +1046,26 @@ mod tests {
     }
 
     #[test]
+    fn parse_jsx_namespaced_attribute() {
+        let arena = Bump::new();
+        let result = parse("const el = <Cart client:load userId={id} />;", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { value, .. } => match value {
+                Expr::JsxElement { element, .. } => {
+                    assert_eq!(element.tag, "Cart");
+                    let names: Vec<&str> = element.attributes.iter().map(|a| a.name).collect();
+                    assert!(names.contains(&"client:load"), "got {names:?}");
+                    assert!(names.contains(&"userId"), "got {names:?}");
+                }
+                _ => panic!("expected jsx element, got {:?}", value),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
     fn parse_jsx_with_children() {
         let arena = Bump::new();
         let result = parse("const el = <p>hello {name}</p>;", &arena);
