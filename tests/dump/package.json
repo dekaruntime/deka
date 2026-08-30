@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dump": "bun scripts/dump-results.mjs"
+    "dump": "bun scripts/dump-results.mjs",
+    "test": "bun test"
   },
   "dependencies": {
     "@dekaruntime/web-ide-kit": "^0.1.8"
