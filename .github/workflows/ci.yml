@@ -8,6 +8,13 @@ on:
       - 'docs/**'
       - '.github/ISSUE_TEMPLATE/**'
       - '.github/PULL_REQUEST_TEMPLATE.md'
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/PULL_REQUEST_TEMPLATE.md'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -30,8 +37,13 @@ jobs:
       - name: Detect change categories
         id: detect
         run: |
-          git fetch origin main --quiet
-          files="$(git diff --name-only origin/main...HEAD | sort -u)"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # On pushes to main, HEAD is main — diff against the pre-push head.
+            files="$(git diff --name-only ${{ github.event.before }}..HEAD | sort -u)"
+          else
+            git fetch origin main --quiet
+            files="$(git diff --name-only origin/main...HEAD | sort -u)"
+          fi
 
           echo "Changed files:"
           echo "$files"
