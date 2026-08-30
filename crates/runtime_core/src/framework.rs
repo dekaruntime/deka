@@ -268,6 +268,68 @@ pub fn route_pattern_matches(pattern: &str, path: &str) -> Option<BTreeMap<Strin
     Some(params)
 }
 
+const HTTP_METHODS: &[&str] = &["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"];
+
+pub fn scan_api_dir(api_dir: &Path) -> Vec<FrameworkEntry> {
+    let mut entries = Vec::new();
+    if !api_dir.is_dir() {
+        return entries;
+    }
+    visit_api_dir(api_dir, api_dir, &mut entries);
+    entries.sort_by(|a, b| a.route.cmp(&b.route));
+    entries
+}
+
+fn visit_api_dir(api_root: &Path, dir: &Path, entries: &mut Vec<FrameworkEntry>) {
+    let Ok(reader) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in reader.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with('.') {
+            continue;
+        }
+        if path.is_dir() {
+            visit_api_dir(api_root, &path, entries);
+            continue;
+        }
+        if !matches!(name.as_ref(), "route.ds" | "route.dsx") {
+            continue;
+        }
+        let rel = path
+            .strip_prefix(api_root)
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default();
+        let parent = rel.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
+        let route = if parent.is_empty() {
+            "/api".to_string()
+        } else {
+            format!("/api/{parent}")
+        };
+        entries.push(FrameworkEntry {
+            kind: FrameworkEntryKind::Api,
+            route,
+            file: path.to_string_lossy().into_owned(),
+        });
+    }
+}
+
+pub fn exported_http_methods(path: &Path) -> Vec<String> {
+    let Ok(src) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    HTTP_METHODS
+        .iter()
+        .filter(|method| {
+            src.contains(&format!("export fn {method}"))
+                || src.contains(&format!("export function {method}"))
+        })
+        .map(|m| (*m).to_string())
+        .collect()
+}
+
 pub fn static_page_routes(manifest: &FrameworkManifest) -> Vec<String> {
     manifest
         .entries
@@ -310,6 +372,23 @@ pub fn write_app_router_entry(project_root: &Path) -> Result<PathBuf, String> {
         .map_err(|err| format!("failed to create {}: {err}", cache_dir.display()))?;
     let entry = cache_dir.join("serve-entry.dsx");
     let source = generate_serve_entry(&entry, &manifest, &index_html)?;
+    std::fs::write(&entry, source.as_bytes())
+        .map_err(|err| format!("failed to write {}: {err}", entry.display()))?;
+    let _ = write_api_router_entry(project_root);
+    Ok(entry)
+}
+
+/// `.dsx` cannot import `api/`, so API dispatch lives in a sibling `.ds` file.
+pub fn write_api_router_entry(project_root: &Path) -> Result<PathBuf, String> {
+    let api_entries = scan_api_dir(&project_root.join("api"));
+    if api_entries.is_empty() {
+        return Err("no api/route.ds modules".to_string());
+    }
+    let cache_dir = project_root.join(".cache").join("dekascript");
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|err| format!("failed to create {}: {err}", cache_dir.display()))?;
+    let entry = cache_dir.join("api-entry.ds");
+    let source = generate_api_entry(&entry, &api_entries)?;
     std::fs::write(&entry, source.as_bytes())
         .map_err(|err| format!("failed to write {}: {err}", entry.display()))?;
     Ok(entry)
@@ -474,6 +553,59 @@ export fn App(request: Request): Response {{
     const accept = request.headers.accept
     const fragment = accept == "{FRAGMENT_ACCEPT}" || accept == "{FRAGMENT_ACCEPT_LEGACY}"
 {branches}    return respond({not_found_tree}, 404, fragment, {not_found_head})
+}}
+"#
+    ))
+}
+
+fn generate_api_entry(entry: &Path, api_entries: &[FrameworkEntry]) -> Result<String, String> {
+    let mut imports = String::new();
+    let mut imported: Vec<String> = Vec::new();
+    let mut import_alias = |path: &str, name: &str, alias: &str| {
+        if imported.iter().any(|k| k == alias) {
+            return;
+        }
+        imported.push(alias.to_string());
+        let rel = pathdiff_dsx(entry, Path::new(path));
+        imports.push_str(&format!("import {{ {name} as {alias} }} from \"{rel}\"\n"));
+    };
+    let mut branches = String::new();
+    for api in api_entries {
+        let methods = exported_http_methods(Path::new(&api.file));
+        if methods.is_empty() {
+            continue;
+        }
+        let stem = alias("api", &api.route);
+        for method in &methods {
+            import_alias(&api.file, method, &format!("{method}_{stem}"));
+        }
+        let cond = path_condition(&api.route);
+        let mut inner = String::new();
+        let has_get = methods.iter().any(|m| m == "GET");
+        let has_head = methods.iter().any(|m| m == "HEAD");
+        for method in &methods {
+            let fn_name = format!("{method}_{stem}");
+            inner.push_str(&format!(
+                "        if (request.method == \"{method}\") {{\n            const res = unsafe {{ {fn_name}(request) }}\n            return match (res) {{\n                Ok(r) => r,\n                Err(e) => {{ status: 500, body: e.message }},\n            }}\n        }}\n"
+            ));
+        }
+        if has_get && !has_head {
+            inner.push_str(&format!(
+                "        if (request.method == \"HEAD\") {{\n            const res = unsafe {{ GET_{stem}(request) }}\n            return match (res) {{\n                Ok(r) => {{ status: r.status, body: \"\" }},\n                Err(e) => {{ status: 500, body: e.message }},\n            }}\n        }}\n"
+            ));
+        }
+        inner.push_str("        return { status: 405, body: \"Method not allowed\" }\n");
+        branches.push_str(&format!("    if ({cond}) {{\n{inner}    }}\n"));
+    }
+    Ok(format!(
+        r#"{imports}
+interface RequestHeaders {{ accept: string }}
+interface Request {{ url: string, pathname: string, method: string, headers: RequestHeaders }}
+interface Response {{ status: number, body: string }}
+
+export fn App(request: Request): Response {{
+    const path = request.pathname == "" ? "/" : request.pathname
+{branches}    return {{ status: 404, body: "Not found" }}
 }}
 "#
     ))
@@ -887,5 +1019,28 @@ mod tests {
             !cond.contains("path == \"/foo\"bar\""),
             "unescaped quote would break generated source: {cond}"
         );
+    }
+
+    #[test]
+    fn scan_api_dir_maps_route_files() {
+        let tmp = std::env::temp_dir().join(format!(
+            "deka_api_scan_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(tmp.join("hello")).unwrap();
+        std::fs::write(
+            tmp.join("hello/route.ds"),
+            "export fn GET(request: Request): Response { return { status: 200, body: \"ok\" } }\n",
+        )
+        .unwrap();
+        let entries = scan_api_dir(&tmp);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].route, "/api/hello");
+        let methods = exported_http_methods(Path::new(&entries[0].file));
+        assert_eq!(methods, vec!["GET".to_string()]);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

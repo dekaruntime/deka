@@ -66,6 +66,7 @@ pub async fn execute_request_parts(
     headers: Vec<(String, String)>,
     body: Option<String>,
 ) -> Result<ResponseEnvelope, String> {
+    let handler_entry = api_entry_override(state.handler_entry.clone(), &url);
     let request_parts = RequestParts {
         url,
         method,
@@ -75,13 +76,31 @@ pub async fn execute_request_parts(
 
     let request_data = RequestData {
         handler_code: state.handler_code.clone(),
-        handler_entry: state.handler_entry.clone(),
+        handler_entry,
         request_value: serde_json::Value::Null,
         request_parts: Some(request_parts),
         mode: ExecutionMode::Request,
     };
 
     execute_request_data(state, request_data).await
+}
+
+fn api_entry_override(page_entry: Option<String>, url: &str) -> Option<String> {
+    let path = url.split('?').next().unwrap_or(url);
+    let path = path.split("://").nth(1).unwrap_or(path);
+    let path = path.find('/').map(|i| &path[i..]).unwrap_or("/");
+    if !(path == "/api" || path.starts_with("/api/")) {
+        return page_entry;
+    }
+    let Some(page_entry) = page_entry else {
+        return None;
+    };
+    let api_entry = std::path::Path::new(&page_entry).with_file_name("api-entry.ds");
+    if api_entry.is_file() {
+        Some(api_entry.to_string_lossy().into_owned())
+    } else {
+        Some(page_entry)
+    }
 }
 
 pub async fn execute_request_value(
