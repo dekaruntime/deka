@@ -23,7 +23,7 @@ mod expr;
 mod stmt;
 mod types;
 
-pub use types::Type;
+pub use types::{NewtypeSide, OperatorRewrite, Type, UnwrapKind};
 
 #[derive(Debug)]
 pub struct TypeError {
@@ -37,6 +37,12 @@ pub struct TypeckResult<'a> {
     /// Map from method call expression pointer to the lowering target for the
     /// receiver method that should replace it during lowering.
     pub method_calls: HashMap<*const ast::Expr<'a>, MethodTarget<'a>>,
+    /// Map from primitive conversion call expression pointer to how it should
+    /// be lowered (`number(x)`, `string(x)`, `bool(x)`).
+    pub unwrap_calls: HashMap<*const ast::Expr<'a>, types::UnwrapKind>,
+    /// Map from binary/unary operator expression pointer to how a newtype
+    /// operation should be lowered.
+    pub operator_rewrites: HashMap<*const ast::Expr<'a>, types::OperatorRewrite<'a>>,
 }
 
 pub fn check_program<'a>(program: &'a Program<'a>, _source: &str) -> TypeckResult<'a> {
@@ -51,6 +57,7 @@ pub struct ModuleExports<'a> {
     pub structs: HashMap<&'a str, StructInfo<'a>>,
     pub enums: HashMap<&'a str, EnumInfo<'a>>,
     pub aliases: HashMap<&'a str, ast::Type<'a>>,
+    pub newtypes: HashMap<&'a str, NewtypeInfo>,
     pub receiver_methods: HashMap<(&'a str, &'a str), MethodInfo<'a>>,
     /// Value bindings (functions / constants) exported by the module.
     /// Currently stored as `Type::Infer` so uses typecheck generically.
@@ -63,6 +70,7 @@ impl<'a> Default for ModuleExports<'a> {
             structs: HashMap::new(),
             enums: HashMap::new(),
             aliases: HashMap::new(),
+            newtypes: HashMap::new(),
             receiver_methods: HashMap::new(),
             values: HashMap::new(),
         }
@@ -83,6 +91,8 @@ pub fn check_program_with_imports<'a>(
         errors: checker.errors,
         warnings: checker.warnings,
         method_calls: checker.method_calls,
+        unwrap_calls: checker.unwrap_calls,
+        operator_rewrites: checker.operator_rewrites,
     }
 }
 
@@ -95,6 +105,7 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
     let mut declared_structs: HashMap<&'a str, StructInfo<'a>> = HashMap::new();
     let mut declared_enums: HashMap<&'a str, EnumInfo<'a>> = HashMap::new();
     let mut declared_aliases: HashMap<&'a str, ast::Type<'a>> = HashMap::new();
+    let mut declared_newtypes: HashMap<&'a str, NewtypeInfo> = HashMap::new();
     let mut receiver_methods: HashMap<(&'a str, &'a str), MethodInfo<'a>> = HashMap::new();
 
     for stmt in program.statements.iter() {
@@ -115,6 +126,9 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
             }
             ast::Stmt::TypeAlias { name, value, .. } => {
                 declared_aliases.insert(*name, value.clone());
+            }
+            ast::Stmt::Newtype { name, repr, .. } => {
+                declared_newtypes.insert(*name, NewtypeInfo { repr: *repr });
             }
             ast::Stmt::ReceiverMethod {
                 receiver_type,
@@ -172,6 +186,18 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                     if let Some(ty) = declared_aliases.get(local) {
                         exports.aliases.insert(external, ty.clone());
                     }
+                    if let Some(info) = declared_newtypes.get(local) {
+                        exports.newtypes.insert(external, info.clone());
+                        // Promote receiver methods declared on the local
+                        // newtype to the exported name.
+                        for ((rt, mn), mi) in receiver_methods.iter() {
+                            if *rt == local {
+                                exports
+                                    .receiver_methods
+                                    .insert((external, *mn), mi.clone());
+                            }
+                        }
+                    }
                     if let Some(ty) = exports.values.get(local).cloned() {
                         exports.values.insert(external, ty);
                     }
@@ -187,6 +213,12 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
 #[derive(Clone, Debug)]
 pub struct EnumInfo<'a> {
     pub cases: &'a [ast::EnumCase<'a>],
+}
+
+/// Information about a newtype's primitive representation.
+#[derive(Clone, Debug)]
+pub struct NewtypeInfo {
+    pub repr: ast::NewtypeRepr,
 }
 
 /// Information about a struct's fields and embedded structs, collected before
@@ -228,10 +260,16 @@ struct Checker<'a> {
     structs: HashMap<&'a str, StructInfo<'a>>,
     /// User-defined interfaces.
     interfaces: HashMap<&'a str, InterfaceInfo<'a>>,
+    /// User-defined newtypes.
+    newtypes: HashMap<&'a str, NewtypeInfo>,
     /// Receiver methods keyed by `(receiver_type, method_name)`.
     receiver_methods: HashMap<(&'a str, &'a str), MethodInfo<'a>>,
     /// Method call sites to lower, keyed by call expression pointer.
     method_calls: HashMap<*const ast::Expr<'a>, MethodTarget<'a>>,
+    /// Primitive conversion call sites to lower, keyed by call expression pointer.
+    unwrap_calls: HashMap<*const ast::Expr<'a>, types::UnwrapKind>,
+    /// Operator expression sites that need newtype-aware lowering.
+    operator_rewrites: HashMap<*const ast::Expr<'a>, types::OperatorRewrite<'a>>,
     /// Local scopes. The first scope is the top-level scope.
     scopes: Vec<HashMap<&'a str, Type<'a>>>,
     /// Bindings that were introduced with `let` and may be reassigned.
@@ -261,8 +299,11 @@ impl<'a> Checker<'a> {
             case_to_enum: HashMap::new(),
             structs: HashMap::new(),
             interfaces: HashMap::new(),
+            newtypes: HashMap::new(),
             receiver_methods: HashMap::new(),
             method_calls: HashMap::new(),
+            unwrap_calls: HashMap::new(),
+            operator_rewrites: HashMap::new(),
             scopes: vec![HashMap::new()],
             mutables: vec![HashSet::new()],
             type_scopes: Vec::new(),
@@ -315,6 +356,15 @@ impl<'a> Checker<'a> {
 
                 if let Some(ty) = exports.aliases.get(imported) {
                     self.aliases.insert(local, ty.clone());
+                }
+
+                if let Some(info) = exports.newtypes.get(imported) {
+                    self.newtypes.insert(local, info.clone());
+                    for ((rt, mn), mi) in exports.receiver_methods.iter() {
+                        if *rt == imported {
+                            self.receiver_methods.insert((local, *mn), mi.clone());
+                        }
+                    }
                 }
 
                 if let Some(ty) = exports.values.get(imported) {

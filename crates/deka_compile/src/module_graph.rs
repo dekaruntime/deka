@@ -572,6 +572,42 @@ mod tests {
     }
 
     #[test]
+    fn graph_compiles_cross_module_newtype_method() {
+        let root = PathBuf::from("/project");
+        let money = root.join("money.ds");
+        let main = root.join("main.ds");
+
+        let mut files = HashMap::new();
+        files.insert(
+            money.clone(),
+            "type Cents number\nfn (c Cents) toDollars() number { return number(c) / 100 }\nexport { Cents }".to_string(),
+        );
+        files.insert(
+            main.clone(),
+            "import { Cents } from \"./money.ds\";\nconst c: Cents = Cents(500);\nconst d: number = c.toDollars();".to_string(),
+        );
+
+        let mut aliases = HashMap::new();
+        aliases.insert((main.clone(), "./money.ds".to_string()), money.clone());
+
+        let loader = InMemoryLoader { files, aliases };
+        let result = compile_module_graph(&main, &loader).expect("compile graph");
+        assert_eq!(result.modules.len(), 2);
+        let money_js = &result.modules[&money];
+        let main_js = &result.modules[&main];
+        assert!(money_js.contains("const Cents$proto"), "got: {}", money_js);
+        assert!(
+            money_js.contains("Cents$proto.toDollars = function()"),
+            "got: {}",
+            money_js
+        );
+        assert!(money_js.contains("export { Cents };"), "got: {}", money_js);
+        assert!(main_js.contains("import { Cents } from \"./money.ds\";"), "got: {}", main_js);
+        assert!(main_js.contains("Cents(500)"), "got: {}", main_js);
+        assert!(main_js.contains("c.toDollars()"), "got: {}", main_js);
+    }
+
+    #[test]
     fn graph_compiles_cross_module_struct_embed() {
         let root = PathBuf::from("/project");
         let legs = root.join("legs.ds");

@@ -248,8 +248,15 @@ pub fn compile_to_js_with_imports_and_options<'a>(
         return Err(typeck_result.errors);
     }
 
-    let js = emit_js_with_options(&program, source, imports, options.module_base)
-        .map_err(|message| vec![Diagnostic::error(0, 0, message)])?;
+    let js = emit_js_with_options(
+        &program,
+        source,
+        imports,
+        options.module_base,
+        &typeck_result.unwrap_calls,
+        &typeck_result.operator_rewrites,
+    )
+    .map_err(|message| vec![Diagnostic::error(0, 0, message)])?;
 
     Ok(CompileResult {
         js,
@@ -531,5 +538,224 @@ mod tests {
         assert_eq!(meta.exports.len(), 2);
         assert_eq!(meta.exports[0].name, "x");
         assert_eq!(meta.exports[1].name, "double");
+    }
+
+    #[test]
+    fn compile_newtype_construct_and_unwrap() {
+        let result = compile_to_js(
+            "type Cents number\nconst c: Cents = Cents(500)\nconst n: number = number(c)",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("const Cents$proto"), "got: {}", result.js);
+        assert!(result.js.contains("function Cents(v)"), "got: {}", result.js);
+        assert!(result.js.contains("const c = Cents(500)"), "got: {}", result.js);
+        assert!(result.js.contains("const n = c[__p]"), "got: {}", result.js);
+    }
+
+    #[test]
+    fn compile_newtype_ascription_rejected() {
+        let err = compile_to_js("type Cents number\nconst c: Cents = 500", "test.ds")
+            .expect_err("compile should fail");
+        assert!(
+            err.iter().any(|d| d.message.contains("Cents")),
+            "expected ascription error, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn compile_newtype_unwrap_wrong_repr_rejected() {
+        let err = compile_to_js(
+            "type Cents number\nconst c: Cents = Cents(500)\nconst s: string = string(c)",
+            "test.ds",
+        )
+        .expect_err("compile should fail");
+        assert!(
+            err.iter().any(|d| d.message.contains("cannot convert")),
+            "expected conversion error, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn compile_newtype_add_same() {
+        let result = compile_to_js(
+            "type Cents number\nconst a: Cents = Cents(100)\nconst b: Cents = Cents(200)\nconst c: Cents = a + b",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("Cents((a[__p] + b[__p]))"), "got: {}", result.js);
+    }
+
+    #[test]
+    fn compile_newtype_sub_same() {
+        let result = compile_to_js(
+            "type Cents number\nconst a: Cents = Cents(300)\nconst b: Cents = Cents(100)\nconst c: Cents = a - b",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("Cents((a[__p] - b[__p]))"), "got: {}", result.js);
+    }
+
+    #[test]
+    fn compile_newtype_div_same_returns_number() {
+        let result = compile_to_js(
+            "type Cents number\nconst a: Cents = Cents(300)\nconst b: Cents = Cents(100)\nconst r: number = a / b",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("(a[__p] / b[__p])"), "got: {}", result.js);
+        assert!(!result.js.contains("Cents((a[__p] / b[__p]))"), "division must not rewrap");
+    }
+
+    #[test]
+    fn compile_newtype_mul_scalar() {
+        let result = compile_to_js(
+            "type Cents number\nconst a: Cents = Cents(100)\nconst c: Cents = a * 2",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("Cents((a[__p] * 2))"), "got: {}", result.js);
+    }
+
+    #[test]
+    fn compile_newtype_scalar_mul_left() {
+        let result = compile_to_js(
+            "type Cents number\nconst a: Cents = Cents(100)\nconst c: Cents = 2 * a",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("Cents((2 * a[__p]))"), "got: {}", result.js);
+    }
+
+    #[test]
+    fn compile_newtype_compare_same() {
+        let result = compile_to_js(
+            "type Cents number\nconst a: Cents = Cents(100)\nconst b: Cents = Cents(200)\nconst eq: boolean = a == b",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("(a[__p] == b[__p])"), "got: {}", result.js);
+    }
+
+    #[test]
+    fn compile_newtype_unary_neg() {
+        let result = compile_to_js(
+            "type Cents number\nconst a: Cents = Cents(100)\nconst b: Cents = -a",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("Cents((-a[__p]))"), "got: {}", result.js);
+    }
+
+    #[test]
+    fn compile_newtype_add_number_rejected() {
+        let err = compile_to_js(
+            "type Cents number\nconst a: Cents = Cents(100)\nconst c: Cents = a + 2",
+            "test.ds",
+        )
+        .expect_err("compile should fail");
+        assert!(
+            err.iter().any(|d| d.message.contains("cannot add")),
+            "expected cannot add error, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn compile_newtype_mul_same_rejected() {
+        let err = compile_to_js(
+            "type Cents number\nconst a: Cents = Cents(100)\nconst b: Cents = Cents(200)\nconst c: Cents = a * b",
+            "test.ds",
+        )
+        .expect_err("compile should fail");
+        assert!(
+            err.iter().any(|d| d.message.contains("multiply")),
+            "expected multiply error, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn compile_newtype_number_div_newtype_rejected() {
+        let err = compile_to_js(
+            "type Cents number\nconst a: Cents = Cents(100)\nconst r: number = 100 / a",
+            "test.ds",
+        )
+        .expect_err("compile should fail");
+        assert!(
+            err.iter().any(|d| d.message.contains("number") && d.message.contains("Cents")),
+            "expected division type error, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn compile_newtype_string_arithmetic_rejected() {
+        let err = compile_to_js(
+            "type Name string\nconst a: Name = Name(\"a\")\nconst b: Name = Name(\"b\")\nconst c: Name = a + b",
+            "test.ds",
+        )
+        .expect_err("compile should fail");
+        assert!(
+            err.iter().any(|d| d.message.contains("cannot add")),
+            "expected cannot add error for string newtype, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn compile_newtype_receiver_method() {
+        let result = compile_to_js(
+            "type Cents number\nfn (c Cents) toDollars() number { return number(c) / 100 }\nconst c: Cents = Cents(500)\nconst d: number = c.toDollars()",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("const Cents$proto"), "got: {}", result.js);
+        assert!(
+            result.js.contains("Cents$proto.toDollars = function()"),
+            "got: {}",
+            result.js
+        );
+        assert!(result.js.contains("const c = Cents(500)"), "got: {}", result.js);
+        assert!(result.js.contains("c.toDollars()"), "got: {}", result.js);
+    }
+
+    #[test]
+    fn compile_newtype_receiver_method_uses_self() {
+        let result = compile_to_js(
+            "type Cents number\nfn (c Cents) doubled() Cents { return Cents(number(c) * 2) }\nconst c: Cents = Cents(50)\nconst d: Cents = c.doubled()",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("Cents$proto.doubled = function()"), "got: {}", result.js);
+        assert!(result.js.contains("const c = this"), "got: {}", result.js);
+        assert!(result.js.contains("Cents(c[__p] * 2)"), "got: {}", result.js);
+    }
+
+    #[test]
+    fn compile_newtype_receiver_method_param() {
+        let result = compile_to_js(
+            "type Cents number\nfn (c Cents) add(other: Cents) Cents { return Cents(number(c) + number(other)) }\nconst a: Cents = Cents(100)\nconst b: Cents = Cents(200)\nconst c: Cents = a.add(b)",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(result.js.contains("Cents$proto.add = function(other)"), "got: {}", result.js);
+        assert!(result.js.contains("a.add(b)"), "got: {}", result.js);
+    }
+
+    #[test]
+    fn compile_newtype_mutable_receiver_rejected() {
+        let err = compile_to_js(
+            "type Cents number\nfn (c mut Cents) setValue(v: number) { c = Cents(v) }",
+            "test.ds",
+        )
+        .expect_err("compile should fail");
+        assert!(
+            err.iter().any(|d| d.message.contains("mutable") && d.message.contains("newtype")),
+            "expected mutable newtype receiver error, got: {:?}",
+            err
+        );
     }
 }

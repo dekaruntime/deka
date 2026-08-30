@@ -347,6 +347,11 @@ fn transform_stmt<'a>(
                 span: *span,
             }
         }
+        Stmt::Newtype { name, repr, span } => Stmt::Newtype {
+            name,
+            repr: *repr,
+            span: *span,
+        },
     }
 }
 
@@ -929,6 +934,11 @@ fn lower_stmt<'a>(
                 span: *span,
             }
         }
+        Stmt::Newtype { name, repr, span } => Stmt::Newtype {
+            name,
+            repr: *repr,
+            span: *span,
+        },
     }
 }
 

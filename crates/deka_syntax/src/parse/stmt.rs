@@ -1,6 +1,10 @@
 //! Statement parsing.
 
-use crate::ast::{alloc, alloc_slice, EnumCase, ExportDecl, Expr, ForInit, InterfaceMember, Param, Pos, Program, StructField, Stmt, TemplatePart, Type, TypeParam};
+use crate::ast::{
+    alloc, alloc_slice, EnumCase, ExportDecl, Expr, ForInit, InterfaceMember, NewtypeRepr, Param,
+    Pos, Program, StructField, Stmt, TemplatePart, Type, TypeParam,
+};
+use crate::diagnostics::Diagnostic;
 use crate::lexer::TokenKind;
 
 use super::util::token_name;
@@ -153,7 +157,9 @@ impl<'a> Parser<'a> {
                 self.parse_interface_statement(start, start_byte)
             }
 
-            TokenKind::Type => self.parse_type_alias_statement(start, start_byte),
+            TokenKind::Type | TokenKind::Alias => {
+                self.parse_type_alias_statement(start, start_byte)
+            }
 
             TokenKind::Import => self.parse_import_statement(start, start_byte),
 
@@ -648,9 +654,33 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type_alias_statement(&mut self, start: Pos, start_byte: usize) -> Option<Stmt<'a>> {
-        self.advance(); // `type`
+        let keyword = self.current_kind();
+        self.advance(); // `type` or `alias`
 
         let name = self.expect_identifier()?;
+
+        // Newtype: `type Name Repr` (no `=`).
+        if keyword == TokenKind::Type && !self.at(TokenKind::Eq) {
+            let repr = self.parse_newtype_repr()?;
+            self.expect_statement_end(false)?;
+            return Some(Stmt::Newtype {
+                name,
+                repr,
+                span: self.span_from(start, start_byte),
+            });
+        }
+
+        if keyword == TokenKind::Type {
+            self.errors.push(
+                Diagnostic::warning(
+                    start.line,
+                    start.column,
+                    "`type X = Y` is deprecated; use `alias X = Y` instead",
+                )
+                .with_help("replace `type` with `alias`"),
+            );
+        }
+
         let type_params = if self.at(TokenKind::Lt) {
             self.parse_type_params()?
         } else {
@@ -666,6 +696,21 @@ impl<'a> Parser<'a> {
             type_params,
             value,
             span: self.span_from(start, start_byte),
+        })
+    }
+
+    fn parse_newtype_repr(&mut self) -> Option<NewtypeRepr> {
+        let repr_name = self.expect_identifier()?;
+        Some(match repr_name {
+            "number" => NewtypeRepr::Number,
+            "string" => NewtypeRepr::String,
+            "bool" => NewtypeRepr::Bool,
+            _ => {
+                self.error(format!(
+                    "newtype representation must be `number`, `string`, or `bool`, found `{repr_name}`"
+                ));
+                NewtypeRepr::Number
+            }
         })
     }
 
@@ -972,6 +1017,7 @@ fn stmt_has_top_level_await(stmt: &Stmt<'_>) -> bool {
         Stmt::Struct { .. }
         | Stmt::Enum { .. }
         | Stmt::TypeAlias { .. }
+        | Stmt::Newtype { .. }
         | Stmt::Interface { .. }
         | Stmt::Import { .. } => false,
     }
