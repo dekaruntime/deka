@@ -47,6 +47,9 @@ for (const test of selected) {
     failed++
     console.error(`[smoke] FAIL ${test.slug}`)
     for (const problem of problems) console.error(`  ${problem}`)
+    console.error(`  browser: ${JSON.stringify({ ok: test.wasmResult.ok, stage: test.wasmResult.stage, stdout: test.wasmResult.stdout, error: test.wasmResult.error, formattedCode: test.wasmResult.formattedCode })}`)
+    console.error(`  native:  ${JSON.stringify({ ok: test.nativeResult.ok, stage: test.nativeResult.stage, stdout: test.nativeResult.stdout, error: test.nativeResult.error })}`)
+    console.error(`  expect:  ${JSON.stringify({ status: test.status, stage: test.stage, stdout: test.expectedStdout, code: test.expectedCode })}`)
   } else {
     console.log(`[smoke] ok ${test.slug}`)
   }
