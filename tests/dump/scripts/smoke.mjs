@@ -10,7 +10,7 @@
 import { loadAndRunAllTests } from '../lib/build-tests.ts'
 
 process.env.HATS_FILTER =
-  process.env.HATS_FILTER || 'boolean_logic,component_fn_hoisted'
+  process.env.HATS_FILTER || 'boolean-logic,component-fn-hoisted'
 
 const { nativeAvailable, browserAvailable, categories } = await loadAndRunAllTests()
 

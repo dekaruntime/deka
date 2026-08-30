@@ -37,13 +37,13 @@ export interface HatsCategory {
 const TESTS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'testsuite')
 
 function parseStatusFromFilename(filename: string): HatsTestStatus | null {
-  if (filename.endsWith('.pass.ds')) return 'pass'
-  if (filename.endsWith('.fail.ds')) return 'fail'
+  if (filename.endsWith('.pass.ds') || filename.endsWith('.pass.dsx')) return 'pass'
+  if (filename.endsWith('.fail.ds') || filename.endsWith('.fail.dsx')) return 'fail'
   return null
 }
 
 function baseNameFromFilename(filename: string): string {
-  return filename.replace(/\.(pass|fail)\.ds$/, '')
+  return filename.replace(/\.(pass|fail)\.dsx?$/, '')
 }
 
 function slugFromParts(category: string, name: string): string {
@@ -63,7 +63,7 @@ function collectDsFiles(dir: string, relativeTo: string): string[] {
     const relativePath = path.relative(relativeTo, path.join(dir, entry.name)).replace(/\\/g, '/')
     if (entry.isDirectory()) {
       results.push(...collectDsFiles(path.join(dir, entry.name), relativeTo))
-    } else if (entry.isFile() && entry.name.endsWith('.ds')) {
+    } else if (entry.isFile() && (entry.name.endsWith('.ds') || entry.name.endsWith('.dsx'))) {
       results.push(relativePath)
     }
   }
