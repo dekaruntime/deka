@@ -195,7 +195,7 @@ fn build_passes_slug_params_in_generated_entry() {
     )
     .expect("read generated serve-entry");
     assert!(
-        entry.contains("slug: last_segment(path)"),
+        entry.contains("slug={last_segment(path)}") || entry.contains("slug: last_segment(path)"),
         "generated matcher should pass [slug] into Page: {entry}"
     );
 }
@@ -323,7 +323,7 @@ fn build_desugars_loading_dsx_to_suspense() {
         "serve-entry should import Suspense: {entry}"
     );
     assert!(
-        entry.contains("Suspense({ fallback: Loading_root()"),
-        "loading.dsx should wrap the child segment: {entry}"
+        entry.contains("<Suspense fallback={<Loading_root />}"),
+        "loading.dsx should wrap the child segment as a ComponentNode: {entry}"
     );
 }
