@@ -205,6 +205,16 @@ fn api_entry_override(page_entry: Option<String>, url: &str) -> Option<String> {
     let path = url.split('?').next().unwrap_or(url);
     let path = path.split("://").nth(1).unwrap_or(path);
     let path = path.find('/').map(|i| &path[i..]).unwrap_or("/");
+    if path == "/_deka/defer" || path.starts_with("/_deka/defer?") {
+        let Some(page_entry) = page_entry else {
+            return None;
+        };
+        let defer_entry = std::path::Path::new(&page_entry).with_file_name("defer-entry.dsx");
+        if defer_entry.is_file() {
+            return Some(defer_entry.to_string_lossy().into_owned());
+        }
+        return Some(page_entry);
+    }
     if !(path == "/api" || path.starts_with("/api/")) {
         return page_entry;
     }

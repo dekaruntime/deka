@@ -568,6 +568,56 @@ fn build_emits_per_route_css_into_head() {
     );
 }
 
+#[test]
+fn build_server_defer_requires_fallback_and_emits_loader() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    fs::write(
+        project.path().join("app").join("page.dsx"),
+        "export fn Badge() {\n    return <strong>42</strong>;\n}\nexport fn Page() {\n    return <main><Badge server:defer cache=\"60s\"><span slot=\"fallback\">.</span></Badge></main>;\n}\n",
+    )
+    .expect("write defer page");
+    let (success, combined) = run_build(project.path());
+    assert!(success, "deka build should succeed with server:defer fallback: {combined}");
+    let index = fs::read_to_string(project.path().join("dist").join("client").join("index.html"))
+        .expect("read dist html");
+    assert!(
+        index.contains("islands-defer.js"),
+        "server:defer must emit the defer loader: {index}"
+    );
+    assert!(
+        !index.contains("<strong>42</strong>"),
+        "static shell must not include the deferred tree: {index}"
+    );
+    assert!(
+        project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("assets")
+            .join("islands-defer.js")
+            .is_file(),
+        "islands-defer.js must exist"
+    );
+}
+
+#[test]
+fn build_server_defer_without_fallback_fails() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    fs::write(
+        project.path().join("app").join("page.dsx"),
+        "export fn Badge() {\n    return <strong>42</strong>;\n}\nexport fn Page() {\n    return <main><Badge server:defer /></main>;\n}\n",
+    )
+    .expect("write defer page without fallback");
+    let (success, combined) = run_build(project.path());
+    assert!(!success, "missing fallback must fail the build: {combined}");
+    assert!(
+        combined.contains("slot=\"fallback\"") || combined.contains("fallback"),
+        "error should mention the required fallback slot: {combined}"
+    );
+}
+
 fn gzip_len(bytes: &[u8]) -> usize {
     use std::io::Write;
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());

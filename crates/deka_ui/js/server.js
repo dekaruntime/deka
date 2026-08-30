@@ -64,18 +64,38 @@ function serializeIslandProps(props) {
 function extractDirectives(props) {
   const rest = {};
   const directives = [];
+  let cache = null;
   for (const [key, value] of Object.entries(props ?? {})) {
     if (key.startsWith("client:") && value !== false && value != null) {
       directives.push(key.slice(7));
+    } else if (key === "server:defer" && value !== false && value != null) {
+      directives.push("defer");
     } else if (key.startsWith("server:")) {
-      // server:defer is phase 11; do not treat it as a client island.
+      // unknown server: axis
+    } else if (key === "cache") {
+      cache = String(value);
     } else if (typeof value === "function" && key.startsWith("on")) {
       // event handlers are client-only
     } else {
       rest[key] = value;
     }
   }
-  return { rest, directives };
+  return { rest, directives, cache };
+}
+
+function fallbackNodes(children) {
+  const list = Array.isArray(children) ? children : children == null ? [] : [children];
+  const out = [];
+  for (const child of list) {
+    if (!isComponentNode(child)) continue;
+    if (child.props && child.props.slot === "fallback") out.push(child);
+  }
+  return out;
+}
+
+function wrapDeferred(name, directive, props, cache, id, html) {
+  const cachePart = cache ? ` cache:${base64Encode(String(cache))}` : "";
+  return `<!--deka-island start:${base64Encode(name)} directive:${base64Encode(directive)} props:${base64Encode(serializeIslandProps(props))} id:${base64Encode(id)}${cachePart}--><span data-deka-defer="${escapeHtml(id)}">${html}</span><!--deka-island end:${base64Encode(name)}-->`;
 }
 
 function renderAttributes(props) {
@@ -111,6 +131,13 @@ function isSuspenseTag(tag) {
 
 function wrapFallback(id, fallbackHtml) {
   return `<div id="${escapeHtml(id)}" data-deka-suspense="pending">${fallbackHtml}</div>`;
+}
+
+let deferSeq = 0;
+
+function nextDeferId() {
+  deferSeq += 1;
+  return "D:" + deferSeq;
 }
 
 function createCtx() {
@@ -149,15 +176,18 @@ function renderNode(node, ctx) {
     if (isSuspenseTag(tag)) {
       return renderSuspenseSync(node, ctx);
     }
-    const { rest, directives } = extractDirectives(props);
+    const { rest, directives, cache } = extractDirectives(props);
+    if (directives.includes("defer")) {
+      const html = renderNode(fallbackNodes(children), ctx);
+      return wrapDeferred(tag.name || "Anonymous", "defer", rest, cache, nextDeferId(), html);
+    }
     const result = tag({ ...rest, children });
     if (isPromise(result)) return handlePromiseSync(ctx, result);
     const html = forwardClass(renderNode(result, ctx), rest.class);
     if (directives.length === 0) return html;
     const islandName = tag.name || "Anonymous";
     const directive = directives[0];
-    const serializedProps = serializeIslandProps(rest);
-    return `<!--deka-island start:${base64Encode(islandName)} directive:${base64Encode(directive)} props:${base64Encode(serializedProps)}-->${html}<!--deka-island end:${base64Encode(islandName)}-->`;
+    return `<!--deka-island start:${base64Encode(islandName)} directive:${base64Encode(directive)} props:${base64Encode(serializeIslandProps(rest))}-->${html}<!--deka-island end:${base64Encode(islandName)}-->`;
   }
 
   if (typeof tag === "string") {
@@ -214,15 +244,18 @@ async function renderNodeAsync(node) {
     if (isSuspenseTag(tag)) {
       return await renderNodeAsync(children);
     }
-    const { rest, directives } = extractDirectives(props);
+    const { rest, directives, cache } = extractDirectives(props);
+    if (directives.includes("defer")) {
+      const html = await renderNodeAsync(fallbackNodes(children));
+      return wrapDeferred(tag.name || "Anonymous", "defer", rest, cache, nextDeferId(), html);
+    }
     let result = tag({ ...rest, children });
     if (isPromise(result)) result = await result;
     const html = forwardClass(await renderNodeAsync(result), rest.class);
     if (directives.length === 0) return html;
     const islandName = tag.name || "Anonymous";
     const directive = directives[0];
-    const serializedProps = serializeIslandProps(rest);
-    return `<!--deka-island start:${base64Encode(islandName)} directive:${base64Encode(directive)} props:${base64Encode(serializedProps)}-->${html}<!--deka-island end:${base64Encode(islandName)}-->`;
+    return `<!--deka-island start:${base64Encode(islandName)} directive:${base64Encode(directive)} props:${base64Encode(serializeIslandProps(rest))}-->${html}<!--deka-island end:${base64Encode(islandName)}-->`;
   }
 
   if (typeof tag === "string") {
@@ -243,11 +276,13 @@ async function renderNodeAsync(node) {
 }
 
 export function renderToString(node) {
+  deferSeq = 0;
   const ctx = createCtx();
   return { html: renderNode(node, ctx), boundaries: ctx.pending.map((item) => item.id) };
 }
 
 export async function renderToStringAsync(node) {
+  deferSeq = 0;
   return { html: await renderNodeAsync(node), boundaries: [] };
 }
 
@@ -284,6 +319,7 @@ async function nextResolved(queue) {
 }
 
 async function* iterateChunks(node) {
+  deferSeq = 0;
   const ctx = createCtx();
   yield renderNode(node, ctx);
   const queue = ctx.pending.slice();

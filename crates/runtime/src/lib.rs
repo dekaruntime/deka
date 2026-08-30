@@ -45,6 +45,10 @@ pub fn write_island_client_assets_for_project(
     islands::write_island_client_assets_for_project(project_root)
 }
 
+pub fn write_defer_client_assets(assets_dir: &std::path::Path) -> Result<(), String> {
+    islands::write_defer_client_assets(assets_dir)
+}
+
 pub fn write_route_css_assets(
     assets_dir: &std::path::Path,
     styles: &[runtime_core::framework::RouteStyle],

@@ -267,6 +267,18 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     }
 
     let islands = runtime_core::framework::scan_client_islands(&app_dir);
+    let deferred = runtime_core::framework::scan_server_defer(&app_dir);
+    if deferred.iter().any(|item| !item.has_fallback) {
+        let names: Vec<&str> = deferred
+            .iter()
+            .filter(|item| !item.has_fallback)
+            .map(|item| item.component.as_str())
+            .collect();
+        return Err(format!(
+            "server:defer requires a child with slot=\"fallback\" ({})",
+            names.join(", ")
+        ));
+    }
     if !islands.is_empty() {
         #[cfg(feature = "native")]
         {
@@ -277,6 +289,16 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
             )?;
         }
         inject_island_scripts(&dist_client, &islands)?;
+    }
+    if !deferred.is_empty() {
+        #[cfg(feature = "native")]
+        {
+            runtime::write_defer_client_assets(&dist_client.join("assets"))?;
+            runtime::write_defer_client_assets(
+                &project_root.join(".cache").join("dekascript").join("assets"),
+            )?;
+        }
+        inject_defer_script(&dist_client)?;
     }
 
     let styles = runtime_core::framework::collect_route_styles(
@@ -1110,6 +1132,11 @@ impl VirtualSource for GraphJsProvider {
     }
 }
 
+fn inject_defer_script(dist_client: &Path) -> Result<(), String> {
+    let tags = runtime_core::framework::defer_script_tag(true);
+    inject_before_body_close_walk(dist_client, &tags)
+}
+
 fn inject_island_scripts(
     dist_client: &Path,
     islands: &[runtime_core::framework::ClientIsland],
@@ -1136,7 +1163,10 @@ fn inject_before_body_close_walk(dir: &Path, tags: &str) -> Result<(), String> {
         }
         let mut html = fs::read_to_string(&path)
             .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
-        if html.contains("islands-load.js") || html.contains("islands-idle.js") {
+        if html.contains("islands-load.js")
+            || html.contains("islands-idle.js")
+            || html.contains("islands-defer.js")
+        {
             continue;
         }
         if let Some(idx) = html.rfind("</body>") {

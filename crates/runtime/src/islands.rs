@@ -28,14 +28,22 @@ pub fn write_island_client_assets_for_project(project_root: &Path) -> Result<(),
     if !runtime_core::framework::is_app_router_project(project_root) {
         return Ok(());
     }
-    let islands = runtime_core::framework::scan_client_islands(&project_root.join("app"));
-    if islands.is_empty() {
+    let app_dir = project_root.join("app");
+    let islands = runtime_core::framework::scan_client_islands(&app_dir);
+    let deferred = runtime_core::framework::scan_server_defer(&app_dir);
+    if islands.is_empty() && deferred.is_empty() {
         return Ok(());
     }
     write_island_client_assets(
         &project_root.join(".cache").join("dekascript").join("assets"),
         &islands,
-    )
+    )?;
+    if !deferred.is_empty() {
+        write_defer_client_assets(
+            &project_root.join(".cache").join("dekascript").join("assets"),
+        )?;
+    }
+    Ok(())
 }
 
 pub fn write_island_client_assets(
@@ -122,6 +130,25 @@ fn compile_js(source: &str, path: &str) -> Result<String, String> {
             .collect::<Vec<_>>()
             .join("\n")),
     }
+}
+
+pub fn write_defer_client_assets(assets_dir: &Path) -> Result<(), String> {
+    let ui_dir = assets_dir.join("ui");
+    fs::create_dir_all(&ui_dir)
+        .map_err(|err| format!("failed to create {}: {err}", ui_dir.display()))?;
+    for (name, source) in [
+        ("jsx.js", deka_ui::JSX),
+        ("reactive.js", deka_ui::REACTIVE),
+        ("client.js", deka_ui::CLIENT),
+    ] {
+        fs::write(ui_dir.join(name), source.as_bytes())
+            .map_err(|err| format!("failed to write {}: {err}", ui_dir.join(name).display()))?;
+    }
+    let entry = "import { hydrate } from \"./ui/client.js\";\nhydrate();\n";
+    let dest = assets_dir.join("islands-defer.js");
+    fs::write(&dest, entry.as_bytes())
+        .map_err(|err| format!("failed to write {}: {err}", dest.display()))?;
+    Ok(())
 }
 
 fn rewrite_ui_imports(js: &str) -> String {

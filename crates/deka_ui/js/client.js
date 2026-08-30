@@ -25,7 +25,7 @@ function decodeB64(value) {
 function parseMarker(text) {
   const raw = String(text || "").trim();
   const match = raw.match(
-    /^deka-island start:([A-Za-z0-9+/=]+) directive:([A-Za-z0-9+/=]+) props:([A-Za-z0-9+/=]+)$/
+    /^deka-island start:([A-Za-z0-9+/=]+) directive:([A-Za-z0-9+/=]+) props:([A-Za-z0-9+/=]+)(?: id:([A-Za-z0-9+/=]+))?(?: cache:([A-Za-z0-9+/=]+))?$/
   );
   if (!match) return null;
   let props = {};
@@ -38,6 +38,8 @@ function parseMarker(text) {
     name: decodeB64(match[1]),
     directive: decodeB64(match[2]) || "load",
     props,
+    id: match[4] ? decodeB64(match[4]) : "",
+    cache: match[5] ? decodeB64(match[5]) : "",
   };
 }
 
@@ -243,6 +245,40 @@ export function stopObserver() {
   observing = false;
 }
 
+function fetchDeferred(items) {
+  if (typeof fetch !== "function" || items.length === 0) return;
+  const payload = JSON.stringify({
+    islands: items.map((item) => ({
+      id: item.id || item.name,
+      name: item.name,
+      props: item.props || {},
+    })),
+  });
+  fetch("/_deka/defer", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    credentials: "same-origin",
+    body: payload,
+  })
+    .then((res) => (res && res.ok ? res.json() : null))
+    .then((data) => {
+      const fragments = data && data.fragments ? data.fragments : {};
+      for (const item of items) {
+        const key = item.id || item.name;
+        const html = fragments[key];
+        if (typeof html !== "string" || !item.el) continue;
+        const slot =
+          item.el.getAttribute && item.el.getAttribute("data-deka-defer")
+            ? item.el
+            : item.el;
+        try {
+          slot.outerHTML = html;
+        } catch (_) {}
+      }
+    })
+    .catch(() => {});
+}
+
 export function hydrate(root) {
   if (typeof globalThis !== "undefined") {
     globalThis.deka = globalThis.deka || {};
@@ -251,7 +287,15 @@ export function hydrate(root) {
   if (typeof document === "undefined") return;
   const scope = root && root.nodeType ? root : document;
   const found = findIslands(scope);
+  const deferred = [];
   for (const island of found) {
+    if (island.directive === "defer") {
+      if (!island.el.__dekaHydrated) {
+        island.el.__dekaHydrated = true;
+        deferred.push(island);
+      }
+      continue;
+    }
     if (island.el.__dekaHydrated) continue;
     const component = islands().get(island.name);
     if (typeof component !== "function") continue;
@@ -264,5 +308,6 @@ export function hydrate(root) {
       el.__dekaHydrated = true;
     });
   }
+  if (deferred.length > 0) fetchDeferred(deferred);
   if (found.length > 0) startObserver();
 }

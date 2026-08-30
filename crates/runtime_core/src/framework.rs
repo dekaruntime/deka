@@ -762,6 +762,213 @@ pub fn island_script_tags(islands: &[ClientIsland]) -> String {
     tags
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeferredIsland {
+    pub component: String,
+    pub file: String,
+    pub props: Vec<String>,
+    pub cache: Option<String>,
+    pub has_fallback: bool,
+}
+
+pub fn scan_server_defer(app_dir: &Path) -> Vec<DeferredIsland> {
+    let mut out = Vec::new();
+    if !app_dir.is_dir() {
+        return out;
+    }
+    let mut stack = vec![app_dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(reader) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in reader.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+                continue;
+            };
+            if ext != "dsx" && ext != "ds" {
+                continue;
+            }
+            let Ok(src) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            out.extend(defer_in_source(&src, path.to_string_lossy().as_ref()));
+        }
+    }
+    out
+}
+
+fn defer_in_source(src: &str, file: &str) -> Vec<DeferredIsland> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < src.len() {
+        let rest = &src[i..];
+        let Some(rel) = rest.find("server:defer") else {
+            break;
+        };
+        let at = i + rel;
+        let prefix = &src[..at];
+        let tag_start = prefix.rfind('<').unwrap_or(0);
+        let tag_end = src[tag_start..]
+            .find('>')
+            .map(|rel| tag_start + rel + 1)
+            .unwrap_or(at + "server:defer".len());
+        let tag_src = &src[tag_start..tag_end];
+        let component = tag_src
+            .trim_start_matches('<')
+            .split(|c: char| c.is_whitespace() || c == '>' || c == '/')
+            .next()
+            .unwrap_or("")
+            .to_string();
+        let is_component = component
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_uppercase())
+            .unwrap_or(false);
+        if is_component {
+            let self_closing = tag_src.trim_end().ends_with("/>") || tag_src.contains("/>");
+            let has_fallback = !self_closing && fallback_in_element(src, tag_end, &component);
+            let cache = defer_cache_attr(tag_src);
+            out.push(DeferredIsland {
+                component,
+                file: file.to_string(),
+                props: island_prop_names(tag_src),
+                cache,
+                has_fallback,
+            });
+        }
+        i = at + "server:defer".len();
+    }
+    out
+}
+
+fn fallback_in_element(src: &str, tag_end: usize, component: &str) -> bool {
+    let rest = &src[tag_end.min(src.len())..];
+    let close = format!("</{component}>");
+    let window = rest.find(&close).map(|i| &rest[..i]).unwrap_or(rest);
+    window.contains("slot=\"fallback\"")
+        || window.contains("slot='fallback'")
+        || window.contains("slot={\"fallback\"}")
+}
+
+fn defer_cache_attr(tag_src: &str) -> Option<String> {
+    for raw in tag_src.split_whitespace() {
+        if let Some(rest) = raw.strip_prefix("cache=") {
+            let value = rest.trim_matches(|c| c == '"' || c == '\'' || c == '{' || c == '}');
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
+pub fn defer_script_tag(has_defer: bool) -> String {
+    if has_defer {
+        "<script type=\"module\" src=\"/assets/islands-defer.js\"></script>".to_string()
+    } else {
+        String::new()
+    }
+}
+
+pub fn write_defer_router_entry(project_root: &Path) -> Result<PathBuf, String> {
+    let deferred = scan_server_defer(&project_root.join("app"));
+    if deferred.is_empty() {
+        return Err("no server:defer islands".to_string());
+    }
+    let missing: Vec<_> = deferred.iter().filter(|d| !d.has_fallback).collect();
+    if !missing.is_empty() {
+        let names = missing
+            .iter()
+            .map(|d| d.component.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!(
+            "server:defer requires a child with slot=\"fallback\" ({names})"
+        ));
+    }
+    let cache_dir = project_root.join(".cache").join("dekascript");
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|err| format!("failed to create {}: {err}", cache_dir.display()))?;
+    let entry = cache_dir.join("defer-entry.dsx");
+    let source = generate_defer_entry(&entry, &deferred)?;
+    std::fs::write(&entry, source.as_bytes())
+        .map_err(|err| format!("failed to write {}: {err}", entry.display()))?;
+    Ok(entry)
+}
+
+fn generate_defer_entry(entry: &Path, deferred: &[DeferredIsland]) -> Result<String, String> {
+    let mut imports = String::new();
+    let mut branches = String::new();
+    let mut seen = BTreeSet::new();
+    for (idx, item) in deferred.iter().enumerate() {
+        let key = format!("{}:{}", item.file, item.component);
+        if !seen.insert(key) {
+            continue;
+        }
+        let alias = format!("Defer_{idx}");
+        let rel = pathdiff_dsx(entry, Path::new(&item.file));
+        imports.push_str(&format!(
+            "import {{ {} as {alias} }} from \"{rel}\"\n",
+            item.component
+        ));
+        branches.push_str(&format!(
+            "                    if (item.name === \"{}\") tree = {alias}(item.props || {{}});\n",
+            item.component
+        ));
+    }
+    let cache_control = defer_cache_header(deferred);
+    Ok(format!(
+        r#"{imports}
+interface RequestHeaders {{ accept: string }}
+interface Request {{ url: string, pathname: string, method: string, headers: RequestHeaders, body: string }}
+interface Response {{ status: number, body: string }}
+
+async fn App(request: Request): Promise<Response> {{
+    const boxed = unsafe {{
+        (async () => {{
+            const payload = JSON.parse(request.body || "{{}}");
+            const islands = Array.isArray(payload.islands) ? payload.islands : [];
+            const fragments = {{}};
+            for (const item of islands) {{
+                let tree = null;
+{branches}                if (!tree) continue;
+                const rendered = deka.ui.renderToString(tree);
+                fragments[item.id || item.name] = rendered && rendered.html ? rendered.html : "";
+            }}
+            return {{ status: 200, body: JSON.stringify({{ fragments }}), headers: {{ \"cache-control\": \"{cache_control}\" }} }};
+        }})()
+    }}
+    return await boxed
+}}
+export {{ App }}
+"#
+    ))
+}
+
+fn defer_cache_header(deferred: &[DeferredIsland]) -> String {
+    let mut max_age: Option<u64> = None;
+    for item in deferred {
+        match item.cache.as_deref() {
+            Some("no-store") | None => return "no-store".to_string(),
+            Some(raw) => {
+                let Some(secs) = raw.trim().trim_end_matches('s').parse::<u64>().ok() else {
+                    return "no-store".to_string();
+                };
+                max_age = Some(max_age.map(|a| a.min(secs)).unwrap_or(secs));
+            }
+        }
+    }
+    match max_age {
+        Some(secs) => format!("max-age={secs}"),
+        None => "no-store".to_string(),
+    }
+}
+
 pub fn static_page_routes(manifest: &FrameworkManifest) -> Vec<String> {
     manifest
         .entries
@@ -800,7 +1007,12 @@ pub fn write_app_router_entry(project_root: &Path) -> Result<PathBuf, String> {
     let index_html = std::fs::read_to_string(&index_path)
         .map_err(|err| format!("failed to read {}: {err}", index_path.display()))?;
     let islands = scan_client_islands(&app_dir);
-    let scripts = island_script_tags(&islands);
+    let deferred = scan_server_defer(&app_dir);
+    let mut scripts = island_script_tags(&islands);
+    scripts.push_str(&defer_script_tag(!deferred.is_empty()));
+    if !deferred.is_empty() {
+        write_defer_router_entry(project_root)?;
+    }
     let styles = collect_route_styles(&manifest);
     let css_plan = css_plan_from_styles(&styles);
     let cache_dir = project_root.join(".cache").join("dekascript");
@@ -937,7 +1149,10 @@ pub fn pattern_hits(pattern: &str, path: &str) -> bool {
 
 pub fn skip_middleware_path(path: &str) -> bool {
     let path = normalize_request_path(path);
-    path == "/assets" || path.starts_with("/assets/")
+    path == "/assets"
+        || path.starts_with("/assets/")
+        || path == "/_deka/defer"
+        || path.starts_with("/_deka/")
 }
 
 pub fn public_file_exists(project_root: &Path, path: &str) -> bool {
@@ -2129,6 +2344,24 @@ mod tests {
         let found = islands_in_source(src, "app/page.dsx");
         assert!(found.is_empty());
         assert_eq!(island_script_tags(&found), "");
+    }
+
+    #[test]
+    fn scan_server_defer_requires_fallback_slot() {
+        let missing = defer_in_source(
+            "export fn Page() {\n    return <Cart server:defer userId={id} />;\n}\n",
+            "app/page.dsx",
+        );
+        assert_eq!(missing.len(), 1);
+        assert!(!missing[0].has_fallback);
+        let ok = defer_in_source(
+            "export fn Page() {\n    return <Cart server:defer><span slot=\"fallback\">.</span></Cart>;\n}\n",
+            "app/page.dsx",
+        );
+        assert_eq!(ok.len(), 1);
+        assert!(ok[0].has_fallback);
+        assert_eq!(ok[0].component, "Cart");
+        assert!(defer_script_tag(true).contains("islands-defer.js"));
     }
 
     #[test]
