@@ -566,6 +566,14 @@ mod tests {
             code.contains(r#"import { echo } from "/tour/modules/io.mjs";"#),
             "expected moduleBase rewrite, got:\n{code}"
         );
+        // The import must stand on its own line. Hosts transform static
+        // imports line-by-line; `import ...;"use strict";` on one line slips
+        // through and then fails as "Cannot use import statement outside a
+        // module" (testsuite.deka.gg regression).
+        assert!(
+            code.lines().any(|line| line == r#"import { echo } from "/tour/modules/io.mjs";"#),
+            "expected the import on its own line, got:\n{code}"
+        );
     }
 
     #[test]

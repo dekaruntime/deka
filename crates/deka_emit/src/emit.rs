@@ -183,6 +183,14 @@ impl<'a> Emitter<'a> {
             self.out.push_str("\";");
         }
 
+        // Imports end without a trailing newline; separate them from the
+        // prelude so each `import` stays on its own line. Hosts transform
+        // static imports line-by-line, so `import ...;"use strict";` on one
+        // line would survive into non-module execution.
+        if !first {
+            self.out.push('\n');
+        }
+
         self.emit_prelude()?;
 
         // First pass: emit struct/enum/function declarations so that all
