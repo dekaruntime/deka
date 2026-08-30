@@ -858,7 +858,9 @@ fn fallback_in_element(src: &str, tag_end: usize, component: &str) -> bool {
 fn defer_cache_attr(tag_src: &str) -> Option<String> {
     for raw in tag_src.split_whitespace() {
         if let Some(rest) = raw.strip_prefix("cache=") {
-            let value = rest.trim_matches(|c| c == '"' || c == '\'' || c == '{' || c == '}');
+            let value = rest.trim_matches(|c| {
+                c == '"' || c == '\'' || c == '{' || c == '}' || c == '>' || c == '/'
+            });
             if !value.is_empty() {
                 return Some(value.to_string());
             }
@@ -921,7 +923,7 @@ fn generate_defer_entry(entry: &Path, deferred: &[DeferredIsland]) -> Result<Str
             item.component
         ));
     }
-    let cache_control = defer_cache_header(deferred);
+    let cache_control = json_str(&defer_cache_header(deferred))?;
     Ok(format!(
         r#"{imports}
 interface RequestHeaders {{ accept: string }}
@@ -940,7 +942,7 @@ async fn App(request: Request): Promise<Response> {{
                 const rendered = deka.ui.renderToString(tree);
                 fragments[item.id || item.name] = rendered && rendered.html ? rendered.html : "";
             }}
-            return {{ status: 200, body: JSON.stringify({{ fragments }}), headers: {{ \"cache-control\": \"{cache_control}\" }} }};
+            return {{ status: 200, body: JSON.stringify({{ fragments }}), headers: {{ "cache-control": {cache_control} }} }};
         }})()
     }}
     return await boxed
@@ -1051,6 +1053,7 @@ pub fn middleware_path(project_root: &Path) -> Option<PathBuf> {
 pub fn project_needs_worker(project_root: &Path) -> bool {
     middleware_path(project_root).is_some()
         || !scan_api_dir(&project_root.join("api")).is_empty()
+        || !scan_server_defer(&project_root.join("app")).is_empty()
 }
 
 pub fn request_path_from_url(url: &str) -> String {
@@ -1367,12 +1370,12 @@ async fn respond(tree: Component, status: number, fragment: boolean, headHtml: s
         const result = unsafe {{ deka.ui.renderToString(tree) }}
         const appHtml = match (result) {{
             Ok(rendered) => rendered.html,
-            Err(err) => err.message,
+            Err(_) => "<p>Internal Server Error</p>",
         }}
         const payload = unsafe {{ JSON.stringify({{ html: appHtml, head: headHtml }}) }}
         return match (payload) {{
             Ok(json) => {{ status: status, body: json }},
-            Err(err) => {{ status: 500, body: err.message }},
+            Err(_) => {{ status: 500, body: "Internal Server Error" }},
         }}
     }}
     const appHtml = await stream_html(tree)
@@ -1684,7 +1687,7 @@ fn exports_head(path: &Path) -> bool {
     let Ok(src) = std::fs::read_to_string(path) else {
         return false;
     };
-    src.contains("export fn head") || src.contains("export function head")
+    exports_fn_named(&strip_ds_comments(&src), "head")
 }
 
 fn alias(prefix: &str, route: &str) -> String {
@@ -2355,12 +2358,13 @@ mod tests {
         assert_eq!(missing.len(), 1);
         assert!(!missing[0].has_fallback);
         let ok = defer_in_source(
-            "export fn Page() {\n    return <Cart server:defer><span slot=\"fallback\">.</span></Cart>;\n}\n",
+            "export fn Page() {\n    return <Cart server:defer cache=\"60s\"><span slot=\"fallback\">.</span></Cart>;\n}\n",
             "app/page.dsx",
         );
         assert_eq!(ok.len(), 1);
         assert!(ok[0].has_fallback);
         assert_eq!(ok[0].component, "Cart");
+        assert_eq!(ok[0].cache.as_deref(), Some("60s"));
         assert!(defer_script_tag(true).contains("islands-defer.js"));
     }
 
