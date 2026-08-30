@@ -5,4 +5,4 @@ fn factorial(n: number) number {
   }
   return n * factorial(n - 1)
 }
-echo(factorial(5))
+echo("" + (factorial(5)))

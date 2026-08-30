@@ -3,4 +3,4 @@ async fn one() Promise<number> {
   return 1
 }
 const x = await one()
-echo(x)
+echo("" + (x))

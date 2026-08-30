@@ -2,4 +2,4 @@ import { echo } from "io"
 const double = fn(n: number) number {
   return n * 2
 }
-echo(double(21))
+echo("" + (double(21)))

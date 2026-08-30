@@ -6,4 +6,4 @@ fn makeBox(v: number) Box {
   return Box { value: v }
 }
 const b = makeBox(7)
-echo(b.value)
+echo("" + (b.value))

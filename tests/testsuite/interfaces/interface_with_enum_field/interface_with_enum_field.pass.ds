@@ -9,5 +9,5 @@ interface HasShape {
 fn area(h: HasShape) number {
   return match (h.shape) { Shape.Circle(r) => r * r, Shape.Square(s) => s * s, _ => 0 }
 }
-echo(area({ shape: Shape.Circle(3) }))
-echo(area({ shape: Shape.Square(2) }))
+echo("" + (area({ shape: Shape.Circle(3)) }))
+echo("" + (area({ shape: Shape.Square(2)) }))

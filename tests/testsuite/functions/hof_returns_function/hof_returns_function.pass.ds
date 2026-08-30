@@ -5,4 +5,4 @@ fn makeAdder(n: number) fn(number) number {
   }
 }
 const add10 = makeAdder(10)
-echo(add10(5))
+echo("" + (add10(5)))

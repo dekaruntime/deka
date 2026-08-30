@@ -2,4 +2,4 @@ import { echo } from "io"
 
 type Cents number
 const a = Cents(4)
-echo(number(a * 2))
+echo("" + (number(a * 2)))

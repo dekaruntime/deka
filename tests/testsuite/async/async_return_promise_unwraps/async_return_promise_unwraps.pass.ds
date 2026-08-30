@@ -3,6 +3,6 @@ async fn value() Promise<number> {
   return Promise.resolve(1)
 }
 async fn main() {
-  echo(await value())
+  echo("" + (await value()))
 }
 await main()

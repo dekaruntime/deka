@@ -4,4 +4,4 @@ struct Point {
   y: number
 }
 const p = Point { y: 2, x: 1 }
-echo(p.x)
+echo("" + (p.x))

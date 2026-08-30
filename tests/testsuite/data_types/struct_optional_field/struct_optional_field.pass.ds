@@ -5,5 +5,5 @@ struct Node {
 }
 const tail = Node { value: 2 }
 const head = Node { value: 1, next: Some(tail) }
-echo(head.value)
-echo(match (head.next) { Some(n) => n.value, None => 0 })
+echo("" + (head.value))
+echo("" + (match (head.next)) { Some(n) => n.value, None => 0 })
