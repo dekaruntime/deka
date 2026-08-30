@@ -8,6 +8,7 @@ pub enum FrameworkEntryKind {
     Page,
     Layout,
     Api,
+    Loading,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +43,7 @@ pub fn route_from_relative_path(kind: FrameworkEntryKind, relative_path: &str) -
     let suffixes: &[&str] = match kind {
         FrameworkEntryKind::Page => &["/page.dsx", "/page.ds", "/page.phpx"],
         FrameworkEntryKind::Layout => &["/layout.dsx", "/layout.ds", "/layout.phpx"],
+        FrameworkEntryKind::Loading => &["/loading.dsx", "/loading.ds"],
         FrameworkEntryKind::Api => &[".ds", ".dsx", ".phpx"],
     };
 
@@ -195,6 +197,14 @@ fn visit_app_dir(app_root: &Path, dir: &Path, manifest: &mut FrameworkManifest) 
         if let Some(route) = route_from_relative_path(FrameworkEntryKind::Layout, &rel) {
             manifest.entries.push(FrameworkEntry {
                 kind: FrameworkEntryKind::Layout,
+                route,
+                file: path.to_string_lossy().into_owned(),
+            });
+            continue;
+        }
+        if let Some(route) = route_from_relative_path(FrameworkEntryKind::Loading, &rel) {
+            manifest.entries.push(FrameworkEntry {
+                kind: FrameworkEntryKind::Loading,
                 route,
                 file: path.to_string_lossy().into_owned(),
             });
@@ -647,6 +657,17 @@ fn generate_serve_entry(
             import_alias(&layout.file, "head", &alias("headL", &layout.route))?;
         }
     }
+    let has_loading = manifest
+        .entries
+        .iter()
+        .any(|e| e.kind == FrameworkEntryKind::Loading);
+    for loading in manifest
+        .entries
+        .iter()
+        .filter(|e| e.kind == FrameworkEntryKind::Loading)
+    {
+        import_alias(&loading.file, "Loading", &alias("Loading", &loading.route));
+    }
     if let Some(not_found) = &manifest.not_found {
         import_alias(&not_found.file, "Page", "Page_not_found")?;
         if exports_head(Path::new(&not_found.file)) {
@@ -679,9 +700,14 @@ fn generate_serve_entry(
     } else {
         "fn FallbackNotFound() {\n    return <section><h1>Not found</h1></section>;\n}\n\n".to_string()
     };
+    let suspense_import = if has_loading {
+        "import { Suspense } from \"ui/suspense\"\n"
+    } else {
+        ""
+    };
 
     Ok(format!(
-        r#"{imports}
+        r#"{suspense_import}{imports}
 interface RequestHeaders {{ accept: string }}
 interface Request {{ url: string, pathname: string, method: string, headers: RequestHeaders }}
 interface Response {{ status: number, body: string }}
@@ -1100,11 +1126,30 @@ fn static_prefix(route: &str) -> String {
 
 fn wrap_layouts(entries: &[FrameworkEntry], route: &str, page_alias: &str) -> String {
     let mut expr = page_call(route, page_alias);
+    if let Some(loading) = loading_at(entries, route) {
+        expr = suspense_wrap(&alias("Loading", &loading.route), &expr);
+    }
     for layout in layout_chain(entries, route).into_iter().rev() {
+        let mut inner = expr;
+        if layout.route != route {
+            if let Some(loading) = loading_at(entries, &layout.route) {
+                inner = suspense_wrap(&alias("Loading", &loading.route), &inner);
+            }
+        }
         let name = alias("Layout", &layout.route);
-        expr = format!("{name}({{ children: {expr} }})");
+        expr = format!("{name}({{ children: {inner} }})");
     }
     expr
+}
+
+fn loading_at<'a>(entries: &'a [FrameworkEntry], route: &str) -> Option<&'a FrameworkEntry> {
+    entries
+        .iter()
+        .find(|entry| entry.kind == FrameworkEntryKind::Loading && entry.route == route)
+}
+
+fn suspense_wrap(loading_alias: &str, children: &str) -> String {
+    format!("Suspense({{ fallback: {loading_alias}(), children: {children} }})")
 }
 
 fn page_call(route: &str, page_alias: &str) -> String {
@@ -1538,6 +1583,93 @@ mod tests {
         std::fs::write(tmp.join("public/style.css"), "body{}").unwrap();
         assert!(public_file_exists(&tmp, "/style.css"));
         assert!(!public_file_exists(&tmp, "/missing.css"));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn wrap_layouts_desugars_loading_around_child_segment() {
+        let entries = vec![
+            FrameworkEntry {
+                kind: FrameworkEntryKind::Layout,
+                route: "/".into(),
+                file: "app/layout.dsx".into(),
+            },
+            FrameworkEntry {
+                kind: FrameworkEntryKind::Loading,
+                route: "/".into(),
+                file: "app/loading.dsx".into(),
+            },
+            FrameworkEntry {
+                kind: FrameworkEntryKind::Layout,
+                route: "/blog".into(),
+                file: "app/blog/layout.dsx".into(),
+            },
+            FrameworkEntry {
+                kind: FrameworkEntryKind::Loading,
+                route: "/blog".into(),
+                file: "app/blog/loading.dsx".into(),
+            },
+            FrameworkEntry {
+                kind: FrameworkEntryKind::Page,
+                route: "/blog".into(),
+                file: "app/blog/page.dsx".into(),
+            },
+        ];
+        let tree = wrap_layouts(&entries, "/blog", "Page_blog");
+        assert!(
+            tree.contains("Suspense({ fallback: Loading__blog(), children: Page_blog() })"),
+            "blog loading wraps the page, not the blog layout: {tree}"
+        );
+        assert!(
+            tree.contains("Layout_root({ children: Suspense({ fallback: Loading_root()"),
+            "root loading wraps the child of the root layout: {tree}"
+        );
+        assert!(
+            !tree.starts_with("Suspense("),
+            "root loading must not wrap the root layout chrome: {tree}"
+        );
+    }
+
+    #[test]
+    fn generated_serve_entry_imports_suspense_for_loading() {
+        let tmp = std::env::temp_dir().join(format!(
+            "deka_loading_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(tmp.join("app")).unwrap();
+        std::fs::write(
+            tmp.join("index.html"),
+            "<!doctype html><html><head><!--deka-head--></head><body><div id=\"app\"><!--deka-app--></div><!--deka-scripts--></body></html>\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.join("app/layout.dsx"),
+            "interface LayoutProps { children: Component }\nexport fn Layout(props: LayoutProps) {\n    return <main>{props.children}</main>;\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.join("app/page.dsx"),
+            "export fn Page() {\n    return <section><h1>Home</h1></section>;\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.join("app/loading.dsx"),
+            "export fn Loading() {\n    return <p>Loading...</p>;\n}\n",
+        )
+        .unwrap();
+        let entry = write_app_router_entry(&tmp).expect("generate serve-entry");
+        let source = std::fs::read_to_string(&entry).expect("read serve-entry");
+        assert!(
+            source.contains("import { Suspense } from \"ui/suspense\""),
+            "generated entry should import Suspense: {source}"
+        );
+        assert!(
+            source.contains("Suspense({ fallback: Loading_root()"),
+            "generated entry should desugar loading.dsx: {source}"
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
