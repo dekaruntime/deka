@@ -824,9 +824,9 @@ fn generate_middleware_entry(entry: &Path, middleware: &Path) -> Result<String, 
     let source = std::fs::read_to_string(middleware)
         .map_err(|err| format!("failed to read {}: {err}", middleware.display()))?;
     let matcher = parse_middleware_matcher(&source);
-    let rel = pathdiff_dsx(entry, middleware);
+    let rel = json_str(&pathdiff_dsx(entry, middleware))?;
     Ok(format!(
-        "import {{ middleware }} from \"{rel}\"\n{}",
+        "import {{ middleware }} from {rel}\n{}",
         middleware_app_source(&matcher)
     ))
 }
@@ -835,20 +835,21 @@ fn generate_worker_entry(entry: &Path, project_root: &Path) -> Result<String, St
     let mut imports = String::new();
     let mw = middleware_path(project_root);
     if let Some(mw) = &mw {
-        let rel = pathdiff_dsx(entry, mw);
-        imports.push_str(&format!("import {{ middleware }} from \"{rel}\"\n"));
+        let rel = json_str(&pathdiff_dsx(entry, mw))?;
+        imports.push_str(&format!("import {{ middleware }} from {rel}\n"));
     }
     let api_entries = scan_api_dir(&project_root.join("api"));
     let mut branches = String::new();
     {
         let mut imported: Vec<String> = Vec::new();
-        let mut import_alias = |path: &str, name: &str, alias: &str| {
+        let mut import_alias = |path: &str, name: &str, alias: &str| -> Result<(), String> {
             if imported.iter().any(|k| k == alias) {
-                return;
+                return Ok(());
             }
             imported.push(alias.to_string());
-            let rel = pathdiff_dsx(entry, Path::new(path));
-            imports.push_str(&format!("import {{ {name} as {alias} }} from \"{rel}\"\n"));
+            let rel = json_str(&pathdiff_dsx(entry, Path::new(path)))?;
+            imports.push_str(&format!("import {{ {name} as {alias} }} from {rel}\n"));
+            Ok(())
         };
         for api in &api_entries {
             let methods = exported_http_methods(Path::new(&api.file));
@@ -857,21 +858,21 @@ fn generate_worker_entry(entry: &Path, project_root: &Path) -> Result<String, St
             }
             let stem = alias("api", &api.route);
             for method in &methods {
-                import_alias(&api.file, method, &format!("{method}_{stem}"));
+                import_alias(&api.file, method, &format!("{method}_{stem}"))?;
             }
-            let cond = path_condition(&api.route);
+            let cond = path_condition(&api.route)?;
             let mut inner = String::new();
             let has_get = methods.iter().any(|m| m == "GET");
             let has_head = methods.iter().any(|m| m == "HEAD");
             for method in &methods {
                 let fn_name = format!("{method}_{stem}");
                 inner.push_str(&format!(
-                    "        if (request.method == \"{method}\") {{\n            const res = unsafe {{ {fn_name}(request) }}\n            return match (res) {{\n                Ok(r) => r,\n                Err(e) => {{ status: 500, body: e.message, headers: {{ location: \"\" }} }},\n            }}\n        }}\n"
+                    "        if (request.method == \"{method}\") {{\n            const res = unsafe {{ {fn_name}(request) }}\n            return match (res) {{\n                Ok(r) => r,\n                Err(_) => {{ status: 500, body: \"Internal Server Error\", headers: {{ location: \"\" }} }},\n            }}\n        }}\n"
                 ));
             }
             if has_get && !has_head {
                 inner.push_str(&format!(
-                    "        if (request.method == \"HEAD\") {{\n            const res = unsafe {{ GET_{stem}(request) }}\n            return match (res) {{\n                Ok(r) => {{ status: r.status, body: \"\", headers: {{ location: \"\" }} }},\n                Err(e) => {{ status: 500, body: e.message, headers: {{ location: \"\" }} }},\n            }}\n        }}\n"
+                    "        if (request.method == \"HEAD\") {{\n            const res = unsafe {{ GET_{stem}(request) }}\n            return match (res) {{\n                Ok(r) => unsafe {{ {{ status: r.status, body: \"\", headers: r.headers }} }},\n                Err(_) => {{ status: 500, body: \"Internal Server Error\", headers: {{ location: \"\" }} }},\n            }}\n        }}\n"
                 ));
             }
             inner.push_str(
@@ -893,12 +894,12 @@ fn generate_worker_entry(entry: &Path, project_root: &Path) -> Result<String, St
             const raw = unsafe {{ middleware(request) }}
             const opt = match (raw) {{
                 Ok(v) => v,
-                Err(e) => {{ __case: "Some", value: {{ status: 500, body: e.message, headers: {{ location: "" }} }} }},
+                Err(_) => {{ __case: "Some", value: {{ status: 500, body: "Internal Server Error", headers: {{ location: "" }} }} }},
             }}
             const unwrapped = unsafe {{ opt.__case == "Some" ? opt.value : {{ status: 0, body: "", headers: {{ location: "" }} }} }}
             const decided = match (unwrapped) {{
                 Ok(r) => r,
-                Err(e) => {{ status: 500, body: e.message, headers: {{ location: "" }} }},
+                Err(_) => {{ status: 500, body: "Internal Server Error", headers: {{ location: "" }} }},
             }}
             if (decided.status != 0) {{
                 return decided
