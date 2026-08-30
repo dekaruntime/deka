@@ -395,8 +395,15 @@ impl<'a> Checker<'a> {
     /// real check pass sees stable, forward-reference-resolved signatures.
     fn infer_function_return_types(&mut self) {
         self.infer_only = true;
+        // Each round propagates one hop of a forward-reference chain, and real
+        // modules are a handful of hops deep, so ten rounds is generous. If it
+        // is ever not enough, the diagnostic below names the function instead
+        // of silently continuing with a half-inferred type (deka#367).
+        let mut converged = false;
+        let mut pending: Vec<(&'a str, ast::Span)> = Vec::new();
         for _ in 0..10 {
             let mut changed = false;
+            pending.clear();
             for stmt in self.program.statements {
                 let info = match stmt {
                     ast::Stmt::Function {
@@ -430,6 +437,7 @@ impl<'a> Checker<'a> {
                     _ => None,
                 };
                 if let Some((name, type_params, params, body, is_async, span)) = info {
+                    pending.push((name, span));
                     let prev = self.globals.get(name).cloned();
                     self.check_function(
                         name,
@@ -447,13 +455,26 @@ impl<'a> Checker<'a> {
                 }
             }
             if !changed {
+                converged = true;
                 break;
             }
         }
         self.infer_only = false;
-        self.method_calls.clear();
-        self.unwrap_calls.clear();
-        self.operator_rewrites.clear();
+        if !converged {
+            for (name, span) in pending {
+                if let Some(Type::Function { ret, .. }) = self.globals.get(name) {
+                    if matches!(**ret, Type::Infer) {
+                        self.error_span(
+                            span,
+                            format!(
+                                "could not infer a return type for `{name}`; add an explicit return type"
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+        self.reset_lowering_state();
     }
 
     pub(super) fn check_statement(&mut self, stmt: &ast::Stmt<'a>) {

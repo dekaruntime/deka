@@ -4,4 +4,4 @@ for (let j = 0; false; j = j + 1) {
   echo("never")
   i = i + 1
 }
-echo("" + (i))
+echo(string(i))

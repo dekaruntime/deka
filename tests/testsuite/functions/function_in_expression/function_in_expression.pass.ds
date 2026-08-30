@@ -3,4 +3,4 @@ fn double(x: number) number {
   return x * 2
 }
 const result = double(3) + double(4)
-echo("" + (result))
+echo(string(result))

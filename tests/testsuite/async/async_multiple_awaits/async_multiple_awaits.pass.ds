@@ -7,6 +7,6 @@ async fn two() Promise<number> {
 }
 async fn main() {
   const x = await one() + await two()
-  echo("" + (x))
+  echo(string(x))
 }
 await main()

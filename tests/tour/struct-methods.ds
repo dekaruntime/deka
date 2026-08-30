@@ -9,4 +9,4 @@ fn (p Point) magnitude() number {
 }
 
 const p = Point { x: 3, y: 4 };
-echo("" + (p.magnitude()));
+echo(string(p.magnitude()));

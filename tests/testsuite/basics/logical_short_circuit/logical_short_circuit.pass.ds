@@ -3,4 +3,4 @@ fn side_effect(): boolean {
   echo("x")
   return true
 }
-echo("" + (false && side_effect()))
+echo(string(false && side_effect()))

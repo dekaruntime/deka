@@ -448,10 +448,14 @@ struct Checker<'a> {
     /// Receiver methods keyed by `(receiver_type, method_name)`.
     receiver_methods: HashMap<(&'a str, &'a str), MethodInfo<'a>>,
     /// Method call sites to lower, keyed by call expression pointer.
+    /// Lowering collections like this one must also be cleared in
+    /// `reset_lowering_state` — the inference pass populates them too.
     method_calls: HashMap<*const ast::Expr<'a>, MethodTarget<'a>>,
     /// Primitive conversion call sites to lower, keyed by call expression pointer.
+    /// Cleared between passes by `reset_lowering_state`.
     unwrap_calls: HashMap<*const ast::Expr<'a>, types::UnwrapKind>,
     /// Operator expression sites that need newtype-aware lowering.
+    /// Cleared between passes by `reset_lowering_state`.
     operator_rewrites: HashMap<*const ast::Expr<'a>, types::OperatorRewrite<'a>>,
     /// Local scopes. The first scope is the top-level scope.
     scopes: Vec<HashMap<&'a str, Type<'a>>>,
@@ -563,6 +567,18 @@ impl<'a> Checker<'a> {
 
     fn error_at_expr(&mut self, expr: &ast::Expr<'a>, message: impl Into<String>) {
         self.error_span(expr.span(), message);
+    }
+
+    /// Clear every lowering collection populated while checking.
+    ///
+    /// The silent inference pass runs `check_function` for real, so these maps
+    /// fill up with entries the subsequent check pass must not see. Any new
+    /// lowering collection added to `Checker` must be cleared here — missing
+    /// one surfaces as a lowering bug far away from this call site (deka#367).
+    pub(super) fn reset_lowering_state(&mut self) {
+        self.method_calls.clear();
+        self.unwrap_calls.clear();
+        self.operator_rewrites.clear();
     }
 
     // ------------------------------------------------------------------

@@ -1,2 +1,2 @@
 import { echo } from "io"
-echo("" + (Date.now() > 0))
+echo(string(Date.now() > 0))

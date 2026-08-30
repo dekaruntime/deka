@@ -1743,7 +1743,11 @@ impl<'a> Checker<'a> {
             }
         }
 
-        // Primitive unwrap: `number(c)`, `string(c)`, `bool(c)`.
+        // Primitive conversion: `string(x)`, `number(x)`, `bool(x)` — always
+        // public, no import (#364). The primary job is unwrapping a newtype to
+        // its representation; the secondary job is widening between primitives
+        // (`string(42)`). `number("abc")` returns `Option<number>` because JS
+        // `Number` can produce `NaN`.
         if let ast::Expr::Identifier { name, .. } = callee {
             if let Some(repr) = newtype_repr_from_name(name) {
                 if args.len() != 1 {
@@ -1754,23 +1758,72 @@ impl<'a> Checker<'a> {
                     return Type::Error;
                 }
                 let arg_type = self.check_expr(&args[0]);
-                let expected = Type::from_newtype_repr(repr);
-                let kind = match &arg_type {
-                    Type::Newtype { repr: arg_repr, .. } if *arg_repr == repr => {
-                        Some(super::types::UnwrapKind::Payload)
-                    }
-                    other if *other == expected => Some(super::types::UnwrapKind::Identity),
-                    _ => None,
+                let ret = Type::from_newtype_repr(repr);
+                let number_ret = || Type::Option {
+                    inner: Box::new(Type::Named { name: "number" }),
+                };
+                use crate::ast::NewtypeRepr as Repr;
+                let (kind, ret) = match repr {
+                    Repr::String => match &arg_type {
+                        Type::Newtype {
+                            repr: Repr::String, ..
+                        } => (Some(super::types::UnwrapKind::Payload), ret.clone()),
+                        Type::Named { name: "string" } => {
+                            (Some(super::types::UnwrapKind::Identity), ret.clone())
+                        }
+                        Type::Named {
+                            name: "number" | "boolean",
+                        } => (Some(super::types::UnwrapKind::WidenToString), ret.clone()),
+                        // Rejected, not widened: `String(undefined)` is
+                        // "undefined", `String({})` is "[object Object]" —
+                        // total but silently wrong. Ask for an annotation
+                        // instead of trusting a value the checker cannot see
+                        // (deka#370 review).
+                        Type::Infer => (None, ret.clone()),
+                        _ => (None, ret.clone()),
+                    },
+                    Repr::Number => match &arg_type {
+                        Type::Newtype {
+                            repr: Repr::Number, ..
+                        } => (Some(super::types::UnwrapKind::Payload), ret.clone()),
+                        Type::Named { name: "number" } => {
+                            (Some(super::types::UnwrapKind::Identity), ret.clone())
+                        }
+                        Type::Named { name: "string" } => (
+                            Some(super::types::UnwrapKind::StringToOptionNumber),
+                            number_ret(),
+                        ),
+                        // Same rule: unknown input is rejected, not guarded.
+                        Type::Infer => (None, ret.clone()),
+                        _ => (None, ret.clone()),
+                    },
+                    Repr::Bool => match &arg_type {
+                        Type::Newtype {
+                            repr: Repr::Bool, ..
+                        } => (Some(super::types::UnwrapKind::Payload), ret.clone()),
+                        Type::Named { name: "boolean" } => {
+                            (Some(super::types::UnwrapKind::Identity), ret.clone())
+                        }
+                        Type::Infer => (None, ret.clone()),
+                        _ => (None, ret.clone()),
+                    },
                 };
                 if let Some(kind) = kind {
                     self.unwrap_calls.insert(expr as *const ast::Expr<'a>, kind);
                 } else if !arg_type.is_error() {
-                    self.error_at_expr(
-                        &args[0],
-                        format!("cannot convert `{arg_type}` to `{name}`"),
-                    );
+                    if matches!(arg_type, Type::Infer) {
+                        self.error_at_expr(
+                            &args[0],
+                            format!("cannot convert a value of unknown type to `{name}`; add a type annotation"),
+                        );
+                    } else {
+                        self.error_at_expr(
+                            &args[0],
+                            format!("cannot convert `{arg_type}` to `{name}`"),
+                        );
+                    }
                 }
-                return Type::Named { name };
+                return ret;
             }
         }
 
