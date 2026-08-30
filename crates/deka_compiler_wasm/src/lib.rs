@@ -481,7 +481,12 @@ mod tests {
         let ds_files: Vec<String> = std::fs::read_dir(&tour_dir)
             .unwrap_or_else(|error| panic!("read {}: {error}", tour_dir.display()))
             .filter_map(|entry| entry.ok())
-            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "ds"))
+            .filter(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .is_some_and(|ext| ext == "ds" || ext == "dsx")
+            })
             .map(|entry| {
                 entry
                     .path()
@@ -512,7 +517,15 @@ mod tests {
         manifest
             .into_iter()
             .map(|lesson| {
-                let source_path = tour_dir.join(format!("{}.ds", lesson.id));
+                let ds_path = tour_dir.join(format!("{}.ds", lesson.id));
+                let dsx_path = tour_dir.join(format!("{}.dsx", lesson.id));
+                let source_path = if ds_path.exists() {
+                    ds_path
+                } else if dsx_path.exists() {
+                    dsx_path
+                } else {
+                    panic!("tests/tour/{}.ds or .dsx not found", lesson.id);
+                };
                 let source = std::fs::read_to_string(&source_path)
                     .unwrap_or_else(|error| panic!("read {}: {error}", source_path.display()));
                 (lesson, source)
@@ -662,8 +675,15 @@ const origin = Point { x: 3, y: 4 };
             "tests/tour must contain at least one lesson"
         );
 
+        let tour_dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/tour");
         for (lesson, source) in lessons {
-            let filename = format!("{}.ds", lesson.id);
+            let extension = if tour_dir.join(format!("{}.dsx", lesson.id)).exists() {
+                "dsx"
+            } else {
+                "ds"
+            };
+            let filename = format!("{}.{}", lesson.id, extension);
             // The standalone WASM compiler cannot resolve stdlib index packages
             // like `io` because it has no filesystem/network access. Skip those
             // lessons here; they are covered by the native language gate and the

@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -63,19 +64,20 @@ const tourDir = join(dirname(fileURLToPath(import.meta.url)), "../../../tests/to
 const tourManifest = JSON.parse(await readFile(join(tourDir, "manifest.json"), "utf-8"));
 const tourFiles = (await readdir(tourDir)).filter((name) => name.endsWith(".ds") || name.endsWith(".dsx"));
 const manifestIds = new Set(tourManifest.map((lesson) => lesson.id));
-const fileIds = new Set(tourFiles.map((name) => name.replace(/\.ds$/, "")));
+const fileIds = new Set(tourFiles.map((name) => name.replace(/\.dsx?$/, "")));
 for (const id of manifestIds) {
-  if (!fileIds.has(id)) throw new Error(`tests/tour/manifest.json lists ${id} but ${id}.ds is missing`);
+  if (!fileIds.has(id)) throw new Error(`tests/tour/manifest.json lists ${id} but ${id}.ds/.dsx is missing`);
 }
 for (const id of fileIds) {
-  if (!manifestIds.has(id)) throw new Error(`tests/tour/${id}.ds is not listed in manifest.json`);
+  if (!manifestIds.has(id)) throw new Error(`tests/tour/${id}.ds/.dsx is not listed in manifest.json`);
 }
 if (tourManifest.length === 0) {
   throw new Error("tests/tour must contain at least one lesson");
 }
 for (const lesson of tourManifest) {
-  const source = await readFile(join(tourDir, `${lesson.id}.ds`), "utf-8");
-  const response = compile(source, `${lesson.id}.ds`, "deka");
+  const extension = existsSync(join(tourDir, `${lesson.id}.dsx`)) ? "dsx" : "ds";
+  const source = await readFile(join(tourDir, `${lesson.id}.${extension}`), "utf-8");
+  const response = compile(source, `${lesson.id}.${extension}`, "deka");
   if (response.ok !== lesson.expectCompile) {
     throw new Error(`${lesson.id} browser WASM compile result drifted: ${JSON.stringify(response)}`);
   }
