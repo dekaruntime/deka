@@ -74,6 +74,7 @@ fn bundle_produces_valid_js() {
             project_root: tmp.clone(),
             minify: false,
             iife: false,
+            client: false,
         },
         provider,
     )
@@ -109,6 +110,7 @@ fn bundle_allows_parent_relative_ds_import_from_subdirectory() {
             project_root: tmp.clone(),
             minify: false,
             iife: false,
+            client: false,
         },
         provider,
     )
@@ -138,6 +140,7 @@ fn bundle_with_iife_wrapping() {
             project_root: tmp.clone(),
             minify: false,
             iife: true,
+            client: false,
         },
         provider,
     )
@@ -175,6 +178,7 @@ await __phpx_main();
             project_root: tmp.clone(),
             minify: true,
             iife: true,
+            client: false,
         },
         provider,
     )
@@ -210,6 +214,7 @@ fn bundle_minified_output_is_valid() {
             project_root: tmp.clone(),
             minify: true,
             iife: false,
+            client: false,
         },
         provider,
     )
@@ -251,6 +256,7 @@ fn bundle_minified_preserves_if_assignment() {
             project_root: tmp.clone(),
             minify: true,
             iife: false,
+            client: false,
         },
         provider,
     )
@@ -291,6 +297,7 @@ fn bundle_minified_preserves_for_of_head() {
             project_root: tmp.clone(),
             minify: true,
             iife: false,
+            client: false,
         },
         provider,
     )
@@ -299,6 +306,66 @@ fn bundle_minified_preserves_for_of_head() {
         !result.contains("of count = 0,"),
         "minifier folded a statement into the for-of head: {}",
         result
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn client_bundle_rejects_ui_server_import() {
+    let tmp = make_tmp_dir("client_ui_server");
+    let entry = tmp.join("island.js");
+    let source = "import { renderToString } from \"ui/server\";\nexport const x = renderToString;\n";
+    std::fs::write(&entry, source).expect("write entry");
+    let provider = Arc::new(SimpleVirtualSource {
+        entry: entry.clone(),
+        code: source.to_string(),
+    });
+    let err = bundle_virtual_entry(
+        &entry,
+        BundleOptions {
+            project_root: tmp.clone(),
+            minify: false,
+            iife: false,
+            client: true,
+        },
+        provider,
+    )
+    .expect_err("client bundle must reject ui/server");
+    assert!(
+        err.contains("ui/server"),
+        "{err}"
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn client_bundle_allows_ui_jsx() {
+    let tmp = make_tmp_dir("client_ui_jsx");
+    let entry = tmp.join("island.js");
+    let source = "import { jsx } from \"ui/jsx\";\nexport const node = jsx(\"div\", { children: \"ok\" });\n";
+    std::fs::write(&entry, source).expect("write entry");
+    let provider = Arc::new(SimpleVirtualSource {
+        entry: entry.clone(),
+        code: source.to_string(),
+    });
+    let result = bundle_virtual_entry(
+        &entry,
+        BundleOptions {
+            project_root: tmp.clone(),
+            minify: false,
+            iife: false,
+            client: true,
+        },
+        provider,
+    )
+    .expect("client bundle may import ui/jsx");
+    assert!(
+        result.contains("jsx") || result.contains("div"),
+        "{result}"
+    );
+    assert!(
+        !result.contains("renderToString"),
+        "ui/server leaked into client bundle: {result}"
     );
     let _ = std::fs::remove_dir_all(&tmp);
 }
@@ -319,7 +386,7 @@ fn resolver_only_uses_project_local_php_modules() {
     )
     .unwrap();
 
-    let resolver = DekaResolver::new(project.clone()).unwrap();
+    let resolver = DekaResolver::new(project.clone(), false).unwrap();
     assert!(
         resolver.resolve_php_module("crypto").is_none(),
         "stdlib fallback is disabled: resolver must return None for missing packages"
@@ -334,7 +401,7 @@ fn resolver_only_uses_project_local_php_modules() {
     )
     .unwrap();
 
-    let resolver2 = DekaResolver::new(project.clone()).unwrap();
+    let resolver2 = DekaResolver::new(project.clone(), false).unwrap();
     let result2 = resolver2.resolve_php_module("crypto");
     assert!(result2.is_some(), "expected local resolution");
     assert!(
@@ -360,7 +427,7 @@ fn resolver_rejects_path_traversal() {
     // Also create a file outside php_modules to be the traversal target
     std::fs::write(project.join("secret.js"), "export const secret = 'oops';\n").unwrap();
 
-    let resolver = DekaResolver::new(project.clone()).unwrap();
+    let resolver = DekaResolver::new(project.clone(), false).unwrap();
 
     // Normal resolution should work
     let normal = resolver.resolve_php_module("component/button");
@@ -400,7 +467,7 @@ fn resolver_allows_parent_relative_import_within_project() {
     )
     .unwrap();
 
-    let resolver = DekaResolver::new(project.clone()).unwrap();
+    let resolver = DekaResolver::new(project.clone(), false).unwrap();
 
     // Resolve `../helpers` from `api/checkout.js`
     let base = FileName::Real(api_dir.join("checkout.js"));
@@ -454,7 +521,7 @@ fn resolver_parent_relative_import_stays_within_project() {
     // through (the only reason it returned Err was file-not-found).
     std::fs::write(workspace.join("outside.js"), "export const x = 'leaked';\n").unwrap();
 
-    let resolver = DekaResolver::new(project.clone()).unwrap();
+    let resolver = DekaResolver::new(project.clone(), false).unwrap();
     let base = FileName::Real(api_dir.join("checkout.js"));
 
     // `../../outside` from `project/api/checkout.js` resolves to
@@ -482,7 +549,7 @@ fn resolver_deep_traversal_to_system_path_is_rejected() {
     std::fs::create_dir_all(&src_dir).unwrap();
     std::fs::write(src_dir.join("index.js"), "// entry\n").unwrap();
 
-    let resolver = DekaResolver::new(project.clone()).unwrap();
+    let resolver = DekaResolver::new(project.clone(), false).unwrap();
     let base = FileName::Real(src_dir.join("index.js"));
 
     // This specifier attempts to climb to /etc/passwd (or an analogous
@@ -522,7 +589,7 @@ fn resolver_allows_parent_relative_import_two_levels_within_project() {
     )
     .unwrap();
 
-    let resolver = DekaResolver::new(project.clone()).unwrap();
+    let resolver = DekaResolver::new(project.clone(), false).unwrap();
     let base = FileName::Real(deep_dir.join("button.js"));
     let result = resolver.resolve(&base, "../../utils");
     assert!(

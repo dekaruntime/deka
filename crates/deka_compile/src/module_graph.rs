@@ -12,7 +12,10 @@ use std::path::{Path, PathBuf};
 use bumpalo::Bump;
 use deka_syntax::Diagnostic;
 
-use crate::{compile_to_js_with_imports, parse_source_module_meta};
+use crate::{
+    compile_to_js_with_imports_and_options, parse_source_module_meta, CompileOptions,
+};
+use crate::shake::{self, ShakeModule, ShakePlan};
 
 /// A module loader supplies source text and resolves specifiers for the
 /// graph compiler.
@@ -168,6 +171,13 @@ impl ModuleLoader for FsModuleLoader {
     }
 }
 
+/// Options for compiling a module graph.
+#[derive(Debug, Default, Clone)]
+pub struct GraphCompileOptions {
+    /// When true, any import-graph path to `ui/server` is a compile error.
+    pub client: bool,
+}
+
 /// A discovered module and its outgoing dependencies.
 #[derive(Debug)]
 struct GraphModule {
@@ -175,6 +185,8 @@ struct GraphModule {
     source: String,
     /// Resolved dependency path for each import specifier in this module.
     dependencies: HashMap<String, PathBuf>,
+    /// Compiler-provided specifiers (`ui/jsx`, …) that are not `.ds` files.
+    virtual_imports: Vec<String>,
 }
 
 /// Result of compiling a module graph.
@@ -197,6 +209,15 @@ pub struct ModuleGraphResult {
 pub fn compile_module_graph(
     entry: &Path,
     loader: &dyn ModuleLoader,
+) -> Result<ModuleGraphResult, Vec<Diagnostic>> {
+    compile_module_graph_with_options(entry, loader, GraphCompileOptions::default())
+}
+
+/// Compile every reachable `.ds` module from `entry` with shaking options.
+pub fn compile_module_graph_with_options(
+    entry: &Path,
+    loader: &dyn ModuleLoader,
+    options: GraphCompileOptions,
 ) -> Result<ModuleGraphResult, Vec<Diagnostic>> {
     let entry = std::fs::canonicalize(entry).unwrap_or_else(|_| entry.to_path_buf());
     let arena = Bump::new();
@@ -225,7 +246,12 @@ pub fn compile_module_graph(
 
         let meta = parse_source_module_meta(&source);
         let mut dependencies = HashMap::with_capacity(meta.imports.len());
+        let mut virtual_imports = Vec::new();
         for import in &meta.imports {
+            if let Some(ui) = shake::normalize_ui_specifier(&import.path) {
+                virtual_imports.push(ui);
+                continue;
+            }
             match loader.resolve(&import.path, &path) {
                 Ok(dep) => {
                     let from_ds = path
@@ -268,6 +294,7 @@ pub fn compile_module_graph(
                 path,
                 source,
                 dependencies,
+                virtual_imports,
             },
         );
     }
@@ -326,15 +353,58 @@ pub fn compile_module_graph(
     }
 
     // ------------------------------------------------------------------
-    // Emit each module.  We compile in dependency order so imported structs,
-    // enums, and receiver methods are known to the typechecker.
+    // Graph shaking: drop unused exports of pure modules, then unused modules.
+    // Client entries that can reach ui/server fail the build.
     // ------------------------------------------------------------------
-    let mut emitted: HashMap<PathBuf, String> = HashMap::with_capacity(modules.len());
+    let shake_modules: HashMap<PathBuf, ShakeModule> = modules
+        .iter()
+        .map(|(path, module)| {
+            (
+                path.clone(),
+                ShakeModule {
+                    dependencies: module.dependencies.clone(),
+                    virtual_imports: module.virtual_imports.clone(),
+                },
+            )
+        })
+        .collect();
+    let plan: ShakePlan = shake::shake_graph(&entry, &shake_modules, &programs);
+    if options.client && plan.reaches_ui_server {
+        errors.push(diag(
+            0,
+            0,
+            format!(
+                "{}: client bundle cannot import ui/server",
+                entry.display()
+            ),
+        ));
+        return Err(errors);
+    }
+
+    // ------------------------------------------------------------------
+    // Emit each kept module.  We compile in dependency order so imported
+    // structs, enums, and receiver methods are known to the typechecker.
+    // ------------------------------------------------------------------
+    let mut emitted: HashMap<PathBuf, String> = HashMap::with_capacity(plan.keep.len());
     for path in order {
+        if !plan.keep.contains(&path) {
+            continue;
+        }
         let module = modules.get(&path).expect("module in graph");
         let input = path.to_string_lossy();
         let module_imports = imports.get(&path).cloned().unwrap_or_default();
-        match compile_to_js_with_imports(&module.source, &input, &arena, &module_imports) {
+        let compile_options = CompileOptions {
+            used_exports: plan.live.get(&path).cloned().flatten(),
+            client: options.client,
+            ..Default::default()
+        };
+        match compile_to_js_with_imports_and_options(
+            &module.source,
+            &input,
+            &arena,
+            &module_imports,
+            compile_options,
+        ) {
             Ok(result) => {
                 emitted.insert(path, result.js);
             }
@@ -624,6 +694,95 @@ mod tests {
         assert!(main_js.contains("import { Cents } from \"./money.ds\";"), "got: {}", main_js);
         assert!(main_js.contains("Cents(500)"), "got: {}", main_js);
         assert!(main_js.contains("c.toDollars()"), "got: {}", main_js);
+    }
+
+    #[test]
+    fn graph_drops_unused_export_from_pure_module() {
+        let root = PathBuf::from("/project");
+        let lib = root.join("lib.ds");
+        let main = root.join("main.ds");
+
+        let mut files = HashMap::new();
+        files.insert(
+            lib.clone(),
+            "export fn keep() { return \"KEEP_ME\"; }\nexport fn drop() { return \"DROP_ME_UNIQUE\"; }".to_string(),
+        );
+        files.insert(
+            main.clone(),
+            "import { keep } from \"./lib.ds\";\nconst x: string = keep();".to_string(),
+        );
+
+        let mut aliases = HashMap::new();
+        aliases.insert((main.clone(), "./lib.ds".to_string()), lib.clone());
+
+        let loader = InMemoryLoader { files, aliases };
+        let result = compile_module_graph(&main, &loader).expect("compile graph");
+        assert_eq!(result.modules.len(), 2);
+        let lib_js = &result.modules[&lib];
+        assert!(lib_js.contains("KEEP_ME"), "got: {}", lib_js);
+        assert!(
+            !lib_js.contains("DROP_ME_UNIQUE"),
+            "unused export should be shaken: {}",
+            lib_js
+        );
+    }
+
+    #[test]
+    fn graph_keeps_impure_module_side_effect() {
+        let root = PathBuf::from("/project");
+        let logger = root.join("logger.ds");
+        let main = root.join("main.ds");
+
+        let mut files = HashMap::new();
+        files.insert(
+            logger.clone(),
+            "const marker: string = \"SIDE_EFFECT_UNIQUE\";".to_string(),
+        );
+        files.insert(
+            main.clone(),
+            "import \"./logger.ds\";\nconst x: number = 1;".to_string(),
+        );
+
+        let mut aliases = HashMap::new();
+        aliases.insert((main.clone(), "./logger.ds".to_string()), logger.clone());
+
+        let loader = InMemoryLoader { files, aliases };
+        let result = compile_module_graph(&main, &loader).expect("compile graph");
+        assert_eq!(result.modules.len(), 2);
+        let logger_js = &result.modules[&logger];
+        assert!(
+            logger_js.contains("SIDE_EFFECT_UNIQUE"),
+            "impure module must be kept: {}",
+            logger_js
+        );
+    }
+
+    #[test]
+    fn client_graph_rejects_ui_server() {
+        let root = PathBuf::from("/project");
+        let main = root.join("main.dsx");
+
+        let mut files = HashMap::new();
+        files.insert(
+            main.clone(),
+            "import { renderToString } from \"ui/server\";\nexport const x = renderToString;".to_string(),
+        );
+
+        let loader = InMemoryLoader {
+            files,
+            aliases: HashMap::new(),
+        };
+        let err = compile_module_graph_with_options(
+            &main,
+            &loader,
+            GraphCompileOptions { client: true },
+        )
+        .expect_err("ui/server on a client entry");
+        assert!(
+            err.iter().any(|d| d.message.contains("ui/server")),
+            "{:?}",
+            err
+        );
     }
 
     #[test]

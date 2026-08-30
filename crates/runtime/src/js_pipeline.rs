@@ -65,6 +65,7 @@ fn build_deka_handler_bundle_in_project(
             project_root,
             minify: true,
             iife: true,
+            client: false,
         },
         provider,
     )
