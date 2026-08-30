@@ -173,6 +173,8 @@ fn is_stdlib_module_spec(spec: &str) -> bool {
         || bare.starts_with("deka/")
         || bare.starts_with("encoding/")
         || bare.starts_with("db/")
+        || bare == "ui"
+        || bare.starts_with("ui/")
 }
 
 /// Build a map of imported module signatures for known stdlib bare specifiers.
@@ -660,6 +662,21 @@ mod tests {
         .expect("compile should succeed");
         assert!(result.js.contains("jsx(Greeting"), "got: {}", result.js);
         assert!(result.js.contains("\"name\": \"Deka\""), "got: {}", result.js);
+    }
+
+    #[test]
+    fn compile_form_import_from_ui_form() {
+        let result = compile_to_js(
+            "import { Form } from \"ui/form\";\nconst el = <Form action=\"/api/hello\" method=\"post\">Send</Form>;",
+            "test.dsx",
+        )
+        .expect("ui/form is a compiler-provided specifier");
+        assert!(
+            result.js.contains("from \"ui/form\""),
+            "got: {}",
+            result.js
+        );
+        assert!(result.js.contains("Form"), "got: {}", result.js);
     }
 
     #[test]
