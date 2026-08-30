@@ -8,7 +8,7 @@ mod listener;
 pub mod rate_limit;
 mod router;
 mod server;
-mod utility_css;
+pub mod utility_css;
 pub mod websocket;
 
 pub mod unix;

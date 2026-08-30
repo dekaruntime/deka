@@ -734,6 +734,10 @@ impl<'a> Emitter<'a> {
                 }
             }
             Stmt::Import { specifiers, source, .. } => {
+                if source_is_css(source) {
+                    // CSS is collected per-route and injected as <link> tags.
+                    return Ok(());
+                }
                 write_indent(&mut self.out, 0);
                 let resolved_source = self.resolve_module_source(source);
                 if specifiers.is_empty() {
@@ -1997,6 +2001,12 @@ fn raw_js_looks_like_statements(raw: &str) -> bool {
 fn js_has_top_level_await(raw: &str) -> bool {
     raw.split(|c: char| !c.is_alphanumeric() && c != '_')
         .any(|word| word == "await")
+}
+
+fn source_is_css(source: &str) -> bool {
+    let trimmed = source.trim().trim_matches('"').trim_matches('\'');
+    let lower = trimmed.to_ascii_lowercase();
+    lower.ends_with(".css")
 }
 
 fn jsx_child_needs_live(expr: &Expr) -> bool {

@@ -491,6 +491,83 @@ fn build_without_islands_emits_no_island_script() {
     );
 }
 
+#[test]
+fn build_emits_per_route_css_into_head() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    fs::write(
+        project.path().join("app").join("page.dsx"),
+        "export fn Page() {\n    return <section class=\"p-4 text-lg\">Home</section>;\n}\n",
+    )
+    .expect("write home page");
+    let about_dir = project.path().join("app").join("about");
+    fs::create_dir_all(&about_dir).expect("mkdir about");
+    fs::write(
+        about_dir.join("page.dsx"),
+        "export fn Page() {\n    return <section class=\"p-4 text-sm\">About</section>;\n}\n",
+    )
+    .expect("write about page");
+
+    let (success, combined) = run_build(project.path());
+    assert!(success, "deka build should succeed with per-route CSS: {combined}");
+
+    let home = fs::read_to_string(project.path().join("dist").join("client").join("index.html"))
+        .expect("read home html");
+    assert!(
+        home.contains("/assets/css/common.css"),
+        "shared classes should hoist to common.css: {home}"
+    );
+    assert!(
+        home.contains("/assets/css/route-root.css"),
+        "home unique classes should be a route stylesheet: {home}"
+    );
+    let common = fs::read_to_string(
+        project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("assets")
+            .join("css")
+            .join("common.css"),
+    )
+    .expect("read common.css");
+    assert!(
+        common.contains(".p-4"),
+        "shared p-4 must land in common.css: {common}"
+    );
+    let root_css = fs::read_to_string(
+        project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("assets")
+            .join("css")
+            .join("route-root.css"),
+    )
+    .expect("read route-root.css");
+    assert!(
+        root_css.contains(".text-lg"),
+        "home-only class must land in route CSS: {root_css}"
+    );
+    assert!(
+        !root_css.contains(".text-sm"),
+        "about-only class must not leak into home CSS: {root_css}"
+    );
+    let about = fs::read_to_string(
+        project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("about")
+            .join("index.html"),
+    )
+    .expect("read about html");
+    assert!(
+        about.contains("/assets/css/route-about.css"),
+        "about unique classes should be a route stylesheet: {about}"
+    );
+}
+
 fn gzip_len(bytes: &[u8]) -> usize {
     use std::io::Write;
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());

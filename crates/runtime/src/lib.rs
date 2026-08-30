@@ -6,6 +6,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::OnceLock;
 
+mod css;
 mod env;
 mod extensions;
 mod islands;
@@ -42,6 +43,19 @@ pub fn write_island_client_assets_for_project(
     project_root: &std::path::Path,
 ) -> Result<(), String> {
     islands::write_island_client_assets_for_project(project_root)
+}
+
+pub fn write_route_css_assets(
+    assets_dir: &std::path::Path,
+    styles: &[runtime_core::framework::RouteStyle],
+) -> Result<(), String> {
+    css::write_route_css_assets(assets_dir, styles)
+}
+
+pub fn write_route_css_assets_for_project(
+    project_root: &std::path::Path,
+) -> Result<(), String> {
+    css::write_route_css_assets_for_project(project_root)
 }
 
 pub fn platform(context: &Context) {

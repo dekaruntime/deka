@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -502,6 +502,236 @@ fn island_prop_names(tag_src: &str) -> Vec<String> {
     names
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RouteStyle {
+    pub route: String,
+    pub classes: BTreeSet<String>,
+    pub files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CssPlan {
+    pub common: bool,
+    pub routes: BTreeMap<String, bool>,
+}
+
+pub fn route_css_slug(route: &str) -> String {
+    if route == "/" {
+        return "root".to_string();
+    }
+    let mut out = String::new();
+    for ch in route.trim_matches('/').chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    if out.is_empty() {
+        "root".to_string()
+    } else {
+        out
+    }
+}
+
+pub fn css_links_for_route(plan: &CssPlan, route: &str) -> String {
+    let mut tags = String::new();
+    if plan.common {
+        tags.push_str("<link rel=\"stylesheet\" href=\"/assets/css/common.css\">");
+    }
+    if plan.routes.get(route).copied().unwrap_or(false) {
+        tags.push_str(&format!(
+            "<link rel=\"stylesheet\" href=\"/assets/css/route-{}.css\">",
+            route_css_slug(route)
+        ));
+    }
+    tags
+}
+
+pub fn collect_route_styles(app_dir: &Path, manifest: &FrameworkManifest) -> Vec<RouteStyle> {
+    let mut pages: Vec<&FrameworkEntry> = manifest
+        .entries
+        .iter()
+        .filter(|entry| entry.kind == FrameworkEntryKind::Page)
+        .collect();
+    pages.sort_by_key(|entry| entry.route.clone());
+    let mut out = Vec::new();
+    for page in pages {
+        let mut files = Vec::new();
+        files.extend(layout_chain(&manifest.entries, &page.route).into_iter().map(|e| e.file.clone()));
+        files.push(page.file.clone());
+        let scanned = scan_style_graph(&files);
+        out.push(RouteStyle {
+            route: page.route.clone(),
+            classes: scanned.0,
+            files: scanned.1,
+        });
+    }
+    if let Some(not_found) = &manifest.not_found {
+        let mut files = Vec::new();
+        files.extend(layout_chain(&manifest.entries, "/").into_iter().map(|e| e.file.clone()));
+        files.push(not_found.file.clone());
+        let scanned = scan_style_graph(&files);
+        out.push(RouteStyle {
+            route: "__not_found".to_string(),
+            classes: scanned.0,
+            files: scanned.1,
+        });
+    }
+    let _ = app_dir;
+    out
+}
+
+pub fn css_plan_from_styles(styles: &[RouteStyle]) -> CssPlan {
+    let mut class_count: BTreeMap<String, usize> = BTreeMap::new();
+    let mut file_count: BTreeMap<String, usize> = BTreeMap::new();
+    for style in styles {
+        for class in &style.classes {
+            *class_count.entry(class.clone()).or_insert(0) += 1;
+        }
+        let mut seen = BTreeSet::new();
+        for file in &style.files {
+            if seen.insert(file.clone()) {
+                *file_count.entry(file.clone()).or_insert(0) += 1;
+            }
+        }
+    }
+    let mut common_classes = BTreeSet::new();
+    for (class, count) in &class_count {
+        if *count >= 2 {
+            common_classes.insert(class.clone());
+        }
+    }
+    let mut common_files = BTreeSet::new();
+    for (file, count) in &file_count {
+        if *count >= 2 {
+            common_files.insert(file.clone());
+        }
+    }
+    let common = !common_classes.is_empty() || !common_files.is_empty();
+    let mut routes = BTreeMap::new();
+    for style in styles {
+        let unique_class = style.classes.iter().any(|c| !common_classes.contains(c));
+        let unique_file = style.files.iter().any(|f| !common_files.contains(f));
+        routes.insert(style.route.clone(), unique_class || unique_file);
+    }
+    CssPlan { common, routes }
+}
+
+fn scan_style_graph(entry_files: &[String]) -> (BTreeSet<String>, Vec<String>) {
+    let mut classes = BTreeSet::new();
+    let mut css_files = Vec::new();
+    let mut seen_css = BTreeSet::new();
+    let mut seen_ds = BTreeSet::new();
+    let mut stack = entry_files.to_vec();
+    while let Some(file) = stack.pop() {
+        if !seen_ds.insert(file.clone()) {
+            continue;
+        }
+        let path = Path::new(&file);
+        let Ok(src) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        classes.extend(collect_class_literals(&src));
+        for css in collect_quoted_paths(&src, |p| p.to_ascii_lowercase().ends_with(".css")) {
+            if let Some(resolved) = resolve_relative(path, &css) {
+                if seen_css.insert(resolved.clone()) {
+                    css_files.push(resolved);
+                }
+            }
+        }
+        for ds in collect_quoted_paths(&src, |p| {
+            let lower = p.to_ascii_lowercase();
+            lower.ends_with(".ds") || lower.ends_with(".dsx")
+        }) {
+            if let Some(resolved) = resolve_relative(path, &ds) {
+                stack.push(resolved);
+            }
+        }
+    }
+    (classes, css_files)
+}
+
+pub fn collect_class_literals(src: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    let bytes = src.as_bytes();
+    let mut i = 0usize;
+    while i + 6 < bytes.len() {
+        if !bytes[i..].starts_with(b"class=") {
+            i += 1;
+            continue;
+        }
+        i += 6;
+        if i >= bytes.len() {
+            break;
+        }
+        let quote = bytes[i];
+        if quote == b'"' || quote == b'\'' {
+            i += 1;
+            let start = i;
+            while i < bytes.len() && bytes[i] != quote {
+                i += 1;
+            }
+            push_classes(&src[start..i.min(src.len())], &mut out);
+        } else if quote == b'{' {
+            i += 1;
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i < bytes.len() && (bytes[i] == b'"' || bytes[i] == b'\'') {
+                let q = bytes[i];
+                i += 1;
+                let start = i;
+                while i < bytes.len() && bytes[i] != q {
+                    i += 1;
+                }
+                push_classes(&src[start..i.min(src.len())], &mut out);
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+fn push_classes(chunk: &str, out: &mut BTreeSet<String>) {
+    for token in chunk.split_whitespace() {
+        if !token.is_empty() {
+            out.insert(token.to_string());
+        }
+    }
+}
+
+fn collect_quoted_paths(src: &str, pred: impl Fn(&str) -> bool) -> Vec<String> {
+    let mut out = Vec::new();
+    let bytes = src.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let quote = bytes[i];
+        if quote == b'"' || quote == b'\'' {
+            i += 1;
+            let start = i;
+            while i < bytes.len() && bytes[i] != quote {
+                i += 1;
+            }
+            let path = &src[start..i.min(src.len())];
+            if pred(path) {
+                out.push(path.to_string());
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+fn resolve_relative(from_file: &Path, spec: &str) -> Option<String> {
+    if !(spec.starts_with("./") || spec.starts_with("../")) {
+        return None;
+    }
+    let parent = from_file.parent()?;
+    let resolved = parent.join(spec);
+    Some(resolved.to_string_lossy().into_owned())
+}
+
 pub fn island_script_tags(islands: &[ClientIsland]) -> String {
     let mut seen = std::collections::BTreeSet::new();
     let mut tags = String::new();
@@ -554,11 +784,13 @@ pub fn write_app_router_entry(project_root: &Path) -> Result<PathBuf, String> {
         .map_err(|err| format!("failed to read {}: {err}", index_path.display()))?;
     let islands = scan_client_islands(&app_dir);
     let scripts = island_script_tags(&islands);
+    let styles = collect_route_styles(&app_dir, &manifest);
+    let css_plan = css_plan_from_styles(&styles);
     let cache_dir = project_root.join(".cache").join("dekascript");
     std::fs::create_dir_all(&cache_dir)
         .map_err(|err| format!("failed to create {}: {err}", cache_dir.display()))?;
     let entry = cache_dir.join("serve-entry.dsx");
-    let source = generate_serve_entry(&entry, &manifest, &index_html, &scripts)?;
+    let source = generate_serve_entry(&entry, &manifest, &index_html, &scripts, &css_plan)?;
     std::fs::write(&entry, source.as_bytes())
         .map_err(|err| format!("failed to write {}: {err}", entry.display()))?;
     let _ = write_api_router_entry(project_root);
@@ -731,6 +963,7 @@ fn generate_serve_entry(
     manifest: &FrameworkManifest,
     index_html: &str,
     scripts: &str,
+    css_plan: &CssPlan,
 ) -> Result<String, String> {
     let (doc_head, doc_mid, doc_tail) = split_document(index_html, scripts);
     let doc_head = json_str(&doc_head)?;
@@ -794,7 +1027,7 @@ fn generate_serve_entry(
     for page in &pages {
         let cond = path_condition(&page.route)?;
         let tree = wrap_layouts(&manifest.entries, &page.route, &alias("Page", &page.route));
-        let head = head_concat(&manifest.entries, page, false);
+        let head = with_css_links(css_plan, &page.route, head_concat(&manifest.entries, page, false))?;
         branches.push_str(&format!(
             "    if ({cond}) {{\n        return await respond({tree}, 200, fragment, {head})\n    }}\n"
         ));
@@ -804,11 +1037,17 @@ fn generate_serve_entry(
     } else {
         "FallbackNotFound()".to_string()
     };
-    let not_found_head = if manifest.not_found.as_ref().is_some_and(|e| exports_head(Path::new(&e.file))) {
+    let not_found_route = if manifest.not_found.is_some() {
+        "__not_found"
+    } else {
+        "/"
+    };
+    let not_found_head_inner = if manifest.not_found.as_ref().is_some_and(|e| exports_head(Path::new(&e.file))) {
         head_expr(&layout_head_aliases(&manifest.entries, "/"), "head_not_found()")
     } else {
         head_expr(&layout_head_aliases(&manifest.entries, "/"), "\"\"")
     };
+    let not_found_head = with_css_links(css_plan, not_found_route, not_found_head_inner)?;
 
     let fallback_fn = if manifest.not_found.is_some() {
         String::new()
@@ -1199,6 +1438,14 @@ fn split_document(index_html: &str, scripts: &str) -> (String, String, String) {
 
 fn json_str(value: &str) -> Result<String, String> {
     serde_json::to_string(value).map_err(|err| format!("failed to encode string: {err}"))
+}
+
+fn with_css_links(plan: &CssPlan, route: &str, head_js: String) -> Result<String, String> {
+    let links = css_links_for_route(plan, route);
+    if links.is_empty() {
+        return Ok(head_js);
+    }
+    Ok(format!("{} + {}", json_str(&links)?, head_js))
 }
 
 fn exports_head(path: &Path) -> bool {
@@ -1870,5 +2117,39 @@ mod tests {
     #[test]
     fn island_script_tags_empty_without_islands() {
         assert_eq!(island_script_tags(&[]), "");
+    }
+
+    #[test]
+    fn collect_class_literals_reads_string_attrs() {
+        let src = r#"return <div class="p-4 text-lg"><span class={'bg-white'}>x</span></div>;"#;
+        let classes = collect_class_literals(src);
+        assert!(classes.contains("p-4"));
+        assert!(classes.contains("text-lg"));
+        assert!(classes.contains("bg-white"));
+    }
+
+    #[test]
+    fn css_plan_hoists_shared_classes() {
+        let styles = vec![
+            RouteStyle {
+                route: "/".into(),
+                classes: ["p-4", "text-lg"].into_iter().map(str::to_string).collect(),
+                files: vec![],
+            },
+            RouteStyle {
+                route: "/about".into(),
+                classes: ["p-4", "text-sm"].into_iter().map(str::to_string).collect(),
+                files: vec![],
+            },
+        ];
+        let plan = css_plan_from_styles(&styles);
+        assert!(plan.common);
+        assert_eq!(plan.routes.get("/"), Some(&true));
+        assert_eq!(plan.routes.get("/about"), Some(&true));
+        let home = css_links_for_route(&plan, "/");
+        assert!(home.contains("/assets/css/common.css"));
+        assert!(home.contains("/assets/css/route-root.css"));
+        let about = css_links_for_route(&plan, "/about");
+        assert!(about.contains("route-about.css"));
     }
 }

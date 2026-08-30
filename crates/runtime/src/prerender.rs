@@ -30,6 +30,7 @@ async fn prerender_static_pages_async(
     }
     let entry = framework::write_app_router_entry(project_root)?;
     crate::islands::write_island_client_assets_for_project(project_root)?;
+    crate::css::write_route_css_assets_for_project(project_root)?;
     let handler_path = entry.to_string_lossy().to_string();
 
     let mut env_set = |key: &str, value: &str| {
