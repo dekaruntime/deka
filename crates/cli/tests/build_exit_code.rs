@@ -237,3 +237,64 @@ fn build_bundles_api_handlers_into_worker() {
         "worker must export a Cloudflare fetch handler: {worker}"
     );
 }
+
+#[test]
+fn build_writes_cloudflare_redirects() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    let (success, combined) = run_build(project.path());
+    assert!(success, "deka build should succeed: {combined}");
+    let redirects = fs::read_to_string(project.path().join("dist").join("_redirects"))
+        .expect("read dist/_redirects");
+    assert!(
+        redirects.contains("/*/ /:splat 301"),
+        "default canonical form is no trailing slash: {redirects}"
+    );
+}
+
+#[test]
+fn build_rejects_static_kind_when_api_exists() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    let deka = fs::read_to_string(project.path().join("deka.json")).expect("read deka.json");
+    let patched = deka.replace(
+        "\"serve\": { \"mode\": \"ds\" }",
+        "\"serve\": { \"mode\": \"ds\", \"kind\": \"static\" }",
+    );
+    fs::write(project.path().join("deka.json"), patched).expect("write deka.json");
+    let api_dir = project.path().join("api").join("hello");
+    fs::create_dir_all(&api_dir).expect("mkdir api");
+    fs::write(
+        api_dir.join("route.ds"),
+        "interface Response { status: number, body: string }\nexport fn GET(): Response {\n    return { status: 200, body: \"ok\" }\n}\n",
+    )
+    .expect("write route");
+    let (success, combined) = run_build(project.path());
+    assert!(!success, "static kind + api/ must fail: {combined}");
+    assert!(
+        combined.contains("serve.kind") && combined.contains("worker"),
+        "error should name serve.kind: {combined}"
+    );
+}
+
+#[test]
+fn build_emits_worker_for_middleware() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    fs::write(
+        project.path().join("middleware.ds"),
+        "export const matcher = [\"/dashboard/:path*\"]\ninterface RequestHeaders { accept: string }\ninterface ResponseHeaders { location: string }\ninterface Request { url: string, pathname: string, method: string, headers: RequestHeaders }\ninterface Response { status: number, body: string, headers: ResponseHeaders }\nexport fn middleware(request: Request): Option<Response> {\n    return Some({ status: 302, body: \"\", headers: { location: \"/login\" } })\n}\n",
+    )
+    .expect("write middleware.ds");
+    let (success, combined) = run_build(project.path());
+    assert!(
+        success,
+        "deka build should succeed with middleware.ds: {combined}"
+    );
+    let worker = fs::read_to_string(project.path().join("dist").join("_worker.js"))
+        .expect("read dist/_worker.js");
+    assert!(
+        worker.contains("/login"),
+        "worker must compile middleware redirect: {worker}"
+    );
+}

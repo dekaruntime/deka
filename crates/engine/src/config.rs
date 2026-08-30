@@ -15,11 +15,23 @@ pub enum ServeMode {
     Php,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ServeKind {
+    Static,
+    Worker,
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub struct ServeConfig {
     pub mode: Option<ServeMode>,
     pub entry: Option<String>,
     pub directory_listing: Option<bool>,
+    /// `"static"` or `"worker"`. Omitted → Worker iff `api/` or `middleware.ds` exist.
+    pub kind: Option<ServeKind>,
+    /// Canonical trailing slash. Default: no trailing slash except `/`.
+    #[serde(default, alias = "trailing_slash")]
+    pub trailing_slash: Option<bool>,
 }
 
 impl ServeConfig {

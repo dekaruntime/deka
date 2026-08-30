@@ -55,6 +55,31 @@ globalThis.app = function(req) {
 }
 
 #[tokio::test]
+async fn trailing_slash_redirects_to_canonical_path() {
+    let code = r#"
+globalThis.app = function(req) {
+  return { status: 200, headers: {}, body: "should not run" };
+};
+"#;
+    let state = test_state(code);
+    let envelope = execute_request_parts(
+        state,
+        "http://localhost/blog/".to_string(),
+        "GET".to_string(),
+        vec![],
+        None,
+    )
+    .await
+    .expect("should redirect");
+    assert_eq!(envelope.status, 301);
+    assert_eq!(
+        envelope.headers.get("location").map(String::as_str),
+        Some("/blog")
+    );
+    assert_eq!(envelope.body, "");
+}
+
+#[tokio::test]
 async fn response_status_codes_propagate_correctly() {
     let code = r#"
 globalThis.app = function(req) {
