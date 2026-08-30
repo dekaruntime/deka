@@ -152,7 +152,8 @@ function normalizeDiagnostics(value: unknown): BuildCompileResult['diagnostics']
 export function compileWithWasm(
   compiler: WasmCompiler,
   source: string,
-  filename: string
+  filename: string,
+  options?: { moduleBase?: string }
 ): BuildCompileResult {
   const exports = compiler.exports
   const allocate = exports.deka_compiler_alloc
@@ -160,7 +161,9 @@ export function compileWithWasm(
 
   const sourceBytes = textEncoder.encode(source)
   const filenameBytes = textEncoder.encode(filename)
-  const optionsBytes = textEncoder.encode(JSON.stringify({ mode: 'deka' }))
+  const optionsBytes = textEncoder.encode(
+    JSON.stringify({ mode: 'deka', moduleBase: options?.moduleBase })
+  )
 
   const sourcePtr = allocate(sourceBytes.length)
   const filenamePtr = allocate(filenameBytes.length)
