@@ -4,7 +4,7 @@ import { spawnSync } from 'child_process'
 import { fileURLToPath } from 'url'
 
 const DUMP_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
-import type { Browser, Page } from 'playwright'
+import type { Browser, Page, Route } from 'playwright'
 import { compileDekaProject } from '@dekaruntime/web-ide-kit/runtime'
 import type { HatsTestStage } from './tests'
 import { projectLoaderJs } from './project-loader'
@@ -104,9 +104,16 @@ type HarnessRun = {
 }
 
 // Vendored stdlib shims served to the browser harness. Keep in sync with the
-// real packages; io's echo is the console.log shim by design.
+// real packages; io's echo is the console.log shim by design. The ui/jsx
+// module is served straight from the deka_ui crate so the harness never
+// drifts from the real JSX runtime.
+const JSX_RUNTIME_SOURCE = fs.readFileSync(
+  path.join(DUMP_ROOT, '..', 'crates', 'deka_ui', 'js', 'jsx.js'),
+  'utf8',
+)
 const MODULE_SHIMS: Record<string, string> = {
   'io.mjs': 'export function echo(message) {\n  console.log(message)\n}\n',
+  'jsx.mjs': JSX_RUNTIME_SOURCE,
 }
 
 async function evaluateInFreshPage(jsCode: string): Promise<HarnessRun> {
@@ -119,8 +126,9 @@ async function evaluateInFreshPage(jsCode: string): Promise<HarnessRun> {
   // The compiler rewrites bare stdlib imports to HARNESS_MODULE_BASE URLs.
   // Intercept those and serve the vendored shims so the dump is
   // self-contained — no dependency on a live site, and the CORS header lets
-  // the blob Worker (null origin) import them.
-  await context.route('**/modules/*.mjs', (route) => {
+  // the blob Worker (null origin) import them. Both patterns are registered
+  // because module paths may be flat (io.mjs) or nested (ui/jsx.mjs).
+  const shimHandler = (route: Route) => {
     const url = new URL(route.request().url())
     const name = url.pathname.split('/').pop() ?? ''
     const body = MODULE_SHIMS[name]
@@ -133,7 +141,9 @@ async function evaluateInFreshPage(jsCode: string): Promise<HarnessRun> {
       headers: { 'access-control-allow-origin': '*' },
       body,
     })
-  })
+  }
+  await context.route('**/modules/*.mjs', shimHandler)
+  await context.route('**/modules/**/*.mjs', shimHandler)
   const page = await context.newPage()
   try {
     await page.addScriptTag({ path: harnessBundlePath })
