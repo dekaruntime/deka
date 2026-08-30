@@ -15,6 +15,11 @@ impl<'a> Checker<'a> {
         self.check_embedded_method_ambiguity();
         self.validate_interface_declarations();
 
+        // Infer return types for unannotated functions before emitting
+        // diagnostics. This resolves forward references within a module (e.g.
+        // `sha256` calling `digest` in @deka/crypto).
+        self.infer_function_return_types();
+
         // Check function and receiver-method bodies first so that inferred
         // return types are available to later top-level statements.
         for stmt in self.program.statements {
@@ -371,6 +376,84 @@ impl<'a> Checker<'a> {
                 },
             );
         }
+    }
+
+    /// Run the silent inference pass used to seed cross-module function
+    /// signatures for `collect_module_exports`.
+    pub(crate) fn infer_all_function_signatures(&mut self) {
+        self.collect_declarations();
+        self.collect_function_signatures();
+        self.collect_receiver_methods();
+        self.check_embedded_method_ambiguity();
+        self.validate_interface_declarations();
+        self.infer_function_return_types();
+    }
+
+    /// Silent pre-check pass that infers return types for unannotated functions.
+    ///
+    /// Runs without emitting diagnostics and clears lowering side-effects so the
+    /// real check pass sees stable, forward-reference-resolved signatures.
+    fn infer_function_return_types(&mut self) {
+        self.infer_only = true;
+        for _ in 0..10 {
+            let mut changed = false;
+            for stmt in self.program.statements {
+                let info = match stmt {
+                    ast::Stmt::Function {
+                        name,
+                        type_params,
+                        params,
+                        return_type,
+                        body,
+                        span,
+                        is_async,
+                        ..
+                    } if return_type.is_none() => {
+                        Some((*name, *type_params, *params, *body, *is_async, *span))
+                    }
+                    ast::Stmt::Export {
+                        decl:
+                            ast::ExportDecl::Function {
+                                name,
+                                type_params,
+                                params,
+                                return_type,
+                                body,
+                                is_async,
+                                ..
+                            },
+                        span,
+                        ..
+                    } if return_type.is_none() => {
+                        Some((*name, *type_params, *params, *body, *is_async, *span))
+                    }
+                    _ => None,
+                };
+                if let Some((name, type_params, params, body, is_async, span)) = info {
+                    let prev = self.globals.get(name).cloned();
+                    self.check_function(
+                        name,
+                        type_params,
+                        params,
+                        None,
+                        body,
+                        is_async,
+                        span,
+                    );
+                    let new = self.globals.get(name).cloned();
+                    if prev != new {
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        self.infer_only = false;
+        self.method_calls.clear();
+        self.unwrap_calls.clear();
+        self.operator_rewrites.clear();
     }
 
     pub(super) fn check_statement(&mut self, stmt: &ast::Stmt<'a>) {

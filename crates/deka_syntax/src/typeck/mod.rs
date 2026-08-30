@@ -96,6 +96,18 @@ pub fn check_program_with_imports<'a>(
     }
 }
 
+/// Infer function signatures for a single module without emitting diagnostics.
+///
+/// This is used by `collect_module_exports` so that unannotated exported
+/// functions (common in the stdlib, e.g. `export fn sha512() { digest(...) }`)
+/// still expose a usable return type to importers.
+pub fn infer_module_function_signatures<'a>(program: &'a Program<'a>) -> HashMap<&'a str, Type<'a>> {
+    let imports = HashMap::new();
+    let mut checker = Checker::new(program, &imports);
+    checker.infer_all_function_signatures();
+    checker.globals
+}
+
 /// Collect the exported type information from a parsed module.
 ///
 /// The returned `ModuleExports` references AST nodes allocated in `arena` (and
@@ -240,7 +252,10 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
     }
 
     // Collect declared value signatures so `export { foo }` can re-export the
-    // type of a non-exported `fn foo` or `const foo`.
+    // type of a non-exported `fn foo` or `const foo`. Prefer inferred
+    // signatures (which resolve forward references and bridge/unsafe returns)
+    // over raw annotations when available.
+    let inferred_globals = infer_module_function_signatures(program);
     let mut declared_values: HashMap<&'a str, Type<'a>> = HashMap::new();
     for stmt in program.statements.iter() {
         match stmt {
@@ -252,19 +267,23 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                 ..
             } => {
                 if type_params.is_empty() {
-                    let param_types: Vec<Type<'a>> = params
-                        .iter()
-                        .map(|p| {
-                            p.ty.as_ref()
-                                .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
-                                .unwrap_or(Type::Infer)
-                        })
-                        .collect();
-                    let ret = return_type
-                        .as_ref()
-                        .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
-                        .unwrap_or(Type::Infer);
-                    declared_values.insert(*name, Type::Function { params: param_types, ret: Box::new(ret), optional: 0 });
+                    if let Some(ty) = inferred_globals.get(name) {
+                        declared_values.insert(*name, ty.clone());
+                    } else {
+                        let param_types: Vec<Type<'a>> = params
+                            .iter()
+                            .map(|p| {
+                                p.ty.as_ref()
+                                    .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
+                                    .unwrap_or(Type::Infer)
+                            })
+                            .collect();
+                        let ret = return_type
+                            .as_ref()
+                            .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
+                            .unwrap_or(Type::Infer);
+                        declared_values.insert(*name, Type::Function { params: param_types, ret: Box::new(ret), optional: 0 });
+                    }
                 } else {
                     // Generic function signatures depend on type arguments; keep
                     // the conservative Infer placeholder until we model polymorphism.
@@ -272,10 +291,11 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                 }
             }
             ast::Stmt::Const { name, ty, .. } | ast::Stmt::Let { name, ty, .. } => {
-                let value_ty = ty
-                    .as_ref()
-                    .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
-                    .unwrap_or(Type::Infer);
+                let value_ty = inferred_globals.get(name).cloned().unwrap_or_else(|| {
+                    ty.as_ref()
+                        .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
+                        .unwrap_or(Type::Infer)
+                });
                 declared_values.insert(*name, value_ty);
             }
             _ => {}
@@ -290,10 +310,11 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
         };
         match decl {
             ast::ExportDecl::Const { name, ty, .. } => {
-                let value_ty = ty
-                    .as_ref()
-                    .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
-                    .unwrap_or(Type::Infer);
+                let value_ty = inferred_globals.get(name).cloned().unwrap_or_else(|| {
+                    ty.as_ref()
+                        .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
+                        .unwrap_or(Type::Infer)
+                });
                 exports.values.insert(*name, value_ty);
             }
             ast::ExportDecl::Function {
@@ -304,19 +325,23 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                 ..
             } => {
                 if type_params.is_empty() {
-                    let param_types: Vec<Type<'a>> = params
-                        .iter()
-                        .map(|p| {
-                            p.ty.as_ref()
-                                .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
-                                .unwrap_or(Type::Infer)
-                        })
-                        .collect();
-                    let ret = return_type
-                        .as_ref()
-                        .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
-                        .unwrap_or(Type::Infer);
-                    exports.values.insert(*name, Type::Function { params: param_types, ret: Box::new(ret), optional: 0 });
+                    if let Some(ty) = inferred_globals.get(name) {
+                        exports.values.insert(*name, ty.clone());
+                    } else {
+                        let param_types: Vec<Type<'a>> = params
+                            .iter()
+                            .map(|p| {
+                                p.ty.as_ref()
+                                    .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
+                                    .unwrap_or(Type::Infer)
+                            })
+                            .collect();
+                        let ret = return_type
+                            .as_ref()
+                            .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
+                            .unwrap_or(Type::Infer);
+                        exports.values.insert(*name, Type::Function { params: param_types, ret: Box::new(ret), optional: 0 });
+                    }
                 } else {
                     exports.values.insert(*name, Type::Infer);
                 }
@@ -443,6 +468,9 @@ struct Checker<'a> {
     return_type: Option<Type<'a>>,
     /// How many nested loops currently enclose the checked statement?
     loop_depth: usize,
+    /// When true, diagnostics are suppressed. Used during the pre-check
+    /// inference pass that resolves forward-referenced function return types.
+    infer_only: bool,
 }
 
 impl<'a> Checker<'a> {
@@ -469,6 +497,7 @@ impl<'a> Checker<'a> {
             in_async_function: false,
             return_type: None,
             loop_depth: 0,
+            infer_only: false,
         };
         this.seed_imports(imports);
         this.seed_builtins();

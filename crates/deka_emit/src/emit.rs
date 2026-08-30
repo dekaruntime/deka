@@ -1371,6 +1371,14 @@ impl<'a> Emitter<'a> {
             Expr::Unsafe { source, .. } => {
                 self.emit_unsafe(source)?;
             }
+            Expr::Bridge {
+                kind,
+                action,
+                args,
+                ..
+            } => {
+                self.emit_bridge(kind, action, args)?;
+            }
             Expr::Ternary {
                 condition,
                 then_branch,
@@ -1584,6 +1592,27 @@ impl<'a> Emitter<'a> {
         self.out.push_str(&awaited);
         self.out.push_str(" }; } catch (err) { return { __case: \"Err\", error: err }; } })()");
 
+        Ok(())
+    }
+
+    fn emit_bridge(
+        &mut self,
+        kind: &str,
+        action: &str,
+        args: &[Expr<'a>],
+    ) -> Result<(), String> {
+        self.out.push_str("(function() { const __deka_r = __deka_host(");
+        self.out.push_str(&json_string(kind));
+        self.out.push_str(", ");
+        self.out.push_str(&json_string(action));
+        self.out.push_str(", [");
+        for (i, arg) in args.iter().enumerate() {
+            if i > 0 {
+                self.out.push_str(", ");
+            }
+            self.emit_expr(arg)?;
+        }
+        self.out.push_str("]); if (__deka_r && __deka_r.ok) { return { __case: \"Ok\", value: __deka_r.value }; } else { return { __case: \"Err\", error: (__deka_r && __deka_r.error) ? __deka_r.error : \"host bridge failed\" }; } })()");
         Ok(())
     }
 

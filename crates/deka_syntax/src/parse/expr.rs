@@ -342,6 +342,7 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Fn => self.parse_fn_expression(start, start_byte),
             TokenKind::Unsafe => self.parse_unsafe_expression(start, start_byte),
+            TokenKind::Bridge => self.parse_bridge_expression(start, start_byte),
             TokenKind::Lt => self.parse_jsx(start, start_byte),
             TokenKind::LBracket => {
                 self.advance();
@@ -441,9 +442,9 @@ impl<'a> Parser<'a> {
 
     /// Parse an `unsafe { ... }` raw JavaScript block.
     ///
-    /// The lexer has already tokenised the contents; we skip tokens until we
-    /// find the matching `}` and extract the literal source bytes between the
-    /// braces. The contents are not parsed as DekaScript.
+    /// The lexer emits the body as a single `RawJs` token, so the parser only
+    /// needs to consume the surrounding braces. The contents are not parsed as
+    /// DekaScript.
     fn parse_unsafe_expression(
         &mut self,
         start: crate::ast::Pos,
@@ -455,35 +456,70 @@ impl<'a> Parser<'a> {
             self.error("expected `{` after `unsafe`");
             return None;
         }
-
-        let body_start_byte = self.current_span().byte_start + 1; // after `{`
         self.advance(); // `{`
 
-        let mut depth = 1;
-        let mut body_end_byte = body_start_byte;
-        while depth > 0 && !self.at_end() {
-            if self.at(TokenKind::LBrace) {
-                depth += 1;
-                self.advance();
-            } else if self.at(TokenKind::RBrace) {
-                depth -= 1;
-                if depth == 0 {
-                    body_end_byte = self.current_span().byte_start;
-                }
-                self.advance();
-            } else {
-                self.advance();
-            }
+        let source = if self.at(TokenKind::RawJs) {
+            self.current_text()
+        } else {
+            ""
+        };
+        let source = self.bump_str(source);
+        if self.at(TokenKind::RawJs) {
+            self.advance();
         }
 
-        if depth != 0 {
+        if !self.at(TokenKind::RBrace) {
             self.error("unterminated `unsafe` block; expected `}`");
             return None;
         }
+        self.advance(); // `}`
 
-        let source = &self.source[body_start_byte..body_end_byte];
         Some(Expr::Unsafe {
-            source: self.bump_str(source),
+            source,
+            span: self.span_from(start, start_byte),
+        })
+    }
+
+    /// Parse a host bridge expression: `bridge kind.action(arg1, arg2)`.
+    fn parse_bridge_expression(
+        &mut self,
+        start: crate::ast::Pos,
+        start_byte: usize,
+    ) -> Option<Expr<'a>> {
+        self.advance(); // `bridge`
+
+        let kind = self.expect_identifier()?;
+
+        if !self.at(TokenKind::Dot) {
+            self.error("expected `.` between bridge kind and action, e.g. `bridge crypto.random_bytes(...)`");
+            return None;
+        }
+        self.advance(); // `.`
+
+        let action = self.expect_identifier()?;
+
+        if !self.at(TokenKind::LParen) {
+            self.error("expected `(` after bridge action");
+            return None;
+        }
+        self.advance(); // `(`
+
+        let mut args = Vec::new();
+        if !self.at(TokenKind::RParen) {
+            loop {
+                args.push(self.parse_expression()?);
+                if !self.eat(TokenKind::Comma) {
+                    break;
+                }
+                self.skip_newlines();
+            }
+        }
+        self.expect(TokenKind::RParen)?;
+
+        Some(Expr::Bridge {
+            kind: self.bump_str(kind),
+            action: self.bump_str(action),
+            args: alloc_slice(self.arena, args),
             span: self.span_from(start, start_byte),
         })
     }
