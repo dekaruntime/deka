@@ -12,4 +12,4 @@ fn transform(values: Array<number>, f: Mapper) Array<number> {
 const doubled = transform([1, 2, 3], fn(n: number) number {
   return n * 2
 })
-echo(doubled.length)
+echo("" + (doubled.length))

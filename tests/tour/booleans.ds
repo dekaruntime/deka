@@ -1,6 +1,6 @@
 import { echo } from "io"
 const yes = true
 const no = false
-echo(yes && no)
-echo(yes || no)
-echo(!yes)
+echo("" + (yes && no))
+echo("" + (yes || no))
+echo("" + (!yes))

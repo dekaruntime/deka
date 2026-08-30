@@ -1,4 +1,4 @@
 import { echo } from "io"
 fn add(a: number, b: number) number { return a + b }
 const add1 = add(1, _)
-echo(add1(2))
+echo("" + (add1(2)))
