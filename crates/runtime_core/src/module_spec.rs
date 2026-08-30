@@ -67,9 +67,14 @@ pub fn canonical_php_package_spec(spec: &str) -> Option<String> {
 /// disagree.
 pub fn ds_source_candidates(base: &Path) -> Vec<PathBuf> {
     match base.extension().and_then(|ext| ext.to_str()) {
-        Some("ds") => vec![base.to_path_buf()],
+        Some("ds") | Some("dsx") => vec![base.to_path_buf()],
         Some(_) => Vec::new(),
-        None => vec![base.with_extension("ds"), base.join("index.ds")],
+        None => vec![
+            base.with_extension("ds"),
+            base.with_extension("dsx"),
+            base.join("index.ds"),
+            base.join("index.dsx"),
+        ],
     }
 }
 

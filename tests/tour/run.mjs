@@ -123,8 +123,9 @@ options:
 }
 
 function compileLesson(cliBinary, projectDir, sourcePath, outPath) {
-  copyFileSync(sourcePath, join(projectDir, "lesson.ds"));
-  const result = spawnSync(cliBinary, ["transpile", "./lesson.ds", "--out", outPath], {
+  const ext = sourcePath.endsWith(".dsx") ? ".dsx" : ".ds";
+  copyFileSync(sourcePath, join(projectDir, `lesson${ext}`));
+  const result = spawnSync(cliBinary, ["transpile", `./lesson${ext}`, "--out", outPath], {
     cwd: projectDir,
     encoding: "utf-8",
     timeout: 30_000,
@@ -145,9 +146,9 @@ function main() {
   }
 
   const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
-  const dsFiles = readdirSync(__dirname).filter((name) => name.endsWith(".ds"));
+  const dsFiles = readdirSync(__dirname).filter((name) => name.endsWith(".ds") || name.endsWith(".dsx"));
   const manifestIds = new Set(manifest.map((lesson) => lesson.id));
-  const fileIds = new Set(dsFiles.map((name) => name.replace(/\.ds$/, "")));
+  const fileIds = new Set(dsFiles.map((name) => name.replace(/\.dsx$/, "").replace(/\.ds$/, "")));
 
   const missingFiles = [...manifestIds].filter((id) => !fileIds.has(id));
   const orphanFiles = [...fileIds].filter((id) => !manifestIds.has(id));
@@ -204,7 +205,9 @@ function main() {
 
   try {
     for (const lesson of filtered) {
-      const sourcePath = join(__dirname, `${lesson.id}.ds`);
+      const sourcePath = existsSync(join(__dirname, `${lesson.id}.dsx`))
+        ? join(__dirname, `${lesson.id}.dsx`)
+        : join(__dirname, `${lesson.id}.ds`);
       const outPath = join(scratchDir, `${lesson.id}.js`);
       const compiled = compileLesson(cliBinary, projectDir, sourcePath, outPath);
       try {

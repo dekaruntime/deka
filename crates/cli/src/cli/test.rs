@@ -425,7 +425,7 @@ fn is_test_file(path: &Path) -> bool {
         Some(name) => name.to_ascii_lowercase(),
         None => return false,
     };
-    if !file_name.ends_with(".ds") {
+    if !file_name.ends_with(".ds") && !file_name.ends_with(".dsx") {
         return false;
     }
     file_name == "test.ds"

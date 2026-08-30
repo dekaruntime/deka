@@ -56,7 +56,10 @@ fn run(context: &Context) -> Result<(), String> {
 }
 
 fn is_deka_source_path(path: &Path) -> bool {
-    matches!(path.extension().and_then(|ext| ext.to_str()), Some("ds"))
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("ds") | Some("dsx")
+    )
 }
 
 #[cfg(test)]
@@ -67,6 +70,7 @@ mod tests {
     #[test]
     fn accepts_dekascript_only() {
         assert!(is_deka_source_path(Path::new("main.ds")));
+        assert!(is_deka_source_path(Path::new("page.dsx")));
         assert!(!is_deka_source_path(Path::new("main.phpx")));
         assert!(!is_deka_source_path(Path::new("main.ts")));
     }

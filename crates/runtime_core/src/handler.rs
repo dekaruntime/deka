@@ -51,7 +51,8 @@ where
 }
 
 pub fn is_deka_entry(path: &str) -> bool {
-    path.to_ascii_lowercase().ends_with(".ds")
+    let lower = path.to_ascii_lowercase();
+    lower.ends_with(".ds") || lower.ends_with(".dsx")
 }
 
 pub fn is_html_entry(path: &str) -> bool {
@@ -89,6 +90,7 @@ mod tests {
     #[test]
     fn dekascript_entry_detection_rejects_phpx_and_html() {
         assert!(is_deka_entry("index.DS"));
+        assert!(is_deka_entry("page.dsx"));
         assert!(!is_deka_entry("index.DekaScript"));
         assert!(!is_deka_entry("index.html"));
         assert!(is_html_entry("index.html"));
