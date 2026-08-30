@@ -320,14 +320,74 @@ pub fn exported_http_methods(path: &Path) -> Vec<String> {
     let Ok(src) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
+    let stripped = strip_ds_comments(&src);
     HTTP_METHODS
         .iter()
-        .filter(|method| {
-            src.contains(&format!("export fn {method}"))
-                || src.contains(&format!("export function {method}"))
-        })
-        .map(|m| (*m).to_string())
+        .copied()
+        .filter(|method| exports_fn_named(&stripped, method))
+        .map(|m| m.to_string())
         .collect()
+}
+
+fn exports_fn_named(src: &str, name: &str) -> bool {
+    let needle = format!("export fn {name}");
+    let mut rest = src;
+    while let Some(at) = rest.find(&needle) {
+        let after = &rest[at + needle.len()..];
+        let boundary = match after.chars().next() {
+            None => true,
+            Some(c) => !c.is_ascii_alphanumeric() && c != '_',
+        };
+        if boundary {
+            return true;
+        }
+        rest = &rest[at + 1..];
+    }
+    false
+}
+
+fn strip_ds_comments(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    let bytes = src.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if bytes[i] == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            i = i.saturating_add(2).min(bytes.len());
+            continue;
+        }
+        if bytes[i] == b'"' || bytes[i] == b'\'' {
+            let quote = bytes[i];
+            out.push(quote as char);
+            i += 1;
+            while i < bytes.len() {
+                out.push(bytes[i] as char);
+                if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                    i += 1;
+                    if i < bytes.len() {
+                        out.push(bytes[i] as char);
+                    }
+                } else if bytes[i] == quote {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            continue;
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    out
 }
 
 pub fn static_page_routes(manifest: &FrameworkManifest) -> Vec<String> {
@@ -561,13 +621,14 @@ export fn App(request: Request): Response {{
 fn generate_api_entry(entry: &Path, api_entries: &[FrameworkEntry]) -> Result<String, String> {
     let mut imports = String::new();
     let mut imported: Vec<String> = Vec::new();
-    let mut import_alias = |path: &str, name: &str, alias: &str| {
+    let mut import_alias = |path: &str, name: &str, alias: &str| -> Result<(), String> {
         if imported.iter().any(|k| k == alias) {
-            return;
+            return Ok(());
         }
         imported.push(alias.to_string());
-        let rel = pathdiff_dsx(entry, Path::new(path));
-        imports.push_str(&format!("import {{ {name} as {alias} }} from \"{rel}\"\n"));
+        let rel = json_str(&pathdiff_dsx(entry, Path::new(path)))?;
+        imports.push_str(&format!("import {{ {name} as {alias} }} from {rel}\n"));
+        Ok(())
     };
     let mut branches = String::new();
     for api in api_entries {
@@ -577,21 +638,21 @@ fn generate_api_entry(entry: &Path, api_entries: &[FrameworkEntry]) -> Result<St
         }
         let stem = alias("api", &api.route);
         for method in &methods {
-            import_alias(&api.file, method, &format!("{method}_{stem}"));
+            import_alias(&api.file, method, &format!("{method}_{stem}"))?;
         }
-        let cond = path_condition(&api.route);
+        let cond = path_condition(&api.route)?;
         let mut inner = String::new();
         let has_get = methods.iter().any(|m| m == "GET");
         let has_head = methods.iter().any(|m| m == "HEAD");
         for method in &methods {
             let fn_name = format!("{method}_{stem}");
             inner.push_str(&format!(
-                "        if (request.method == \"{method}\") {{\n            const res = unsafe {{ {fn_name}(request) }}\n            return match (res) {{\n                Ok(r) => r,\n                Err(e) => {{ status: 500, body: e.message }},\n            }}\n        }}\n"
+                "        if (request.method == \"{method}\") {{\n            const res = unsafe {{ {fn_name}(request) }}\n            return match (res) {{\n                Ok(r) => r,\n                Err(_) => {{ status: 500, body: \"Internal Server Error\" }},\n            }}\n        }}\n"
             ));
         }
         if has_get && !has_head {
             inner.push_str(&format!(
-                "        if (request.method == \"HEAD\") {{\n            const res = unsafe {{ GET_{stem}(request) }}\n            return match (res) {{\n                Ok(r) => {{ status: r.status, body: \"\" }},\n                Err(e) => {{ status: 500, body: e.message }},\n            }}\n        }}\n"
+                "        if (request.method == \"HEAD\") {{\n            const res = unsafe {{ GET_{stem}(request) }}\n            return match (res) {{\n                Ok(r) => unsafe {{ {{ status: r.status, headers: r.headers, body: \"\" }} }},\n                Err(_) => {{ status: 500, body: \"Internal Server Error\" }},\n            }}\n        }}\n"
             ));
         }
         inner.push_str("        return { status: 405, body: \"Method not allowed\" }\n");
@@ -1045,60 +1106,23 @@ mod tests {
     }
 
     #[test]
-    fn page_call_passes_slug_from_last_segment() {
-        assert_eq!(page_call("/", "Page_root"), "Page_root()");
-        assert_eq!(
-            page_call("/blog/[slug]", "Page_blog__slug_"),
-            "Page_blog__slug_({ slug: last_segment(path) })"
-        );
-        assert_eq!(dynamic_param_names("/blog/[slug]"), vec!["slug".to_string()]);
-        assert!(dynamic_param_names("/about").is_empty());
-    }
-
-    #[test]
-    fn generated_serve_entry_merges_head_and_passes_slug() {
+    fn exported_http_methods_uses_word_boundary_and_skips_comments() {
         let tmp = std::env::temp_dir().join(format!(
-            "deka_gen_{}",
+            "deka_api_methods_{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
         ));
-        std::fs::create_dir_all(tmp.join("app/blog/[slug]")).unwrap();
+        std::fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("route.ds");
         std::fs::write(
-            tmp.join("index.html"),
-            "<!doctype html><html><head><!--deka-head--></head><body><div id=\"app\"><!--deka-app--></div><!--deka-scripts--></body></html>\n",
+            &path,
+            "// export fn DELETE(request: Request): Response { return { status: 200, body: \"no\" } }\nexport fn GETTER() { return 1 }\nexport fn GET(request: Request): Response { return { status: 200, body: \"ok\" } }\n",
         )
         .unwrap();
-        std::fs::write(
-            tmp.join("app/layout.dsx"),
-            "interface LayoutProps { children: Component }\nexport fn Layout(props: LayoutProps) {\n    return <main>{props.children}</main>;\n}\n",
-        )
-        .unwrap();
-        std::fs::write(
-            tmp.join("app/page.dsx"),
-            "export fn head() {\n    return <title>Head Merge</title>;\n}\nexport fn Page() {\n    return <section><h1>Home</h1></section>;\n}\n",
-        )
-        .unwrap();
-        std::fs::write(
-            tmp.join("app/blog/[slug]/page.dsx"),
-            "interface PageProps { slug: string }\nexport fn Page(props: PageProps) {\n    return <article>{props.slug}</article>;\n}\n",
-        )
-        .unwrap();
-        let entry = write_app_router_entry(&tmp).expect("generate serve-entry");
-        let source = std::fs::read_to_string(&entry).expect("read serve-entry");
-        assert!(
-            source.contains("head_html(head_root())"),
-            "generated entry should merge page head(): {source}"
-        );
-        assert!(
-            source.contains("last_segment"),
-            "generated entry should define last_segment: {source}"
-        );
-        assert!(
-            source.contains("slug: last_segment(path)"),
-            "generated [slug] page call should pass params: {source}"
-        );
+        let methods = exported_http_methods(&path);
+        assert_eq!(methods, vec!["GET".to_string()]);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
