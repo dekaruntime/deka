@@ -556,8 +556,15 @@ impl<'a> Checker<'a> {
                 // as externally provided. They are assigned the infer sentinel
                 // so uses of them typecheck generically; a real module resolver
                 // will supply concrete types later.
+                //
+                // When a module graph has already seeded concrete types for this
+                // import source (via `Checker::seed_imports`), do not overwrite
+                // them with the Infer placeholder.
                 for spec in specifiers.iter() {
-                    self.declare_var(spec.local, Type::Infer);
+                    let already_known = self.scopes.first().map_or(false, |scope| scope.contains_key(spec.local));
+                    if !already_known {
+                        self.declare_var(spec.local, Type::Infer);
+                    }
                 }
             }
         }
