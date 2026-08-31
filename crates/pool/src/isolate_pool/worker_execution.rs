@@ -1147,6 +1147,25 @@ impl WorkerThread {
             );
         }
 
+        // Enforce the resolved dynamic-code policy before any inline user
+        // handler source reaches V8. Validate once per warm isolate rather
+        // than on every request; a source hash change creates a new isolate.
+        // ESM module-graph enforcement requires the loader to validate each
+        // compiled module and is tracked separately in #425.
+        if !request.request_data.handler_code.trim().is_empty()
+            && !isolate.dynamic_code_validated
+        {
+            if let Err(err) = validation::validate_dynamic_code_from_process_env(
+                &request.request_data.handler_code,
+                &key.name,
+            ) {
+                isolate.active_requests = 0;
+                isolate.state = IsolateState::Idle;
+                return (ExecutionOutcome::Err(err), ExecutionProfile::empty());
+            }
+            isolate.dynamic_code_validated = true;
+        }
+
         let use_esm = request.request_data.handler_entry.is_some()
             && std::env::var("DEKA_RUNTIME_ESM")
                 .map(|value| value != "0" && value != "false")

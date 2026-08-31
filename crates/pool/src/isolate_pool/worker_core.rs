@@ -70,6 +70,9 @@ pub(super) struct WarmIsolate {
     pub(super) state: IsolateState,
     pub(super) op_metrics: Option<Rc<OpTimingTracker>>,
     pub(super) handler_loaded: bool,
+    /// Whether the current inline handler source passed dynamic-code policy
+    /// validation. The isolate is replaced when its source hash changes.
+    pub(super) dynamic_code_validated: bool,
     pub(super) entry_specifier: Option<ModuleSpecifier>,
 }
 
@@ -779,6 +782,7 @@ impl WorkerThread {
             state: IsolateState::Idle,
             op_metrics,
             handler_loaded: false,
+            dynamic_code_validated: false,
             entry_specifier,
         })
     }

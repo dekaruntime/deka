@@ -9,6 +9,7 @@ use swc_common::{FileName, SourceMap, Span, Spanned, sync::Lrc};
 use swc_ecma_ast::*;
 use swc_ecma_parser::{Parser, StringInput, Syntax, TsSyntax, error::SyntaxError, lexer::Lexer};
 use swc_ecma_visit::{Visit, VisitWith};
+use runtime_core::security_policy::parse_deka_security_policy;
 
 use super::error_formatter::format_validation_error;
 
@@ -164,6 +165,46 @@ pub fn validate_dynamic_code(
         ));
     }
     Ok(())
+}
+
+/// Validate source against the resolved process policy used by the native
+/// runtime. Missing or malformed policy data fails closed.
+pub fn validate_dynamic_code_from_process_env(
+    source_code: &str,
+    file_path: &str,
+) -> Result<(), String> {
+    let allow_dynamic = match std::env::var("DEKA_SECURITY_POLICY") {
+        Ok(raw) => {
+            let document = serde_json::from_str::<serde_json::Value>(&raw)
+                .map_err(|err| format!("invalid DEKA_SECURITY_POLICY: {}", err))?;
+            let parsed = parse_deka_security_policy(&document);
+            if parsed.has_errors() {
+                let errors = parsed
+                    .diagnostics
+                    .iter()
+                    .filter(|diagnostic| {
+                        matches!(
+                            diagnostic.level,
+                            runtime_core::security_policy::PolicyDiagnosticLevel::Error
+                        )
+                    })
+                    .map(|diagnostic| {
+                        format!(
+                            "{} at {}: {}",
+                            diagnostic.code, diagnostic.path, diagnostic.message
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                return Err(format!("invalid security policy: {}", errors));
+            }
+            parsed.policy.allow.dynamic && !parsed.policy.deny.dynamic
+        }
+        Err(std::env::VarError::NotPresent) => false,
+        Err(err) => return Err(format!("invalid DEKA_SECURITY_POLICY: {}", err)),
+    };
+
+    validate_dynamic_code(source_code, file_path, allow_dynamic)
 }
 
 #[derive(Default)]
