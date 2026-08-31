@@ -56,6 +56,12 @@ function liveText(value) {
   return "\u200b";
 }
 
+const DEFER_TTL_SECS = 3600;
+const DEFER_NONCE_LEN = 12;
+
+let deferRequest = null;
+let deferSessionCookie = "deka_sid";
+
 function getDeferSecret() {
   try {
     if (typeof globalThis !== "undefined" && globalThis.__DEKA_DEFER_SECRET) {
@@ -65,129 +71,277 @@ function getDeferSecret() {
   return "";
 }
 
-function rotr(n, x) {
-  return (x >>> n) | (x << (32 - n));
-}
-
-function sha256(bytes) {
-  const K = [
-    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
-  ];
-  const h = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
-  const bitLen = bytes.length * 8;
-  const withOne = bytes.concat([0x80]);
-  while ((withOne.length % 64) !== 56) withOne.push(0);
-  const hi = Math.floor(bitLen / 0x100000000);
-  const lo = bitLen >>> 0;
-  withOne.push((hi >>> 24) & 255, (hi >>> 16) & 255, (hi >>> 8) & 255, hi & 255);
-  withOne.push((lo >>> 24) & 255, (lo >>> 16) & 255, (lo >>> 8) & 255, lo & 255);
-  for (let i = 0; i < withOne.length; i += 64) {
-    const w = new Array(64);
-    for (let t = 0; t < 16; t++) {
-      const o = i + t * 4;
-      w[t] = ((withOne[o] << 24) | (withOne[o + 1] << 16) | (withOne[o + 2] << 8) | withOne[o + 3]) >>> 0;
-    }
-    for (let t = 16; t < 64; t++) {
-      const s0 = rotr(7, w[t - 15]) ^ rotr(18, w[t - 15]) ^ (w[t - 15] >>> 3);
-      const s1 = rotr(17, w[t - 2]) ^ rotr(19, w[t - 2]) ^ (w[t - 2] >>> 10);
-      w[t] = (w[t - 16] + s0 + w[t - 7] + s1) >>> 0;
-    }
-    let a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
-    for (let t = 0; t < 64; t++) {
-      const S1 = rotr(6, e) ^ rotr(11, e) ^ rotr(25, e);
-      const ch = (e & f) ^ (~e & g);
-      const temp1 = (hh + S1 + ch + K[t] + w[t]) >>> 0;
-      const S0 = rotr(2, a) ^ rotr(13, a) ^ rotr(22, a);
-      const maj = (a & b) ^ (a & c) ^ (b & c);
-      const temp2 = (S0 + maj) >>> 0;
-      hh = g; g = f; f = e; e = (d + temp1) >>> 0; d = c; c = b; b = a; a = (temp1 + temp2) >>> 0;
-    }
-    h[0] = (h[0] + a) >>> 0; h[1] = (h[1] + b) >>> 0; h[2] = (h[2] + c) >>> 0; h[3] = (h[3] + d) >>> 0;
-    h[4] = (h[4] + e) >>> 0; h[5] = (h[5] + f) >>> 0; h[6] = (h[6] + g) >>> 0; h[7] = (h[7] + hh) >>> 0;
+export function bindDefer(request, secret, cookieName) {
+  deferRequest = request || null;
+  if (cookieName !== undefined && cookieName !== null) {
+    deferSessionCookie = String(cookieName);
   }
-  let out = "";
-  for (let i = 0; i < 8; i++) out += ("00000000" + h[i].toString(16)).slice(-8);
-  return out;
-}
-
-function sha256Bytes(bytes) {
-  const hex = sha256(bytes);
-  const out = [];
-  for (let i = 0; i < hex.length; i += 2) out.push(parseInt(hex.slice(i, i + 2), 16));
-  return out;
-}
-
-function hmacSha256Hex(secret, message) {
-  let key = utf8Bytes(secret);
-  if (key.length > 64) key = sha256Bytes(key);
-  while (key.length < 64) key.push(0);
-  const oKey = key.map((b) => b ^ 0x5c);
-  const iKey = key.map((b) => b ^ 0x36);
-  const inner = sha256Bytes(iKey.concat(utf8Bytes(message)));
-  return sha256(oKey.concat(inner));
-}
-
-export function signDeferIsland(name, propsJson, id) {
-  const secret = getDeferSecret();
-  if (!secret) return "";
-  return hmacSha256Hex(secret, String(name) + "\n" + String(propsJson) + "\n" + String(id));
-}
-
-export function verifyDeferIsland(name, propsJson, id, mac) {
-  const want = signDeferIsland(name, propsJson, id);
-  if (!want) return false;
-  const got = String(mac || "");
-  if (got.length !== want.length) return false;
-  let diff = 0;
-  for (let i = 0; i < want.length; i++) diff |= want.charCodeAt(i) ^ got.charCodeAt(i);
-  return diff === 0;
-}
-
-export function runDeferBatch(body, secret, registry, cacheControl) {
   if (secret) {
     try {
       globalThis.__DEKA_DEFER_SECRET = String(secret);
     } catch (_) {}
   }
+}
+
+function cookieHeader(request) {
+  const req = request || deferRequest;
+  const headers = req && req.headers;
+  if (!headers) return "";
+  return String(headers.cookie || headers.Cookie || "");
+}
+
+function cookieValue(header, name) {
+  const want = String(name || "");
+  if (!want) return "";
+  const parts = String(header || "").split(";");
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i].trim();
+    const eq = part.indexOf("=");
+    if (eq <= 0) continue;
+    if (part.slice(0, eq) !== want) continue;
+    const raw = part.slice(eq + 1).trim();
+    try {
+      return decodeURIComponent(raw);
+    } catch (_) {
+      return raw;
+    }
+  }
+  return "";
+}
+
+function sessionFromRequest(request) {
+  return cookieValue(cookieHeader(request), deferSessionCookie);
+}
+
+function deferAad(name, request) {
+  return "props:" + String(name || "") + "\n" + sessionFromRequest(request);
+}
+
+function hostFn() {
+  try {
+    const h = globalThis[Symbol.for("deka.host.internal")];
+    if (h && typeof h.host === "function") return h.host;
+  } catch (_) {}
+  if (typeof __deka_host === "function") return __deka_host;
+  return null;
+}
+
+function keyBytesFromSecret(secret) {
+  const s = String(secret || getDeferSecret() || "");
+  if (!/^[0-9a-fA-F]{64}$/.test(s)) return null;
+  const out = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) out[i] = parseInt(s.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+
+function randomNonce() {
+  const out = new Uint8Array(DEFER_NONCE_LEN);
+  const host = hostFn();
+  if (host) {
+    const r = host("crypto", "random_bytes", [DEFER_NONCE_LEN]);
+    if (r && r.ok && r.value) {
+      const src = r.value instanceof Uint8Array ? r.value : new Uint8Array(r.value);
+      out.set(src.subarray(0, DEFER_NONCE_LEN));
+      return out;
+    }
+  }
+  if (globalThis.crypto && typeof globalThis.crypto.getRandomValues === "function") {
+    globalThis.crypto.getRandomValues(out);
+    return out;
+  }
+  return null;
+}
+
+function u8Concat(a, b) {
+  const out = new Uint8Array(a.length + b.length);
+  out.set(a, 0);
+  out.set(b, a.length);
+  return out;
+}
+
+function encodeEnc(nonce, ciphertext) {
+  return base64EncodeBytes(u8Concat(nonce, ciphertext));
+}
+
+function decodeEnc(enc) {
+  const raw = base64DecodeBytes(enc);
+  if (raw.length < DEFER_NONCE_LEN + 16) return null;
+  return { nonce: raw.subarray(0, DEFER_NONCE_LEN), ciphertext: raw.subarray(DEFER_NONCE_LEN) };
+}
+
+function base64EncodeBytes(bytes) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let output = "";
+  for (let i = 0; i < u8.length; i += 3) {
+    const a = u8[i];
+    const b = i + 1 < u8.length ? u8[i + 1] : 0;
+    const c = i + 2 < u8.length ? u8[i + 2] : 0;
+    const triple = (a << 16) | (b << 8) | c;
+    output += alphabet[(triple >> 18) & 63];
+    output += alphabet[(triple >> 12) & 63];
+    output += i + 1 < u8.length ? alphabet[(triple >> 6) & 63] : "=";
+    output += i + 2 < u8.length ? alphabet[triple & 63] : "=";
+  }
+  return output;
+}
+
+function base64DecodeBytes(raw) {
+  const cleaned = String(raw || "").replace(/[^A-Za-z0-9+/=]/g, "");
+  if (!cleaned) return new Uint8Array();
+  if (typeof atob === "function") {
+    try {
+      const binary = atob(cleaned);
+      const out = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i) & 255;
+      return out;
+    } catch (_) {}
+  }
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const bytes = [];
+  for (let i = 0; i < cleaned.length; i += 4) {
+    const a = alphabet.indexOf(cleaned[i]);
+    const b = alphabet.indexOf(cleaned[i + 1]);
+    const c = alphabet.indexOf(cleaned[i + 2]);
+    const d = alphabet.indexOf(cleaned[i + 3]);
+    const triple = ((a & 63) << 18) | ((b & 63) << 12) | ((c & 63) << 6) | (d & 63);
+    bytes.push((triple >> 16) & 255);
+    if (cleaned[i + 2] !== "=") bytes.push((triple >> 8) & 255);
+    if (cleaned[i + 3] !== "=") bytes.push(triple & 255);
+  }
+  return new Uint8Array(bytes);
+}
+
+function utf8U8(str) {
+  const raw = utf8Bytes(str);
+  return raw instanceof Uint8Array ? raw : new Uint8Array(raw);
+}
+
+function utf8Decode(bytes) {
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+  if (typeof TextDecoder === "function") {
+    try {
+      return new TextDecoder().decode(u8);
+    } catch (_) {}
+  }
+  let out = "";
+  for (let i = 0; i < u8.length; i++) out += String.fromCharCode(u8[i]);
+  return out;
+}
+
+function nowSecs() {
+  return Math.floor((Date.now ? Date.now() : 0) / 1000);
+}
+
+function encryptPropsSync(name, props, request) {
+  const key = keyBytesFromSecret();
+  const nonce = randomNonce();
+  if (!key || !nonce) return "";
+  const exp = nowSecs() + DEFER_TTL_SECS;
+  const plaintext = utf8U8(JSON.stringify({ props: props || {}, exp }));
+  const aad = utf8U8(deferAad(name, request));
+  const host = hostFn();
+  if (host) {
+    const r = host("crypto", "aes_256_gcm_encrypt", [key, nonce, plaintext, aad]);
+    if (!r || r.ok !== true || r.value == null) return "";
+    const ct = r.value instanceof Uint8Array ? r.value : new Uint8Array(r.value);
+    return encodeEnc(nonce, ct);
+  }
+  return "";
+}
+
+async function decryptEncAsync(name, enc, request) {
+  const packed = decodeEnc(enc);
+  const key = keyBytesFromSecret();
+  if (!packed || !key) return null;
+  const aad = utf8U8(deferAad(name, request));
+  const host = hostFn();
+  if (host) {
+    const r = host("crypto", "aes_256_gcm_decrypt", [key, packed.nonce, packed.ciphertext, aad]);
+    if (!r || r.ok !== true || r.value == null) return null;
+    const pt = r.value instanceof Uint8Array ? r.value : new Uint8Array(r.value);
+    return utf8Decode(pt);
+  }
+  if (globalThis.crypto && crypto.subtle && typeof crypto.subtle.importKey === "function") {
+    try {
+      const cryptoKey = await crypto.subtle.importKey("raw", key, { name: "AES-GCM" }, false, ["decrypt"]);
+      const pt = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: packed.nonce, additionalData: aad },
+        cryptoKey,
+        packed.ciphertext
+      );
+      return utf8Decode(new Uint8Array(pt));
+    } catch (_) {
+      return null;
+    }
+  }
+  return null;
+}
+
+function deferJson(status, body, extraHeaders) {
+  const headers = {
+    "content-type": "application/json",
+    "cache-control": "private, no-store",
+    "x-robots-tag": "noindex",
+  };
+  if (extraHeaders) {
+    for (const k of Object.keys(extraHeaders)) headers[k] = extraHeaders[k];
+  }
+  return { status, body, headers };
+}
+
+export async function runDeferBatch(body, secret, registry, cacheControl, request, cookieName) {
+  if (secret) bindDefer(request, secret, cookieName);
+  else {
+    if (request) deferRequest = request;
+    if (cookieName !== undefined && cookieName !== null) deferSessionCookie = String(cookieName);
+  }
   let payload = {};
   try {
     payload = JSON.parse(body || "{}");
   } catch (_) {
-    return {
-      status: 400,
-      body: "{\"error\":\"invalid json\"}",
-      headers: { "content-type": "application/json", "cache-control": "private, no-store" },
-    };
+    return deferJson(400, "{\"error\":\"invalid json\"}");
   }
   const islands = Array.isArray(payload.islands) ? payload.islands.slice(0, 32) : [];
+  for (const item of islands) {
+    if (!item) continue;
+    if (item.props != null || item.mac != null) {
+      return deferJson(400, "{\"error\":\"plaintext props are not allowed\"}");
+    }
+  }
   const fragments = {};
   const seen = {};
   const handlers = registry || {};
+  const req = request || deferRequest;
   for (const item of islands) {
     const key = String((item && (item.id || item.name)) || "");
     if (!key || seen[key]) continue;
     seen[key] = true;
-    const propsJson = JSON.stringify(item && item.props ? item.props : {});
-    if (!verifyDeferIsland(item && item.name, propsJson, item && item.id, item && item.mac)) continue;
-    const fn = handlers[item && item.name];
+    const name = item && item.name;
+    const enc = item && item.enc;
+    if (!name || !enc) continue;
+    const raw = await decryptEncAsync(name, enc, req);
+    if (raw == null) continue;
+    let decoded;
+    try {
+      decoded = JSON.parse(raw);
+    } catch (_) {
+      continue;
+    }
+    const exp = decoded && typeof decoded.exp === "number" ? decoded.exp : 0;
+    if (exp && exp < nowSecs()) continue;
+    const props = decoded && decoded.props && typeof decoded.props === "object" ? decoded.props : {};
+    const fn = handlers[name];
     if (typeof fn !== "function") continue;
-    const tree = fn(item.props || {});
-    const rendered = renderToString(tree);
+    const tree = fn(props, req);
+    const rendered = renderToString(tree, req);
     fragments[key] = rendered && rendered.html ? rendered.html : "";
   }
   const cache = cacheControl || "private, no-store";
-  return {
-    status: 200,
-    body: JSON.stringify({ fragments }),
-    headers: { "content-type": "application/json", "cache-control": cache, "vary": "cookie" },
-  };
+  return deferJson(200, JSON.stringify({ fragments }), {
+    "cache-control": cache,
+    vary: "cookie",
+  });
 }
 
 const VOID = new Set([
@@ -254,10 +408,9 @@ function fallbackNodes(children) {
 
 function wrapDeferred(name, directive, props, cache, id, html) {
   const cachePart = cache ? ` cache:${base64Encode(String(cache))}` : "";
-  const propsJson = serializeIslandProps(props);
-  const mac = signDeferIsland(name, propsJson, id);
-  const macPart = mac ? ` mac:${base64Encode(mac)}` : "";
-  return `<!--deka-island start:${base64Encode(name)} directive:${base64Encode(directive)} props:${base64Encode(propsJson)} id:${base64Encode(id)}${cachePart}${macPart}--><span data-deka-defer="${escapeHtml(id)}">${html}</span><!--deka-island end:${base64Encode(name)}-->`;
+  const enc = encryptPropsSync(name, jsonSafe(props) ?? {}, deferRequest);
+  const encPart = enc ? ` enc:${enc}` : "";
+  return `<!--deka-island start:${base64Encode(name)} directive:${base64Encode(directive)} id:${base64Encode(id)}${encPart}${cachePart}--><span data-deka-defer="${escapeHtml(id)}">${html}</span><!--deka-island end:${base64Encode(name)}-->`;
 }
 
 function renderAttributes(props) {
@@ -467,15 +620,27 @@ async function renderNodeAsync(node) {
   return "";
 }
 
-export function renderToString(node) {
+export function renderToString(node, request) {
+  const prev = deferRequest;
+  if (request !== undefined) deferRequest = request || null;
   deferSeq = 0;
-  const ctx = createCtx();
-  return { html: renderNode(node, ctx), boundaries: ctx.pending.map((item) => item.id) };
+  try {
+    const ctx = createCtx();
+    return { html: renderNode(node, ctx), boundaries: ctx.pending.map((item) => item.id) };
+  } finally {
+    deferRequest = prev;
+  }
 }
 
-export async function renderToStringAsync(node) {
+export async function renderToStringAsync(node, request) {
+  const prev = deferRequest;
+  if (request !== undefined) deferRequest = request || null;
   deferSeq = 0;
-  return { html: await renderNodeAsync(node), boundaries: [] };
+  try {
+    return { html: await renderNodeAsync(node), boundaries: [] };
+  } finally {
+    deferRequest = prev;
+  }
 }
 
 function swapChunk(id, html) {
@@ -587,12 +752,18 @@ function createByteStream(start) {
   };
 }
 
-export function renderToStream(node) {
+export function renderToStream(node, request) {
+  const prev = deferRequest;
+  if (request !== undefined) deferRequest = request || null;
   return createByteStream(async (controller) => {
-    for await (const text of iterateChunks(node)) {
-      controller.enqueue(encodeChunk(text));
+    try {
+      for await (const text of iterateChunks(node)) {
+        controller.enqueue(encodeChunk(text));
+      }
+      controller.close();
+    } finally {
+      deferRequest = prev;
     }
-    controller.close();
   });
 }
 
@@ -611,10 +782,16 @@ export async function collectStream(stream) {
   return out;
 }
 
-export async function renderToStreamHtml(node) {
-  let out = "";
-  for await (const text of iterateChunks(node)) out += text;
-  return out;
+export async function renderToStreamHtml(node, request) {
+  const prev = deferRequest;
+  if (request !== undefined) deferRequest = request || null;
+  try {
+    let out = "";
+    for await (const text of iterateChunks(node)) out += text;
+    return out;
+  } finally {
+    deferRequest = prev;
+  }
 }
 
 export { escapeHtml, liveText, Suspense };

@@ -76,22 +76,25 @@ function liveText(value) {
 function parseMarker(text) {
   const raw = String(text || "").trim();
   const match = raw.match(
-    /^deka-island start:([A-Za-z0-9+/=]+) directive:([A-Za-z0-9+/=]+) props:([A-Za-z0-9+/=]+)(?: id:([A-Za-z0-9+/=]+))?(?: cache:([A-Za-z0-9+/=]+))?(?: mac:([A-Za-z0-9+/=]+))?$/
+    /^deka-island start:([A-Za-z0-9+/=]+) directive:([A-Za-z0-9+/=]+)(?: props:([A-Za-z0-9+/=]+))?(?: id:([A-Za-z0-9+/=]+))?(?: enc:([A-Za-z0-9+/=]+))?(?: cache:([A-Za-z0-9+/=]+))?(?: mac:([A-Za-z0-9+/=]+))?$/
   );
   if (!match) return null;
   let props = {};
-  try {
-    props = JSON.parse(decodeB64(match[3]) || "{}") || {};
-  } catch (_) {
-    props = {};
+  if (match[3]) {
+    try {
+      props = JSON.parse(decodeB64(match[3]) || "{}") || {};
+    } catch (_) {
+      props = {};
+    }
   }
   return {
     name: decodeB64(match[1]),
     directive: decodeB64(match[2]) || "load",
     props,
     id: match[4] ? decodeB64(match[4]) : "",
-    cache: match[5] ? decodeB64(match[5]) : "",
-    mac: match[6] ? decodeB64(match[6]) : "",
+    enc: match[5] || "",
+    cache: match[6] ? decodeB64(match[6]) : "",
+    mac: match[7] ? decodeB64(match[7]) : "",
   };
 }
 
@@ -321,8 +324,7 @@ function fetchDeferredChunk(items) {
     islands: items.map((item) => ({
       id: item.id || item.name,
       name: item.name,
-      props: item.props || {},
-      mac: item.mac || "",
+      enc: item.enc || "",
     })),
   });
   fetch("/_deka/defer", {
