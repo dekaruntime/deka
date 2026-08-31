@@ -424,10 +424,8 @@ impl<'a> Checker<'a> {
         }
 
         for field in info.fields {
-            let is_optional_type = matches!(field.ty, ast::Type::Option { .. });
             if field.default_value.is_none()
                 && !field.optional
-                && !is_optional_type
                 && !seen_fields.contains(field.name)
             {
                 self.error_span(

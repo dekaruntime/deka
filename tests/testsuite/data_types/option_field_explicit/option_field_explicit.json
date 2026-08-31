@@ -1,0 +1,5 @@
+{
+  "title": "Option fields require Some or None",
+  "stage": "run",
+  "notes": "deka#401: a raw value was accepted where Option<T> was expected and left unwrapped, and an omitted Option field auto-filled None on structs but errored on interfaces."
+}
