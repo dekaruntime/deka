@@ -196,6 +196,9 @@ jobs:
       - name: Test cli project-gate boundary
         run: cargo test --locked -p cli --test project_gate_boundary
 
+      - name: Test cli dynamic-policy boundary
+        run: cargo test --locked -p cli --test dynamic_policy_boundary
+
       - name: Build and test browser compiler WASM
         env:
           DEKA_SKIP_DIRTY_CHECK: 1
