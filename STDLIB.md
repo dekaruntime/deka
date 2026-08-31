@@ -154,9 +154,38 @@ this file.
 - A runtime (`dekaruntime/deka`) release
 - Pushing to a PR branch
 
-`bytes` on 2026-08-22 is the example: `main` is DekaScript `0.2.0`, the
-registry still lists `0.1.1`, R2 has no `bytes-0.2.0.tgz`. Hats
-`tests/packages/` stay red until steps 3 and 4 both happen.
+`bytes` was the worked example: on 2026-08-22 `main` was DekaScript
+`0.2.0` while the registry still listed `0.1.1` and R2 had no
+`bytes-0.2.0.tgz`. It has since been released properly and is now the
+**reference package** — copy its shape (`deka.json`, `index.ds`,
+`tests/`, `.gitignore`, `.github/workflows/release.yml`).
+
+Hats `tests/packages/` stay red until steps 3 and 4 both happen. Step 4
+is the one that gets skipped: a `206` from R2 looks like success, and
+`deka add` silently keeps installing the previous latest.
+
+## Verifying a repo that has never released
+
+`workflow_dispatch` exists so a release can be re-cut without burning a
+version. It is also how you prove a *new* package repo can actually
+release before you tag anything real:
+
+```bash
+gh workflow run release.yml --repo dekaruntime/<name> -f version=0.0.0-wiring-check
+gh run list --repo dekaruntime/<name> --limit 1
+curl -sS -r 0-0 -o /dev/null -w '%{http_code}\n' \
+  https://pub-6d81db17678348abba85f93fde4b4400.r2.dev/<name>/0.0.0-wiring-check/<name>-0.0.0-wiring-check.tgz
+```
+
+A throwaway version is inert — `probe:r2` only HEADs candidates listed in
+`data/registry.ts`, so a version that is not listed never appears on the
+index. This exercises the whole path: org runner assignment, the
+Cloudflare secrets, and the R2 write.
+
+Worth doing because runner visibility is per-repo. A repo with **no
+workflow runs at all** has never proven it can see the org self-hosted
+runners, and that failure only shows up when you are trying to cut a real
+release.
 
 ## Testsuite
 
