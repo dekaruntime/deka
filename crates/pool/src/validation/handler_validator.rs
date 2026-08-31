@@ -187,12 +187,12 @@ impl Visit for DynamicCodeValidator {
                 "Dynamic import is disabled by the security policy",
                 "Declare the module dependency statically or run with an explicit dynamic allowance.",
             ),
-            Callee::Expr(expr) if is_identifier(expr, "eval") => self.reject(
+            Callee::Expr(expr) if resolves_to_global(expr, "eval") => self.reject(
                 node.span,
                 "eval is disabled by the security policy",
                 "Remove dynamic evaluation or explicitly allow dynamic execution.",
             ),
-            Callee::Expr(expr) if is_identifier(expr, "Function") => self.reject(
+            Callee::Expr(expr) if resolves_to_global(expr, "Function") => self.reject(
                 node.span,
                 "The Function constructor is disabled by the security policy",
                 "Remove dynamic code generation or explicitly allow dynamic execution.",
@@ -203,7 +203,7 @@ impl Visit for DynamicCodeValidator {
     }
 
     fn visit_new_expr(&mut self, node: &NewExpr) {
-        if is_identifier(&node.callee, "Function") {
+        if resolves_to_global(&node.callee, "Function") {
             self.reject(
                 node.span,
                 "The Function constructor is disabled by the security policy",
@@ -214,10 +214,14 @@ impl Visit for DynamicCodeValidator {
     }
 
     fn visit_member_expr(&mut self, node: &MemberExpr) {
-        if is_identifier(&node.obj, "globalThis") && member_property_is(node, "process") {
+        // `process.env`, `globalThis.process.env`, `globalThis["process"].env`
+        // are the same reach for the host process object.
+        if resolves_to_global(&Expr::Member(node.clone()), "process")
+            || resolves_to_global(&node.obj, "process")
+        {
             self.reject(
                 node.span,
-                "globalThis.process is disabled by the security policy",
+                "Reaching the host process object is disabled by the security policy",
                 "Use a Deka capability instead of reaching the host process object.",
             );
         }
@@ -227,6 +231,32 @@ impl Visit for DynamicCodeValidator {
 
 fn is_identifier(expr: &Expr, expected: &str) -> bool {
     matches!(expr, Expr::Ident(ident) if ident.sym == expected)
+}
+
+/// Whether an expression names a given global, however it is spelled.
+///
+/// `eval`, `globalThis.eval` and `globalThis["eval"]` are one thing, and so are
+/// `(eval)` and `(0, eval)`. Matching only `Expr::Ident` left every
+/// member-expression form as a one-line bypass of the policy.
+///
+/// This is deliberately syntactic. Aliasing (`const f = eval; f(src)`) is out
+/// of scope -- catching it needs dataflow, and a syntactic control is the wrong
+/// place to chase it. The isolate's own capability boundary is what backstops
+/// that case.
+fn resolves_to_global(expr: &Expr, expected: &str) -> bool {
+    match expr {
+        Expr::Ident(ident) => ident.sym == expected,
+        Expr::Member(member) => {
+            is_identifier(&member.obj, "globalThis") && member_property_is(member, expected)
+        }
+        Expr::Paren(paren) => resolves_to_global(&paren.expr, expected),
+        // The value of a comma sequence is its last element: `(0, eval)(src)`.
+        Expr::Seq(seq) => seq
+            .exprs
+            .last()
+            .is_some_and(|last| resolves_to_global(last, expected)),
+        _ => false,
+    }
 }
 
 fn member_property_is(node: &MemberExpr, expected: &str) -> bool {
@@ -253,6 +283,15 @@ mod dynamic_code_tests {
             "const value = import('./late.js');",
             "const value = globalThis.process;",
             "const value = globalThis['process'];",
+            // Member, paren and sequence spellings of the same globals. Each of
+            // these ran straight past the first version of this validator.
+            "const value = globalThis.eval('1 + 1');",
+            "const value = globalThis['eval']('1 + 1');",
+            "const value = globalThis.Function('return 7')();",
+            "const value = new globalThis.Function('return 7')();",
+            "const value = (0, eval)('1 + 1');",
+            "const value = (eval)('1 + 1');",
+            "const value = process.env;",
         ] {
             let result = validate_dynamic_code(source, "handler.js", false);
             assert!(result.is_err(), "expected rejection for {source}");
