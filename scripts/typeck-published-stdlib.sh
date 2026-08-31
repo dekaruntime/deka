@@ -87,7 +87,11 @@ for name in "${PACKAGES[@]}"; do
   fi
 
   out="$(cd "$proj" && DEKA_SECURITY_NO_PROMPT=1 "$CLI" run consumer.ds 2>&1 || true)"
-  if grep -qE 'unknown type|unknown identifier|expected `' <<<"$out"; then
+  # Any diagnostic whose location points into the installed package is a real
+  # failure. Matching on error text instead missed whole classes: an earlier
+  # pattern list passed @deka/fs while it was emitting
+  # "`await` expected Promise<T>" on three lines.
+  if grep -qE '^[0-9]+:[0-9]+:.*(ds_modules|php_modules)/' <<<"$out"; then
     echo "FAIL $name: does not typecheck on this compiler"
     grep -vE '^\[security\]' <<<"$out" | head -5
     failed=1
