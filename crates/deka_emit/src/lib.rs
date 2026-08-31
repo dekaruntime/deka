@@ -169,6 +169,33 @@ mod tests {
     }
 
     #[test]
+    fn emit_unsafe_ignores_string_punctuation_and_keywords() {
+        let out = parse_and_emit("const a = unsafe { \"a;b\" }; const b = unsafe { \"await\" };");
+        assert!(out.contains("return (\"a;b\")"), "string semicolon changed shape: {}", out);
+        assert!(out.contains("return (\"await\")"), "string await changed shape: {}", out);
+        assert!(!out.contains("async function"), "string await changed wrapper asyncness: {}", out);
+    }
+
+    #[test]
+    fn emit_unsafe_ignores_comment_punctuation() {
+        let out = parse_and_emit("const r = unsafe { 1 + 1 /* ; await */ };");
+        assert!(out.contains("return (1 + 1 /* ; await */)"), "comment changed expression shape: {}", out);
+        assert!(!out.contains("async function"), "comment await changed wrapper asyncness: {}", out);
+    }
+
+    #[test]
+    fn emit_unsafe_ignores_regex_punctuation() {
+        let out = parse_and_emit("const r = unsafe { /a;b/.test(value) };");
+        assert!(out.contains("return (/a;b/.test(value))"), "regex semicolon changed shape: {}", out);
+    }
+
+    #[test]
+    fn emit_unsafe_detects_automatic_semicolon_insertion() {
+        let out = parse_and_emit("const r = unsafe { 1\n2 };");
+        assert!(out.contains("function() { 1\n2 }"), "ASI statements were treated as an expression: {}", out);
+    }
+
+    #[test]
     fn emit_jsx_element() {
         let out = parse_and_emit("const el = <div class=\"box\" />;");
         assert!(out.contains("import { jsx, jsxs, Fragment } from \"ui/jsx\""), "got: {}", out);
