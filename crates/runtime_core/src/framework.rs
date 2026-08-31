@@ -992,17 +992,17 @@ fn generate_defer_entry(
     let cache_control = json_str(&format!("private, {}", defer_cache_header(deferred)))?;
     let secret = json_str(&ensure_defer_secret(project_root)?)?;
     Ok(format!(
-        r#"{imports}
+        r#"{imports}import {{ runDeferBatch }} from "ui/server"
+
 interface RequestHeaders {{ accept: string }}
 interface Request {{ url: string, pathname: string, method: string, headers: RequestHeaders, body: string }}
 interface Response {{ status: number, body: string }}
 
 fn App(request: Request): Response {{
-    const boxed = unsafe {{ globalThis.deka.ui.runDeferBatch(request.body, {secret}, {registry}, {cache_control}) }}
+    const boxed = unsafe {{ runDeferBatch(request.body, {secret}, {registry}, {cache_control}) }}
     return match (boxed) {{
         Ok(r) => r,
         Err(_) => {{ status: 500, body: "Internal Server Error" }},
-        _ => {{ status: 500, body: "Internal Server Error" }},
     }}
 }}
 export {{ App }}
@@ -1613,6 +1613,66 @@ export {{ App }}
 }
 
 fn generate_api_entry(entry: &Path, api_entries: &[FrameworkEntry]) -> Result<String, String> {
+    let (imports, registry) = api_imports_and_registry(entry, api_entries)?;
+    Ok(format!(
+        r#"{imports}import {{ runApiRouter }} from "ui/router"
+
+interface RequestHeaders {{ accept: string }}
+interface ResponseHeaders {{ location: string }}
+interface Request {{ url: string, pathname: string, method: string, headers: RequestHeaders, body: string }}
+interface Response {{ status: number, body: string, headers: ResponseHeaders }}
+
+fn App(request: Request): Response {{
+    const boxed = unsafe {{ runApiRouter(request, {registry}) }}
+    return match (boxed) {{
+        Ok(r) => r,
+        Err(_) => {{ status: 500, body: "Internal Server Error", headers: {{ location: "" }} }},
+    }}
+}}
+export {{ App }}
+"#
+    ))
+}
+
+fn generate_middleware_entry(entry: &Path, middleware: &Path) -> Result<String, String> {
+    let source = std::fs::read_to_string(middleware)
+        .map_err(|err| format!("failed to read {}: {err}", middleware.display()))?;
+    let matcher = parse_middleware_matcher(&source);
+    let rel = json_str(&pathdiff_dsx(entry, middleware))?;
+    let matcher_js = matcher_js_literal(&matcher)?;
+    Ok(format!(
+        r#"import {{ middleware }} from {rel}
+import {{ runMiddleware }} from "ui/router"
+
+interface RequestHeaders {{ accept: string }}
+interface ResponseHeaders {{ location: string }}
+interface Request {{ url: string, pathname: string, method: string, headers: RequestHeaders }}
+interface Response {{ status: number, body: string, headers: ResponseHeaders }}
+
+fn App(request: Request): Response {{
+    const boxed = unsafe {{ runMiddleware(request, middleware, {matcher_js}) }}
+    return match (boxed) {{
+        Ok(r) => r,
+        Err(_) => {{ status: 500, body: "Internal Server Error", headers: {{ location: "" }} }},
+    }}
+}}
+export {{ App }}
+"#
+    ))
+}
+
+fn matcher_js_literal(matcher: &Option<Vec<String>>) -> Result<String, String> {
+    match matcher {
+        None => Ok("null".to_string()),
+        Some(patterns) => serde_json::to_string(patterns)
+            .map_err(|err| format!("failed to encode matcher: {err}")),
+    }
+}
+
+fn api_imports_and_registry(
+    entry: &Path,
+    api_entries: &[FrameworkEntry],
+) -> Result<(String, String), String> {
     let mut imports = String::new();
     let mut imported: Vec<String> = Vec::new();
     let mut import_alias = |path: &str, name: &str, alias: &str| -> Result<(), String> {
@@ -1624,271 +1684,70 @@ fn generate_api_entry(entry: &Path, api_entries: &[FrameworkEntry]) -> Result<St
         imports.push_str(&format!("import {{ {name} as {alias} }} from {rel}\n"));
         Ok(())
     };
-    let mut branches = String::new();
+    let mut registry = String::from("{ ");
+    let mut first_route = true;
     for api in api_entries {
         let methods = exported_http_methods(Path::new(&api.file));
         if methods.is_empty() {
             continue;
         }
+        assert_dynamic_route_supported(&api.route)?;
         let stem = alias("api", &api.route);
         for method in &methods {
             import_alias(&api.file, method, &format!("{method}_{stem}"))?;
         }
-        let cond = path_condition(&api.route)?;
-        let mut inner = String::new();
-        let has_get = methods.iter().any(|m| m == "GET");
-        let has_head = methods.iter().any(|m| m == "HEAD");
-        for method in &methods {
-            let fn_name = format!("{method}_{stem}");
-            inner.push_str(&format!(
-                "        if (request.method == \"{method}\") {{\n            const boxed = unsafe {{ {fn_name}(request) }}\n            return match (boxed) {{\n                Ok(r) => r,\n                Err(_) => {{ status: 500, body: \"Internal Server Error\", headers: {{ location: \"\" }} }},\n            }}\n        }}\n"
-            ));
+        if !first_route {
+            registry.push_str(", ");
         }
-        if has_get && !has_head {
-            inner.push_str(&format!(
-                "        if (request.method == \"HEAD\") {{\n            const boxed = unsafe {{ GET_{stem}(request) }}\n            return match (boxed) {{\n                Ok(r) => r,\n                Err(_) => {{ status: 500, body: \"Internal Server Error\", headers: {{ location: \"\" }} }},\n            }}\n        }}\n"
-            ));
+        first_route = false;
+        registry.push_str(&format!("{}: {{ ", json_str(&api.route)?));
+        for (i, method) in methods.iter().enumerate() {
+            if i > 0 {
+                registry.push_str(", ");
+            }
+            registry.push_str(&format!("{method}: {method}_{stem}"));
         }
-        inner.push_str("        return { status: 405, body: \"Method not allowed\", headers: { location: \"\" } }\n");
-        branches.push_str(&format!("    if ({cond}) {{\n{inner}    }}\n"));
+        registry.push_str(" }");
     }
-    Ok(format!(
-        r#"{imports}
-interface RequestHeaders {{ accept: string }}
-interface ResponseHeaders {{ location: string }}
-interface Request {{ url: string, pathname: string, method: string, headers: RequestHeaders, body: string }}
-interface Response {{ status: number, body: string, headers: ResponseHeaders }}
-
-export fn App(request: Request): Response {{
-    const path = request.pathname == "" ? "/" : request.pathname
-{branches}    return {{ status: 404, body: "Not found", headers: {{ location: "" }} }}
-}}
-"#
-    ))
-}
-
-fn generate_middleware_entry(entry: &Path, middleware: &Path) -> Result<String, String> {
-    let source = std::fs::read_to_string(middleware)
-        .map_err(|err| format!("failed to read {}: {err}", middleware.display()))?;
-    let matcher = parse_middleware_matcher(&source);
-    let rel = json_str(&pathdiff_dsx(entry, middleware))?;
-    Ok(format!(
-        "import {{ middleware }} from {rel}\n{}",
-        middleware_app_source(&matcher)
-    ))
+    registry.push_str(" }");
+    Ok((imports, registry))
 }
 
 fn generate_worker_entry(entry: &Path, project_root: &Path) -> Result<String, String> {
     let mut imports = String::new();
     let mw = middleware_path(project_root);
+    let mut mw_arg = "null".to_string();
+    let mut matcher_js = "null".to_string();
     if let Some(mw) = &mw {
         let rel = json_str(&pathdiff_dsx(entry, mw))?;
         imports.push_str(&format!("import {{ middleware }} from {rel}\n"));
+        mw_arg = "middleware".to_string();
+        let matcher = std::fs::read_to_string(mw)
+            .ok()
+            .and_then(|src| parse_middleware_matcher(&src));
+        matcher_js = matcher_js_literal(&matcher)?;
     }
     let api_entries = scan_api_dir(&project_root.join("api"));
-    let mut branches = String::new();
-    {
-        let mut imported: Vec<String> = Vec::new();
-        let mut import_alias = |path: &str, name: &str, alias: &str| -> Result<(), String> {
-            if imported.iter().any(|k| k == alias) {
-                return Ok(());
-            }
-            imported.push(alias.to_string());
-            let rel = json_str(&pathdiff_dsx(entry, Path::new(path)))?;
-            imports.push_str(&format!("import {{ {name} as {alias} }} from {rel}\n"));
-            Ok(())
-        };
-        for api in &api_entries {
-            let methods = exported_http_methods(Path::new(&api.file));
-            if methods.is_empty() {
-                continue;
-            }
-            let stem = alias("api", &api.route);
-            for method in &methods {
-                import_alias(&api.file, method, &format!("{method}_{stem}"))?;
-            }
-            let cond = path_condition(&api.route)?;
-            let mut inner = String::new();
-            let has_get = methods.iter().any(|m| m == "GET");
-            let has_head = methods.iter().any(|m| m == "HEAD");
-            for method in &methods {
-                let fn_name = format!("{method}_{stem}");
-                inner.push_str(&format!(
-                    "        if (request.method == \"{method}\") {{\n            const boxed = unsafe {{ {fn_name}(request) }}\n            return match (boxed) {{\n                Ok(r) => r,\n                Err(_) => {{ status: 500, body: \"Internal Server Error\", headers: {{ location: \"\" }} }},\n            }}\n        }}\n"
-                ));
-            }
-            if has_get && !has_head {
-                inner.push_str(&format!(
-                    "        if (request.method == \"HEAD\") {{\n            const boxed = unsafe {{ GET_{stem}(request) }}\n            return match (boxed) {{\n                Ok(r) => r,\n                Err(_) => {{ status: 500, body: \"Internal Server Error\", headers: {{ location: \"\" }} }},\n            }}\n        }}\n"
-                ));
-            }
-            inner.push_str(
-                "        return { status: 405, body: \"Method not allowed\", headers: { location: \"\" } }\n",
-            );
-            branches.push_str(&format!("    if ({cond}) {{\n{inner}    }}\n"));
-        }
-    }
-
-    let matcher = mw.as_ref().and_then(|path| {
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|src| parse_middleware_matcher(&src))
-    });
-    let mw_block = if mw.is_some() {
-        format!(
-            r#"    if (!(path == "/assets" || starts_with(path, "/assets/"))) {{
-        if (matcher_hits(path)) {{
-            const raw = unsafe {{ middleware(request) }}
-            const opt = match (raw) {{
-                Ok(v) => v,
-                Err(_) => {{ status: 500, body: "Internal Server Error", headers: {{ location: "" }} }},
-                _ => next_response(),
-            }}
-            const decided = unsafe {{
-                if (opt == null) return {{ status: 0, body: "", headers: {{ location: "" }} }};
-                if (opt.__case == "None") return {{ status: 0, body: "", headers: {{ location: "" }} }};
-                if (opt.__case == "Some") return opt.value;
-                if (typeof opt.status == "number") return opt;
-                return {{ status: 0, body: "", headers: {{ location: "" }} }};
-            }}
-            const response = match (decided) {{
-                Ok(r) => r,
-                Err(_) => {{ status: 500, body: "Internal Server Error", headers: {{ location: "" }} }},
-                _ => next_response(),
-            }}
-            if (response.status != 0) {{
-                return response
-            }}
-        }}
-    }}
-"#
-        )
-    } else {
-        String::new()
-    };
-    let api_miss = if api_entries.is_empty() {
-        String::new()
-    } else {
-        "    if (path == \"/api\" || starts_with(path, \"/api/\")) {\n        return { status: 404, body: \"Not found\", headers: { location: \"\" } }\n    }\n"
-            .to_string()
-    };
-
+    let (api_imports, registry) = api_imports_and_registry(entry, &api_entries)?;
+    imports.push_str(&api_imports);
     Ok(format!(
-        r#"{imports}
+        r#"{imports}import {{ runWorker }} from "ui/router"
+
 interface RequestHeaders {{ accept: string }}
 interface ResponseHeaders {{ location: string }}
 interface Request {{ url: string, pathname: string, method: string, headers: RequestHeaders, body: string }}
 interface Response {{ status: number, body: string, headers: ResponseHeaders }}
 
-{starts_with}
-{matcher_fn}
-
-fn next_response(): Response {{
-    return {{ status: 0, body: "", headers: {{ location: "" }} }}
-}}
-
-export fn App(request: Request): Response {{
-    const path = request.pathname == "" ? "/" : request.pathname
-{mw_block}{branches}{api_miss}    return next_response()
-}}
-"#,
-        imports = imports,
-        starts_with = STARTS_WITH_DS,
-        matcher_fn = matcher_hits_fn(&matcher),
-        mw_block = mw_block,
-        branches = branches,
-        api_miss = api_miss,
-    ))
-}
-
-const STARTS_WITH_DS: &str = r#"fn starts_with(s: string, prefix: string): boolean {
-    let i = 0
-    for (const want of prefix) {
-        let j = 0
-        let got = ""
-        for (const ch of s) {
-            if (j == i) { got = ch }
-            j = j + 1
-        }
-        if (got != want) { return false }
-        i = i + 1
-    }
-    return true
-}"#;
-
-fn middleware_app_source(matcher: &Option<Vec<String>>) -> String {
-    format!(
-        r#"
-interface RequestHeaders {{ accept: string }}
-interface ResponseHeaders {{ location: string }}
-interface Request {{ url: string, pathname: string, method: string, headers: RequestHeaders }}
-interface Response {{ status: number, body: string, headers: ResponseHeaders }}
-
-{starts_with}
-{matcher_fn}
-
-fn next_response(): Response {{
-    return {{ status: 0, body: "", headers: {{ location: "" }} }}
-}}
-
-export fn App(request: Request): Response {{
-    const path = request.pathname == "" ? "/" : request.pathname
-    if (path == "/assets" || starts_with(path, "/assets/")) {{
-        return next_response()
-    }}
-    if (!matcher_hits(path)) {{
-        return next_response()
-    }}
-    const raw = unsafe {{ middleware(request) }}
-    const opt = match (raw) {{
-        Ok(v) => v,
-        Err(_) => {{ status: 500, body: "Internal Server Error", headers: {{ location: "" }} }},
-        _ => next_response(),
-    }}
-    // `return None` emits JS null; do not read `.__case` on it.
-    const decided = unsafe {{
-        if (opt == null) return {{ status: 0, body: "", headers: {{ location: "" }} }};
-        if (opt.__case == "None") return {{ status: 0, body: "", headers: {{ location: "" }} }};
-        if (opt.__case == "Some") return opt.value;
-        if (typeof opt.status == "number") return opt;
-        return {{ status: 0, body: "", headers: {{ location: "" }} }};
-    }}
-    return match (decided) {{
+fn App(request: Request): Response {{
+    const boxed = unsafe {{ runWorker(request, {mw_arg}, {matcher_js}, {registry}) }}
+    return match (boxed) {{
         Ok(r) => r,
         Err(_) => {{ status: 500, body: "Internal Server Error", headers: {{ location: "" }} }},
-        _ => next_response(),
     }}
 }}
-"#,
-        starts_with = STARTS_WITH_DS,
-        matcher_fn = matcher_hits_fn(matcher),
-    )
-}
-
-fn matcher_hits_fn(matcher: &Option<Vec<String>>) -> String {
-    let body = match matcher {
-        None => "    return true\n".to_string(),
-        Some(patterns) if patterns.is_empty() => "    return false\n".to_string(),
-        Some(patterns) => {
-            let mut checks = Vec::new();
-            for pattern in patterns {
-                if let Some(prefix) = pattern.strip_suffix("/:path*") {
-                    checks.push(format!(
-                        "(path == \"{prefix}\" || starts_with(path, \"{prefix}/\"))"
-                    ));
-                } else if let Some(prefix) = pattern.strip_suffix(":path*") {
-                    let prefix = prefix.trim_end_matches('/');
-                    checks.push(format!(
-                        "(path == \"{prefix}\" || starts_with(path, \"{prefix}/\"))"
-                    ));
-                } else {
-                    checks.push(format!("path == \"{pattern}\""));
-                }
-            }
-            format!("    return {}\n", checks.join(" || "))
-        }
-    };
-    format!("fn matcher_hits(path: string): boolean {{\n{body}}}")
+export {{ App }}
+"#
+    ))
 }
 
 fn split_document(index_html: &str, scripts: &str) -> (String, String, String) {
@@ -2871,26 +2730,38 @@ mod tests {
         let entry = write_defer_router_entry(&tmp).expect("write defer-entry");
         let source = std::fs::read_to_string(&entry).expect("read defer-entry");
         assert!(source.contains("runDeferBatch"));
-        assert!(source.contains("globalThis.deka.ui.runDeferBatch"));
+        assert!(source.contains("import { runDeferBatch } from \"ui/server\""));
         assert!(!source.contains("async fn App"));
         assert!(!source.contains("headers: { \\\"cache-control\\\""));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
-    fn middleware_entry_treats_null_none_as_continue() {
-        let src = middleware_app_source(&Some(vec!["/_deka/defer".to_string()]));
+    fn middleware_entry_calls_run_middleware() {
+        let tmp = std::env::temp_dir().join(format!(
+            "deka_mw_gen_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(
+            tmp.join("middleware.ds"),
+            "export const matcher = [\"/_deka/defer\"]\nexport fn middleware(request: Request): Option<Response> { return None }\n",
+        )
+        .unwrap();
+        let entry = write_middleware_router_entry(&tmp).expect("write middleware-entry");
+        let source = std::fs::read_to_string(&entry).expect("read middleware-entry");
         assert!(
-            src.contains("if (opt == null)"),
-            "return None compiles to JS null; wrapper must not read .__case on it: {src}"
+            source.contains("import { runMiddleware } from \"ui/router\""),
+            "{source}"
         );
+        assert!(source.contains("runMiddleware(request, middleware,"), "{source}");
         assert!(
-            src.contains("next_response()"),
-            "null/None must continue with status 0: {src}"
+            !source.contains("opt.__case"),
+            "Option lowering belongs in ui/router, not generated text: {source}"
         );
-        assert!(
-            src.contains("matcher_hits"),
-            "matcher should still gate the middleware call: {src}"
-        );
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

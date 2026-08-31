@@ -305,6 +305,7 @@ impl PhpxEsmLoader {
 import * as __server from \"ui/server\";\n\
 import * as __reactive from \"ui/reactive\";\n\
 import * as __suspense from \"ui/suspense\";\n\
+import * as __router from \"ui/router\";\n\
 globalThis.deka = globalThis.deka || {};\n\
 globalThis.deka.ui = Object.freeze({\n\
   ...(globalThis.deka.ui || {}),\n\
@@ -312,6 +313,7 @@ globalThis.deka.ui = Object.freeze({\n\
   ...__server,\n\
   ...__reactive,\n\
   ...__suspense,\n\
+  ...__router,\n\
 });\n\
 const __dekaMain = await import(\"__ENTRY__\");\n\
 const __candidate = typeof __dekaMain.default !== \"undefined\"\n\
@@ -839,5 +841,6 @@ mod tests {
         let loader = PhpxEsmLoader::new(root.path().to_path_buf(), root.path().join("main.ds"))
             .expect("loader");
         assert!(loader.wrapper_source().contains("__dekaMain.App"));
+        assert!(loader.wrapper_source().contains("ui/router"));
     }
 }
