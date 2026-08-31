@@ -6,6 +6,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 python3 - "$ROOT_DIR" <<'PY'
+#  in an annotation is evaluated at def time before 3.10, and
+# stock macOS ships 3.9 -- so this script died on any Mac without a newer
+# python, taking the wasm build script with it.
+from __future__ import annotations
+
 import re
 import sys
 from pathlib import Path
