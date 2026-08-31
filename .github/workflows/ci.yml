@@ -190,10 +190,13 @@ jobs:
       # crates/cli/tests/ were never run here, and six of them were red on main
       # -- including the two that assert a .phpx entry is refused before it
       # executes, and the two that caught deka#437 (a shipped Worker whose
-      # handlers were referenced but never defined). --test-threads=1 is
-      # load-bearing: the --lib tests are order-dependent (deka#427).
+      # handlers were referenced but never defined).
+      #
+      # Runs in parallel. --test-threads=1 was masking deka#427, where a
+      # process-global test hook fired inside unrelated tests; running these
+      # concurrently is what makes CI able to catch that class again.
       - name: Test cli
-        run: cargo test --locked -p cli -- --test-threads=1
+        run: cargo test --locked -p cli
 
       - name: Build and test browser compiler WASM
         env:

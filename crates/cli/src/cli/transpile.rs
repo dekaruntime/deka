@@ -453,7 +453,7 @@ struct CommittedOutput {
 fn commit_outputs(root: &SecureOutputRoot, plans: Vec<OutputPlan>) -> Result<(), String> {
     let mut staged = Vec::with_capacity(plans.len());
     for (index, plan) in plans.iter().enumerate() {
-        run_test_phase_hook(TestPhase::Stage, index);
+        run_test_phase_hook(TestPhase::Stage, index, &root.display);
         if let Err(err) = root
             .revalidate()
             .and_then(|_| plan.destination.revalidate(root))
@@ -485,10 +485,10 @@ fn commit_outputs(root: &SecureOutputRoot, plans: Vec<OutputPlan>) -> Result<(),
     run_test_commit_hook();
     let mut committed = Vec::with_capacity(staged.len());
     for (index, staged_output) in staged.iter().enumerate() {
-        run_test_phase_hook(TestPhase::Commit, index);
+        run_test_phase_hook(TestPhase::Commit, index, &root.display);
         // Test-only rollback hooks are installed at this revalidation seam so a
         // deterministic topology change exercises cleanup after prior commits.
-        run_test_phase_hook(TestPhase::Rollback, index);
+        run_test_phase_hook(TestPhase::Rollback, index, &root.display);
         if let Err(err) = root
             .revalidate()
             .and_then(|_| staged_output.destination.revalidate(root))
@@ -969,7 +969,7 @@ enum TestPhase {
 }
 
 #[cfg(not(test))]
-fn run_test_phase_hook(_: TestPhase, _: usize) {}
+fn run_test_phase_hook(_: TestPhase, _: usize, _: &Path) {}
 
 #[cfg(test)]
 type CommitHook = Box<dyn FnOnce() + Send>;
@@ -991,21 +991,31 @@ fn run_test_commit_hook() {
 }
 
 #[cfg(test)]
-type PhaseHook = Box<dyn Fn(TestPhase, usize) + Send + Sync>;
+/// Test hook. Takes the output root because `PHASE_HOOK` is process-global:
+/// without it, a hook installed by one test also fired inside every other
+/// transpile test running concurrently, and performed its directory swap
+/// against *their* output (deka#427).
+type PhaseHook = Box<dyn Fn(TestPhase, usize, &Path) + Send + Sync>;
 #[cfg(test)]
 static PHASE_HOOK: std::sync::OnceLock<std::sync::Mutex<Option<PhaseHook>>> =
     std::sync::OnceLock::new();
 #[cfg(test)]
 static PHASE_HOOK_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[cfg(test)]
-fn run_test_phase_hook(phase: TestPhase, index: usize) {
+fn run_test_phase_hook(phase: TestPhase, index: usize, output_root: &Path) {
+    // Recover from poisoning instead of panicking. Every transpile test calls
+    // this, but only the parent-swap tests install a hook, so one panicking
+    // test used to take five to seven unrelated tests down with it and bury
+    // the real failure (deka#427). The guarded data is an Option<PhaseHook>
+    // that a panicking test leaves as garbage at worst -- there is no
+    // invariant here that poisoning protects.
     if let Some(hook) = PHASE_HOOK
         .get_or_init(|| std::sync::Mutex::new(None))
         .lock()
-        .expect("phase hook lock")
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
         .as_ref()
     {
-        hook(phase, index);
+        hook(phase, index, output_root);
     }
 }
 
@@ -1281,17 +1291,38 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[allow(clippy::too_many_arguments)]
     fn parent_swap_hook(
         phase: TestPhase,
         target_phase: TestPhase,
         index: usize,
         target_index: usize,
+        run_output_root: &Path,
         output: &Path,
         outside: &Path,
         moved: &Path,
         swapped: &AtomicBool,
     ) {
         if phase != target_phase || index != target_index {
+            return;
+        }
+        // Another test's transpile run reaching this global hook. Swapping its
+        // directories is what produced the AlreadyExists and IsADirectory
+        // panics attributed to unrelated tests (deka#427).
+        //
+        // Compare resolved paths: the runtime canonicalizes the output root, so
+        // on macOS it arrives as /private/var/... while the test holds
+        // /var/... -- the same directory, two spellings.
+        let resolve = |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        if resolve(run_output_root) != resolve(output) {
+            return;
+        }
+        // Swap exactly once. The hook can be reached more than once for the
+        // same (phase, index), and the second `rename` then failed with
+        // `IsADirectory` because `moved` already existed -- a real panic, which
+        // poisoned the hook mutex and cascaded (deka#427). "Deterministic
+        // parent swap" means one swap.
+        if swapped.load(Ordering::Acquire) {
             return;
         }
         let nested = output.join("nested");
@@ -1320,7 +1351,9 @@ mod tests {
             write(&output.join("first.js"), &original);
         }
 
-        let _guard = PHASE_HOOK_TEST_GUARD.lock().expect("phase hook test guard");
+        let _guard = PHASE_HOOK_TEST_GUARD
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let swapped = Arc::new(AtomicBool::new(false));
         let hook_output = output.clone();
         let hook_outside = outside.clone();
@@ -1329,12 +1362,14 @@ mod tests {
         *PHASE_HOOK
             .get_or_init(|| std::sync::Mutex::new(None))
             .lock()
-            .expect("phase hook install") = Some(Box::new(move |current_phase, index| {
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            Some(Box::new(move |current_phase, index, run_output_root| {
             parent_swap_hook(
                 current_phase,
                 phase,
                 index,
                 target_index,
+                run_output_root,
                 &hook_output,
                 &hook_outside,
                 &hook_moved,
@@ -1352,7 +1387,7 @@ mod tests {
         *PHASE_HOOK
             .get_or_init(|| std::sync::Mutex::new(None))
             .lock()
-            .expect("phase hook clear") = None;
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
 
         assert!(swapped.load(Ordering::Acquire), "phase hook did not run");
         assert!(!error.is_empty(), "topology change must report an error");
