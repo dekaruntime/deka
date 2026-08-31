@@ -84,6 +84,20 @@ fn path_matches(rule_item: &str, target: &str) -> bool {
     target_path.starts_with(&rule_path)
 }
 
+/// Resolve a path for policy comparison, resolving symlinks even when the
+/// path does not exist yet.
+///
+/// `std::fs::canonicalize` fails on a path that is not on disk, and the old
+/// fallback kept the raw string. That made grants depend on whether the target
+/// already existed: on macOS `/tmp` is a symlink to `/private/tmp`, so the rule
+/// `/tmp` canonicalized to `/private/tmp` while a not-yet-created
+/// `/tmp/new.txt` stayed as written and failed the prefix test. The effect was
+/// that a `write` grant let you **overwrite** a file but never **create** one
+/// (deka#420). Any symlinked directory reproduces it, not just macOS `/tmp`.
+///
+/// Resolving the nearest existing ancestor and re-appending the remainder keeps
+/// symlink resolution — which is what makes the prefix test meaningful — while
+/// giving a not-yet-created path the same answer it will have a moment later.
 fn normalize_path(value: &str) -> std::path::PathBuf {
     let path = std::path::Path::new(value);
     let resolved = if path.is_absolute() {
@@ -93,7 +107,36 @@ fn normalize_path(value: &str) -> std::path::PathBuf {
             .unwrap_or_else(|_| std::path::PathBuf::from("."))
             .join(path)
     };
-    std::fs::canonicalize(&resolved).unwrap_or(resolved)
+
+    if let Ok(canonical) = std::fs::canonicalize(&resolved) {
+        return canonical;
+    }
+
+    // Walk up to the nearest ancestor that exists, canonicalize that, then
+    // re-append the components we walked past.
+    let mut trailing: Vec<std::ffi::OsString> = Vec::new();
+    let mut cursor = resolved.as_path();
+    loop {
+        match cursor.parent() {
+            Some(parent) => {
+                if let Some(name) = cursor.file_name() {
+                    trailing.push(name.to_os_string());
+                } else {
+                    // A `..` or `.` component; nothing sensible to re-append.
+                    return resolved;
+                }
+                if let Ok(canonical) = std::fs::canonicalize(parent) {
+                    let mut out = canonical;
+                    for name in trailing.iter().rev() {
+                        out.push(name);
+                    }
+                    return out;
+                }
+                cursor = parent;
+            }
+            None => return resolved,
+        }
+    }
 }
 
 thread_local! {
@@ -861,4 +904,59 @@ pub(super) fn enforce_db(target: Option<&str>) -> Result<(), deno_core::error::C
 pub(super) fn enforce_wasm(target: Option<&str>) -> Result<(), deno_core::error::CoreError> {
     let policy = security_policy_from_env();
     enforce_scope("wasm", &policy.allow.wasm, &policy.deny.wasm, target)
+}
+
+
+#[cfg(test)]
+mod path_normalization_tests {
+    use super::path_matches;
+
+    /// deka#420: a `write` grant used to permit overwriting an existing file
+    /// and refuse to create a new one, because only the existing path could be
+    /// canonicalized through the symlink.
+    #[test]
+    fn a_grant_covers_a_path_that_does_not_exist_yet() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let root = dir.path().to_str().expect("utf-8 temp dir");
+
+        let existing = dir.path().join("already-there.txt");
+        std::fs::write(&existing, b"x").expect("seed file");
+        assert!(
+            path_matches(root, existing.to_str().expect("utf-8")),
+            "an existing file under the grant must match"
+        );
+
+        let missing = dir.path().join("not-yet.txt");
+        assert!(
+            path_matches(root, missing.to_str().expect("utf-8")),
+            "a file that does not exist yet must match the same grant"
+        );
+
+        let nested = dir.path().join("deep").join("nested").join("new.txt");
+        assert!(
+            path_matches(root, nested.to_str().expect("utf-8")),
+            "several missing components must still resolve to the grant"
+        );
+    }
+
+    #[test]
+    fn a_grant_does_not_leak_to_a_sibling_path() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let granted = dir.path().join("granted");
+        let other = dir.path().join("other");
+        std::fs::create_dir_all(&granted).expect("granted dir");
+        std::fs::create_dir_all(&other).expect("other dir");
+
+        assert!(!path_matches(
+            granted.to_str().expect("utf-8"),
+            other.join("new.txt").to_str().expect("utf-8")
+        ));
+        // Prefix-of-a-name, not a path component.
+        let adjacent = dir.path().join("granted-extra");
+        std::fs::create_dir_all(&adjacent).expect("adjacent dir");
+        assert!(!path_matches(
+            granted.to_str().expect("utf-8"),
+            adjacent.join("new.txt").to_str().expect("utf-8")
+        ));
+    }
 }
