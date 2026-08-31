@@ -1906,6 +1906,15 @@ impl<'a> Emitter<'a> {
                 }
                 conditions.join(" && ")
             }
+            // Alternatives cannot bind (deka#446), so the test is a plain
+            // disjunction and there is nothing to destructure.
+            Pattern::Or { alternatives, .. } => {
+                let tests: Vec<String> = alternatives
+                    .iter()
+                    .map(|alternative| self.match_condition(alternative, scrutinee_var))
+                    .collect();
+                format!("({})", tests.join(" || "))
+            }
             Pattern::Struct { .. } | Pattern::Tuple { .. } => "false".to_string(),
         }
     }
@@ -1927,6 +1936,9 @@ impl<'a> Emitter<'a> {
                 self.out.push_str(";\n");
             }
             Pattern::Literal { .. } => {}
+                        // Alternatives cannot bind (deka#446), so there is nothing to
+            // destructure here.
+            Pattern::Or { .. } => {}
             Pattern::Constructor { name, payload, .. } => {
                 if let Some(payload) = payload {
                     let payload_access = if *name == "None" {

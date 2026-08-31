@@ -1161,6 +1161,13 @@ fn pattern_to_string(pattern: &Pattern<'_>) -> String {
             }
             s
         }
+        //  is compile (RFD 28), so a pattern the formatter cannot
+        // render is a pattern nobody can use.
+        Pattern::Or { alternatives, .. } => alternatives
+            .iter()
+            .map(pattern_to_string)
+            .collect::<Vec<_>>()
+            .join(" | "),
         Pattern::Struct { name, fields, .. } => {
             let mut s = name.to_string();
             s.push_str(" { ");

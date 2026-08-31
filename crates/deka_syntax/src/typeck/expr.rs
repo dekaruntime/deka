@@ -48,6 +48,12 @@ impl<'a> Coverage<'a> {
                 Coverage::Cases(cases)
             }
             // A literal matches one value, never a whole case.
+            // An or-pattern covers everything all of its alternatives do, so
+            // `Timeout | NotFound` counts for both in the exhaustiveness check.
+            ast::Pattern::Or { alternatives, .. } => alternatives
+                .iter()
+                .map(Coverage::of_pattern)
+                .fold(Coverage::nothing(), Coverage::merge),
             ast::Pattern::Literal { .. }
             | ast::Pattern::Struct { .. }
             | ast::Pattern::Tuple { .. } => Coverage::nothing(),
@@ -1126,10 +1132,13 @@ impl<'a> Checker<'a> {
     }
 
     fn pattern_is_catch_all(pattern: &ast::Pattern<'_>) -> bool {
-        matches!(
-            pattern,
-            ast::Pattern::Wildcard { .. } | ast::Pattern::Identifier { .. }
-        )
+        match pattern {
+            ast::Pattern::Wildcard { .. } | ast::Pattern::Identifier { .. } => true,
+            ast::Pattern::Or { alternatives, .. } => {
+                alternatives.iter().any(Self::pattern_is_catch_all)
+            }
+            _ => false,
+        }
     }
 
     fn check_match_exhaustiveness(
@@ -1267,9 +1276,43 @@ impl<'a> Checker<'a> {
             } => {
                 self.check_constructor_pattern(name, payload.as_deref(), *span, scrutinee_type);
             }
+            ast::Pattern::Or { alternatives, span } => {
+                for alternative in alternatives.iter() {
+                    // A binding would have to come from whichever alternative
+                    // matched, and every alternative would have to bind the
+                    // same names for the arm body to be well-typed. Neither is
+                    // built yet, so say so rather than bind from one branch
+                    // (deka#446).
+                    if let Some(name) = Self::pattern_binding_name(alternative) {
+                        self.error_span(
+                            *span,
+                            format!(
+                                "an alternative in `A | B` cannot bind (`{name}` here); \
+                                 every alternative would have to bind the same names"
+                            ),
+                        );
+                        continue;
+                    }
+                    self.check_pattern(alternative, scrutinee_type);
+                }
+            }
             ast::Pattern::Struct { span, .. } | ast::Pattern::Tuple { span, .. } => {
                 self.error_span(*span, "struct/tuple patterns are not supported in v2 typeck");
             }
+        }
+    }
+
+    /// The first name an alternative would bind, if any.
+    fn pattern_binding_name(pattern: &ast::Pattern<'a>) -> Option<&'a str> {
+        match pattern {
+            ast::Pattern::Identifier { name, .. } => Some(name),
+            ast::Pattern::Constructor { payload, .. } => {
+                payload.and_then(|inner| Self::pattern_binding_name(inner))
+            }
+            ast::Pattern::Or { alternatives, .. } => alternatives
+                .iter()
+                .find_map(Self::pattern_binding_name),
+            _ => None,
         }
     }
 

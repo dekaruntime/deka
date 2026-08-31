@@ -49,7 +49,23 @@ impl<'a> Parser<'a> {
 
     fn parse_match_arm(&mut self) -> Option<MatchArm<'a>> {
         let (start, start_byte) = self.span_start();
-        let pattern = self.parse_pattern()?;
+        let first = self.parse_pattern()?;
+
+        // `A | B | C => …` (deka#446).
+        let pattern = if self.at(TokenKind::Bar) {
+            let mut alternatives = vec![first];
+            while self.eat(TokenKind::Bar) {
+                self.skip_newlines();
+                alternatives.push(self.parse_pattern()?);
+            }
+            Pattern::Or {
+                alternatives: crate::ast::alloc_slice(self.arena, alternatives),
+                span: self.span_from(start, start_byte),
+            }
+        } else {
+            first
+        };
+
         self.expect(TokenKind::FatArrow)?;
         let body = self.parse_expression()?;
         Some(MatchArm {

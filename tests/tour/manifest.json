@@ -390,5 +390,10 @@
     "id": "props-checked",
     "title": "Props are checked at the call site",
     "expectCompile": true
+  },
+  {
+    "id": "or-patterns",
+    "title": "One arm, several cases",
+    "expectCompile": true
   }
 ]
