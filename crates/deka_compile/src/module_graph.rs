@@ -6,7 +6,7 @@
 //! receiver methods are propagated through the module graph so importers can
 //! construct imported structs and match imported enums with full typechecking.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 use bumpalo::Bump;
@@ -204,6 +204,13 @@ pub struct ModuleGraphResult {
     pub entry: PathBuf,
     /// Map from absolute module path to emitted JavaScript.
     pub modules: HashMap<PathBuf, String>,
+    /// Every import specifier written anywhere in the graph, as written.
+    ///
+    /// Callers that gate on dependencies need the transitive set, not the
+    /// entry file's imports: a module the entry never mentions can pull in a
+    /// stdlib package the project does not declare.  gated on
+    /// entry-only imports and missed exactly that (deka#430).
+    pub imports: BTreeSet<String>,
 }
 
 /// Compile every reachable `.ds` module from `entry` and return the emitted
@@ -232,6 +239,7 @@ pub fn compile_module_graph_with_options(
 
     let mut modules: HashMap<PathBuf, GraphModule> = HashMap::new();
     let mut errors: Vec<Diagnostic> = Vec::new();
+    let mut all_imports: BTreeSet<String> = BTreeSet::new();
 
     // ------------------------------------------------------------------
     // Discovery: BFS from the entry, resolving every import specifier.
@@ -256,6 +264,9 @@ pub fn compile_module_graph_with_options(
         let mut dependencies = HashMap::with_capacity(meta.imports.len());
         let mut virtual_imports = Vec::new();
         for import in &meta.imports {
+            // Recorded before resolution so the set is complete even for
+            // specifiers this loader cannot resolve.
+            all_imports.insert(import.path.trim().to_string());
             if let Some(ui) = shake::normalize_ui_specifier(&import.path) {
                 virtual_imports.push(ui);
                 continue;
@@ -444,7 +455,11 @@ pub fn compile_module_graph_with_options(
         return Err(errors);
     }
 
-    Ok(ModuleGraphResult { entry, modules: emitted })
+    Ok(ModuleGraphResult {
+        entry,
+        modules: emitted,
+        imports: all_imports,
+    })
 }
 
 fn diag(line: usize, column: usize, message: String) -> Diagnostic {

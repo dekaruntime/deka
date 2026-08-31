@@ -189,6 +189,13 @@ jobs:
       - name: Test cli
         run: cargo test --locked -p cli --lib -- --test-threads=1
 
+      # Boundary tests drive the real CLI binary as a subprocess. They are a
+      # separate binary from the rest of crates/cli/tests/ because those are
+      # currently red on main and not run anywhere (deka#432); a check that
+      # only passes because nobody runs it is how deka#430 went unnoticed.
+      - name: Test cli project-gate boundary
+        run: cargo test --locked -p cli --test project_gate_boundary
+
       - name: Build and test browser compiler WASM
         env:
           DEKA_SKIP_DIRTY_CHECK: 1

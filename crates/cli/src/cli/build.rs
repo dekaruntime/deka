@@ -483,17 +483,11 @@ fn project_root_search_start(input_path: &Path) -> PathBuf {
 fn ensure_project_layout(
     project_root: &Path,
     module_root: Option<&Path>,
-    meta: &deka_compile::SourceModuleMeta,
+    imports: &[String],
 ) -> Result<(), String> {
-    let imports: Vec<String> = meta
-        .imports
-        .iter()
-        .map(|decl| decl.path.trim().to_string())
-        .collect();
-
     runtime_core::project_gate::validate_project(
         project_root,
-        &imports,
+        imports,
         &runtime_core::project_gate::GateOptions {
             module_root: module_root.map(|p| p.to_path_buf()),
             require_lockfile: true,
@@ -863,7 +857,12 @@ fn build_single_file_to_string(
     let js = compile_js_or_report(&source, input)?;
 
     let project_root = resolve_project_root(input_path)?;
-    ensure_project_layout(&project_root, None, &meta)?;
+    let entry_imports: Vec<String> = meta
+        .imports
+        .iter()
+        .map(|decl| decl.path.trim().to_string())
+        .collect();
+    ensure_project_layout(&project_root, None, &entry_imports)?;
 
     Ok(JsBuildOutput {
         js,
@@ -976,6 +975,10 @@ fn write_cloudflare_worker(project_root: &Path, dist_root: &Path) -> Result<(), 
     let loader = deka_compile::module_graph::FsModuleLoader::new(project_root.to_path_buf());
     let graph = deka_compile::module_graph::compile_module_graph(&entry, &loader)
         .map_err(|diagnostics| deka_compile::format_diagnostics(&diagnostics))?;
+    // Transitive: a module the entry never mentions can still import a stdlib
+    // package the project does not declare (deka#430).
+    let graph_imports: Vec<String> = graph.imports.iter().cloned().collect();
+    ensure_project_layout(project_root, None, &graph_imports)?;
     let provider = Arc::new(GraphJsProvider {
         modules: graph.modules,
     });
