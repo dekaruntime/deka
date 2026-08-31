@@ -385,5 +385,10 @@
     "id": "host-process",
     "title": "Host globals and the env capability",
     "expectCompile": true
+  },
+  {
+    "id": "props-checked",
+    "title": "Props are checked at the call site",
+    "expectCompile": true
   }
 ]
