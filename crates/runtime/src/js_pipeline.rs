@@ -1,15 +1,11 @@
 #[cfg(test)]
 use std::cell::Cell;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use bundler::{BundleOptions, VirtualSource, bundle_virtual_entry};
-use runtime_core::module_spec::{
-    ds_source_candidates, is_bare_module_specifier, module_spec_aliases,
-};
-use runtime_core::modules::resolve_modules_dir;
 
 #[cfg(test)]
 use runtime_core::modules::MODULES_DIR;
@@ -166,122 +162,15 @@ pub fn ensure_project_layout(
     module_root: Option<&Path>,
     imports: &[String],
 ) -> Result<(), String> {
-    // When an explicit module_root is provided and differs from the project
-    // root, the tenant relies on an external stdlib root and we skip the local
-    // ds_modules/ check. Tenant-local packages still require a lockfile and
-    // local ds_modules/. This replaces the process-global DEKA_MODULE_ROOT
-    // bypass for the runtime v2 path.
-    if module_root.is_some_and(|root| root != project_root) {
-        return Ok(());
-    }
-
-    let lock_path = project_root.join("deka.lock");
-    if !lock_path.is_file() {
-        return Err(format!(
-            "deka run requires deka.lock at project root: {}",
-            lock_path.display()
-        ));
-    }
-
-    let stdlib_imports = collect_stdlib_imports(imports);
-    if stdlib_imports.is_empty() {
-        return Ok(());
-    }
-
-    let modules_dir = resolve_modules_dir(project_root);
-    if !modules_dir.is_dir() {
-        return Err(format!(
-            "deka run requires ds_modules/ at project root when using stdlib imports ({}). Run `deka install`.",
-            stdlib_imports.join(", ")
-        ));
-    }
-
-    let mut missing = Vec::new();
-    for spec in stdlib_imports {
-        if resolve_module_file(&modules_dir, &spec).is_none() {
-            missing.push(spec);
-        }
-    }
-
-    if missing.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "missing stdlib modules under {}: {}. Run `deka install`.",
-            modules_dir.display(),
-            missing.join(", ")
-        ))
-    }
-}
-
-fn collect_stdlib_imports(imports: &[String]) -> Vec<String> {
-    let mut seen = BTreeSet::new();
-    for spec in imports {
-        let spec = spec.trim();
-        if is_stdlib_module_spec(spec) {
-            seen.insert(spec.to_string());
-        }
-    }
-    seen.into_iter().collect()
-}
-
-fn is_stdlib_module_spec(spec: &str) -> bool {
-    if !is_bare_specifier(spec) || spec.starts_with("@user/") {
-        return false;
-    }
-
-    if let Some(rest) = spec.strip_prefix("@deka/") {
-        return is_stdlib_module_spec(rest);
-    }
-
-    spec.starts_with("component/")
-        || spec.starts_with("deka/")
-        || spec.starts_with("encoding/")
-        || spec.starts_with("db/")
-        || matches!(
-            spec,
-            "json"
-                | "postgres"
-                | "mysql"
-                | "sqlite"
-                | "bytes"
-                | "buffer"
-                | "http"
-                | "tcp"
-                | "tls"
-                | "fs"
-                | "crypto"
-                | "jwt"
-                | "test"
-                | "cookies"
-                | "auth"
-                | "db"
-                | "time"
-                | "io"
-        )
-}
-
-fn resolve_module_file(modules_dir: &Path, spec: &str) -> Option<PathBuf> {
-    // For prefixed stdlib specifiers (e.g. encoding/json) also try the scoped
-    // @deka layout so `deka install`-ed modules are found.
-    let mut aliases = module_spec_aliases(spec);
-    if spec.contains('/')
-        && !spec.starts_with('@')
-        && !spec.starts_with("./")
-        && !spec.starts_with("../")
-    {
-        aliases.push(format!("@deka/{}", spec));
-    }
-    let mut candidates = Vec::new();
-    for alias in aliases {
-        candidates.extend(ds_source_candidates(&modules_dir.join(alias.as_str())));
-    }
-
-    candidates.into_iter().find(|path| path.is_file())
-}
-
-fn is_bare_specifier(spec: &str) -> bool {
-    is_bare_module_specifier(spec)
+    runtime_core::project_gate::validate_project(
+        project_root,
+        imports,
+        &runtime_core::project_gate::GateOptions {
+            module_root: module_root.map(|p| p.to_path_buf()),
+            require_lockfile: true,
+            context: "deka run",
+        },
+    )
 }
 
 #[cfg(test)]
@@ -363,7 +252,12 @@ mod tests {
     #[test]
     fn ensure_project_layout_accepts_scoped_stdlib_imports_installed_unscoped() {
         let tmp = tempfile::tempdir().expect("tmp");
-        std::fs::write(tmp.path().join("deka.json"), "{}").expect("deka.json");
+        // Dependencies must be declared, not merely installed (deka#403).
+        std::fs::write(
+            tmp.path().join("deka.json"),
+            r#"{"dependencies":{"@deka/http":"*","@deka/crypto":"*","@deka/time":"*"}}"#,
+        )
+        .expect("deka.json");
         std::fs::write(tmp.path().join("deka.lock"), "{}").expect("deka.lock");
         for module in ["http", "crypto", "time"] {
             let dir = tmp.path().join(MODULES_DIR).join(module);
@@ -380,9 +274,11 @@ mod tests {
             "@deka/crypto".to_string(),
             "@deka/time".to_string(),
         ];
-        assert_eq!(
-            super::collect_stdlib_imports(&imports),
-            vec!["@deka/crypto", "@deka/http", "@deka/time"]
+        assert!(
+            imports
+                .iter()
+                .all(|spec| runtime_core::project_gate::is_stdlib_module_spec(spec)),
+            "scoped stdlib specifiers must be gated"
         );
 
         ensure_project_layout(tmp.path(), Some(tmp.path()), &imports).expect("layout should pass");

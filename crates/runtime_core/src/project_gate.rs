@@ -2,17 +2,22 @@
 //!
 //! This replaces three separate `ensure_project_layout` implementations — in
 //! `pool::esm_loader`, `cli::build` and `runtime::js_pipeline` — that had the
-//! same name and job but three different bypass rules. A fix applied to one was
-//! invisible to the others, which is how the declared-dependency check ended up
-//! missing from all three (deka#403, deka#414).
+//! same name and job but three different bypass rules and three copies of the
+//! stdlib-specifier list. A fix applied to one was invisible to the others,
+//! which is how the declared-dependency check ended up missing from all three
+//! (deka#403, deka#414), and how `deka build` ended up not checking
+//! `@deka/http` at all (see `is_stdlib_module_spec`).
 //!
-//! Bypasses are explicit parameters here. The `esm_loader` copy keyed its bypass
-//! off a `DEKA_MODULE_ROOT` environment variable read in the middle of the
-//! function, so one ambient variable disabled every check including the
+//! Bypasses are explicit parameters here. The `esm_loader` copy keyed its
+//! bypass off a `DEKA_MODULE_ROOT` environment variable read in the middle of
+//! the function, so one ambient variable disabled every check including the
 //! lockfile requirement (deka#229).
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+
+use crate::module_spec::{ds_source_candidates, is_bare_module_specifier, module_spec_aliases};
+use crate::modules::resolve_modules_dir;
 
 /// How strict to be, stated by the caller rather than inferred from ambient state.
 #[derive(Debug, Clone)]
@@ -24,6 +29,9 @@ pub struct GateOptions {
     /// Whether `deka.lock` must be present. Stdlib-only tenants deploy without
     /// one (deka#220); everything else requires it.
     pub require_lockfile: bool,
+    /// What to call this entry point in error messages: "deka build",
+    /// "deka run", "deka runtime".
+    pub context: &'static str,
 }
 
 impl Default for GateOptions {
@@ -31,8 +39,75 @@ impl Default for GateOptions {
         Self {
             module_root: None,
             require_lockfile: true,
+            context: "deka",
         }
     }
+}
+
+/// Whether a specifier names a stdlib module, and so is subject to the gate.
+///
+/// This is the union of the three copies it replaces. Two of them diverged:
+/// `js_pipeline` listed `http` and the other two did not, and `esm_loader`
+/// accepted any `@deka/*` while the others resolved the tail against the bare
+/// list. The union is the strictest reading of the three, and it closes the
+/// hole where `deka build` skipped `@deka/http` entirely because neither rule
+/// matched it.
+pub fn is_stdlib_module_spec(spec: &str) -> bool {
+    let spec = spec.trim();
+    if !is_bare_module_specifier(spec) || spec.starts_with("@user/") {
+        return false;
+    }
+
+    // Any `@deka/*` specifier is stdlib by construction — the scope is ours.
+    spec.starts_with("@deka/")
+        || spec.starts_with("component/")
+        || spec.starts_with("deka/")
+        || spec.starts_with("encoding/")
+        || spec.starts_with("db/")
+        || matches!(
+            spec,
+            "json"
+                | "postgres"
+                | "mysql"
+                | "sqlite"
+                | "bytes"
+                | "buffer"
+                | "http"
+                | "tcp"
+                | "tls"
+                | "fs"
+                | "crypto"
+                | "jwt"
+                | "test"
+                | "cookies"
+                | "auth"
+                | "db"
+                | "time"
+                | "io"
+        )
+}
+
+/// Locate the file a stdlib specifier resolves to under a modules directory.
+///
+/// Prefixed specifiers (`encoding/json`) also try the scoped layout
+/// (`@deka/encoding/json`), since `deka install` writes packages under
+/// `@deka/<pkg>/`.
+pub fn resolve_module_file(modules_dir: &Path, spec: &str) -> Option<PathBuf> {
+    let mut aliases = module_spec_aliases(spec);
+    if spec.contains('/')
+        && !spec.starts_with('@')
+        && !spec.starts_with("./")
+        && !spec.starts_with("../")
+    {
+        aliases.push(format!("@deka/{spec}"));
+    }
+
+    let mut candidates = Vec::new();
+    for alias in aliases {
+        candidates.extend(ds_source_candidates(&modules_dir.join(alias.as_str())));
+    }
+
+    candidates.into_iter().find(|path| path.is_file())
 }
 
 /// Validate a project against the imports its module graph actually contains.
@@ -49,9 +124,6 @@ pub fn validate_project(
     project_root: &Path,
     imports: &[String],
     opts: &GateOptions,
-    is_stdlib_spec: &dyn Fn(&str) -> bool,
-    modules_dir_for: &dyn Fn(&Path) -> PathBuf,
-    resolves: &dyn Fn(&Path, &str) -> bool,
 ) -> Result<(), String> {
     // An external module root means the runtime supplies the stdlib; the local
     // tree is not expected to contain it.
@@ -63,11 +135,13 @@ pub fn validate_project(
         return Ok(());
     }
 
+    let who = opts.context;
+
     if opts.require_lockfile {
         let lock_path = project_root.join("deka.lock");
         if !lock_path.is_file() {
             return Err(format!(
-                "deka requires deka.lock at project root: {}",
+                "{who} requires deka.lock at project root: {}",
                 lock_path.display()
             ));
         }
@@ -76,7 +150,7 @@ pub fn validate_project(
     let stdlib_imports: BTreeSet<String> = imports
         .iter()
         .map(|s| s.trim().to_string())
-        .filter(|s| is_stdlib_spec(s))
+        .filter(|s| is_stdlib_module_spec(s))
         .collect();
 
     if stdlib_imports.is_empty() {
@@ -94,7 +168,7 @@ pub fn validate_project(
         let list: Vec<String> = undeclared.iter().map(|s| (*s).clone()).collect();
         let add: Vec<String> = list.iter().map(|s| bare_name(s).to_string()).collect();
         return Err(format!(
-            "imported but not declared in deka.json: {}. Add {} with `deka add {}`.",
+            "{who}: imported but not declared in deka.json: {}. Add {} with `deka add {}`.",
             list.join(", "),
             if list.len() == 1 { "it" } else { "them" },
             add.join(" ")
@@ -102,10 +176,10 @@ pub fn validate_project(
     }
 
     // Rule 3 — present on disk.
-    let modules_dir = modules_dir_for(project_root);
+    let modules_dir = resolve_modules_dir(project_root);
     if !modules_dir.is_dir() {
         return Err(format!(
-            "deka requires {} when using stdlib imports ({}). Run `deka install`.",
+            "{who} requires {} at project root when using stdlib imports ({}). Run `deka install`.",
             modules_dir.display(),
             stdlib_imports.iter().cloned().collect::<Vec<_>>().join(", ")
         ));
@@ -113,7 +187,7 @@ pub fn validate_project(
 
     let missing: Vec<String> = stdlib_imports
         .iter()
-        .filter(|spec| !resolves(&modules_dir, spec))
+        .filter(|spec| resolve_module_file(&modules_dir, spec).is_none())
         .cloned()
         .collect();
 
@@ -121,7 +195,7 @@ pub fn validate_project(
         Ok(())
     } else {
         Err(format!(
-            "declared but not installed under {}: {}. Run `deka install`.",
+            "{who}: declared but not installed under {}: {}. Run `deka install`.",
             modules_dir.display(),
             missing.join(", ")
         ))
@@ -166,10 +240,6 @@ fn is_declared(spec: &str, declared: &BTreeSet<String>) -> bool {
 mod tests {
     use super::*;
 
-    fn stdlib(spec: &str) -> bool {
-        matches!(spec, "crypto" | "io" | "bytes") || spec.starts_with("@deka/")
-    }
-
     fn write(dir: &Path, name: &str, body: &str) {
         std::fs::write(dir.join(name), body).unwrap();
     }
@@ -178,20 +248,15 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         write(tmp.path(), "deka.json", manifest);
         write(tmp.path(), "deka.lock", r#"{"lockfileVersion":1,"packages":{}}"#);
-        std::fs::create_dir_all(tmp.path().join("ds_modules/@deka/crypto")).unwrap();
+        let crypto = tmp.path().join("ds_modules/@deka/crypto");
+        std::fs::create_dir_all(&crypto).unwrap();
+        std::fs::write(crypto.join("index.ds"), "export fn noop() {}\n").unwrap();
         tmp
     }
 
     fn run(root: &Path, imports: &[&str]) -> Result<(), String> {
         let owned: Vec<String> = imports.iter().map(|s| s.to_string()).collect();
-        validate_project(
-            root,
-            &owned,
-            &GateOptions::default(),
-            &stdlib,
-            &|r| r.join("ds_modules"),
-            &|dir, spec| dir.join("@deka").join(super::bare_name(spec)).is_dir(),
-        )
+        validate_project(root, &owned, &GateOptions::default())
     }
 
     #[test]
@@ -232,15 +297,7 @@ mod tests {
             ..GateOptions::default()
         };
         let owned = vec!["crypto".to_string()];
-        validate_project(
-            tmp.path(),
-            &owned,
-            &opts,
-            &stdlib,
-            &|r| r.join("ds_modules"),
-            &|dir, spec| dir.join("@deka").join(super::bare_name(spec)).is_dir(),
-        )
-        .expect("waived lockfile should pass");
+        validate_project(tmp.path(), &owned, &opts).expect("waived lockfile should pass");
     }
 
     #[test]
@@ -252,14 +309,30 @@ mod tests {
             ..GateOptions::default()
         };
         let owned = vec!["crypto".to_string()];
-        validate_project(
-            tmp.path(),
-            &owned,
-            &opts,
-            &stdlib,
-            &|r| r.join("ds_modules"),
-            &|_, _| false,
-        )
-        .expect("external module root supplies the stdlib");
+        validate_project(tmp.path(), &owned, &opts)
+            .expect("external module root supplies the stdlib");
+    }
+
+    #[test]
+    fn context_appears_in_the_message() {
+        let tmp = setup(r#"{"name":"t","dependencies":{}}"#);
+        std::fs::remove_file(tmp.path().join("deka.lock")).unwrap();
+        let opts = GateOptions {
+            context: "deka build",
+            ..GateOptions::default()
+        };
+        let err = validate_project(tmp.path(), &[], &opts).unwrap_err();
+        assert!(err.starts_with("deka build requires deka.lock"), "{err}");
+    }
+
+    // The three copies disagreed about these two specifiers; the shared gate
+    // must treat both as stdlib or `deka build` keeps skipping them.
+    #[test]
+    fn converged_specifiers_are_stdlib() {
+        assert!(is_stdlib_module_spec("http"), "js_pipeline listed it");
+        assert!(is_stdlib_module_spec("@deka/http"), "build.rs skipped it");
+        assert!(is_stdlib_module_spec("@deka/anything"));
+        assert!(!is_stdlib_module_spec("@user/thing"));
+        assert!(!is_stdlib_module_spec("./local"));
     }
 }

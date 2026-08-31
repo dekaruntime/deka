@@ -126,9 +126,17 @@ mod tests {
     #[test]
     fn ds_candidates_are_file_then_index() {
         let base = Path::new("src/foo");
+        // .dsx joined the list in 516ede7af (RFD 24 phase 2) and this
+        // assertion was not updated, so runtime_core has been red on main
+        // since. Order matters: file before index, .ds before .dsx.
         assert_eq!(
             ds_source_candidates(base),
-            vec![Path::new("src/foo.ds").to_path_buf(), Path::new("src/foo/index.ds").to_path_buf()]
+            vec![
+                Path::new("src/foo.ds").to_path_buf(),
+                Path::new("src/foo.dsx").to_path_buf(),
+                Path::new("src/foo/index.ds").to_path_buf(),
+                Path::new("src/foo/index.dsx").to_path_buf(),
+            ]
         );
     }
 
