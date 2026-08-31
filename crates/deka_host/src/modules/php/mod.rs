@@ -54,6 +54,7 @@ deno_core::extension!(
         fs_ops::op_php_write_file_sync,
         fs_ops::op_php_mkdirs,
         crypto_env::op_php_set_privileged,
+        security::op_php_env_capability_granted,
         crypto_env::op_php_sha256,
         crypto_env::op_php_random_bytes,
         crypto_env::op_php_digest,

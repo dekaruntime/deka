@@ -1,7 +1,7 @@
 // Minimal PHP runtime module - no Node.js compatibility
 // This provides only the essentials for PHP execution
 
-const { op_php_read_file_sync, op_php_cwd, op_php_canonicalize, op_php_file_exists, op_php_path_resolve, op_php_set_privileged } = Deno.core.ops;
+const { op_php_env_capability_granted, op_php_read_file_sync, op_php_cwd, op_php_canonicalize, op_php_file_exists, op_php_path_resolve, op_php_set_privileged } = Deno.core.ops;
 const __php_print = Deno.core.print.bind(Deno.core);
 
 // Basic console implementation. Close over print so logs still work after
@@ -254,15 +254,27 @@ if (!globalThis.fs.existsSync) {
   }
 }());
 
-// Minimal process implementation
-if (!globalThis.process) {
-  globalThis.process = {};
-}
-if (!globalThis.process.env) {
-  globalThis.process.env = {};
-}
-if (!globalThis.process.cwd) {
-  globalThis.process.cwd = () => op_php_cwd();
+// `process` is behind the `env` capability, and is not part of the DekaScript
+// surface -- typeck does not know the name, so it is reachable only from inside
+// `unsafe { }`. Both gates are independent and both are required: without an
+// `env` grant the global is never installed, so even the `unsafe` call fails
+// with a ReferenceError, which `unsafe` surfaces as `Err`. deka#378.
+//
+// Installed rather than guarded per-call because `op_php_cwd` is also the
+// runtime's own path resolver (see __dekaPath and the tenant-root guards);
+// gating the op would break resolution for everyone. Absence is the gate.
+if (op_php_env_capability_granted()) {
+  if (!globalThis.process) {
+    globalThis.process = {};
+  }
+  if (!globalThis.process.env) {
+    globalThis.process.env = {};
+  }
+  if (!globalThis.process.cwd) {
+    globalThis.process.cwd = () => op_php_cwd();
+  }
+} else if (globalThis.process) {
+  delete globalThis.process;
 }
 
 function withPrivileged(fn) {

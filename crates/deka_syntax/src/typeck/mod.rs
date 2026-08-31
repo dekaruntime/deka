@@ -534,7 +534,11 @@ impl<'a> Checker<'a> {
         // `unsafe { }` bodies are raw JavaScript and are not checked against
         // this list, so a removed name is still reachable there — which is the
         // form the stdlib packages already use.
-        for name in ["Math", "Object", "Promise", "parseInt", "process", "isset"] {
+        // `process` is deliberately absent: it is behind the `env` capability
+        // and reachable only from `unsafe { }` (deka#378). Naming it in plain
+        // DekaScript is now `unknown identifier`, which is the diagnostic RFD
+        // 13 P10 asks for.
+        for name in ["Math", "Object", "Promise", "parseInt", "isset"] {
             self.globals.insert(name, Type::Infer);
         }
     }
