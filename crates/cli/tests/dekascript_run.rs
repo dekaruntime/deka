@@ -800,3 +800,58 @@ go()
         "ok",
     );
 }
+
+/// deka#394: a bare `None` literal emitted JS `null` while `match` tested
+/// `__case === "None"`, so matching on any function that returned `None` threw
+/// `TypeError: Cannot read properties of null`. This executes the program, so
+/// it fails on the throw rather than on emitted text.
+#[test]
+fn bare_none_matches_as_option_none() {
+    run_dekascript(
+        "bare_none_matches",
+        r#"
+fn find(hit: boolean): Option<number> {
+  if (hit) {
+    return Some(7)
+  }
+  return None
+}
+
+fn show(hit: boolean): number {
+  return match (find(hit)) {
+    Some(v) => v,
+    None => 0
+  }
+}
+
+const hit = show(true);
+const miss = show(false);
+print(hit);
+print(miss);
+"#,
+        "7\n0",
+    );
+}
+
+/// deka#394: a `None` literal bound directly must be the same value as one
+/// returned from a function, so both match the same arm.
+#[test]
+fn bare_none_binding_matches_prelude_none() {
+    run_dekascript(
+        "bare_none_binding",
+        r#"
+fn label(value: Option<number>): string {
+  return match (value) {
+    Some(v) => "some",
+    None => "none"
+  }
+}
+
+const direct: Option<number> = None;
+const wrapped: Option<number> = Some(3);
+print(label(direct));
+print(label(wrapped));
+"#,
+        "none\nsome",
+    );
+}
