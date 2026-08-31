@@ -380,5 +380,10 @@
     "id": "generic-enums",
     "title": "Generic enums",
     "expectCompile": true
+  },
+  {
+    "id": "host-process",
+    "title": "Host globals and the env capability",
+    "expectCompile": true
   }
 ]

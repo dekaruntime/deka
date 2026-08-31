@@ -891,6 +891,25 @@ pub(super) fn enforce_net(target: Option<&str>) -> Result<(), deno_core::error::
     enforce_scope("net", &policy.allow.net, &policy.deny.net, target)
 }
 
+/// Whether the resolved policy grants the `env` capability at all.
+///
+/// Not `enforce_env(None)`: that answers "may this run touch an unnamed env
+/// target", which only an `All` grant satisfies. This answers the coarser
+/// question the `process` global is gated on — is there an `env` grant of any
+/// shape, and is it not denied outright. A list grant (`env: ["HOME"]`) is
+/// still a grant.
+///
+/// deka#378: `process` is installed only when this is true, so removing the
+/// grant makes the global absent and even an `unsafe { process.cwd() }` fails.
+#[op2(fast)]
+pub(super) fn op_php_env_capability_granted() -> bool {
+    let policy = security_policy_from_env();
+    if matches!(policy.deny.env, RuleList::All) {
+        return false;
+    }
+    !matches!(policy.allow.env, RuleList::None)
+}
+
 pub(super) fn enforce_env(target: Option<&str>) -> Result<(), deno_core::error::CoreError> {
     let policy = security_policy_from_env();
     enforce_scope("env", &policy.allow.env, &policy.deny.env, target)
