@@ -900,6 +900,13 @@ impl<'a> Checker<'a> {
             self.mutables.pop();
 
             match &result_type {
+                // A `never` arm — one that calls `panic` or otherwise cannot
+                // return — carries no information about the match's type, so a
+                // later arm replaces it. Assignability only runs the other way:
+                // `never` is assignable to anything, nothing is assignable to
+                // `never`, so seeding from a `never` arm rejected every arm
+                // after it and made the result depend on arm order (deka#407).
+                Some(Type::Never) => result_type = Some(arm_type),
                 Some(expected) => {
                     if !self.is_assignable(expected, &arm_type) {
                         self.error_at_expr(
