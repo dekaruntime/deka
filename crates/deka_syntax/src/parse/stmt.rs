@@ -792,7 +792,17 @@ impl<'a> Parser<'a> {
                 let decl = crate::ast::ExportDecl::Const { name, ty, value };
                 Some(Stmt::Export { decl, span })
             }
-            TokenKind::Fn => {
+            // `parse_fn_statement` already consumes an optional `async`, so the
+            // async form needs no separate parse — only a way to reach it from
+            // here. `export async fn` was rejected outright before (deka#410);
+            // `@deka/fs` is written that way and could not be compiled at all.
+            TokenKind::Fn | TokenKind::Async => {
+                if self.current_kind() == TokenKind::Async
+                    && self.tokens.get(self.pos + 1).map(|t| t.kind) != Some(TokenKind::Fn)
+                {
+                    self.error("expected `fn` after `async`");
+                    return None;
+                }
                 let fn_stmt = self.parse_fn_statement(start, start_byte)?;
                 let span = self.span_from(start, start_byte);
                 let decl = match fn_stmt {
@@ -857,7 +867,7 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 self.error(format!(
-                    "expected `const`, `fn`, `{{` or `default` after `export`, found `{}`",
+                    "expected `const`, `fn`, `async fn`, `{{` or `default` after `export`, found `{}`",
                     token_name(self.current_kind())
                 ));
                 None
