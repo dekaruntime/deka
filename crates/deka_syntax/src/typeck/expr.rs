@@ -19,6 +19,58 @@ fn is_panic_callee(callee: &ast::Expr<'_>) -> bool {
     }
 }
 
+/// How completely a set of match arms covers a scrutinee type.
+///
+/// `All` means an irrefutable pattern was seen. `Cases` records, per
+/// constructor name, how completely that case's *payload* is covered — which
+/// is what makes `Ok(Some(v))` distinguishable from `Ok(_)` (deka#396).
+#[derive(Debug, Clone)]
+enum Coverage<'a> {
+    All,
+    Cases(HashMap<&'a str, Coverage<'a>>),
+}
+
+impl<'a> Coverage<'a> {
+    fn nothing() -> Self {
+        Coverage::Cases(HashMap::new())
+    }
+
+    fn of_pattern(pattern: &ast::Pattern<'a>) -> Self {
+        match pattern {
+            ast::Pattern::Wildcard { .. } | ast::Pattern::Identifier { .. } => Coverage::All,
+            ast::Pattern::Constructor { name, payload, .. } => {
+                let inner = match payload {
+                    Some(inner) => Coverage::of_pattern(inner),
+                    None => Coverage::All,
+                };
+                let mut cases = HashMap::new();
+                cases.insert(*name, inner);
+                Coverage::Cases(cases)
+            }
+            // A literal matches one value, never a whole case.
+            ast::Pattern::Literal { .. }
+            | ast::Pattern::Struct { .. }
+            | ast::Pattern::Tuple { .. } => Coverage::nothing(),
+        }
+    }
+
+    fn merge(self, other: Coverage<'a>) -> Coverage<'a> {
+        match (self, other) {
+            (Coverage::All, _) | (_, Coverage::All) => Coverage::All,
+            (Coverage::Cases(mut left), Coverage::Cases(right)) => {
+                for (name, cov) in right {
+                    let merged = match left.remove(name) {
+                        Some(existing) => existing.merge(cov),
+                        None => cov,
+                    };
+                    left.insert(name, merged);
+                }
+                Coverage::Cases(left)
+            }
+        }
+    }
+}
+
 impl<'a> Checker<'a> {
     pub(super) fn check_expr(&mut self, expr: &ast::Expr<'a>) -> Type<'a> {
         match expr {
@@ -832,20 +884,17 @@ impl<'a> Checker<'a> {
 
         let scrutinee_type = self.check_expr(scrutinee);
         let mut result_type: Option<Type<'a>> = None;
-        let mut covered_cases: HashSet<&'a str> = HashSet::new();
+        let mut coverage = Coverage::nothing();
         let mut has_catch_all = false;
 
         for arm in arms {
             self.scopes.push(HashMap::new());
             self.mutables.push(HashSet::new());
             self.check_pattern(&arm.pattern, &scrutinee_type);
-            if !has_catch_all {
-                if Self::pattern_is_catch_all(&arm.pattern) {
-                    has_catch_all = true;
-                } else if let ast::Pattern::Constructor { name, .. } = &arm.pattern {
-                    covered_cases.insert(*name);
-                }
+            if !has_catch_all && Self::pattern_is_catch_all(&arm.pattern) {
+                has_catch_all = true;
             }
+            coverage = coverage.merge(Coverage::of_pattern(&arm.pattern));
             let arm_type = self.check_expr(&arm.body);
             self.scopes.pop();
             self.mutables.pop();
@@ -866,7 +915,8 @@ impl<'a> Checker<'a> {
         }
 
         if !has_catch_all && !scrutinee_type.is_error() {
-            self.check_match_exhaustiveness(span, &scrutinee_type, &covered_cases);
+            let scrutinee_type = scrutinee_type.clone();
+            self.check_match_exhaustiveness(span, &scrutinee_type, &coverage);
         }
 
         result_type.unwrap_or(Type::None)
@@ -883,38 +933,82 @@ impl<'a> Checker<'a> {
         &mut self,
         span: ast::Span,
         scrutinee_type: &Type<'a>,
-        covered_cases: &HashSet<&'a str>,
+        coverage: &Coverage<'a>,
     ) {
-        let enum_name = match scrutinee_type {
-            Type::Named { name } => *name,
-            Type::Option { .. } => return, // Option is exhaustive via Some/None; already checked.
-            Type::Generic { base: "Result", .. } => return, // Result is exhaustive via Ok/Err.
-            _ => return,
-        };
-
-        let Some(info) = self.enums.get(enum_name) else {
-            return;
-        };
-
-        let missing: Vec<&'a str> = info
-            .cases
-            .iter()
-            .map(|c| c.name)
-            .filter(|name| !covered_cases.contains(*name))
-            .collect();
-
+        let mut missing = Vec::new();
+        self.collect_missing(scrutinee_type, coverage, "", &mut missing);
         if !missing.is_empty() {
-            let missing_qualified: Vec<String> = missing
-                .iter()
-                .map(|name| format!("{enum_name}::{name}"))
-                .collect();
             self.error_span(
                 span,
-                format!(
-                    "non-exhaustive match: missing {}",
-                    missing_qualified.join(", ")
-                ),
+                format!("non-exhaustive match: missing {}", missing.join(", ")),
             );
+        }
+    }
+
+    /// The constructors of `ty`, with each payload type, when `ty` is an enum.
+    /// `Option` and `Result` are prelude enums and are not in `self.enums`, so
+    /// they are spelled out here rather than skipped (deka#396).
+    fn enum_shape(&mut self, ty: &Type<'a>) -> Option<(String, Vec<(&'a str, Option<Type<'a>>)>)> {
+        match ty {
+            Type::Option { inner } => Some((
+                "Option".to_string(),
+                vec![("Some", Some((**inner).clone())), ("None", None)],
+            )),
+            Type::Generic { base: "Result", args } if args.len() == 2 => Some((
+                "Result".to_string(),
+                vec![("Ok", Some(args[0].clone())), ("Err", Some(args[1].clone()))],
+            )),
+            Type::Named { name } => {
+                let info = self.enums.get(name)?.clone();
+                let cases = info
+                    .cases
+                    .iter()
+                    .map(|case| {
+                        let payload = case.payload.as_ref().map(|p| self.resolve_ast_type(p));
+                        (case.name, payload)
+                    })
+                    .collect();
+                Some(((*name).to_string(), cases))
+            }
+            _ => None,
+        }
+    }
+
+    /// Walk type and coverage together. A constructor pattern covers its case
+    /// only as far as its payload pattern covers the payload type, so
+    /// `Ok(Some(v))` leaves `Ok(None)` uncovered.
+    fn collect_missing(
+        &mut self,
+        ty: &Type<'a>,
+        coverage: &Coverage<'a>,
+        path: &str,
+        out: &mut Vec<String>,
+    ) {
+        let Coverage::Cases(covered) = coverage else {
+            return;
+        };
+        let Some((label, cases)) = self.enum_shape(ty) else {
+            // Not an enum: nothing to enumerate. A refutable pattern here (a
+            // literal) is left alone rather than guessed at.
+            return;
+        };
+        for (case_name, payload_ty) in cases {
+            let qualified = if path.is_empty() {
+                format!("{label}::{case_name}")
+            } else {
+                format!("{path}({label}::{case_name})")
+            };
+            match covered.get(case_name) {
+                None => out.push(qualified),
+                Some(sub) => match payload_ty {
+                    Some(payload) => self.collect_missing(&payload, sub, &qualified, out),
+                    None => {
+                        if !matches!(sub, Coverage::All) {
+                            out.push(qualified);
+                        }
+                    }
+                },
+            }
         }
     }
 
