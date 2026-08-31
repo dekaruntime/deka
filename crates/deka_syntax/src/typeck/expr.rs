@@ -762,7 +762,7 @@ impl<'a> Checker<'a> {
 
         // User-defined enum.
         let info = match self.enums.get(enum_name) {
-            Some(i) => i,
+            Some(i) => i.clone(),
             None => {
                 self.error_span(span, format!("unknown enum `{enum_name}`"));
                 return Type::Error;
@@ -780,9 +780,18 @@ impl<'a> Checker<'a> {
             }
         };
 
+        let params: Vec<&'a str> = info.type_params.iter().map(|p| p.name).collect();
+        let mut inferred: HashMap<&'a str, Type<'a>> = HashMap::new();
+
         match (&case.payload, payload_type) {
             (Some(expected), Some(actual)) => {
+                self.push_type_params(info.type_params);
                 let expected_ty = self.resolve_ast_type(expected);
+                self.pop_type_params();
+                // `Box.Full(5)` must infer `Box<number>` rather than reporting a
+                // mismatch between the declared `T` and the argument (deka#372).
+                infer_type_args(&expected_ty, &actual, &params, &mut inferred);
+                let expected_ty = substitute_type(&expected_ty, &inferred);
                 if !self.is_assignable(&expected_ty, &actual) {
                     self.error_span(
                         span,
@@ -801,7 +810,16 @@ impl<'a> Checker<'a> {
             (None, None) => {}
         }
 
-        Type::Named { name: enum_name }
+        if params.is_empty() {
+            return Type::Named { name: enum_name };
+        }
+        // Parameters a payload-free case cannot pin stay Infer, which is
+        // compatible with any concrete type until one is available.
+        let args: Vec<Type<'a>> = params
+            .iter()
+            .map(|p| inferred.get(p).cloned().unwrap_or(Type::Infer))
+            .collect();
+        Type::Generic { base: enum_name, args }
     }
 
     fn check_option_constructor(
@@ -965,6 +983,7 @@ impl<'a> Checker<'a> {
             )),
             Type::Named { name } => {
                 let info = self.enums.get(name)?.clone();
+                self.push_type_params(info.type_params);
                 let cases = info
                     .cases
                     .iter()
@@ -973,7 +992,34 @@ impl<'a> Checker<'a> {
                         (case.name, payload)
                     })
                     .collect();
+                self.pop_type_params();
                 Some(((*name).to_string(), cases))
+            }
+            // A generic enum at a use site: resolve each payload with the
+            // declared params in scope, then substitute the arguments in
+            // (deka#372).
+            Type::Generic { base, args } if self.enums.contains_key(base) => {
+                let info = self.enums.get(base)?.clone();
+                let subst: HashMap<&'a str, Type<'a>> = info
+                    .type_params
+                    .iter()
+                    .map(|p| p.name)
+                    .zip(args.iter().cloned())
+                    .collect();
+                self.push_type_params(info.type_params);
+                let cases: Vec<(&'a str, Option<Type<'a>>)> = info
+                    .cases
+                    .iter()
+                    .map(|case| {
+                        let payload = case
+                            .payload
+                            .as_ref()
+                            .map(|p| substitute_type(&self.resolve_ast_type(p), &subst));
+                        (case.name, payload)
+                    })
+                    .collect();
+                self.pop_type_params();
+                Some(((*base).to_string(), cases))
             }
             _ => None,
         }
@@ -1117,17 +1163,25 @@ impl<'a> Checker<'a> {
         };
 
         let info = match self.enums.get(enum_name) {
-            Some(i) => i,
+            Some(i) => i.clone(),
             None => return,
         };
 
-        if !scrutinee_type.is_error() && !matches!(scrutinee_type, Type::Named { name } if *name == enum_name) {
-            self.error_span(
-                span,
-                format!("`{name}` is not a case of type `{scrutinee_type}`"),
-            );
-            return;
-        }
+        // `enum Box<T>` used as `Box<number>` arrives as Type::Generic, not
+        // Type::Named. Accept both and remember the type arguments so the case
+        // payload can be substituted below (deka#372).
+        let type_args: Vec<Type<'a>> = match scrutinee_type {
+            Type::Named { name } if *name == enum_name => Vec::new(),
+            Type::Generic { base, args } if *base == enum_name => args.clone(),
+            _ if scrutinee_type.is_error() => Vec::new(),
+            _ => {
+                self.error_span(
+                    span,
+                    format!("`{name}` is not a case of type `{scrutinee_type}`"),
+                );
+                return;
+            }
+        };
 
         let case = match info.cases.iter().find(|c| c.name == name) {
             Some(c) => c,
@@ -1138,7 +1192,22 @@ impl<'a> Checker<'a> {
         };
 
         if let Some(payload_type) = &case.payload {
-            let resolved_payload = self.resolve_ast_type(payload_type);
+            let params: Vec<&'a str> = info.type_params.iter().map(|p| p.name).collect();
+            let resolved_payload = {
+                self.push_type_params(info.type_params);
+                let base = self.resolve_ast_type(payload_type);
+                self.pop_type_params();
+                if params.is_empty() || type_args.is_empty() {
+                    base
+                } else {
+                    let subst: HashMap<&'a str, Type<'a>> = params
+                        .iter()
+                        .copied()
+                        .zip(type_args.iter().cloned())
+                        .collect();
+                    substitute_type(&base, &subst)
+                }
+            };
             if let Some(p) = payload {
                 self.check_pattern(p, &resolved_payload);
             } else {
@@ -2184,6 +2253,35 @@ fn contains_param(ty: &Type<'_>) -> bool {
 }
 
 /// Replace type parameters according to `subst`.
+/// Structurally match a declared type against an actual one, binding any
+/// declared type parameter it encounters. Used to infer `Box<number>` from
+/// `Box.Full(5)` where the case is declared `Full(T)` (deka#372).
+fn infer_type_args<'a>(
+    declared: &Type<'a>,
+    actual: &Type<'a>,
+    params: &[&'a str],
+    out: &mut HashMap<&'a str, Type<'a>>,
+) {
+    match (declared, actual) {
+        (Type::Param { name }, concrete) if params.contains(name) => {
+            out.entry(name).or_insert_with(|| concrete.clone());
+        }
+        (Type::Option { inner: d }, Type::Option { inner: a }) => {
+            infer_type_args(d, a, params, out)
+        }
+        (Type::Array { elem: d }, Type::Array { elem: a }) => infer_type_args(d, a, params, out),
+        (
+            Type::Generic { base: db, args: da },
+            Type::Generic { base: ab, args: aa },
+        ) if db == ab && da.len() == aa.len() => {
+            for (d, a) in da.iter().zip(aa.iter()) {
+                infer_type_args(d, a, params, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn substitute_type<'a>(ty: &Type<'a>, subst: &HashMap<&'a str, Type<'a>>) -> Type<'a> {
     match ty {
         Type::Param { name } => subst.get(name).cloned().unwrap_or_else(|| Type::Param { name }),

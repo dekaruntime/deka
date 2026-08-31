@@ -87,8 +87,12 @@ impl<'a> Checker<'a> {
                     self.error_span(*span, format!("duplicate type alias `{name}`"));
                 }
             }
-            if let ast::Stmt::Enum { name, cases, span, .. } = stmt {
-                if self.enums.insert(name, super::EnumInfo { cases }).is_some() {
+            if let ast::Stmt::Enum { name, cases, type_params, span } = stmt {
+                if self
+                    .enums
+                    .insert(name, super::EnumInfo { cases, type_params })
+                    .is_some()
+                {
                     self.error_span(*span, format!("duplicate enum definition `{name}`"));
                     continue;
                 }
@@ -208,7 +212,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn push_type_params(&mut self, type_params: &'a [ast::TypeParam<'a>]) {
+    pub(super) fn push_type_params(&mut self, type_params: &'a [ast::TypeParam<'a>]) {
         if type_params.is_empty() {
             return;
         }
@@ -219,7 +223,7 @@ impl<'a> Checker<'a> {
         self.type_scopes.push(scope);
     }
 
-    fn pop_type_params(&mut self) {
+    pub(super) fn pop_type_params(&mut self) {
         self.type_scopes.pop();
     }
 
@@ -641,12 +645,16 @@ impl<'a> Checker<'a> {
                 }
                 self.pop_type_params();
             }
-            ast::Stmt::Enum { name: _, cases, span: _, .. } => {
+            ast::Stmt::Enum { name: _, cases, type_params, span: _ } => {
+                // `enum Box<T> { Full(T) }` — T must be in scope while the case
+                // payload types are resolved, or it reports `unknown type T`.
+                self.push_type_params(type_params);
                 for case in *cases {
                     if let Some(payload) = &case.payload {
                         self.resolve_ast_type(payload);
                     }
                 }
+                self.pop_type_params();
             }
             ast::Stmt::Empty { .. }
             | ast::Stmt::TypeAlias { .. }

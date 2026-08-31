@@ -133,8 +133,8 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                     },
                 );
             }
-            ast::Stmt::Enum { name, cases, .. } => {
-                declared_enums.insert(*name, EnumInfo { cases: *cases });
+            ast::Stmt::Enum { name, cases, type_params, .. } => {
+                declared_enums.insert(*name, EnumInfo { cases: *cases, type_params: *type_params });
             }
             ast::Stmt::TypeAlias { name, value, .. } => {
                 declared_aliases.insert(*name, value.clone());
@@ -396,6 +396,10 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
 #[derive(Clone, Debug)]
 pub struct EnumInfo<'a> {
     pub cases: &'a [ast::EnumCase<'a>],
+    /// Declared type parameters, e.g. `T` in `enum Box<T>`. Kept so a use site
+    /// spelled `Box<number>` can substitute them into case payload types
+    /// (deka#372); previously they were parsed and discarded.
+    pub type_params: &'a [ast::TypeParam<'a>],
 }
 
 /// Information about a newtype's primitive representation.
