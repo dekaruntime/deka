@@ -23,7 +23,7 @@ use runtime_core::{
     },
     DEKA_VALIDATION_ERROR_MARKER,
 };
-use runtime_core::modules::{resolve_modules_dir, MODULES_DIR};
+use runtime_core::modules::MODULES_DIR;
 
 /// Compile a single `.ds` source file to JavaScript using compiler v2.
 fn compile_ds_source_to_js(source: &str, input: &str) -> Result<String, JsErrorBox> {
@@ -507,115 +507,29 @@ fn collect_deka_source_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Re
 }
 
 pub fn ensure_project_layout(project_root: &Path, imports: &[String]) -> Result<(), String> {
-    // DEKA_MODULE_ROOT bypass (#220): when set, the tenant relies on the runtime stdlib at
-    // that root and we trust the runtime-provided modules without requiring a local
-    // deka.lock or php_modules/. Tenant-local packages would still need a lockfile, but
-    // stdlib-only tenants (id.tana.gg) deploy without ceremony.
+    // DEKA_MODULE_ROOT bypass (#220): when set, the tenant relies on the runtime
+    // stdlib at that root and we trust the runtime-provided modules without
+    // requiring a local deka.lock or ds_modules/. Tenant-local packages would
+    // still need a lockfile, but stdlib-only tenants (id.tana.gg) deploy
+    // without ceremony.
+    //
+    // This is the bypass deka#229 removes. It is kept here at the call site
+    // rather than pushed into the gate so it stays visible: it is a process-
+    // global environment variable that disables every check below, including
+    // the lockfile requirement, and in the ordinary `deka run` path the runtime
+    // sets it to the project root itself.
     if std::env::var_os("DEKA_MODULE_ROOT").is_some() {
         return Ok(());
     }
 
-    let lock_path = project_root.join("deka.lock");
-    if !lock_path.is_file() {
-        return Err(format!(
-            "deka runtime requires deka.lock at project root: {}",
-            lock_path.display()
-        ));
-    }
-
-    let stdlib_imports = collect_stdlib_imports(imports);
-    if stdlib_imports.is_empty() {
-        return Ok(());
-    }
-
-    let modules_dir = resolve_modules_dir(project_root);
-    if !modules_dir.is_dir() {
-        return Err(format!(
-            "deka runtime requires ds_modules/ at project root when using stdlib imports ({}). Run `deka install`.",
-            stdlib_imports.join(", ")
-        ));
-    }
-
-    let mut missing = Vec::new();
-    for spec in stdlib_imports {
-        if resolve_module_file(&modules_dir, &spec).is_none() {
-            missing.push(spec);
-        }
-    }
-
-    if missing.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "missing stdlib modules under {}: {}. Run `deka install`.",
-            modules_dir.display(),
-            missing.join(", ")
-        ))
-    }
-}
-
-fn collect_stdlib_imports(imports: &[String]) -> Vec<String> {
-    let mut seen = HashSet::new();
-    for spec in imports {
-        let spec = spec.trim();
-        if is_stdlib_module_spec(spec) {
-            seen.insert(spec.to_string());
-        }
-    }
-    seen.into_iter().collect()
-}
-
-fn is_stdlib_module_spec(spec: &str) -> bool {
-    if !is_bare_specifier(spec) || spec.starts_with("@user/") {
-        return false;
-    }
-
-    spec.starts_with("component/")
-        || spec.starts_with("deka/")
-        || spec.starts_with("encoding/")
-        || spec.starts_with("db/")
-        || spec.starts_with("@deka/")
-        || matches!(
-            spec,
-            "json"
-                | "postgres"
-                | "mysql"
-                | "sqlite"
-                | "bytes"
-                | "buffer"
-                | "tcp"
-                | "tls"
-                | "fs"
-                | "crypto"
-                | "jwt"
-                | "test"
-                | "cookies"
-                | "auth"
-                | "db"
-                | "time"
-                | "io"
-        )
-}
-
-fn resolve_module_file(modules_dir: &Path, spec: &str) -> Option<PathBuf> {
-    // Expand aliases, and for prefixed stdlib imports (e.g. encoding/json)
-    // also try the scoped layout (@deka/encoding/json) since modules installed
-    // from linkhash land under php_modules/@deka/<pkg>/<subpath>.
-    let mut aliases = module_spec_aliases(spec);
-    if spec.contains('/')
-        && !spec.starts_with('@')
-        && !spec.starts_with("./")
-        && !spec.starts_with("../")
-    {
-        aliases.push(format!("@deka/{}", spec));
-    }
-
-    let mut candidates = Vec::new();
-    for alias in aliases {
-        candidates.extend(ds_source_candidates(&modules_dir.join(alias.as_str())));
-    }
-
-    candidates.into_iter().find(|path| path.is_file())
+    runtime_core::project_gate::validate_project(
+        project_root,
+        imports,
+        &runtime_core::project_gate::GateOptions {
+            context: "deka runtime",
+            ..Default::default()
+        },
+    )
 }
 
 fn resolve_phpx_module_spec(project_root: &Path, specifier: &str) -> Option<PathBuf> {

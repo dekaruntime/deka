@@ -1,10 +1,9 @@
 use bundler::{BuildOptions, VirtualSource, bundle_virtual_entry};
 use core::{CommandSpec, Context, ParamSpec, Registry};
-use runtime_core::module_spec::{ds_source_candidates, module_spec_aliases};
-use runtime_core::modules::{resolve_modules_dir, MODULES_DIR};
+use runtime_core::modules::MODULES_DIR;
 
 use crate::compile_helper::compile_js_or_report;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -486,116 +485,21 @@ fn ensure_project_layout(
     module_root: Option<&Path>,
     meta: &deka_compile::SourceModuleMeta,
 ) -> Result<(), String> {
-    // When an explicit external module_root is provided, trust it for stdlib
-    // modules and skip the local ds_modules/ check. Tenant-local packages still
-    // require a lockfile and local ds_modules/.
-    if module_root.is_some_and(|root| root != project_root) {
-        return Ok(());
-    }
+    let imports: Vec<String> = meta
+        .imports
+        .iter()
+        .map(|decl| decl.path.trim().to_string())
+        .collect();
 
-    let lock_path = project_root.join("deka.lock");
-    if !lock_path.is_file() {
-        return Err(format!(
-            "deka build requires deka.lock at project root: {}",
-            lock_path.display()
-        ));
-    }
-
-    let stdlib_imports = collect_stdlib_imports(meta);
-    if stdlib_imports.is_empty() {
-        return Ok(());
-    }
-
-    let modules_dir = resolve_modules_dir(project_root);
-    if !modules_dir.is_dir() {
-        return Err(format!(
-            "deka build requires ds_modules/ at project root when using stdlib imports ({}). Run `deka install`.",
-            stdlib_imports.join(", ")
-        ));
-    }
-
-    let mut missing = Vec::new();
-    for spec in stdlib_imports {
-        if resolve_module_file(&modules_dir, &spec).is_none() {
-            missing.push(spec);
-        }
-    }
-
-    if missing.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "missing stdlib modules under {}: {}. Run `deka install`.",
-            modules_dir.display(),
-            missing.join(", ")
-        ))
-    }
-}
-
-fn collect_stdlib_imports(meta: &deka_compile::SourceModuleMeta) -> Vec<String> {
-    let mut seen = BTreeSet::new();
-    for decl in &meta.imports {
-        let spec = decl.path.trim();
-        if is_stdlib_module_spec(spec) {
-            seen.insert(spec.to_string());
-        }
-    }
-    seen.into_iter().collect()
-}
-
-fn is_stdlib_module_spec(spec: &str) -> bool {
-    if !is_bare_specifier(spec) || spec.starts_with("@user/") {
-        return false;
-    }
-
-    if let Some(rest) = spec.strip_prefix("@deka/") {
-        return is_stdlib_module_spec(rest);
-    }
-
-    spec.starts_with("component/")
-        || spec.starts_with("deka/")
-        || spec.starts_with("encoding/")
-        || spec.starts_with("db/")
-        || matches!(
-            spec,
-            "json"
-                | "postgres"
-                | "mysql"
-                | "sqlite"
-                | "bytes"
-                | "buffer"
-                | "tcp"
-                | "tls"
-                | "fs"
-                | "crypto"
-                | "jwt"
-                | "test"
-                | "cookies"
-                | "auth"
-                | "db"
-                | "time"
-                | "io"
-        )
-}
-
-fn resolve_module_file(modules_dir: &Path, spec: &str) -> Option<PathBuf> {
-    let mut candidates = Vec::new();
-    for alias in module_spec_aliases(spec) {
-        candidates.extend(ds_source_candidates(&modules_dir.join(&alias)));
-    }
-
-    // For prefixed stdlib specifiers (e.g. encoding/json) also check the scoped
-    // @deka layout — stdlib packages installed via `deka install` live there.
-    if spec.contains('/')
-        && !spec.starts_with('@')
-        && !spec.starts_with("./")
-        && !spec.starts_with("../")
-    {
-        let scoped = format!("@deka/{}", spec);
-        candidates.extend(ds_source_candidates(&modules_dir.join(&scoped)));
-    }
-
-    candidates.into_iter().find(|path| path.is_file())
+    runtime_core::project_gate::validate_project(
+        project_root,
+        &imports,
+        &runtime_core::project_gate::GateOptions {
+            module_root: module_root.map(|p| p.to_path_buf()),
+            require_lockfile: true,
+            context: "deka build",
+        },
+    )
 }
 
 fn load_deka_json(project_root: &Path) -> Result<serde_json::Value, String> {
