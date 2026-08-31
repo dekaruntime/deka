@@ -394,6 +394,65 @@ fn apply_legacy_permissions(
     }
 }
 
+/// The capability keys a security scope accepts.
+pub const KNOWN_CAPABILITY_KEYS: [&str; 8] = [
+    "read", "write", "net", "env", "run", "db", "wasm", "dynamic",
+];
+
+/// Keys a misspelling most likely meant, as a comma-joined list.
+///
+/// Two shapes matter. A near-miss on spelling (`nett`, `wasmm`) is edit
+/// distance. A *concept* that is not a key at all (`fs`, `filesystem`,
+/// `network`) is not close to anything by edit distance but has an obvious
+/// intent, so those are named directly -- `fs` is the one that actually
+/// happened.
+fn nearest_capability_keys(key: &str) -> Option<String> {
+    let lowered = key.to_ascii_lowercase();
+
+    let by_concept: &[&str] = match lowered.as_str() {
+        "fs" | "file" | "files" | "filesystem" | "path" | "paths" => &["read", "write"],
+        "network" | "http" | "fetch" | "socket" => &["net"],
+        "process" | "proc" | "exec" | "spawn" | "command" => &["run", "env"],
+        "database" | "sql" | "postgres" | "mysql" | "sqlite" => &["db"],
+        "eval" | "unsafe" => &["dynamic"],
+        _ => &[],
+    };
+    if !by_concept.is_empty() {
+        return Some(by_concept.join(" or "));
+    }
+
+    let close: Vec<&str> = KNOWN_CAPABILITY_KEYS
+        .iter()
+        .copied()
+        .filter(|known| edit_distance_within(&lowered, known, 2))
+        .collect();
+    if close.is_empty() {
+        None
+    } else {
+        Some(close.join(" or "))
+    }
+}
+
+/// Levenshtein distance, answered only as "is it within `max`".
+fn edit_distance_within(a: &str, b: &str, max: usize) -> bool {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if a.len().abs_diff(b.len()) > max {
+        return false;
+    }
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut current = vec![0usize; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        current[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = usize::from(ca != cb);
+            current[j + 1] = (prev[j] + cost).min(prev[j + 1] + 1).min(current[j] + 1);
+        }
+        std::mem::swap(&mut prev, &mut current);
+    }
+    prev[b.len()] <= max
+}
+
 fn parse_scope(
     path: &str,
     value: &Value,
@@ -411,20 +470,28 @@ fn parse_scope(
     };
 
     for key in obj.keys() {
-        if key != "read"
-            && key != "write"
-            && key != "net"
-            && key != "env"
-            && key != "run"
-            && key != "db"
-            && key != "wasm"
-            && key != "dynamic"
-        {
+        if !KNOWN_CAPABILITY_KEYS.contains(&key.as_str()) {
+            // An error, not a warning. A misspelled capability is never
+            // intentional, and as a warning it read as "configured" while
+            // granting nothing: `allow.fs` produced a line above the security
+            // banner, the run continued with no grant, and every host op failed
+            // with SECURITY_CAPABILITY_DENIED. That looks like a capability bug
+            // rather than a manifest typo, and it cost a day on deka#420.
+            // Failing closed here matches the default-deny posture everywhere
+            // else in this policy (deka#435).
+            let mut message = format!(
+                "Unknown capability key '{}' in security scope. Valid keys: {}.",
+                key,
+                KNOWN_CAPABILITY_KEYS.join(", ")
+            );
+            if let Some(suggestions) = nearest_capability_keys(key) {
+                message.push_str(&format!(" Did you mean {}?", suggestions));
+            }
             diagnostics.push(diag(
-                PolicyDiagnosticLevel::Warning,
+                PolicyDiagnosticLevel::Error,
                 "SECURITY_POLICY_UNKNOWN_SCOPE_KEY",
                 &format!("{}.{}", path, key),
-                "Unknown capability key in security scope",
+                &message,
             ));
         }
     }
@@ -684,6 +751,77 @@ mod tests {
         PolicyDiagnosticLevel, RuleList, SecurityCliOverrides, merge_policy_with_cli,
         merge_policy_with_cli_manifest_net_env, parse_deka_security_policy, policy_to_json,
     };
+
+    /// deka#435: a misspelled capability used to be a warning, so the manifest
+    /// read as configured while granting nothing and every host op failed with
+    /// SECURITY_CAPABILITY_DENIED. That looks like a capability bug, not a typo.
+    #[test]
+    fn an_unknown_capability_key_is_an_error() {
+        let doc = serde_json::json!({
+            "security": { "allow": { "fs": ["/tmp"] }, "prompt": false }
+        });
+        let out = parse_deka_security_policy(&doc);
+        assert!(out.has_errors(), "an unknown key must fail closed");
+        let d = out
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "SECURITY_POLICY_UNKNOWN_SCOPE_KEY")
+            .expect("diagnostic present");
+        assert!(matches!(d.level, PolicyDiagnosticLevel::Error));
+        assert!(d.message.contains("read or write"), "{}", d.message);
+    }
+
+    #[test]
+    fn unknown_keys_name_the_likely_intent() {
+        for (given, expected) in [
+            ("fs", "read or write"),
+            ("filesystem", "read or write"),
+            ("network", "net"),
+            ("nett", "net"),
+            ("database", "db"),
+            ("eval", "dynamic"),
+        ] {
+            let doc = serde_json::json!({ "security": { "allow": { given: true } } });
+            let out = parse_deka_security_policy(&doc);
+            let d = out
+                .diagnostics
+                .iter()
+                .find(|d| d.code == "SECURITY_POLICY_UNKNOWN_SCOPE_KEY")
+                .unwrap_or_else(|| panic!("no diagnostic for {given}"));
+            assert!(
+                d.message.contains(expected),
+                "{given} should suggest {expected}: {}",
+                d.message
+            );
+        }
+    }
+
+    #[test]
+    fn a_key_with_no_near_miss_still_lists_the_valid_ones() {
+        let doc = serde_json::json!({ "security": { "deny": { "boguskey": true } } });
+        let out = parse_deka_security_policy(&doc);
+        let d = out
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "SECURITY_POLICY_UNKNOWN_SCOPE_KEY")
+            .expect("diagnostic present");
+        assert!(d.message.contains("read, write, net"), "{}", d.message);
+        assert!(!d.message.contains("Did you mean"), "{}", d.message);
+    }
+
+    #[test]
+    fn every_valid_key_is_accepted() {
+        for key in super::KNOWN_CAPABILITY_KEYS {
+            let value = if key == "dynamic" {
+                serde_json::json!(true)
+            } else {
+                serde_json::json!(["x"])
+            };
+            let doc = serde_json::json!({ "security": { "allow": { key: value } } });
+            let out = parse_deka_security_policy(&doc);
+            assert!(!out.has_errors(), "{key} must be accepted");
+        }
+    }
 
     #[test]
     fn default_policy_when_key_missing() {
