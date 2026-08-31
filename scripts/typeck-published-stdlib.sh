@@ -40,7 +40,16 @@ for name in "${PACKAGES[@]}"; do
     failed=1
     continue
   fi
-  main=""
+  # `deka check` is a SINGLE-FILE typecheck: it does not resolve imports, so
+  # checking a package's index.ds directly reports every imported name as
+  # unknown and cascades. That is a false failure for any package with
+  # dependencies (auth, jwt, http), and a true result only by luck for those
+  # without.
+  #
+  # `deka run` on a consumer walks the module graph and typechecks the package
+  # in place. Validated against bytes@0.2.0, whose `unknown type object` this
+  # catches while `deka check` on a consumer and `deka build` both miss it.
+  pkg_index=""
   for candidate in \
     "$proj/ds_modules/@deka/$name/index.ds" \
     "$proj/ds_modules/$name/index.ds" \
@@ -48,21 +57,43 @@ for name in "${PACKAGES[@]}"; do
     "$proj/php_modules/$name/index.ds"
   do
     if [[ -f "$candidate" ]]; then
-      main="$candidate"
+      pkg_index="$candidate"
       break
     fi
   done
-  if [[ -z "$main" ]]; then
+  if [[ -z "$pkg_index" ]]; then
     echo "FAIL $name: no index.ds after install"
     failed=1
     continue
   fi
-  if ! (cd "$proj" && DEKA_SECURITY_NO_PROMPT=1 "$CLI" check "$main"); then
-    echo "FAIL $name: typeck"
+
+  # Import one real export so the package enters the graph. A bare named
+  # import is enough; nothing is called, so no argument types are needed.
+  # || true: grep exits 1 on no match and head can SIGPIPE it; neither is fatal
+  # here, an empty symbol is handled below. Without this, set -o pipefail aborts
+  # the whole run on the first package that yields nothing.
+  symbol="$( { grep -oE '^export (async )?fn [A-Za-z_][A-Za-z0-9_]*' "$pkg_index" || true; } | head -1 | awk '{print $NF}')"
+  if [[ -z "$symbol" ]]; then
+    echo "skip $name (no exported fn to import)"
+    continue
+  fi
+
+  if [[ "$name" == "io" ]]; then
+    printf 'import { echo } from "io"\necho("ok")\n' >"$proj/consumer.ds"
+  else
+    (cd "$proj" && DEKA_SECURITY_NO_PROMPT=1 "$CLI" add io --yes --no-prompt >/dev/null 2>&1) || true
+    printf 'import { %s } from "%s"\nimport { echo } from "io"\necho("ok")\n' \
+      "$symbol" "$name" >"$proj/consumer.ds"
+  fi
+
+  out="$(cd "$proj" && DEKA_SECURITY_NO_PROMPT=1 "$CLI" run consumer.ds 2>&1 || true)"
+  if grep -qE 'unknown type|unknown identifier|expected `' <<<"$out"; then
+    echo "FAIL $name: does not typecheck on this compiler"
+    grep -vE '^\[security\]' <<<"$out" | head -5
     failed=1
     continue
   fi
-  echo "ok $name"
+  echo "ok $name (via $symbol)"
 done
 
 if [[ "$failed" -ne 0 ]]; then
