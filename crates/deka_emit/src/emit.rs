@@ -2077,43 +2077,355 @@ fn is_builtin_call<'a>(callee: &Expr<'a>, name: &str) -> bool {
     matches!(callee, Expr::Identifier { name: n, .. } if *n == name)
 }
 
-fn raw_js_looks_like_statements(raw: &str) -> bool {
-    if raw.contains(';') {
-        return true;
+#[derive(Default)]
+struct RawJsScan<'a> {
+    first_word: Option<&'a str>,
+    has_top_level_semicolon: bool,
+    has_await: bool,
+    saw_significant: bool,
+    previous_can_end_expression: bool,
+}
+
+#[derive(Clone, Copy)]
+enum RawJsTokenClass {
+    Word,
+    Number,
+    String,
+    Template,
+    Punctuation(u8),
+}
+
+/// Scan the parts of an unsafe body that affect wrapper selection.
+///
+/// This is deliberately a small lexical scanner rather than a JavaScript
+/// parser. The browser compiler cannot afford to link SWC's parser, but the
+/// old string searches were not safe: punctuation and keywords inside
+/// literals, comments, and regexes changed the emitted wrapper. Keeping this
+/// scanner lexical also means native and WASM compilers make the same choice.
+fn scan_raw_js(raw: &str) -> RawJsScan<'_> {
+    let bytes = raw.as_bytes();
+    let mut scan = RawJsScan::default();
+    let mut i = 0;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut brace_depth = 0usize;
+    let mut line_break_since_token = false;
+    let mut previous_allows_regex = true;
+
+    while i < bytes.len() {
+        match bytes[i] {
+            b' ' | b'\t' | b'\r' | b'\n' => {
+                if bytes[i] == b'\n' {
+                    line_break_since_token = true;
+                }
+                i += 1;
+            }
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'/' => {
+                i += 2;
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+                line_break_since_token = true;
+            }
+            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'*' => {
+                let start = i;
+                i += 2;
+                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                    i += 1;
+                }
+                if i + 1 < bytes.len() {
+                    i += 2;
+                }
+                if raw[start..i.min(raw.len())].contains('\n') {
+                    line_break_since_token = true;
+                }
+            }
+            b'\'' | b'"' => {
+                let start = i;
+                i = skip_js_quoted(raw, i);
+                scan_token(
+                    &mut scan,
+                    &raw[start..i],
+                    RawJsTokenClass::String,
+                    line_break_since_token,
+                    paren_depth,
+                    bracket_depth,
+                    brace_depth,
+                );
+                line_break_since_token = false;
+                previous_allows_regex = false;
+            }
+            b'`' => {
+                let start = i;
+                i = skip_js_template(raw, i);
+                scan_token(
+                    &mut scan,
+                    &raw[start..i],
+                    RawJsTokenClass::Template,
+                    line_break_since_token,
+                    paren_depth,
+                    bracket_depth,
+                    brace_depth,
+                );
+                line_break_since_token = false;
+                previous_allows_regex = false;
+            }
+            b'/' if previous_allows_regex => {
+                i = skip_js_regex(raw, i);
+                scan_token(
+                    &mut scan,
+                    "/regex/",
+                    RawJsTokenClass::String,
+                    line_break_since_token,
+                    paren_depth,
+                    bracket_depth,
+                    brace_depth,
+                );
+                line_break_since_token = false;
+                previous_allows_regex = false;
+            }
+            b'0'..=b'9' => {
+                let start = i;
+                i = skip_js_number(bytes, i);
+                scan_token(
+                    &mut scan,
+                    &raw[start..i],
+                    RawJsTokenClass::Number,
+                    line_break_since_token,
+                    paren_depth,
+                    bracket_depth,
+                    brace_depth,
+                );
+                line_break_since_token = false;
+                previous_allows_regex = false;
+            }
+            b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' => {
+                let start = i;
+                i += 1;
+                while i < bytes.len()
+                    && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] == b'$')
+                {
+                    i += 1;
+                }
+                let word = &raw[start..i];
+                scan_token(
+                    &mut scan,
+                    word,
+                    RawJsTokenClass::Word,
+                    line_break_since_token,
+                    paren_depth,
+                    bracket_depth,
+                    brace_depth,
+                );
+                line_break_since_token = false;
+                previous_allows_regex = word_allows_regex_after(word);
+            }
+            punct => {
+                let start = i;
+                let class = RawJsTokenClass::Punctuation(punct);
+                i += 1;
+                if i < bytes.len() && is_two_byte_js_punctuation(punct, bytes[i]) {
+                    i += 1;
+                }
+                scan_token(
+                    &mut scan,
+                    &raw[start..i],
+                    class,
+                    line_break_since_token,
+                    paren_depth,
+                    bracket_depth,
+                    brace_depth,
+                );
+                line_break_since_token = false;
+                match punct {
+                    b'(' => paren_depth += 1,
+                    b')' => paren_depth = paren_depth.saturating_sub(1),
+                    b'[' => bracket_depth += 1,
+                    b']' => bracket_depth = bracket_depth.saturating_sub(1),
+                    b'{' => brace_depth += 1,
+                    b'}' => brace_depth = brace_depth.saturating_sub(1),
+                    _ => {}
+                }
+                previous_allows_regex = punctuation_allows_regex_after(punct);
+            }
+        }
     }
-    let head = raw
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .trim_matches(|c: char| c == '(' || c == '{' || c == '[');
+
+    scan
+}
+
+fn scan_token<'a>(
+    scan: &mut RawJsScan<'a>,
+    text: &'a str,
+    class: RawJsTokenClass,
+    line_break_before: bool,
+    paren_depth: usize,
+    bracket_depth: usize,
+    brace_depth: usize,
+) {
+    let at_top_level = paren_depth == 0 && bracket_depth == 0 && brace_depth == 0;
+    let can_start_expression = matches!(class, RawJsTokenClass::Word | RawJsTokenClass::Number | RawJsTokenClass::String | RawJsTokenClass::Template);
+    if line_break_before
+        && at_top_level
+        && scan.previous_can_end_expression
+        && can_start_expression
+    {
+        scan.has_top_level_semicolon = true;
+    }
+
+    if !scan.saw_significant {
+        if let RawJsTokenClass::Word = class {
+            scan.first_word = Some(text);
+        }
+        scan.saw_significant = true;
+    }
+    if text == "await" {
+        scan.has_await = true;
+    }
+    if let RawJsTokenClass::Punctuation(punct) = class {
+        if punct == b';' && at_top_level {
+            scan.has_top_level_semicolon = true;
+        }
+    }
+    scan.previous_can_end_expression = matches!(
+        class,
+        RawJsTokenClass::Word
+            | RawJsTokenClass::Number
+            | RawJsTokenClass::String
+            | RawJsTokenClass::Template
+    );
+    if let RawJsTokenClass::Punctuation(punct) = class {
+        scan.previous_can_end_expression |= matches!(punct, b')' | b']' | b'}');
+    }
+}
+
+fn skip_js_quoted(raw: &str, mut i: usize) -> usize {
+    let quote = raw.as_bytes()[i];
+    i += 1;
+    let bytes = raw.as_bytes();
+    while i < bytes.len() {
+        if bytes[i] == b'\\' {
+            i = (i + 2).min(bytes.len());
+        } else if bytes[i] == quote {
+            return i + 1;
+        } else {
+            i += 1;
+        }
+    }
+    i
+}
+
+fn skip_js_template(raw: &str, mut i: usize) -> usize {
+    let bytes = raw.as_bytes();
+    i += 1;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' {
+            i = (i + 2).min(bytes.len());
+        } else if bytes[i] == b'`' {
+            return i + 1;
+        } else {
+            i += 1;
+        }
+    }
+    i
+}
+
+fn skip_js_regex(raw: &str, mut i: usize) -> usize {
+    let bytes = raw.as_bytes();
+    i += 1;
+    let mut in_class = false;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i = (i + 2).min(bytes.len()),
+            b'[' => {
+                in_class = true;
+                i += 1;
+            }
+            b']' => {
+                in_class = false;
+                i += 1;
+            }
+            b'/' if !in_class => {
+                i += 1;
+                while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
+                    i += 1;
+                }
+                return i;
+            }
+            _ => i += 1,
+        }
+    }
+    i
+}
+
+fn skip_js_number(bytes: &[u8], mut i: usize) -> usize {
+    while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || matches!(bytes[i], b'.' | b'_')) {
+        i += 1;
+    }
+    i
+}
+
+fn word_allows_regex_after(word: &str) -> bool {
     matches!(
-        head,
-        "const"
-            | "let"
-            | "var"
-            | "function"
-            | "class"
-            | "if"
-            | "for"
-            | "while"
-            | "do"
-            | "try"
-            | "switch"
-            | "return"
+        word,
+        "return"
             | "throw"
-            | "break"
-            | "continue"
-            | "with"
-            | "debugger"
-            | "import"
-            | "export"
-            | "async"
+            | "case"
+            | "delete"
+            | "void"
+            | "typeof"
+            | "instanceof"
+            | "in"
+            | "of"
+            | "yield"
+            | "await"
     )
 }
 
+fn punctuation_allows_regex_after(punct: u8) -> bool {
+    matches!(
+        punct,
+        b'(' | b'[' | b'{' | b'=' | b':' | b',' | b';' | b'!' | b'?' | b'&' | b'|'
+            | b'+' | b'-' | b'*' | b'%' | b'^' | b'~' | b'<' | b'>'
+    )
+}
+
+fn is_two_byte_js_punctuation(first: u8, second: u8) -> bool {
+    matches!((first, second), (b'=', b'=') | (b'!', b'=') | (b'&', b'&') | (b'|', b'|') | (b'=', b'>') | (b'+', b'+') | (b'-', b'-') | (b'<', b'=') | (b'>', b'='))
+}
+
+fn raw_js_looks_like_statements(raw: &str) -> bool {
+    let scan = scan_raw_js(raw);
+    scan.has_top_level_semicolon
+        || matches!(
+            scan.first_word,
+            Some(
+                "const"
+                    | "let"
+                    | "var"
+                    | "function"
+                    | "class"
+                    | "if"
+                    | "for"
+                    | "while"
+                    | "do"
+                    | "try"
+                    | "switch"
+                    | "return"
+                    | "throw"
+                    | "break"
+                    | "continue"
+                    | "with"
+                    | "debugger"
+                    | "import"
+                    | "export"
+                    | "async"
+            )
+        )
+}
+
 fn js_has_top_level_await(raw: &str) -> bool {
-    raw.split(|c: char| !c.is_alphanumeric() && c != '_')
-        .any(|word| word == "await")
+    scan_raw_js(raw).has_await
 }
 
 fn source_is_css(source: &str) -> bool {
