@@ -1,0 +1,25 @@
+import { echo } from "io"
+struct S {
+  path: string?
+}
+interface O {
+  label?: string
+}
+fn shown(value: Option<string>): string {
+  return match (value) {
+    Some(p) => p,
+    None => "none"
+  }
+}
+fn labelled(o: O): string {
+  if (isset(o.label)) {
+    return o.label
+  }
+  return "none"
+}
+const filled = S { path: Some("/x") }
+const empty = S { path: None }
+echo(shown(filled.path))
+echo(shown(empty.path))
+echo(labelled({ label: "hi" }))
+echo(labelled({}))

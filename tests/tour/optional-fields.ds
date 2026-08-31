@@ -1,15 +1,36 @@
 import { echo } from "io"
+
+// Two different ideas, two different spellings.
+
+// `email: string?` — the field is always there and holds an Option.
+// Write Some(x) or None yourself; the compiler will not guess for you.
 struct User {
   name: string
   email: string?
 }
 
-const u = User { name: "DekaScript" };
+// `nickname?: string` — the field may be absent entirely.
+// Its type is a plain string, so guard it with isset().
+interface Profile {
+  nickname?: string
+}
 
-const contact = match (u.email) {
+const user = User { name: "DekaScript", email: None }
+
+// Some and None are the only cases, so no catch-all arm is needed —
+// the compiler checks that you covered both.
+const contact = match (user.email) {
   Some(value) => value,
-  None => "no email",
-  _ => "unknown"
-};
+  None => "no email"
+}
 
-echo(contact);
+fn greet(profile: Profile): string {
+  if (isset(profile.nickname)) {
+    return profile.nickname
+  }
+  return "friend"
+}
+
+echo(contact)
+echo(greet({}))
+echo(greet({ nickname: "Deka" }))

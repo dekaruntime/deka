@@ -660,12 +660,12 @@ impl<'a> Checker<'a> {
         if matches!(expected, Type::Named { name: "void" }) && matches!(actual, Type::None) {
             return true;
         }
-        // A concrete `T` is assignable to `Option<T>` (sugar for `Some(T)`).
-        if let Type::Option { inner } = expected {
-            if self.is_assignable(inner, actual) {
-                return true;
-            }
-        }
+        // A concrete `T` is NOT assignable to `Option<T>`. This used to permit it
+        // as "sugar for Some(T)", but the emitter never implemented the sugar: the
+        // raw value was left in place, so `S { path: "/x" }` on a `path: string?`
+        // field typechecked and then threw `non-exhaustive match` at runtime on
+        // the first `match`. `Some(x)` must be written explicitly, matching how
+        // `Result` already behaves (deka#401).
         // `Option<A>` is assignable to `Option<B>` when `A` is assignable to `B`.
         if let (Type::Option { inner: expected_inner }, Type::Option { inner: actual_inner }) =
             (expected, actual)
