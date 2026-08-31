@@ -281,12 +281,17 @@ fn rfd24_security_claims_on_http() {
     )
     .unwrap_or_default();
     assert!(
-        api_entry.contains("Internal Server Error"),
-        "generated API wrapper must use an opaque 500: {api_entry}"
+        api_entry.contains("runApiRouter"),
+        "API entry should dispatch through ui/router: {api_entry}"
     );
     assert!(
         !api_entry.contains("e.message"),
         "generated API wrapper must not return e.message: {api_entry}"
+    );
+    assert!(
+        include_str!("../../deka_ui/js/router.js").contains("Internal Server Error")
+            && !include_str!("../../deka_ui/js/router.js").contains("e.message"),
+        "ui/router must use an opaque 500"
     );
 }
 

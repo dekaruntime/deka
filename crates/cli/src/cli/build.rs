@@ -1057,6 +1057,7 @@ fn write_ui_modules_for_worker(project_root: &Path) -> Result<(), String> {
         ("suspense.js", deka_ui::SUSPENSE),
         ("client.js", deka_ui::CLIENT),
         ("form.js", deka_ui::FORM),
+        ("router.js", deka_ui::ROUTER),
     ] {
         fs::write(ui_dir.join(name), source.as_bytes())
             .map_err(|err| format!("failed to write {}: {err}", ui_dir.join(name).display()))?;

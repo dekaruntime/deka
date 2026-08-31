@@ -252,4 +252,5 @@ fn rewrite_ui_imports(js: &str) -> String {
         .replace("from \"ui/form\"", "from \"./ui/form.js\"")
         .replace("from \"ui/suspense\"", "from \"./ui/suspense.js\"")
         .replace("from \"ui/server\"", "from \"./ui/server-stub.js\"")
+        .replace("from \"ui/router\"", "from \"./ui/router.js\"")
 }
