@@ -2194,15 +2194,18 @@ impl<'a> Checker<'a> {
         }
 
         // No explicit type args: infer from arguments.
+        //
+        // This used to match only a *top-level* `Type::Param`, so `fn head<T>(xs:
+        // Array<T>)` inferred nothing and reported `expected Array<T>, found
+        // Array<number>`. infer_type_args descends through Array, Option and
+        // nested generics, and is the same helper the enum constructors use.
         let mut subst = HashMap::new();
         for (param_ty, arg) in function_params.iter().zip(call_args.iter()) {
-            if let Type::Param { name } = param_ty {
-                if subst.contains_key(*name) {
-                    continue;
-                }
-                let arg_type = self.check_expr(arg);
-                subst.insert(*name, arg_type);
+            if !contains_param(param_ty) {
+                continue;
             }
+            let arg_type = self.check_expr(arg);
+            infer_type_args(param_ty, &arg_type, &param_names, &mut subst);
         }
         subst
     }
@@ -2225,6 +2228,7 @@ fn collect_param_names_rec<'a>(ty: &Type<'a>, names: &mut Vec<&'a str>, seen: &m
             }
         }
         Type::Option { inner } => collect_param_names_rec(inner, names, seen),
+        Type::Array { elem } => collect_param_names_rec(elem, names, seen),
         Type::Function { params, ret, .. } => {
             for p in params {
                 collect_param_names_rec(p, names, seen);
@@ -2244,6 +2248,7 @@ fn contains_param(ty: &Type<'_>) -> bool {
     match ty {
         Type::Param { .. } => true,
         Type::Option { inner } => contains_param(inner),
+        Type::Array { elem } => contains_param(elem),
         Type::Function { params, ret, .. } => {
             params.iter().any(contains_param) || contains_param(ret)
         }
@@ -2287,6 +2292,9 @@ fn substitute_type<'a>(ty: &Type<'a>, subst: &HashMap<&'a str, Type<'a>>) -> Typ
         Type::Param { name } => subst.get(name).cloned().unwrap_or_else(|| Type::Param { name }),
         Type::Option { inner } => Type::Option {
             inner: Box::new(substitute_type(inner, subst)),
+        },
+        Type::Array { elem } => Type::Array {
+            elem: Box::new(substitute_type(elem, subst)),
         },
         Type::Function { params, ret, optional } => Type::Function {
             params: params.iter().map(|p| substitute_type(p, subst)).collect(),
