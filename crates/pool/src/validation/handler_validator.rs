@@ -273,20 +273,21 @@ impl Visit for DynamicCodeValidator {
         node.visit_children_with(self);
     }
 
-    fn visit_member_expr(&mut self, node: &MemberExpr) {
-        // `process.env`, `globalThis.process.env`, `globalThis["process"].env`
-        // are the same reach for the host process object.
-        if resolves_to_global(&Expr::Member(node.clone()), "process")
-            || resolves_to_global(&node.obj, "process")
-        {
-            self.reject(
-                node.span,
-                "Reaching the host process object is disabled by the security policy",
-                "Use a Deka capability instead of reaching the host process object.",
-            );
-        }
-        node.visit_children_with(self);
-    }
+    // Deliberately no `process` check here.
+    //
+    // `security.allow.dynamic` governs *evaluating code that did not exist at
+    // compile time* — `eval`, the `Function` constructor, dynamic `import()`.
+    // Reaching the host process object is ambient host access, a different
+    // concern with a different capability shape (`env` is the closest thing
+    // that exists today).
+    //
+    // The first version of this validator denied `globalThis.process` but not
+    // bare `process`, so `process.cwd()` was allowed and
+    // `globalThis.process.cwd()` was not — the same capability, two answers.
+    // Extending it to the bare form instead broke `error_globals/process_cwd`,
+    // a passing conformance fixture for a documented language feature. Neither
+    // half belongs under this policy. What `process` should require is an open
+    // question tracked in deka#378 and deka#435.
 }
 
 fn is_identifier(expr: &Expr, expected: &str) -> bool {
@@ -341,8 +342,6 @@ mod dynamic_code_tests {
             "const value = new Function('return 7')();",
             "const value = Function('return 7')();",
             "const value = import('./late.js');",
-            "const value = globalThis.process;",
-            "const value = globalThis['process'];",
             // Member, paren and sequence spellings of the same globals. Each of
             // these ran straight past the first version of this validator.
             "const value = globalThis.eval('1 + 1');",
@@ -351,12 +350,26 @@ mod dynamic_code_tests {
             "const value = new globalThis.Function('return 7')();",
             "const value = (0, eval)('1 + 1');",
             "const value = (eval)('1 + 1');",
-            "const value = process.env;",
         ] {
             let result = validate_dynamic_code(source, "handler.js", false);
             assert!(result.is_err(), "expected rejection for {source}");
             let error = result.unwrap_err();
             assert!(error.contains("Dynamic Code Disabled"), "{error}");
+        }
+    }
+
+    /// Ambient host access is not dynamic code. `error_globals/process_cwd` is a
+    /// passing conformance fixture; denying it here broke a documented feature
+    /// under a policy that does not name it. See deka#378, deka#435.
+    #[test]
+    fn host_process_access_is_not_governed_by_the_dynamic_policy() {
+        for source in [
+            "const value = process.cwd();",
+            "const value = globalThis.process;",
+            "const value = globalThis['process'].cwd();",
+        ] {
+            super::validate_dynamic_code(source, "handler.js", false)
+                .unwrap_or_else(|err| panic!("{source} must not be rejected here: {err}"));
         }
     }
 

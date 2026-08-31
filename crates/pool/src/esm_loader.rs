@@ -94,6 +94,7 @@ impl PhpxEsmLoader {
                     let imports: Vec<String> = graph.imports.iter().cloned().collect();
                     ensure_project_layout(&project_root, &imports)
                         .map_err(JsErrorBox::generic)?;
+                    enforce_dynamic_policy(&graph.modules)?;
                     Some(graph.modules)
                 }
                 Err(diagnostics) => {
@@ -509,6 +510,31 @@ fn collect_deka_source_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Re
         if is_deka_source {
             out.push(path);
         }
+    }
+    Ok(())
+}
+
+/// Enforce the resolved `security.allow.dynamic` policy on every module in the
+/// graph, before any of it reaches V8.
+///
+/// deka#425. The inline-handler check in `worker_execution` covers the platform
+/// path, whose tenant bundles arrive as source. `deka run` and `deka serve` are
+/// ESM and leave `handler_code` empty, so nothing gated them and the runtime
+/// printed `dynamic=false` while `eval` worked.
+///
+/// This validates the compiler's own output for each user module rather than
+/// the assembled script. The host-bindings preamble legitimately reaches
+/// `globalThis` and would trip the validator; user modules never need to.
+fn enforce_dynamic_policy(modules: &HashMap<PathBuf, String>) -> Result<(), JsErrorBox> {
+    // Deterministic order, so a project with two offending modules reports the
+    // same one every run.
+    let mut paths: Vec<&PathBuf> = modules.keys().collect();
+    paths.sort();
+    for path in paths {
+        let source = &modules[path];
+        let name = path.to_string_lossy();
+        crate::validation::validate_dynamic_code_from_process_env(source, &name)
+            .map_err(|err| JsErrorBox::generic(format!("{DEKA_VALIDATION_ERROR_MARKER}{err}")))?;
     }
     Ok(())
 }
