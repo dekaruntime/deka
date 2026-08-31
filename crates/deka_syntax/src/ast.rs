@@ -538,6 +538,17 @@ pub enum Pattern<'a> {
         elements: &'a [Pattern<'a>],
         span: Span,
     },
+    /// `A | B => …`. Alternatives are tried in order; the arm matches if any
+    /// of them does.
+    ///
+    /// No alternative may bind a name in v1 (deka#446). Allowing it means every
+    /// alternative has to bind the *same* names, and the binding has to come
+    /// from whichever one matched -- worth having, but not needed for the
+    /// motivating case, which is grouping payload-free cases.
+    Or {
+        alternatives: &'a [Pattern<'a>],
+        span: Span,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]

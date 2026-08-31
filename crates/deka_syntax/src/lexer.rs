@@ -70,7 +70,11 @@ pub enum TokenKind {
     Or,
     Not,
     Ampersand,
+    /// `|>`, the pipeline operator.
     Pipe,
+    /// A bare `|`. Used to separate or-pattern alternatives (deka#446); it was
+    /// a lex error before that, since DekaScript has no bitwise or.
+    Bar,
     Caret,
     Shl,
     Shr,
@@ -1113,7 +1117,11 @@ impl<'a> Lexer<'a> {
                         span: self.span_from(start, start_byte),
                     }
                 } else {
-                    self.error(format!("unexpected `|`; did you mean `||` or `|>`?"))
+                    Token {
+                        kind: TokenKind::Bar,
+                        text: "|",
+                        span: self.span_from(start, start_byte),
+                    }
                 }
             }
             '^' => {

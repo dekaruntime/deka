@@ -963,6 +963,12 @@ impl<'a> Parser<'a> {
             // statement. Consume any following newlines as well.
             self.skip_newlines();
             Some(())
+        } else if self.at(TokenKind::Bar) {
+            // `|` only separates or-pattern alternatives (deka#446).
+            // DekaScript has no bitwise or, and a bare `|` used to be a lex
+            // error carrying this hint -- keep it now that the token is real.
+            self.error("unexpected `|`; did you mean `||` or `|>`?");
+            None
         } else {
             self.error(format!(
                 "expected `;` or newline, found `{}`",

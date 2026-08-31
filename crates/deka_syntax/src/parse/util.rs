@@ -44,6 +44,7 @@ pub(super) fn eof_token<'a>() -> Token<'a> {
 pub(super) fn token_name(kind: TokenKind) -> &'static str {
     use TokenKind::*;
     match kind {
+        Bar => "`|`",
         Number => "number",
         BigInt => "bigint",
         String => "string",
