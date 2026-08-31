@@ -291,7 +291,6 @@ fn rfd24_security_claims_on_http() {
 }
 
 #[test]
-#[ignore = "deka#392.3: authed POST /_deka/defer returns 500 (defer-entry isolate never runs App)"]
 fn rfd24_defer_entitlement() {
     let serve = spawn_serve(false);
     let http = client();
@@ -300,6 +299,23 @@ fn rfd24_defer_entitlement() {
 }
 
 fn rfd24_defer_entitlement_inner(http: &Client, base: &str, serve: &Serve) {
+    let empty = http
+        .post(format!("{base}/_deka/defer"))
+        .header("content-type", "application/json")
+        .header("accept", "text/x-deka-session")
+        .body(r#"{"islands":[]}"#)
+        .send()
+        .expect("empty defer");
+    let empty_status = empty.status().as_u16();
+    let empty_body = empty.text().expect("empty body");
+    assert_eq!(
+        empty_status, 200,
+        "authed empty defer batch should 200, body: {empty_body}\nserve.log:\n{}\ndefer-entry:\n{}",
+        serve.log(),
+        fs::read_to_string(serve.root.path().join(".cache/dekascript/defer-entry.dsx"))
+            .unwrap_or_default()
+    );
+
     let blog = http
         .get(format!("{base}/blog"))
         .send()

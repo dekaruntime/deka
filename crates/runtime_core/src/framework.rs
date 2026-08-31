@@ -997,13 +997,13 @@ interface RequestHeaders {{ accept: string }}
 interface Request {{ url: string, pathname: string, method: string, headers: RequestHeaders, body: string }}
 interface Response {{ status: number, body: string }}
 
-async fn App(request: Request): Promise<Response> {{
-    const boxed = unsafe {{ deka.ui.runDeferBatch(request.body, {secret}, {registry}, {cache_control}) }}
-    const prom = match (boxed) {{
-        Ok(p) => p,
+fn App(request: Request): Response {{
+    const boxed = unsafe {{ globalThis.deka.ui.runDeferBatch(request.body, {secret}, {registry}, {cache_control}) }}
+    return match (boxed) {{
+        Ok(r) => r,
         Err(_) => {{ status: 500, body: "Internal Server Error" }},
+        _ => {{ status: 500, body: "Internal Server Error" }},
     }}
-    return await prom
 }}
 export {{ App }}
 "#
@@ -1741,15 +1741,23 @@ fn generate_worker_entry(entry: &Path, project_root: &Path) -> Result<String, St
             const raw = unsafe {{ middleware(request) }}
             const opt = match (raw) {{
                 Ok(v) => v,
-                Err(_) => {{ __case: "Some", value: {{ status: 500, body: "Internal Server Error", headers: {{ location: "" }} }} }},
+                Err(_) => {{ status: 500, body: "Internal Server Error", headers: {{ location: "" }} }},
+                _ => next_response(),
             }}
-            const unwrapped = unsafe {{ opt.__case == "Some" ? opt.value : {{ status: 0, body: "", headers: {{ location: "" }} }} }}
-            const decided = match (unwrapped) {{
+            const decided = unsafe {{
+                if (opt == null) return {{ status: 0, body: "", headers: {{ location: "" }} }};
+                if (opt.__case == "None") return {{ status: 0, body: "", headers: {{ location: "" }} }};
+                if (opt.__case == "Some") return opt.value;
+                if (typeof opt.status == "number") return opt;
+                return {{ status: 0, body: "", headers: {{ location: "" }} }};
+            }}
+            const response = match (decided) {{
                 Ok(r) => r,
                 Err(_) => {{ status: 500, body: "Internal Server Error", headers: {{ location: "" }} }},
+                _ => next_response(),
             }}
-            if (decided.status != 0) {{
-                return decided
+            if (response.status != 0) {{
+                return response
             }}
         }}
     }}
@@ -1834,12 +1842,21 @@ export fn App(request: Request): Response {{
     const raw = unsafe {{ middleware(request) }}
     const opt = match (raw) {{
         Ok(v) => v,
-        Err(_) => {{ __case: "Some", value: {{ status: 500, body: "Internal Server Error", headers: {{ location: "" }} }} }},
+        Err(_) => {{ status: 500, body: "Internal Server Error", headers: {{ location: "" }} }},
+        _ => next_response(),
     }}
-    const unwrapped = unsafe {{ opt.__case == "Some" ? opt.value : {{ status: 0, body: "", headers: {{ location: "" }} }} }}
-    return match (unwrapped) {{
+    // `return None` emits JS null; do not read `.__case` on it.
+    const decided = unsafe {{
+        if (opt == null) return {{ status: 0, body: "", headers: {{ location: "" }} }};
+        if (opt.__case == "None") return {{ status: 0, body: "", headers: {{ location: "" }} }};
+        if (opt.__case == "Some") return opt.value;
+        if (typeof opt.status == "number") return opt;
+        return {{ status: 0, body: "", headers: {{ location: "" }} }};
+    }}
+    return match (decided) {{
         Ok(r) => r,
         Err(_) => {{ status: 500, body: "Internal Server Error", headers: {{ location: "" }} }},
+        _ => next_response(),
     }}
 }}
 "#,
@@ -2854,8 +2871,26 @@ mod tests {
         let entry = write_defer_router_entry(&tmp).expect("write defer-entry");
         let source = std::fs::read_to_string(&entry).expect("read defer-entry");
         assert!(source.contains("runDeferBatch"));
-        assert!(source.contains("deka.ui.runDeferBatch"));
+        assert!(source.contains("globalThis.deka.ui.runDeferBatch"));
+        assert!(!source.contains("async fn App"));
         assert!(!source.contains("headers: { \\\"cache-control\\\""));
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn middleware_entry_treats_null_none_as_continue() {
+        let src = middleware_app_source(&Some(vec!["/_deka/defer".to_string()]));
+        assert!(
+            src.contains("if (opt == null)"),
+            "return None compiles to JS null; wrapper must not read .__case on it: {src}"
+        );
+        assert!(
+            src.contains("next_response()"),
+            "null/None must continue with status 0: {src}"
+        );
+        assert!(
+            src.contains("matcher_hits"),
+            "matcher should still gate the middleware call: {src}"
+        );
     }
 }

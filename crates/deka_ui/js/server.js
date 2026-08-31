@@ -150,7 +150,7 @@ export function verifyDeferIsland(name, propsJson, id, mac) {
   return diff === 0;
 }
 
-export async function runDeferBatch(body, secret, registry, cacheControl) {
+export function runDeferBatch(body, secret, registry, cacheControl) {
   if (secret) {
     try {
       globalThis.__DEKA_DEFER_SECRET = String(secret);
@@ -520,8 +520,11 @@ async function* iterateChunks(node) {
     const selected = await nextResolved(queue);
     const index = queue.indexOf(selected.item);
     if (index >= 0) queue.splice(index, 1);
-    const source = selected.item.children != null ? selected.item.children : selected.value;
-    const html = await renderNodeAsync(source);
+    // Stream the resolved tree with the same sync renderer so nested
+    // Suspense can enqueue more boundaries. renderNodeAsync unwraps
+    // Suspense and waits, which collapsed nested fallbacks (Hats
+    // jsx_suspense_stream_swap).
+    const html = renderNode(selected.value, ctx);
     for (const extra of ctx.pending) queue.push(extra);
     ctx.pending.length = 0;
     if (selected.item.id) yield swapChunk(selected.item.id, html);
