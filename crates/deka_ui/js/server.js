@@ -60,6 +60,7 @@ const DEFER_TTL_SECS = 3600;
 const DEFER_NONCE_LEN = 12;
 
 let deferRequest = null;
+let deferSessionCookie = "deka_sid";
 
 function getDeferSecret() {
   try {
@@ -70,8 +71,11 @@ function getDeferSecret() {
   return "";
 }
 
-export function bindDefer(request, secret) {
+export function bindDefer(request, secret, cookieName) {
   deferRequest = request || null;
+  if (cookieName !== undefined && cookieName !== null) {
+    deferSessionCookie = String(cookieName);
+  }
   if (secret) {
     try {
       globalThis.__DEKA_DEFER_SECRET = String(secret);
@@ -79,11 +83,34 @@ export function bindDefer(request, secret) {
   }
 }
 
-function sessionFromRequest(request) {
+function cookieHeader(request) {
   const req = request || deferRequest;
   const headers = req && req.headers;
   if (!headers) return "";
   return String(headers.cookie || headers.Cookie || "");
+}
+
+function cookieValue(header, name) {
+  const want = String(name || "");
+  if (!want) return "";
+  const parts = String(header || "").split(";");
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i].trim();
+    const eq = part.indexOf("=");
+    if (eq <= 0) continue;
+    if (part.slice(0, eq) !== want) continue;
+    const raw = part.slice(eq + 1).trim();
+    try {
+      return decodeURIComponent(raw);
+    } catch (_) {
+      return raw;
+    }
+  }
+  return "";
+}
+
+function sessionFromRequest(request) {
+  return cookieValue(cookieHeader(request), deferSessionCookie);
 }
 
 function deferAad(name, request) {
@@ -263,9 +290,12 @@ function deferJson(status, body, extraHeaders) {
   return { status, body, headers };
 }
 
-export async function runDeferBatch(body, secret, registry, cacheControl, request) {
-  if (secret) bindDefer(request, secret);
-  else if (request) deferRequest = request;
+export async function runDeferBatch(body, secret, registry, cacheControl, request, cookieName) {
+  if (secret) bindDefer(request, secret, cookieName);
+  else {
+    if (request) deferRequest = request;
+    if (cookieName !== undefined && cookieName !== null) deferSessionCookie = String(cookieName);
+  }
   let payload = {};
   try {
     payload = JSON.parse(body || "{}");

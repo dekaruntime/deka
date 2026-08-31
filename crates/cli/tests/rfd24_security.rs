@@ -402,6 +402,7 @@ fn rfd24_defer_entitlement_inner(http: &Client, base: &str, serve: &Serve) {
 
     let admin = http
         .get(format!("{base}/admin"))
+        .header("cookie", "deka_sid=alice; _ga=1")
         .send()
         .expect("GET /admin")
         .text()
@@ -409,48 +410,39 @@ fn rfd24_defer_entitlement_inner(http: &Client, base: &str, serve: &Serve) {
     let panel = parse_island(&admin);
     assert_eq!(panel.name, "AdminPanel");
     assert!(!panel.enc.is_empty(), "AdminPanel island must carry enc ciphertext");
+    let island = serde_json::json!({
+        "islands": [{
+            "id": panel.id,
+            "name": panel.name,
+            "enc": panel.enc,
+        }]
+    })
+    .to_string();
+    let extra = http
+        .post(format!("{base}/_deka/defer"))
+        .header("content-type", "application/json")
+        .header("accept", "text/x-deka-session")
+        .header("cookie", "deka_sid=alice; _ga=2")
+        .body(island.clone())
+        .send()
+        .expect("same session extra cookies");
+    let extra_body = extra.text().expect("extra body");
+    assert!(
+        extra_body.contains("admin-secret"),
+        "unrelated cookies must not invalidate the island: {extra_body}"
+    );
     let replay = http
         .post(format!("{base}/_deka/defer"))
         .header("content-type", "application/json")
         .header("accept", "text/x-deka-session")
-        .header("cookie", "deka_sid=other-user")
-        .body(
-            serde_json::json!({
-                "islands": [{
-                    "id": panel.id,
-                    "name": panel.name,
-                    "enc": panel.enc,
-                }]
-            })
-            .to_string(),
-        )
+        .header("cookie", "deka_sid=bob; _ga=2")
+        .body(island.clone())
         .send()
-        .expect("cookie-mismatched defer");
+        .expect("session-mismatched defer");
     let replay_body = replay.text().expect("replay body");
     assert!(
         !replay_body.contains("admin-secret"),
-        "ciphertext bound to empty cookie must not decrypt under another cookie: {replay_body}"
-    );
-    let legit = http
-        .post(format!("{base}/_deka/defer"))
-        .header("content-type", "application/json")
-        .header("accept", "text/x-deka-session")
-        .body(
-            serde_json::json!({
-                "islands": [{
-                    "id": panel.id,
-                    "name": panel.name,
-                    "enc": panel.enc,
-                }]
-            })
-            .to_string(),
-        )
-        .send()
-        .expect("legit defer");
-    let legit_body = legit.text().expect("legit body");
-    assert!(
-        legit_body.contains("admin-secret"),
-        "valid AdminPanel MAC should render the island: {legit_body}"
+        "ciphertext bound to deka_sid=alice must not decrypt for bob: {replay_body}"
     );
 }
 

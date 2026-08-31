@@ -991,6 +991,7 @@ fn generate_defer_entry(
     registry.push_str(" }");
     let cache_control = json_str(&format!("private, {}", defer_cache_header(deferred)))?;
     let secret = json_str(&ensure_defer_secret(project_root)?)?;
+    let cookie = json_str(&session_cookie_name(project_root))?;
     Ok(format!(
         r#"{imports}import {{ runDeferBatch }} from "ui/server"
 
@@ -999,7 +1000,7 @@ interface Request {{ url: string, pathname: string, method: string, headers: Req
 interface Response {{ status: number, body: string }}
 
 async fn App(request: Request): Promise<Response> {{
-    const boxed = unsafe {{ runDeferBatch(request.body, {secret}, {registry}, {cache_control}, request) }}
+    const boxed = unsafe {{ runDeferBatch(request.body, {secret}, {registry}, {cache_control}, request, {cookie}) }}
     const prom = match (boxed) {{
         Ok(p) => p,
         Err(_) => {{ status: 500, body: "Internal Server Error" }},
@@ -1086,7 +1087,8 @@ pub fn write_app_router_entry(project_root: &Path) -> Result<PathBuf, String> {
         String::new()
     } else {
         let secret = json_str(&ensure_defer_secret(project_root)?)?;
-        format!("    unsafe {{ deka.ui.bindDefer(request, {secret}) }}\n")
+        let cookie = json_str(&session_cookie_name(project_root))?;
+        format!("    unsafe {{ deka.ui.bindDefer(request, {secret}, {cookie}) }}\n")
     };
     let source = generate_serve_entry(
         &entry,
@@ -1321,6 +1323,26 @@ fn collect_public_rel_paths_walk(dir: &Path, base: &Path, out: &mut Vec<String>)
                 out.push(format!("/{rel}"));
             }
         }
+    }
+}
+
+/// Cookie whose value is AES-GCM AAD for deferred islands.
+/// `serve.sessionCookie` in deka.json; default `deka_sid`. Empty string
+/// disables session binding (anonymous AAD is just the component name).
+fn session_cookie_name(project_root: &Path) -> String {
+    let Ok(raw) = std::fs::read_to_string(project_root.join("deka.json")) else {
+        return "deka_sid".to_string();
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return "deka_sid".to_string();
+    };
+    match value
+        .get("serve")
+        .and_then(|serve| serve.get("sessionCookie").or_else(|| serve.get("session_cookie")))
+        .and_then(|v| v.as_str())
+    {
+        Some(name) => name.to_string(),
+        None => "deka_sid".to_string(),
     }
 }
 
@@ -2733,7 +2755,34 @@ mod tests {
         assert!(source.contains("runDeferBatch"));
         assert!(source.contains("import { runDeferBatch } from \"ui/server\""));
         assert!(source.contains("runDeferBatch(request.body"));
+        assert!(source.contains("\"deka_sid\""), "{source}");
         assert!(!source.contains("headers: { \\\"cache-control\\\""));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn session_cookie_name_reads_serve_config() {
+        let tmp = std::env::temp_dir().join(format!(
+            "deka_sid_cfg_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        assert_eq!(session_cookie_name(&tmp), "deka_sid");
+        std::fs::write(
+            tmp.join("deka.json"),
+            "{ \"serve\": { \"sessionCookie\": \"sid\" } }\n",
+        )
+        .unwrap();
+        assert_eq!(session_cookie_name(&tmp), "sid");
+        std::fs::write(
+            tmp.join("deka.json"),
+            "{ \"serve\": { \"sessionCookie\": \"\" } }\n",
+        )
+        .unwrap();
+        assert_eq!(session_cookie_name(&tmp), "");
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
