@@ -513,10 +513,28 @@ impl<'a> Checker<'a> {
     }
 
     fn seed_builtins(&mut self) {
-        // Host-provided JavaScript globals that the test suite (and v1) rely on.
+        // Host-provided JavaScript globals still reachable from plain DekaScript.
         // They are typed opaquely as Infer; field/method access on Infer is
-        // allowed and returns Infer. Console is intentionally excluded per RFD 32.
-        for name in ["Math", "Date", "JSON", "Object", "Promise", "crypto", "parseInt", "process", "isset"] {
+        // allowed and returns Infer, so anything flowing through one of these
+        // stops being typechecked (deka#252). Console is excluded per RFD 32.
+        //
+        // RFD 21 and RFD 13's "imports over ambient globals" corollary say
+        // ordinary DekaScript does not reach host globals at all. Removing a
+        // name is only possible once a DekaScript replacement exists, so this
+        // list shrinks as those land (deka#378):
+        //
+        //   removed: JSON    -> @deka/json
+        //            crypto  -> @deka/crypto
+        //            Date    -> @deka/time
+        //
+        //   remaining: Math      needs prelude methods on `number` (#378 step 2)
+        //              Object    Promise    parseInt    process    undecided
+        //              isset     removed by #416
+        //
+        // `unsafe { }` bodies are raw JavaScript and are not checked against
+        // this list, so a removed name is still reachable there — which is the
+        // form the stdlib packages already use.
+        for name in ["Math", "Object", "Promise", "parseInt", "process", "isset"] {
             self.globals.insert(name, Type::Infer);
         }
     }
