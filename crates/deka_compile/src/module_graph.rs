@@ -767,4 +767,36 @@ mod tests {
         assert!(js.contains("ui/form"), "got: {js}");
         assert!(js.contains("Form"), "got: {js}");
     }
+
+    #[test]
+    fn generated_defer_entry_compiles() {
+        let tmp = std::env::temp_dir().join(format!(
+            "deka_defer_compile_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(tmp.join("app/blog")).unwrap();
+        std::fs::write(tmp.join("deka.json"), "{}\n").unwrap();
+        std::fs::write(
+            tmp.join("app/blog/page.dsx"),
+            "export fn Post() {\n    return <article>blog-secret</article>;\n}\nexport fn Page() {\n    return <main><Post server:defer><span slot=\"fallback\">loading-post</span></Post></main>;\n}\n",
+        )
+        .unwrap();
+        let entry = runtime_core::framework::write_defer_router_entry(&tmp)
+            .expect("write defer-entry");
+        let loader = FsModuleLoader::new(tmp.clone());
+        if let Err(errs) = compile_module_graph(&entry, &loader) {
+            let _ = std::fs::remove_dir_all(&tmp);
+            panic!(
+                "defer-entry failed to compile:\n{}",
+                errs.iter()
+                    .map(|d| format!("{}:{}: {}", d.line, d.column, d.message))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

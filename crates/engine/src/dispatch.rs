@@ -5,20 +5,37 @@ use std::sync::Arc;
 use crate::RuntimeState;
 use crate::envelope::{RequestEnvelope, ResponseEnvelope};
 use pool::RequestParts;
-use pool::{ExecutionMode, RequestData};
+use pool::{ExecutionMode, HandlerKey, RequestData};
 use runtime_core::framework::{
     self, matcher_hits, parse_middleware_matcher, public_file_exists, skip_middleware_path,
     trailing_slash_redirect_for_request, MIDDLEWARE_NEXT_STATUS,
 };
 use runtime_core::storefront_envelope::StorefrontResponse;
 
+/// Page, API, middleware, and defer entries must not share one isolate.
+/// The serve RuntimeState key is the generated serve-entry filename; fold
+/// the actual entry path in so a hash collision cannot reuse App().
+fn handler_key_for_entry(base: &HandlerKey, handler_entry: Option<&str>) -> HandlerKey {
+    match handler_entry {
+        Some(entry) => {
+            let file = Path::new(entry)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(entry);
+            HandlerKey::new(format!("{}::{file}", base.name))
+        }
+        None => base.clone(),
+    }
+}
+
 async fn execute_request_data(
     state: Arc<RuntimeState>,
     request_data: RequestData,
 ) -> Result<ResponseEnvelope, String> {
+    let handler_key = handler_key_for_entry(&state.handler_key, request_data.handler_entry.as_deref());
     let pool_response = state
         .engine
-        .execute(state.handler_key.clone(), request_data)
+        .execute(handler_key, request_data)
         .await
         .map_err(|err| format!("handler execution failed: {}", err))?;
 
@@ -248,4 +265,33 @@ pub async fn execute_request_value(
     };
 
     execute_request_data(state, request_data).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::handler_key_for_entry;
+    use pool::HandlerKey;
+
+    #[test]
+    fn handler_key_includes_entry_filename() {
+        let base = HandlerKey::new("serve-entry.dsx");
+        let page = handler_key_for_entry(
+            &base,
+            Some("/tmp/proj/.cache/dekascript/serve-entry.dsx"),
+        );
+        let defer = handler_key_for_entry(
+            &base,
+            Some("/tmp/proj/.cache/dekascript/defer-entry.dsx"),
+        );
+        let mw = handler_key_for_entry(
+            &base,
+            Some("/tmp/proj/.cache/dekascript/middleware-entry.ds"),
+        );
+        assert_ne!(page.name, defer.name);
+        assert_ne!(page.name, mw.name);
+        assert!(page.name.ends_with("::serve-entry.dsx"), "{}", page.name);
+        assert!(defer.name.ends_with("::defer-entry.dsx"), "{}", defer.name);
+        let none = handler_key_for_entry(&base, None);
+        assert_eq!(none.name, "serve-entry.dsx");
+    }
 }

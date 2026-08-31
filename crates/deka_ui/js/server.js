@@ -150,6 +150,46 @@ export function verifyDeferIsland(name, propsJson, id, mac) {
   return diff === 0;
 }
 
+export function runDeferBatch(body, secret, registry, cacheControl) {
+  if (secret) {
+    try {
+      globalThis.__DEKA_DEFER_SECRET = String(secret);
+    } catch (_) {}
+  }
+  let payload = {};
+  try {
+    payload = JSON.parse(body || "{}");
+  } catch (_) {
+    return {
+      status: 400,
+      body: "{\"error\":\"invalid json\"}",
+      headers: { "content-type": "application/json", "cache-control": "private, no-store" },
+    };
+  }
+  const islands = Array.isArray(payload.islands) ? payload.islands.slice(0, 32) : [];
+  const fragments = {};
+  const seen = {};
+  const handlers = registry || {};
+  for (const item of islands) {
+    const key = String((item && (item.id || item.name)) || "");
+    if (!key || seen[key]) continue;
+    seen[key] = true;
+    const propsJson = JSON.stringify(item && item.props ? item.props : {});
+    if (!verifyDeferIsland(item && item.name, propsJson, item && item.id, item && item.mac)) continue;
+    const fn = handlers[item && item.name];
+    if (typeof fn !== "function") continue;
+    const tree = fn(item.props || {});
+    const rendered = renderToString(tree);
+    fragments[key] = rendered && rendered.html ? rendered.html : "";
+  }
+  const cache = cacheControl || "private, no-store";
+  return {
+    status: 200,
+    body: JSON.stringify({ fragments }),
+    headers: { "content-type": "application/json", "cache-control": cache, "vary": "cookie" },
+  };
+}
+
 const VOID = new Set([
   "area", "base", "br", "col", "embed", "hr", "img", "input",
   "link", "meta", "param", "source", "track", "wbr",
@@ -480,8 +520,11 @@ async function* iterateChunks(node) {
     const selected = await nextResolved(queue);
     const index = queue.indexOf(selected.item);
     if (index >= 0) queue.splice(index, 1);
-    const source = selected.item.children != null ? selected.item.children : selected.value;
-    const html = await renderNodeAsync(source);
+    // Stream the resolved tree with the same sync renderer so nested
+    // Suspense can enqueue more boundaries. renderNodeAsync unwraps
+    // Suspense and waits, which collapsed nested fallbacks (Hats
+    // jsx_suspense_stream_swap).
+    const html = renderNode(selected.value, ctx);
     for (const extra of ctx.pending) queue.push(extra);
     ctx.pending.length = 0;
     if (selected.item.id) yield swapChunk(selected.item.id, html);

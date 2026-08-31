@@ -966,10 +966,10 @@ fn generate_defer_entry(
     project_root: &Path,
     deferred: &[DeferredIsland],
 ) -> Result<String, String> {
-    let mut imports =
-        "import { renderToString, verifyDeferIsland } from \"ui/server\"\n".to_string();
-    let mut branches = String::new();
+    let mut imports = String::new();
+    let mut registry = String::from("{ ");
     let mut seen = BTreeSet::new();
+    let mut first = true;
     for (idx, item) in deferred.iter().enumerate() {
         let key = format!("{}:{}", item.file, item.component);
         if !seen.insert(key) {
@@ -982,12 +982,14 @@ fn generate_defer_entry(
             "import {{ {} as {alias} }} from {rel}\n",
             item.component
         ));
-        branches.push_str(&format!(
-            "                    if (item.name === {name}) tree = {alias}(item.props || {{}});\n"
-        ));
+        if !first {
+            registry.push_str(", ");
+        }
+        first = false;
+        registry.push_str(&format!("{name}: {alias}"));
     }
+    registry.push_str(" }");
     let cache_control = json_str(&format!("private, {}", defer_cache_header(deferred)))?;
-    let bad_json = json_str(r#"{"error":"invalid json"}"#)?;
     let secret = json_str(&ensure_defer_secret(project_root)?)?;
     Ok(format!(
         r#"{imports}
@@ -995,36 +997,13 @@ interface RequestHeaders {{ accept: string }}
 interface Request {{ url: string, pathname: string, method: string, headers: RequestHeaders, body: string }}
 interface Response {{ status: number, body: string }}
 
-async fn App(request: Request): Promise<Response> {{
-    const boxed = unsafe {{
-        return (async () => {{
-            globalThis.__DEKA_DEFER_SECRET = {secret};
-            let payload = {{}};
-            try {{ payload = JSON.parse(request.body || "{{}}"); }} catch (err) {{
-                return {{ status: 400, body: {bad_json}, headers: {{ "content-type": "application/json", "cache-control": "private, no-store" }} }};
-            }}
-            const islands = Array.isArray(payload.islands) ? payload.islands.slice(0, 32) : [];
-            const fragments = {{}};
-            const seen = {{}};
-            for (const item of islands) {{
-                const key = String(item && (item.id || item.name) || "");
-                if (!key || seen[key]) continue;
-                seen[key] = true;
-                const propsJson = JSON.stringify(item && item.props ? item.props : {{}});
-                if (!verifyDeferIsland(item && item.name, propsJson, item && item.id, item && item.mac)) continue;
-                let tree = null;
-{branches}                if (!tree) continue;
-                const rendered = renderToString(tree);
-                fragments[key] = rendered && rendered.html ? rendered.html : "";
-            }}
-            return {{ status: 200, body: JSON.stringify({{ fragments }}), headers: {{ "content-type": "application/json", "cache-control": {cache_control}, "vary": "cookie" }} }};
-        }})();
-    }}
-    const prom = match (boxed) {{
-        Ok(p) => p,
+fn App(request: Request): Response {{
+    const boxed = unsafe {{ globalThis.deka.ui.runDeferBatch(request.body, {secret}, {registry}, {cache_control}) }}
+    return match (boxed) {{
+        Ok(r) => r,
         Err(_) => {{ status: 500, body: "Internal Server Error" }},
+        _ => {{ status: 500, body: "Internal Server Error" }},
     }}
-    return await prom
 }}
 export {{ App }}
 "#
@@ -1762,15 +1741,23 @@ fn generate_worker_entry(entry: &Path, project_root: &Path) -> Result<String, St
             const raw = unsafe {{ middleware(request) }}
             const opt = match (raw) {{
                 Ok(v) => v,
-                Err(_) => {{ __case: "Some", value: {{ status: 500, body: "Internal Server Error", headers: {{ location: "" }} }} }},
+                Err(_) => {{ status: 500, body: "Internal Server Error", headers: {{ location: "" }} }},
+                _ => next_response(),
             }}
-            const unwrapped = unsafe {{ opt.__case == "Some" ? opt.value : {{ status: 0, body: "", headers: {{ location: "" }} }} }}
-            const decided = match (unwrapped) {{
+            const decided = unsafe {{
+                if (opt == null) return {{ status: 0, body: "", headers: {{ location: "" }} }};
+                if (opt.__case == "None") return {{ status: 0, body: "", headers: {{ location: "" }} }};
+                if (opt.__case == "Some") return opt.value;
+                if (typeof opt.status == "number") return opt;
+                return {{ status: 0, body: "", headers: {{ location: "" }} }};
+            }}
+            const response = match (decided) {{
                 Ok(r) => r,
                 Err(_) => {{ status: 500, body: "Internal Server Error", headers: {{ location: "" }} }},
+                _ => next_response(),
             }}
-            if (decided.status != 0) {{
-                return decided
+            if (response.status != 0) {{
+                return response
             }}
         }}
     }}
@@ -1855,12 +1842,21 @@ export fn App(request: Request): Response {{
     const raw = unsafe {{ middleware(request) }}
     const opt = match (raw) {{
         Ok(v) => v,
-        Err(_) => {{ __case: "Some", value: {{ status: 500, body: "Internal Server Error", headers: {{ location: "" }} }} }},
+        Err(_) => {{ status: 500, body: "Internal Server Error", headers: {{ location: "" }} }},
+        _ => next_response(),
     }}
-    const unwrapped = unsafe {{ opt.__case == "Some" ? opt.value : {{ status: 0, body: "", headers: {{ location: "" }} }} }}
-    return match (unwrapped) {{
+    // `return None` emits JS null; do not read `.__case` on it.
+    const decided = unsafe {{
+        if (opt == null) return {{ status: 0, body: "", headers: {{ location: "" }} }};
+        if (opt.__case == "None") return {{ status: 0, body: "", headers: {{ location: "" }} }};
+        if (opt.__case == "Some") return opt.value;
+        if (typeof opt.status == "number") return opt;
+        return {{ status: 0, body: "", headers: {{ location: "" }} }};
+    }}
+    return match (decided) {{
         Ok(r) => r,
         Err(_) => {{ status: 500, body: "Internal Server Error", headers: {{ location: "" }} }},
+        _ => next_response(),
     }}
 }}
 "#,
@@ -2874,11 +2870,27 @@ mod tests {
         .unwrap();
         let entry = write_defer_router_entry(&tmp).expect("write defer-entry");
         let source = std::fs::read_to_string(&entry).expect("read defer-entry");
-        assert!(source.contains("return (async () =>"));
-        assert!(source.contains("slice(0, 32)"));
-        assert!(source.contains("verifyDeferIsland"));
-        assert!(source.contains("from \"ui/server\""));
+        assert!(source.contains("runDeferBatch"));
+        assert!(source.contains("globalThis.deka.ui.runDeferBatch"));
+        assert!(!source.contains("async fn App"));
         assert!(!source.contains("headers: { \\\"cache-control\\\""));
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn middleware_entry_treats_null_none_as_continue() {
+        let src = middleware_app_source(&Some(vec!["/_deka/defer".to_string()]));
+        assert!(
+            src.contains("if (opt == null)"),
+            "return None compiles to JS null; wrapper must not read .__case on it: {src}"
+        );
+        assert!(
+            src.contains("next_response()"),
+            "null/None must continue with status 0: {src}"
+        );
+        assert!(
+            src.contains("matcher_hits"),
+            "matcher should still gate the middleware call: {src}"
+        );
     }
 }
