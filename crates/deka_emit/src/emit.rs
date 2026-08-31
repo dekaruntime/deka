@@ -1754,10 +1754,15 @@ impl<'a> Emitter<'a> {
         let is_statement_block = raw_js_looks_like_statements(trimmed);
 
         let fn_kw = if is_async { "async function" } else { "function" };
+        // The body is raw JavaScript spliced verbatim, so the delimiters that
+        // follow it must start on their own line. Without the newlines a body
+        // whose last line is a `//` comment swallows the closing `}` and `)()`
+        // and the module fails to parse with `Unexpected end of input`
+        // (deka#378-adjacent codegen-as-text class; see also #356, #371).
         let inner = if is_statement_block {
-            format!("({fn_kw}() {{ {trimmed} }})()")
+            format!("({fn_kw}() {{\n{trimmed}\n}})()")
         } else {
-            format!("({fn_kw}() {{ return ({trimmed}); }})()")
+            format!("({fn_kw}() {{ return (\n{trimmed}\n); }})()")
         };
 
         let awaited = if is_async {
