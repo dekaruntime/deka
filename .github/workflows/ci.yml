@@ -1,7 +1,11 @@
 name: CI
 
 on:
+  # PRs always run: main has branch protection requiring these checks, and a
+  # paths-ignore here would leave docs-only PRs permanently unmergeable.
   pull_request:
+    branches: [main]
+  push:
     branches: [main]
     paths-ignore:
       - '**/*.md'
@@ -30,8 +34,13 @@ jobs:
       - name: Detect change categories
         id: detect
         run: |
-          git fetch origin main --quiet
-          files="$(git diff --name-only origin/main...HEAD | sort -u)"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # On pushes to main, HEAD is main — diff against the pre-push head.
+            files="$(git diff --name-only ${{ github.event.before }}..HEAD | sort -u)"
+          else
+            git fetch origin main --quiet
+            files="$(git diff --name-only origin/main...HEAD | sort -u)"
+          fi
 
           echo "Changed files:"
           echo "$files"
@@ -190,6 +199,20 @@ jobs:
 
       - name: Run tour + public conformance suite (native)
         run: ./run.sh --skip-build
+
+      - name: Install dump harness deps + Chromium
+        working-directory: tests/dump
+        run: |
+          bun install
+          bunx playwright install chromium
+
+      # The full dump only runs on release; without this smoke, harness
+      # breakage (bad shim paths, import-transform regressions) ships red.
+      - name: Dump harness smoke (browser + native)
+        env:
+          DEKA_NATIVE: ${{ github.workspace }}/target/release/cli
+          DEKA_WASM: ${{ github.workspace }}/dist/deka-compiler-wasm/deka_compiler.wasm
+        run: bun tests/dump/scripts/smoke.mjs
 
       - name: Upload browser compiler WASM provenance
         uses: actions/upload-artifact@v7

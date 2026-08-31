@@ -202,7 +202,8 @@ function writeProjectFiles(tmpDir: string, entryPath: string, source: string, fi
   const outputPath = path.join(tmpDir, 'test.js')
 
   if (!isProject) {
-    const inputPath = path.join(tmpDir, 'test.ds')
+    // Follow the fixture's extension — .dsx unlocks JSX in the compiler.
+    const inputPath = path.join(tmpDir, entryPath.endsWith('.dsx') ? 'test.dsx' : 'test.ds')
     fs.writeFileSync(inputPath, source)
     return { inputPath, outputPath, isProject: false }
   }
@@ -316,7 +317,9 @@ export async function runNativeCli(
       }
     }
 
-    const entryRel = isProject ? `./${entryPath ?? 'main.ds'}` : './test.ds'
+    const entryRel = isProject
+      ? `./${entryPath ?? 'main.ds'}`
+      : `./test${entryPath?.endsWith('.dsx') ? '.dsx' : '.ds'}`
 
     const jsOut = path.join(tmpDir, 'captured.js')
     const transpiled = spawnSync(cliPath, ['transpile', entryRel, '--out', jsOut], {

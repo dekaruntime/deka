@@ -6,4 +6,4 @@ fn makeMultiplier(factor: number) {
   return mul
 }
 const triple = makeMultiplier(3)
-echo(triple(4))
+echo(string(triple(4)))

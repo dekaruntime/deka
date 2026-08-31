@@ -375,6 +375,17 @@ impl WorkerThread {
         } else {
             Self::hash_source(&request.request_data.handler_code)
         };
+        // Distinct generated entries (serve / api / middleware / defer) must
+        // never share a warm isolate even if their module-graph hashes collide.
+        let source_hash = if let Some(entry) = request.request_data.handler_entry.as_ref() {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            source_hash.hash(&mut hasher);
+            entry.hash(&mut hasher);
+            hasher.finish()
+        } else {
+            source_hash
+        };
         let key = request.handler_key.clone();
 
         // Check cache and get/create isolate

@@ -396,6 +396,12 @@ pub enum Expr<'a> {
         source: &'a str,
         span: Span,
     },
+    Bridge {
+        kind: &'a str,
+        action: &'a str,
+        args: &'a [Expr<'a>],
+        span: Span,
+    },
     Ternary {
         condition: &'a Expr<'a>,
         then_branch: &'a Expr<'a>,
@@ -594,6 +600,7 @@ impl<'a> Expr<'a> {
             Expr::EnumConstructor { span, .. } => *span,
             Expr::Match { span, .. } => *span,
             Expr::Unsafe { span, .. } => *span,
+            Expr::Bridge { span, .. } => *span,
             Expr::Ternary { span, .. } => *span,
             Expr::Await { span, .. } => *span,
             Expr::JsxElement { span, .. } => *span,

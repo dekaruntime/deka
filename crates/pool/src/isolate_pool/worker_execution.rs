@@ -864,6 +864,10 @@ impl WorkerThread {
                                 && typeof Uint8Array !== 'undefined') {
                                 assoc.data = new Uint8Array(assoc.data);
                             }
+                            // v2 bridge emit expects { ok, value }; legacy PHPX bridge uses { ok, data }.
+                            if (assoc && assoc.ok === true && typeof assoc.value === 'undefined' && typeof assoc.data !== 'undefined') {
+                                assoc.value = assoc.data;
+                            }
                             return assoc;
                         } catch (err) {
                             return { ok: false, error: err && err.message ? String(err.message) : String(err) };

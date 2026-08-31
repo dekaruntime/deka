@@ -18,7 +18,7 @@ results="${DEKA_DUMP_OUT:-$out/hats-results.json}"
 rm -rf "$out/tour" "$out/testsuite"
 mkdir -p "$out/tour" "$out/testsuite"
 
-cp tests/tour/manifest.json tests/tour/*.ds "$out/tour/"
+cp tests/tour/manifest.json tests/tour/*.ds tests/tour/*.dsx "$out/tour/"
 
 # Hats folders only — not the native runner or known-fail list.
 find tests/testsuite -mindepth 1 -maxdepth 1 -type d ! -name '.*' | while read -r cat; do

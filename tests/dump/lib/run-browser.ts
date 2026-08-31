@@ -4,9 +4,10 @@ import { spawnSync } from 'child_process'
 import { fileURLToPath } from 'url'
 
 const DUMP_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
-import type { Browser, Page } from 'playwright'
+import type { Browser, Page, Route } from 'playwright'
 import { compileDekaProject } from '@dekaruntime/web-ide-kit/runtime'
 import type { HatsTestStage } from './tests'
+import { projectLoaderJs } from './project-loader'
 
 export interface BrowserRunResult {
   ok: boolean
@@ -102,6 +103,19 @@ type HarnessRun = {
   error?: string
 }
 
+// Vendored stdlib shims served to the browser harness. Keep in sync with the
+// real packages; io's echo is the console.log shim by design. The ui/jsx
+// module is served straight from the deka_ui crate so the harness never
+// drifts from the real JSX runtime.
+const JSX_RUNTIME_SOURCE = fs.readFileSync(
+  path.join(DUMP_ROOT, '..', '..', 'crates', 'deka_ui', 'js', 'jsx.js'),
+  'utf8',
+)
+const MODULE_SHIMS: Record<string, string> = {
+  'io.mjs': 'export function echo(message) {\n  console.log(message)\n}\n',
+  'jsx.mjs': JSX_RUNTIME_SOURCE,
+}
+
 async function evaluateInFreshPage(jsCode: string): Promise<HarnessRun> {
   if (!browser || !harnessBundlePath) {
     throw new Error(browserUnavailableReason ?? 'browser host not started')
@@ -109,6 +123,27 @@ async function evaluateInFreshPage(jsCode: string): Promise<HarnessRun> {
 
   const context = await browser.newContext()
   context.setDefaultTimeout(EVALUATE_TIMEOUT_MS)
+  // The compiler rewrites bare stdlib imports to HARNESS_MODULE_BASE URLs.
+  // Intercept those and serve the vendored shims so the dump is
+  // self-contained — no dependency on a live site, and the CORS header lets
+  // the blob Worker (null origin) import them. Both patterns are registered
+  // because module paths may be flat (io.mjs) or nested (ui/jsx.mjs).
+  const shimHandler = (route: Route) => {
+    const url = new URL(route.request().url())
+    const name = url.pathname.split('/').pop() ?? ''
+    const body = MODULE_SHIMS[name]
+    if (body === undefined) {
+      return route.fulfill({ status: 404, body: `no harness shim for ${name}` })
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: 'text/javascript',
+      headers: { 'access-control-allow-origin': '*' },
+      body,
+    })
+  }
+  await context.route('**/modules/*.mjs', shimHandler)
+  await context.route('**/modules/**/*.mjs', shimHandler)
   const page = await context.newPage()
   try {
     await page.addScriptTag({ path: harnessBundlePath })
@@ -181,44 +216,6 @@ export async function runCompiledJsInBrowser(jsCode: string): Promise<BrowserRun
   }
 }
 
-function normalizePath(filePath: string): string {
-  return filePath.replace(/\\/g, '/').replace(/^\.\//, '')
-}
-
-function projectLoaderJs(entryPath: string, modules: Record<string, { code: string }>): string {
-  const normalizedEntry = normalizePath(entryPath)
-  const moduleEntries = Object.entries(modules).map(([modulePath, module]) => {
-    const safePath = JSON.stringify(modulePath)
-    const escapedCode = module.code.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$\{/g, '\\${')
-    return `  ${safePath}: function(exports, __dekaRequire, module) {\n${escapedCode}\n}`
-  })
-  return `
-const __dekaModules = {\n${moduleEntries.join(',\n')}\n};
-const __dekaCache = new Map();
-function __dekaResolve(spec, currentPath) {
-  if (!spec.startsWith('./') && !spec.startsWith('../')) return spec;
-  const base = currentPath.includes('/') ? currentPath.slice(0, currentPath.lastIndexOf('/') + 1) : '';
-  const parts = (base + spec).split('/').filter(Boolean);
-  const resolved = [];
-  for (const part of parts) {
-    if (part === '..') resolved.pop();
-    else if (part !== '.') resolved.push(part);
-  }
-  return resolved.join('/');
-}
-function __dekaRequire(spec, currentPath) {
-  const normalized = __dekaResolve(spec, currentPath || ${JSON.stringify(normalizedEntry)});
-  if (__dekaCache.has(normalized)) return __dekaCache.get(normalized);
-  const factory = __dekaModules[normalized];
-  if (!factory) throw new Error('Module not found: ' + spec + ' (resolved to ' + normalized + ')');
-  const module = { exports: {} };
-  factory(module.exports, (s) => __dekaRequire(s, normalized), module);
-  __dekaCache.set(normalized, module.exports);
-  return module.exports;
-}
-__dekaRequire(${JSON.stringify(normalizedEntry)});
-`
-}
 
 export async function runProjectInBrowser(
   entryPath: string,

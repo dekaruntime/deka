@@ -17,6 +17,14 @@ use crate::{
 };
 use crate::shake::{self, ShakeModule, ShakePlan};
 
+/// Compiler-provided JS runtime (`ui/jsx`, `ui/form`, …). These are not
+/// DekaScript modules: hosts materialize the files, and the graph leaves the
+/// import specifier intact.
+fn is_compiler_ui_spec(spec: &str) -> bool {
+    let bare = spec.trim().strip_prefix("@deka/").unwrap_or(spec.trim());
+    bare == "ui" || bare.starts_with("ui/")
+}
+
 /// A module loader supplies source text and resolves specifiers for the
 /// graph compiler.
 ///
@@ -252,6 +260,9 @@ pub fn compile_module_graph_with_options(
                 virtual_imports.push(ui);
                 continue;
             }
+            if is_compiler_ui_spec(&import.path) {
+                continue;
+            }
             match loader.resolve(&import.path, &path) {
                 Ok(dep) => {
                     let from_ds = path
@@ -392,7 +403,16 @@ pub fn compile_module_graph_with_options(
         }
         let module = modules.get(&path).expect("module in graph");
         let input = path.to_string_lossy();
-        let module_imports = imports.get(&path).cloned().unwrap_or_default();
+        let inferred = crate::infer_stdlib_imports_for_source(&module.source, &arena);
+        let mut combined: HashMap<&str, &deka_syntax::ModuleExports> = HashMap::new();
+        for (spec, exports) in &inferred {
+            combined.insert(*spec, exports);
+        }
+        if let Some(graph_imports) = imports.get(&path) {
+            for (spec, exports) in graph_imports {
+                combined.insert(*spec, *exports);
+            }
+        }
         let compile_options = CompileOptions {
             used_exports: plan.live.get(&path).cloned().flatten(),
             client: options.client,
@@ -402,7 +422,7 @@ pub fn compile_module_graph_with_options(
             &module.source,
             &input,
             &arena,
-            &module_imports,
+            &combined,
             compile_options,
         ) {
             Ok(result) => {
@@ -822,6 +842,33 @@ mod tests {
     }
 
     #[test]
+    fn graph_propagates_result_type_for_imported_function() {
+        let root = PathBuf::from("/project");
+        let crypto = root.join("crypto.ds");
+        let main = root.join("main.ds");
+
+        let mut files = HashMap::new();
+        files.insert(
+            crypto.clone(),
+            "export fn random_bytes(n: number): Result<string, string> {\n  return unsafe { String(n) }\n}".to_string(),
+        );
+        files.insert(
+            main.clone(),
+            "import { random_bytes } from \"./crypto.ds\";\nconst r = match (random_bytes(32)) { Ok(v) => v, Err(e) => \"\" };".to_string(),
+        );
+
+        let mut aliases = HashMap::new();
+        aliases.insert((main.clone(), "./crypto.ds".to_string()), crypto.clone());
+
+        let loader = InMemoryLoader { files, aliases };
+        let result = compile_module_graph(&main, &loader).expect("compile graph");
+        assert_eq!(result.modules.len(), 2);
+        let main_js = &result.modules[&main];
+        assert!(main_js.contains("random_bytes(32)"), "got: {}", main_js);
+        assert!(main_js.contains("__case"), "got: {}", main_js);
+    }
+
+    #[test]
     fn fs_loader_resolves_relative_and_index() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = tmp.path().to_path_buf();
@@ -858,5 +905,117 @@ mod tests {
             std::fs::canonicalize(&resolved).unwrap(),
             std::fs::canonicalize(ds_modules.join("json").join("index.ds")).unwrap()
         );
+    }
+
+    #[test]
+    fn graph_treats_ui_runtime_as_external() {
+        let main = PathBuf::from("/project/page.dsx");
+        let mut files = HashMap::new();
+        files.insert(
+            main.clone(),
+            "import { Form } from \"ui/form\";\nconst el = <Form action=\"/api/x\" method=\"post\">Go</Form>;\n"
+                .to_string(),
+        );
+        let loader = InMemoryLoader {
+            files,
+            aliases: HashMap::new(),
+        };
+        let result =
+            compile_module_graph(&main, &loader).expect("ui/form should not need a .ds module");
+        let js = &result.modules[&main];
+        assert!(js.contains("ui/form"), "got: {js}");
+        assert!(js.contains("Form"), "got: {js}");
+    }
+
+    #[test]
+    fn generated_defer_entry_compiles() {
+        let tmp = std::env::temp_dir().join(format!(
+            "deka_defer_compile_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(tmp.join("app/blog")).unwrap();
+        std::fs::write(tmp.join("deka.json"), "{}\n").unwrap();
+        std::fs::write(
+            tmp.join("app/blog/page.dsx"),
+            "export fn Post() {\n    return <article>blog-secret</article>;\n}\nexport fn Page() {\n    return <main><Post server:defer><span slot=\"fallback\">loading-post</span></Post></main>;\n}\n",
+        )
+        .unwrap();
+        let entry = runtime_core::framework::write_defer_router_entry(&tmp)
+            .expect("write defer-entry");
+        let loader = FsModuleLoader::new(tmp.clone());
+        if let Err(errs) = compile_module_graph(&entry, &loader) {
+            let _ = std::fs::remove_dir_all(&tmp);
+            panic!(
+                "defer-entry failed to compile:\n{}",
+                errs.iter()
+                    .map(|d| format!("{}:{}: {}", d.line, d.column, d.message))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    fn compile_or_panic(entry: &Path, root: &Path, label: &str) {
+        let loader = FsModuleLoader::new(root.to_path_buf());
+        if let Err(errs) = compile_module_graph(entry, &loader) {
+            panic!(
+                "{label} failed to compile:\n{}",
+                errs.iter()
+                    .map(|d| format!("{}:{}: {}", d.line, d.column, d.message))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+        }
+    }
+
+    #[test]
+    fn generated_middleware_and_api_entries_compile() {
+        let tmp = std::env::temp_dir().join(format!(
+            "deka_mw_api_compile_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(tmp.join("api/boom")).unwrap();
+        std::fs::write(tmp.join("deka.json"), "{}\n").unwrap();
+        std::fs::write(
+            tmp.join("middleware.ds"),
+            r#"export const matcher = ["/_deka/defer"]
+interface RequestHeaders { accept: string }
+interface ResponseHeaders { location: string }
+interface Request { url: string, pathname: string, method: string, headers: RequestHeaders }
+interface Response { status: number, body: string, headers: ResponseHeaders }
+export fn middleware(request: Request): Option<Response> {
+    return None
+}
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.join("api/boom/route.ds"),
+            r#"interface RequestHeaders { accept: string }
+interface Request { url: string, pathname: string, method: string, headers: RequestHeaders }
+interface Response { status: number, body: string }
+export fn GET(request: Request): Response {
+    return { status: 200, body: "ok" }
+}
+"#,
+        )
+        .unwrap();
+        let mw = runtime_core::framework::write_middleware_router_entry(&tmp)
+            .expect("write middleware-entry");
+        compile_or_panic(&mw, &tmp, "middleware-entry");
+        let api =
+            runtime_core::framework::write_api_router_entry(&tmp).expect("write api-entry");
+        compile_or_panic(&api, &tmp, "api-entry");
+        let worker =
+            runtime_core::framework::write_worker_router_entry(&tmp).expect("write worker-entry");
+        compile_or_panic(&worker, &tmp, "worker-entry");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

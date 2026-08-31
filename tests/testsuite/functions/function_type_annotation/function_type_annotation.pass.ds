@@ -5,4 +5,4 @@ fn apply(x: number, f: fn(number) number) number {
 fn double(x: number) number {
   return x * 2
 }
-echo(apply(3, double))
+echo(string(apply(3, double)))

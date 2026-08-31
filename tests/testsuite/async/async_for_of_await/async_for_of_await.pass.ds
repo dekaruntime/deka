@@ -5,7 +5,7 @@ async fn double(x: number) Promise<number> {
 async fn main() {
   const arr = [1, 2, 3]
   for (const x of arr) {
-    echo(await double(x))
+    echo(string(await double(x)))
   }
 }
 await main()

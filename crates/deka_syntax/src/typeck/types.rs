@@ -79,6 +79,14 @@ pub enum UnwrapKind {
     Identity,
     /// The argument is a newtype; access its payload via `__p`.
     Payload,
+    /// Widen the argument to `string` (`String(x)` in JS).
+    WidenToString,
+    /// Widen the argument to `number` (`Number(x)` in JS).
+    WidenToNumber,
+    /// Widen the argument to `boolean` (`Boolean(x)` in JS).
+    WidenToBool,
+    /// Convert a string argument to `Option<number>` (`Number(x)` wrapped).
+    StringToOptionNumber,
 }
 
 /// Which operand of a mixed newtype/primitive operation is the newtype.

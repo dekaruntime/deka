@@ -7,4 +7,4 @@ const c2 = c.inc()
 fn (c Counter) inc() Counter {
   return Counter { count: c.count + 1 }
 }
-echo(c2.count)
+echo(string(c2.count))

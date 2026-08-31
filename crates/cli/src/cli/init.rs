@@ -66,24 +66,32 @@ pub fn cmd(context: &Context) {
         return;
     }
     if let Err(err) = ensure_file(
-        &target.join("app").join("main.ds"),
-        default_main_ds().to_string(),
+        &target.join("index.html"),
+        default_index_html().to_string(),
         &mut touched,
     ) {
         stdio_error("init", &err);
         return;
     }
     if let Err(err) = ensure_file(
-        &target.join("app").join("page.ds"),
-        default_app_page_ds().to_string(),
+        &target.join("app").join("page.dsx"),
+        default_app_page_dsx().to_string(),
         &mut touched,
     ) {
         stdio_error("init", &err);
         return;
     }
     if let Err(err) = ensure_file(
-        &target.join("app").join("layout.ds"),
-        default_app_layout_ds().to_string(),
+        &target.join("app").join("layout.dsx"),
+        default_app_layout_dsx().to_string(),
+        &mut touched,
+    ) {
+        stdio_error("init", &err);
+        return;
+    }
+    if let Err(err) = ensure_file(
+        &target.join("app").join("not-found.dsx"),
+        default_not_found_dsx().to_string(),
         &mut touched,
     ) {
         stdio_error("init", &err);
@@ -95,8 +103,8 @@ pub fn cmd(context: &Context) {
         return;
     }
     if let Err(err) = ensure_file(
-        &target.join("public").join("index.html"),
-        default_public_index_html().to_string(),
+        &target.join("public").join("style.css"),
+        default_public_style_css().to_string(),
         &mut touched,
     ) {
         stdio_error("init", &err);
@@ -149,7 +157,7 @@ fn path_display(path: &Path) -> String {
 
 fn default_deka_json(name: &str) -> String {
     format!(
-        "{{\n  \"name\": \"{}\",\n  \"type\": \"serve\",\n  \"serve\": {{ \"entry\": \"app/main.ds\", \"mode\": \"ds\" }},\n  \"tasks\": {{ \"dev\": \"deka serve --dev\" }},\n  \"security\": {{\n    \"allow\": {{}},\n    \"deny\": {{}},\n    \"prompt\": true\n  }}\n}}\n",
+        "{{\n  \"name\": \"{}\",\n  \"type\": \"serve\",\n  \"serve\": {{ \"mode\": \"ds\" }},\n  \"tasks\": {{ \"dev\": \"deka serve --dev\" }},\n  \"security\": {{\n    \"allow\": {{}},\n    \"deny\": {{}},\n    \"prompt\": true\n  }}\n}}\n",
         name
     )
 }
@@ -158,34 +166,43 @@ fn default_deka_lock_json() -> String {
     "{\n  \"lockfileVersion\": 1,\n  \"packages\": {}\n}\n".to_string()
 }
 
-fn default_app_page_ds() -> &'static str {
-    "export fn Page() string {\n    return \"<section><h1>Deka App</h1><p>Project initialized.</p></section>\";\n}\n"
+fn default_app_page_dsx() -> &'static str {
+    "export fn Page() {\n    return <section><h1>Deka App</h1><p>Project initialized.</p></section>;\n}\n"
 }
 
-fn default_main_ds() -> &'static str {
-    "interface Request { url: string }\ninterface Response { status: number, body: string }\nexport fn App(request: Request): Response {\n    return { status: 200, body: \"<!doctype html><html lang=\\\"en\\\"><body><main id=\\\"app\\\">Deka App</main></body></html>\" };\n}\n"
+fn default_app_layout_dsx() -> &'static str {
+    "interface LayoutProps { children: Component }\nexport fn Layout(props: LayoutProps) {\n    return <main>{props.children}</main>;\n}\n"
 }
 
-fn default_app_layout_ds() -> &'static str {
-    "interface LayoutProps { children: string }\nexport fn Layout(props: LayoutProps) string {\n    return \"<main id=\\\"app\\\">\" + props.children + \"</main>\";\n}\n"
+fn default_not_found_dsx() -> &'static str {
+    "export fn Page() {\n    return <section><h1>Not found</h1></section>;\n}\n"
 }
 
-fn default_public_index_html() -> &'static str {
-    "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>Deka</title>\n  </head>\n  <body>\n    <!-- Static shell only. `deka serve` executes main.ds. -->\n    <div id=\"app\"></div>\n  </body>\n</html>\n"
+fn default_index_html() -> &'static str {
+    "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>Deka</title>\n    <link rel=\"stylesheet\" href=\"/style.css\" />\n    <!--deka-head-->\n  </head>\n  <body>\n    <div id=\"app\"><!--deka-app--></div>\n    <!--deka-scripts-->\n  </body>\n</html>\n"
+}
+
+fn default_public_style_css() -> &'static str {
+    "body { font-family: system-ui, sans-serif; margin: 2rem; }\n"
 }
 
 #[cfg(test)]
 mod tests {
-    use super::default_main_ds;
+    use super::{default_app_page_dsx, default_deka_json, default_index_html};
 
     #[test]
-    fn default_main_uses_dekascript_page_layout_entry() {
-        let template = default_main_ds();
-        assert!(template.contains("interface Request { url: string }"));
-        assert!(template.contains("interface Response { status: number, body: string }"));
-        assert!(template.contains("export fn App(request: Request): Response"));
-        assert!(template.contains("body: \"<!doctype html>"));
-        assert!(!template.contains('$'));
-        assert!(!template.contains("component/router"));
+    fn default_scaffold_is_the_rfd_document() {
+        let json = default_deka_json("demo");
+        assert!(!json.contains("serve.entry"));
+        assert!(!json.contains("app/main.ds"));
+        let page = default_app_page_dsx();
+        assert!(page.contains("export fn Page()"));
+        assert!(page.contains("<section>"));
+        assert!(!page.contains("string {"));
+        let index = default_index_html();
+        assert!(index.contains("<!--deka-head-->"));
+        assert!(index.contains("<!--deka-app-->"));
+        assert!(index.contains("<!--deka-scripts-->"));
+        assert!(index.contains("id=\"app\""));
     }
 }

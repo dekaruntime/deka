@@ -6,4 +6,4 @@ fn (c Counter) get() number {
   return c.value
 }
 const c = Counter { value: 5 }
-echo(c.get())
+echo(string(c.get()))

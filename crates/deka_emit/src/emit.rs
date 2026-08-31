@@ -137,6 +137,7 @@ struct Emitter<'a> {
     jsx_roots: usize,
     /// When set, only these top-level names are emitted (graph shaking).
     live_names: Option<HashSet<String>>,
+    needs_live: bool,
 }
 
 impl<'a> Emitter<'a> {
@@ -161,12 +162,20 @@ impl<'a> Emitter<'a> {
             jsx_siblings: Vec::new(),
             jsx_roots: 0,
             live_names: None,
+            needs_live: false,
         };
         emitter.prepass();
+        emitter.needs_live = emitter.scan_needs_live();
         emitter
     }
 
     fn emit(&mut self) -> Result<String, String> {
+        // "use strict" belongs in the directive prologue, before even the
+        // hoisted imports: after an import it degrades to a dead expression
+        // statement, and the kit's RAW display strips it only when it is the
+        // first line. (Redundant but legal in ES modules, which are always
+        // strict.)
+        self.out.push_str("\"use strict\";\n");
         // Imports must precede other statements. Hoist user imports, then the
         // jsx runtime import when this file contains JSX.
         let mut first = true;
@@ -188,6 +197,24 @@ impl<'a> Emitter<'a> {
             self.out.push_str("import { jsx, jsxs, Fragment } from \"");
             self.out.push_str(&spec);
             self.out.push_str("\";");
+        }
+        if self.needs_live {
+            if !first {
+                self.out.push('\n');
+            }
+            first = false;
+            let spec = self.resolve_module_source("ui/reactive");
+            self.out.push_str("import { live } from \"");
+            self.out.push_str(&spec);
+            self.out.push_str("\";");
+        }
+
+        // Imports end without a trailing newline; separate them from the
+        // prelude so each `import` stays on its own line. Hosts transform
+        // static imports line-by-line, so `import ...;"use strict";` on one
+        // line would survive into non-module execution.
+        if !first {
+            self.out.push('\n');
         }
 
         self.emit_prelude()?;
@@ -472,8 +499,6 @@ impl<'a> Emitter<'a> {
     // Prelude
     // ------------------------------------------------------------------
     fn emit_prelude(&mut self) -> Result<(), String> {
-        self.out.push_str("\"use strict\";\n");
-
         // Determine which helpers are needed by scanning the AST.
         self.uses_struct = self.needs_struct_helper();
         self.uses_prelude_enums = self.uses_prelude_enums || self.needs_prelude_enums();
@@ -593,6 +618,28 @@ impl<'a> Emitter<'a> {
             visit_stmt_exprs(stmt, &mut |expr| {
                 if matches!(expr, Expr::JsxElement { .. } | Expr::JsxFragment { .. }) {
                     found = true;
+                }
+            });
+            found
+        })
+    }
+
+    fn scan_needs_live(&self) -> bool {
+        self.program.statements.iter().any(|stmt| {
+            let mut found = false;
+            visit_stmt_exprs(stmt, &mut |expr| {
+                match expr {
+                    Expr::JsxElement { element, .. } => {
+                        if element.children.iter().any(jsx_child_needs_live) {
+                            found = true;
+                        }
+                    }
+                    Expr::JsxFragment { children, .. } => {
+                        if children.iter().any(jsx_child_needs_live) {
+                            found = true;
+                        }
+                    }
+                    _ => {}
                 }
             });
             found
@@ -749,6 +796,11 @@ impl<'a> Emitter<'a> {
                 }
             }
             Stmt::Import { specifiers, source, .. } => {
+                if source_is_css(source) && specifiers.is_empty() {
+                    // Side-effect `import "./x.css"` is collected per-route as <link>.
+                    // Keep specifier imports (CSS modules) so the bundler can resolve them.
+                    return Ok(());
+                }
                 write_indent(&mut self.out, 0);
                 let resolved_source = self.resolve_module_source(source);
                 if specifiers.is_empty() {
@@ -1319,6 +1371,28 @@ impl<'a> Emitter<'a> {
                                 self.emit_expr(arg)?;
                                 self.out.push_str("[__p]");
                             }
+                            deka_syntax::typeck::UnwrapKind::WidenToString => {
+                                self.out.push_str("String(");
+                                self.emit_expr(arg)?;
+                                self.out.push(')');
+                            }
+                            deka_syntax::typeck::UnwrapKind::WidenToNumber => {
+                                self.out.push_str("Number(");
+                                self.emit_expr(arg)?;
+                                self.out.push(')');
+                            }
+                            deka_syntax::typeck::UnwrapKind::WidenToBool => {
+                                self.out.push_str("Boolean(");
+                                self.emit_expr(arg)?;
+                                self.out.push(')');
+                            }
+                            deka_syntax::typeck::UnwrapKind::StringToOptionNumber => {
+                                // `number(s)` on a string can produce NaN;
+                                // surface it as Option<number>.
+                                self.out.push_str("(() => { const __n = Number(");
+                                self.emit_expr(arg)?;
+                                self.out.push_str("); return isNaN(__n) ? { __enum: \"Option\", __case: \"None\", name: \"None\" } : { __enum: \"Option\", __case: \"Some\", name: \"Some\", value: __n }; })()");
+                            }
                         }
                     }
                     return Ok(());
@@ -1445,6 +1519,14 @@ impl<'a> Emitter<'a> {
             }
             Expr::Unsafe { source, .. } => {
                 self.emit_unsafe(source)?;
+            }
+            Expr::Bridge {
+                kind,
+                action,
+                args,
+                ..
+            } => {
+                self.emit_bridge(kind, action, args)?;
             }
             Expr::Ternary {
                 condition,
@@ -1662,6 +1744,27 @@ impl<'a> Emitter<'a> {
         Ok(())
     }
 
+    fn emit_bridge(
+        &mut self,
+        kind: &str,
+        action: &str,
+        args: &[Expr<'a>],
+    ) -> Result<(), String> {
+        self.out.push_str("(function() { const __deka_r = __deka_host(");
+        self.out.push_str(&json_string(kind));
+        self.out.push_str(", ");
+        self.out.push_str(&json_string(action));
+        self.out.push_str(", [");
+        for (i, arg) in args.iter().enumerate() {
+            if i > 0 {
+                self.out.push_str(", ");
+            }
+            self.emit_expr(arg)?;
+        }
+        self.out.push_str("]); if (__deka_r && __deka_r.ok) { return { __case: \"Ok\", value: __deka_r.value }; } else { return { __case: \"Err\", error: (__deka_r && __deka_r.error) ? __deka_r.error : \"host bridge failed\" }; } })()");
+        Ok(())
+    }
+
     fn emit_match(
         &mut self,
         scrutinee: &Expr<'a>,
@@ -1742,6 +1845,7 @@ impl<'a> Emitter<'a> {
                     jsx_siblings: Vec::new(),
                     jsx_roots: 0,
                     live_names: None,
+                    needs_live: false,
                 };
                 tmp.emit_expr(expr).expect("literal emission");
                 literal = tmp.out;
@@ -1846,11 +1950,7 @@ impl<'a> Emitter<'a> {
 
         let mut child_values = Vec::new();
         for child in element.children.iter() {
-            let mut buf = String::new();
-            std::mem::swap(&mut self.out, &mut buf);
-            self.emit_expr(child)?;
-            std::mem::swap(&mut self.out, &mut buf);
-            child_values.push(buf);
+            child_values.push(self.emit_jsx_child(child)?);
         }
 
         if !child_values.is_empty() {
@@ -1872,15 +1972,25 @@ impl<'a> Emitter<'a> {
         Ok(())
     }
 
+    fn emit_jsx_child(&mut self, child: &Expr<'a>) -> Result<String, String> {
+        let mut buf = String::new();
+        std::mem::swap(&mut self.out, &mut buf);
+        if jsx_child_needs_live(child) {
+            self.out.push_str("live(function() { return ");
+            self.emit_expr(child)?;
+            self.out.push_str("; })");
+        } else {
+            self.emit_expr(child)?;
+        }
+        std::mem::swap(&mut self.out, &mut buf);
+        Ok(buf)
+    }
+
     fn emit_jsx_fragment(&mut self, children: &[Expr<'a>]) -> Result<(), String> {
         self.enter_jsx_node();
         let mut child_values = Vec::new();
         for child in children.iter() {
-            let mut buf = String::new();
-            std::mem::swap(&mut self.out, &mut buf);
-            self.emit_expr(child)?;
-            std::mem::swap(&mut self.out, &mut buf);
-            child_values.push(buf);
+            child_values.push(self.emit_jsx_child(child)?);
         }
 
         let fn_name = if child_values.len() > 1 { "jsxs" } else { "jsx" };
@@ -1968,6 +2078,37 @@ fn raw_js_looks_like_statements(raw: &str) -> bool {
 fn js_has_top_level_await(raw: &str) -> bool {
     raw.split(|c: char| !c.is_alphanumeric() && c != '_')
         .any(|word| word == "await")
+}
+
+fn source_is_css(source: &str) -> bool {
+    let trimmed = source.trim().trim_matches('"').trim_matches('\'');
+    let lower = trimmed.to_ascii_lowercase();
+    lower.ends_with(".css")
+}
+
+fn expr_contains_jsx(expr: &Expr) -> bool {
+    let mut found = false;
+    visit_expr(expr, &mut |e| {
+        if matches!(e, Expr::JsxElement { .. } | Expr::JsxFragment { .. }) {
+            found = true;
+        }
+    });
+    found
+}
+
+fn jsx_child_needs_live(expr: &Expr) -> bool {
+    match expr {
+        Expr::String { .. }
+        | Expr::Number { .. }
+        | Expr::Boolean { .. }
+        | Expr::JsxText { .. }
+        | Expr::JsxElement { .. }
+        | Expr::JsxFragment { .. }
+        | Expr::None { .. } => false,
+        Expr::Paren { expr, .. } => jsx_child_needs_live(expr),
+        _ if expr_contains_jsx(expr) => false,
+        _ => true,
+    }
 }
 
 fn visit_stmt_exprs(stmt: &Stmt, visitor: &mut dyn FnMut(&Expr)) {

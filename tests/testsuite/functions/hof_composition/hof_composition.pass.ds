@@ -10,4 +10,4 @@ fn double(n: number) number {
 fn inc(n: number) number {
   return n + 1
 }
-echo(compose(inc, double)(5))
+echo(string(compose(inc, double)(5)))

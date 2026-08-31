@@ -13,4 +13,4 @@ fn bump(i: Counter) {
 }
 let c = Clicker { count: 0 }
 bump(c)
-echo(c.count)
+echo(string(c.count))

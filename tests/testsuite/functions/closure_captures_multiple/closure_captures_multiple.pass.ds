@@ -8,4 +8,4 @@ fn makeSum() {
   return sum
 }
 const f = makeSum()
-echo(f())
+echo(string(f()))

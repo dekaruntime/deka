@@ -6,4 +6,4 @@ fn dbl(n: number) number {
   return n * 2
 }
 const result = 5 |> dbl |> inc
-echo(result)
+echo(string(result))

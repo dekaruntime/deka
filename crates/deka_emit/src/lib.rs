@@ -178,10 +178,64 @@ mod tests {
     }
 
     #[test]
+    fn emit_jsx_does_not_live_wrap_conditional_elements() {
+        let out = parse_and_emit("const el = <div>{cond && <b>hi</b>}</div>;");
+        assert!(
+            !out.contains("live(function() { return cond &&"),
+            "JSX-producing interpolations must not be live() text bindings: {out}"
+        );
+        assert!(out.contains("cond &&"), "conditional jsx child should still emit: {out}");
+    }
+
+    #[test]
     fn emit_jsx_with_children() {
         let out = parse_and_emit("const el = <p>hello {name}</p>;");
         assert!(out.contains("jsxs("), "expected jsxs call, got: {}", out);
         assert!(out.contains("\"children\": ["), "expected children array, got: {}", out);
+        assert!(
+            out.contains("import { live } from \"ui/reactive\""),
+            "non-literal interpolations must import live: {out}"
+        );
+        assert!(
+            out.contains("live(function() { return name; })"),
+            "non-literal interpolations must wrap live(): {out}"
+        );
+    }
+
+    #[test]
+    fn emit_skips_css_imports() {
+        let out = parse_and_emit("import \"./card.css\";\nconst x = 1;");
+        assert!(
+            !out.contains("card.css"),
+            "CSS imports must not emit JS import: {out}"
+        );
+        assert!(out.contains("const x = 1;"), "got: {out}");
+    }
+
+    #[test]
+    fn emit_keeps_css_module_specifier_imports() {
+        let out = parse_and_emit("import { styles } from \"./card.module.css\";\nconst x = styles;");
+        assert!(
+            out.contains("card.module.css"),
+            "CSS module specifier imports must stay in the JS graph: {out}"
+        );
+    }
+
+    #[test]
+    fn emit_jsx_client_directive() {
+        let out = parse_and_emit("const el = <Cart client:load userId={id} />;");
+        assert!(
+            out.contains("\"client:load\": true"),
+            "namespaced client directive must emit as a prop: {out}"
+        );
+        assert!(
+            out.contains("\"userId\": id"),
+            "island props must emit: {out}"
+        );
+        assert!(
+            !out.contains("..."),
+            "island emit must not spread props: {out}"
+        );
     }
 
     #[test]

@@ -287,6 +287,7 @@ impl PhpxEsmLoader {
             "ds" | "dsx" => self.load_ds_source(&path)?,
             _ => self.load_js_source(&path)?,
         };
+        code = prepend_host_bindings(code);
         if specifier == &self.entry_specifier {
             code = append_entry_footer(code);
         }
@@ -303,12 +304,16 @@ impl PhpxEsmLoader {
         let template = "import * as __jsx from \"ui/jsx\";\n\
 import * as __server from \"ui/server\";\n\
 import * as __reactive from \"ui/reactive\";\n\
+import * as __suspense from \"ui/suspense\";\n\
+import * as __router from \"ui/router\";\n\
 globalThis.deka = globalThis.deka || {};\n\
 globalThis.deka.ui = Object.freeze({\n\
   ...(globalThis.deka.ui || {}),\n\
   ...__jsx,\n\
   ...__server,\n\
   ...__reactive,\n\
+  ...__suspense,\n\
+  ...__router,\n\
 });\n\
 const __dekaMain = await import(\"__ENTRY__\");\n\
 const __candidate = typeof __dekaMain.default !== \"undefined\"\n\
@@ -726,6 +731,26 @@ fn is_bare_specifier(spec: &str) -> bool {
     is_bare_module_specifier(spec)
 }
 
+const HOST_BINDINGS_PREAMBLE: &str = "const __dekaHostBindings = globalThis[Symbol.for('deka.host.internal')];
+const __deka_host = __dekaHostBindings && __dekaHostBindings.host;
+const __bridge = __dekaHostBindings && __dekaHostBindings.bridge;
+const __bridge_async = __dekaHostBindings && __dekaHostBindings.bridgeAsync;
+const __deka_wasm_call = __dekaHostBindings && __dekaHostBindings.wasmCall;
+const __deka_wasm_call_async = __dekaHostBindings && __dekaHostBindings.wasmCallAsync;
+";
+
+fn prepend_host_bindings(code: ModuleSourceCode) -> ModuleSourceCode {
+    match code {
+        ModuleSourceCode::String(source) => {
+            let mut text = String::with_capacity(HOST_BINDINGS_PREAMBLE.len() + source.len());
+            text.push_str(HOST_BINDINGS_PREAMBLE);
+            text.push_str(&source);
+            ModuleSourceCode::String(text.into())
+        }
+        other => other,
+    }
+}
+
 fn append_entry_footer(code: ModuleSourceCode) -> ModuleSourceCode {
     const FOOTER: &str = "\nif (typeof globalThis.app === \"undefined\" && typeof app !== \"undefined\") {\n\
   const __candidate = app;\n\
@@ -816,5 +841,6 @@ mod tests {
         let loader = PhpxEsmLoader::new(root.path().to_path_buf(), root.path().join("main.ds"))
             .expect("loader");
         assert!(loader.wrapper_source().contains("__dekaMain.App"));
+        assert!(loader.wrapper_source().contains("ui/router"));
     }
 }

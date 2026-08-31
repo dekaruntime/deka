@@ -9,4 +9,4 @@ const ops = [mul2, add1]
 let n = 15
 n = ops[0](n)
 n = ops[1](n)
-echo(n)
+echo(string(n))

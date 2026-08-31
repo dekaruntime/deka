@@ -15,6 +15,11 @@ impl<'a> Checker<'a> {
         self.check_embedded_method_ambiguity();
         self.validate_interface_declarations();
 
+        // Infer return types for unannotated functions before emitting
+        // diagnostics. This resolves forward references within a module (e.g.
+        // `sha256` calling `digest` in @deka/crypto).
+        self.infer_function_return_types();
+
         // Check function and receiver-method bodies first so that inferred
         // return types are available to later top-level statements.
         for stmt in self.program.statements {
@@ -373,6 +378,105 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Run the silent inference pass used to seed cross-module function
+    /// signatures for `collect_module_exports`.
+    pub(crate) fn infer_all_function_signatures(&mut self) {
+        self.collect_declarations();
+        self.collect_function_signatures();
+        self.collect_receiver_methods();
+        self.check_embedded_method_ambiguity();
+        self.validate_interface_declarations();
+        self.infer_function_return_types();
+    }
+
+    /// Silent pre-check pass that infers return types for unannotated functions.
+    ///
+    /// Runs without emitting diagnostics and clears lowering side-effects so the
+    /// real check pass sees stable, forward-reference-resolved signatures.
+    fn infer_function_return_types(&mut self) {
+        self.infer_only = true;
+        // Each round propagates one hop of a forward-reference chain, and real
+        // modules are a handful of hops deep, so ten rounds is generous. If it
+        // is ever not enough, the diagnostic below names the function instead
+        // of silently continuing with a half-inferred type (deka#367).
+        let mut converged = false;
+        let mut pending: Vec<(&'a str, ast::Span)> = Vec::new();
+        for _ in 0..10 {
+            let mut changed = false;
+            pending.clear();
+            for stmt in self.program.statements {
+                let info = match stmt {
+                    ast::Stmt::Function {
+                        name,
+                        type_params,
+                        params,
+                        return_type,
+                        body,
+                        span,
+                        is_async,
+                        ..
+                    } if return_type.is_none() => {
+                        Some((*name, *type_params, *params, *body, *is_async, *span))
+                    }
+                    ast::Stmt::Export {
+                        decl:
+                            ast::ExportDecl::Function {
+                                name,
+                                type_params,
+                                params,
+                                return_type,
+                                body,
+                                is_async,
+                                ..
+                            },
+                        span,
+                        ..
+                    } if return_type.is_none() => {
+                        Some((*name, *type_params, *params, *body, *is_async, *span))
+                    }
+                    _ => None,
+                };
+                if let Some((name, type_params, params, body, is_async, span)) = info {
+                    pending.push((name, span));
+                    let prev = self.globals.get(name).cloned();
+                    self.check_function(
+                        name,
+                        type_params,
+                        params,
+                        None,
+                        body,
+                        is_async,
+                        span,
+                    );
+                    let new = self.globals.get(name).cloned();
+                    if prev != new {
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                converged = true;
+                break;
+            }
+        }
+        self.infer_only = false;
+        if !converged {
+            for (name, span) in pending {
+                if let Some(Type::Function { ret, .. }) = self.globals.get(name) {
+                    if matches!(**ret, Type::Infer) {
+                        self.error_span(
+                            span,
+                            format!(
+                                "could not infer a return type for `{name}`; add an explicit return type"
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+        self.reset_lowering_state();
+    }
+
     pub(super) fn check_statement(&mut self, stmt: &ast::Stmt<'a>) {
         match stmt {
             ast::Stmt::Const {
@@ -556,8 +660,15 @@ impl<'a> Checker<'a> {
                 // as externally provided. They are assigned the infer sentinel
                 // so uses of them typecheck generically; a real module resolver
                 // will supply concrete types later.
+                //
+                // When a module graph has already seeded concrete types for this
+                // import source (via `Checker::seed_imports`), do not overwrite
+                // them with the Infer placeholder.
                 for spec in specifiers.iter() {
-                    self.declare_var(spec.local, Type::Infer);
+                    let already_known = self.scopes.first().map_or(false, |scope| scope.contains_key(spec.local));
+                    if !already_known {
+                        self.declare_var(spec.local, Type::Infer);
+                    }
                 }
             }
         }

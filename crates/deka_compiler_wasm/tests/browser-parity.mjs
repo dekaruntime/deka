@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -63,19 +64,20 @@ const tourDir = join(dirname(fileURLToPath(import.meta.url)), "../../../tests/to
 const tourManifest = JSON.parse(await readFile(join(tourDir, "manifest.json"), "utf-8"));
 const tourFiles = (await readdir(tourDir)).filter((name) => name.endsWith(".ds") || name.endsWith(".dsx"));
 const manifestIds = new Set(tourManifest.map((lesson) => lesson.id));
-const fileIds = new Set(tourFiles.map((name) => name.replace(/\.ds$/, "")));
+const fileIds = new Set(tourFiles.map((name) => name.replace(/\.dsx?$/, "")));
 for (const id of manifestIds) {
-  if (!fileIds.has(id)) throw new Error(`tests/tour/manifest.json lists ${id} but ${id}.ds is missing`);
+  if (!fileIds.has(id)) throw new Error(`tests/tour/manifest.json lists ${id} but ${id}.ds/.dsx is missing`);
 }
 for (const id of fileIds) {
-  if (!manifestIds.has(id)) throw new Error(`tests/tour/${id}.ds is not listed in manifest.json`);
+  if (!manifestIds.has(id)) throw new Error(`tests/tour/${id}.ds/.dsx is not listed in manifest.json`);
 }
 if (tourManifest.length === 0) {
   throw new Error("tests/tour must contain at least one lesson");
 }
 for (const lesson of tourManifest) {
-  const source = await readFile(join(tourDir, `${lesson.id}.ds`), "utf-8");
-  const response = compile(source, `${lesson.id}.ds`, "deka");
+  const extension = existsSync(join(tourDir, `${lesson.id}.dsx`)) ? "dsx" : "ds";
+  const source = await readFile(join(tourDir, `${lesson.id}.${extension}`), "utf-8");
+  const response = compile(source, `${lesson.id}.${extension}`, "deka");
   if (response.ok !== lesson.expectCompile) {
     throw new Error(`${lesson.id} browser WASM compile result drifted: ${JSON.stringify(response)}`);
   }
@@ -101,9 +103,22 @@ if (!structResponse.ok || !structResponse.output?.code) {
 // The emitted JS is executed by the tour in a strict-mode function. Ensure the
 // deka.Struct factory does not assign to f.name (which is non-writable in strict
 // mode and throws "Attempted to assign to readonly property.").
-const structCode = structResponse.output.code
-  .replace(/^export const \w+ = [^;]+;\n?/gm, "")
-  .replace(/^export async function \w+[\s\S]*$/m, "");
+//
+// The emitted code is run verbatim. It is deliberately NOT reshaped with
+// regexes: a pattern cannot see string or template-literal boundaries, so
+// `[^;]+;` stops at a semicolon inside a string and `[\s\S]*$` silently
+// deletes the rest of the file — leaving a program that still parses and a
+// test that passes while executing nothing. If emit ever grows module syntax,
+// this must become a module runner, not a stripper. The assertion below is
+// what makes that a loud failure instead of a silent one.
+const structCode = structResponse.output.code;
+if (/^\s*export[\s{]/m.test(structCode)) {
+  throw new Error(
+    "emitted JS now contains `export`, which `new Function` cannot evaluate.\n" +
+      "Run the module properly (e.g. import a data: URL) instead of stripping\n" +
+      "exports with a regex — see dekaruntime/deka#359.",
+  );
+}
 try {
   const run = new Function(
     `"use strict";\n${structCode}\nreturn origin.x + origin.y;`,
@@ -114,6 +129,28 @@ try {
   }
 } catch (error) {
   throw new Error(`strict-mode struct execution failed: ${error.message}\n${structCode}`);
+}
+
+// Hostile fixture (deka#359): every character class that breaks a codegen path
+// which assembles or reshapes source as text — a template literal, `${`, an
+// escaped backslash and an escape sequence. The struct prelude above already
+// carries backticks, so a regression here breaks both fixtures at once.
+const hostileSource = `const name = "world"
+const greeting = \`hi \${name}\`
+const path = "c:\\\\tmp"
+const multi = "a\\nb"
+greeting + path + multi`;
+const hostileResponse = compile(hostileSource, "hostile.ds", "deka");
+if (!hostileResponse.ok || !hostileResponse.output?.code) {
+  throw new Error(`hostile fixture failed to compile: ${JSON.stringify(hostileResponse)}`);
+}
+const hostileResult = new Function(
+  `"use strict";\n${hostileResponse.output.code}\nreturn greeting + path + multi;`,
+)();
+if (hostileResult !== "hi worldc:\\tmpa\nb") {
+  throw new Error(
+    `hostile fixture round-trip corrupted the source: ${JSON.stringify(hostileResult)}`,
+  );
 }
 
 // Stdlib imports are typed as `Infer` in the single-file WASM compiler, so a

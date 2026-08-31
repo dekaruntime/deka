@@ -12,6 +12,11 @@ import { setCompilerArtifactPath } from '@dekaruntime/web-ide-kit/runtime'
 import { loadAllTests, type HatsCategory, type HatsHost, type HatsTest, type HatsTestStage } from './tests'
 import { computeOverallStatus, type HatsOverallStatus } from './overall-status'
 
+// Bare stdlib imports (from "io") are rewritten by the compiler to this base;
+// the browser harness intercepts these URLs and serves the vendored shims
+// (see run-browser.ts), so the dump never depends on a live site.
+export const HARNESS_MODULE_BASE = 'https://hats.dump.invalid/modules'
+
 export { computeOverallStatus, type HatsOverallStatus } from './overall-status'
 
 export type RuntimeStatus = 'pass' | 'fail'
@@ -130,7 +135,12 @@ async function runBrowserTest(
     return { ...runResult, formattedCode }
   }
 
-  const compileResult = compileWithWasm(globalHatsCompiler, source, `${slug}.ds`)
+  // Keep the stem "test" (expected stdout embeds it via data-deka-id) but
+  // follow the fixture's extension — .dsx unlocks JSX in the compiler.
+  const entryExt = entryPath?.endsWith('.dsx') ? '.dsx' : '.ds'
+  const compileResult = compileWithWasm(globalHatsCompiler, source, `test${entryExt}`, {
+    moduleBase: HARNESS_MODULE_BASE,
+  })
   if (!compileResult.ok || !compileResult.js) {
     return {
       ok: false,
@@ -226,9 +236,13 @@ async function runAllTestsOnce(): Promise<HatsBuildResults> {
   try {
     for (const category of categories) {
       const tests: HatsTestWithBuildResult[] = []
-      const filter = process.env.HATS_FILTER
+      // Comma-separated slug substrings; a fixture runs when it matches any.
+      const filters = (process.env.HATS_FILTER ?? '')
+        .split(',')
+        .map((f) => f.trim())
+        .filter(Boolean)
       for (const test of category.tests) {
-        if (filter && !test.slug.includes(filter)) continue
+        if (filters.length > 0 && !filters.some((f) => test.slug.includes(f))) continue
         const wantNative = test.hosts.includes('native')
         const wantBrowser = test.hosts.includes('browser')
 

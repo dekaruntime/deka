@@ -9,5 +9,5 @@ fn sum(values: Array<number>) number {
 
 let values = [1, 2, 3]
 values[0] = 10
-echo(values.length)
-echo(sum(values))
+echo(string(values.length))
+echo(string(sum(values)))

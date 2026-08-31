@@ -17,6 +17,7 @@ deka_http = { path = "../http" }
 stdio = { path = "../stdio" }
 deka_host = { path = "../deka_host", default-features = false, features = ["runtime"] }
 deka_compile = { path = "../deka_compile" }
+deka_ui = { path = "../deka_ui" }
 bundler = { path = "../bundler" }
 compile = { path = "../compile" }
 axum = { workspace = true }

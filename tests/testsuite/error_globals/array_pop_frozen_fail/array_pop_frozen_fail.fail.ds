@@ -1,3 +1,5 @@
 import { echo } from "io"
 const arr = [1, 2]
-echo(arr.pop())
+arr.pop()
+const len: number = arr.length
+echo(string(len))

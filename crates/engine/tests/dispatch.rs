@@ -55,6 +55,51 @@ globalThis.app = function(req) {
 }
 
 #[tokio::test]
+async fn trailing_slash_redirects_to_canonical_path() {
+    let code = r#"
+globalThis.app = function(req) {
+  return { status: 200, headers: {}, body: "should not run" };
+};
+"#;
+    let state = test_state(code);
+    let envelope = execute_request_parts(
+        state,
+        "http://localhost/blog/".to_string(),
+        "GET".to_string(),
+        vec![],
+        None,
+    )
+    .await
+    .expect("should redirect");
+    assert_eq!(envelope.status, 301);
+    assert_eq!(
+        envelope.headers.get("location").map(String::as_str),
+        Some("/blog")
+    );
+    assert_eq!(envelope.body, "");
+}
+
+#[tokio::test]
+async fn trailing_slash_does_not_redirect_post() {
+    let code = r#"
+globalThis.app = function(req) {
+  return { status: 200, headers: {}, body: "posted" };
+};
+"#;
+    let state = test_state(code);
+    let envelope = execute_request_parts(
+        state,
+        "http://localhost/blog/".to_string(),
+        "POST".to_string(),
+        vec![],
+        Some("{\"x\":1}".to_string()),
+    )
+    .await
+    .expect("POST should not 301");
+    assert_ne!(envelope.status, 301, "POST must keep its body: {:?}", envelope.headers);
+}
+
+#[tokio::test]
 async fn response_status_codes_propagate_correctly() {
     let code = r#"
 globalThis.app = function(req) {
