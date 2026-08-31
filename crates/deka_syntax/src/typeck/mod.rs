@@ -43,6 +43,21 @@ pub struct TypeckResult<'a> {
     /// Map from binary/unary operator expression pointer to how a newtype
     /// operation should be lowered.
     pub operator_rewrites: HashMap<*const ast::Expr<'a>, types::OperatorRewrite<'a>>,
+    /// How each JSX element's optional props must be materialised.
+    ///
+    /// A component's props interface is a construction site the compiler owns,
+    /// so `?:` props are filled and bare values wrapped there. A plain object
+    /// literal is not, which is why omitting one is a type error (deka#416).
+    pub jsx_optional_props: HashMap<*const ast::JsxElement<'a>, JsxOptionalProps<'a>>,
+}
+
+/// The `Option` materialisation for one JSX element.
+#[derive(Debug, Clone, Default)]
+pub struct JsxOptionalProps<'a> {
+    /// Optional props with no attribute: emit `Option.None`.
+    pub fill_none: Vec<&'a str>,
+    /// Attributes whose value must be wrapped in `Option.Some(...)`.
+    pub wrap_some: Vec<&'a str>,
 }
 
 pub fn check_program<'a>(program: &'a Program<'a>, _source: &str) -> TypeckResult<'a> {
@@ -93,6 +108,7 @@ pub fn check_program_with_imports<'a>(
         method_calls: checker.method_calls,
         unwrap_calls: checker.unwrap_calls,
         operator_rewrites: checker.operator_rewrites,
+        jsx_optional_props: checker.jsx_optional_props,
     }
 }
 
@@ -461,6 +477,7 @@ struct Checker<'a> {
     /// Operator expression sites that need newtype-aware lowering.
     /// Cleared between passes by `reset_lowering_state`.
     operator_rewrites: HashMap<*const ast::Expr<'a>, types::OperatorRewrite<'a>>,
+    jsx_optional_props: HashMap<*const ast::JsxElement<'a>, JsxOptionalProps<'a>>,
     /// Local scopes. The first scope is the top-level scope.
     scopes: Vec<HashMap<&'a str, Type<'a>>>,
     /// Bindings that were introduced with `let` and may be reassigned.
@@ -498,6 +515,7 @@ impl<'a> Checker<'a> {
             method_calls: HashMap::new(),
             unwrap_calls: HashMap::new(),
             operator_rewrites: HashMap::new(),
+            jsx_optional_props: HashMap::new(),
             scopes: vec![HashMap::new()],
             mutables: vec![HashSet::new()],
             type_scopes: Vec::new(),
@@ -538,7 +556,9 @@ impl<'a> Checker<'a> {
         // and reachable only from `unsafe { }` (deka#378). Naming it in plain
         // DekaScript is now `unknown identifier`, which is the diagnostic RFD
         // 13 P10 asks for.
-        for name in ["Math", "Object", "Promise", "parseInt", "isset"] {
+        // `isset` is gone with deka#416: it existed only to test presence on an
+        // interface `?:` field, which is now an `Option` like everywhere else.
+        for name in ["Math", "Object", "Promise", "parseInt"] {
             self.globals.insert(name, Type::Infer);
         }
     }
@@ -775,17 +795,28 @@ impl<'a> Checker<'a> {
                                 optional,
                                 ..
                             } => {
-                                let expected_ty = self.resolve_ast_type(ty);
+                                let mut expected_ty = self.resolve_ast_type(ty);
                                 if expected_ty.is_error() {
                                     continue;
+                                }
+                                // `name?: T` is a field of type `Option<T>`,
+                                // the same as `name: T?` (deka#416).
+                                if *optional {
+                                    expected_ty = Type::Option {
+                                        inner: Box::new(expected_ty),
+                                    };
                                 }
                                 let Some((_, actual_ty)) = actual_fields
                                     .iter()
                                     .find(|(n, _)| n == field_name)
                                 else {
-                                    if *optional {
-                                        continue;
-                                    }
+                                    // Omission is not allowed in a plain object
+                                    // literal: there is no construction site
+                                    // for the compiler to fill, so the field
+                                    // would be JS `undefined` while the type
+                                    // says `Option<T>` -- the exact runtime
+                                    // hole deka#401 closed for `T?`. JSX is
+                                    // different and fills it; see the emitter.
                                     return false;
                                 };
                                 if !self.is_assignable(&expected_ty, actual_ty) {

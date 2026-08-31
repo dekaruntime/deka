@@ -203,7 +203,8 @@ impl<'a> Checker<'a> {
                 }
                 self.check_jsx_attributes(element, *span);
                 for child in element.children.iter() {
-                    self.check_expr(child);
+                    let child_type = self.check_expr(child);
+                    self.reject_unrendered_option(&child_type, child.span());
                 }
                 Type::Infer
             }
@@ -603,6 +604,27 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Reject interpolating an `Option` or `Result` straight into JSX.
+    ///
+    /// Rendering one puts the enum object itself into the DOM -- `[object
+    /// Object]` -- with no diagnostic anywhere. That is the failure mode
+    /// deka#416 would otherwise have introduced silently at every existing
+    /// `{props.optionalThing}`, so the read has to fail loudly instead.
+    fn reject_unrendered_option(&mut self, ty: &Type<'a>, span: ast::Span) {
+        let name = match ty {
+            Type::Option { .. } => "Option",
+            Type::Generic { base: "Result", .. } => "Result",
+            _ => return,
+        };
+        self.error_span(
+            span,
+            format!(
+                "cannot render a `{name}` directly; match it first \
+                 (`match (x) {{ Some(v) => …, None => … }}`)"
+            ),
+        );
+    }
+
     /// The props interface of an uppercase JSX tag, if it has one.
     ///
     /// `<Card … />` resolves `Card` to its function type and takes the first
@@ -717,6 +739,25 @@ impl<'a> Checker<'a> {
             }
         }
 
+        // The plan the emitter applies: every `?:` prop becomes an `Option`
+        // here, because this is a construction site the compiler owns
+        // (deka#416).
+        let mut plan = crate::typeck::JsxOptionalProps::default();
+        for (name, _, optional) in fields.iter() {
+            if !*optional {
+                continue;
+            }
+            if supplied.contains(name) {
+                plan.wrap_some.push(name);
+            } else if *name != "children" {
+                plan.fill_none.push(name);
+            }
+        }
+        if !plan.fill_none.is_empty() || !plan.wrap_some.is_empty() {
+            self.jsx_optional_props
+                .insert(element as *const ast::JsxElement<'a>, plan);
+        }
+
         for (name, _, optional) in fields.iter() {
             // `children` is supplied by nesting, not by an attribute:
             // `<Layout><Page /></Layout>` fills `children: Component`. Every
@@ -745,8 +786,17 @@ impl<'a> Checker<'a> {
         let info = self.interfaces.get(interface_name)?;
         for member in info.members.iter() {
             match member {
-                ast::InterfaceMember::Field { name, ty, .. } if *name == field => {
-                    return Some(self.resolve_ast_type(ty));
+                ast::InterfaceMember::Field { name, ty, optional, .. } if *name == field => {
+                    let resolved = self.resolve_ast_type(ty);
+                    //  is the same thing as  -- one
+                    // meaning for optional, whichever way it is spelled
+                    // (deka#416).
+                    if *optional {
+                        return Some(Type::Option {
+                            inner: Box::new(resolved),
+                        });
+                    }
+                    return Some(resolved);
                 }
                 ast::InterfaceMember::Method { name, params, return_type, .. } if *name == field => {
                     let param_types: Vec<Type<'a>> = params
@@ -2027,12 +2077,22 @@ impl<'a> Checker<'a> {
         args: &'a [ast::Expr<'a>],
         span: ast::Span,
     ) -> Type<'a> {
-        // Built-in special forms that need a concrete return type.
+        // `isset` was removed in deka#416. It existed only to test presence on
+        // an interface `?:` field, which is now an `Option` like every other
+        // maybe-absent value. Name it explicitly rather than letting it fall
+        // through to `unknown identifier`, because the useful thing to say is
+        // what replaced it.
         if let ast::Expr::Identifier { name: "isset", .. } = callee {
             for arg in args.iter() {
                 self.check_expr(arg);
             }
-            return Type::Named { name: "boolean" };
+            self.error_span(
+                span,
+                "`isset` was removed: optional fields are `Option<T>`, so match on the value \
+                 (`match (x) { Some(v) => …, None => … }`)"
+                    .to_string(),
+            );
+            return Type::Error;
         }
 
         // `panic(msg)` / `deka.panic(msg)`: never-returning lang item (RFD 21).

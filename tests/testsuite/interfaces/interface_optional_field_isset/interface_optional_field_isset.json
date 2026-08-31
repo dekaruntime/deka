@@ -1,5 +1,5 @@
 {
-  "title": "Optional interface field checked with isset",
+  "title": "Interface optional fields are Option and are matched",
   "stage": "run",
-  "notes": ""
+  "notes": "deka#416: isset is gone; `?:` yields Option<T> like `T?` does."
 }
