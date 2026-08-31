@@ -1022,6 +1022,26 @@ mod tests {
     }
 
     #[test]
+    fn panic_is_never_and_assignable() {
+        assert!(typeck("const x: number = panic(\"boom\");").is_empty());
+        assert!(typeck("const y: string = deka.panic(\"boom\");").is_empty());
+    }
+
+    #[test]
+    fn panic_expects_one_string() {
+        let errors = typeck("const x: number = panic();");
+        assert!(
+            errors.iter().any(|e| e.message.contains("panic")),
+            "{errors:?}"
+        );
+        let errors = typeck("const x: number = panic(1);");
+        assert!(
+            errors.iter().any(|e| e.message.contains("string")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
     fn struct_literal_and_field_access_passes() {
         assert!(typeck("struct Point { x: number; y: number } const p: Point = Point { x: 1, y: 2 }; const x: number = p.x;").is_empty());
     }
