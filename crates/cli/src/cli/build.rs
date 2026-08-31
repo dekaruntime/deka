@@ -920,6 +920,7 @@ fn build_single_file_bundle_to_path(
             project_root: output.project_root,
             minify,
             iife: false,
+            client: false,
         },
         provider,
     )?;
@@ -1080,6 +1081,7 @@ fn write_cloudflare_worker(project_root: &Path, dist_root: &Path) -> Result<(), 
             project_root: project_root.to_path_buf(),
             minify: false,
             iife: false,
+            client: false,
         },
         provider,
     )?;
@@ -1099,6 +1101,7 @@ fn write_cloudflare_worker(project_root: &Path, dist_root: &Path) -> Result<(), 
                 project_root: project_root.to_path_buf(),
                 minify: false,
                 iife: false,
+                client: false,
             },
             defer_provider,
         )?;

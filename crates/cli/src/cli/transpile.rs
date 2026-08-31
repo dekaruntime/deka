@@ -1,7 +1,7 @@
 use bundler::{BuildOptions, VirtualSource, bundle_virtual_entry, optimize_emitted_module};
 use core::{CommandSpec, Context, ParamSpec, Registry};
-use deka_compile::module_graph;
-use std::collections::BTreeSet;
+use deka_compile::module_graph::{self, GraphCompileOptions};
+use std::collections::{BTreeSet, HashMap};
 
 use crate::compile_helper::compile_js_or_report;
 use std::fs;
@@ -39,6 +39,11 @@ pub fn register(registry: &mut Registry) {
         name: "--treeshake",
         aliases: &[],
         description: "apply the existing JavaScript optimization path to emitted modules",
+    });
+    registry.add_flag(core::FlagSpec {
+        name: "--client",
+        aliases: &[],
+        description: "treat the entry as a client bundle (ui/server is a build failure)",
     });
     registry.add_param(ParamSpec {
         name: "--out",
@@ -78,16 +83,22 @@ fn run(context: &Context) -> Result<(), String> {
         .get("--treeshake")
         .copied()
         .unwrap_or(false);
+    let client = context
+        .args
+        .flags
+        .get("--client")
+        .copied()
+        .unwrap_or(false);
 
     match (input.is_file(), input.is_dir()) {
-        (true, _) => transpile_file(&input, output.as_deref(), mode, treeshake),
-        (_, true) => transpile_directory(&input, output.as_deref(), mode, treeshake),
+        (true, _) => transpile_file(&input, output.as_deref(), mode, treeshake, client),
+        (_, true) => transpile_directory(&input, output.as_deref(), mode, treeshake, client),
         _ => Err(format!("input path does not exist: {}", input.display())),
     }
 }
 
 fn usage() -> &'static str {
-    "usage: deka transpile <file-or-directory> [--preserve|--bundle] [--treeshake] [--out <path>]\n\nModes:\n  file: writes adjacent <name>.js by default; --out selects the output file\n  directory: --preserve is the default and mirrors .ds paths as .js paths\n  directory --bundle: requires --out <file.js> and emits one resolved graph\n  --treeshake: applies the existing JavaScript optimization path in either mode\n\nSecurity:\n  Output ancestors must be non-symlinked, private directories owned by this user\n  (or a non-writable root-owned system ancestor); shared paths are rejected.\n\nExamples:\n  deka transpile app/main.ds\n  deka transpile app --preserve --out generated\n  deka transpile app --bundle --out dist/app.js --treeshake"
+    "usage: deka transpile <file-or-directory> [--preserve|--bundle] [--treeshake] [--client] [--out <path>]\n\nModes:\n  file: writes adjacent <name>.js by default; --out selects the output file\n  directory: --preserve is the default and mirrors .ds paths as .js paths\n  directory --bundle: requires --out <file.js> and emits one resolved graph\n  --treeshake: applies the existing JavaScript optimization path in either mode\n  --client: fail the build if the graph can reach ui/server\n\nSecurity:\n  Output ancestors must be non-symlinked, private directories owned by this user\n  (or a non-writable root-owned system ancestor); shared paths are rejected.\n\nExamples:\n  deka transpile app/main.ds\n  deka transpile app --preserve --out generated\n  deka transpile app --bundle --out dist/app.js --treeshake\n  deka transpile island.dsx --bundle --client --out dist/island.js"
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -123,6 +134,7 @@ fn transpile_file(
     out: Option<&Path>,
     mode: TranspileMode,
     treeshake: bool,
+    client: bool,
 ) -> Result<(), String> {
     require_ds(input)?;
     let output = out
@@ -134,9 +146,9 @@ fn transpile_file(
     // Validate the source before checking output-directory security so that
     // syntax/type errors are surfaced immediately (dekaruntime/deka#117).
     let js = if mode == TranspileMode::Bundle {
-        build_bundle(input, treeshake)?
+        build_bundle(input, treeshake, client)?
     } else {
-        build_module(input, &output, treeshake)?
+        build_module(input, &output, treeshake, client)?
     };
     let mappings = vec![(input.to_path_buf(), output.clone())];
     let root = SecureOutputRoot::open_or_create(output_root_parent(&output))?;
@@ -161,6 +173,7 @@ fn transpile_directory(
     out: Option<&Path>,
     mode: TranspileMode,
     treeshake: bool,
+    client: bool,
 ) -> Result<(), String> {
     let sources = collect_ds_sources(input)?;
     if sources.is_empty() {
@@ -178,7 +191,7 @@ fn transpile_directory(
             let entry = directory_entry(input, &sources)?;
             // Validate the entry before checking output-directory security so
             // that syntax/type errors surface first (dekaruntime/deka#117).
-            let js = build_bundle(&entry, treeshake)?;
+            let js = build_bundle(&entry, treeshake, client)?;
             let root = SecureOutputRoot::open_or_create(output_root_parent(output))?;
             let mut destinations =
                 preflight_outputs(&root, &[(entry.clone(), output.to_path_buf())])?;
@@ -227,7 +240,7 @@ fn transpile_directory(
                 .iter()
                 .zip(destinations)
                 .map(|((source, output), destination)| {
-                    build_module(source, output, treeshake)
+                    build_module(source, output, treeshake, client)
                         .map(|js| OutputPlan { destination, js })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -269,9 +282,10 @@ fn build_module(
     input: &Path,
     output: &Path,
     treeshake: bool,
+    client: bool,
 ) -> Result<String, String> {
     let mut js = if source_has_imports(input)? {
-        compile_source_via_module_graph(input)?
+        compile_source_via_module_graph(input, client)?
     } else {
         compile_source(input)?
     };
@@ -289,13 +303,17 @@ fn source_has_imports(input: &Path) -> Result<bool, String> {
     Ok(!meta.imports.is_empty())
 }
 
-fn compile_source_via_module_graph(input: &Path) -> Result<String, String> {
+fn compile_source_via_module_graph(input: &Path, client: bool) -> Result<String, String> {
     let project_root = input
         .parent()
         .unwrap_or(Path::new("."))
         .to_path_buf();
     let loader = module_graph::FsModuleLoader::new(project_root);
-    let graph = module_graph::compile_module_graph(input, &loader)
+    let graph = module_graph::compile_module_graph_with_options(
+        input,
+        &loader,
+        GraphCompileOptions { client },
+    )
         .map_err(|diagnostics| {
             diagnostics
                 .iter()
@@ -313,14 +331,26 @@ fn compile_source_via_module_graph(input: &Path) -> Result<String, String> {
 fn build_bundle(
     input: &Path,
     treeshake: bool,
+    client: bool,
 ) -> Result<String, String> {
     let entry = fs::canonicalize(input)
         .map_err(|err| format!("failed to resolve {}: {err}", input.display()))?;
     let project_root = entry.parent().unwrap_or(Path::new(".")).to_path_buf();
-    let entry_source = compile_source(&entry)?;
-    let provider = Arc::new(DsSourceProvider {
-        entry: entry.clone(),
-        entry_source,
+    let loader = module_graph::FsModuleLoader::new(project_root.clone());
+    let graph = module_graph::compile_module_graph_with_options(
+        &entry,
+        &loader,
+        GraphCompileOptions { client },
+    )
+    .map_err(|diagnostics| {
+        diagnostics
+            .iter()
+            .map(|d| format!("{}:{}: {}", d.line, d.column, d.message))
+            .collect::<Vec<_>>()
+            .join("\n")
+    })?;
+    let provider = Arc::new(GraphSourceProvider {
+        modules: graph.modules,
     });
     bundle_virtual_entry(
         &entry,
@@ -328,6 +358,7 @@ fn build_bundle(
             project_root,
             minify: treeshake,
             iife: false,
+            client,
         },
         provider,
     )
@@ -344,20 +375,17 @@ fn compile_source(input: &Path) -> Result<String, String> {
     compile_js_or_report(&source, input_name)
 }
 
-struct DsSourceProvider {
-    entry: PathBuf,
-    entry_source: String,
+struct GraphSourceProvider {
+    modules: HashMap<PathBuf, String>,
 }
 
-impl VirtualSource for DsSourceProvider {
+impl VirtualSource for GraphSourceProvider {
     fn load_virtual(&self, path: &Path) -> Result<Option<String>, String> {
-        if path == self.entry {
-            return Ok(Some(self.entry_source.clone()));
+        let canon = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        if let Some(js) = self.modules.get(&canon).or_else(|| self.modules.get(path)) {
+            return Ok(Some(js.clone()));
         }
-        if !is_ds(path) {
-            return Ok(None);
-        }
-        compile_source(path).map(Some)
+        Ok(None)
     }
 }
 
@@ -1042,7 +1070,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let input = temp.path().join("answer.ds");
         write(&input, "export const answer = 42;\n");
-        transpile_file(&input, None, TranspileMode::Preserve, false)
+        transpile_file(&input, None, TranspileMode::Preserve, false, false)
             .expect("transpile");
         let output = input.with_extension("js");
         let emitted = fs::read_to_string(&output).expect("output");
@@ -1080,7 +1108,7 @@ mod tests {
             include_str!("../../tests/fixtures/transpile/tree/main.ds"),
         );
         let out = temp.path().join("generated");
-        transpile_directory(&root, Some(&out), TranspileMode::Preserve, false)
+        transpile_directory(&root, Some(&out), TranspileMode::Preserve, false, false)
             .expect("transpile");
         assert!(out.join("nested/math.js").is_file());
         assert!(
@@ -1102,11 +1130,11 @@ mod tests {
             &root.join("main.ds"),
             include_str!("../../tests/fixtures/transpile/bundle/main.ds"),
         );
-        let err = transpile_directory(&root, None, TranspileMode::Bundle, true)
+        let err = transpile_directory(&root, None, TranspileMode::Bundle, true, false)
             .expect_err("needs out");
         assert!(err.contains("requires --out"));
         let out = temp.path().join("bundle.js");
-        transpile_directory(&root, Some(&out), TranspileMode::Bundle, true)
+        transpile_directory(&root, Some(&out), TranspileMode::Bundle, true, false)
             .expect("bundle");
         let emitted = fs::read_to_string(out).expect("bundle output");
         assert!(emitted.starts_with(GENERATED_MARKER));
@@ -1116,12 +1144,57 @@ mod tests {
     }
 
     #[test]
+    fn bundle_drops_unused_export_without_minify() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("src");
+        write(
+            &root.join("lib.ds"),
+            "export fn keep() { return \"KEEP_ME\"; }\nexport fn drop() { return \"DROP_ME_UNIQUE\"; }\n",
+        );
+        write(
+            &root.join("main.ds"),
+            "import { keep } from \"./lib.ds\";\nexport const answer = keep();\n",
+        );
+        let out = temp.path().join("bundle.js");
+        transpile_directory(&root, Some(&out), TranspileMode::Bundle, false, false)
+            .expect("bundle");
+        let emitted = fs::read_to_string(out).expect("bundle output");
+        assert!(emitted.contains("KEEP_ME"), "{emitted}");
+        assert!(
+            !emitted.contains("DROP_ME_UNIQUE"),
+            "unused export must be shaken without minify: {emitted}"
+        );
+    }
+
+    #[test]
+    fn client_bundle_rejects_ui_server() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let input = temp.path().join("island.dsx");
+        write(
+            &input,
+            "import { renderToString } from \"ui/server\";\nexport const x = 1;\n",
+        );
+        let err = transpile_file(
+            &input,
+            None,
+            TranspileMode::Bundle,
+            false,
+            true,
+        )
+        .expect_err("client + ui/server");
+        assert!(
+            err.contains("ui/server"),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn rejects_invalid_input_flags_and_unowned_output_collision() {
         let temp = tempfile::tempdir().expect("tempdir");
         let txt = temp.path().join("bad.txt");
         write(&txt, "nope\n");
         assert!(
-            transpile_file(&txt, None, TranspileMode::Preserve, false).is_err()
+            transpile_file(&txt, None, TranspileMode::Preserve, false, false).is_err()
         );
         let input = temp.path().join("main.ds");
         let output = temp.path().join("main.js");
@@ -1132,6 +1205,7 @@ mod tests {
                 &input,
                 Some(&output),
                 TranspileMode::Preserve,
+                false,
                 false,
             )
             .expect_err("collision")
@@ -1152,6 +1226,7 @@ mod tests {
             &root,
             None,
             TranspileMode::Preserve,
+            false,
             false,
         )
         .expect_err("preflight collision");
@@ -1183,6 +1258,7 @@ mod tests {
             &root,
             Some(&output),
             TranspileMode::Preserve,
+            false,
             false,
         )
         .is_err());
@@ -1269,6 +1345,7 @@ mod tests {
             &root,
             Some(&output),
             TranspileMode::Preserve,
+            false,
             false,
         )
         .expect_err("swapped output parent must be rejected");

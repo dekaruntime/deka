@@ -1,8 +1,9 @@
 //! DekaScript compiler orchestrator (Compiler v2).
 
 pub mod module_graph;
+pub mod shake;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use bumpalo::Bump;
@@ -53,6 +54,20 @@ fn is_api_import(spec: &str) -> bool {
         || trimmed.starts_with("api/")
         || trimmed.starts_with("@/api/")
         || trimmed.contains("/api/")
+}
+
+fn client_ui_server_error(source: &str) -> Option<Diagnostic> {
+    let meta = parse_source_module_meta(source);
+    for import in &meta.imports {
+        if crate::shake::is_ui_server(&import.path) {
+            return Some(Diagnostic::error(
+                1,
+                1,
+                "client bundle cannot import ui/server".to_string(),
+            ));
+        }
+    }
+    None
 }
 
 fn program_contains_jsx(program: &Program<'_>) -> bool {
@@ -313,6 +328,10 @@ pub struct CompileOptions {
     /// for the process-global `DEKA_MODULE_ROOT` environment variable in the
     /// v2 compiler path.
     pub module_root: Option<PathBuf>,
+    /// Live top-level names after graph shaking. `None` keeps every name.
+    pub used_exports: Option<HashSet<String>>,
+    /// When true, an import of `ui/server` is a compile error.
+    pub client: bool,
 }
 
 /// Compile a DekaScript source to JavaScript using the v2 pipeline.
@@ -377,6 +396,11 @@ pub fn compile_to_js_with_imports_and_options<'a>(
     if let Some(diagnostic) = file_type_rule_error(file_path, source, &program) {
         return Err(vec![diagnostic]);
     }
+    if options.client {
+        if let Some(diagnostic) = client_ui_server_error(source) {
+            return Err(vec![diagnostic]);
+        }
+    }
 
     resolve_imported_enum_constructors(&mut program, arena, imports);
 
@@ -393,6 +417,7 @@ pub fn compile_to_js_with_imports_and_options<'a>(
         &typeck_result.unwrap_calls,
         &typeck_result.operator_rewrites,
         file_path,
+        options.used_exports.as_ref(),
     )
     .map_err(|message| vec![Diagnostic::error(0, 0, message)])?;
 

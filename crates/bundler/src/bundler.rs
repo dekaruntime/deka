@@ -6,7 +6,7 @@ use runtime_core::module_spec::{ds_source_candidates, module_spec_aliases};
 use runtime_core::modules::{existing_modules_dirs, MODULES_DIR};
 use swc_bundler::{BundleKind, Bundler, Config, Hook, Load, ModuleData, ModuleType};
 use swc_common::{
-    FileName, GLOBALS, Globals, Mark, SourceMap, comments::SingleThreadedComments, sync::Lrc,
+    FileName, GLOBALS, Globals, Mark, SourceMap, sync::Lrc,
 };
 use swc_ecma_ast::{EsVersion, KeyValueProp, Module, Pass, Program};
 use swc_ecma_codegen::{Emitter, text_writer::JsWriter};
@@ -16,15 +16,13 @@ use swc_ecma_minifier::option::{CompressOptions, MangleOptions, MinifyOptions};
 use swc_ecma_parser::{EsSyntax, Parser, StringInput, Syntax, TsSyntax, lexer::Lexer};
 use swc_ecma_transforms_base::helpers::Helpers;
 use swc_ecma_transforms_base::resolver;
-use swc_ecma_transforms_react::{Options as JsxOptions, Runtime as JsxRuntime, react};
+
 use swc_ecma_transforms_typescript::strip;
 
 pub use crate::cached::bundle_browser_assets_cached;
 use crate::css_bundler::{self, CssAsset};
 
-const REACT_SOURCE: &str = include_str!("../src-ts/vendor/react.esm.js");
-const REACT_DOM_CLIENT_SOURCE: &str = include_str!("../src-ts/vendor/react-dom-client.esm.js");
-const REACT_JSX_RUNTIME_SOURCE: &str = include_str!("../src-ts/vendor/react-jsx-runtime.esm.js");
+const CLIENT_SERVER_IMPORT_ERROR: &str = "client bundle cannot import ui/server";
 
 pub struct JsBundle {
     pub code: String,
@@ -36,6 +34,8 @@ pub struct BundleOptions {
     pub project_root: PathBuf,
     pub minify: bool,
     pub iife: bool,
+    /// When true, a reachable `ui/server` import is a build failure.
+    pub client: bool,
 }
 
 pub type BuildOptions = BundleOptions;
@@ -133,7 +133,7 @@ pub fn bundle_virtual_entry(
         css_collector: Arc::new(Mutex::new(CssCollector::default())),
         provider,
     };
-    let resolver = DekaResolver::new(options.project_root)?;
+    let resolver = DekaResolver::new(options.project_root, options.client)?;
 
     let mut bundler = Bundler::new(
         &globals,
@@ -378,13 +378,10 @@ impl Load for FsLoader {
                     (source, Some(path.clone()))
                 }
             }
-            FileName::Custom(name) if name == "deka:react" => (REACT_SOURCE.to_string(), None),
-            FileName::Custom(name) if name == "deka:react-dom-client" => {
-                (REACT_DOM_CLIENT_SOURCE.to_string(), None)
-            }
-            FileName::Custom(name) if name == "deka:react-jsx-runtime" => {
-                (REACT_JSX_RUNTIME_SOURCE.to_string(), None)
-            }
+            FileName::Custom(name) => match load_ui_custom(name) {
+                Some(source) => (source.to_string(), None),
+                None => anyhow::bail!("Unsupported file name: {file:?}"),
+            },
             other => anyhow::bail!("Unsupported file name: {other:?}"),
         };
 
@@ -420,20 +417,6 @@ impl Load for FsLoader {
             .map_or(false, |path| is_typescript(path.as_path()))
         {
             let mut pass = strip(unresolved_mark, top_level_mark);
-            pass.process(&mut program);
-        }
-
-        if path.as_ref().map_or(false, |path| is_jsx(path.as_path())) {
-            let mut options = JsxOptions::default();
-            options.runtime = Some(JsxRuntime::Automatic);
-            options.import_source = Some("react".into());
-            let mut pass = react(
-                self.cm.clone(),
-                Some(SingleThreadedComments::default()),
-                options,
-                top_level_mark,
-                unresolved_mark,
-            );
             pass.process(&mut program);
         }
 
@@ -540,13 +523,10 @@ impl Load for VirtualLoader {
                     (source, Some(path.clone()))
                 }
             }
-            FileName::Custom(name) if name == "deka:react" => (REACT_SOURCE.to_string(), None),
-            FileName::Custom(name) if name == "deka:react-dom-client" => {
-                (REACT_DOM_CLIENT_SOURCE.to_string(), None)
-            }
-            FileName::Custom(name) if name == "deka:react-jsx-runtime" => {
-                (REACT_JSX_RUNTIME_SOURCE.to_string(), None)
-            }
+            FileName::Custom(name) => match load_ui_custom(name) {
+                Some(source) => (source.to_string(), None),
+                None => anyhow::bail!("Unsupported file name: {file:?}"),
+            },
             other => anyhow::bail!("Unsupported file name: {other:?}"),
         };
 
@@ -583,20 +563,6 @@ impl Load for VirtualLoader {
             .map_or(false, |path| is_typescript(path.as_path()))
         {
             let mut pass = strip(unresolved_mark, top_level_mark);
-            pass.process(&mut program);
-        }
-
-        if path.as_ref().map_or(false, |path| is_jsx(path.as_path())) {
-            let mut options = JsxOptions::default();
-            options.runtime = Some(JsxRuntime::Automatic);
-            options.import_source = Some("react".into());
-            let mut pass = react(
-                self.cm.clone(),
-                Some(SingleThreadedComments::default()),
-                options,
-                top_level_mark,
-                unresolved_mark,
-            );
             pass.process(&mut program);
         }
 
@@ -704,27 +670,9 @@ impl FsResolver {
 
 impl Resolve for FsResolver {
     fn resolve(&self, base: &FileName, specifier: &str) -> Result<Resolution, anyhow::Error> {
-        if specifier == "react" {
+        if let Some(filename) = resolve_ui_specifier(base, specifier, false)? {
             return Ok(Resolution {
-                filename: FileName::Custom("deka:react".to_string()),
-                slug: None,
-            });
-        }
-        if specifier == "react-dom/client" {
-            return Ok(Resolution {
-                filename: FileName::Custom("deka:react-dom-client".to_string()),
-                slug: None,
-            });
-        }
-        if specifier == "react/jsx-runtime" {
-            return Ok(Resolution {
-                filename: FileName::Custom("deka:react-jsx-runtime".to_string()),
-                slug: None,
-            });
-        }
-        if specifier == "deka/jsx-runtime" {
-            return Ok(Resolution {
-                filename: FileName::Custom("deka:react-jsx-runtime".to_string()),
+                filename,
                 slug: None,
             });
         }
@@ -830,12 +778,7 @@ fn is_typescript(path: &Path) -> bool {
     }
 }
 
-fn is_jsx(path: &Path) -> bool {
-    match path.extension().and_then(|ext| ext.to_str()) {
-        Some("tsx") | Some("jsx") => true,
-        _ => false,
-    }
-}
+
 
 /// Verify that `resolved` stays within `root` after canonicalization.
 /// Returns `None` if the path escapes the root (path traversal).
@@ -851,12 +794,14 @@ fn guard_path_traversal(resolved: &Path, root: &Path) -> Option<PathBuf> {
 
 struct DekaResolver {
     root: PathBuf,
+    client: bool,
 }
 
 impl DekaResolver {
-    fn new(project_root: PathBuf) -> Result<Self, String> {
+    fn new(project_root: PathBuf, client: bool) -> Result<Self, String> {
         Ok(Self {
             root: project_root,
+            client,
         })
     }
 
@@ -902,27 +847,9 @@ impl DekaResolver {
 
 impl Resolve for DekaResolver {
     fn resolve(&self, base: &FileName, specifier: &str) -> Result<Resolution, anyhow::Error> {
-        if specifier == "react" {
+        if let Some(filename) = resolve_ui_specifier(base, specifier, self.client)? {
             return Ok(Resolution {
-                filename: FileName::Custom("deka:react".to_string()),
-                slug: None,
-            });
-        }
-        if specifier == "react-dom/client" {
-            return Ok(Resolution {
-                filename: FileName::Custom("deka:react-dom-client".to_string()),
-                slug: None,
-            });
-        }
-        if specifier == "react/jsx-runtime" {
-            return Ok(Resolution {
-                filename: FileName::Custom("deka:react-jsx-runtime".to_string()),
-                slug: None,
-            });
-        }
-        if specifier == "deka/jsx-runtime" {
-            return Ok(Resolution {
-                filename: FileName::Custom("deka:react-jsx-runtime".to_string()),
+                filename,
                 slug: None,
             });
         }
@@ -1038,6 +965,56 @@ fn resolve_with_candidates(target: &Path) -> Option<PathBuf> {
     ds_bundle_candidates(target)
         .into_iter()
         .find(|candidate| candidate.is_file())
+}
+
+fn load_ui_custom(name: &str) -> Option<&'static str> {
+    name.strip_prefix("deka:").and_then(deka_ui::source_for)
+}
+
+fn resolve_ui_specifier(
+    base: &FileName,
+    specifier: &str,
+    client: bool,
+) -> Result<Option<FileName>, anyhow::Error> {
+    let filename = if let Some(source) = deka_ui::source_for(specifier) {
+        let _ = source;
+        Some(FileName::Custom(format!(
+            "deka:{}",
+            specifier.trim_end_matches(".js").trim_end_matches(".mjs")
+        )))
+    } else if let FileName::Custom(name) = base {
+        resolve_ui_relative(name, specifier)
+    } else {
+        None
+    };
+    let Some(filename) = filename else {
+        return Ok(None);
+    };
+    if client && is_ui_server_filename(&filename) {
+        anyhow::bail!("{CLIENT_SERVER_IMPORT_ERROR}");
+    }
+    Ok(Some(filename))
+}
+
+fn resolve_ui_relative(base_name: &str, specifier: &str) -> Option<FileName> {
+    let _current = base_name.strip_prefix("deka:ui/")?;
+    if !specifier.starts_with("./") && !specifier.starts_with("../") {
+        return None;
+    }
+    let file = specifier
+        .rsplit('/')
+        .next()?
+        .trim_end_matches(".js")
+        .trim_end_matches(".mjs");
+    let spec = format!("ui/{file}");
+    deka_ui::source_for(&spec).map(|_| FileName::Custom(format!("deka:{spec}")))
+}
+
+fn is_ui_server_filename(file: &FileName) -> bool {
+    match file {
+        FileName::Custom(name) => name == "deka:ui/server",
+        _ => false,
+    }
 }
 
 /// DekaScript first (`ds_source_candidates`, deka#241), then JS/TS for mixed

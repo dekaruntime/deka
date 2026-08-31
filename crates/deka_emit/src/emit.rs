@@ -22,6 +22,7 @@ pub fn emit_js(program: &Program, _source: &str) -> Result<String, String> {
         &HashMap::new(),
         &HashMap::new(),
         "module.ds",
+        None,
     )
 }
 
@@ -46,6 +47,7 @@ pub fn emit_js_with_imports<'a>(
         unwrap_calls,
         operator_rewrites,
         "module.ds",
+        None,
     )
 }
 
@@ -64,6 +66,7 @@ pub fn emit_js_with_options<'a>(
     unwrap_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::UnwrapKind>,
     operator_rewrites: &HashMap<*const Expr<'a>, deka_syntax::typeck::OperatorRewrite<'a>>,
     file_path: &str,
+    live_names: Option<&HashSet<String>>,
 ) -> Result<String, String> {
     let mut emitter = Emitter::new(program);
     emitter.module_base = module_base;
@@ -71,6 +74,7 @@ pub fn emit_js_with_options<'a>(
     emitter.seed_imports(imports);
     emitter.unwrap_calls = unwrap_calls.clone();
     emitter.operator_rewrites = operator_rewrites.clone();
+    emitter.live_names = live_names.cloned();
     emitter.emit()
 }
 
@@ -131,6 +135,8 @@ struct Emitter<'a> {
     jsx_path: Vec<usize>,
     jsx_siblings: Vec<usize>,
     jsx_roots: usize,
+    /// When set, only these top-level names are emitted (graph shaking).
+    live_names: Option<HashSet<String>>,
     needs_live: bool,
 }
 
@@ -155,6 +161,7 @@ impl<'a> Emitter<'a> {
             jsx_path: Vec::new(),
             jsx_siblings: Vec::new(),
             jsx_roots: 0,
+            live_names: None,
             needs_live: false,
         };
         emitter.prepass();
@@ -173,7 +180,7 @@ impl<'a> Emitter<'a> {
         // jsx runtime import when this file contains JSX.
         let mut first = true;
         for stmt in self.program.statements.iter() {
-            if matches!(stmt, Stmt::Import { .. }) {
+            if matches!(stmt, Stmt::Import { .. }) && self.should_emit_stmt(stmt) {
                 if !first {
                     self.out.push('\n');
                 }
@@ -218,7 +225,7 @@ impl<'a> Emitter<'a> {
             if matches!(stmt, Stmt::Import { .. }) {
                 continue;
             }
-            if !Self::is_runtime_statement(stmt) {
+            if !Self::is_runtime_statement(stmt) && self.should_emit_stmt(stmt) {
                 if !first {
                     self.out.push('\n');
                 }
@@ -232,7 +239,7 @@ impl<'a> Emitter<'a> {
 
         // Second pass: emit executable top-level statements (const/let/expr).
         for stmt in self.program.statements.iter() {
-            if Self::is_runtime_statement(stmt) {
+            if Self::is_runtime_statement(stmt) && self.should_emit_stmt(stmt) {
                 if !first {
                     self.out.push('\n');
                 }
@@ -242,6 +249,49 @@ impl<'a> Emitter<'a> {
         }
 
         Ok(std::mem::take(&mut self.out))
+    }
+
+    fn is_live(&self, name: &str) -> bool {
+        self.live_names
+            .as_ref()
+            .map_or(true, |live| live.contains(name))
+    }
+
+    fn should_emit_stmt(&self, stmt: &Stmt<'_>) -> bool {
+        if self.live_names.is_none() {
+            return true;
+        }
+        match stmt {
+            Stmt::Import { specifiers, .. } => {
+                specifiers.is_empty() || specifiers.iter().any(|spec| self.is_live(spec.local))
+            }
+            Stmt::Export { decl, .. } => match decl {
+                ExportDecl::Const { name, .. } | ExportDecl::Function { name, .. } => {
+                    self.is_live(name)
+                }
+                ExportDecl::NamedGroup { names } => names.iter().any(|n| {
+                    self.is_live(n.alias.unwrap_or(n.name)) || self.is_live(n.name)
+                }),
+            },
+            Stmt::Const { name, .. }
+            | Stmt::Let { name, .. }
+            | Stmt::Function { name, .. }
+            | Stmt::Struct { name, .. }
+            | Stmt::Enum { name, .. }
+            | Stmt::TypeAlias { name, .. }
+            | Stmt::Newtype { name, .. }
+            | Stmt::Interface { name, .. } => self.is_live(name),
+            Stmt::ReceiverMethod { receiver_type, .. } => self.is_live(receiver_type),
+            Stmt::Expr { .. }
+            | Stmt::If { .. }
+            | Stmt::Block { .. }
+            | Stmt::For { .. }
+            | Stmt::ForOf { .. }
+            | Stmt::Return { .. }
+            | Stmt::Break { .. }
+            | Stmt::Continue { .. }
+            | Stmt::Empty { .. } => true,
+        }
     }
 
     /// Returns true for statements whose initializers run at module load time.
@@ -566,6 +616,9 @@ impl<'a> Emitter<'a> {
 
     fn needs_jsx_helper(&self) -> bool {
         self.program.statements.iter().any(|stmt| {
+            if !self.should_emit_stmt(stmt) {
+                return false;
+            }
             let mut found = false;
             visit_stmt_exprs(stmt, &mut |expr| {
                 if matches!(expr, Expr::JsxElement { .. } | Expr::JsxFragment { .. }) {
@@ -723,8 +776,17 @@ impl<'a> Emitter<'a> {
                         self.out.push('}');
                     }
                     ExportDecl::NamedGroup { names } => {
+                        let kept: Vec<_> = names
+                            .iter()
+                            .filter(|n| {
+                                self.is_live(n.alias.unwrap_or(n.name)) || self.is_live(n.name)
+                            })
+                            .collect();
+                        if kept.is_empty() {
+                            return Ok(());
+                        }
                         self.out.push_str("{ ");
-                        for (i, name) in names.iter().enumerate() {
+                        for (i, name) in kept.iter().enumerate() {
                             if i > 0 {
                                 self.out.push_str(", ");
                             }
@@ -751,8 +813,15 @@ impl<'a> Emitter<'a> {
                     self.out.push_str(&resolved_source);
                     self.out.push_str("\";");
                 } else {
+                    let kept: Vec<_> = specifiers
+                        .iter()
+                        .filter(|spec| self.is_live(spec.local))
+                        .collect();
+                    if kept.is_empty() {
+                        return Ok(());
+                    }
                     self.out.push_str("import { ");
-                    for (i, spec) in specifiers.iter().enumerate() {
+                    for (i, spec) in kept.iter().enumerate() {
                         if i > 0 {
                             self.out.push_str(", ");
                         }
@@ -1002,6 +1071,9 @@ impl<'a> Emitter<'a> {
     fn emit_method_registrations(&mut self) -> Result<(), String> {
         let order = self.struct_order.clone();
         for struct_name in order {
+            if !self.is_live(&struct_name) {
+                continue;
+            }
             let methods = self.collect_methods_for_struct(&struct_name, &mut HashSet::new());
             for method in methods {
                     write_indent(&mut self.out, 0);
@@ -1039,6 +1111,9 @@ impl<'a> Emitter<'a> {
             .newtypes
             .keys()
             .filter_map(|name| {
+                if !self.is_live(name) {
+                    return None;
+                }
                 self.receiver_methods
                     .get(name)
                     .map(|methods| (name.clone(), methods.clone()))
@@ -1777,6 +1852,7 @@ impl<'a> Emitter<'a> {
                     jsx_path: Vec::new(),
                     jsx_siblings: Vec::new(),
                     jsx_roots: 0,
+                    live_names: None,
                     needs_live: false,
                 };
                 tmp.emit_expr(expr).expect("literal emission");

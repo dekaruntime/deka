@@ -46,6 +46,7 @@ fn transpile_help_describes_output_modes() {
         "--preserve",
         "--bundle",
         "--treeshake",
+        "--client",
         "Examples:",
         "Output ancestors must be non-symlinked",
     ] {

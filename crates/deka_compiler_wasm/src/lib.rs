@@ -271,6 +271,8 @@ fn compile_request(source: &str, filename: &str, options_json: &str) -> String {
     let compile_options = deka_compile::CompileOptions {
         module_base: options.module_base,
         module_root: None,
+        used_exports: None,
+        client: false,
     };
 
     match deka_compile::compile_to_js_with_options(source, filename, compile_options) {
