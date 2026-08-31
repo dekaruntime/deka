@@ -201,11 +201,7 @@ impl<'a> Checker<'a> {
                         );
                     }
                 }
-                for attr in element.attributes.iter() {
-                    if let Some(value) = &attr.value {
-                        self.check_expr(value);
-                    }
-                }
+                self.check_jsx_attributes(element, *span);
                 for child in element.children.iter() {
                     self.check_expr(child);
                 }
@@ -603,6 +599,140 @@ impl<'a> Checker<'a> {
                     format!("cannot access field `{field}` on type `{type_name}`"),
                 );
                 Type::Error
+            }
+        }
+    }
+
+    /// The props interface of an uppercase JSX tag, if it has one.
+    ///
+    /// `<Card … />` resolves `Card` to its function type and takes the first
+    /// parameter. A component whose props are a struct, an inline object type
+    /// or unannotated yields `None` and is not prop-checked -- this is the
+    /// interface case, which is what components are written with.
+    fn jsx_props_interface(&mut self, tag: &'a str) -> Option<&'a str> {
+        if !tag.chars().next().is_some_and(|c| c.is_uppercase()) {
+            return None;
+        }
+        let Some(Type::Function { params, .. }) = self.lookup_var(tag) else {
+            return None;
+        };
+        let Some(Type::Interface { name }) = params.first().cloned() else {
+            return None;
+        };
+        if self.interfaces.contains_key(name) {
+            Some(name)
+        } else {
+            None
+        }
+    }
+
+    /// Check a JSX element's attributes against its component's props interface.
+    ///
+    /// deka#443: attributes were never checked at all. A missing required prop,
+    /// a wrong type and an unknown prop all compiled, while a read of the same
+    /// interface *inside* the component was checked correctly -- so every
+    /// guarantee stopped at the `<`.
+    ///
+    /// JSX spread (`{...expr}`) is rejected by the parser, so every attribute
+    /// here is a named one and the supplied set is known exactly. That is what
+    /// makes the missing-prop check sound.
+    fn check_jsx_attributes(&mut self, element: &ast::JsxElement<'a>, span: ast::Span) {
+        let Some(interface_name) = self.jsx_props_interface(element.tag) else {
+            // Not a component with an interface props type: still typecheck the
+            // attribute expressions themselves.
+            for attr in element.attributes.iter() {
+                if let Some(value) = &attr.value {
+                    self.check_expr(value);
+                }
+            }
+            return;
+        };
+
+        let fields: Vec<(&'a str, &'a ast::Type<'a>, bool)> = {
+            let info = match self.interfaces.get(interface_name) {
+                Some(info) => info,
+                None => return,
+            };
+            info.members
+                .iter()
+                .filter_map(|member| match member {
+                    ast::InterfaceMember::Field {
+                        name, ty, optional, ..
+                    } => Some((*name, ty, *optional)),
+                    ast::InterfaceMember::Method { .. } => None,
+                })
+                .collect()
+        };
+
+        let mut supplied: Vec<&'a str> = Vec::new();
+
+        for attr in element.attributes.iter() {
+            supplied.push(attr.name);
+
+            let Some((_, field_ty, _)) = fields.iter().find(|(name, _, _)| *name == attr.name)
+            else {
+                if let Some(value) = &attr.value {
+                    self.check_expr(value);
+                }
+                self.error_span(
+                    attr.span,
+                    format!(
+                        "interface `{interface_name}` has no prop `{}`",
+                        attr.name
+                    ),
+                );
+                continue;
+            };
+
+            let expected = self.resolve_ast_type(field_ty);
+
+            // `<Card flag />` is boolean shorthand.
+            let Some(value) = &attr.value else {
+                if !Self::is_boolean(&expected)
+                    && !matches!(expected, Type::Infer | Type::Error)
+                {
+                    self.error_span(
+                        attr.span,
+                        format!(
+                            "prop `{}` expects type `{expected}`; a bare attribute is `true`",
+                            attr.name
+                        ),
+                    );
+                }
+                continue;
+            };
+
+            let actual = self.check_expr(value);
+            if !self.is_assignable(&expected, &actual)
+                && !matches!(actual, Type::Infer | Type::Error)
+                && !matches!(expected, Type::Infer | Type::Error)
+            {
+                self.error_span(
+                    attr.span,
+                    format!(
+                        "prop `{}` expects type `{expected}`, found type `{actual}`",
+                        attr.name
+                    ),
+                );
+            }
+        }
+
+        for (name, _, optional) in fields.iter() {
+            // `children` is supplied by nesting, not by an attribute:
+            // `<Layout><Page /></Layout>` fills `children: Component`. Every
+            // layout in the framework is written that way, so treating it as
+            // missing would reject the generated entry for any app.
+            if *name == "children" && !element.children.is_empty() {
+                continue;
+            }
+            if !*optional && !supplied.contains(name) {
+                self.error_span(
+                    span,
+                    format!(
+                        "missing required prop `{name}` on `{}`",
+                        element.tag
+                    ),
+                );
             }
         }
     }
