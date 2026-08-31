@@ -168,31 +168,60 @@ mod tests {
         assert!(out.contains("return x + 2;"), "expected raw JS statements, got: {}", out);
     }
 
+    /// Collapse runs of whitespace so wrapper-selection assertions do not
+    /// depend on the emitter's line breaks. deka#424 put the body's delimiters
+    /// on their own lines to stop a trailing `//` comment swallowing them,
+    /// which broke every assertion here that spelled the spacing out.
+    fn squeeze(source: &str) -> String {
+        source.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
     #[test]
     fn emit_unsafe_ignores_string_punctuation_and_keywords() {
         let out = parse_and_emit("const a = unsafe { \"a;b\" }; const b = unsafe { \"await\" };");
-        assert!(out.contains("return (\"a;b\")"), "string semicolon changed shape: {}", out);
-        assert!(out.contains("return (\"await\")"), "string await changed shape: {}", out);
+        let flat = squeeze(&out);
+        assert!(flat.contains("return ( \"a;b\" )"), "string semicolon changed shape: {}", out);
+        assert!(flat.contains("return ( \"await\" )"), "string await changed shape: {}", out);
         assert!(!out.contains("async function"), "string await changed wrapper asyncness: {}", out);
     }
 
     #[test]
     fn emit_unsafe_ignores_comment_punctuation() {
         let out = parse_and_emit("const r = unsafe { 1 + 1 /* ; await */ };");
-        assert!(out.contains("return (1 + 1 /* ; await */)"), "comment changed expression shape: {}", out);
+        let flat = squeeze(&out);
+        assert!(flat.contains("return ( 1 + 1 /* ; await */ )"), "comment changed expression shape: {}", out);
         assert!(!out.contains("async function"), "comment await changed wrapper asyncness: {}", out);
     }
 
     #[test]
     fn emit_unsafe_ignores_regex_punctuation() {
         let out = parse_and_emit("const r = unsafe { /a;b/.test(value) };");
-        assert!(out.contains("return (/a;b/.test(value))"), "regex semicolon changed shape: {}", out);
+        let flat = squeeze(&out);
+        assert!(flat.contains("return ( /a;b/.test(value) )"), "regex semicolon changed shape: {}", out);
     }
 
     #[test]
     fn emit_unsafe_detects_automatic_semicolon_insertion() {
         let out = parse_and_emit("const r = unsafe { 1\n2 };");
-        assert!(out.contains("function() { 1\n2 }"), "ASI statements were treated as an expression: {}", out);
+        let flat = squeeze(&out);
+        // Statement wrapper: no `return (`, the body is spliced as statements.
+        assert!(flat.contains("function() { 1 2 }"), "ASI statements were treated as an expression: {}", out);
+    }
+
+    /// The bug that started deka#423: a body whose last line is a `//` comment
+    /// used to swallow the closing delimiters. Both halves are needed -- the
+    /// scanner picks the wrapper, deka#424 emits its delimiters on own lines.
+    #[test]
+    fn emit_unsafe_survives_a_trailing_line_comment() {
+        let out = parse_and_emit("const r = unsafe { 1 + 1 // trailing\n };");
+        let opens = out.matches('{').count();
+        let closes = out.matches('}').count();
+        assert_eq!(opens, closes, "unbalanced braces from trailing comment: {}", out);
+        assert!(
+            out.contains("// trailing\n"),
+            "comment must stay on its own line: {}",
+            out
+        );
     }
 
     #[test]
