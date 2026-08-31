@@ -248,8 +248,51 @@ fn collect_expr_idents(expr: &Expr<'_>, out: &mut HashSet<String>) {
                 out.insert(element.tag.to_string());
             }
         }
+        // An `unsafe` body is raw JS spliced as text, so the walker sees no
+        // sub-expressions and every name it uses was invisible here. Anything
+        // imported and used *only* inside `unsafe` was therefore shaken out and
+        // the emitted module referenced an undefined symbol.
+        //
+        // That is how `deka build` shipped a Cloudflare Worker whose api/ and
+        // middleware handlers were named but never defined (deka#437): the
+        // generated router entry imports them and uses them only inside
+        // `unsafe { runWorker(...) }`.
+        //
+        // Over-approximating is the safe direction for dead-code elimination --
+        // keeping a name that turns out to be unused costs bytes, dropping one
+        // that is used produces a ReferenceError at runtime. So this takes every
+        // identifier-shaped token, including ones inside strings and comments.
+        Expr::Unsafe { source, .. } => {
+            collect_js_identifier_tokens(source, out);
+        }
         _ => {}
     }
+}
+
+/// Every identifier-shaped token in a chunk of raw JavaScript.
+///
+/// Deliberately not a lexer: this feeds dead-code elimination, where a false
+/// positive keeps a binding alive and a false negative breaks the program.
+fn collect_js_identifier_tokens(source: &str, out: &mut HashSet<String>) {
+    let mut current = String::new();
+    for ch in source.chars() {
+        if ch.is_alphanumeric() || ch == '_' || ch == '$' {
+            current.push(ch);
+        } else if !current.is_empty() {
+            push_identifier(std::mem::take(&mut current), out);
+        }
+    }
+    if !current.is_empty() {
+        push_identifier(current, out);
+    }
+}
+
+fn push_identifier(token: String, out: &mut HashSet<String>) {
+    // A leading digit means it was a number, not a name.
+    if token.starts_with(|ch: char| ch.is_ascii_digit()) {
+        return;
+    }
+    out.insert(token);
 }
 
 fn walk_stmt(stmt: &Stmt<'_>, visit: &mut dyn FnMut(&Expr<'_>)) {

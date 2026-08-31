@@ -186,18 +186,14 @@ jobs:
       - name: Test bundler
         run: cargo test -p bundler
 
+      # Every target, not just --lib. The integration tests under
+      # crates/cli/tests/ were never run here, and six of them were red on main
+      # -- including the two that assert a .phpx entry is refused before it
+      # executes, and the two that caught deka#437 (a shipped Worker whose
+      # handlers were referenced but never defined). --test-threads=1 is
+      # load-bearing: the --lib tests are order-dependent (deka#427).
       - name: Test cli
-        run: cargo test --locked -p cli --lib -- --test-threads=1
-
-      # Boundary tests drive the real CLI binary as a subprocess. They are a
-      # separate binary from the rest of crates/cli/tests/ because those are
-      # currently red on main and not run anywhere (deka#432); a check that
-      # only passes because nobody runs it is how deka#430 went unnoticed.
-      - name: Test cli project-gate boundary
-        run: cargo test --locked -p cli --test project_gate_boundary
-
-      - name: Test cli dynamic-policy boundary
-        run: cargo test --locked -p cli --test dynamic_policy_boundary
+        run: cargo test --locked -p cli -- --test-threads=1
 
       - name: Build and test browser compiler WASM
         env:
