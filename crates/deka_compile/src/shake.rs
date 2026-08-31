@@ -12,7 +12,15 @@ use std::path::PathBuf;
 use deka_syntax::{ExportDecl, Expr, Program, Stmt};
 
 /// Compiler-provided UI specifiers. These are not `.ds` files.
-pub const UI_SPECIFIERS: &[&str] = &["ui/jsx", "ui/reactive", "ui/client", "ui/server"];
+pub const UI_SPECIFIERS: &[&str] = &[
+    "ui/jsx",
+    "ui/reactive",
+    "ui/client",
+    "ui/server",
+    "ui/form",
+    "ui/suspense",
+    "ui/router",
+];
 
 pub fn normalize_ui_specifier(spec: &str) -> Option<String> {
     let trimmed = spec.trim().trim_end_matches(".js").trim_end_matches(".mjs");
@@ -229,6 +237,16 @@ fn collect_expr_idents(expr: &Expr<'_>, out: &mut HashSet<String>) {
         }
         Expr::EnumConstructor { enum_name, .. } => {
             out.insert((*enum_name).to_string());
+        }
+        Expr::JsxElement { element, .. } => {
+            if element
+                .tag
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_uppercase())
+            {
+                out.insert(element.tag.to_string());
+            }
         }
         _ => {}
     }
