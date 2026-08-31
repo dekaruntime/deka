@@ -221,6 +221,39 @@ function writeProjectFiles(tmpDir: string, entryPath: string, source: string, fi
   return { inputPath: tmpDir, outputPath, isProject: true }
 }
 
+// A cache hit restores ds_modules/ and deka.lock but not the manifest, so the
+// fixture ended up with packages installed and never declared -- exactly the
+// shape the project gate rejects (deka#403, deka#430). Derive the dependency
+// block from what was actually restored, so it does not matter which runner
+// filled the shared cache.
+function declareRestoredModules(tmpDir: string) {
+  const manifestPath = path.join(tmpDir, 'deka.json')
+  const manifest = fs.existsSync(manifestPath)
+    ? JSON.parse(fs.readFileSync(manifestPath, 'utf-8'))
+    : {}
+  const deps: Record<string, string> = { ...(manifest.dependencies ?? {}) }
+  for (const modulesDir of ['ds_modules', 'php_modules']) {
+    const scope = path.join(tmpDir, modulesDir, '@deka')
+    if (!fs.existsSync(scope)) continue
+    for (const name of fs.readdirSync(scope)) {
+      const pkg = '@deka/' + name
+      if (deps[pkg]) continue
+      const pkgManifest = path.join(scope, name, 'deka.json')
+      let version = '*'
+      if (fs.existsSync(pkgManifest)) {
+        try {
+          version = JSON.parse(fs.readFileSync(pkgManifest, 'utf-8')).version ?? '*'
+        } catch {
+          version = '*'
+        }
+      }
+      deps[pkg] = version
+    }
+  }
+  manifest.dependencies = deps
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + String.fromCharCode(10))
+}
+
 function restoreCachedModules(cacheDir: string, tmpDir: string) {
   for (const name of ['ds_modules', 'php_modules']) {
     const cached = path.join(cacheDir, name)
@@ -245,6 +278,7 @@ function installPackages(
   if (fs.existsSync(cachedLock) && hasCachedModules) {
     restoreCachedModules(cacheDir, tmpDir)
     fs.copyFileSync(cachedLock, path.join(tmpDir, 'deka.lock'))
+    declareRestoredModules(tmpDir)
     return { ok: true, stderr: '' }
   }
 
