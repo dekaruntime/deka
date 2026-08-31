@@ -88,7 +88,14 @@ impl PhpxEsmLoader {
         let v2_modules = if !entry_is_app_directory && entry_module_path.is_file() {
             let loader = deka_compile::module_graph::FsModuleLoader::new(project_root.clone());
             match deka_compile::module_graph::compile_module_graph(&entry_module_path, &loader) {
-                Ok(graph) => Some(graph.modules),
+                Ok(graph) => {
+                    // The graph is the only point every entry shape passes
+                    // through, and it carries the transitive import set.
+                    let imports: Vec<String> = graph.imports.iter().cloned().collect();
+                    ensure_project_layout(&project_root, &imports)
+                        .map_err(JsErrorBox::generic)?;
+                    Some(graph.modules)
+                }
                 Err(diagnostics) => {
                     let message = diagnostics
                         .iter()
@@ -507,27 +514,24 @@ fn collect_deka_source_files_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Re
 }
 
 pub fn ensure_project_layout(project_root: &Path, imports: &[String]) -> Result<(), String> {
-    // DEKA_MODULE_ROOT bypass (#220): when set, the tenant relies on the runtime
-    // stdlib at that root and we trust the runtime-provided modules without
-    // requiring a local deka.lock or ds_modules/. Tenant-local packages would
-    // still need a lockfile, but stdlib-only tenants (id.tana.gg) deploy
-    // without ceremony.
+    // DEKA_MODULE_ROOT is the stdlib-only-tenant escape (#220): when it points
+    // at a root *other* than this project, the runtime supplies the stdlib and
+    // a local ds_modules/ tree is not expected.
     //
-    // This is the bypass deka#229 removes. It is kept here at the call site
-    // rather than pushed into the gate so it stays visible: it is a process-
-    // global environment variable that disables every check below, including
-    // the lockfile requirement, and in the ordinary `deka run` path the runtime
-    // sets it to the project root itself.
-    if std::env::var_os("DEKA_MODULE_ROOT").is_some() {
-        return Ok(());
-    }
+    // It used to bypass on presence alone, which made this whole function
+    // dead: the CLI sets the variable to the project root itself on every
+    // ordinary run, so the early return always fired (deka#229, deka#430).
+    // Comparing against the project root preserves what #220 actually needed
+    // and drops the accidental blanket bypass.
+    let module_root = std::env::var_os("DEKA_MODULE_ROOT").map(PathBuf::from);
 
     runtime_core::project_gate::validate_project(
         project_root,
         imports,
         &runtime_core::project_gate::GateOptions {
+            module_root,
+            require_lockfile: true,
             context: "deka runtime",
-            ..Default::default()
         },
     )
 }

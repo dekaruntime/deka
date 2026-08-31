@@ -17,6 +17,8 @@ const scratchRoot = join(__dirname, ".run-tmp");
 
 const DEFAULT_DEKA_LOCK = '{\n  "lockfileVersion": 1,\n  "packages": {}\n}\n';
 
+const NL = String.fromCharCode(10);
+
 const DEFAULT_DEKA_JSON = {
   name: "conformance-fixture",
   security: {
@@ -276,6 +278,39 @@ function writeProjectFiles(tmpDir, entryPath, source, files) {
   return { isProject: true, ext: ".ds" };
 }
 
+// A cache hit restores ds_modules/ and deka.lock but not the manifest, so the
+// fixture ended up with packages installed and never declared -- exactly the
+// shape the project gate rejects (deka#403, deka#430). Derive the dependency
+// block from what was actually restored, so it does not matter which runner
+// filled the shared cache.
+function declareRestoredModules(tmpDir) {
+  const manifestPath = join(tmpDir, "deka.json");
+  const manifest = existsSync(manifestPath)
+    ? JSON.parse(readFileSync(manifestPath, "utf-8"))
+    : {};
+  const deps = { ...(manifest.dependencies ?? {}) };
+  for (const modulesDir of ["ds_modules", "php_modules"]) {
+    const scope = join(tmpDir, modulesDir, "@deka");
+    if (!existsSync(scope)) continue;
+    for (const name of readdirSync(scope)) {
+      const pkg = "@deka/" + name;
+      if (deps[pkg]) continue;
+      const pkgManifest = join(scope, name, "deka.json");
+      let version = "*";
+      if (existsSync(pkgManifest)) {
+        try {
+          version = JSON.parse(readFileSync(pkgManifest, "utf-8")).version ?? "*";
+        } catch {
+          version = "*";
+        }
+      }
+      deps[pkg] = version;
+    }
+  }
+  manifest.dependencies = deps;
+  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + NL);
+}
+
 function restoreCachedModules(cacheDir, tmpDir) {
   for (const name of ["ds_modules", "php_modules"]) {
     const cached = join(cacheDir, name);
@@ -295,6 +330,7 @@ function installPackages(cliPath, tmpDir, packages) {
   if (existsSync(cachedLock) && hasCachedModules) {
     restoreCachedModules(cacheDir, tmpDir);
     copyFileSync(cachedLock, join(tmpDir, "deka.lock"));
+    declareRestoredModules(tmpDir);
     return { ok: true, stderr: "" };
   }
 
@@ -332,6 +368,7 @@ function installPackages(cliPath, tmpDir, packages) {
   }
   return { ok: true, stderr };
 }
+
 
 function runNative(cliPath, test) {
   mkdirSync(scratchRoot, { recursive: true });
