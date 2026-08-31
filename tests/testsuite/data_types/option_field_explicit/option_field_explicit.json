@@ -1,5 +1,5 @@
 {
-  "title": "Option fields require Some or None",
+  "title": "`name?: T` and `name: T?` are one type",
   "stage": "run",
-  "notes": "deka#401: a raw value was accepted where Option<T> was expected and left unwrapped, and an omitted Option field auto-filled None on structs but errored on interfaces."
+  "notes": "deka#416: one mechanism for absence, whichever way it is spelled."
 }

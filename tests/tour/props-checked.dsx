@@ -11,9 +11,13 @@ interface LayoutProps {
 // required prop, a wrong type, or a name that is not a prop at all are all
 // compile errors on the `<Card … />` line.
 fn Card(props: CardProps) Component {
+  const sub = match (props.subtitle) {
+    Some(s) => <p>{s}</p>,
+    None => <></>
+  }
   return <article>
     <h2>{props.title}</h2>
-    <p>{props.subtitle}</p>
+    {sub}
   </article>
 }
 

@@ -33,6 +33,7 @@ pub fn emit_js(program: &Program, _source: &str) -> Result<String, String> {
         None,
         &HashMap::new(),
         &HashMap::new(),
+        &HashMap::new(),
         "module.ds",
         None,
     )
@@ -58,6 +59,7 @@ pub fn emit_js_with_imports<'a>(
         None,
         unwrap_calls,
         operator_rewrites,
+        &HashMap::new(),
         "module.ds",
         None,
     )
@@ -77,6 +79,10 @@ pub fn emit_js_with_options<'a>(
     module_base: Option<String>,
     unwrap_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::UnwrapKind>,
     operator_rewrites: &HashMap<*const Expr<'a>, deka_syntax::typeck::OperatorRewrite<'a>>,
+    jsx_optional_props: &HashMap<
+        *const deka_syntax::JsxElement<'a>,
+        deka_syntax::typeck::JsxOptionalProps<'a>,
+    >,
     file_path: &str,
     live_names: Option<&HashSet<String>>,
 ) -> Result<String, String> {
@@ -86,6 +92,7 @@ pub fn emit_js_with_options<'a>(
     emitter.seed_imports(imports);
     emitter.unwrap_calls = unwrap_calls.clone();
     emitter.operator_rewrites = operator_rewrites.clone();
+    emitter.jsx_optional_props = jsx_optional_props.clone();
     emitter.live_names = live_names.cloned();
     emitter.emit()
 }
@@ -140,6 +147,10 @@ struct Emitter<'a> {
     module_base: Option<String>,
     /// Primitive conversion calls lowered by the typechecker.
     unwrap_calls: HashMap<*const Expr<'a>, deka_syntax::typeck::UnwrapKind>,
+    jsx_optional_props: HashMap<
+        *const deka_syntax::JsxElement<'a>,
+        deka_syntax::typeck::JsxOptionalProps<'a>,
+    >,
     /// Newtype operator rewrites lowered by the typechecker.
     operator_rewrites: HashMap<*const Expr<'a>, deka_syntax::typeck::OperatorRewrite<'a>>,
     file_stem: String,
@@ -167,6 +178,7 @@ impl<'a> Emitter<'a> {
             receiver_methods: HashMap::new(),
             module_base: None,
             unwrap_calls: HashMap::new(),
+            jsx_optional_props: HashMap::new(),
             operator_rewrites: HashMap::new(),
             file_stem: "module".to_string(),
             fn_scope: "_".to_string(),
@@ -1472,14 +1484,6 @@ impl<'a> Emitter<'a> {
                         }
                     }
                     self.out.push(')');
-                } else if is_builtin_call(callee, "isset") {
-                    // isset(x) returns true when x is a concrete value.
-                    // For Option, None is considered unset.
-                    self.out.push_str("((__deka_isset_arg) => (__deka_isset_arg !== undefined && __deka_isset_arg !== null && !(__deka_isset_arg.__case === \"None\")))(");
-                    if let Some(arg) = args.first() {
-                        self.emit_expr(arg)?;
-                    }
-                    self.out.push(')');
                 } else {
                     self.emit_expr(callee)?;
                     self.out.push('(');
@@ -1874,6 +1878,7 @@ impl<'a> Emitter<'a> {
                     receiver_methods: HashMap::new(),
                     module_base: self.module_base.clone(),
                     unwrap_calls: HashMap::new(),
+                    jsx_optional_props: HashMap::new(),
                     operator_rewrites: HashMap::new(),
                     file_stem: self.file_stem.clone(),
                     fn_scope: self.fn_scope.clone(),
@@ -1953,6 +1958,14 @@ impl<'a> Emitter<'a> {
             format!("\"{}\"", escape_string(element.tag))
         };
 
+        // Cloned rather than borrowed: emitting an attribute value needs
+        // `&mut self`, and the plan is two small Vecs of names.
+        let plan = self
+            .jsx_optional_props
+            .get(&(element as *const deka_syntax::JsxElement<'a>))
+            .cloned();
+        let plan = plan.as_ref();
+
         let mut props = Vec::new();
         if !is_component {
             props.push(format!(
@@ -1980,7 +1993,29 @@ impl<'a> Emitter<'a> {
                     }
                     None => "true".to_string(),
                 };
+                // An `?:` prop is `Option<T>` inside the component and the
+                // caller wrote a bare `T`. This is a construction site the
+                // compiler owns, so it does the wrapping (deka#416).
+                let value = if plan
+                    .map(|plan| plan.wrap_some.iter().any(|name| *name == attr.name))
+                    .unwrap_or(false)
+                {
+                    self.uses_prelude_enums = true;
+                    format!("Option.Some({value})")
+                } else {
+                    value
+                };
                 props.push(format!("\"{}\": {}", escape_string(attr.name), value));
+            }
+        }
+
+        // Optional props the caller left out. Without this the field would be
+        // JS `undefined` while the type says `Option<T>` -- the runtime hole
+        // deka#401 closed for `T?`.
+        if let Some(plan) = plan {
+            for name in plan.fill_none.iter() {
+                self.uses_prelude_enums = true;
+                props.push(format!("\"{}\": Option.None", escape_string(name)));
             }
         }
 

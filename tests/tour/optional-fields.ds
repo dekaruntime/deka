@@ -1,16 +1,14 @@
 import { echo } from "io"
 
-// Two different ideas, two different spellings.
+// One idea, two spellings. Both give the field the type `Option<T>`.
 
-// `email: string?` — the field is always there and holds an Option.
-// Write Some(x) or None yourself; the compiler will not guess for you.
+// `email: string?` — spelled on the type.
 struct User {
   name: string
   email: string?
 }
 
-// `nickname?: string` — the field may be absent entirely.
-// Its type is a plain string, so guard it with isset().
+// `nickname?: string` — spelled on the field name. Same meaning.
 interface Profile {
   nickname?: string
 }
@@ -24,13 +22,19 @@ const contact = match (user.email) {
   None => "no email"
 }
 
+// There is no presence test. Absence is a case, so it is a branch.
 fn greet(profile: Profile): string {
-  if (isset(profile.nickname)) {
-    return profile.nickname
+  return match (profile.nickname) {
+    Some(name) => name,
+    None => "friend"
   }
-  return "friend"
 }
 
 echo(contact)
-echo(greet({}))
-echo(greet({ nickname: "Deka" }))
+echo(greet({ nickname: None }))
+echo(greet({ nickname: Some("Deka") }))
+
+// A plain object literal must say which one it means — `greet({})` does not
+// compile. A JSX element is different: the compiler owns that construction
+// site, so `<Card title="Hello" />` fills the omitted prop with None and wraps
+// a bare `subtitle="World"` in Some. See the props lesson.
