@@ -173,8 +173,28 @@ pub fn validate_dynamic_code_from_process_env(
     source_code: &str,
     file_path: &str,
 ) -> Result<(), String> {
-    let allow_dynamic = match std::env::var("DEKA_SECURITY_POLICY") {
-        Ok(raw) => {
+    let raw = std::env::var("DEKA_SECURITY_POLICY");
+    let raw = match raw {
+        Ok(value) => Some(value),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(err) => return Err(format!("invalid DEKA_SECURITY_POLICY: {}", err)),
+    };
+    validate_dynamic_code_with_policy(source_code, file_path, raw.as_deref())
+}
+
+/// The policy decision, separated from reading the environment so it can be
+/// tested without mutating process-global state.
+///
+/// `None` means no policy was supplied, which resolves to *deny*. A missing
+/// variable is the state a misconfigured deploy lands in, so it is the one
+/// case where failing open would be silent.
+pub fn validate_dynamic_code_with_policy(
+    source_code: &str,
+    file_path: &str,
+    policy_json: Option<&str>,
+) -> Result<(), String> {
+    let allow_dynamic = match policy_json {
+        Some(raw) => {
             let document = serde_json::from_str::<serde_json::Value>(&raw)
                 .map_err(|err| format!("invalid DEKA_SECURITY_POLICY: {}", err))?;
             let parsed = parse_deka_security_policy(&document);
@@ -200,8 +220,7 @@ pub fn validate_dynamic_code_from_process_env(
             }
             parsed.policy.allow.dynamic && !parsed.policy.deny.dynamic
         }
-        Err(std::env::VarError::NotPresent) => false,
-        Err(err) => return Err(format!("invalid DEKA_SECURITY_POLICY: {}", err)),
+        None => false,
     };
 
     validate_dynamic_code(source_code, file_path, allow_dynamic)
@@ -339,6 +358,41 @@ mod dynamic_code_tests {
             let error = result.unwrap_err();
             assert!(error.contains("Dynamic Code Disabled"), "{error}");
         }
+    }
+
+    #[test]
+    fn absent_policy_denies() {
+        // The misconfigured-deploy case. Failing open here would be silent.
+        let err = super::validate_dynamic_code_with_policy(
+            "const value = eval('1 + 1');",
+            "handler.js",
+            None,
+        )
+        .unwrap_err();
+        assert!(err.contains("Dynamic Code Disabled"), "{err}");
+    }
+
+    #[test]
+    fn malformed_policy_denies() {
+        let err = super::validate_dynamic_code_with_policy(
+            "const value = eval('1 + 1');",
+            "handler.js",
+            Some("{ not json"),
+        )
+        .unwrap_err();
+        assert!(err.contains("invalid DEKA_SECURITY_POLICY"), "{err}");
+    }
+
+    #[test]
+    fn explicit_deny_beats_allow() {
+        let policy = r#"{"allow":{"dynamic":true},"deny":{"dynamic":true}}"#;
+        let err = super::validate_dynamic_code_with_policy(
+            "const value = eval('1 + 1');",
+            "handler.js",
+            Some(policy),
+        )
+        .unwrap_err();
+        assert!(err.contains("Dynamic Code Disabled"), "{err}");
     }
 
     #[test]

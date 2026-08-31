@@ -1150,8 +1150,13 @@ impl WorkerThread {
         // Enforce the resolved dynamic-code policy before any inline user
         // handler source reaches V8. Validate once per warm isolate rather
         // than on every request; a source hash change creates a new isolate.
-        // ESM module-graph enforcement requires the loader to validate each
-        // compiled module and is tracked separately in #425.
+        //
+        // Scope: this covers the *platform* path, whose tenant bundles arrive
+        // as inline source from `PlatformState::resolve_handler`. `deka run`
+        // and `deka serve` are ESM and set `handler_code` to the empty string
+        // (runtime/src/run.rs, runtime/src/serve.rs), so the guard below is
+        // false for them; those are gated by the module-graph validator in
+        // #425. The multi-tenant storefronts are the case this protects.
         if !request.request_data.handler_code.trim().is_empty()
             && !isolate.dynamic_code_validated
         {
