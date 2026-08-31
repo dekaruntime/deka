@@ -41,18 +41,19 @@ use wasm_bindgen::prelude::*;
 ///     12
 /// );
 ///
-/// // Produces:
+/// // Produces (every row hangs off one gutter, so the caret sits under the
+/// // column the header names):
 /// // Validation Error
 /// // ❌ Invalid Import
 /// //
-/// // ┌─ handler.ts:1:26
-/// // │
+/// //     ┌─ handler.ts:1:26
+/// //     │
 /// //   1 │ import { serve } from 'deka/invalid';
 /// //     │                          ^^^^^^^^^^^^ Module 'deka/invalid' not found
-/// // │
-/// // = help: Available modules: deka, deka/router, deka/sqlite
-/// // │
-/// // └─
+/// //     │
+/// //     = help: Available modules: deka, deka/router, deka/sqlite
+/// //     │
+/// //     └─
 /// ```
 // Pre-existing WASM API; refactoring is out of scope for #231.
 #[allow(clippy::too_many_arguments)]
@@ -195,27 +196,36 @@ fn format_error_impl(
     let label = colorize(label, severity_color, use_color);
     let kind_label = colorize(error_kind, kind_color, use_color);
 
-    let mut out = format!(
-        "\n{}\n\
-        {} {}\n\
-        \n\
-        ┌─ {}:{}:{}\n\
-        │\n\
-        {:>3} │ {}\n\
-            │ {}{} {}\n\
-        │\n",
-        label,
-        icon,
-        kind_label,
-        file_path,
-        line_num,
-        col_num,
-        line_num,
-        error_line,
-        " ".repeat(col_num.saturating_sub(1)),
-        "^".repeat(underline_length),
-        message,
-    );
+    // Every line of the frame carries the gutter explicitly, and the frame is
+    // assembled line by line rather than as one `\`-continued literal.
+    //
+    // It used to be a single `format!` whose lines ended in `\`. A `\` at
+    // end-of-line strips the newline *and all leading whitespace on the next
+    // line*, so the four spaces written in front of the caret row were deleted
+    // at compile time: the source row got a six-character prefix (`  2 │ `)
+    // and the caret row got two (`│ `), putting every caret four columns left
+    // of what it pointed at (deka#441). Indentation a `\` can silently eat is
+    // not a safe way to align anything, so there is none here to eat.
+    //
+    // The width tracks the line number so the frame does not drift on files
+    // with four-digit lines -- the same bug waiting to happen again.
+    let number = line_num.to_string();
+    let gutter_width = number.len().max(3);
+    let gutter = " ".repeat(gutter_width);
+
+    let caret_pad = " ".repeat(col_num.saturating_sub(1));
+    let carets = "^".repeat(underline_length);
+
+    let mut out = String::new();
+    out.push('\n');
+    out.push_str(&format!("{label}\n"));
+    out.push_str(&format!("{icon} {kind_label}\n"));
+    out.push('\n');
+    out.push_str(&format!("{gutter} ┌─ {file_path}:{line_num}:{col_num}\n"));
+    out.push_str(&format!("{gutter} │\n"));
+    out.push_str(&format!("{number:>gutter_width$} │ {error_line}\n"));
+    out.push_str(&format!("{gutter} │ {caret_pad}{carets} {message}\n"));
+    out.push_str(&format!("{gutter} │\n"));
 
     let help_trimmed = help.trim();
     let suggestion = extra.as_ref().and_then(|extra| {
@@ -233,17 +243,17 @@ fn format_error_impl(
         }
     }
     if show_help {
-        out.push_str(&format!("= help: {}\n", help));
+        out.push_str(&format!("{gutter} = help: {}\n", help));
     }
     if let Some(suggestion_value) = suggestion {
         let suggestion_label = colorize("suggestion", "\x1b[36m", use_color);
-        out.push_str(&format!("= {}: {}\n", suggestion_label, suggestion_value));
+        out.push_str(&format!("{gutter} = {}: {}\n", suggestion_label, suggestion_value));
     }
     if let Some(link) = extra.as_ref().and_then(|extra| extra.docs_link.clone()) {
         let docs_label = colorize("docs", "\x1b[36m", use_color);
-        out.push_str(&format!("= {}: {}\n", docs_label, link));
+        out.push_str(&format!("{gutter} = {}: {}\n", docs_label, link));
     }
-    out.push_str("│\n└─\n");
+    out.push_str(&format!("{gutter} │\n{gutter} └─\n"));
     out
 }
 
@@ -298,6 +308,142 @@ fn color_for_kind(kind: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Column index of the first `needle`, counted in characters.
+    ///
+    /// `str::find` returns a byte index and `│` is three bytes in UTF-8, so
+    /// byte offsets are not columns.
+    fn char_col(line: &str, needle: char) -> usize {
+        line.chars()
+            .position(|c| c == needle)
+            .unwrap_or_else(|| panic!("no `{needle}` in {line:?}"))
+    }
+
+    /// deka#441: the caret row was four columns left of what it pointed at, for
+    /// weeks, because the tests only asserted `contains("^")`. These assert the
+    /// geometry instead -- that the gutters line up and that the character
+    /// under the caret is the one the column names.
+    #[test]
+    fn caret_points_at_the_column_it_names() {
+        let code = "interface Logger {\n  fn log(...msgs: string[]) void\n}\n";
+        let error = format_validation_error(
+            code,
+            "rest.ds",
+            "Syntax Error",
+            2,
+            10,
+            "expected identifier",
+            "",
+            3,
+        );
+
+        let lines: Vec<&str> = error.lines().collect();
+        let source_row = lines
+            .iter()
+            .find(|line| line.contains("fn log("))
+            .expect("source row");
+        let caret_row = lines
+            .iter()
+            .find(|line| line.contains('^'))
+            .expect("caret row");
+
+        let source_bar = char_col(source_row, '│');
+        let caret_bar = char_col(caret_row, '│');
+        assert_eq!(
+            source_bar, caret_bar,
+            "gutter bars must align:\n{source_row}\n{caret_row}"
+        );
+
+        // Text begins two characters past the bar: `│` then one space.
+        let source_text: String = source_row.chars().skip(source_bar + 2).collect();
+        let caret_offset = char_col(caret_row, '^') - (caret_bar + 2);
+        assert_eq!(
+            caret_offset,
+            10 - 1,
+            "caret must sit at column 10:\n{source_row}\n{caret_row}"
+        );
+        assert_eq!(
+            source_text.chars().nth(caret_offset),
+            Some('.'),
+            "column 10 of that line is the first `.` of `...`"
+        );
+    }
+
+    #[test]
+    fn the_frame_holds_for_four_digit_line_numbers() {
+        let mut code = String::new();
+        for _ in 0..1233 {
+            code.push_str("let filler = 1\n");
+        }
+        code.push_str("  let x = 2\n");
+        let error = format_validation_error(
+            &code,
+            "big.ds",
+            "Type Error",
+            1234,
+            7,
+            "nope",
+            "",
+            1,
+        );
+
+        let lines: Vec<&str> = error.lines().collect();
+        let source_row = lines
+            .iter()
+            .find(|line| line.contains("let x = 2"))
+            .expect("source row");
+        let caret_row = lines
+            .iter()
+            .find(|line| line.contains('^'))
+            .expect("caret row");
+
+        assert_eq!(
+            char_col(source_row, '│'),
+            char_col(caret_row, '│'),
+            "a wider line number must widen the whole frame:\n{source_row}\n{caret_row}"
+        );
+        let bar = char_col(caret_row, '│');
+        let source_text: String = source_row.chars().skip(bar + 2).collect();
+        let caret_offset = char_col(caret_row, '^') - (bar + 2);
+        assert_eq!(source_text.chars().nth(caret_offset), Some('x'));
+    }
+
+    #[test]
+    fn every_framed_row_shares_one_gutter() {
+        let error = format_validation_error(
+            "const a = 1\n",
+            "f.ds",
+            "Type Error",
+            1,
+            7,
+            "message",
+            "a help line",
+            1,
+        );
+
+        let bars: Vec<usize> = error
+            .lines()
+            .filter(|line| line.contains('│'))
+            .map(|line| char_col(line, '│'))
+            .collect();
+        assert!(bars.len() >= 3, "expected several framed rows: {error}");
+        assert!(
+            bars.windows(2).all(|w| w[0] == w[1]),
+            "gutter bars drift: {bars:?}\n{error}"
+        );
+
+        let corners: Vec<usize> = error
+            .lines()
+            .filter(|line| line.contains('┌') || line.contains('└'))
+            .map(|line| char_col(line, if line.contains('┌') { '┌' } else { '└' }))
+            .collect();
+        assert_eq!(corners.len(), 2, "expected both corners: {error}");
+        assert!(
+            corners.iter().all(|corner| *corner == bars[0]),
+            "corners must sit on the gutter: {corners:?} vs {}\n{error}",
+            bars[0]
+        );
+    }
 
     #[test]
     fn test_basic_error_formatting() {
