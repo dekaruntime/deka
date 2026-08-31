@@ -1,5 +1,9 @@
 {
-  "title": "Date.now returns a positive number",
+  "title": "time.now returns a positive number",
   "stage": "run",
-  "notes": ""
+  "notes": "Date was removed from the ambient globals (deka#378); @deka/time is the DekaScript replacement.",
+  "packages": [
+    "time",
+    "io"
+  ]
 }
