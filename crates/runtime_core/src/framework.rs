@@ -994,24 +994,25 @@ fn generate_defer_entry(
     Ok(format!(
         r#"{imports}import {{ runDeferBatch }} from "ui/server"
 
-interface RequestHeaders {{ accept: string }}
+interface RequestHeaders {{ accept: string, cookie: string }}
 interface Request {{ url: string, pathname: string, method: string, headers: RequestHeaders, body: string }}
 interface Response {{ status: number, body: string }}
 
-fn App(request: Request): Response {{
-    const boxed = unsafe {{ runDeferBatch(request.body, {secret}, {registry}, {cache_control}) }}
-    return match (boxed) {{
-        Ok(r) => r,
+async fn App(request: Request): Promise<Response> {{
+    const boxed = unsafe {{ runDeferBatch(request.body, {secret}, {registry}, {cache_control}, request) }}
+    const prom = match (boxed) {{
+        Ok(p) => p,
         Err(_) => {{ status: 500, body: "Internal Server Error" }},
     }}
+    return await prom
 }}
 export {{ App }}
 "#
     ))
 }
 
-// Shared-cache `cache="60s"` shells reuse one signed marker. Do not put
-// viewer-specific props on those islands; the MAC binds name+props, not a session.
+// Shared-cache `cache="60s"` shells reuse one encrypted marker. Do not put
+// viewer-specific props on those islands; AAD binds name+cookie, not a login.
 fn defer_cache_header(deferred: &[DeferredIsland]) -> String {
     let mut max_age: Option<u64> = None;
     for item in deferred {
@@ -1085,7 +1086,7 @@ pub fn write_app_router_entry(project_root: &Path) -> Result<PathBuf, String> {
         String::new()
     } else {
         let secret = json_str(&ensure_defer_secret(project_root)?)?;
-        format!("    unsafe {{ globalThis.__DEKA_DEFER_SECRET = {secret} }}\n")
+        format!("    unsafe {{ deka.ui.bindDefer(request, {secret}) }}\n")
     };
     let source = generate_serve_entry(
         &entry,
@@ -2731,7 +2732,7 @@ mod tests {
         let source = std::fs::read_to_string(&entry).expect("read defer-entry");
         assert!(source.contains("runDeferBatch"));
         assert!(source.contains("import { runDeferBatch } from \"ui/server\""));
-        assert!(!source.contains("async fn App"));
+        assert!(source.contains("runDeferBatch(request.body"));
         assert!(!source.contains("headers: { \\\"cache-control\\\""));
         let _ = std::fs::remove_dir_all(&tmp);
     }
