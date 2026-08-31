@@ -386,7 +386,11 @@ fn run_rejects_phpx_entry_before_execution() {
         "PHPX entry unexpectedly ran: {combined}"
     );
     assert!(
-        combined.contains("Run mode supports .ds entrypoints"),
+        // Not the whole sentence: it became ".ds/.dsx entrypoints" when RFD 24
+        // phase 2 added the extension, and the exact wording is not what this
+        // test is about. The load-bearing assertions are the two around it --
+        // non-zero exit, and the entry never executing.
+        combined.contains("Run mode supports .ds"),
         "missing PHPX rejection in runtime output: {combined}"
     );
     assert!(
@@ -422,7 +426,7 @@ fn run_rejects_absolute_ds_symlink_to_phpx_before_execution() {
         "PHPX symlink target unexpectedly ran: {combined}"
     );
     assert!(
-        combined.contains("Run mode supports .ds entrypoints"),
+        combined.contains("Run mode supports .ds"),
         "missing PHPX target rejection in runtime output: {combined}"
     );
     assert!(
@@ -826,8 +830,8 @@ fn show(hit: boolean): number {
 
 const hit = show(true);
 const miss = show(false);
-print(hit);
-print(miss);
+unsafe { console.log(hit) };
+unsafe { console.log(miss) };
 "#,
         "7\n0",
     );
@@ -849,8 +853,10 @@ fn label(value: Option<number>): string {
 
 const direct: Option<number> = None;
 const wrapped: Option<number> = Some(3);
-print(label(direct));
-print(label(wrapped));
+const a = label(direct);
+const b = label(wrapped);
+unsafe { console.log(a) };
+unsafe { console.log(b) };
 "#,
         "none\nsome",
     );
