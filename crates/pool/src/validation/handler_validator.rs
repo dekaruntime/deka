@@ -115,6 +115,207 @@ pub fn validate_handler(source_code: &str, file_path: &str) -> Result<(), String
     Ok(())
 }
 
+/// Reject JavaScript escape hatches that are disabled by the resolved
+/// `security.allow.dynamic` policy.
+///
+/// This validator intentionally runs on the native pool path. The browser
+/// compiler has a separate, size-sensitive emitter path and does not link
+/// SWC; native execution is the enforcement boundary for a store's handler.
+pub fn validate_dynamic_code(
+    source_code: &str,
+    file_path: &str,
+    allow_dynamic: bool,
+) -> Result<(), String> {
+    if allow_dynamic {
+        return Ok(());
+    }
+
+    let cm: Lrc<SourceMap> = Default::default();
+    let fm = cm.new_source_file(
+        FileName::Custom(file_path.to_string()).into(),
+        source_code.to_string(),
+    );
+    let syntax = Syntax::Typescript(TsSyntax {
+        tsx: file_path.ends_with(".tsx") || file_path.ends_with(".jsx"),
+        decorators: false,
+        dts: false,
+        no_early_errors: true,
+        disallow_ambiguous_jsx_like: true,
+    });
+    let lexer = Lexer::new(syntax, EsVersion::Es2022, StringInput::from(&*fm), None);
+    let mut parser = Parser::new_from(lexer);
+    let module = parser
+        .parse_module()
+        .map_err(|err| format_parse_error(source_code, file_path, &cm, err))?;
+
+    let mut validator = DynamicCodeValidator::default();
+    module.visit_with(&mut validator);
+    if let Some((span, message, hint)) = validator.violation {
+        let (line, col, underline_length) = extract_span_info(&cm, span);
+        return Err(format_validation_error(
+            source_code,
+            file_path,
+            "Dynamic Code Disabled",
+            line,
+            col,
+            message,
+            hint,
+            underline_length,
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+struct DynamicCodeValidator {
+    violation: Option<(Span, &'static str, &'static str)>,
+}
+
+impl DynamicCodeValidator {
+    fn reject(&mut self, span: Span, message: &'static str, hint: &'static str) {
+        if self.violation.is_none() {
+            self.violation = Some((span, message, hint));
+        }
+    }
+}
+
+impl Visit for DynamicCodeValidator {
+    fn visit_call_expr(&mut self, node: &CallExpr) {
+        match &node.callee {
+            Callee::Import(_) => self.reject(
+                node.span,
+                "Dynamic import is disabled by the security policy",
+                "Declare the module dependency statically or run with an explicit dynamic allowance.",
+            ),
+            Callee::Expr(expr) if resolves_to_global(expr, "eval") => self.reject(
+                node.span,
+                "eval is disabled by the security policy",
+                "Remove dynamic evaluation or explicitly allow dynamic execution.",
+            ),
+            Callee::Expr(expr) if resolves_to_global(expr, "Function") => self.reject(
+                node.span,
+                "The Function constructor is disabled by the security policy",
+                "Remove dynamic code generation or explicitly allow dynamic execution.",
+            ),
+            _ => {}
+        }
+        node.visit_children_with(self);
+    }
+
+    fn visit_new_expr(&mut self, node: &NewExpr) {
+        if resolves_to_global(&node.callee, "Function") {
+            self.reject(
+                node.span,
+                "The Function constructor is disabled by the security policy",
+                "Remove dynamic code generation or explicitly allow dynamic execution.",
+            );
+        }
+        node.visit_children_with(self);
+    }
+
+    fn visit_member_expr(&mut self, node: &MemberExpr) {
+        // `process.env`, `globalThis.process.env`, `globalThis["process"].env`
+        // are the same reach for the host process object.
+        if resolves_to_global(&Expr::Member(node.clone()), "process")
+            || resolves_to_global(&node.obj, "process")
+        {
+            self.reject(
+                node.span,
+                "Reaching the host process object is disabled by the security policy",
+                "Use a Deka capability instead of reaching the host process object.",
+            );
+        }
+        node.visit_children_with(self);
+    }
+}
+
+fn is_identifier(expr: &Expr, expected: &str) -> bool {
+    matches!(expr, Expr::Ident(ident) if ident.sym == expected)
+}
+
+/// Whether an expression names a given global, however it is spelled.
+///
+/// `eval`, `globalThis.eval` and `globalThis["eval"]` are one thing, and so are
+/// `(eval)` and `(0, eval)`. Matching only `Expr::Ident` left every
+/// member-expression form as a one-line bypass of the policy.
+///
+/// This is deliberately syntactic. Aliasing (`const f = eval; f(src)`) is out
+/// of scope -- catching it needs dataflow, and a syntactic control is the wrong
+/// place to chase it. The isolate's own capability boundary is what backstops
+/// that case.
+fn resolves_to_global(expr: &Expr, expected: &str) -> bool {
+    match expr {
+        Expr::Ident(ident) => ident.sym == expected,
+        Expr::Member(member) => {
+            is_identifier(&member.obj, "globalThis") && member_property_is(member, expected)
+        }
+        Expr::Paren(paren) => resolves_to_global(&paren.expr, expected),
+        // The value of a comma sequence is its last element: `(0, eval)(src)`.
+        Expr::Seq(seq) => seq
+            .exprs
+            .last()
+            .is_some_and(|last| resolves_to_global(last, expected)),
+        _ => false,
+    }
+}
+
+fn member_property_is(node: &MemberExpr, expected: &str) -> bool {
+    match &node.prop {
+        MemberProp::Ident(ident) => ident.sym == expected,
+        MemberProp::Computed(prop) => match &*prop.expr {
+            Expr::Lit(Lit::Str(value)) => value.value.to_string_lossy() == expected,
+            _ => false,
+        },
+        MemberProp::PrivateName(_) => false,
+    }
+}
+
+#[cfg(test)]
+mod dynamic_code_tests {
+    use super::validate_dynamic_code;
+
+    #[test]
+    fn rejects_dynamic_escape_hatches_by_default() {
+        for source in [
+            "const value = eval('1 + 1');",
+            "const value = new Function('return 7')();",
+            "const value = Function('return 7')();",
+            "const value = import('./late.js');",
+            "const value = globalThis.process;",
+            "const value = globalThis['process'];",
+            // Member, paren and sequence spellings of the same globals. Each of
+            // these ran straight past the first version of this validator.
+            "const value = globalThis.eval('1 + 1');",
+            "const value = globalThis['eval']('1 + 1');",
+            "const value = globalThis.Function('return 7')();",
+            "const value = new globalThis.Function('return 7')();",
+            "const value = (0, eval)('1 + 1');",
+            "const value = (eval)('1 + 1');",
+            "const value = process.env;",
+        ] {
+            let result = validate_dynamic_code(source, "handler.js", false);
+            assert!(result.is_err(), "expected rejection for {source}");
+            let error = result.unwrap_err();
+            assert!(error.contains("Dynamic Code Disabled"), "{error}");
+        }
+    }
+
+    #[test]
+    fn allows_dynamic_code_when_explicitly_enabled() {
+        validate_dynamic_code("const value = eval('1 + 1');", "handler.js", true).unwrap();
+    }
+
+    #[test]
+    fn ignores_dynamic_words_inside_literals_and_comments() {
+        validate_dynamic_code(
+            "const text = 'eval(\"await\")'; const re = /Function\\(/; /* import('x') */",
+            "handler.js",
+            false,
+        )
+        .unwrap();
+    }
+}
+
 #[derive(Default, Debug, Clone)]
 pub struct ServeOptions {
     pub port: Option<u16>,
