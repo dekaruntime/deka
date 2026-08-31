@@ -554,6 +554,11 @@ impl<'a> Emitter<'a> {
                         found = true;
                     }
                 }
+                // A bare `None` literal is Expr::None, not an EnumConstructor, so it
+                // must be detected here or the prelude it now references is not emitted.
+                if matches!(expr, Expr::None { .. }) {
+                    found = true;
+                }
             });
             found
         })
@@ -1230,7 +1235,10 @@ impl<'a> Emitter<'a> {
                 self.out.push_str(if *value { "true" } else { "false" });
             }
             Expr::None { .. } => {
-                self.out.push_str("null");
+                // `None` is Option.None, not JS null. The prelude constant and the
+                // `__case === "None"` pattern test must agree on one representation
+                // (deka#394); emitting bare null made every match on it throw.
+                self.out.push_str("Option.None");
             }
             Expr::Identifier { name, .. } => {
                 self.out.push_str(name);
