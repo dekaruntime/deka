@@ -97,9 +97,8 @@ impl WorkerThread {
                     globalThis.deka = {};
                 }
 
-                if (typeof globalThis.panic !== 'function') {
-                    globalThis.panic = (msg) => { throw new Error(String(msg)); };
-                    globalThis.deka.panic = globalThis.panic;
+                if (typeof globalThis.deka.panic !== 'function') {
+                    globalThis.deka.panic = (msg) => { throw new Error(String(msg)); };
                 }
 
                 if (typeof globalThis.crypto === 'undefined' || typeof globalThis.crypto.randomUUID !== 'function') {

@@ -682,6 +682,17 @@ mod tests {
     }
 
     #[test]
+    fn compile_panic_throws() {
+        let result = compile_to_js("const x: number = panic(\"boom\");", "test.ds")
+            .expect("compile should succeed");
+        assert!(result.js.contains("throw new Error"), "got: {}", result.js);
+        assert!(!result.js.contains("globalThis.panic"), "got: {}", result.js);
+        let result = compile_to_js("const x: number = deka.panic(\"boom\");", "test.ds")
+            .expect("compile should succeed");
+        assert!(result.js.contains("throw new Error"), "got: {}", result.js);
+    }
+
+    #[test]
     fn compile_unsafe_async() {
         let result = compile_to_js("const r = unsafe { await fetch(url) };", "test.ds")
             .expect("compile should succeed");

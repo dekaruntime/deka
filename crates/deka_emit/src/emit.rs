@@ -12,6 +12,18 @@ use deka_syntax::{BinOp, ExportDecl, Expr, ForInit, NewtypeRepr, Pattern, Progra
 
 use crate::util::{bin_op_str, escape_string, un_op_str, write_indent};
 
+fn is_panic_callee(callee: &Expr<'_>) -> bool {
+    match callee {
+        Expr::Identifier { name: "panic", .. } => true,
+        Expr::FieldAccess {
+            object,
+            field: "panic",
+            ..
+        } => matches!(object, Expr::Identifier { name: "deka", .. }),
+        _ => false,
+    }
+}
+
 /// Emit JavaScript for a parsed and type-checked program.
 pub fn emit_js(program: &Program, _source: &str) -> Result<String, String> {
     emit_js_with_options(
@@ -1403,6 +1415,17 @@ impl<'a> Emitter<'a> {
                             }
                         }
                     }
+                    return Ok(());
+                }
+
+                if is_panic_callee(callee) {
+                    self.out.push_str("(() => { throw new Error(String(");
+                    if let Some(arg) = args.first() {
+                        self.emit_expr(arg)?;
+                    } else {
+                        self.out.push_str("\"panic\"");
+                    }
+                    self.out.push_str(")); })()");
                     return Ok(());
                 }
 

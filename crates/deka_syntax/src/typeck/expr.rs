@@ -7,6 +7,17 @@ use crate::ast;
 use super::types::{newtype_repr_from_name, Type};
 use super::Checker;
 
+fn is_panic_callee(callee: &ast::Expr<'_>) -> bool {
+    match callee {
+        ast::Expr::Identifier { name: "panic", .. } => true,
+        ast::Expr::FieldAccess {
+            object,
+            field: "panic",
+            ..
+        } => matches!(object, ast::Expr::Identifier { name: "deka", .. }),
+        _ => false,
+    }
+}
 
 /// How completely a set of match arms covers a scrutinee type.
 ///
@@ -93,7 +104,11 @@ impl<'a> Checker<'a> {
                 span,
                 ..
             } => {
-                if let Some(ret) = self.try_check_method_call(expr, callee, args, *span) {
+                // `deka.panic` must not go through method-call typeck: `deka`
+                // is not a typed object (RFD 21 lang item).
+                if is_panic_callee(callee) {
+                    self.check_call(expr, callee, type_args, args, *span)
+                } else if let Some(ret) = self.try_check_method_call(expr, callee, args, *span) {
                     ret
                 } else {
                     self.check_call(expr, callee, type_args, args, *span)
@@ -1814,6 +1829,22 @@ impl<'a> Checker<'a> {
                 self.check_expr(arg);
             }
             return Type::Named { name: "boolean" };
+        }
+
+        // `panic(msg)` / `deka.panic(msg)`: never-returning lang item (RFD 21).
+        if is_panic_callee(callee) {
+            if args.len() != 1 {
+                self.error_span(span, "`panic` expects exactly one argument");
+                return Type::Never;
+            }
+            let arg_type = self.check_expr(&args[0]);
+            if !self.is_assignable(&Type::Named { name: "string" }, &arg_type) {
+                self.error_at_expr(
+                    &args[0],
+                    format!("expected type `string`, found type `{arg_type}`"),
+                );
+            }
+            return Type::Never;
         }
 
         // Newtype constructor: `Cents(500)` is only legal in the declaring module.
