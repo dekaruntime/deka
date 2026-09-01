@@ -174,7 +174,8 @@ impl<'a> Checker<'a> {
                     }
                 }
                 Type::Array {
-                    elem: Box::new(elem_type.unwrap_or(Type::Infer)),
+                    // `[]` is genuinely polymorphic (deka#468).
+                    elem: Box::new(elem_type.unwrap_or(Type::Var)),
                 }
             }
             ast::Expr::Object { fields, .. } => {
@@ -534,10 +535,13 @@ impl<'a> Checker<'a> {
         }
 
         match &object_type {
-            Type::Infer => {
-                // An externally-provided or unresolved value may have any field.
-                // Returning Infer preserves the opaque type through the access.
-                Type::Infer
+            Type::Infer | Type::Var => {
+                // An externally-provided or unresolved value (`Infer`) and an
+                // unconstrained one (`Var`) may both have any field. Cloning the
+                // object type preserves *which* kind it was through the access:
+                // a field of something unconstrained is itself unconstrained,
+                // and must not silently become "unresolved" (deka#468).
+                object_type.clone()
             }
             Type::Struct { name } => {
                 let struct_name = *name;
@@ -925,13 +929,16 @@ impl<'a> Checker<'a> {
                 },
                 array_ty.clone(),
             ),
+            // `map` is generic in a second parameter U that `elem` cannot
+            // supply: (T -> U) -> Array<U>. U is unconstrained, not unresolved
+            // (deka#467, deka#468).
             "map" => Type::Function {
                 params: vec![Type::Function {
                     params: vec![elem.clone()],
-                    ret: Box::new(Type::Infer),
+                    ret: Box::new(Type::Var),
                     optional: 0,
                 }],
-                ret: Box::new(Type::Array { elem: Box::new(Type::Infer) }),
+                ret: Box::new(Type::Array { elem: Box::new(Type::Var) }),
                 optional: 0,
             },
             "find" => fn1(
@@ -950,13 +957,14 @@ impl<'a> Checker<'a> {
                 },
                 Type::None,
             ),
+            // `reduce` is generic in the accumulator A: ((A, T) -> A) -> A.
             "reduce" => Type::Function {
                 params: vec![Type::Function {
-                    params: vec![Type::Infer, elem.clone()],
-                    ret: Box::new(Type::Infer),
+                    params: vec![Type::Var, elem.clone()],
+                    ret: Box::new(Type::Var),
                     optional: 0,
                 }],
-                ret: Box::new(Type::Infer),
+                ret: Box::new(Type::Var),
                 optional: 0,
             },
             _ => {
@@ -1078,9 +1086,9 @@ impl<'a> Checker<'a> {
                 if payload.is_some() {
                     self.error_span(span, "`None` cannot have a payload");
                 }
-                // `None` is polymorphic; return Option<Infer> so it can match
-                // any Option<T> in the surrounding context.
-                Type::Option { inner: Box::new(Type::Infer) }
+                // `None` is polymorphic: it names no payload type at all, so the
+                // inner type is unconstrained rather than unresolved (deka#468).
+                Type::Option { inner: Box::new(Type::Var) }
             }
             _ => {
                 self.error_span(span, format!("unknown Option case `{case_name}`"));
@@ -1098,9 +1106,10 @@ impl<'a> Checker<'a> {
     ) -> Type<'a> {
         match case_name {
             "Ok" => match payload_type {
+                // `Ok(x)` fixes T and says nothing about E (deka#468).
                 Some(t) => Type::Generic {
                     base: "Result",
-                    args: vec![t, Type::Infer],
+                    args: vec![t, Type::Var],
                 },
                 None => {
                     self.error_span(span, "`Ok` requires a payload");
@@ -1108,9 +1117,10 @@ impl<'a> Checker<'a> {
                 }
             },
             "Err" => match payload_type {
+                // `Err(e)` fixes E and says nothing about T (deka#468).
                 Some(e) => Type::Generic {
                     base: "Result",
-                    args: vec![Type::Infer, e],
+                    args: vec![Type::Var, e],
                 },
                 None => {
                     self.error_span(span, "`Err` requires a payload");
@@ -2467,9 +2477,10 @@ impl<'a> Checker<'a> {
                 substituted_ret
             }
             Type::Error => Type::Error,
-            Type::Infer => {
+            Type::Infer | Type::Var => {
                 // Imported or otherwise externally-provided binding with no
-                // known type. Treat the call as opaque rather than erroring.
+                // known type, or an unconstrained one. Treat the call as opaque
+                // rather than erroring (deka#468).
                 for arg in args.iter() {
                     self.check_expr(arg);
                 }

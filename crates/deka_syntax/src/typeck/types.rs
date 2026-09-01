@@ -10,8 +10,22 @@ use std::fmt;
 pub enum Type<'a> {
     /// Sentinel used for error recovery.
     Error,
-    /// Placeholder used while a function's return type is being inferred.
+    /// Placeholder used while a function's return type is being inferred, and
+    /// the marker for "the checker could not work this out".
     Infer,
+    /// An unconstrained type variable.
+    ///
+    /// Produced where a construct genuinely does not mention a type rather than
+    /// failing to determine one: the `E` in `Ok(x)`, the `T` in `None`, the
+    /// element type of `[]`, the result element of `map`. It asserts nothing,
+    /// so it unifies with any type — which is sound precisely because there is
+    /// no claim to violate.
+    ///
+    /// Distinct from `Infer` on purpose (deka#468). Collapsing the two is what
+    /// made deka#252 intractable: "I could not work this out" and "this is
+    /// genuinely open" were spelled identically, so tightening one broke the
+    /// other.
+    Var,
     /// The bottom type (`never`). Not produced by the parser, but accepted in
     /// annotations for forward compatibility.
     Never,
@@ -116,6 +130,7 @@ impl fmt::Display for Type<'_> {
         match self {
             Type::Error => write!(f, "<error>"),
             Type::Infer => write!(f, "<infer>"),
+            Type::Var => write!(f, "_"),
             Type::Never => write!(f, "never"),
             Type::None => write!(f, "none"),
             Type::Named { name } => write!(f, "{name}"),
