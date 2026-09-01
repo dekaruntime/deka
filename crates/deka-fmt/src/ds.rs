@@ -36,6 +36,11 @@ struct Formatter<'src> {
     /// Tracks whether the last character written was a newline so we can emit
     /// indentation before the next non-whitespace token.
     at_line_start: bool,
+    /// `//` line comments as (line, text), sorted by source line. The parser
+    /// discards comment tokens, so the formatter re-lexes the source and
+    /// reattaches comments positionally (deka#484).
+    comments: Vec<(usize, String)>,
+    comment_cursor: usize,
 }
 
 impl<'src> Formatter<'src> {
@@ -45,7 +50,34 @@ impl<'src> Formatter<'src> {
             out: String::new(),
             indent: 0,
             at_line_start: true,
+            comments: collect_line_comments(source),
+            comment_cursor: 0,
         }
+    }
+
+    /// Emit every not-yet-emitted comment from a source line before `line`,
+    /// each on its own line at the current indent. Statements are formatted
+    /// in source order, so a single forward cursor stays consistent.
+    fn emit_comments_before(&mut self, line: usize) {
+        while self.comment_cursor < self.comments.len()
+            && self.comments[self.comment_cursor].0 < line
+        {
+            let text = self.comments[self.comment_cursor].1.clone();
+            self.write(&text);
+            self.newline();
+            self.comment_cursor += 1;
+        }
+    }
+
+    /// Line of the first pending comment before `line`, if any. The
+    /// blank-line separator measures the gap to this rather than to the next
+    /// statement, because a statement span swallows trailing comments and
+    /// would otherwise hide the gap (deka#484).
+    fn pending_comment_line(&self, before_line: usize) -> Option<usize> {
+        self.comments
+            .get(self.comment_cursor)
+            .map(|(line, _)| *line)
+            .filter(|line| *line < before_line)
     }
 
     fn finish(mut self) -> Result<String, String> {
@@ -102,14 +134,25 @@ impl<'src> Formatter<'src> {
 
     /// The line a statement's content actually ends on. Statement spans
     /// extend through trailing blank lines (the parser consumes them before
-    /// closing the span), so `span.end.line` can point at the next
-    /// statement's line — walk back over trailing whitespace instead.
+    /// closing the span) and through trailing standalone comments, so
+    /// `span.end.line` can point at the next statement's line — walk back
+    /// over trailing whitespace and whole-line comments instead.
     fn stmt_end_line(&self, stmt: &Stmt<'_>) -> usize {
         let span = stmt_span(stmt);
         let bytes = self.source.as_bytes();
         let mut end = span.byte_end.min(bytes.len());
-        while end > span.byte_start && matches!(bytes[end - 1], b' ' | b'\t' | b'\r' | b'\n') {
-            end -= 1;
+        loop {
+            while end > span.byte_start && matches!(bytes[end - 1], b' ' | b'\t' | b'\r' | b'\n') {
+                end -= 1;
+            }
+            // A trailing line whose content is entirely a `//` comment is not
+            // part of the statement either; skip it and keep walking.
+            let line_start = self.source[..end].rfind('\n').map(|i| i + 1).unwrap_or(0);
+            if self.source[line_start..end].trim_start().starts_with("//") {
+                end = line_start.saturating_sub(1);
+                continue;
+            }
+            break;
         }
         self.source[..end].matches('\n').count() + 1
     }
@@ -138,17 +181,22 @@ impl<'src> Formatter<'src> {
             }
             let next_line = self.stmt_start_line(stmt);
             if !first {
-                self.emit_stmt_separator(prev_end_line.unwrap_or(0), next_line);
+                let gap_to = self.pending_comment_line(next_line).unwrap_or(next_line);
+                self.emit_stmt_separator(prev_end_line.unwrap_or(0), gap_to);
             }
+            self.emit_comments_before(next_line);
             first = false;
             self.fmt_stmt(stmt);
             prev_end_line = Some(self.stmt_end_line(stmt));
         }
+        // Comments after the last statement still belong to the file.
+        self.emit_comments_before(usize::MAX);
     }
 
     fn fmt_stmt(&mut self, stmt: &Stmt<'_>) {
+        let stmt_end_line = self.stmt_end_line(stmt);
         match stmt {
-            Stmt::Export { decl, .. } => self.fmt_export_decl(decl),
+            Stmt::Export { decl, .. } => self.fmt_export_decl(decl, stmt_end_line),
             Stmt::Import {
                 specifiers,
                 source,
@@ -215,9 +263,11 @@ impl<'src> Formatter<'src> {
                         self.newline();
                         self.indent += 1;
                         for inner in stmts.iter() {
+                            self.emit_comments_before(self.stmt_start_line(inner));
                             self.fmt_stmt(inner);
                             self.newline();
                         }
+                        self.emit_comments_before(stmt_end_line);
                         self.indent -= 1;
                         self.write("}");
                     }
@@ -248,7 +298,7 @@ impl<'src> Formatter<'src> {
             } => {
                 self.fmt_fn_sig(*is_async, Some(name), type_params, params, return_type.as_ref());
                 self.write(" ");
-                self.fmt_block(body);
+                self.fmt_block(body, stmt_end_line);
             }
             Stmt::ReceiverMethod {
                 receiver_type,
@@ -273,7 +323,7 @@ impl<'src> Formatter<'src> {
                     return_type.as_ref(),
                 );
                 self.write(" ");
-                self.fmt_block(body);
+                self.fmt_block(body, stmt_end_line);
             }
             Stmt::Struct {
                 name,
@@ -389,17 +439,17 @@ impl<'src> Formatter<'src> {
                 self.write("if (");
                 self.fmt_expr(condition);
                 self.write(") ");
-                self.fmt_block(then_body);
+                self.fmt_block(then_body, stmt_end_line);
                 if !else_body.is_empty() {
                     self.write(" else ");
                     if else_body.len() == 1 && matches!(else_body[0], Stmt::If { .. }) {
                         self.fmt_stmt(&else_body[0]);
                     } else {
-                        self.fmt_block(else_body);
+                        self.fmt_block(else_body, stmt_end_line);
                     }
                 }
             }
-            Stmt::Block { body, .. } => self.fmt_block(body),
+            Stmt::Block { body, .. } => self.fmt_block(body, stmt_end_line),
             Stmt::For {
                 init,
                 condition,
@@ -420,7 +470,7 @@ impl<'src> Formatter<'src> {
                     self.fmt_expr(step);
                 }
                 self.write(") ");
-                self.fmt_block(body);
+                self.fmt_block(body, stmt_end_line);
             }
             Stmt::ForOf {
                 name,
@@ -439,7 +489,7 @@ impl<'src> Formatter<'src> {
                 self.write(" of ");
                 self.fmt_expr(iterable);
                 self.write(") ");
-                self.fmt_block(body);
+                self.fmt_block(body, stmt_end_line);
             }
             Stmt::Break { .. } => self.write("break"),
             Stmt::Continue { .. } => self.write("continue"),
@@ -447,7 +497,7 @@ impl<'src> Formatter<'src> {
         }
     }
 
-    fn fmt_block(&mut self, stmts: &[Stmt<'_>]) {
+    fn fmt_block(&mut self, stmts: &[Stmt<'_>], end_line: usize) {
         self.write("{");
         if stmts.is_empty() {
             self.write("}");
@@ -463,12 +513,16 @@ impl<'src> Formatter<'src> {
                 }
                 let next_line = this.stmt_start_line(stmt);
                 if !first {
-                    this.emit_stmt_separator(prev_end_line.unwrap_or(0), next_line);
+                    let gap_to = this.pending_comment_line(next_line).unwrap_or(next_line);
+                    this.emit_stmt_separator(prev_end_line.unwrap_or(0), gap_to);
                 }
+                this.emit_comments_before(next_line);
                 first = false;
                 this.fmt_stmt(stmt);
                 prev_end_line = Some(this.stmt_end_line(stmt));
             }
+            // Comments between the last statement and the closing brace.
+            this.emit_comments_before(end_line);
         });
         self.newline();
         self.write("}");
@@ -492,7 +546,7 @@ impl<'src> Formatter<'src> {
         }
     }
 
-    fn fmt_export_decl(&mut self, decl: &ExportDecl<'_>) {
+    fn fmt_export_decl(&mut self, decl: &ExportDecl<'_>, stmt_end_line: usize) {
         match decl {
             ExportDecl::Const { name, ty, value } => {
                 self.write("export const ");
@@ -515,7 +569,7 @@ impl<'src> Formatter<'src> {
                 self.write("export ");
                 self.fmt_fn_sig(*is_async, Some(name), type_params, params, return_type.as_ref());
                 self.write(" ");
-                self.fmt_block(body);
+                self.fmt_block(body, stmt_end_line);
             }
             ExportDecl::NamedGroup { names } => {
                 self.write("export { ");
@@ -1341,6 +1395,25 @@ fn format_number(value: f64) -> String {
     }
 }
 
+/// Re-lex the source and collect `//` line comments as (line, text) pairs.
+/// Comments inside `unsafe { }` bodies are part of the raw JS passthrough
+/// and never surface as Comment tokens, so they are untouched by design.
+/// Block comments (`/* */`) are not DekaScript and are not preserved.
+fn collect_line_comments(source: &str) -> Vec<(usize, String)> {
+    let mut lexer = deka_syntax::Lexer::new(source);
+    let mut comments = Vec::new();
+    loop {
+        let token = lexer.next_token();
+        if token.kind == deka_syntax::lexer::TokenKind::Comment && token.text.starts_with("//") {
+            comments.push((token.span.start.line, token.text.to_string()));
+        }
+        if token.kind == deka_syntax::lexer::TokenKind::Eof {
+            break;
+        }
+    }
+    comments
+}
+
 fn escape_string(value: &str) -> String {
     value
         .replace('\\', "\\\\")
@@ -1729,6 +1802,38 @@ mod tests {
         let once = format_ds(input).unwrap();
         let twice = format_ds(&once).unwrap();
         assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn preserves_line_comments() {
+        // deka#484: the parser discards comment tokens; the formatter
+        // re-lexes and reattaches them by position.
+        let input = "// file header\nlet x = 1\n\n// doc for f\nfn f() {\n  // inside\n  return x\n}\n";
+        let output = format_ds(input).unwrap();
+        assert_eq!(
+            output,
+            "// file header\nlet x = 1\n\n// doc for f\nfn f() {\n  // inside\n  return x\n}\n"
+        );
+    }
+
+    #[test]
+    fn preserved_comments_are_idempotent() {
+        let input = "// header\n\nfn f() {\n  // note\n  let x = 1\n}\n";
+        let once = format_ds(input).unwrap();
+        let twice = format_ds(&once).unwrap();
+        assert_eq!(once, twice);
+        assert!(once.contains("// header"));
+        assert!(once.contains("// note"));
+    }
+
+    #[test]
+    fn comment_tokens_include_both_slashes() {
+        // The lexer caller consumed the first `/` before the comment reader
+        // ran, so Comment token text started with a single slash — writing
+        // it back produced `/ comment`, which does not lex as a comment.
+        let input = "// hello\nlet x = 1\n";
+        let output = format_ds(input).unwrap();
+        assert!(output.starts_with("// hello\n"), "got: {output:?}");
     }
 
     #[test]
