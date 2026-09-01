@@ -933,7 +933,12 @@ impl<'a> Parser<'a> {
         // `at_unwrap_binding` already established this.
         self.advance(); // `or`
 
-        let alternative = self.parse_block()?;
+        let alternative = if self.at(TokenKind::Match) {
+            self.advance();
+            crate::ast::UnwrapAlternative::Match(self.parse_match_arms()?)
+        } else {
+            crate::ast::UnwrapAlternative::Block(self.parse_block()?)
+        };
         self.expect_statement_end(in_block)?;
 
         Some(Stmt::UnwrapLet {
@@ -1067,7 +1072,14 @@ fn stmt_has_top_level_await(stmt: &Stmt<'_>) -> bool {
             ..
         } => {
             expr_has_top_level_await(scrutinee)
-                || alternative.iter().any(stmt_has_top_level_await)
+                || match alternative {
+                    crate::ast::UnwrapAlternative::Block(stmts) => {
+                        stmts.iter().any(stmt_has_top_level_await)
+                    }
+                    crate::ast::UnwrapAlternative::Match(arms) => {
+                        arms.iter().any(|arm| expr_has_top_level_await(&arm.body))
+                    }
+                }
         }
         Stmt::Return { value: Some(value), .. } => expr_has_top_level_await(value),
         Stmt::Return { value: None, .. } => false,

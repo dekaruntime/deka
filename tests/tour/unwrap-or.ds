@@ -30,7 +30,18 @@ fn tried(): string {
   return v
 }
 
+// `or match` enumerates the failure modes instead of collapsing them. The arms
+// match the original value, so `unwrap` supplies the `Ok` arm and you write the
+// rest -- and because they are real match arms, a missing case is an error.
+fn described(r: Result<string, string>): string {
+  let v = unwrap(r) or match {
+    Err(message) => "failed: " + message
+  }
+  return v
+}
+
 echo(label(Some("a")))
 echo(label(None))
 echo(early(None))
 echo(tried())
+echo(described(Err("boom")))

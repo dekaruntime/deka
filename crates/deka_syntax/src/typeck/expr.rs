@@ -25,7 +25,7 @@ fn is_panic_callee(callee: &ast::Expr<'_>) -> bool {
 /// constructor name, how completely that case's *payload* is covered — which
 /// is what makes `Ok(Some(v))` distinguishable from `Ok(_)` (deka#396).
 #[derive(Debug, Clone)]
-enum Coverage<'a> {
+pub(super) enum Coverage<'a> {
     All,
     Cases(HashMap<&'a str, Coverage<'a>>),
 }
@@ -35,7 +35,14 @@ impl<'a> Coverage<'a> {
         Coverage::Cases(HashMap::new())
     }
 
-    fn of_pattern(
+    /// Coverage for the arm `unwrap` supplies itself (deka#445).
+    pub(super) fn success_case(name: &'a str) -> Self {
+        let mut cases = HashMap::new();
+        cases.insert(name, Coverage::All);
+        Coverage::Cases(cases)
+    }
+
+    pub(super) fn of_pattern(
         pattern: &ast::Pattern<'a>,
         cases: &HashMap<*const ast::Pattern<'a>, &'a str>,
     ) -> Self {
@@ -75,7 +82,7 @@ impl<'a> Coverage<'a> {
         }
     }
 
-    fn merge(self, other: Coverage<'a>) -> Coverage<'a> {
+    pub(super) fn merge(self, other: Coverage<'a>) -> Coverage<'a> {
         match (self, other) {
             (Coverage::All, _) | (_, Coverage::All) => Coverage::All,
             (Coverage::Cases(mut left), Coverage::Cases(right)) => {
@@ -1162,7 +1169,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn check_match_exhaustiveness(
+    pub(super) fn check_match_exhaustiveness(
         &mut self,
         span: ast::Span,
         scrutinee_type: &Type<'a>,
@@ -1273,7 +1280,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn check_pattern(&mut self, pattern: &ast::Pattern<'a>, scrutinee_type: &Type<'a>) {
+    pub(super) fn check_pattern(&mut self, pattern: &ast::Pattern<'a>, scrutinee_type: &Type<'a>) {
         match pattern {
             ast::Pattern::Wildcard { .. } => {}
             ast::Pattern::Identifier { name, span } => {
