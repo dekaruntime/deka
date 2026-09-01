@@ -355,6 +355,50 @@ mod tests {
     }
 
     #[test]
+    fn parse_nested_generic_type_splits_shr() {
+        // The lexer emits `>>` as one Shr token; the type parser must split
+        // it when closing nested generics (deka#465).
+        let arena = Bump::new();
+        let result = parse("const x: Option<Option<number>> = None;", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { ty, .. } => match ty {
+                Some(Type::Generic { base, args, .. }) => {
+                    assert_eq!(base.to_string(), "Option");
+                    assert_eq!(args.len(), 1);
+                    match &args[0] {
+                        Type::Generic { base, args, .. } => {
+                            assert_eq!(base.to_string(), "Option");
+                            assert_eq!(args.len(), 1);
+                            match &args[0] {
+                                Type::Named { name, .. } => {
+                                    assert_eq!(name.to_string(), "number")
+                                }
+                                _ => panic!("expected number"),
+                            }
+                        }
+                        _ => panic!("expected inner Option<number> generic"),
+                    }
+                }
+                _ => panic!("expected Option<Option<number>> generic type"),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_triple_nested_generic_type() {
+        // `>>>` lexes as Shr + Gt; the split must compose with a plain Gt.
+        let arena = Bump::new();
+        let result = parse(
+            "const x: Option<Option<Option<number>>> = None;",
+            &arena,
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+    }
+
+    #[test]
     fn parse_let_with_type_and_optional() {
         let arena = Bump::new();
         let result = parse("let y: Option<string> = \"hi\";", &arena);

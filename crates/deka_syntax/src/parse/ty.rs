@@ -1,7 +1,7 @@
 //! Type parsing.
 
-use crate::ast::{alloc, alloc_slice, Type};
-use crate::lexer::TokenKind;
+use crate::ast::{alloc, alloc_slice, Pos, Span, Type};
+use crate::lexer::{Token, TokenKind};
 
 use super::util::token_name;
 use super::Parser;
@@ -17,6 +17,59 @@ impl<'a> Parser<'a> {
             });
         }
         Some(ty)
+    }
+
+    /// Expect the `>` closing a generic argument list.
+    ///
+    /// The lexer emits `>>` as a single `Shr` token, so a nested type like
+    /// `Option<Option<number>>` presents `Shr` where the inner generic's
+    /// closing `>` is expected (deka#465). Split it: consume the first half
+    /// as this generic's `>`, leaving a `Gt` covering the second half for the
+    /// enclosing generic to consume. The expression parser is unaffected —
+    /// `8 >> 1` still sees the whole `Shr`.
+    fn expect_gt(&mut self) -> Option<()> {
+        if self.eat(TokenKind::Gt) {
+            return Some(());
+        }
+        if self.at(TokenKind::Shr) {
+            let span = self.current_span();
+            let first = Token {
+                kind: TokenKind::Gt,
+                text: &self.source[span.byte_start..span.byte_start + 1],
+                span: Span {
+                    start: span.start,
+                    end: Pos {
+                        line: span.start.line,
+                        column: span.start.column + 1,
+                    },
+                    byte_start: span.byte_start,
+                    byte_end: span.byte_start + 1,
+                },
+            };
+            self.tokens[self.pos] = Token {
+                kind: TokenKind::Gt,
+                text: &self.source[span.byte_start + 1..span.byte_end],
+                span: Span {
+                    start: Pos {
+                        line: span.start.line,
+                        column: span.start.column + 1,
+                    },
+                    end: span.end,
+                    byte_start: span.byte_start + 1,
+                    byte_end: span.byte_end,
+                },
+            };
+            // Like advance(), but the position stays: the second half of the
+            // split token is the new current token.
+            self.prev = first;
+            return Some(());
+        }
+        self.error(format!(
+            "expected `{}`, found `{}`",
+            token_name(TokenKind::Gt),
+            token_name(self.current_kind())
+        ));
+        None
     }
 
     fn parse_type_primary(&mut self) -> Option<Type<'a>> {
@@ -65,7 +118,7 @@ impl<'a> Parser<'a> {
                     self.skip_newlines();
                 }
                 self.skip_newlines();
-                self.expect(TokenKind::Gt)?;
+                self.expect_gt()?;
                 Some(Type::Generic {
                     base: name,
                     args: alloc_slice(self.arena, args),
