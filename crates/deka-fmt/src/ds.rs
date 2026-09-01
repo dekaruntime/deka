@@ -708,7 +708,11 @@ impl<'src> Formatter<'src> {
             Expr::String { value, .. } => format!("\"{}\"", escape_string(value)),
             Expr::Boolean { value: true, .. } => "true".to_string(),
             Expr::Boolean { value: false, .. } => "false".to_string(),
-            Expr::None { .. } => "none".to_string(),
+            // `None`, not `none`. The lexer maps only the capitalised spelling
+            // (lexer.rs: `"None" => TokenKind::None`), so emitting the lower
+            // one produced a file that no longer compiled -- and `deka fmt` is
+            // compile, so running it destroyed working code (deka#453).
+            Expr::None { .. } => "None".to_string(),
             Expr::Identifier { name, .. } => name.to_string(),
             Expr::Binary { op, left, right, .. } => {
                 if *op == BinOp::Pipe {
@@ -1393,6 +1397,60 @@ mod tests {
             result.errors
         );
         assert!(result.program.is_some(), "parser returned no program");
+    }
+
+    /// Formatting must produce something that still *compiles*.
+    ///
+    /// deka#453: the formatter emitted `none` for `Expr::None` while the lexer
+    /// only accepts `None`, so `deka fmt` turned a compiling file into one that
+    /// did not. Every test here asserted on formatted *text*, so a spelling the
+    /// language does not have could not fail them.
+    ///
+    /// Re-parsing is not enough either -- `none` parses perfectly well as an
+    /// identifier and only fails in the typechecker. A round-trip check that
+    /// stops at the parser passes against the broken formatter, which is how
+    /// the first version of this test was itself vacuous.
+    fn round_trips(source: &str) {
+        let formatted = format_ds(source).expect("formats");
+
+        let arena = bumpalo::Bump::new();
+        let parsed = parse::parse(&formatted, &arena);
+        assert!(
+            parsed.errors.is_empty(),
+            "formatted output does not parse: {:?}\n{formatted}",
+            parsed.errors
+        );
+        let program = parsed.program.expect("parser returned no program");
+        let checked = deka_syntax::typeck::check_program(&program, &formatted);
+        assert!(
+            checked.errors.is_empty(),
+            "formatted output does not typecheck: {:?}\n{formatted}",
+            checked.errors
+        );
+
+        let again = format_ds(&formatted).expect("formats twice");
+        assert_eq!(formatted, again, "formatting is not idempotent");
+    }
+
+    #[test]
+    fn prelude_constructors_round_trip() {
+        round_trips("const a = None\n");
+        round_trips("const a = Some(\"x\")\n");
+        round_trips("const a = Ok(1)\n");
+        round_trips("const a = Err(\"e\")\n");
+    }
+
+    #[test]
+    fn option_round_trips_through_a_match() {
+        round_trips(
+            "fn f(o: Option<string>) string {\n  return match (o) { Some(v) => v, None => \"n\" }\n}\n",
+        );
+    }
+
+    #[test]
+    fn literals_and_patterns_round_trip() {
+        round_trips("const a = true\nconst b = false\n");
+        round_trips("fn f(n: number) number {\n  return match (n) { 1 => 1, _ => 0 }\n}\n");
     }
 
     #[test]
