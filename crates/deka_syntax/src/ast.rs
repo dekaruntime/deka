@@ -68,6 +68,23 @@ pub enum Stmt<'a> {
         value: Expr<'a>,
         span: Span,
     },
+    /// `let name = unwrap(scrutinee) or { … }` (deka#445).
+    ///
+    /// A binding form rather than an expression, and deliberately so: the
+    /// alternative may `return` from the enclosing function, which an
+    /// expression cannot do. An expression-position block has to be lowered to
+    /// an IIFE, and `return` inside an IIFE returns from the IIFE -- verified
+    /// against `unsafe { return … }`, which silently produces the value
+    /// instead of exiting. Rust's `let-else` and Swift's `guard let` are
+    /// binding forms for the same reason.
+    UnwrapLet {
+        name: &'a str,
+        ty: Option<Type<'a>>,
+        is_const: bool,
+        scrutinee: Expr<'a>,
+        alternative: &'a [Stmt<'a>],
+        span: Span,
+    },
     /// `function name<T>(args): Ret { body }`
     Function {
         name: &'a str,

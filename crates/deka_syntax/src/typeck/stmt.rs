@@ -499,6 +499,23 @@ impl<'a> Checker<'a> {
             } => {
                 self.check_binding(name, ty.as_ref(), value, true, *span);
             }
+            ast::Stmt::UnwrapLet {
+                name,
+                ty,
+                is_const,
+                scrutinee,
+                alternative,
+                span,
+            } => {
+                self.check_unwrap_binding(
+                    name,
+                    ty.as_ref(),
+                    *is_const,
+                    scrutinee,
+                    alternative,
+                    *span,
+                );
+            }
             ast::Stmt::Function {
                 name,
                 type_params,
@@ -714,6 +731,69 @@ impl<'a> Checker<'a> {
             ast::ForInit::Expr(expr) => {
                 self.check_expr(expr);
             }
+        }
+    }
+
+    /// `let name = unwrap(scrutinee) or { … }` (deka#445).
+    ///
+    /// The binding takes the success payload; the block runs when the value is
+    /// absent, and either produces the binding's value or leaves the function.
+    fn check_unwrap_binding(
+        &mut self,
+        name: &'a str,
+        ty: Option<&ast::Type<'a>>,
+        is_const: bool,
+        scrutinee: &ast::Expr<'a>,
+        alternative: &[ast::Stmt<'a>],
+        span: ast::Span,
+    ) {
+        let scrutinee_type = self.check_expr(scrutinee);
+
+        // `unwrap` is about a value that might be absent, and DekaScript has
+        // exactly two of those. Anything else should use `match`, which says
+        // so rather than leaving the reader to guess.
+        let bound = match &scrutinee_type {
+            Type::Option { inner } => (**inner).clone(),
+            Type::Generic { base: "Result", args } if args.len() == 2 => args[0].clone(),
+            Type::Infer | Type::Error => Type::Infer,
+            other => {
+                self.error_span(
+                    span,
+                    format!(
+                        "`unwrap` works on `Option` and `Result`, found type `{other}`; use `match`"
+                    ),
+                );
+                Type::Error
+            }
+        };
+
+        let declared = ty.map(|ty| self.resolve_ast_type(ty));
+        if let Some(declared) = &declared {
+            if !self.is_assignable(declared, &bound)
+                && !matches!(bound, Type::Infer | Type::Error)
+            {
+                self.error_span(
+                    span,
+                    format!("binding declared as `{declared}`, but `unwrap` yields `{bound}`"),
+                );
+            }
+        }
+
+        // The block is checked in its own scope, then the binding is declared
+        // -- the alternative cannot see the name it is providing.
+        self.scopes.push(HashMap::new());
+        self.mutables.push(HashSet::new());
+        for inner in alternative.iter() {
+            self.check_statement(inner);
+        }
+        self.mutables.pop();
+        self.scopes.pop();
+
+        let bound_type = declared.unwrap_or(bound);
+        if is_const {
+            self.declare_var(name, bound_type);
+        } else {
+            self.declare_mutable_var(name, bound_type);
         }
     }
 

@@ -171,6 +171,34 @@ impl<'src> Formatter<'src> {
                 self.write(" = ");
                 self.fmt_expr(value);
             }
+            // `deka fmt` is compile (RFD 28), so a construct the formatter
+            // cannot print is a construct nobody can use.
+            Stmt::UnwrapLet {
+                name,
+                ty,
+                is_const,
+                scrutinee,
+                alternative,
+                ..
+            } => {
+                self.write(if *is_const { "const " } else { "let " });
+                self.write(name);
+                if let Some(ty) = ty {
+                    self.write(": ");
+                    self.fmt_type(ty);
+                }
+                self.write(" = unwrap(");
+                self.fmt_expr(scrutinee);
+                self.write(") or {");
+                self.newline();
+                self.indent += 1;
+                for inner in alternative.iter() {
+                    self.fmt_stmt(inner);
+                    self.newline();
+                }
+                self.indent -= 1;
+                self.write("}");
+            }
             Stmt::Function {
                 name,
                 type_params,
@@ -1252,6 +1280,7 @@ fn stmt_span(stmt: &Stmt<'_>) -> Span {
         Stmt::Import { span, .. } => *span,
         Stmt::Const { span, .. } => *span,
         Stmt::Let { span, .. } => *span,
+        Stmt::UnwrapLet { span, .. } => *span,
         Stmt::Function { span, .. } => *span,
         Stmt::ReceiverMethod { span, .. } => *span,
         Stmt::Struct { span, .. } => *span,

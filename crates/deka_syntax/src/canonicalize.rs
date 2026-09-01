@@ -109,6 +109,27 @@ fn transform_stmt<'a>(
     enums: &HashMap<&'a str, HashSet<&'a str>>,
 ) -> Stmt<'a> {
     match stmt {
+        Stmt::UnwrapLet {
+            name,
+            ty,
+            is_const,
+            scrutinee,
+            alternative,
+            span,
+        } => Stmt::UnwrapLet {
+            name,
+            ty: ty.clone(),
+            is_const: *is_const,
+            scrutinee: transform_expr(scrutinee, arena, enums).clone(),
+            alternative: ast::alloc_slice(
+                arena,
+                alternative
+                    .iter()
+                    .map(|inner| transform_stmt(inner, arena, enums))
+                    .collect::<Vec<_>>(),
+            ),
+            span: *span,
+        },
         Stmt::Export { decl, span } => {
             let new_decl = match decl {
                 ast::ExportDecl::Const { name, ty, value } => {
@@ -708,6 +729,27 @@ fn lower_stmt<'a>(
     method_calls: &HashMap<*const Expr<'a>, MethodTarget<'a>>,
 ) -> Stmt<'a> {
     match stmt {
+        Stmt::UnwrapLet {
+            name,
+            ty,
+            is_const,
+            scrutinee,
+            alternative,
+            span,
+        } => Stmt::UnwrapLet {
+            name,
+            ty: ty.clone(),
+            is_const: *is_const,
+            scrutinee: lower_expr(scrutinee, arena, method_calls).clone(),
+            alternative: ast::alloc_slice(
+                arena,
+                alternative
+                    .iter()
+                    .map(|inner| lower_stmt(inner, arena, method_calls))
+                    .collect::<Vec<_>>(),
+            ),
+            span: *span,
+        },
         Stmt::Export { decl, span } => {
             let new_decl = match decl {
                 ast::ExportDecl::Const { name, ty, value } => ast::ExportDecl::Const {

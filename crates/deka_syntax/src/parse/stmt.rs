@@ -63,6 +63,13 @@ impl<'a> Parser<'a> {
                     None
                 };
                 self.expect(TokenKind::Eq)?;
+
+                // `unwrap(x) or { … }` (deka#445). Recognised positionally so
+                // `unwrap` and `or` stay ordinary identifiers everywhere else.
+                if self.at_unwrap_binding() {
+                    return self.parse_unwrap_binding(name, ty, is_const, start, start_byte, in_block);
+                }
+
                 let value = self.parse_expression()?;
                 self.expect_statement_end(in_block)?;
 
@@ -875,6 +882,70 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// `unwrap` `(` … `)` `or` — the start of an unwrap binding.
+    ///
+    /// The `or` is part of the recognition, not just the grammar that follows.
+    /// `unwrap` stays an ordinary identifier, so a program that defines its own
+    /// `unwrap` function keeps working: `const x = unwrap(b)` with no `or` is
+    /// that call, and this returns false for it.
+    fn at_unwrap_binding(&self) -> bool {
+        if self.current_kind() != TokenKind::Identifier
+            || self.current_text() != "unwrap"
+            || self.peek_kind(1) != Some(TokenKind::LParen)
+        {
+            return false;
+        }
+        // Scan to the `(`'s partner, then look one past it.
+        let mut depth = 0usize;
+        let mut offset = 1usize;
+        loop {
+            match self.peek_kind(offset) {
+                Some(TokenKind::LParen) => depth += 1,
+                Some(TokenKind::RParen) => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return self.peek_kind(offset + 1) == Some(TokenKind::Identifier)
+                            && self.peek_text(offset + 1) == Some("or");
+                    }
+                }
+                Some(TokenKind::Eof) | None => return false,
+                _ => {}
+            }
+            offset += 1;
+        }
+    }
+
+    /// `let name = unwrap(scrutinee) or { … }`.
+    fn parse_unwrap_binding(
+        &mut self,
+        name: &'a str,
+        ty: Option<crate::ast::Type<'a>>,
+        is_const: bool,
+        start: crate::ast::Pos,
+        start_byte: usize,
+        in_block: bool,
+    ) -> Option<Stmt<'a>> {
+        self.advance(); // `unwrap`
+        self.expect(TokenKind::LParen)?;
+        let scrutinee = self.parse_expression()?;
+        self.expect(TokenKind::RParen)?;
+
+        // `at_unwrap_binding` already established this.
+        self.advance(); // `or`
+
+        let alternative = self.parse_block()?;
+        self.expect_statement_end(in_block)?;
+
+        Some(Stmt::UnwrapLet {
+            name,
+            ty,
+            is_const,
+            scrutinee,
+            alternative,
+            span: self.span_from(start, start_byte),
+        })
+    }
+
     pub(super) fn parse_block(&mut self) -> Option<&'a [Stmt<'a>]> {
         self.expect(TokenKind::LBrace)?;
         let mut statements = Vec::new();
@@ -990,6 +1061,14 @@ fn stmt_has_top_level_await(stmt: &Stmt<'_>) -> bool {
         Stmt::Const { value, .. }
         | Stmt::Let { value, .. }
         | Stmt::Expr { expr: value, .. } => expr_has_top_level_await(value),
+        Stmt::UnwrapLet {
+            scrutinee,
+            alternative,
+            ..
+        } => {
+            expr_has_top_level_await(scrutinee)
+                || alternative.iter().any(stmt_has_top_level_await)
+        }
         Stmt::Return { value: Some(value), .. } => expr_has_top_level_await(value),
         Stmt::Return { value: None, .. } => false,
         // Top-level function declarations are boundaries: await inside them is
