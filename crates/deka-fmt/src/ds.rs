@@ -5,6 +5,7 @@
 //! returned unchanged so the formatter is safe to run on incomplete code.
 
 use deka_syntax::ast::{
+    UnwrapAlternative,
     BinOp, Embed, EnumCase, ExportDecl, ExportName, Expr, ForInit, ImportSpec,
     InterfaceMember, JsxElement, MatchArm, ObjectField, Param, Pattern, Program, Span,
     Stmt, StructField, TemplatePart, Type, TypeParam, UnOp,
@@ -189,15 +190,33 @@ impl<'src> Formatter<'src> {
                 }
                 self.write(" = unwrap(");
                 self.fmt_expr(scrutinee);
-                self.write(") or {");
-                self.newline();
-                self.indent += 1;
-                for inner in alternative.iter() {
-                    self.fmt_stmt(inner);
-                    self.newline();
+                match alternative {
+                    UnwrapAlternative::Block(stmts) => {
+                        self.write(") or {");
+                        self.newline();
+                        self.indent += 1;
+                        for inner in stmts.iter() {
+                            self.fmt_stmt(inner);
+                            self.newline();
+                        }
+                        self.indent -= 1;
+                        self.write("}");
+                    }
+                    UnwrapAlternative::Match(arms) => {
+                        self.write(") or match {");
+                        self.newline();
+                        self.indent += 1;
+                        for arm in arms.iter() {
+                            self.write(&pattern_to_string(&arm.pattern));
+                            self.write(" => ");
+                            self.fmt_expr(&arm.body);
+                            self.write(",");
+                            self.newline();
+                        }
+                        self.indent -= 1;
+                        self.write("}");
+                    }
                 }
-                self.indent -= 1;
-                self.write("}");
             }
             Stmt::Function {
                 name,

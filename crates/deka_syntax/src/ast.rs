@@ -82,7 +82,7 @@ pub enum Stmt<'a> {
         ty: Option<Type<'a>>,
         is_const: bool,
         scrutinee: Expr<'a>,
-        alternative: &'a [Stmt<'a>],
+        alternative: UnwrapAlternative<'a>,
         span: Span,
     },
     /// `function name<T>(args): Ret { body }`
@@ -566,6 +566,17 @@ pub enum Pattern<'a> {
         alternatives: &'a [Pattern<'a>],
         span: Span,
     },
+}
+
+/// What runs when `unwrap` finds nothing (deka#445).
+#[derive(Clone, Debug, Serialize)]
+pub enum UnwrapAlternative<'a> {
+    /// `or { … }` — statements. A trailing expression is the binding's value;
+    /// anything else must leave the function.
+    Block(&'a [Stmt<'a>]),
+    /// `or match { … }` — the remaining arms. The success arm is implicit, so
+    /// the arms match the *original* value and `unwrap` supplies `Ok`/`Some`.
+    Match(&'a [MatchArm<'a>]),
 }
 
 #[derive(Clone, Debug, Serialize)]

@@ -748,8 +748,33 @@ impl<'a> Emitter<'a> {
                 self.out.push_str(&format!(
                     "if ({temp}.__case === \"Some\" || {temp}.__case === \"Ok\") {{ {name} = {temp}.value; }} else {{\n"
                 ));
-                for inner in alternative.iter() {
-                    self.emit_stmt_in_unwrap(inner, name)?;
+                match alternative {
+                    deka_syntax::UnwrapAlternative::Block(stmts) => {
+                        for inner in stmts.iter() {
+                            self.emit_stmt_in_unwrap(inner, name)?;
+                        }
+                    }
+                    deka_syntax::UnwrapAlternative::Match(arms) => {
+                        // The arms match the original value, so their tests and
+                        // bindings are the ordinary ones against the temporary.
+                        // The success arm is already handled above.
+                        for (index, arm) in arms.iter().enumerate() {
+                            let condition = self.match_condition(&arm.pattern, &temp);
+                            if index > 0 {
+                                self.out.push_str("else ");
+                            }
+                            self.out.push_str(&format!("if ({condition}) {{\n"));
+                            self.emit_pattern_bindings(&arm.pattern, &temp, 0)?;
+                            self.out.push_str(&format!("{name} = "));
+                            self.emit_expr(&arm.body)?;
+                            self.out.push_str(";\n}\n");
+                        }
+                        if !arms.is_empty() {
+                            self.out.push_str(
+                                "else { throw new Error(\"non-exhaustive match\"); }\n",
+                            );
+                        }
+                    }
                 }
                 self.out.push_str("}\n}");
             }

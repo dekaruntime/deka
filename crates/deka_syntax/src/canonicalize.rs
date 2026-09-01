@@ -121,13 +121,30 @@ fn transform_stmt<'a>(
             ty: ty.clone(),
             is_const: *is_const,
             scrutinee: transform_expr(scrutinee, arena, enums).clone(),
-            alternative: ast::alloc_slice(
-                arena,
-                alternative
-                    .iter()
-                    .map(|inner| transform_stmt(inner, arena, enums))
-                    .collect::<Vec<_>>(),
-            ),
+            alternative: match alternative {
+                ast::UnwrapAlternative::Block(stmts) => ast::UnwrapAlternative::Block(
+                    ast::alloc_slice(
+                        arena,
+                        stmts
+                            .iter()
+                            .map(|inner| transform_stmt(inner, arena, enums))
+                            .collect::<Vec<_>>(),
+                    ),
+                ),
+                ast::UnwrapAlternative::Match(arms) => ast::UnwrapAlternative::Match(
+                    ast::alloc_slice(
+                        arena,
+                        arms.iter()
+                            .map(|arm| ast::MatchArm {
+                                pattern: arm.pattern.clone(),
+                                guard: arm.guard.clone(),
+                                body: transform_expr(&arm.body, arena, enums).clone(),
+                                span: arm.span,
+                            })
+                            .collect::<Vec<_>>(),
+                    ),
+                ),
+            },
             span: *span,
         },
         Stmt::Export { decl, span } => {
@@ -741,13 +758,30 @@ fn lower_stmt<'a>(
             ty: ty.clone(),
             is_const: *is_const,
             scrutinee: lower_expr(scrutinee, arena, method_calls).clone(),
-            alternative: ast::alloc_slice(
-                arena,
-                alternative
-                    .iter()
-                    .map(|inner| lower_stmt(inner, arena, method_calls))
-                    .collect::<Vec<_>>(),
-            ),
+            alternative: match alternative {
+                ast::UnwrapAlternative::Block(stmts) => ast::UnwrapAlternative::Block(
+                    ast::alloc_slice(
+                        arena,
+                        stmts
+                            .iter()
+                            .map(|inner| lower_stmt(inner, arena, method_calls))
+                            .collect::<Vec<_>>(),
+                    ),
+                ),
+                ast::UnwrapAlternative::Match(arms) => ast::UnwrapAlternative::Match(
+                    ast::alloc_slice(
+                        arena,
+                        arms.iter()
+                            .map(|arm| ast::MatchArm {
+                                pattern: arm.pattern.clone(),
+                                guard: arm.guard.clone(),
+                                body: lower_expr(&arm.body, arena, method_calls).clone(),
+                                span: arm.span,
+                            })
+                            .collect::<Vec<_>>(),
+                    ),
+                ),
+            },
             span: *span,
         },
         Stmt::Export { decl, span } => {

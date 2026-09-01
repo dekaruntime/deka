@@ -1,6 +1,7 @@
 //! Statement typechecking.
 
 use std::collections::{HashMap, HashSet};
+use super::expr::Coverage;
 
 use crate::ast;
 
@@ -744,7 +745,7 @@ impl<'a> Checker<'a> {
         ty: Option<&ast::Type<'a>>,
         is_const: bool,
         scrutinee: &ast::Expr<'a>,
-        alternative: &[ast::Stmt<'a>],
+        alternative: &ast::UnwrapAlternative<'a>,
         span: ast::Span,
     ) {
         let scrutinee_type = self.check_expr(scrutinee);
@@ -779,12 +780,19 @@ impl<'a> Checker<'a> {
             }
         }
 
-        // The block is checked in its own scope, then the binding is declared
-        // -- the alternative cannot see the name it is providing.
+        // The alternative is checked in its own scope, then the binding is
+        // declared -- it cannot see the name it is providing.
         self.scopes.push(HashMap::new());
         self.mutables.push(HashSet::new());
-        for inner in alternative.iter() {
-            self.check_statement(inner);
+        match alternative {
+            ast::UnwrapAlternative::Block(stmts) => {
+                for inner in stmts.iter() {
+                    self.check_statement(inner);
+                }
+            }
+            ast::UnwrapAlternative::Match(arms) => {
+                self.check_unwrap_match_arms(&scrutinee_type, &bound, arms, span);
+            }
         }
         self.mutables.pop();
         self.scopes.pop();
@@ -795,6 +803,63 @@ impl<'a> Checker<'a> {
         } else {
             self.declare_mutable_var(name, bound_type);
         }
+    }
+
+    /// The arms of `unwrap(x) or match { … }`.
+    ///
+    /// They match the *original* value, so `unwrap` supplies the success arm
+    /// and the author writes the rest. That keeps the desugaring literal --
+    /// `or match` is "the remaining arms" -- and lets the existing
+    /// exhaustiveness check run over the whole set rather than a stripped
+    /// payload (deka#445).
+    fn check_unwrap_match_arms(
+        &mut self,
+        scrutinee_type: &Type<'a>,
+        bound: &Type<'a>,
+        arms: &[ast::MatchArm<'a>],
+        span: ast::Span,
+    ) {
+        // `Option` has no failure payload, so the only arm would be `None`.
+        // A one-armed match written to look thorough is the shape of slop even
+        // when it is correct.
+        if matches!(scrutinee_type, Type::Option { .. }) {
+            self.error_span(
+                span,
+                format!(
+                    "`or match` has nothing to match on for `{scrutinee_type}`; use `or {{ … }}`"
+                ),
+            );
+            return;
+        }
+
+        let success_case = match scrutinee_type {
+            Type::Generic { base: "Result", .. } => "Ok",
+            _ => return,
+        };
+
+        let mut coverage = Coverage::success_case(success_case);
+        for arm in arms.iter() {
+            self.scopes.push(HashMap::new());
+            self.mutables.push(HashSet::new());
+            self.check_pattern(&arm.pattern, scrutinee_type);
+            let arm_type = self.check_expr(&arm.body);
+            self.mutables.pop();
+            self.scopes.pop();
+
+            if !self.is_assignable(bound, &arm_type)
+                && !matches!(arm_type, Type::Infer | Type::Error | Type::Never)
+                && !matches!(bound, Type::Infer | Type::Error)
+            {
+                self.error_span(
+                    arm.span,
+                    format!("arm has type `{arm_type}`, but the binding is `{bound}`"),
+                );
+            }
+
+            coverage = coverage.merge(Coverage::of_pattern(&arm.pattern, &self.enum_case_patterns));
+        }
+
+        self.check_match_exhaustiveness(span, scrutinee_type, &coverage);
     }
 
     fn check_binding(
