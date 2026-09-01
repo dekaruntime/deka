@@ -7,6 +7,6 @@ enum Reply {
 // alternative would have to bind the same names for the body to be well typed.
 fn describe(r: Reply): string {
   return match (r) {
-    Reply.Failed(message) | Reply.Empty => message
+    Failed(message) | Empty => message
   }
 }

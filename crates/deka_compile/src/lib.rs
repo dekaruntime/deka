@@ -417,6 +417,7 @@ pub fn compile_to_js_with_imports_and_options<'a>(
         &typeck_result.unwrap_calls,
         &typeck_result.operator_rewrites,
         &typeck_result.jsx_optional_props,
+        &typeck_result.enum_case_patterns,
         file_path,
         options.used_exports.as_ref(),
     )
