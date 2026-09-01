@@ -198,6 +198,11 @@ jobs:
       - name: Test cli
         run: cargo test --locked -p cli
 
+      # The formatter has a corpus round-trip property test (deka#477) that
+      # only runs if the crate is tested here.
+      - name: Test deka-fmt
+        run: cargo test -p deka-fmt
+
       - name: Build and test browser compiler WASM
         env:
           DEKA_SKIP_DIRTY_CHECK: 1

@@ -9,6 +9,9 @@ export function computeOverallStatus(args: {
   browserMatches: boolean
   nativeSkipped: boolean
   browserSkipped: boolean
+  /// Byte-identity of the two hosts' formatter output (deka#477). Only
+  /// defined when both hosts formatted the source.
+  fmtHostsAgree?: boolean
 }): HatsOverallStatus {
   const nativeRan = args.wantNative && args.nativeAvailable && !args.nativeSkipped
   const browserRan = args.wantBrowser && args.browserAvailable && !args.browserSkipped
@@ -17,6 +20,11 @@ export function computeOverallStatus(args: {
   // cases used to flip fail→pass when Chromium came back because absence
   // was scored as fail.
   if (!nativeRan && !browserRan) return 'skip'
+
+  // The formatters disagreeing is host divergence even when both runtimes
+  // behave identically — the user gets different bytes depending on where
+  // they edit (deka#477).
+  if (nativeRan && browserRan && args.fmtHostsAgree === false) return 'divergent'
 
   const nativeOk = !nativeRan || args.nativeMatches
   const browserOk = !browserRan || args.browserMatches
