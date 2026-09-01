@@ -182,7 +182,7 @@ fn nameMatches(full: string, pattern: string) boolean {
   if (pattern == "") {
     return true
   }
-  const hit = match (unsafe { full.indexOf(pattern) >= 0 }) {
+  const hit = match (unsafe<boolean> { full.indexOf(pattern) >= 0 }) {
     Ok(v) => v,
     Err(e) => true,
   }
@@ -214,7 +214,7 @@ fn enum_is<T>(value: T, enumName: string, caseName: string) boolean {
 }
 
 fn fmt<T>(value: T) string {
-  const r = match (unsafe { JSON.stringify(value) }) {
+  const r = match (unsafe<string> { JSON.stringify(value) }) {
     Ok(v) => v,
     Err(e) => "",
   }
@@ -228,11 +228,11 @@ fn deepEqual<T>(a: T, b: T) boolean {
   if (a == b) {
     return true
   }
-  const left = match (unsafe { JSON.stringify(a) }) {
+  const left = match (unsafe<string> { JSON.stringify(a) }) {
     Ok(v) => v,
     Err(e) => "",
   }
-  const right = match (unsafe { JSON.stringify(b) }) {
+  const right = match (unsafe<string> { JSON.stringify(b) }) {
     Ok(v) => v,
     Err(e) => "",
   }

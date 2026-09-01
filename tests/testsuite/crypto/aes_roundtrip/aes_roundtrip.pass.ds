@@ -1,7 +1,7 @@
 import { echo } from "io"
 import { random_bytes, aes_256_gcm_encrypt, aes_256_gcm_decrypt } from "crypto"
 fn utf8(value: string): bytes {
-  let encoded = unsafe { new TextEncoder().encode(value) }
+  let encoded = unsafe<bytes> { new TextEncoder().encode(value) }
   return match (encoded) {
     Ok(buf) => buf,
     Err(err) => utf8("")
@@ -23,7 +23,7 @@ fn to_hex(value: bytes): string {
   }
 }
 fn no_aad(): bytes {
-  let r = unsafe { new Uint8Array(0) }
+  let r = unsafe<bytes> { new Uint8Array(0) }
   return match (r) {
     Ok(v) => v,
     Err(e) => utf8("")

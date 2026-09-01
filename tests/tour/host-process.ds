@@ -13,7 +13,7 @@ import { echo } from "io"
 // Neither is sufficient alone. Without the grant the global is never installed,
 // so even the `unsafe` call fails — the escape hatch does not outrank the
 // capability.
-let cwd = unsafe { process.cwd() }
+let cwd = unsafe<string> { process.cwd() }
 
 // This lesson runs without an `env` grant, so the result is `Err`. Add
 // `"env": ["HOME"]` under `security.allow` and the same line returns `Ok`.
