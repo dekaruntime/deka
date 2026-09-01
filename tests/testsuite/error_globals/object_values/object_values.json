@@ -1,5 +1,5 @@
 {
-  "title": "Object.values returns enumerable values",
+  "title": "Object is reachable through unsafe, not ambiently",
   "stage": "run",
-  "notes": ""
+  "notes": "deka#378."
 }

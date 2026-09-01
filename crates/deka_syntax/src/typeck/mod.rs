@@ -564,7 +564,17 @@ impl<'a> Checker<'a> {
         // 13 P10 asks for.
         // `isset` is gone with deka#416: it existed only to test presence on an
         // interface `?:` field, which is now an `Option` like everywhere else.
-        for name in ["Math", "Object", "Promise", "parseInt"] {
+        // Only `Math` is left, and only because its replacement is not built:
+        // `sqrt`/`floor` want prelude methods on `number` and `PI` wants a
+        // home, per deka#378 step 2.
+        //
+        // `Object`, `Promise` and `parseInt` are gone. `Promise` stays a
+        // *type* -- 63 annotations across the corpora are unaffected, because
+        // types resolve through `resolve_ast_type` and never consulted this
+        // list. `parseInt`'s replacement is `number(s)`, which already yields
+        // `Option<number>` rather than `NaN`, so removing it is a net
+        // improvement rather than a subtraction.
+        for name in ["Math"] {
             self.globals.insert(name, Type::Infer);
         }
     }

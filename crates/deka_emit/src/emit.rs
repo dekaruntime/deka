@@ -334,6 +334,11 @@ impl<'a> Emitter<'a> {
             stmt,
             Stmt::Const { .. }
                 | Stmt::Let { .. }
+                // Its initializer runs at load time like any other binding.
+                // Omitting it here classified the statement as a declaration,
+                // so it was hoisted above the runtime statements and read a
+                // binding that had not been initialised yet (deka#445).
+                | Stmt::UnwrapLet { .. }
                 | Stmt::Expr { .. }
                 | Stmt::Return { .. }
                 | Stmt::If { .. }
