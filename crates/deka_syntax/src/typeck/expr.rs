@@ -234,15 +234,20 @@ impl<'a> Checker<'a> {
                     let child_type = self.check_expr(child);
                     self.reject_unrendered_option(&child_type, child.span());
                 }
-                Type::Infer
+                // A JSX element is a `Component` (deka#461). It used to be
+                // `Infer`, which is universally assignable, so every JSX value
+                // silently stopped being checked -- `let n: number = <p/>` was
+                // accepted.
+                Type::Named { name: "Component" }
             }
             ast::Expr::JsxFragment { children, .. } => {
                 for child in children.iter() {
-                    self.check_expr(child);
+                    let child_type = self.check_expr(child);
+                    self.reject_unrendered_option(&child_type, child.span());
                 }
-                Type::Infer
+                Type::Named { name: "Component" }
             }
-            ast::Expr::JsxText { .. } => Type::Infer,
+            ast::Expr::JsxText { .. } => Type::Named { name: "string" },
             ast::Expr::Unsafe { .. } => {
                 // Raw JavaScript block. The emitter wraps it as a Result, so
                 // the typechecker exposes it as Result<Infer, Infer> so
