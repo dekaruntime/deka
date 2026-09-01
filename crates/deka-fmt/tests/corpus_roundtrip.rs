@@ -61,6 +61,7 @@ fn fmt_output_parses_and_is_idempotent_across_corpus() {
 
     let mut unparseable = Vec::new();
     let mut unstable = Vec::new();
+    let mut comments_lost = Vec::new();
 
     for file in &files {
         let source = fs::read_to_string(file)
@@ -98,6 +99,21 @@ fn fmt_output_parses_and_is_idempotent_across_corpus() {
         if once != twice {
             unstable.push(file.display().to_string());
         }
+
+        // deka#484: every `//` line comment in the input must survive.
+        // Counted via the lexer so strings containing "//" do not confuse
+        // the assertion; comments inside unsafe {} bodies are raw JS
+        // passthrough and preserved by construction.
+        let before = count_line_comments(&source);
+        let after = count_line_comments(&once);
+        if before != after {
+            comments_lost.push(format!(
+                "{}: {} comment(s) in, {} out",
+                file.display(),
+                before,
+                after
+            ));
+        }
     }
 
     assert!(
@@ -112,4 +128,25 @@ fn fmt_output_parses_and_is_idempotent_across_corpus() {
         unstable.len(),
         unstable.join("\n")
     );
+    assert!(
+        comments_lost.is_empty(),
+        "fmt dropped or duplicated // comments in {} file(s):\n{}",
+        comments_lost.len(),
+        comments_lost.join("\n")
+    );
+}
+
+fn count_line_comments(source: &str) -> usize {
+    let mut lexer = deka_syntax::Lexer::new(source);
+    let mut count = 0;
+    loop {
+        let token = lexer.next_token();
+        if token.kind == deka_syntax::lexer::TokenKind::Comment && token.text.starts_with("//") {
+            count += 1;
+        }
+        if token.kind == deka_syntax::lexer::TokenKind::Eof {
+            break;
+        }
+    }
+    count
 }

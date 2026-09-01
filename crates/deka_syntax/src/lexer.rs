@@ -691,11 +691,12 @@ impl<'a> Lexer<'a> {
     }
 
     fn read_line_comment(&mut self) -> Token<'a> {
-        let start = self.pos_at();
-        let start_byte = self.pos;
-        let start_pos = self.pos;
-        self.advance(); // /
-        self.advance(); // /
+        // The caller already consumed the first `/`; the token spans both.
+        let mut start = self.pos_at();
+        start.column -= 1;
+        let start_byte = self.pos - 1;
+        let start_pos = self.pos - 1;
+        self.advance(); // second /
         while let Some(ch) = self.current() {
             if ch == '\n' {
                 break;
@@ -710,10 +711,11 @@ impl<'a> Lexer<'a> {
     }
 
     fn read_block_comment(&mut self) -> Token<'a> {
-        let start = self.pos_at();
-        let start_byte = self.pos;
-        let start_pos = self.pos;
-        self.advance(); // /
+        // The caller already consumed the first `/`; the token spans both.
+        let mut start = self.pos_at();
+        start.column -= 1;
+        let start_byte = self.pos - 1;
+        let start_pos = self.pos - 1;
         self.advance(); // *
         let mut terminated = false;
         while let Some(ch) = self.current() {
