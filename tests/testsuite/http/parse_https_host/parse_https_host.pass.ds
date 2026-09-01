@@ -4,7 +4,7 @@ const u = match (parse_url("https://example.com/path")) {
   Ok(v) => v,
   Err(e) => { host: "", path: "", port: 0, scheme: "" }
 }
-echo(match (unsafe { String(u.host) }) {
+echo(match (unsafe<string> { String(u.host) }) {
   Ok(v) => v,
   Err(e) => ""
 })

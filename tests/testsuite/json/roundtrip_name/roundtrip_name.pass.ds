@@ -6,7 +6,7 @@ const encoded = match (stringify({ name: "deka" })) {
 }
 const name = match (parse(encoded)) {
   Err(e) => "",
-  Ok(o) => match (unsafe { String(o.name) }) {
+  Ok(o) => match (unsafe<string> { String(o.name) }) {
     Ok(v) => v,
     Err(e) => ""
   }

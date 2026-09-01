@@ -20,7 +20,7 @@ impl<'a> Checker<'a> {
     ) -> Type<'a> {
         match ty {
             ast::Type::Named { name, span } => match *name {
-                "number" | "string" | "boolean" | "never" | "void" | "bytes" | "Component" => {
+                "number" | "string" | "boolean" | "never" | "void" | "bytes" | "Component" | "JsError" => {
                     Type::Named { name }
                 }
                 "Option" => {

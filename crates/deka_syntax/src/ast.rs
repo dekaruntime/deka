@@ -411,6 +411,10 @@ pub enum Expr<'a> {
     },
     Unsafe {
         source: &'a str,
+        /// The declared success type: `unsafe<T> { ... }` yields
+        /// `Result<T, JsError>`. `None` is the legacy bare form, which is
+        /// deprecated and yields `Result<Infer, Infer>` (deka#460).
+        result_type: Option<Type<'a>>,
         span: Span,
     },
     Bridge {

@@ -819,7 +819,11 @@ impl<'src> Formatter<'src> {
                 arms,
                 span,
             } => self.match_to_string(scrutinee, arms, *span),
-            Expr::Unsafe { source, span } => self.unsafe_to_string(source, *span),
+            Expr::Unsafe {
+                source,
+                result_type,
+                span,
+            } => self.unsafe_to_string(source, result_type.as_ref(), *span),
             Expr::Bridge {
                 kind,
                 action,
@@ -1040,7 +1044,16 @@ impl<'src> Formatter<'src> {
         s
     }
 
-    fn unsafe_to_string(&self, source: &str, _span: Span) -> String {
+    fn unsafe_to_string(
+        &self,
+        source: &str,
+        result_type: Option<&Type<'_>>,
+        _span: Span,
+    ) -> String {
+        let head = match result_type {
+            Some(ty) => format!("unsafe<{}>", type_to_string(ty)),
+            None => "unsafe".to_string(),
+        };
         // Preserve raw JavaScript inside `unsafe { ... }` verbatim. We
         // only normalize the surrounding whitespace, not the body.
         let inner = source;
@@ -1052,9 +1065,9 @@ impl<'src> Formatter<'src> {
             || inner.ends_with('\n')
             || inner.is_empty();
         if has_surrounding_ws {
-            format!("unsafe {{{inner}}}")
+            format!("{head} {{{inner}}}")
         } else {
-            format!("unsafe {{ {inner} }}")
+            format!("{head} {{ {inner} }}")
         }
     }
 

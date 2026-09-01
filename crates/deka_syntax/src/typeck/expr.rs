@@ -248,13 +248,37 @@ impl<'a> Checker<'a> {
                 Type::Named { name: "Component" }
             }
             ast::Expr::JsxText { .. } => Type::Named { name: "string" },
-            ast::Expr::Unsafe { .. } => {
-                // Raw JavaScript block. The emitter wraps it as a Result, so
-                // the typechecker exposes it as Result<Infer, Infer> so
-                // match arms can bind Ok/Err payloads.
-                Type::Generic {
-                    base: "Result",
-                    args: vec![Type::Infer, Type::Infer],
+            ast::Expr::Unsafe {
+                result_type, span, ..
+            } => {
+                // Raw JavaScript block. The emitter wraps the body in
+                // try/catch, so the block is a Result. The success type is
+                // declared; the error side is whatever JavaScript threw, which
+                // is always `JsError` (deka#460).
+                match result_type {
+                    Some(ty) => {
+                        let ok = self.resolve_ast_type(ty);
+                        Type::Generic {
+                            base: "Result",
+                            args: vec![ok, Type::Named { name: "JsError" }],
+                        }
+                    }
+                    None => {
+                        // Legacy bare `unsafe { }`. This is the load-bearing
+                        // source of `Infer` in the language (deka#252): every
+                        // value flowing out of it is universally assignable
+                        // and silently stops being checked.
+                        //
+                        // No diagnostic yet: the published stdlib on the
+                        // registry still contains bare `unsafe`, so this
+                        // cannot become an error until those packages are
+                        // republished. That is deka#460 phase 4.
+                        let _ = span;
+                        Type::Generic {
+                            base: "Result",
+                            args: vec![Type::Infer, Type::Infer],
+                        }
+                    }
                 }
             }
             ast::Expr::Bridge { args, .. } => {
