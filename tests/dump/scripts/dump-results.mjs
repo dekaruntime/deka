@@ -6,6 +6,22 @@ import { runAdhocScenarios, toHatsCategory } from '../../testsuite/adhoc/cases.m
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 
+// Which web-ide-kit produced this pack. The site renders results with its own
+// copy, and a caret range on a 0.x version is minor-locked -- `^0.1.8` can never
+// resolve to `0.2.x` -- so the two silently skew and the pack ends up describing
+// a compiler nobody is running (deka#357). Recording the RESOLVED version, not
+// the manifest range, makes that detectable from the artifact itself instead of
+// by comparing two repositories' manifests.
+function resolveWebIdeKitVersion() {
+  try {
+    const url = new URL('../node_modules/@dekaruntime/web-ide-kit/package.json', import.meta.url);
+    return JSON.parse(fs.readFileSync(url, 'utf-8')).version ?? null;
+  } catch {
+    return null;
+  }
+}
+const webIdeKitVersion = resolveWebIdeKitVersion();
+
 const { nativeAvailable, browserAvailable, version, wasmSourceCommit, categories } =
   await loadAndRunAllTests()
 
@@ -22,7 +38,8 @@ for (const test of adhocCategory.tests) {
 
 console.log(
   `[hats] nativeAvailable=${nativeAvailable} browserAvailable=${browserAvailable} version=${version}` +
-    (wasmSourceCommit ? ` source_commit=${wasmSourceCommit}` : '')
+    (wasmSourceCommit ? ` source_commit=${wasmSourceCommit}` : '') +
+    (webIdeKitVersion ? ` web-ide-kit=${webIdeKitVersion}` : ' web-ide-kit=UNKNOWN')
 )
 
 for (const category of categories) {
@@ -41,6 +58,6 @@ const outPath =
 fs.mkdirSync(path.dirname(outPath), { recursive: true })
 fs.writeFileSync(
   outPath,
-  JSON.stringify({ nativeAvailable, browserAvailable, version, wasmSourceCommit, categories }, null, 2)
+  JSON.stringify({ nativeAvailable, browserAvailable, version, wasmSourceCommit, webIdeKitVersion, categories }, null, 2)
 )
 console.log(`[hats] wrote ${outPath}`)

@@ -7,7 +7,7 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@dekaruntime/web-ide-kit": "^0.2.2"
+    "@dekaruntime/web-ide-kit": "^0.3.0"
   },
   "devDependencies": {
     "playwright": "^1.62.1"
