@@ -234,15 +234,20 @@ impl<'a> Checker<'a> {
                     let child_type = self.check_expr(child);
                     self.reject_unrendered_option(&child_type, child.span());
                 }
-                Type::Infer
+                // A JSX element is a `Component` (deka#461). It used to be
+                // `Infer`, which is universally assignable, so every JSX value
+                // silently stopped being checked -- `let n: number = <p/>` was
+                // accepted.
+                Type::Named { name: "Component" }
             }
             ast::Expr::JsxFragment { children, .. } => {
                 for child in children.iter() {
-                    self.check_expr(child);
+                    let child_type = self.check_expr(child);
+                    self.reject_unrendered_option(&child_type, child.span());
                 }
-                Type::Infer
+                Type::Named { name: "Component" }
             }
-            ast::Expr::JsxText { .. } => Type::Infer,
+            ast::Expr::JsxText { .. } => Type::Named { name: "string" },
             ast::Expr::Unsafe {
                 result_type, span, ..
             } => {
@@ -263,6 +268,7 @@ impl<'a> Checker<'a> {
                         // source of `Infer` in the language (deka#252): every
                         // value flowing out of it is universally assignable
                         // and silently stops being checked.
+                        //
                         // No diagnostic yet: the published stdlib on the
                         // registry still contains bare `unsafe`, so this
                         // cannot become an error until those packages are
