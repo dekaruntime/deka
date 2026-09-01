@@ -156,6 +156,7 @@ struct Emitter<'a> {
         deka_syntax::typeck::JsxOptionalProps<'a>,
     >,
     enum_case_patterns: HashMap<*const deka_syntax::Pattern<'a>, &'a str>,
+    unwrap_id: usize,
     /// Newtype operator rewrites lowered by the typechecker.
     operator_rewrites: HashMap<*const Expr<'a>, deka_syntax::typeck::OperatorRewrite<'a>>,
     file_stem: String,
@@ -185,6 +186,7 @@ impl<'a> Emitter<'a> {
             unwrap_calls: HashMap::new(),
             jsx_optional_props: HashMap::new(),
             enum_case_patterns: HashMap::new(),
+            unwrap_id: 0,
             operator_rewrites: HashMap::new(),
             file_stem: "module".to_string(),
             fn_scope: "_".to_string(),
@@ -292,6 +294,8 @@ impl<'a> Emitter<'a> {
             return true;
         }
         match stmt {
+            // Same rule as : kept when the bound name is live.
+            Stmt::UnwrapLet { name, .. } => self.is_live(name),
             Stmt::Import { specifiers, .. } => {
                 specifiers.is_empty() || specifiers.iter().any(|spec| self.is_live(spec.local))
             }
@@ -710,6 +714,44 @@ impl<'a> Emitter<'a> {
                 self.out.push_str(" = ");
                 self.emit_expr(value)?;
                 self.out.push_str(";");
+            }
+            Stmt::UnwrapLet {
+                name,
+                is_const,
+                scrutinee,
+                alternative,
+                ..
+            } => {
+                // Lowered to statements, not an IIFE. That is the whole reason
+                // this is a binding form: `return` in the alternative has to
+                // leave the enclosing function, and a `return` inside an IIFE
+                // returns from the IIFE (deka#445).
+                //
+                //   let name;
+                //   { const __u = scrutinee;
+                //     if (__u.__case === "Some") { name = __u.value; }
+                //     else { …alternative… } }
+                //
+                // `let` even for `const`, because the assignment happens in a
+                // branch. Reassignment is rejected by typeck, not by JS.
+                let _ = is_const;
+                let temp = format!("__deka_unwrap_{}", self.next_unwrap_id());
+                write_indent(&mut self.out, 0);
+                self.out.push_str("let ");
+                self.out.push_str(name);
+                self.out.push_str(";\n");
+                write_indent(&mut self.out, 0);
+                self.out.push_str("{\n");
+                self.out.push_str(&format!("const {temp} = "));
+                self.emit_expr(scrutinee)?;
+                self.out.push_str(";\n");
+                self.out.push_str(&format!(
+                    "if ({temp}.__case === \"Some\" || {temp}.__case === \"Ok\") {{ {name} = {temp}.value; }} else {{\n"
+                ));
+                for inner in alternative.iter() {
+                    self.emit_stmt_in_unwrap(inner, name)?;
+                }
+                self.out.push_str("}\n}");
             }
             Stmt::Function {
                 name,
@@ -1310,6 +1352,33 @@ impl<'a> Emitter<'a> {
         Ok(tmp)
     }
 
+    /// A counter so nested unwraps do not collide on the temporary name.
+    fn next_unwrap_id(&mut self) -> usize {
+        self.unwrap_id += 1;
+        self.unwrap_id
+    }
+
+    /// Emit one statement of an `or { … }` block.
+    ///
+    /// A trailing expression statement is the block's value and is assigned to
+    /// the binding; everything else is emitted as-is, so a `return` in there
+    /// leaves the enclosing function.
+    fn emit_stmt_in_unwrap(
+        &mut self,
+        stmt: &'a Stmt<'a>,
+        binding: &str,
+    ) -> Result<(), String> {
+        if let Stmt::Expr { expr, .. } = stmt {
+            self.out.push_str(&format!("{binding} = "));
+            self.emit_expr(expr)?;
+            self.out.push_str(";\n");
+            return Ok(());
+        }
+        self.emit_stmt(stmt)?;
+        self.out.push('\n');
+        Ok(())
+    }
+
     fn emit_expr(&mut self, expr: &Expr<'a>) -> Result<(), String> {
         match expr {
             Expr::Number { value, .. } => {
@@ -1897,6 +1966,7 @@ impl<'a> Emitter<'a> {
                     unwrap_calls: HashMap::new(),
                     jsx_optional_props: HashMap::new(),
                     enum_case_patterns: HashMap::new(),
+                    unwrap_id: 0,
                     operator_rewrites: HashMap::new(),
                     file_stem: self.file_stem.clone(),
                     fn_scope: self.fn_scope.clone(),

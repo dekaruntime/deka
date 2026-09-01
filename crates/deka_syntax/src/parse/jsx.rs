@@ -223,7 +223,11 @@ impl<'a> Parser<'a> {
         &self.source[start_byte..end_byte]
     }
 
-    fn peek_kind(&self, offset: usize) -> Option<TokenKind> {
+    pub(super) fn peek_kind(&self, offset: usize) -> Option<TokenKind> {
         self.tokens.get(self.pos + offset).map(|t| t.kind)
+    }
+
+    pub(super) fn peek_text(&self, offset: usize) -> Option<&'a str> {
+        self.tokens.get(self.pos + offset).map(|t| t.text)
     }
 }

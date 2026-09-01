@@ -2181,6 +2181,24 @@ impl<'a> Checker<'a> {
         args: &'a [ast::Expr<'a>],
         span: ast::Span,
     ) -> Type<'a> {
+        // `unwrap(x)` with no `or` block. The parser only claims the name when
+        // `or` follows, so a program with its own `unwrap` function is
+        // unaffected and reaches this only when the name is genuinely unbound
+        // (deka#445).
+        if let ast::Expr::Identifier { name: "unwrap", .. } = callee {
+            if self.lookup_var("unwrap").is_none() {
+                for arg in args.iter() {
+                    self.check_expr(arg);
+                }
+                self.error_span(
+                    span,
+                    "`unwrap` needs the absent case handled; add `or { … }`, or match on the value"
+                        .to_string(),
+                );
+                return Type::Error;
+            }
+        }
+
         // `isset` was removed in deka#416. It existed only to test presence on
         // an interface `?:` field, which is now an `Option` like every other
         // maybe-absent value. Name it explicitly rather than letting it fall
