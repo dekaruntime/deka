@@ -382,6 +382,34 @@ mod tests {
     }
 
     #[test]
+    fn project_preserves_generic_return_types_across_modules() {
+        let mut project = ProjectState::new();
+        project.write(
+            "lib.ds",
+            r#"
+export fn constant<T>(payload: T) Result<string, string> { return Ok("y") }
+export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
+"#,
+        );
+        project.write(
+            "main.ds",
+            r#"
+import { constant, first } from "./lib.ds"
+const fixed: string = match (constant({ sub: "1" })) { Ok(value) => value, Err(error) => error }
+const item: string = match (first(["x"])) { Some(value) => value, None => "" }
+"#,
+        );
+
+        let json = project.compile();
+        let response: Value = serde_json::from_str(&json).expect("valid compile response JSON");
+
+        assert_eq!(response["ok"], true, "compile failed: {}", json);
+        let main = response["modules"]["main.ds"]["code"].as_str().unwrap();
+        assert!(main.contains("constant({sub: \"1\"})"), "got:\n{}", main);
+        assert!(main.contains("first([\"x\"])"), "got:\n{}", main);
+    }
+
+    #[test]
     fn project_reports_unresolved_relative_import() {
         let mut project = ProjectState::new();
         project.write(

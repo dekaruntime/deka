@@ -1,0 +1,7 @@
+export fn constant<T>(payload: T) Result<string, string> {
+  return Ok("y")
+}
+
+export fn first<T>(values: Array<T>) Option<T> {
+  return Some(values[0])
+}

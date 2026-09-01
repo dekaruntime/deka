@@ -1,0 +1,3 @@
+export fn first<T>(values: Array<T>) Option<T> {
+  return Some(values[0])
+}
