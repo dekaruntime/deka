@@ -7,7 +7,9 @@ const COMMAND: CommandSpec = CommandSpec {
     aliases: &[],
     subcommands: &[
         INSTALL_SUBCOMMAND,
+        LINK_SUBCOMMAND,
         UPDATE_SUBCOMMAND,
+        UNLINK_SUBCOMMAND,
         PUBLISH_SUBCOMMAND,
         RELEASE_SUBCOMMAND,
     ],
@@ -26,6 +28,20 @@ const UPDATE_SUBCOMMAND: SubcommandSpec = SubcommandSpec {
     summary: "update dependencies to latest within semver range",
     aliases: &[],
     handler: crate::cli::install::cmd_update,
+};
+
+const LINK_SUBCOMMAND: SubcommandSpec = SubcommandSpec {
+    name: "link",
+    summary: "link a local package working tree",
+    aliases: &[],
+    handler: crate::cli::link::cmd_link,
+};
+
+const UNLINK_SUBCOMMAND: SubcommandSpec = SubcommandSpec {
+    name: "unlink",
+    summary: "remove a local package link",
+    aliases: &[],
+    handler: crate::cli::link::cmd_unlink,
 };
 
 const PUBLISH_SUBCOMMAND: SubcommandSpec = SubcommandSpec {
@@ -49,6 +65,6 @@ pub fn register(registry: &mut Registry) {
 fn cmd(_context: &Context) {
     stdio::log(
         "pkg",
-        "available subcommands: install, update, publish, release",
+        "available subcommands: install, link, unlink, update, publish, release",
     );
 }

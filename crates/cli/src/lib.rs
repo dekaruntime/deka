@@ -27,6 +27,7 @@ pub fn build_registry() -> Registry {
         cli::compile::register(&mut registry);
         cli::db::register(&mut registry);
         cli::install::register(&mut registry);
+        cli::link::register(&mut registry);
         #[cfg(feature = "lsp")]
         cli::lsp::register(&mut registry);
         cli::pkg::register(&mut registry);

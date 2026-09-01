@@ -1,5 +1,5 @@
 use super::*;
-use runtime_core::modules::MODULES_DIR;
+use runtime_core::modules::{write_links_at, LinkEntry, LinkManifest, MODULES_DIR};
 
 #[test]
 fn test_is_valid_identifier() {
@@ -411,6 +411,74 @@ fn resolver_only_uses_project_local_php_modules() {
 
     let _ = std::fs::remove_dir_all(&project);
     let _ = std::fs::remove_dir_all(&stdlib);
+}
+
+#[test]
+fn resolver_prefers_local_link_over_installed_package_and_aliases() {
+    let project = make_tmp_dir("local_link_precedence");
+    let package = make_tmp_dir("local_link_package");
+    let package_root = package.canonicalize().unwrap();
+    let installed = project.join(MODULES_DIR).join("@deka").join("example");
+    std::fs::create_dir_all(&installed).unwrap();
+    std::fs::write(
+        installed.join("index.ds"),
+        "export const source = 'installed';\n",
+    )
+    .unwrap();
+    std::fs::write(
+        package.join("index.ds"),
+        "export const source = 'linked';\n",
+    )
+    .unwrap();
+
+    write_links_at(
+        &project,
+        &LinkManifest {
+            version: runtime_core::modules::LINKS_VERSION,
+            packages: std::collections::BTreeMap::from([(
+                "@deka/example".to_string(),
+                LinkEntry {
+                    path: package_root.clone(),
+                },
+            )]),
+        },
+    )
+    .unwrap();
+
+    let resolver = DekaResolver::new(project.clone(), false).unwrap();
+    for specifier in ["@deka/example", "example"] {
+        let resolved = resolver
+            .resolve_php_module(specifier)
+            .expect("linked package should resolve");
+        assert!(resolved.starts_with(&package_root));
+    }
+
+    let _ = std::fs::remove_dir_all(project);
+    let _ = std::fs::remove_dir_all(package);
+}
+
+#[test]
+fn resolver_rejects_stale_local_link_instead_of_falling_back() {
+    let project = make_tmp_dir("stale_local_link");
+    let missing = project.join("missing-package");
+    write_links_at(
+        &project,
+        &LinkManifest {
+            version: runtime_core::modules::LINKS_VERSION,
+            packages: std::collections::BTreeMap::from([(
+                "@deka/example".to_string(),
+                LinkEntry { path: missing },
+            )]),
+        },
+    )
+    .unwrap();
+
+    let error = match DekaResolver::new(project.clone(), false) {
+        Ok(_) => panic!("stale link must fail"),
+        Err(error) => error,
+    };
+    assert!(error.contains("missing target"));
+    let _ = std::fs::remove_dir_all(project);
 }
 
 #[test]
