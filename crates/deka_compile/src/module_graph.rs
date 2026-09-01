@@ -91,14 +91,22 @@ impl FsModuleLoader {
         let canon_path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         let canon_root = std::fs::canonicalize(&self.project_root)
             .unwrap_or_else(|_| self.project_root.clone());
-        if !canon_path.starts_with(&canon_root) {
-            return Err(format!(
-                "import escapes project root: {} is outside {}",
-                canon_path.display(),
-                canon_root.display()
-            ));
+        if canon_path.starts_with(&canon_root) {
+            return Ok(canon_path);
         }
-        Ok(canon_path)
+        // Files inside a linked package root are part of the project even
+        // though they live outside the project directory on disk.
+        for root in self.linked_modules.values() {
+            let canon_link = std::fs::canonicalize(root).unwrap_or_else(|_| root.clone());
+            if canon_path.starts_with(&canon_link) {
+                return Ok(canon_path);
+            }
+        }
+        Err(format!(
+            "import escapes project root: {} is outside {}",
+            canon_path.display(),
+            canon_root.display()
+        ))
     }
 
     fn resolve_linked_module(&self, specifier: &str) -> Option<PathBuf> {
