@@ -189,6 +189,41 @@ function createPrivateTempDir(): string {
   return dir
 }
 
+export interface NativeFormatResult {
+  ok: boolean
+  code?: string
+  error?: string
+}
+
+/**
+ * Format a DekaScript source with the native CLI (`deka fmt`). The dump
+ * compares this against the wasm formatter's output for every fixture so a
+ * host that starts rewriting source differently (deka#477) shows up as
+ * divergence instead of silently shipping two formatters.
+ */
+export function formatDsWithNative(cliPath: string, source: string): NativeFormatResult {
+  const tmpDir = createPrivateTempDir()
+  try {
+    const file = path.join(tmpDir, 'fmt-input.ds')
+    fs.writeFileSync(file, source)
+    const result = spawnSync(cliPath, ['fmt', file], {
+      cwd: tmpDir,
+      encoding: 'utf-8',
+      timeout: 30000,
+      env: { ...process.env, DEKA_SECURITY_NO_PROMPT: '1' },
+    })
+    if (result.status !== 0) {
+      return {
+        ok: false,
+        error: (result.stderr ?? '').trim() || `deka fmt exited ${result.status}`,
+      }
+    }
+    return { ok: true, code: fs.readFileSync(file, 'utf-8') }
+  } finally {
+    removeTempDir(tmpDir)
+  }
+}
+
 function removeTempDir(tmpDir: string): void {
   try {
     fs.rmSync(tmpDir, { recursive: true, force: true })

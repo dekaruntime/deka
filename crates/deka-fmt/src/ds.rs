@@ -100,8 +100,27 @@ impl<'src> Formatter<'src> {
         self.span_start_line(stmt_span(stmt))
     }
 
-    fn emit_stmt_separator(&mut self, prev_start_line: usize, next_start_line: usize) {
-        if next_start_line > prev_start_line + 1 {
+    /// The line a statement's content actually ends on. Statement spans
+    /// extend through trailing blank lines (the parser consumes them before
+    /// closing the span), so `span.end.line` can point at the next
+    /// statement's line — walk back over trailing whitespace instead.
+    fn stmt_end_line(&self, stmt: &Stmt<'_>) -> usize {
+        let span = stmt_span(stmt);
+        let bytes = self.source.as_bytes();
+        let mut end = span.byte_end.min(bytes.len());
+        while end > span.byte_start && matches!(bytes[end - 1], b' ' | b'\t' | b'\r' | b'\n') {
+            end -= 1;
+        }
+        self.source[..end].matches('\n').count() + 1
+    }
+
+    /// Preserve a blank line between statements when the source had one.
+    /// `prev_end_line` is the line the previous statement ENDS on, not where
+    /// it starts: comparing start lines treats every multi-line statement as
+    /// if a blank line followed it, so each reformat inserted another blank
+    /// line and the formatter never reached a fixed point (deka#477).
+    fn emit_stmt_separator(&mut self, prev_end_line: usize, next_start_line: usize) {
+        if next_start_line > prev_end_line + 1 {
             self.write("\n\n");
         } else {
             self.newline();
@@ -112,18 +131,18 @@ impl<'src> Formatter<'src> {
 
     fn fmt_program(&mut self, program: Program<'_>) {
         let mut first = true;
-        let mut prev_line: Option<usize> = None;
+        let mut prev_end_line: Option<usize> = None;
         for stmt in program.statements {
             if matches!(stmt, Stmt::Empty { .. }) {
                 continue;
             }
             let next_line = self.stmt_start_line(stmt);
             if !first {
-                self.emit_stmt_separator(prev_line.unwrap_or(0), next_line);
+                self.emit_stmt_separator(prev_end_line.unwrap_or(0), next_line);
             }
             first = false;
             self.fmt_stmt(stmt);
-            prev_line = Some(next_line);
+            prev_end_line = Some(self.stmt_end_line(stmt));
         }
     }
 
@@ -437,18 +456,18 @@ impl<'src> Formatter<'src> {
         self.newline();
         self.indented(|this| {
             let mut first = true;
-            let mut prev_line: Option<usize> = None;
+            let mut prev_end_line: Option<usize> = None;
             for stmt in stmts {
                 if matches!(stmt, Stmt::Empty { .. }) {
                     continue;
                 }
                 let next_line = this.stmt_start_line(stmt);
                 if !first {
-                    this.emit_stmt_separator(prev_line.unwrap_or(0), next_line);
+                    this.emit_stmt_separator(prev_end_line.unwrap_or(0), next_line);
                 }
                 first = false;
                 this.fmt_stmt(stmt);
-                prev_line = Some(next_line);
+                prev_end_line = Some(this.stmt_end_line(stmt));
             }
         });
         self.newline();
@@ -599,14 +618,17 @@ impl<'src> Formatter<'src> {
                 mutable,
                 ..
             } => {
+                // `mut fn name(params) Ret;` — mut leads the signature in the
+                // grammar; emitting it before the return type produced
+                // output that does not parse (deka#479).
+                if *mutable {
+                    self.write("mut ");
+                }
                 self.write("fn ");
                 self.write(name);
                 self.write("(");
                 self.fmt_param_list(params);
                 self.write(")");
-                if *mutable {
-                    self.write(" mut");
-                }
                 if let Some(ty) = return_type {
                     self.write(" ");
                     self.fmt_type(ty);
@@ -1166,7 +1188,25 @@ fn object_field_to_string(field: &ObjectField<'_>, fmt: &Formatter<'_>) -> Strin
         // Spread field encoded as empty key.
         format!("...{}", fmt.expr_to_string(&field.value))
     } else {
-        format!("{}: {}", field.key, fmt.expr_to_string(&field.value))
+        format!(
+            "{}: {}",
+            object_key_to_string(field.key),
+            fmt.expr_to_string(&field.value)
+        )
+    }
+}
+
+/// Object keys arrive unquoted from the parser. Bare-emit valid identifiers;
+/// anything else (dashes, spaces, leading digits) must keep its quotes or the
+/// output no longer parses (deka#477).
+fn object_key_to_string(key: &str) -> String {
+    let mut chars = key.chars();
+    let bare = matches!(chars.next(), Some(c) if c == '_' || c.is_ascii_alphabetic())
+        && chars.all(|c| c == '_' || c.is_ascii_alphanumeric());
+    if bare {
+        key.to_string()
+    } else {
+        format!("\"{}\"", escape_string(key))
     }
 }
 
@@ -1653,6 +1693,42 @@ mod tests {
         let input = "fn a() {}\n\nfn b() {}";
         let output = format_ds(input).unwrap();
         assert_eq!(output, "fn a() {}\n\nfn b() {}\n");
+    }
+
+    #[test]
+    fn interface_mut_method_keeps_mut_before_fn() {
+        // deka#479: the formatter emitted `fn increment() mut void;`, which
+        // does not parse. mut leads the signature.
+        let input = "interface Counter {\n  mut fn increment() void\n}";
+        let output = format_ds(input).unwrap();
+        assert_eq!(
+            output,
+            "interface Counter {\n  mut fn increment() void;\n}\n"
+        );
+        // And the output itself must parse.
+        let arena = bumpalo::Bump::new();
+        let reparsed = deka_syntax::parse::parse(&output, &arena);
+        assert!(reparsed.errors.is_empty(), "{:?}", reparsed.errors);
+    }
+
+    #[test]
+    fn quoted_object_keys_keep_their_quotes() {
+        // deka#477: keys arrive unquoted from the parser; emitting them bare
+        // broke on dashes (`{ "X-A": "1" }` became `{ X-A: "1" }`).
+        let input = "const headers = { \"X-A\": \"1\", plain: 2 }";
+        let output = format_ds(input).unwrap();
+        assert_eq!(output, "const headers = {\"X-A\": \"1\", plain: 2}\n");
+    }
+
+    #[test]
+    fn reformat_does_not_insert_blank_line_after_multiline_stmt() {
+        // deka#477: the statement separator compared START lines, so any
+        // multi-line statement looked like it was followed by a blank line
+        // and every reformat inserted another one.
+        let input = "let parsed = unwrap(number(\"42\")) or { 0 }\necho(string(parsed))";
+        let once = format_ds(input).unwrap();
+        let twice = format_ds(&once).unwrap();
+        assert_eq!(once, twice);
     }
 
     #[test]

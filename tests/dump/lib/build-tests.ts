@@ -1,7 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import { loadWasmCompiler, compileWithWasm, formatDsWithWasm, readCompilerMetadata } from './build-wasm'
-import { nativeCliVersion, prepareNativeCli, runNativeCli } from './build-native'
+import { nativeCliVersion, prepareNativeCli, runNativeCli, formatDsWithNative } from './build-native'
 import {
   closeBrowserHost,
   prepareBrowserHost,
@@ -44,6 +44,10 @@ export interface HatsTestWithBuildResult extends HatsTest {
   nativeResult: RuntimeResult
   wasmMatches: boolean
   nativeMatches: boolean
+  /// True when both hosts formatted the source and produced byte-identical
+  /// output; false on disagreement; undefined when a host did not format
+  /// (deka#477).
+  fmtHostsAgree?: boolean
   overallStatus: HatsOverallStatus
 }
 
@@ -181,6 +185,8 @@ async function runNativeTest(
       ? 'parse'
       : 'run'
 
+  const formatResult = formatDsWithNative(cliPath, source)
+
   return {
     ok: nativeResult.ok,
     stage,
@@ -188,6 +194,7 @@ async function runNativeTest(
     stderr: nativeResult.stderr,
     error: nativeResult.error,
     emittedJs: nativeResult.emittedJs,
+    formattedCode: formatResult.ok ? formatResult.code : undefined,
     diagnostics: nativeResult.diagnostics,
   }
 }
@@ -278,12 +285,20 @@ async function runAllTestsOnce(): Promise<HatsBuildResults> {
           !nativeResult.skipped &&
           runtimeMatchesExpectation(test, nativeResult, 'native', { ignoreCode: true })
 
+        // deka#477: the native and wasm formatters must produce byte-
+        // identical output. Only defined when both hosts actually formatted.
+        const fmtHostsAgree =
+          wasmResult.formattedCode !== undefined && nativeResult.formattedCode !== undefined
+            ? wasmResult.formattedCode === nativeResult.formattedCode
+            : undefined
+
         tests.push({
           ...test,
           wasmResult,
           nativeResult,
           wasmMatches,
           nativeMatches,
+          fmtHostsAgree,
           overallStatus: computeOverallStatus({
             wantNative,
             wantBrowser,
@@ -293,6 +308,7 @@ async function runAllTestsOnce(): Promise<HatsBuildResults> {
             browserMatches: wasmMatches,
             nativeSkipped: Boolean(nativeResult.skipped),
             browserSkipped: Boolean(wasmResult.skipped),
+            fmtHostsAgree,
           }),
         })
       }
