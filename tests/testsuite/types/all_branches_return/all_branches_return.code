@@ -7,4 +7,4 @@ fn maybeReturn(x: boolean) number {
   }
 }
 
-echo(maybeReturn(true))
+echo(string(maybeReturn(true)))

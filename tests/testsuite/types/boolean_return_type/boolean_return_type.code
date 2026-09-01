@@ -3,4 +3,4 @@ fn isPositive(n: number) boolean {
   return n > 0
 }
 
-echo(isPositive(5))
+echo(string(isPositive(5)))

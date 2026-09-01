@@ -11,4 +11,4 @@ const r = match (e) {
   _ => 0,
 }
 
-echo(r)
+echo(string(r))

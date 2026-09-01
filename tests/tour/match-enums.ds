@@ -7,9 +7,10 @@ enum Status {
 
 const current = Status.Ready
 const label = match (current) {
-  Status.Loading => "loading",
-  Status.Ready => "ready",
-  Status.Failed => "failed",
+  Loading => "loading",
+  Ready => "ready",
+  Failed => "failed",
   _ => "other",
 }
+
 echo(label)

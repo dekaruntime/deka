@@ -1,7 +1,5 @@
 import { echo } from "io"
 
-// deka#460: `unsafe<T>` declares what the block hands back. The error side is
-// always `JsError` -- whatever JavaScript threw -- so it is not annotated.
 const upper = unsafe<string> { String(42) }
 
 match (upper) {
@@ -9,7 +7,6 @@ match (upper) {
   Err(e) => echo("threw"),
 }
 
-// `void` is the honest annotation for a block that returns nothing.
 const nothing = unsafe<void> { globalThis.__deka_probe = 1 }
 match (nothing) {
   Ok(v) => echo("ok"),

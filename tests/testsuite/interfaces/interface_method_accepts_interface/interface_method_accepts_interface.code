@@ -4,7 +4,7 @@ interface Named {
 }
 
 interface Greeter {
-  fn greet(other: Named) string {}
+  fn greet(other: Named) string;
 }
 
 struct Person {

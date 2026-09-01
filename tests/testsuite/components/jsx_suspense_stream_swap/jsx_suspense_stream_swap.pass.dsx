@@ -12,6 +12,7 @@ async fn collect(node: Component) Promise<string> {
     Err(e) => e.message,
     _ => "",
   }
+
   return await prom
 }
 

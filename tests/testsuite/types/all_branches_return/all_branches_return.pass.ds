@@ -6,4 +6,5 @@ fn maybeReturn(x: boolean) number {
     return 2
   }
 }
+
 echo(string(maybeReturn(true)))

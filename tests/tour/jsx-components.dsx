@@ -1,9 +1,9 @@
 interface GreetingProps {
-  name: string
+  name: string;
 }
 
 fn Greeting(props: GreetingProps) Component {
-  return <h1>Hello {props.name}</h1>
+  return <h1>Hello{props.name}</h1>
 }
 
-<Greeting name="DekaScript" />
+<Greeting name={"DekaScript"} />

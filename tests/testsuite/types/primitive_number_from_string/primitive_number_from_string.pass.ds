@@ -5,6 +5,7 @@ match (good) {
   Some(v) => echo(string(v)),
   None => echo("none"),
 }
+
 const bad = number("abc")
 match (bad) {
   Some(v) => echo(string(v)),

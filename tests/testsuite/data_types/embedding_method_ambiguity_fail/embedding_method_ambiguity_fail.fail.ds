@@ -3,13 +3,16 @@ struct Runner {}
 fn (r Runner) move() string {
   return "running"
 }
+
 struct Swimmer {}
 fn (s Swimmer) move() string {
   return "swimming"
 }
+
 struct Triathlete {
-  Runner
-  Swimmer
+  Runner;
+  Swimmer;
 }
-const t = Triathlete { Runner: Runner {}, Swimmer: Swimmer {} }
+
+const t = Triathlete { Runner: Runner {  }, Swimmer: Swimmer {  } }
 echo(t.move())

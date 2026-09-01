@@ -8,4 +8,4 @@ fn makeBox(v: number) Box {
 }
 
 const b = makeBox(7)
-echo(b.value)
+echo(string(b.value))

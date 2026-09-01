@@ -18,19 +18,22 @@ export fn describe(name: string, body: fn() void) {
   for (let i = beforeEachHooks.length; i > be; i = i - 1) {
     beforeEachHooks.pop()
   }
+
   for (let i = afterEachHooks.length; i > ae; i = i - 1) {
     afterEachHooks.pop()
   }
+
   for (let i = beforeAllHooks.length; i > ba; i = i - 1) {
     beforeAllHooks.pop()
   }
+
   for (let i = afterAllHooks.length; i > aa; i = i - 1) {
     afterAllHooks.pop()
   }
 }
 
 export fn it(name: string, body: fn() void) {
-  tests.push({ name: name, fullName: fullName(name), suite: currentSuite(), body: body, beforeEach: snapshot(beforeEachHooks), afterEach: snapshot(afterEachHooks), beforeAll: snapshot(beforeAllHooks), afterAll: snapshot(afterAllHooks) })
+  tests.push({name: name, fullName: fullName(name), suite: currentSuite(), body: body, beforeEach: snapshot(beforeEachHooks), afterEach: snapshot(afterEachHooks), beforeAll: snapshot(beforeAllHooks), afterAll: snapshot(afterAllHooks)})
 }
 
 export fn test(name: string, body: fn() void) {
@@ -62,9 +65,11 @@ export fn toBe<T>(received: T, expected: T) T {
   if (abortedFlag[0]) {
     return received
   }
+
   if (received != expected) {
     currentFailures.push("expected " + fmt(expected) + ", got " + fmt(received))
   }
+
   return received
 }
 
@@ -72,9 +77,11 @@ export fn toEqual<T>(received: T, expected: T) T {
   if (abortedFlag[0]) {
     return received
   }
+
   if (!deepEqual(received, expected)) {
     currentFailures.push("expected " + fmt(expected) + ", got " + fmt(received))
   }
+
   return received
 }
 
@@ -82,6 +89,7 @@ export fn toBeOk<T, E>(received: Result<T, E>) T {
   if (!abortedFlag[0] && !enum_is(received, "Result", "Ok")) {
     fail("expected Ok, got " + fmt(received))
   }
+
   return match (unsafe { received.value }) {
     Ok(v) => v,
     Err(e) => v,
@@ -92,6 +100,7 @@ export fn toBeErr<T, E>(received: Result<T, E>) E {
   if (!abortedFlag[0] && !enum_is(received, "Result", "Err")) {
     fail("expected Err, got " + fmt(received))
   }
+
   return match (unsafe { received.error }) {
     Ok(v) => v,
     Err(e) => v,
@@ -102,6 +111,7 @@ export fn toBeSome<T>(received: Option<T>) T {
   if (!abortedFlag[0] && !enum_is(received, "Option", "Some")) {
     fail("expected Some, got " + fmt(received))
   }
+
   return match (unsafe { received.value }) {
     Ok(v) => v,
     Err(e) => v,
@@ -112,6 +122,7 @@ export fn toBeNone<T>(received: Option<T>) Option<T> {
   if (!abortedFlag[0] && !enum_is(received, "Option", "None")) {
     fail("expected None, got " + fmt(received))
   }
+
   return received
 }
 
@@ -123,12 +134,14 @@ export fn run(pattern: string) void {
     if (!nameMatches(t.fullName, pattern)) {
       continue
     }
+
     abortedFlag[0] = false
     clear_failures()
     if (t.suite != lastSuite) {
       runHooks(t.beforeAll)
       lastSuite = t.suite
     }
+
     runHooks(t.beforeEach)
     callTest(t.body)
     runHooks(t.afterEach)
@@ -143,6 +156,7 @@ export fn run(pattern: string) void {
       console.log("[pass] " + t.fullName)
     }
   }
+
   const total = passed + failed
   console.log("[test] total=" + total + " passed=" + passed + " failed=" + failed)
 }
@@ -151,6 +165,7 @@ fn currentSuite() string {
   if (suiteNames.length == 0) {
     return ""
   }
+
   let out = ""
   for (const part of suiteNames) {
     if (out == "") {
@@ -159,6 +174,7 @@ fn currentSuite() string {
       out = out + " > " + part
     }
   }
+
   return out
 }
 
@@ -167,6 +183,7 @@ fn fullName(name: string) string {
   if (suite == "") {
     return name
   }
+
   return suite + " > " + name
 }
 
@@ -175,6 +192,7 @@ fn snapshot(hooks: array<fn() void>) array<fn() void> {
   for (const hook of hooks) {
     copy.push(hook)
   }
+
   return copy
 }
 
@@ -182,10 +200,12 @@ fn nameMatches(full: string, pattern: string) boolean {
   if (pattern == "") {
     return true
   }
+
   const hit = match (unsafe<boolean> { full.indexOf(pattern) >= 0 }) {
     Ok(v) => v,
     Err(e) => true,
   }
+
   return hit
 }
 
@@ -210,6 +230,7 @@ fn enum_is<T>(value: T, enumName: string, caseName: string) boolean {
     Ok(v) => v,
     Err(e) => false,
   }
+
   return hit
 }
 
@@ -218,9 +239,11 @@ fn fmt<T>(value: T) string {
     Ok(v) => v,
     Err(e) => "",
   }
+
   if (r == "") {
     return "?"
   }
+
   return r
 }
 
@@ -228,16 +251,20 @@ fn deepEqual<T>(a: T, b: T) boolean {
   if (a == b) {
     return true
   }
+
   const left = match (unsafe<string> { JSON.stringify(a) }) {
     Ok(v) => v,
     Err(e) => "",
   }
+
   const right = match (unsafe<string> { JSON.stringify(b) }) {
     Ok(v) => v,
     Err(e) => "",
   }
+
   if (left == "" || right == "") {
     return false
   }
+
   return left == right
 }

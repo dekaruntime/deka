@@ -3,4 +3,5 @@ fn logIfPositive(n: number) void {
     return n
   }
 }
+
 logIfPositive(1)

@@ -4,4 +4,5 @@ const result = match (x) {
   1 => "one",
   _ => "other",
 }
+
 echo(result)

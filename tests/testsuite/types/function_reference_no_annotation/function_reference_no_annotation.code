@@ -4,4 +4,4 @@ fn f(x: number) number {
 }
 
 const g = f
-echo(g(42))
+echo(string(g(42)))

@@ -4,5 +4,8 @@ struct User {
   email?: string;
 }
 
-const u = User { name: "A", email: "a@b.com" }
-echo(u.email)
+const u = User { name: "A", email: Option.Some("a@b.com") }
+match (u.email) {
+  Some(e) => echo(e),
+  None => echo(""),
+}

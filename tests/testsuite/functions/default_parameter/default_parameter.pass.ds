@@ -2,4 +2,5 @@ import { echo } from "io"
 fn greet(greeting: string = "hi") void {
   echo(greeting)
 }
+
 greet()

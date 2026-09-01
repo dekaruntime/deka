@@ -3,4 +3,4 @@ fn double(x: number) number {
   return x * 2
 }
 
-echo(double(5))
+echo(string(double(5)))

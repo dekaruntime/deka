@@ -4,4 +4,5 @@ fn tick() {
     i = i + 1
   }
 }
+
 tick()

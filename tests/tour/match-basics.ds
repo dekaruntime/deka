@@ -7,4 +7,5 @@ const label = match (value) {
   3 => "three",
   _ => "other",
 }
+
 echo(label)

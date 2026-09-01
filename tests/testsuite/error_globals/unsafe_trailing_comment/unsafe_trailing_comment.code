@@ -3,8 +3,10 @@ let thrown = unsafe {
   throw new Error("boom");
   // the wrapper closes after this comment
 }
+
 const label: string = match (thrown) {
   Ok(value) => "ok",
-  Err(error) => "caught"
+  Err(error) => "caught",
 }
+
 echo(label)

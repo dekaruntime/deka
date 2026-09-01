@@ -9,4 +9,4 @@ fn (p Point) sum() number {
 }
 
 const p = Point { x: 3, y: 4 }
-echo(p.sum())
+echo(string(p.sum()))

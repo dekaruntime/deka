@@ -1,6 +1,3 @@
-// expected stdout:
-// no email
-
 import { echo } from "io"
 struct User {
   name: string;

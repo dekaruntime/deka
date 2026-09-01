@@ -4,4 +4,4 @@ fn add(x: number, y: number) number {
 }
 
 const f = add
-echo(f(1, 2))
+echo(string(f(1, 2)))

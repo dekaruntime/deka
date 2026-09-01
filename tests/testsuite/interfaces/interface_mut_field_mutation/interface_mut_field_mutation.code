@@ -9,4 +9,4 @@ fn setFive(b: Box) {
 
 let obj = {value: 0}
 setFive(obj)
-echo(obj.value)
+echo(string(obj.value))

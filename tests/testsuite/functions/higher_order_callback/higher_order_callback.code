@@ -7,4 +7,4 @@ fn increment(n: number) number {
   return n + 1
 }
 
-echo(applyTwice(increment, 5))
+echo(string(applyTwice(increment, 5)))

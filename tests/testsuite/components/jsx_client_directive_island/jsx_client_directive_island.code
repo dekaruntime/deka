@@ -4,5 +4,5 @@ fn Counter(props: object) object {
   return ui.jsx("button", {children: "0"})
 }
 
-const html = ui.renderToString(ui.jsx(Counter, {"client:load": true}))
+const html = ui.renderToString(ui.jsx(Counter, {client:load: true}))
 echo(html.html)

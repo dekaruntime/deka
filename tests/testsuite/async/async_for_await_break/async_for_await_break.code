@@ -10,7 +10,7 @@ async fn main() {
       break
     }
 
-    echo(await double(x))
+    echo(string(await double(x)))
   }
 }
 

@@ -4,4 +4,4 @@ async fn value() Promise<number> {
 }
 
 const p = value()
-echo(await p)
+echo(string(await p))

@@ -5,4 +5,5 @@ async fn countdown(n: number) Promise<void> {
     await countdown(n - 1)
   }
 }
+
 await countdown(3)

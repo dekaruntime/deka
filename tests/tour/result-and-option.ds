@@ -1,10 +1,10 @@
 import { echo } from "io"
-const found = Option.Some("DekaScript");
+const found = Option.Some("DekaScript")
 
 const message = match (found) {
   Some(value) => value,
   None => "nothing",
-  _ => "unknown"
-};
+  _ => "unknown",
+}
 
-echo(message);
+echo(message)

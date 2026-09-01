@@ -12,6 +12,7 @@ async fn htmlAsync(node: Component) Promise<string> {
     Err(e) => e.message,
     _ => "nomatch",
   }
+
   const resolved = await prom
   return resolved.html
 }
@@ -34,5 +35,3 @@ match (bare) {
   Err(e) => echo(e.message),
   _ => echo("bare-nomatch"),
 }
-
-

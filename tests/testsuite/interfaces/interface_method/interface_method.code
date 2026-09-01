@@ -1,6 +1,6 @@
 import { echo } from "io"
 interface Greeter {
-  fn greet() string {}
+  fn greet() string;
 }
 
 struct Person {

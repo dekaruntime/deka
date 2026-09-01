@@ -4,6 +4,7 @@ fn sum(values: Array<number>) number {
   for (const v of values) {
     total += v
   }
+
   return total
 }
 

@@ -1,15 +1,12 @@
 interface Opts {
-  path?: string
+  path?: string;
 }
 
-fn go(o: Opts): string {
+fn go(o: Opts) string {
   return match (o.path) {
     Some(p) => p,
-    None => "/"
+    None => "/",
   }
 }
 
-// A plain object literal is not a construction site the compiler owns, so an
-// omitted optional would be JS `undefined` while the type says `Option<string>`
-// -- the runtime hole deka#401 closed for `T?`. Write `path: None`.
 const out = go({})

@@ -4,4 +4,5 @@ const x = 1
   const x = 2
   echo(string(x))
 }
+
 echo(string(x))

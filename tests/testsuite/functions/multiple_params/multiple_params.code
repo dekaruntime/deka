@@ -3,4 +3,4 @@ fn add(a: number, b: number, c: number) number {
   return a + b + c
 }
 
-echo(add(1, 2, 3))
+echo(string(add(1, 2, 3)))
