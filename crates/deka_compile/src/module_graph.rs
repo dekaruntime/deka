@@ -6,7 +6,7 @@
 //! receiver methods are propagated through the module graph so importers can
 //! construct imported structs and match imported enums with full typechecking.
 
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 use bumpalo::Bump;
@@ -48,18 +48,24 @@ pub trait ModuleLoader {
 /// 1. `@/path` → project root.
 /// 2. `/abs/path` → absolute path (must still lie inside the project root).
 /// 3. `./path` or `../path` → relative to the importing file's directory.
-/// 4. Bare specifier (e.g. `json`, `@deka/crypto`) → `ds_modules/` (with
-///    `@deka/` aliases), falling back to `module_root` when provided.
+/// 4. Bare specifier (e.g. `json`, `@deka/crypto`) → a project-local link
+///    from `.deka/links.json`, then `ds_modules/` (with `@deka/` aliases),
+///    falling back to `module_root` when provided.
 pub struct FsModuleLoader {
     project_root: PathBuf,
     module_root: Option<PathBuf>,
+    linked_modules: BTreeMap<String, PathBuf>,
+    link_error: Option<String>,
 }
 
 impl FsModuleLoader {
     pub fn new(project_root: PathBuf) -> Self {
+        let (linked_modules, link_error) = load_linked_modules(&project_root);
         Self {
             project_root,
             module_root: None,
+            linked_modules,
+            link_error,
         }
     }
 
@@ -68,9 +74,12 @@ impl FsModuleLoader {
     /// `ds_modules/`, the loader tries `<module_root>/ds_modules/` before
     /// giving up.
     pub fn with_module_root(project_root: PathBuf, module_root: PathBuf) -> Self {
+        let (linked_modules, link_error) = load_linked_modules(&project_root);
         Self {
             project_root,
             module_root: Some(module_root),
+            linked_modules,
+            link_error,
         }
     }
 
@@ -91,10 +100,47 @@ impl FsModuleLoader {
         }
         Ok(canon_path)
     }
+
+    fn resolve_linked_module(&self, specifier: &str) -> Option<PathBuf> {
+        for (package, root) in &self.linked_modules {
+            for alias in runtime_core::module_spec::module_spec_aliases(package) {
+                let suffix = if specifier == alias {
+                    ""
+                } else if let Some(suffix) = specifier.strip_prefix(&(alias + "/")) {
+                    suffix
+                } else {
+                    continue;
+                };
+                let base = if suffix.is_empty() {
+                    root.clone()
+                } else {
+                    root.join(suffix)
+                };
+                if let Some(resolved) = self.resolve_ds_file(&base) {
+                    let canonical = std::fs::canonicalize(&resolved).ok()?;
+                    let canonical_root = std::fs::canonicalize(root).ok()?;
+                    if canonical.starts_with(canonical_root) {
+                        return Some(canonical);
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+fn load_linked_modules(project_root: &Path) -> (BTreeMap<String, PathBuf>, Option<String>) {
+    match runtime_core::modules::read_linked_modules(project_root) {
+        Ok(links) => (links, None),
+        Err(error) => (BTreeMap::new(), Some(error)),
+    }
 }
 
 impl ModuleLoader for FsModuleLoader {
     fn resolve(&self, specifier: &str, referrer: &Path) -> Result<PathBuf, String> {
+        if let Some(error) = &self.link_error {
+            return Err(error.clone());
+        }
         let trimmed = specifier.trim();
 
         if trimmed.starts_with("http://")
@@ -141,6 +187,10 @@ impl ModuleLoader for FsModuleLoader {
                 .resolve_ds_file(&base)
                 .ok_or_else(|| format!("cannot resolve relative import '{}'", trimmed))?;
             return self.guard_project_root(&resolved);
+        }
+
+        if let Some(resolved) = self.resolve_linked_module(trimmed) {
+            return Ok(resolved);
         }
 
         // Bare / stdlib specifier.
@@ -920,6 +970,35 @@ mod tests {
             std::fs::canonicalize(&resolved).unwrap(),
             std::fs::canonicalize(ds_modules.join("json").join("index.ds")).unwrap()
         );
+    }
+
+    #[test]
+    fn fs_loader_prefers_local_link_over_installed_package() {
+        let project = tempfile::tempdir().expect("project");
+        let package = tempfile::tempdir().expect("package");
+        let installed = project.path().join("ds_modules/@deka/example");
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::write(installed.join("index.ds"), "export fn source() {}\n").unwrap();
+        std::fs::write(package.path().join("index.ds"), "export fn source() {}\n").unwrap();
+        runtime_core::modules::write_links_at(
+            project.path(),
+            &runtime_core::modules::LinkManifest {
+                version: runtime_core::modules::LINKS_VERSION,
+                packages: std::collections::BTreeMap::from([(
+                    "@deka/example".to_string(),
+                    runtime_core::modules::LinkEntry {
+                        path: package.path().canonicalize().unwrap(),
+                    },
+                )]),
+            },
+        )
+        .unwrap();
+
+        let loader = FsModuleLoader::new(project.path().to_path_buf());
+        let resolved = loader
+            .resolve("example", &project.path().join("main.ds"))
+            .unwrap();
+        assert!(resolved.starts_with(package.path().canonicalize().unwrap()));
     }
 
     #[test]

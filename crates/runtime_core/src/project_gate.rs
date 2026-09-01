@@ -175,6 +175,25 @@ pub fn validate_project(
         ));
     }
 
+    // A `deka link`ed package satisfies an import from a working tree, with
+    // nothing installed (deka#470). Drop those before the on-disk rules below;
+    // they are deliberately still subject to Rule 2, because a link changes
+    // *where* a dependency comes from, not whether it is a dependency.
+    //
+    // A manifest naming a target that has been moved or deleted is an error,
+    // not a fall-through to the installed copy — a stale link must never look
+    // like it worked.
+    let linked = crate::modules::read_linked_modules(project_root)
+        .map_err(|error| format!("{who}: local package link is unusable: {error}"))?;
+    let stdlib_imports: BTreeSet<String> = stdlib_imports
+        .into_iter()
+        .filter(|spec| !is_satisfied_by_link(spec, &linked))
+        .collect();
+
+    if stdlib_imports.is_empty() {
+        return Ok(());
+    }
+
     // Rule 3 — present on disk.
     let modules_dir = resolve_modules_dir(project_root);
     if !modules_dir.is_dir() {
@@ -335,4 +354,18 @@ mod tests {
         assert!(!is_stdlib_module_spec("@user/thing"));
         assert!(!is_stdlib_module_spec("./local"));
     }
+}
+
+/// True when `spec` is provided by a `deka link`ed package — either the package
+/// itself or a subpath within it.
+fn is_satisfied_by_link(
+    spec: &str,
+    linked: &std::collections::BTreeMap<String, std::path::PathBuf>,
+) -> bool {
+    let spec = spec.trim();
+    linked.keys().any(|package| {
+        crate::module_spec::module_spec_aliases(package)
+            .into_iter()
+            .any(|alias| spec == alias || spec.starts_with(&format!("{alias}/")))
+    })
 }

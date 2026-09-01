@@ -1,9 +1,152 @@
+use crate::module_spec::is_valid_package_name;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::fs::{self, File};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 /// Consumer package install directory (`deka add` / `deka install`).
 pub const MODULES_DIR: &str = "ds_modules";
 /// Pre-cutover install directory. Resolution still accepts this if present.
 pub const LEGACY_MODULES_DIR: &str = "php_modules";
+pub const DEKA_CONFIG_DIR: &str = ".deka";
+pub const LINKS_FILE: &str = "links.json";
+pub const LINKS_VERSION: u32 = 1;
+
+/// Project-local overrides used by `deka link`. Links are developer state,
+/// not a reproducible dependency or a publishable package input.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkManifest {
+    #[serde(default = "default_links_version")]
+    pub version: u32,
+    #[serde(default)]
+    pub packages: BTreeMap<String, LinkEntry>,
+}
+
+impl Default for LinkManifest {
+    fn default() -> Self {
+        Self {
+            version: LINKS_VERSION,
+            packages: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkEntry {
+    pub path: PathBuf,
+}
+
+fn default_links_version() -> u32 {
+    LINKS_VERSION
+}
+
+pub fn links_path(project: &Path) -> PathBuf {
+    project.join(DEKA_CONFIG_DIR).join(LINKS_FILE)
+}
+
+/// Read link state strictly. A malformed link must fail closed rather than
+/// silently falling back to a registry package with different source bytes.
+pub fn read_links_at(project: &Path) -> Result<LinkManifest, String> {
+    let path = links_path(project);
+    if !path.exists() {
+        return Ok(LinkManifest {
+            version: LINKS_VERSION,
+            packages: BTreeMap::new(),
+        });
+    }
+
+    let mut raw = String::new();
+    File::open(&path)
+        .and_then(|mut file| file.read_to_string(&mut raw))
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    let manifest: LinkManifest =
+        serde_json::from_str(&raw).map_err(|err| format!("invalid {}: {err}", path.display()))?;
+    validate_link_manifest(&manifest)?;
+    Ok(manifest)
+}
+
+/// Resolve and validate all link targets once at project startup.
+pub fn read_linked_modules(project: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
+    let manifest = read_links_at(project)?;
+    manifest
+        .packages
+        .into_iter()
+        .map(|(name, entry)| {
+            let path = fs::canonicalize(&entry.path).map_err(|err| {
+                format!(
+                    "local link for {name} points to missing target {}: {err}",
+                    entry.path.display()
+                )
+            })?;
+            if !path.is_dir() {
+                return Err(format!(
+                    "local link for {name} is not a directory: {}",
+                    path.display()
+                ));
+            }
+            Ok((name, path))
+        })
+        .collect()
+}
+
+/// Replace the link manifest atomically. The target directories are never
+/// modified by this function, which makes unlink safe by construction.
+pub fn write_links_at(project: &Path, manifest: &LinkManifest) -> Result<(), String> {
+    validate_link_manifest(manifest)?;
+    let directory = project.join(DEKA_CONFIG_DIR);
+    fs::create_dir_all(&directory)
+        .map_err(|err| format!("failed to create {}: {err}", directory.display()))?;
+    let path = directory.join(LINKS_FILE);
+    let temp = directory.join(format!(
+        ".{LINKS_FILE}.tmp-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default()
+    ));
+    let result = (|| {
+        let mut file = File::create(&temp)
+            .map_err(|err| format!("failed to create {}: {err}", temp.display()))?;
+        serde_json::to_writer_pretty(&mut file, manifest)
+            .map_err(|err| format!("failed to serialize {}: {err}", path.display()))?;
+        file.write_all(b"\n")
+            .map_err(|err| format!("failed to write {}: {err}", temp.display()))?;
+        file.sync_all()
+            .map_err(|err| format!("failed to sync {}: {err}", temp.display()))?;
+        fs::rename(&temp, &path)
+            .map_err(|err| format!("failed to replace {}: {err}", path.display()))?;
+        File::open(&directory)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|err| format!("failed to sync {}: {err}", directory.display()))?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result
+}
+
+fn validate_link_manifest(manifest: &LinkManifest) -> Result<(), String> {
+    if manifest.version != LINKS_VERSION {
+        return Err(format!(
+            "unsupported local link manifest version {}; expected {}",
+            manifest.version, LINKS_VERSION
+        ));
+    }
+    for (name, entry) in &manifest.packages {
+        if !is_valid_package_name(name) {
+            return Err(format!("invalid local link package name `{name}`"));
+        }
+        if !entry.path.is_absolute() {
+            return Err(format!(
+                "local link for {name} must use an absolute target path"
+            ));
+        }
+    }
+    Ok(())
+}
 
 pub fn is_modules_dir_name(name: &str) -> bool {
     name.eq_ignore_ascii_case(MODULES_DIR) || name.eq_ignore_ascii_case(LEGACY_MODULES_DIR)
@@ -120,10 +263,11 @@ pub fn ensure_deka_module_root_env_with<Exists, CurrentExe, Get, Set>(
 #[cfg(test)]
 mod tests {
     use super::{
-        detect_deka_module_root_with, ensure_deka_module_root_env_with, install_modules_dir,
-        resolve_modules_dir, MODULES_DIR,
+        LinkEntry, LinkManifest, MODULES_DIR, detect_deka_module_root_with,
+        ensure_deka_module_root_env_with, install_modules_dir, links_path, read_linked_modules,
+        resolve_modules_dir, write_links_at,
     };
-    use std::collections::{HashMap, HashSet};
+    use std::collections::{BTreeMap, HashMap, HashSet};
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
 
@@ -136,6 +280,42 @@ mod tests {
         let root = PathBuf::from("/tmp/new-app");
         assert_eq!(install_modules_dir(&root), root.join(MODULES_DIR));
         assert_eq!(resolve_modules_dir(&root), root.join(MODULES_DIR));
+    }
+
+    #[test]
+    fn local_links_are_atomic_and_resolve_canonical_targets() {
+        let project = tempfile::tempdir().expect("project");
+        let package = tempfile::tempdir().expect("package");
+        let manifest = LinkManifest {
+            version: super::LINKS_VERSION,
+            packages: BTreeMap::from([(
+                "@deka/example".to_string(),
+                LinkEntry {
+                    path: package.path().to_path_buf(),
+                },
+            )]),
+        };
+
+        write_links_at(project.path(), &manifest).expect("write links");
+        assert!(links_path(project.path()).is_file());
+        let linked = read_linked_modules(project.path()).expect("read links");
+        assert_eq!(
+            linked["@deka/example"],
+            package.path().canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn malformed_link_state_fails_closed() {
+        let project = tempfile::tempdir().expect("project");
+        std::fs::create_dir_all(project.path().join(super::DEKA_CONFIG_DIR)).unwrap();
+        std::fs::write(
+            links_path(project.path()),
+            "{\"version\":99,\"packages\":{}}\n",
+        )
+        .unwrap();
+        let error = read_linked_modules(project.path()).expect_err("invalid links must fail");
+        assert!(error.contains("unsupported local link manifest version"));
     }
 
     #[test]

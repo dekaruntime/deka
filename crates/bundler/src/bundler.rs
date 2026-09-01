@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use runtime_core::module_spec::{ds_source_candidates, module_spec_aliases};
-use runtime_core::modules::{existing_modules_dirs, MODULES_DIR};
+use runtime_core::modules::{existing_modules_dirs, read_linked_modules, MODULES_DIR};
 use swc_bundler::{BundleKind, Bundler, Config, Hook, Load, ModuleData, ModuleType};
 use swc_common::{
     FileName, GLOBALS, Globals, Mark, SourceMap, sync::Lrc,
@@ -795,13 +795,16 @@ fn guard_path_traversal(resolved: &Path, root: &Path) -> Option<PathBuf> {
 struct DekaResolver {
     root: PathBuf,
     client: bool,
+    linked_modules: std::collections::BTreeMap<String, PathBuf>,
 }
 
 impl DekaResolver {
     fn new(project_root: PathBuf, client: bool) -> Result<Self, String> {
+        let linked_modules = read_linked_modules(&project_root)?;
         Ok(Self {
             root: project_root,
             client,
+            linked_modules,
         })
     }
 
@@ -825,6 +828,9 @@ impl DekaResolver {
     }
 
     fn resolve_php_module(&self, specifier: &str) -> Option<PathBuf> {
+        if let Some(path) = self.resolve_linked_module(specifier) {
+            return Some(path);
+        }
         for modules in self.module_roots() {
             for alias in module_spec_aliases(specifier) {
                 let base = if alias.starts_with("@user/") {
@@ -838,6 +844,31 @@ impl DekaResolver {
                     if guard_path_traversal(&path, &modules).is_some() {
                         return Some(path);
                     }
+                }
+            }
+        }
+        None
+    }
+
+    fn resolve_linked_module(&self, specifier: &str) -> Option<PathBuf> {
+        for (package, root) in &self.linked_modules {
+            for alias in module_spec_aliases(package) {
+                let suffix = if specifier == alias {
+                    ""
+                } else if let Some(suffix) = specifier.strip_prefix(&(alias + "/")) {
+                    suffix
+                } else {
+                    continue;
+                };
+                let target = if suffix.is_empty() {
+                    root.clone()
+                } else {
+                    root.join(suffix)
+                };
+                if let Some(candidate) = resolve_with_candidates(&target)
+                    && guard_path_traversal(&candidate, root).is_some()
+                {
+                    return Some(candidate);
                 }
             }
         }
@@ -885,6 +916,16 @@ impl Resolve for DekaResolver {
                     });
                 }
             }
+        }
+
+        // Local development links intentionally win over installed packages.
+        // Check before built-in aliases so a link for @deka/component also
+        // wins for the shorthand component/* form.
+        if let Some(candidate) = self.resolve_linked_module(specifier) {
+            return Ok(Resolution {
+                filename: FileName::Real(candidate),
+                slug: None,
+            });
         }
 
         let is_prefixed_module = specifier.starts_with("component/")

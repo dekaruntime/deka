@@ -42,3 +42,20 @@ Run the language suite:
 
 That builds the CLI, compiles every `tests/tour` lesson, and runs
 `tests/testsuite` on the native isolate. See [`TESTING.md`](./TESTING.md).
+
+## Local package development
+
+Link a package working tree into a consumer without changing `deka.json` or
+`deka.lock`:
+
+```bash
+deka link ../my-package
+deka unlink @scope/my-package
+```
+
+Links are stored in the consumer's developer-only `.deka/links.json` (keep
+`.deka/` out of version control). During
+bundling, a local link takes precedence over the installed copy in `ds_modules`
+(and the legacy `php_modules` directory); `deka unlink` removes only that
+metadata and never deletes the package working tree. The linked package must
+declare a scoped `name` such as `@scope/my-package` in its `deka.json`.

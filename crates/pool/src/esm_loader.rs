@@ -23,7 +23,7 @@ use runtime_core::{
     },
     DEKA_VALIDATION_ERROR_MARKER,
 };
-use runtime_core::modules::MODULES_DIR;
+use runtime_core::modules::{read_linked_modules, MODULES_DIR};
 
 /// Compile a single `.ds` source file to JavaScript using compiler v2.
 fn compile_ds_source_to_js(source: &str, input: &str) -> Result<String, JsErrorBox> {
@@ -588,6 +588,45 @@ fn resolve_phpx_module_spec(project_root: &Path, specifier: &str) -> Option<Path
                     if resolved_canon.starts_with(&root_canon) {
                         return Some(resolved);
                     }
+                }
+            }
+        }
+    }
+
+    // Local development links (deka#470). A `deka link`ed package resolves
+    // from its working tree and deliberately wins over anything installed
+    // under ds_modules -- that override is the point of linking.
+    //
+    // Traversal is guarded the same way as the `@/` branch above: reject
+    // literal `..` segments before any IO, then confirm the resolved file is
+    // still inside the linked root after canonicalization. A link points
+    // outside project_root by design, so the linked root is the boundary.
+    if let Ok(linked) = read_linked_modules(project_root) {
+        for (package, root) in &linked {
+            for alias in module_spec_aliases(package) {
+                let suffix = if specifier == alias {
+                    ""
+                } else if let Some(suffix) = specifier.strip_prefix(&format!("{alias}/")) {
+                    suffix
+                } else {
+                    continue;
+                };
+                if suffix.split('/').any(|seg| seg == ".." || seg == ".") {
+                    continue;
+                }
+                let base = if suffix.is_empty() {
+                    root.clone()
+                } else {
+                    root.join(suffix)
+                };
+                if let Some(resolved) = resolve_internal_module_candidates(&base)
+                    && let (Ok(resolved_canon), Ok(root_canon)) = (
+                        std::fs::canonicalize(&resolved),
+                        std::fs::canonicalize(root),
+                    )
+                    && resolved_canon.starts_with(&root_canon)
+                {
+                    return Some(resolved);
                 }
             }
         }

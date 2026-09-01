@@ -5,8 +5,10 @@ use crate::integrity::compute_package_integrity;
 use bumpalo::Bump;
 use serde_json::Value;
 
-use runtime_core::module_spec::ds_source_candidates;
-use runtime_core::modules::{existing_modules_dirs, is_modules_dir_name, MODULES_DIR};
+use runtime_core::module_spec::{ds_source_candidates, module_spec_aliases};
+use runtime_core::modules::{
+    existing_modules_dirs, is_modules_dir_name, links_path, read_linked_modules, MODULES_DIR,
+};
 
 use super::{ErrorKind, Severity, ValidationError};
 use crate::validation::imports::{
@@ -634,6 +636,77 @@ struct PackageIntegrityTarget {
     package_root: PathBuf,
 }
 
+/// Walk up from an imported file looking for the project that owns it — the
+/// nearest ancestor carrying `.deka/links.json`. Returns `None` when the file
+/// is not inside a linked project, which is the ordinary case.
+fn project_root_with_links(current_file_path: &str) -> Option<PathBuf> {
+    let start = Path::new(current_file_path).parent()?;
+    let mut dir = Some(start);
+    while let Some(candidate) = dir {
+        if links_path(candidate).is_file() {
+            return Some(candidate.to_path_buf());
+        }
+        dir = candidate.parent();
+    }
+    None
+}
+
+/// Resolve an import against `deka link`ed packages (deka#470).
+///
+/// This runs *before* the `ds_modules` search: a local link is a deliberate
+/// developer override and must win over an installed copy of the same package.
+///
+/// Returns `Err` when the link manifest exists but is unusable — a target that
+/// was moved or deleted fails closed rather than silently falling through to
+/// the installed package, which would make a stale link look like it worked.
+fn resolve_linked_import(
+    raw: &str,
+    current_file_path: &str,
+) -> Result<Option<ResolvedImportTarget>, ValidationError> {
+    let Some(project) = project_root_with_links(current_file_path) else {
+        return Ok(None);
+    };
+    let linked = read_linked_modules(&project).map_err(|error| {
+        module_error(
+            1,
+            1,
+            raw.len().max(1),
+            format!("Local package link is unusable: {error}"),
+            "Re-run `deka link <package-directory>`, or `deka unlink <package>` to drop it.",
+        )
+    })?;
+
+    for (package, root) in &linked {
+        for alias in module_spec_aliases(package) {
+            let suffix = if raw == alias {
+                ""
+            } else if let Some(suffix) = raw.strip_prefix(&format!("{alias}/")) {
+                suffix
+            } else {
+                continue;
+            };
+            let target = if suffix.is_empty() {
+                root.clone()
+            } else {
+                root.join(suffix)
+            };
+            for candidate in ds_source_candidates(&target) {
+                if !candidate.exists() {
+                    continue;
+                }
+                // A linked package is a working tree, not a registry download,
+                // so there is no integrity hash to check against.
+                return Ok(Some(ResolvedImportTarget {
+                    module_id: raw.to_string(),
+                    file_path: candidate,
+                    integrity_target: None,
+                }));
+            }
+        }
+    }
+    Ok(None)
+}
+
 fn resolve_import_target(
     raw: &str,
     current_file_path: &str,
@@ -643,6 +716,16 @@ fn resolve_import_target(
     let raw = raw.trim();
     let is_relative = raw.starts_with('.');
     let is_project_alias = raw.starts_with("@/");
+
+    // Local development links win over installed packages, and are checked
+    // before the `ds_modules` requirement below — linking a package is exactly
+    // the case where nothing is installed yet (deka#470).
+    if !is_relative && !is_project_alias {
+        if let Some(resolved) = resolve_linked_import(raw, current_file_path)? {
+            return Ok(resolved);
+        }
+    }
+
     let spec_path = raw.strip_prefix("@/").unwrap_or(raw);
     let mut base_dirs: Vec<PathBuf> = Vec::new();
     if is_relative {

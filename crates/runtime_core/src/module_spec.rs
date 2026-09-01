@@ -50,6 +50,32 @@ pub fn canonical_php_package_spec(spec: &str) -> Option<String> {
     None
 }
 
+/// Whether `name` is a package identity that can safely be used as a module
+/// directory or a local-link key.
+pub fn is_valid_package_name(name: &str) -> bool {
+    if !name.starts_with('@') {
+        return false;
+    }
+
+    let mut parts = name.split('/');
+    let Some(scope) = parts.next() else {
+        return false;
+    };
+    let Some(package) = parts.next() else {
+        return false;
+    };
+    if parts.next().is_some() || scope.len() <= 1 || package.is_empty() {
+        return false;
+    }
+
+    scope[1..]
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+        && package
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+}
+
 /// DekaScript source files for an import path (`foo` or `foo.ds`).
 ///
 /// Resolution algorithm (deka#241; keep every resolver on this list):
@@ -88,7 +114,8 @@ pub fn resolve_ds_source_file(base: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        canonical_php_package_spec, ds_source_candidates, module_spec_aliases,
+        canonical_php_package_spec, ds_source_candidates, is_valid_package_name,
+        module_spec_aliases,
     };
     use std::path::Path;
 
@@ -121,6 +148,15 @@ mod tests {
     #[test]
     fn does_not_map_nested_import_paths_to_package_specs() {
         assert_eq!(canonical_php_package_spec("component/router"), None);
+    }
+
+    #[test]
+    fn package_names_are_scoped_and_path_safe() {
+        assert!(is_valid_package_name("@deka/crypto"));
+        assert!(is_valid_package_name("@sami/my-package_2"));
+        assert!(!is_valid_package_name("crypto"));
+        assert!(!is_valid_package_name("@deka/../escape"));
+        assert!(!is_valid_package_name("@deka/crypto/extra"));
     }
 
     #[test]

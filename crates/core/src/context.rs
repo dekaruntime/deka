@@ -77,7 +77,7 @@ impl Context {
                     .args
                     .commands
                     .iter()
-                    .any(|cmd| cmd == "test" || cmd == "self")
+                    .any(|cmd| matches!(cmd.as_str(), "test" | "self" | "link" | "unlink" | "pkg"))
                 {
                     let resolved =
                         resolve_handler_path(".").map_err(ContextError::HandlerResolve)?;
