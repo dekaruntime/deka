@@ -34,6 +34,7 @@ pub fn emit_js(program: &Program, _source: &str) -> Result<String, String> {
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
+        &HashMap::new(),
         "module.ds",
         None,
     )
@@ -60,6 +61,7 @@ pub fn emit_js_with_imports<'a>(
         unwrap_calls,
         operator_rewrites,
         &HashMap::new(),
+        &HashMap::new(),
         "module.ds",
         None,
     )
@@ -83,6 +85,7 @@ pub fn emit_js_with_options<'a>(
         *const deka_syntax::JsxElement<'a>,
         deka_syntax::typeck::JsxOptionalProps<'a>,
     >,
+    enum_case_patterns: &HashMap<*const deka_syntax::Pattern<'a>, &'a str>,
     file_path: &str,
     live_names: Option<&HashSet<String>>,
 ) -> Result<String, String> {
@@ -93,6 +96,7 @@ pub fn emit_js_with_options<'a>(
     emitter.unwrap_calls = unwrap_calls.clone();
     emitter.operator_rewrites = operator_rewrites.clone();
     emitter.jsx_optional_props = jsx_optional_props.clone();
+    emitter.enum_case_patterns = enum_case_patterns.clone();
     emitter.live_names = live_names.cloned();
     emitter.emit()
 }
@@ -151,6 +155,7 @@ struct Emitter<'a> {
         *const deka_syntax::JsxElement<'a>,
         deka_syntax::typeck::JsxOptionalProps<'a>,
     >,
+    enum_case_patterns: HashMap<*const deka_syntax::Pattern<'a>, &'a str>,
     /// Newtype operator rewrites lowered by the typechecker.
     operator_rewrites: HashMap<*const Expr<'a>, deka_syntax::typeck::OperatorRewrite<'a>>,
     file_stem: String,
@@ -179,6 +184,7 @@ impl<'a> Emitter<'a> {
             module_base: None,
             unwrap_calls: HashMap::new(),
             jsx_optional_props: HashMap::new(),
+            enum_case_patterns: HashMap::new(),
             operator_rewrites: HashMap::new(),
             file_stem: "module".to_string(),
             fn_scope: "_".to_string(),
@@ -1858,10 +1864,21 @@ impl<'a> Emitter<'a> {
         Ok(())
     }
 
-    fn match_condition(&self, pattern: &Pattern, scrutinee_var: &str) -> String {
+    fn match_condition(&self, pattern: &Pattern<'a>, scrutinee_var: &str) -> String {
         match pattern {
             Pattern::Wildcard { .. } => "true".to_string(),
-            Pattern::Identifier { .. } => "true".to_string(),
+            // A bare name that resolved to a payload-free case is a case test,
+            // not a binding. Emitting `true` for it is what made every arm
+            // after the first one dead (deka#450).
+            Pattern::Identifier { .. } => {
+                match self
+                    .enum_case_patterns
+                    .get(&(pattern as *const Pattern<'a>))
+                {
+                    Some(case) => format!("{}.__case === \"{}\"", scrutinee_var, case),
+                    None => "true".to_string(),
+                }
+            }
             Pattern::Literal { expr, .. } => {
                 let mut literal = String::new();
                 // Literal patterns are always simple literals; reuse expr emission.
@@ -1879,6 +1896,7 @@ impl<'a> Emitter<'a> {
                     module_base: self.module_base.clone(),
                     unwrap_calls: HashMap::new(),
                     jsx_optional_props: HashMap::new(),
+                    enum_case_patterns: HashMap::new(),
                     operator_rewrites: HashMap::new(),
                     file_stem: self.file_stem.clone(),
                     fn_scope: self.fn_scope.clone(),

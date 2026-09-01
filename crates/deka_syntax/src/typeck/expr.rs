@@ -35,12 +35,27 @@ impl<'a> Coverage<'a> {
         Coverage::Cases(HashMap::new())
     }
 
-    fn of_pattern(pattern: &ast::Pattern<'a>) -> Self {
+    fn of_pattern(
+        pattern: &ast::Pattern<'a>,
+        cases: &HashMap<*const ast::Pattern<'a>, &'a str>,
+    ) -> Self {
         match pattern {
-            ast::Pattern::Wildcard { .. } | ast::Pattern::Identifier { .. } => Coverage::All,
+            // An identifier that resolved to a payload-free case covers that
+            // case only; one that binds covers everything (deka#450).
+            ast::Pattern::Identifier { .. } => {
+                match cases.get(&(pattern as *const ast::Pattern<'a>)) {
+                    Some(case) => {
+                        let mut covered = HashMap::new();
+                        covered.insert(*case, Coverage::All);
+                        Coverage::Cases(covered)
+                    }
+                    None => Coverage::All,
+                }
+            }
+            ast::Pattern::Wildcard { .. } => Coverage::All,
             ast::Pattern::Constructor { name, payload, .. } => {
                 let inner = match payload {
-                    Some(inner) => Coverage::of_pattern(inner),
+                    Some(inner) => Coverage::of_pattern(inner, cases),
                     None => Coverage::All,
                 };
                 let mut cases = HashMap::new();
@@ -52,7 +67,7 @@ impl<'a> Coverage<'a> {
             // `Timeout | NotFound` counts for both in the exhaustiveness check.
             ast::Pattern::Or { alternatives, .. } => alternatives
                 .iter()
-                .map(Coverage::of_pattern)
+                .map(|alternative| Coverage::of_pattern(alternative, cases))
                 .fold(Coverage::nothing(), Coverage::merge),
             ast::Pattern::Literal { .. }
             | ast::Pattern::Struct { .. }
@@ -1093,10 +1108,10 @@ impl<'a> Checker<'a> {
             self.scopes.push(HashMap::new());
             self.mutables.push(HashSet::new());
             self.check_pattern(&arm.pattern, &scrutinee_type);
-            if !has_catch_all && Self::pattern_is_catch_all(&arm.pattern) {
+            if !has_catch_all && Self::pattern_is_catch_all(&arm.pattern, &self.enum_case_patterns) {
                 has_catch_all = true;
             }
-            coverage = coverage.merge(Coverage::of_pattern(&arm.pattern));
+            coverage = coverage.merge(Coverage::of_pattern(&arm.pattern, &self.enum_case_patterns));
             let arm_type = self.check_expr(&arm.body);
             self.scopes.pop();
             self.mutables.pop();
@@ -1131,12 +1146,18 @@ impl<'a> Checker<'a> {
         result_type.unwrap_or(Type::None)
     }
 
-    fn pattern_is_catch_all(pattern: &ast::Pattern<'_>) -> bool {
+    fn pattern_is_catch_all(
+        pattern: &ast::Pattern<'a>,
+        cases: &HashMap<*const ast::Pattern<'a>, &'a str>,
+    ) -> bool {
         match pattern {
-            ast::Pattern::Wildcard { .. } | ast::Pattern::Identifier { .. } => true,
-            ast::Pattern::Or { alternatives, .. } => {
-                alternatives.iter().any(Self::pattern_is_catch_all)
+            ast::Pattern::Wildcard { .. } => true,
+            ast::Pattern::Identifier { .. } => {
+                !cases.contains_key(&(pattern as *const ast::Pattern<'a>))
             }
+            ast::Pattern::Or { alternatives, .. } => alternatives
+                .iter()
+                .any(|alternative| Self::pattern_is_catch_all(alternative, cases)),
             _ => false,
         }
     }
@@ -1255,7 +1276,29 @@ impl<'a> Checker<'a> {
     fn check_pattern(&mut self, pattern: &ast::Pattern<'a>, scrutinee_type: &Type<'a>) {
         match pattern {
             ast::Pattern::Wildcard { .. } => {}
-            ast::Pattern::Identifier { name, .. } => {
+            ast::Pattern::Identifier { name, span } => {
+                // A bare name is a *case* when the scrutinee is an enum that
+                // has one by that name and it carries no payload. It used to
+                // always bind, which meant `match (c) { Red => …, Blue => … }`
+                // compiled `Red` to a test of `true` and returned the first arm
+                // for every input, with exhaustiveness satisfied (deka#450).
+                if let Some((_, cases)) = self.enum_shape(scrutinee_type) {
+                    if let Some((case_name, payload)) =
+                        cases.iter().find(|(case, _)| case == name)
+                    {
+                        if payload.is_some() {
+                            self.error_span(
+                                *span,
+                                format!(
+                                    "`{case_name}` carries a payload; write `{case_name}(value)`"
+                                ),
+                            );
+                        }
+                        self.enum_case_patterns
+                            .insert(pattern as *const ast::Pattern<'a>, case_name);
+                        return;
+                    }
+                }
                 self.declare_var(name, scrutinee_type.clone());
             }
             ast::Pattern::Literal { expr, span } => {
@@ -1277,13 +1320,22 @@ impl<'a> Checker<'a> {
                 self.check_constructor_pattern(name, payload.as_deref(), *span, scrutinee_type);
             }
             ast::Pattern::Or { alternatives, span } => {
+                // Resolve each alternative first so a bare case name is known
+                // to be a case and not a binding (deka#450), then reject any
+                // that genuinely binds.
+                for alternative in alternatives.iter() {
+                    if let ast::Pattern::Identifier { .. } = alternative {
+                        self.check_pattern(alternative, scrutinee_type);
+                    }
+                }
+                let cases = self.enum_case_patterns.clone();
                 for alternative in alternatives.iter() {
                     // A binding would have to come from whichever alternative
                     // matched, and every alternative would have to bind the
                     // same names for the arm body to be well-typed. Neither is
                     // built yet, so say so rather than bind from one branch
                     // (deka#446).
-                    if let Some(name) = Self::pattern_binding_name(alternative) {
+                    if let Some(name) = Self::pattern_binding_name(alternative, &cases) {
                         self.error_span(
                             *span,
                             format!(
@@ -1303,15 +1355,24 @@ impl<'a> Checker<'a> {
     }
 
     /// The first name an alternative would bind, if any.
-    fn pattern_binding_name(pattern: &ast::Pattern<'a>) -> Option<&'a str> {
+    fn pattern_binding_name(
+        pattern: &ast::Pattern<'a>,
+        cases: &HashMap<*const ast::Pattern<'a>, &'a str>,
+    ) -> Option<&'a str> {
         match pattern {
-            ast::Pattern::Identifier { name, .. } => Some(name),
+            ast::Pattern::Identifier { name, .. } => {
+                if cases.contains_key(&(pattern as *const ast::Pattern<'a>)) {
+                    None
+                } else {
+                    Some(name)
+                }
+            }
             ast::Pattern::Constructor { payload, .. } => {
-                payload.and_then(|inner| Self::pattern_binding_name(inner))
+                payload.and_then(|inner| Self::pattern_binding_name(inner, cases))
             }
             ast::Pattern::Or { alternatives, .. } => alternatives
                 .iter()
-                .find_map(Self::pattern_binding_name),
+                .find_map(|alternative| Self::pattern_binding_name(alternative, cases)),
             _ => None,
         }
     }

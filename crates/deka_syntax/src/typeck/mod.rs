@@ -49,6 +49,9 @@ pub struct TypeckResult<'a> {
     /// so `?:` props are filled and bare values wrapped there. A plain object
     /// literal is not, which is why omitting one is a type error (deka#416).
     pub jsx_optional_props: HashMap<*const ast::JsxElement<'a>, JsxOptionalProps<'a>>,
+    /// Identifier patterns that name a payload-free case of the scrutinee's
+    /// enum rather than binding it (deka#450).
+    pub enum_case_patterns: HashMap<*const ast::Pattern<'a>, &'a str>,
 }
 
 /// The `Option` materialisation for one JSX element.
@@ -109,6 +112,7 @@ pub fn check_program_with_imports<'a>(
         unwrap_calls: checker.unwrap_calls,
         operator_rewrites: checker.operator_rewrites,
         jsx_optional_props: checker.jsx_optional_props,
+        enum_case_patterns: checker.enum_case_patterns,
     }
 }
 
@@ -478,6 +482,7 @@ struct Checker<'a> {
     /// Cleared between passes by `reset_lowering_state`.
     operator_rewrites: HashMap<*const ast::Expr<'a>, types::OperatorRewrite<'a>>,
     jsx_optional_props: HashMap<*const ast::JsxElement<'a>, JsxOptionalProps<'a>>,
+    enum_case_patterns: HashMap<*const ast::Pattern<'a>, &'a str>,
     /// Local scopes. The first scope is the top-level scope.
     scopes: Vec<HashMap<&'a str, Type<'a>>>,
     /// Bindings that were introduced with `let` and may be reassigned.
@@ -516,6 +521,7 @@ impl<'a> Checker<'a> {
             unwrap_calls: HashMap::new(),
             operator_rewrites: HashMap::new(),
             jsx_optional_props: HashMap::new(),
+            enum_case_patterns: HashMap::new(),
             scopes: vec![HashMap::new()],
             mutables: vec![HashSet::new()],
             type_scopes: Vec::new(),

@@ -11,8 +11,8 @@ enum Colour {
 // swallows cases they meant to enumerate.
 fn warmth(c: Colour): string {
   return match (c) {
-    Colour.Red | Colour.Green => "warm",
-    Colour.Blue => "cool"
+    Red | Green => "warm",
+    Blue => "cool"
   }
 }
 

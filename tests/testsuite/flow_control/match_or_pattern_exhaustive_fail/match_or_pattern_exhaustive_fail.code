@@ -8,6 +8,6 @@ enum Colour {
 // is still missing.
 fn warmth(c: Colour): string {
   return match (c) {
-    Colour.Red | Colour.Green => "warm"
+    Red | Green => "warm"
   }
 }
