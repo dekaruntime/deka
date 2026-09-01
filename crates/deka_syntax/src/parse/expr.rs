@@ -452,6 +452,20 @@ impl<'a> Parser<'a> {
     ) -> Option<Expr<'a>> {
         self.advance(); // `unsafe`
 
+        // Optional success-type annotation: `unsafe<T> { ... }` (deka#460).
+        let result_type = if self.at(TokenKind::Lt) {
+            self.advance(); // `<`
+            let ty = self.parse_type()?;
+            if !self.at(TokenKind::Gt) {
+                self.error("expected `>` after `unsafe` result type");
+                return None;
+            }
+            self.advance(); // `>`
+            Some(ty)
+        } else {
+            None
+        };
+
         if !self.at(TokenKind::LBrace) {
             self.error("expected `{` after `unsafe`");
             return None;
@@ -476,6 +490,7 @@ impl<'a> Parser<'a> {
 
         Some(Expr::Unsafe {
             source,
+            result_type,
             span: self.span_from(start, start_byte),
         })
     }

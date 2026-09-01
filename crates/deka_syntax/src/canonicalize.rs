@@ -469,8 +469,13 @@ fn transform_expr<'a>(
             arms: transform_match_arms(arms, arena, enums),
             span: *span,
         },
-        Expr::Unsafe { source, span } => Expr::Unsafe {
+        Expr::Unsafe {
             source,
+            result_type,
+            span,
+        } => Expr::Unsafe {
+            source,
+            result_type: result_type.clone(),
             span: *span,
         },
         Expr::Bridge {
@@ -1139,8 +1144,13 @@ fn lower_expr<'a>(
             arms: lower_match_arms(arms, arena, method_calls),
             span: *span,
         },
-        Expr::Unsafe { source, span } => Expr::Unsafe {
+        Expr::Unsafe {
             source,
+            result_type,
+            span,
+        } => Expr::Unsafe {
+            source,
+            result_type: result_type.clone(),
             span: *span,
         },
         Expr::Bridge {

@@ -126,6 +126,10 @@ pub struct Lexer<'a> {
     /// non-whitespace token can switch the lexer into raw-JS mode for the
     /// following `{ ... }` block.
     unsafe_expect_brace: bool,
+    /// Byte offset one past the `>` closing an `unsafe<T>` type argument.
+    /// While `pos` is below it the pending-brace check is suspended so the
+    /// type argument lexes as ordinary tokens (deka#460).
+    unsafe_type_end: usize,
     /// >0 while scanning the body of an `unsafe { }` block. The lexer emits a
     /// single `RawJs` token for the body and returns to normal mode at the
     /// matching `}`.
@@ -144,6 +148,7 @@ impl<'a> Lexer<'a> {
             column: 1,
             diagnostics: Vec::new(),
             unsafe_expect_brace: false,
+            unsafe_type_end: 0,
             raw_depth: 0,
             raw_start_pos: Pos { line: 1, column: 1 },
             raw_start_byte: 0,
@@ -737,12 +742,48 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Byte offset one past the `>` that closes the angle-bracket group
+    /// starting at `self.pos`. Counts characters, so `>>` closes two levels.
+    /// Returns the end of input if the group is unterminated -- the parser
+    /// reports that as a diagnostic.
+    fn matching_angle_end(&self) -> usize {
+        let bytes = self.source.as_bytes();
+        let mut depth = 0usize;
+        let mut i = self.pos;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'<' => depth += 1,
+                b'>' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return i + 1;
+                    }
+                }
+                // A `{` before the group closes means the type argument is
+                // unterminated. Stop so the caller still expects a brace.
+                b'{' => return i,
+                _ => {}
+            }
+            i += 1;
+        }
+        bytes.len()
+    }
+
     pub fn next_token(&mut self) -> Token<'a> {
         if self.raw_depth > 0 {
             return self.read_raw_js_body();
         }
         self.skip_whitespace();
-        if self.unsafe_expect_brace {
+        if self.unsafe_expect_brace && self.pos >= self.unsafe_type_end {
+            if self.current() == Some('<') {
+                // `unsafe<T> { ... }` (deka#460). Find the matching `>` by
+                // scanning characters rather than tokens: a nested type ends
+                // in `>>`, which the lexer would otherwise emit as a single
+                // `Shr`. The pending-brace flag stays set, so the `{` after
+                // the type argument still opens the raw-JS body.
+                self.unsafe_type_end = self.matching_angle_end();
+                // fall through and lex `<` as an ordinary token
+            } else {
             self.unsafe_expect_brace = false;
             let start = self.pos_at();
             let start_byte = self.pos;
@@ -757,7 +798,8 @@ impl<'a> Lexer<'a> {
                     span: self.span_from(start, start_byte),
                 };
             } else {
-                return self.error("expected `{` after `unsafe`");
+                return self.error("expected `{` or `<` after `unsafe`");
+            }
             }
         }
         let start = self.pos_at();

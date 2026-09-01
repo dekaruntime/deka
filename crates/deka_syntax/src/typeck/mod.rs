@@ -196,7 +196,7 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
     ) -> Type<'a> {
         match ty {
             ast::Type::Named { name, .. } => match *name {
-                "number" | "string" | "boolean" | "never" | "void" | "bytes" | "Component" => {
+                "number" | "string" | "boolean" | "never" | "void" | "bytes" | "Component" | "JsError" => {
                     Type::Named { name }
                 }
                 _ => {
