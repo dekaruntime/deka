@@ -19,6 +19,8 @@ fn run(dir: &Path, args: &[&str]) -> std::process::Output {
 fn link_and_unlink_preserve_package_and_use_project_local_state() {
     let consumer = tempfile::tempdir().unwrap();
     let package = tempfile::tempdir().unwrap();
+    let nested = consumer.path().join("src").join("nested");
+    fs::create_dir_all(&nested).unwrap();
     fs::write(consumer.path().join("deka.json"), "{}\n").unwrap();
     fs::write(
         package.path().join("deka.json"),
@@ -29,7 +31,7 @@ fn link_and_unlink_preserve_package_and_use_project_local_state() {
     fs::write(package.path().join("index.ds"), "export const value = 1;\n").unwrap();
 
     let package_path = package.path().to_str().unwrap();
-    let linked = run(consumer.path(), &["link", package_path]);
+    let linked = run(&nested, &["link", package_path]);
     assert!(
         linked.status.success(),
         "link failed: {}{}",
@@ -47,7 +49,8 @@ fn link_and_unlink_preserve_package_and_use_project_local_state() {
         package.path().canonicalize().unwrap().to_str().unwrap()
     );
 
-    let unlinked = run(consumer.path(), &["unlink", "@deka/local"]);
+    assert!(!nested.join(".deka/links.json").exists());
+    let unlinked = run(&nested, &["unlink", "@deka/local"]);
     assert!(
         unlinked.status.success(),
         "unlink failed: {}{}",

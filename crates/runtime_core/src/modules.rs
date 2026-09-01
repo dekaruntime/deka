@@ -1,5 +1,6 @@
 use crate::module_spec::is_valid_package_name;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{Read, Write};
@@ -85,9 +86,50 @@ pub fn read_linked_modules(project: &Path) -> Result<BTreeMap<String, PathBuf>, 
                     path.display()
                 ));
             }
+            validate_linked_package_manifest(&name, &path)?;
             Ok((name, path))
         })
         .collect()
+}
+
+fn validate_linked_package_manifest(name: &str, path: &Path) -> Result<(), String> {
+    let manifest_path = path.join("deka.json");
+    let raw = fs::read_to_string(&manifest_path).map_err(|err| {
+        format!(
+            "local link for {name} has no readable package manifest {}: {err}",
+            manifest_path.display()
+        )
+    })?;
+    let manifest: Value = serde_json::from_str(&raw).map_err(|err| {
+        format!(
+            "local link for {name} has an invalid package manifest {}: {err}",
+            manifest_path.display()
+        )
+    })?;
+    let target_name = manifest
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            format!(
+                "local link for {name} has no non-empty `name` in {}",
+                manifest_path.display()
+            )
+        })?;
+    if !is_valid_package_name(target_name) {
+        return Err(format!(
+            "local link for {name} has invalid package name `{target_name}` in {}",
+            manifest_path.display()
+        ));
+    }
+    if target_name != name {
+        return Err(format!(
+            "local link for {name} points to package `{target_name}` in {}",
+            manifest_path.display()
+        ));
+    }
+    Ok(())
 }
 
 /// Replace the link manifest atomically. The target directories are never
@@ -286,6 +328,11 @@ mod tests {
     fn local_links_are_atomic_and_resolve_canonical_targets() {
         let project = tempfile::tempdir().expect("project");
         let package = tempfile::tempdir().expect("package");
+        std::fs::write(
+            package.path().join("deka.json"),
+            r#"{"name":"@deka/example","version":"0.1.0"}"#,
+        )
+        .unwrap();
         let manifest = LinkManifest {
             version: super::LINKS_VERSION,
             packages: BTreeMap::from([(
@@ -316,6 +363,30 @@ mod tests {
         .unwrap();
         let error = read_linked_modules(project.path()).expect_err("invalid links must fail");
         assert!(error.contains("unsupported local link manifest version"));
+    }
+
+    #[test]
+    fn linked_target_manifest_must_match_link_name() {
+        let project = tempfile::tempdir().expect("project");
+        let package = tempfile::tempdir().expect("package");
+        std::fs::write(
+            package.path().join("deka.json"),
+            r#"{"name":"@deka/other","version":"0.1.0"}"#,
+        )
+        .unwrap();
+        let manifest = LinkManifest {
+            version: super::LINKS_VERSION,
+            packages: BTreeMap::from([(
+                "@deka/example".to_string(),
+                LinkEntry {
+                    path: package.path().to_path_buf(),
+                },
+            )]),
+        };
+        write_links_at(project.path(), &manifest).unwrap();
+
+        let error = read_linked_modules(project.path()).expect_err("mismatched target must fail");
+        assert!(error.contains("points to package `@deka/other`"));
     }
 
     #[test]
