@@ -686,12 +686,20 @@ impl<'a> Checker<'a> {
     }
 
     fn expect_number(&mut self, ty: &Type<'a>, span: ast::Span) {
+        // `Var` is unconstrained and asserts nothing, so it satisfies any
+        // expectation -- the same rule `is_assignable` applies (deka#468).
+        if matches!(ty, Type::Var) {
+            return;
+        }
         if !ty.is_error() && !Self::is_number(ty) {
             self.error_span(span, format!("expected type `number`, found type `{ty}`"));
         }
     }
 
     fn expect_boolean(&mut self, ty: &Type<'a>, span: ast::Span) {
+        if matches!(ty, Type::Var) {
+            return;
+        }
         if !ty.is_error() && !Self::is_boolean(ty) {
             self.error_span(span, format!("expected type `boolean`, found type `{ty}`"));
         }
@@ -702,8 +710,16 @@ impl<'a> Checker<'a> {
         if expected.is_error() || actual.is_error() {
             return true;
         }
+        // `Var` is an unconstrained type variable: a construct that never named
+        // this type, rather than one the checker failed to resolve. It carries
+        // no claim, so unifying it with anything is sound and must stay true
+        // even after `Infer` is tightened (deka#468).
+        if matches!(expected, Type::Var) || matches!(actual, Type::Var) {
+            return true;
+        }
         // `Infer` is the unknown/externally-provided type. It is compatible with
-        // any type until a concrete type is available.
+        // any type until a concrete type is available. This is the deka#252
+        // hole and is expected to be removed; `Var` above is not.
         if matches!(expected, Type::Infer) || matches!(actual, Type::Infer) {
             return true;
         }
