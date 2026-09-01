@@ -1855,7 +1855,7 @@ impl<'a> Emitter<'a> {
     fn emit_unsafe(&mut self, source: &str) -> Result<(), String> {
         let trimmed = source.trim();
         if trimmed.is_empty() {
-            self.out.push_str("(function() { try { return { __case: \"Ok\", value: undefined }; } catch (err) { return { __case: \"Err\", error: err }; } })()");
+            self.out.push_str("(function() { try { return { __case: \"Ok\", value: undefined }; } catch (err) { return { __case: \"Err\", error: err instanceof Error ? err : new Error(String(err)) }; } })()");
             return Ok(());
         }
 
@@ -1884,7 +1884,7 @@ impl<'a> Emitter<'a> {
         self.out.push_str(fn_kw);
         self.out.push_str("() { try { return { __case: \"Ok\", value: ");
         self.out.push_str(&awaited);
-        self.out.push_str(" }; } catch (err) { return { __case: \"Err\", error: err }; } })()");
+        self.out.push_str(" }; } catch (err) { return { __case: \"Err\", error: err instanceof Error ? err : new Error(String(err)) }; } })()");
 
         Ok(())
     }
