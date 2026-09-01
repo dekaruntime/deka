@@ -2,4 +2,4 @@ import { echo } from "io"
 fn id<T>(x: T) T {
   return x
 }
-echo(id(42))
+echo(string(id(42)))

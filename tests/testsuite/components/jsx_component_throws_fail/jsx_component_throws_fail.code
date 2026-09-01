@@ -3,6 +3,5 @@ const ui = globalThis.deka.ui
 fn Boom(props: object) object {
   deka.panic("boom")
 }
-
 const html = ui.renderToString(ui.jsx(Boom, {}))
 echo(html.html)

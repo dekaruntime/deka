@@ -2,5 +2,5 @@ import { echo } from "io"
 import { validate } from "json"
 echo(match (validate("{")) {
   Ok(v) => v,
-  Err(e) => true
+  Err(e) => true,
 })
