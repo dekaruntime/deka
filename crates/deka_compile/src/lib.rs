@@ -572,6 +572,36 @@ mod tests {
     }
 
     #[test]
+    fn compile_union_match_type_patterns() {
+        let result = compile_to_js(
+            "struct Point { x: number; y: number }\nfn f(v: Point | string) number { return match (v) { Point(p) => p.x, string(s) => s.length }; }",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(
+            result.js.contains("deka.getStructId(__deka_scrutinee) === \"Point\""),
+            "got: {}",
+            result.js
+        );
+        assert!(
+            result.js.contains("typeof __deka_scrutinee === \"string\""),
+            "got: {}",
+            result.js
+        );
+    }
+
+    #[test]
+    fn compile_union_type_errors_are_diagnostics() {
+        let err = compile_to_js("const v: string | string = \"a\";", "test.ds")
+            .expect_err("compile should fail");
+        assert!(
+            err.iter().any(|d| d.message.contains("overlap")),
+            "expected overlap diagnostic, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
     fn compile_receiver_method() {
         let result = compile_to_js(
             "struct Point { x: number\n  y: number }\nfn (p Point) distance(other: Point) number { return 0; }\nconst p1: Point = Point { x: 0, y: 0 };\nconst p2: Point = Point { x: 3, y: 4 };\nconst d: number = p1.distance(p2);",
