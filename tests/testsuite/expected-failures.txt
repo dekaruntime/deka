@@ -16,8 +16,6 @@
 # build green; fix the fixture or file the bug.
 #
 # Cluster: entirely stdlib package fixtures -- see #369, #480, #502.
-crypto-aes-roundtrip
-crypto-random-bytes-length
 crypto-sha256-wrong-type
 fs-hello-utf8
 fs-mkdirs-and-dir
@@ -32,10 +30,6 @@ fs-write-count
 fs-write-empty
 fs-write-missing-parent
 fs-write-then-read
-http-format-content-length
-http-format-custom-header
-http-format-get-line
-http-format-host-header
 http-parse-explicit-port
 http-parse-http-port
 http-parse-https-host
@@ -43,22 +37,8 @@ http-parse-https-port
 http-parse-path-query
 http-parse-root-path
 http-parse-scheme
-json-parse-array-first
-json-parse-object-x
-json-validate-bad
-json-validate-ok
-jwt-three-parts
-packages-bytes-from-array-binary
-packages-bytes-from-string-len
 tcp-listen-then-close
 tcp-set-deadline-zero
-time-now-after-epoch
-time-now-after-sleep
-time-now-finite
-time-now-is-number
 time-sleep-ms-type
-time-sleep-zero-elapsed
-time-two-nows
-tls-upgrade-error-nonempty
 tls-upgrade-number-sni
 tls-upgrade-string-handle

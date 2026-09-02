@@ -26,6 +26,6 @@ async fn go() {
     Ok(v) => v,
     Err(e) => false,
   }
-  echo(made && has)
+  echo(string(made && has))
 }
 go()
