@@ -635,10 +635,11 @@ impl<'a> Checker<'a> {
                 body,
                 ..
             } => {
-                self.check_expr(iterable);
+                let iterable_type = self.check_expr(iterable);
+                let element_type = iterable_type.collection_element();
                 self.scopes.push(HashMap::new());
                 self.mutables.push(HashSet::new());
-                self.declare_var(name, Type::Infer);
+                self.declare_var(name, element_type);
                 if !*is_const {
                     self.mutables.last_mut().unwrap().insert(*name);
                 }

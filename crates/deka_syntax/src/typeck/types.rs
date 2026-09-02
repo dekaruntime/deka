@@ -67,6 +67,21 @@ impl<'a> Type<'a> {
         matches!(self, Type::Error)
     }
 
+    /// Return the element type exposed by a collection operation.
+    ///
+    /// `Var` is deliberately preserved for an unconstrained collection (for
+    /// example the element type of `[]`).  `Infer` remains the fallback for a
+    /// value that is not a collection or whose type is still opaque.
+    pub(super) fn collection_element(&self) -> Self {
+        match self {
+            Type::Array { elem } => elem.as_ref().clone(),
+            Type::Named { name: "string" } => Type::Named { name: "string" },
+            Type::Var => Type::Var,
+            Type::Error => Type::Error,
+            _ => Type::Infer,
+        }
+    }
+
     pub fn from_newtype_repr(repr: crate::ast::NewtypeRepr) -> Self {
         match repr {
             crate::ast::NewtypeRepr::Number => Type::Named { name: "number" },

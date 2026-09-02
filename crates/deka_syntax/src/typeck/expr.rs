@@ -190,10 +190,9 @@ impl<'a> Checker<'a> {
                 Type::Object { fields: field_types }
             }
             ast::Expr::IndexAccess { object, index, .. } => {
-                self.check_expr(object);
+                let object_type = self.check_expr(object);
                 self.check_expr(index);
-                // TODO: return element type once collection types are modeled.
-                Type::Infer
+                object_type.collection_element()
             }
             ast::Expr::Spread { expr, .. } => {
                 self.check_expr(expr);
