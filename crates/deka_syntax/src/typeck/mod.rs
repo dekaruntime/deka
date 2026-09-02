@@ -1603,4 +1603,182 @@ mod tests {
         );
         assert!(errors.is_empty(), "{:?}", errors);
     }
+
+    // Union types (rfd#42, deka#530). The positive cases pass trivially if
+    // unions degrade to Infer, which is assignable to everything — every
+    // negative here is what proves the checker keeps unions real.
+
+    #[test]
+    fn union_widening_assign_passes() {
+        // `string` widens into `string | number`: assignable to SOME member.
+        assert!(typeck("const x: string | number = \"a\";").is_empty());
+        assert!(typeck("const x: string | number = 1;").is_empty());
+    }
+
+    #[test]
+    fn union_narrows_and_binds_in_match() {
+        let errors = typeck(
+            "fn f(v: string | number) string { return match (v) { string(s) => s, number(n) => string(n) }; }",
+        );
+        assert!(errors.is_empty(), "{:?}", errors);
+    }
+
+    #[test]
+    fn union_match_with_catch_all_passes() {
+        let errors = typeck(
+            "fn f(v: string | number) string { return match (v) { string(s) => s, _ => \"other\" }; }",
+        );
+        assert!(errors.is_empty(), "{:?}", errors);
+    }
+
+    #[test]
+    fn union_match_or_pattern_is_exhaustive() {
+        let errors = typeck(
+            "fn f(v: string | number) string { return match (v) { string(s) | number(s) => string(s) }; }",
+        );
+        // Alternatives cannot bind (deka#446) — the or-pattern must not
+        // silently become exhaustive by binding; it errors instead.
+        assert!(!errors.is_empty());
+    }
+
+    #[test]
+    fn union_match_rebinds_operand_in_arm() {
+        // Inside the arm, `v` is shadowed with `string`, so `v.length`
+        // typechecks; outside it the union still rejects member access.
+        let errors = typeck(
+            "fn f(v: string | number) number { return match (v) { string(s) => v.length, number(n) => n }; }",
+        );
+        assert!(errors.is_empty(), "{:?}", errors);
+    }
+
+    #[test]
+    fn union_assigned_to_member_fails() {
+        // `string | number` is NOT assignable to `string`: EVERY member must
+        // be assignable to the expected type.
+        let errors = typeck("const x: string | number = 1; const y: string = x;");
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn union_member_access_without_narrowing_fails() {
+        let errors = typeck("const v: string | number = \"a\"; const n = v.length;");
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert!(
+            errors[0].message.contains("narrow") && errors[0].message.contains("match"),
+            "{}",
+            errors[0].message
+        );
+    }
+
+    #[test]
+    fn union_match_missing_arm_fails() {
+        let errors = typeck(
+            "fn f(v: string | number) string { return match (v) { string(s) => s }; }",
+        );
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert!(
+            errors[0].message.contains("non-exhaustive") && errors[0].message.contains("number"),
+            "{}",
+            errors[0].message
+        );
+    }
+
+    #[test]
+    fn union_duplicate_members_fail() {
+        let errors = typeck("const v: string | string = \"a\";");
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert!(errors[0].message.contains("overlap"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn union_overlapping_struct_interface_members_fail() {
+        // A struct that satisfies an interface would match both predicates,
+        // so narrowing would be ambiguous.
+        let errors = typeck(
+            "struct User { name: string } interface Named { name: string } const v: User | Named = User { name: \"a\" };",
+        );
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert!(
+            errors[0].message.contains("User") && errors[0].message.contains("Named"),
+            "{}",
+            errors[0].message
+        );
+    }
+
+    #[test]
+    fn union_distinct_primitives_do_not_overlap() {
+        assert!(typeck("const v: string | number | boolean = true;").is_empty());
+    }
+
+    #[test]
+    fn union_function_member_fails() {
+        let errors = typeck("const f: (fn(number) number) | string = \"a\";");
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert!(
+            errors[0].message.contains("decidable runtime predicate"),
+            "{}",
+            errors[0].message
+        );
+    }
+
+    #[test]
+    fn union_unconstrained_type_param_fails() {
+        let errors = typeck("fn f<T>(x: T | string) string { return \"a\" }");
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert!(
+            errors[0].message.contains("decidable runtime predicate"),
+            "{}",
+            errors[0].message
+        );
+    }
+
+    #[test]
+    fn union_option_member_fails() {
+        // Option has no runtime predicate today (deka#401 shape requires
+        // explicit Some/None construction), so it cannot join a union.
+        let errors = typeck("const v: string | Option<number> = \"a\";");
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert!(
+            errors[0].message.contains("decidable runtime predicate"),
+            "{}",
+            errors[0].message
+        );
+    }
+
+    #[test]
+    fn union_type_pattern_requires_binding() {
+        let errors = typeck(
+            "fn f(v: string | number) string { return match (v) { string => \"a\", number(n) => string(n) }; }",
+        );
+        assert!(
+            errors.iter().any(|e| e.message.contains("requires a binding")),
+            "{:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn union_type_pattern_unknown_member_fails() {
+        let errors = typeck(
+            "fn f(v: string | number) string { return match (v) { boolean(b) => string(b), string(s) => s, number(n) => string(n) }; }",
+        );
+        assert!(
+            errors.iter().any(|e| e.message.contains("not a member of union")),
+            "{:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn union_newtype_member_fails() {
+        // v1 rejects newtypes: the __deka_newtype tag predicate is not wired
+        // into match emission yet.
+        let errors = typeck("type Meters number\nconst v: Meters | string = \"a\";");
+        assert!(
+            errors.iter().any(|e| e.message.contains("decidable runtime predicate")),
+            "{:?}",
+            errors
+        );
+    }
 }

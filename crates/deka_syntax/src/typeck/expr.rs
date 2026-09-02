@@ -1258,8 +1258,17 @@ impl<'a> Checker<'a> {
             // (rfd#42): `match (v) { string(s) => ... }` shadows `v` with
             // `string` inside the arm. Plain shadowing — DekaScript has no
             // flow-sensitive typing — and the scope pop above restores it.
-            if let (ast::Expr::Identifier { name, .. }, ast::Pattern::Constructor { name: pattern_name, .. }) =
-                (scrutinee, &arm.pattern)
+            // `match (v)` wraps the operand in `Expr::Paren`, so unwrap it.
+            let scrutinee_ident = match scrutinee {
+                ast::Expr::Identifier { name, .. } => Some(name),
+                ast::Expr::Paren { expr, .. } => match &**expr {
+                    ast::Expr::Identifier { name, .. } => Some(name),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let (Some(name), ast::Pattern::Constructor { name: pattern_name, .. }) =
+                (scrutinee_ident, &arm.pattern)
             {
                 if self
                     .union_type_patterns
@@ -1482,6 +1491,23 @@ impl<'a> Checker<'a> {
                         }
                         self.enum_case_patterns
                             .insert(pattern as *const ast::Pattern<'a>, case_name);
+                        return;
+                    }
+                }
+                // A bare name that matches a union member is a type-pattern
+                // attempt without its binding (`match (v) { string => ... }`).
+                // Spec examples always bind; fail closed rather than silently
+                // treating the member name as a catch-all binding (rfd#42,
+                // deka#530).
+                if let Type::Union { members } = scrutinee_type {
+                    if members
+                        .iter()
+                        .any(|m| Self::union_member_name(m) == Some(name))
+                    {
+                        self.error_span(
+                            *span,
+                            format!("type pattern `{name}` requires a binding, e.g. `{name}(value)`"),
+                        );
                         return;
                     }
                 }
