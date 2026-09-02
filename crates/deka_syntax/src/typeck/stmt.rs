@@ -245,10 +245,28 @@ impl<'a> Checker<'a> {
                     continue;
                 }
                 let key = (*receiver_type, *name);
+                // Resolve annotations once, here, so body checking and call
+                // sites reuse them instead of re-reporting (deka#494).
+                let param_types: Vec<Type<'a>> = params
+                    .iter()
+                    .map(|p| match &p.ty {
+                        Some(t) => self.resolve_ast_type(t),
+                        None => {
+                            self.error_span(
+                                p.span,
+                                format!("parameter `{}` is missing a type annotation", p.name),
+                            );
+                            Type::Error
+                        }
+                    })
+                    .collect();
+                let resolved_return = return_type.as_ref().map(|t| self.resolve_ast_type(t));
                 if self.receiver_methods.insert(key, super::MethodInfo {
                     params,
                     return_type: return_type.clone(),
                     mutable: *receiver_mutable,
+                    param_types,
+                    resolved_return,
                 }).is_some()
                 {
                     self.error_span(*span, format!(
@@ -919,8 +937,8 @@ impl<'a> Checker<'a> {
     ) {
         // Use the previously collected signature for parameter types so that
         // errors about missing annotations are reported exactly once.
-        let (param_types, optional) = match self.globals.get(name).cloned() {
-            Some(Type::Function { params, ret: _, optional }) => (params, optional),
+        let (param_types, collected_ret, optional) = match self.globals.get(name).cloned() {
+            Some(Type::Function { params, ret, optional }) => (params, Some(*ret), optional),
             _ => {
                 let mut pts = Vec::new();
                 for p in params {
@@ -940,13 +958,22 @@ impl<'a> Checker<'a> {
                     .rev()
                     .take_while(|p| p.default_value.is_some())
                     .count();
-                (pts, optional)
+                (pts, None, optional)
             }
         };
 
         self.push_type_params(type_params);
 
-        let explicit_ret = return_type.map(|t| self.resolve_ast_type(t));
+        // Reuse the return type resolved during signature collection so an
+        // unresolvable annotation is reported once (deka#494). The fallback
+        // path (no collected signature — e.g. a nested function, which
+        // collect_function_signatures does not visit) resolves it here, its
+        // only resolution.
+        let explicit_ret = match (return_type, collected_ret) {
+            (Some(_), Some(ret)) => Some(ret),
+            (Some(t), None) => Some(self.resolve_ast_type(t)),
+            (None, _) => None,
+        };
         let (body_expected_ret, final_ret) =
             self.function_return_context(is_async, explicit_ret.clone(), _span);
 
@@ -1093,7 +1120,9 @@ impl<'a> Checker<'a> {
         receiver_mutable: bool,
         name: &'a str,
         params: &'a [ast::Param<'a>],
-        return_type: Option<&ast::Type<'a>>,
+        // The annotation itself is no longer read here — its resolved form
+        // comes from the MethodInfo collected earlier (deka#494).
+        _return_type: Option<&ast::Type<'a>>,
         body: &'a [ast::Stmt<'a>],
         is_async: bool,
         _span: ast::Span,
@@ -1112,21 +1141,11 @@ impl<'a> Checker<'a> {
             None => return,
         };
 
-        let mut param_types = Vec::new();
-        for p in params {
-            match &p.ty {
-                Some(t) => param_types.push(self.resolve_ast_type(t)),
-                None => {
-                    self.error_span(
-                        p.span,
-                        format!("parameter `{}` is missing a type annotation", p.name),
-                    );
-                    param_types.push(Type::Error);
-                }
-            }
-        }
+        // Annotations were resolved during collection (deka#494); reuse them
+        // so unknown types are reported exactly once.
+        let param_types = info.param_types.clone();
 
-        let explicit_ret = return_type.map(|t| self.resolve_ast_type(t));
+        let explicit_ret = info.resolved_return.clone();
         let (body_expected_ret, final_ret) =
             self.function_return_context(is_async, explicit_ret.clone(), _span);
 
@@ -1169,13 +1188,16 @@ impl<'a> Checker<'a> {
         self.scopes.pop();
         self.mutables.pop();
 
-        // Update the stored signature with resolved types.
+        // Update the stored signature, preserving the annotation resolutions
+        // made during collection (deka#494).
         self.receiver_methods.insert(
             (receiver_type, name),
             super::MethodInfo {
                 params,
-                return_type: return_type.map(|t| t.clone()),
+                return_type: _return_type.map(|t| t.clone()),
                 mutable: receiver_mutable,
+                param_types: param_types.clone(),
+                resolved_return: explicit_ret.clone(),
             },
         );
 
