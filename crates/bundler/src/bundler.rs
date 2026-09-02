@@ -827,9 +827,9 @@ impl DekaResolver {
         }
     }
 
-    fn resolve_php_module(&self, specifier: &str) -> Option<PathBuf> {
-        if let Some(path) = self.resolve_linked_module(specifier) {
-            return Some(path);
+    fn resolve_php_module(&self, specifier: &str) -> Result<Option<PathBuf>, String> {
+        if let Some(path) = self.resolve_linked_module(specifier)? {
+            return Ok(Some(path));
         }
         for modules in self.module_roots() {
             for alias in module_spec_aliases(specifier) {
@@ -842,15 +842,15 @@ impl DekaResolver {
                 };
                 if let Some(path) = resolve_with_candidates(&base) {
                     if guard_path_traversal(&path, &modules).is_some() {
-                        return Some(path);
+                        return Ok(Some(path));
                     }
                 }
             }
         }
-        None
+        Ok(None)
     }
 
-    fn resolve_linked_module(&self, specifier: &str) -> Option<PathBuf> {
+    fn resolve_linked_module(&self, specifier: &str) -> Result<Option<PathBuf>, String> {
         for (package, root) in &self.linked_modules {
             for alias in module_spec_aliases(package) {
                 let suffix = if specifier == alias {
@@ -865,14 +865,22 @@ impl DekaResolver {
                 } else {
                     root.join(suffix)
                 };
-                if let Some(candidate) = resolve_with_candidates(&target)
-                    && guard_path_traversal(&candidate, root).is_some()
-                {
-                    return Some(candidate);
+                let candidate = resolve_with_candidates(&target).ok_or_else(|| {
+                    format!(
+                        "unable to resolve linked module '{specifier}' under {}",
+                        root.display()
+                    )
+                })?;
+                if guard_path_traversal(&candidate, root).is_none() {
+                    return Err(format!(
+                        "linked module '{specifier}' escapes linked package root {}",
+                        root.display()
+                    ));
                 }
+                return Ok(Some(candidate));
             }
         }
-        None
+        Ok(None)
     }
 }
 
@@ -921,7 +929,10 @@ impl Resolve for DekaResolver {
         // Local development links intentionally win over installed packages.
         // Check before built-in aliases so a link for @deka/component also
         // wins for the shorthand component/* form.
-        if let Some(candidate) = self.resolve_linked_module(specifier) {
+        if let Some(candidate) = self
+            .resolve_linked_module(specifier)
+            .map_err(anyhow::Error::msg)?
+        {
             return Ok(Resolution {
                 filename: FileName::Real(candidate),
                 slug: None,
@@ -955,7 +966,10 @@ impl Resolve for DekaResolver {
             }
         }
 
-        if let Some(candidate) = self.resolve_php_module(specifier) {
+        if let Some(candidate) = self
+            .resolve_php_module(specifier)
+            .map_err(anyhow::Error::msg)?
+        {
             return Ok(Resolution {
                 filename: FileName::Real(candidate),
                 slug: None,

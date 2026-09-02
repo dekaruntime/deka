@@ -388,7 +388,7 @@ fn resolver_only_uses_project_local_php_modules() {
 
     let resolver = DekaResolver::new(project.clone(), false).unwrap();
     assert!(
-        resolver.resolve_php_module("crypto").is_none(),
+        resolver.resolve_php_module("crypto").unwrap().is_none(),
         "stdlib fallback is disabled: resolver must return None for missing packages"
     );
 
@@ -402,7 +402,7 @@ fn resolver_only_uses_project_local_php_modules() {
     .unwrap();
 
     let resolver2 = DekaResolver::new(project.clone(), false).unwrap();
-    let result2 = resolver2.resolve_php_module("crypto");
+    let result2 = resolver2.resolve_php_module("crypto").unwrap();
     assert!(result2.is_some(), "expected local resolution");
     assert!(
         result2.unwrap().starts_with(&project),
@@ -418,6 +418,11 @@ fn resolver_prefers_local_link_over_installed_package_and_aliases() {
     let project = make_tmp_dir("local_link_precedence");
     let package = make_tmp_dir("local_link_package");
     let package_root = package.canonicalize().unwrap();
+    std::fs::write(
+        package.join("deka.json"),
+        r#"{"name":"@deka/example","version":"0.1.0"}"#,
+    )
+    .unwrap();
     let installed = project.join(MODULES_DIR).join("@deka").join("example");
     std::fs::create_dir_all(&installed).unwrap();
     std::fs::write(
@@ -449,9 +454,55 @@ fn resolver_prefers_local_link_over_installed_package_and_aliases() {
     for specifier in ["@deka/example", "example"] {
         let resolved = resolver
             .resolve_php_module(specifier)
+            .unwrap()
             .expect("linked package should resolve");
         assert!(resolved.starts_with(&package_root));
     }
+
+    let _ = std::fs::remove_dir_all(project);
+    let _ = std::fs::remove_dir_all(package);
+}
+
+#[test]
+fn resolver_does_not_fall_back_when_linked_subpath_is_missing() {
+    let project = make_tmp_dir("local_link_missing_subpath");
+    let package = make_tmp_dir("local_link_missing_subpath_package");
+    let installed = project.join(MODULES_DIR).join("@deka").join("example");
+    std::fs::create_dir_all(&installed).unwrap();
+    std::fs::write(
+        installed.join("missing.ds"),
+        "export const source = 'installed';\n",
+    )
+    .unwrap();
+    std::fs::write(
+        package.join("deka.json"),
+        r#"{"name":"@deka/example","version":"0.1.0"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        package.join("index.ds"),
+        "export const source = 'linked';\n",
+    )
+    .unwrap();
+    write_links_at(
+        &project,
+        &LinkManifest {
+            version: runtime_core::modules::LINKS_VERSION,
+            packages: std::collections::BTreeMap::from([(
+                "@deka/example".to_string(),
+                LinkEntry {
+                    path: package.canonicalize().unwrap(),
+                },
+            )]),
+        },
+    )
+    .unwrap();
+
+    let resolver = DekaResolver::new(project.clone(), false).unwrap();
+    let error = resolver
+        .resolve_php_module("@deka/example/missing")
+        .expect_err("missing linked subpath must not use installed bytes");
+    assert!(error.contains("unable to resolve linked module"), "{error}");
 
     let _ = std::fs::remove_dir_all(project);
     let _ = std::fs::remove_dir_all(package);
@@ -498,11 +549,13 @@ fn resolver_rejects_path_traversal() {
     let resolver = DekaResolver::new(project.clone(), false).unwrap();
 
     // Normal resolution should work
-    let normal = resolver.resolve_php_module("component/button");
+    let normal = resolver.resolve_php_module("component/button").unwrap();
     assert!(normal.is_some(), "normal module resolution should work");
 
     // Path traversal should fail — the specifier escapes php_modules/
-    let traversal = resolver.resolve_php_module("component/../../secret");
+    let traversal = resolver
+        .resolve_php_module("component/../../secret")
+        .unwrap();
     assert!(
         traversal.is_none(),
         "path traversal should be rejected, but resolved to: {:?}",

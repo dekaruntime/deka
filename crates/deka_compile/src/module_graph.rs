@@ -109,7 +109,7 @@ impl FsModuleLoader {
         ))
     }
 
-    fn resolve_linked_module(&self, specifier: &str) -> Option<PathBuf> {
+    fn resolve_linked_module(&self, specifier: &str) -> Result<Option<PathBuf>, String> {
         for (package, root) in &self.linked_modules {
             for alias in runtime_core::module_spec::module_spec_aliases(package) {
                 let suffix = if specifier == alias {
@@ -124,16 +124,34 @@ impl FsModuleLoader {
                 } else {
                     root.join(suffix)
                 };
-                if let Some(resolved) = self.resolve_ds_file(&base) {
-                    let canonical = std::fs::canonicalize(&resolved).ok()?;
-                    let canonical_root = std::fs::canonicalize(root).ok()?;
-                    if canonical.starts_with(canonical_root) {
-                        return Some(canonical);
-                    }
+                let resolved = self.resolve_ds_file(&base).ok_or_else(|| {
+                    format!(
+                        "unable to resolve linked module '{specifier}' under {}",
+                        root.display()
+                    )
+                })?;
+                let canonical = std::fs::canonicalize(&resolved).map_err(|err| {
+                    format!(
+                        "unable to canonicalize linked module '{specifier}' at {}: {err}",
+                        resolved.display()
+                    )
+                })?;
+                let canonical_root = std::fs::canonicalize(root).map_err(|err| {
+                    format!(
+                        "unable to canonicalize linked package root {}: {err}",
+                        root.display()
+                    )
+                })?;
+                if canonical.starts_with(canonical_root) {
+                    return Ok(Some(canonical));
                 }
+                return Err(format!(
+                    "linked module '{specifier}' escapes linked package root {}",
+                    root.display()
+                ));
             }
         }
-        None
+        Ok(None)
     }
 }
 
@@ -197,7 +215,7 @@ impl ModuleLoader for FsModuleLoader {
             return self.guard_project_root(&resolved);
         }
 
-        if let Some(resolved) = self.resolve_linked_module(trimmed) {
+        if let Some(resolved) = self.resolve_linked_module(trimmed)? {
             return Ok(resolved);
         }
 
@@ -1039,6 +1057,11 @@ mod tests {
         let installed = project.path().join("ds_modules/@deka/example");
         std::fs::create_dir_all(&installed).unwrap();
         std::fs::write(installed.join("index.ds"), "export fn source() {}\n").unwrap();
+        std::fs::write(
+            package.path().join("deka.json"),
+            r#"{"name":"@deka/example","version":"0.1.0"}"#,
+        )
+        .unwrap();
         std::fs::write(package.path().join("index.ds"), "export fn source() {}\n").unwrap();
         runtime_core::modules::write_links_at(
             project.path(),
@@ -1059,6 +1082,40 @@ mod tests {
             .resolve("example", &project.path().join("main.ds"))
             .unwrap();
         assert!(resolved.starts_with(package.path().canonicalize().unwrap()));
+    }
+
+    #[test]
+    fn fs_loader_does_not_fall_back_when_linked_subpath_is_missing() {
+        let project = tempfile::tempdir().expect("project");
+        let package = tempfile::tempdir().expect("package");
+        let installed = project.path().join("ds_modules/@deka/example");
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::write(installed.join("missing.ds"), "export fn source() {}\n").unwrap();
+        std::fs::write(
+            package.path().join("deka.json"),
+            r#"{"name":"@deka/example","version":"0.1.0"}"#,
+        )
+        .unwrap();
+        std::fs::write(package.path().join("index.ds"), "export fn source() {}\n").unwrap();
+        runtime_core::modules::write_links_at(
+            project.path(),
+            &runtime_core::modules::LinkManifest {
+                version: runtime_core::modules::LINKS_VERSION,
+                packages: std::collections::BTreeMap::from([(
+                    "@deka/example".to_string(),
+                    runtime_core::modules::LinkEntry {
+                        path: package.path().canonicalize().unwrap(),
+                    },
+                )]),
+            },
+        )
+        .unwrap();
+
+        let loader = FsModuleLoader::new(project.path().to_path_buf());
+        let error = loader
+            .resolve("@deka/example/missing", &project.path().join("main.ds"))
+            .expect_err("missing linked subpath must not use installed bytes");
+        assert!(error.contains("unable to resolve linked module"), "{error}");
     }
 
     #[test]
