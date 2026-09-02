@@ -114,7 +114,7 @@ fn type_only_exports_are_checked() {
 #[test]
 fn package_with_no_exports_is_rejected() {
     let package = tempfile::tempdir().unwrap();
-    write_package(package.path(), "fn internal(): number {\n  return 1\n}\n");
+    write_package(package.path(), "fn internal() number {\n  return 1\n}\n");
 
     let output = run_check_as_package(package.path());
     assert!(!output.status.success());

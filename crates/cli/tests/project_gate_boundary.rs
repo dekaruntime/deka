@@ -27,13 +27,13 @@ fn project_with_installed_module(manifest: &str) -> tempfile::TempDir {
     fs::create_dir_all(&module_dir).expect("module dir");
     fs::write(
         module_dir.join("index.ds"),
-        "export fn echo(value: string): string {\n    return value\n}\n",
+        "export fn echo(value: string) string {\n    return value\n}\n",
     )
     .expect("module source");
 
     fs::write(
         project.path().join("main.ds"),
-        "import { echo } from \"io\"\n\nexport fn handler(): string {\n    return echo(\"hi\")\n}\n",
+        "import { echo } from \"io\"\n\nexport fn handler() string {\n    return echo(\"hi\")\n}\n",
     )
     .expect("entry");
     project

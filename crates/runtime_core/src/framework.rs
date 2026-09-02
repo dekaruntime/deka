@@ -999,7 +999,7 @@ interface RequestHeaders {{ accept: string, cookie: string }}
 interface Request {{ url: string, pathname: string, method: string, headers: RequestHeaders, body: string }}
 interface Response {{ status: number, body: string }}
 
-async fn App(request: Request): Promise<Response> {{
+async fn App(request: Request) Promise<Response> {{
     const boxed = unsafe {{ runDeferBatch(request.body, {secret}, {registry}, {cache_control}, request, {cookie}) }}
     const prom = match (boxed) {{
         Ok(p) => p,
@@ -1522,7 +1522,7 @@ interface RequestHeaders {{ accept: string }}
 interface Request {{ url: string, pathname: string, method: string, headers: RequestHeaders }}
 interface Response {{ status: number, body: string }}
 
-{fallback_fn}fn starts_with(s: string, prefix: string): boolean {{
+{fallback_fn}fn starts_with(s: string, prefix: string) boolean {{
     let i = 0
     for (const want of prefix) {{
         let j = 0
@@ -1537,7 +1537,7 @@ interface Response {{ status: number, body: string }}
     return true
 }}
 
-fn one_segment_after(s: string, prefix: string): boolean {{
+fn one_segment_after(s: string, prefix: string) boolean {{
     if (!starts_with(s, prefix)) {{ return false }}
     let n = 0
     for (const _ of prefix) {{ n = n + 1 }}
@@ -1554,7 +1554,7 @@ fn one_segment_after(s: string, prefix: string): boolean {{
     return rest > 0 && slashes == 0
 }}
 
-fn last_segment(s: string): string {{
+fn last_segment(s: string) string {{
     let last = ""
     let cur = ""
     for (const ch of s) {{
@@ -1568,7 +1568,7 @@ fn last_segment(s: string): string {{
     return last
 }}
 
-fn head_html(node: Component): string {{
+fn head_html(node: Component) string {{
     const result = unsafe {{ deka.ui.renderToString(node) }}
     return match (result) {{
         Ok(rendered) => rendered.html,
@@ -1576,7 +1576,7 @@ fn head_html(node: Component): string {{
     }}
 }}
 
-async fn stream_html(tree: Component): Promise<string> {{
+async fn stream_html(tree: Component) Promise<string> {{
     const boxed = unsafe {{ deka.ui.renderToStreamHtml(tree) }}
     const prom = match (boxed) {{
         Ok(p) => p,
@@ -1586,7 +1586,7 @@ async fn stream_html(tree: Component): Promise<string> {{
     return await prom
 }}
 
-async fn static_html(tree: Component): Promise<string> {{
+async fn static_html(tree: Component) Promise<string> {{
     const boxed = unsafe {{ deka.ui.renderToStringAsync(tree) }}
     const prom = match (boxed) {{
         Ok(p) => p,
@@ -1602,7 +1602,7 @@ async fn static_html(tree: Component): Promise<string> {{
     }}
 }}
 
-async fn respond(tree: Component, status: number, fragment: boolean, staticBuild: boolean, headHtml: string): Promise<Response> {{
+async fn respond(tree: Component, status: number, fragment: boolean, staticBuild: boolean, headHtml: string) Promise<Response> {{
     if (fragment) {{
         const result = unsafe {{ deka.ui.renderToString(tree) }}
         const appHtml = match (result) {{
@@ -1623,7 +1623,7 @@ async fn respond(tree: Component, status: number, fragment: boolean, staticBuild
     return {{ status: status, body: {doc_head} + headHtml + {doc_mid} + appHtml + {doc_tail} }}
 }}
 
-async fn App(request: Request): Promise<Response> {{
+async fn App(request: Request) Promise<Response> {{
 {defer_secret_js}    const path = request.pathname == "" ? "/" : request.pathname
     const accept = request.headers.accept
     const fragment = accept == "{FRAGMENT_ACCEPT}" || accept == "{FRAGMENT_ACCEPT_LEGACY}"
@@ -1645,7 +1645,7 @@ interface ResponseHeaders {{ location: string }}
 interface Request {{ url: string, pathname: string, method: string, headers: RequestHeaders, body: string }}
 interface Response {{ status: number, body: string, headers: ResponseHeaders }}
 
-fn App(request: Request): Response {{
+fn App(request: Request) Response {{
     const boxed = unsafe {{ runApiRouter(request, {registry}) }}
     return match (boxed) {{
         Ok(r) => r,
@@ -1672,7 +1672,7 @@ interface ResponseHeaders {{ location: string }}
 interface Request {{ url: string, pathname: string, method: string, headers: RequestHeaders }}
 interface Response {{ status: number, body: string, headers: ResponseHeaders }}
 
-fn App(request: Request): Response {{
+fn App(request: Request) Response {{
     const boxed = unsafe {{ runMiddleware(request, middleware, {matcher_js}) }}
     return match (boxed) {{
         Ok(r) => r,
@@ -1761,7 +1761,7 @@ interface ResponseHeaders {{ location: string }}
 interface Request {{ url: string, pathname: string, method: string, headers: RequestHeaders, body: string }}
 interface Response {{ status: number, body: string, headers: ResponseHeaders }}
 
-fn App(request: Request): Response {{
+fn App(request: Request) Response {{
     const boxed = unsafe {{ runWorker(request, {mw_arg}, {matcher_js}, {registry}) }}
     return match (boxed) {{
         Ok(r) => r,
@@ -2324,7 +2324,7 @@ mod tests {
         std::fs::create_dir_all(tmp.join("hello")).unwrap();
         std::fs::write(
             tmp.join("hello/route.ds"),
-            "export fn GET(request: Request): Response { return { status: 200, body: \"ok\" } }\n",
+            "export fn GET(request: Request) Response { return { status: 200, body: \"ok\" } }\n",
         )
         .unwrap();
         let entries = scan_api_dir(&tmp);
@@ -2348,7 +2348,7 @@ mod tests {
         let path = tmp.join("route.ds");
         std::fs::write(
             &path,
-            "// export fn DELETE(request: Request): Response { return { status: 200, body: \"no\" } }\nexport fn GETTER() { return 1 }\nexport fn GET(request: Request): Response { return { status: 200, body: \"ok\" } }\n",
+            "// export fn DELETE(request: Request) Response { return { status: 200, body: \"no\" } }\nexport fn GETTER() { return 1 }\nexport fn GET(request: Request) Response { return { status: 200, body: \"ok\" } }\n",
         )
         .unwrap();
         let methods = exported_http_methods(&path);
@@ -2713,13 +2713,13 @@ mod tests {
         let path = tmp.join("route.ds");
         std::fs::write(
             &path,
-            "async fn GET(request: Request): Promise<Response> { return { status: 200, body: \"ok\" } }\nexport { GET }\n",
+            "async fn GET(request: Request) Promise<Response> { return { status: 200, body: \"ok\" } }\nexport { GET }\n",
         )
         .unwrap();
         assert_eq!(exported_http_methods(&path), vec!["GET".to_string()]);
         std::fs::write(
             &path,
-            "export async fn POST(request: Request): Promise<Response> { return { status: 200, body: \"ok\" } }\n",
+            "export async fn POST(request: Request) Promise<Response> { return { status: 200, body: \"ok\" } }\n",
         )
         .unwrap();
         assert_eq!(exported_http_methods(&path), vec!["POST".to_string()]);
@@ -2798,7 +2798,7 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
         std::fs::write(
             tmp.join("middleware.ds"),
-            "export const matcher = [\"/_deka/defer\"]\nexport fn middleware(request: Request): Option<Response> { return None }\n",
+            "export const matcher = [\"/_deka/defer\"]\nexport fn middleware(request: Request) Option<Response> { return None }\n",
         )
         .unwrap();
         let entry = write_middleware_router_entry(&tmp).expect("write middleware-entry");

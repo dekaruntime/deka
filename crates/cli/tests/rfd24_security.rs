@@ -95,7 +95,7 @@ interface RequestHeaders { accept: string }
 interface ResponseHeaders { location: string }
 interface Request { url: string, pathname: string, method: string, headers: RequestHeaders }
 interface Response { status: number, body: string, headers: ResponseHeaders }
-export fn middleware(request: Request): Option<Response> {
+export fn middleware(request: Request) Option<Response> {
     if (request.headers.accept != "text/x-deka-session") {
         return Some({ status: 401, body: "gated", headers: { location: "" } })
     }
@@ -109,7 +109,7 @@ export fn middleware(request: Request): Option<Response> {
         r#"interface RequestHeaders { accept: string }
 interface Request { url: string, pathname: string, method: string, headers: RequestHeaders }
 interface Response { status: number, body: string }
-export fn GET(request: Request): Response {
+export fn GET(request: Request) Response {
     unsafe { throw new Error("secret:/etc/passwd leaked") }
     return { status: 200, body: "ok" }
 }

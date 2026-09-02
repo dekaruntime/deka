@@ -247,6 +247,21 @@ impl<'a> Parser<'a> {
             .push(Diagnostic::error(pos.line, pos.column, message));
     }
 
+    /// Rejects `fn f() T` -- the colon before a return type.
+    ///
+    /// DekaScript writes the return type directly after the parameter list:
+    /// `fn f() T`. The colon form is TypeScript's and was silently tolerated
+    /// here, so both spellings parsed to the same AST and the corpus drifted
+    /// into a mix of the two. Reporting it keeps one spelling (deka#511).
+    fn reject_return_type_colon(&mut self) {
+        if self.at(TokenKind::Colon) {
+            self.error(
+                "unexpected `:` before the return type -- remove it. DekaScript writes `fn f() T`, not `fn f()` followed by `:`",
+            );
+            self.advance();
+        }
+    }
+
     fn synchronize(&mut self) {
         while !self.at_end() && !self.at(TokenKind::Semicolon) && !self.at(TokenKind::RBrace) {
             self.advance();
@@ -261,6 +276,35 @@ impl<'a> Parser<'a> {
 mod tests {
     use super::*;
     use crate::ast::{BinOp, Expr, Pattern, Stmt, TemplatePart, Type, UnOp};
+
+    // deka#511: the return-type colon is TypeScript's, not DekaScript's. Both
+    // spellings used to parse to the same AST, so the corpus drifted into a mix.
+
+    #[test]
+    fn return_type_colon_is_rejected() {
+        let arena = Bump::new();
+        let result = parse("fn f(): boolean { return true }", &arena);
+        assert!(!result.errors.is_empty(), "colon form must not parse");
+        assert!(
+            result.errors[0].message.contains("remove it"),
+            "diagnostic must say what to do: {}",
+            result.errors[0].message
+        );
+    }
+
+    #[test]
+    fn return_type_colon_rejected_on_receiver_method() {
+        let arena = Bump::new();
+        let result = parse("fn (p P) get(): number { return p.x }", &arena);
+        assert!(!result.errors.is_empty(), "colon form must not parse on methods");
+    }
+
+    #[test]
+    fn return_type_without_colon_parses() {
+        let arena = Bump::new();
+        let result = parse("fn f() boolean { return true }", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+    }
 
     #[test]
     fn parse_multiline_call_args() {
@@ -337,7 +381,7 @@ mod tests {
     fn parse_function_add() {
         let arena = Bump::new();
         let result = parse(
-            "fn add(a: number, b: number): number { return a + b; }",
+            "fn add(a: number, b: number) number { return a + b; }",
             &arena,
         );
         assert!(result.errors.is_empty(), "{:?}", result.errors);
@@ -827,7 +871,7 @@ mod tests {
     fn parse_receiver_method() {
         let arena = Bump::new();
         let result = parse(
-            "struct Point { x: number; y: number } fn (p Point) distance(other: Point): number { return 0; }",
+            "struct Point { x: number; y: number } fn (p Point) distance(other: Point) number { return 0; }",
             &arena,
         );
         assert!(result.errors.is_empty(), "{:?}", result.errors);
@@ -852,7 +896,7 @@ mod tests {
     #[test]
     fn parse_generic_function() {
         let arena = Bump::new();
-        let result = parse("fn id<T>(x: T): T { return x; }", &arena);
+        let result = parse("fn id<T>(x: T) T { return x; }", &arena);
         assert!(result.errors.is_empty(), "{:?}", result.errors);
         let program = result.program.unwrap();
         match &program.statements[0] {
@@ -941,7 +985,7 @@ mod tests {
     #[test]
     fn parse_export_function() {
         let arena = Bump::new();
-        let result = parse("export fn add(a: number, b: number): number { return a + b; }", &arena);
+        let result = parse("export fn add(a: number, b: number) number { return a + b; }", &arena);
         assert!(result.errors.is_empty(), "{:?}", result.errors);
         let program = result.program.unwrap();
         match &program.statements[0] {
@@ -1284,7 +1328,7 @@ mod tests {
     #[test]
     fn parse_optional_semicolon_in_block() {
         let arena = Bump::new();
-        let result = parse("fn add(a: number, b: number): number {\n  const c = a + b\n  return c\n}", &arena);
+        let result = parse("fn add(a: number, b: number) number {\n  const c = a + b\n  return c\n}", &arena);
         assert!(result.errors.is_empty(), "{:?}", result.errors);
         let program = result.program.unwrap();
         match &program.statements[0] {
@@ -1298,7 +1342,7 @@ mod tests {
     #[test]
     fn parse_optional_semicolon_before_closing_brace() {
         let arena = Bump::new();
-        let result = parse("fn one(): number { return 1 }", &arena);
+        let result = parse("fn one() number { return 1 }", &arena);
         assert!(result.errors.is_empty(), "{:?}", result.errors);
         let program = result.program.unwrap();
         match &program.statements[0] {
@@ -1341,7 +1385,7 @@ mod tests {
     fn parse_multiline_function_signature() {
         let arena = Bump::new();
         let result = parse(
-            "fn add(\n  a: number,\n  b: number\n): number {\n  return a + b\n}",
+            "fn add(\n  a: number,\n  b: number\n) number {\n  return a + b\n}",
             &arena,
         );
         assert!(result.errors.is_empty(), "{:?}", result.errors);
