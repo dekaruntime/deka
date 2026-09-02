@@ -15,6 +15,20 @@ const repoRoot = join(__dirname, "..", "..");
 const testsRoot = __dirname;
 const scratchRoot = join(__dirname, ".run-tmp");
 
+// Fixtures known to fail, loaded from tests/testsuite/expected-failures.txt.
+// A ratchet, not a suppression list: a listed fixture that starts passing is a
+// hard error, so the list can only shrink (deka#503).
+function loadExpectedFailures() {
+  const file = join(repoRoot, "tests", "testsuite", "expected-failures.txt");
+  if (!existsSync(file)) return new Set();
+  return new Set(
+    readFileSync(file, "utf8")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#"))
+  );
+}
+
 const DEFAULT_DEKA_LOCK = '{\n  "lockfileVersion": 1,\n  "packages": {}\n}\n';
 
 const NL = String.fromCharCode(10);
@@ -600,9 +614,6 @@ async function main() {
     if (!test.hosts.includes("native")) {
       return { test, skipped: true, reason: "hosts does not include native" };
     }
-    if (test.packages && test.packages.length > 0) {
-      return { test, skipped: true, reason: "index packages are exercised by the dump, not the language gate" };
-    }
     if (test.compiler && test.compiler !== activeCompiler) {
       return { test, skipped: true, reason: `compiler mismatch: fixture requires ${test.compiler}, running ${activeCompiler}` };
     }
@@ -611,9 +622,12 @@ async function main() {
     return { test, skipped: false, native, ...evaled };
   });
 
+  const expectedFailures = loadExpectedFailures();
   let passed = 0;
   let failed = 0;
   let skipped = 0;
+  let known = 0;
+  const unexpectedlyPassing = [];
 
   if (args.json) {
     const output = results.map((r) => ({
@@ -643,7 +657,16 @@ async function main() {
       continue;
     }
     if (result.matched) {
+      // A listed fixture that passes must be removed from the list; leaving it
+      // would let a real regression hide behind a stale entry.
+      if (expectedFailures.has(result.test.slug)) {
+        unexpectedlyPassing.push(result.test.slug);
+      }
       passed++;
+      continue;
+    }
+    if (expectedFailures.has(result.test.slug)) {
+      known++;
       continue;
     }
     failed++;
@@ -653,13 +676,31 @@ async function main() {
     }
   }
 
+  if (unexpectedlyPassing.length > 0) {
+    console.log("");
+    console.log("These fixtures are listed in expected-failures.txt but PASSED.");
+    console.log("Delete their lines -- a stale entry can hide a real regression:");
+    for (const slug of unexpectedlyPassing) console.log(`    ${slug}`);
+  }
+
+  // Every fixture must land in exactly one bucket. If this identity ever fails
+  // a fixture has fallen between the cases and is owned by nothing (deka#503).
+  const accounted = passed + failed + skipped + known;
+  if (accounted !== filtered.length) {
+    console.error(
+      `\nreconciliation failed: ${accounted} accounted for, ${filtered.length} fixtures. ` +
+        `Every fixture must be exactly one of passed/failed/skipped/known.`
+    );
+    process.exit(1);
+  }
+
   console.log("\n============================================================");
   console.log(
-    ` Passed: ${passed} | Failed: ${failed} | Skipped: ${skipped} | Total: ${filtered.length}`
+    ` Passed: ${passed} | Failed: ${failed} | Known: ${known} | Skipped: ${skipped} | Total: ${filtered.length}`
   );
   console.log("============================================================\n");
 
-  process.exit(failed === 0 ? 0 : 1);
+  process.exit(failed === 0 && unexpectedlyPassing.length === 0 ? 0 : 1);
 }
 
 main().catch((error) => {
