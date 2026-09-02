@@ -12,14 +12,17 @@ import os from "node:os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, "..", "..");
-const testsRoot = __dirname;
+// Fixture discovery root. Defaults to this directory; --root overrides it so
+// a hermetic corpus (and other repos, e.g. the testsuite website) can run
+// through the same gate without touching the committed fixtures (deka#539).
+let testsRoot = __dirname;
 const scratchRoot = join(__dirname, ".run-tmp");
 
 // Fixtures known to fail, loaded from tests/testsuite/expected-failures.txt.
 // A ratchet, not a suppression list: a listed fixture that starts passing is a
 // hard error, so the list can only shrink (deka#503).
 function loadExpectedFailures() {
-  const file = join(repoRoot, "tests", "testsuite", "expected-failures.txt");
+  const file = join(testsRoot, "expected-failures.txt");
   if (!existsSync(file)) return new Set();
   return new Set(
     readFileSync(file, "utf8")
@@ -557,6 +560,7 @@ function parseArgs(argv) {
     filter: null,
     help: false,
     locked: false,
+    root: "",
     jobs: Math.min(8, os.availableParallelism?.() || 4),
   };
   for (let i = 0; i < argv.length; i++) {
@@ -566,8 +570,10 @@ function parseArgs(argv) {
     else if (arg === "--filter" || arg === "-f") args.filter = argv[++i] || "";
     else if (arg === "--jobs" || arg === "-j") args.jobs = Number(argv[++i] || args.jobs);
     else if (arg === "--locked") args.locked = true;
+    else if (arg === "--root") args.root = argv[++i] || "";
     else if (arg === "--help" || arg === "-h") args.help = true;
   }
+  if (args.root) testsRoot = resolve(process.cwd(), args.root);
   return args;
 }
 
@@ -580,6 +586,7 @@ options:
   -f, --filter <substr>      Run only fixtures whose slug or title matches
   -j, --jobs <n>             Parallel native runs (default: min(8, CPUs))
   --locked                   Use existing deka.lock; fail if missing or stale
+  --root <dir>               Fixture corpus root (default: tests/testsuite)
   -h, --help                 Show this help
 
 Native isolate only (\`deka run\`). Uses target/release/cli or DEKA_NATIVE.
@@ -682,27 +689,12 @@ async function main() {
   let failed = 0;
   const unexpectedlyPassing = [];
 
-  if (args.json) {
-    const output = results.map((r) => ({
-      slug: r.test.slug,
-      category: r.test.category,
-      name: r.test.name,
-      expectedStatus: r.test.status,
-      expectedStage: r.test.stage,
-      group: r.test.hosts.includes("browser") ? "shared" : "native-only",
-      matched: r.matched ?? false,
-      actualStatus: r.native ? (r.native.ok ? "pass" : "fail") : undefined,
-      actualStage: r.stage,
-      stdout: r.native?.stdout,
-      stderr: r.native?.stderr,
-      error: r.native?.error,
-      reasons: r.reasons,
-    }));
-    console.log(JSON.stringify(output, null, 2));
-    process.exit(0);
-  }
-
-  console.log("");
+  // Gate computation runs in BOTH output modes. --json used to print and
+  // exit(0) here, before the ratchet and reconciliation checks — a silent
+  // bypass that reported success while fixtures were mismatched (deka#539).
+  // JSON mode now emits the same per-fixture array after the gates and exits
+  // with the same status as human-readable mode.
+  if (!args.json) console.log("");
   for (const result of results) {
     const g = groups[isNativeOnly(result.test) ? "native-only" : "shared"];
     g.total++;
@@ -721,13 +713,15 @@ async function main() {
     }
     g.failed++;
     failed++;
-    console.log(`✗ ${result.test.slug}`);
-    for (const reason of result.reasons) {
-      console.log(`    ${reason}`);
+    if (!args.json) {
+      console.log(`✗ ${result.test.slug}`);
+      for (const reason of result.reasons) {
+        console.log(`    ${reason}`);
+      }
     }
   }
 
-  if (unexpectedlyPassing.length > 0) {
+  if (unexpectedlyPassing.length > 0 && !args.json) {
     console.log("");
     console.log("These fixtures are listed in expected-failures.txt but PASSED.");
     console.log("Delete their lines -- a stale entry can hide a real regression:");
@@ -752,20 +746,39 @@ async function main() {
     process.exit(1);
   }
 
-  const line = (name, g) =>
-    ` ${name.padEnd(13)} ${String(g.passed).padStart(4)} pass · ${String(
-      g.failed
-    ).padStart(3)} fail${g.known ? ` · ${g.known} known` : ""}   (${g.total})`;
+  if (args.json) {
+    const output = results.map((r) => ({
+      slug: r.test.slug,
+      category: r.test.category,
+      name: r.test.name,
+      expectedStatus: r.test.status,
+      expectedStage: r.test.stage,
+      group: r.test.hosts.includes("browser") ? "shared" : "native-only",
+      matched: r.matched ?? false,
+      actualStatus: r.native ? (r.native.ok ? "pass" : "fail") : undefined,
+      actualStage: r.stage,
+      stdout: r.native?.stdout,
+      stderr: r.native?.stderr,
+      error: r.native?.error,
+      reasons: r.reasons,
+    }));
+    console.log(JSON.stringify(output, null, 2));
+  } else {
+    const line = (name, g) =>
+      ` ${name.padEnd(13)} ${String(g.passed).padStart(4)} pass · ${String(
+        g.failed
+      ).padStart(3)} fail${g.known ? ` · ${g.known} known` : ""}   (${g.total})`;
 
-  console.log("\n============================================================");
-  console.log(line("native-only", groups["native-only"]));
-  console.log(line("shared", groups.shared));
-  console.log(
-    ` ${"browser-only".padEnd(13)} ${String(browserOnly.length).padStart(
-      4
-    )} not this gate's population — run tests/dump`
-  );
-  console.log("============================================================\n");
+    console.log("\n============================================================");
+    console.log(line("native-only", groups["native-only"]));
+    console.log(line("shared", groups.shared));
+    console.log(
+      ` ${"browser-only".padEnd(13)} ${String(browserOnly.length).padStart(
+        4
+      )} not this gate's population — run tests/dump`
+    );
+    console.log("============================================================\n");
+  }
 
   process.exit(failed === 0 && unexpectedlyPassing.length === 0 ? 0 : 1);
 }
