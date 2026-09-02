@@ -1201,6 +1201,94 @@ mod tests {
         assert!(errors[0].message.contains("string"), "{}", errors[0].message);
     }
 
+    // deka#476: a declared return type must be honoured on every path.
+
+    #[test]
+    fn declared_return_with_empty_body_fails() {
+        let errors = typeck("fn no_return() string { }");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("does not return"),
+            "{}",
+            errors[0].message
+        );
+    }
+
+    #[test]
+    fn declared_return_with_fallthrough_body_fails() {
+        let errors = typeck("fn wrong_tail() string { const x: number = 1 }");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn return_on_one_branch_only_fails() {
+        // The shape most likely to produce a false positive if the analysis is
+        // naive: an `if` with no `else` always leaves a falling-through path.
+        let errors = typeck("fn maybe(x: number) string { if (x > 0) { return \"y\" } }");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+    }
+
+    #[test]
+    fn return_on_both_branches_passes() {
+        assert!(typeck(
+            "fn both(x: number) string { if (x > 0) { return \"y\" } else { return \"n\" } }"
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn return_after_if_passes() {
+        assert!(typeck(
+            "fn after(x: number) string { if (x > 0) { return \"y\" } return \"n\" }"
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn nested_if_else_returns_pass() {
+        assert!(typeck(
+            "fn nested(x: number) string { if (x > 0) { if (x > 1) { return \"a\" } else { return \"b\" } } else { return \"c\" } }"
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn void_return_without_value_passes() {
+        assert!(typeck("fn nothing() void { const x: number = 1 }").is_empty());
+    }
+
+    #[test]
+    fn unannotated_return_without_value_passes() {
+        assert!(typeck("fn nothing() { const x: number = 1 }").is_empty());
+    }
+
+    #[test]
+    fn async_promise_void_without_return_passes() {
+        assert!(typeck("async fn nothing() Promise<void> { const x: number = 1 }").is_empty());
+    }
+
+    #[test]
+    fn async_promise_value_without_return_fails() {
+        let errors = typeck("async fn thing() Promise<string> { const x: number = 1 }");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+    }
+
+    #[test]
+    fn missing_return_does_not_stack_on_bad_annotation() {
+        // An unresolvable return type is already an error; it must not also
+        // produce a missing-return diagnostic. Asserted by message rather than
+        // by count, because the unknown type is currently reported twice
+        // (pre-existing, tracked separately) and that count is not what this
+        // test is about.
+        let errors = typeck("fn bad() NotAType { }");
+        assert!(
+            errors.iter().all(|e| !e.message.contains("does not return")),
+            "{errors:?}"
+        );
+    }
+
     #[test]
     fn for_loop_break_continue_passes() {
         assert!(typeck("for (let i = 0; i < 10; i = i + 1) { if (i == 5) { break } else { continue } }").is_empty());
