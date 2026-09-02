@@ -1,0 +1,108 @@
+---
+title: Reflection with getType()
+description: .getType() returns a first-class Type value describing a value's runtime type — union discrimination, generics, no super keyword.
+---
+
+Every value answers the question "what are you?" at runtime. Calling
+`.getType()` returns a **first-class `Type` value** — not a string —
+matching Java's `getClass()`, C#'s `GetType()`, Go's `reflect.TypeOf()`,
+and Python's `type()`.
+
+```ds
+const t = "hello".getType()
+echo(t.toString()) // "string"
+```
+
+## The descriptor
+
+`getType()` returns a frozen, interned descriptor:
+
+```ds
+{ kind, name, toString() { return this.name } }
+```
+
+- `kind` is an open set: `"string"`, `"number"`, `"boolean"`, `"bytes"`,
+  `"array"`, `"struct"`, `"newtype"`, `"enum"`, `"option"`, `"object"`,
+  `"function"`, `"none"`, `"unknown"`. Only `"string"`, `"number"`,
+  `"boolean"`, `"bytes"`, `"array"`, `"struct"`, `"newtype"`, `"enum"`,
+  `"object"`, `"function"`, and `"none"` are produced today.
+- `name` is what `toString()` returns. Structs, newtypes, and enums report
+  their own name; arrays report `"Array"`.
+
+Two honest limitations of runtime inspection:
+
+- An array's element type is not knowable at runtime — `[1, 2]` can only
+  report `Array`, never `Array<number>`. Finer descriptors are static-tree
+  work (the `super` lane).
+- Enum-tagged values report through the enum tag path: `Some(1).getType()`
+  reports the name `"Option"`, matching the static type.
+
+Descriptors are interned: one singleton per `(kind, name)` per module, so
+identity comparison works.
+
+```ds
+echo(string("a".getType() == "b".getType())) // "true"
+```
+
+In this slice only `toString()` is exposed on `Type`. The rest of the
+descriptor API — `name`/`kind` properties, field and case walking,
+construction from library code — is deferred (see below).
+
+## Union receivers: the headline case
+
+A union value is one of its members at runtime, and `.getType()` tells you
+which — no narrowing required:
+
+```ds
+let something: number | string = "hello world"
+echo(something.getType().toString()) // "string"
+something = 42
+echo(something.getType().toString()) // "number"
+```
+
+This is the difference between the declared type and the runtime type:
+the value's static type stays `number | string` while `getType()`
+reports what the value actually is.
+
+## Generics work without `super`
+
+Because the descriptor comes from inspecting the receiver value at
+runtime, `.getType()` works on generic type parameters with no additional
+keyword or capability:
+
+```ds
+fn id<T>(x: T) Type {
+  return x.getType()
+}
+
+echo(id("hi").toString()) // "string"
+echo(id(1).toString())     // "number"
+```
+
+## How it compiles
+
+`.getType()` is a compile-time rewrite, exactly like extension methods on
+primitives (deka#527): `x.getType()` becomes a call to a module-local
+free function, `__deka_type_of(x)`. There is no prototype mutation and no
+`globalThis` write. Chaining falls out for free — the outer call is an
+ordinary method call on the real descriptor object:
+
+```ds
+echo("hi".getType().toString()) // compiles to `__deka_type_of("hi").toString()`
+```
+
+A user-declared method or extension named `getType` shadows the builtin,
+consistent with the extension shadowing rule.
+
+## Deferred
+
+The following are explicitly out of scope for this slice and land with
+the `super` lane or later:
+
+- `super fn` and `T.type()` — the static descriptor for a type parameter
+  at a call site.
+- `.signature()` — the declared type of a value as opposed to its runtime
+  type.
+- Walking descriptor fields/cases for schema validation.
+- Constructing `Type` values from library code (an open question in
+  rfd#41).
