@@ -1,0 +1,155 @@
+---
+title: Union types
+description: Union types and match type-patterns — narrowing by rebinding, not smart casts.
+---
+
+A union type, written `string | number`, means "one of these types, not yet
+known which". Unions are how a value that can take a small closed set of
+shapes is typed precisely, instead of being widened to something the compiler
+can no longer check.
+
+## Declaring unions
+
+` | ` works in every type position: parameters, return types, bindings,
+struct fields, type aliases and generic arguments. Postfix `?` binds tighter
+than `|`, so `A | B?` is `A | (B?)`; group to apply `?` to a whole union:
+`(A | B)?`.
+
+```ds
+fn render(v: string | number) string {
+  // ...
+}
+
+const widened: string | number = "hello" // ok: string widens into the union
+```
+
+### The membership rule
+
+A type may appear in a union only if it has a **decidable runtime
+predicate** — the compiler must be able to emit a test that decides, at
+runtime, whether a value is a member. Today that means:
+
+- primitives: `string`, `number`, `boolean`, `bytes`, `void`
+- named structs
+- enums
+- interfaces
+
+Everything else is a compile error, naming the rule:
+
+```ds
+const f: (fn(number) number) | string = "a"
+// error: union member `fn(number) number` is not allowed: union members
+// must have a decidable runtime predicate — only primitives, structs,
+// enums and interfaces may appear in a union (rfd#42)
+```
+
+Function types, unconstrained type parameters, and `Option`/`Array` and
+other generic or structural types have no runtime predicate, so they cannot
+join a union. This is the line that keeps union narrowing, `super
+unsafe<T>` validation and the schema system on one engine.
+
+### Overlapping members
+
+Two members that a single value could match are rejected at declaration,
+because narrowing would be ambiguous:
+
+```ds
+struct User {
+  name: string
+}
+
+interface Named {
+  name: string
+}
+
+const v: User | Named = User { name: "a" }
+// error: union members `User` and `Named` overlap — a value matching
+// `Named` also matches `User`, so narrowing would be ambiguous
+```
+
+The message names both members. Distinct primitives never overlap, and the
+restriction is chosen because it can be relaxed later without breaking
+existing code.
+
+## Using a union: narrow with match
+
+A union value cannot be used as any one of its members until it is
+narrowed. Member access without narrowing is a compile error:
+
+```ds
+const v: string | number = "hello"
+const n = v.length
+// error: cannot access field `length` on union type `number | string`;
+// narrow it with a match type-pattern first
+```
+
+Narrowing uses `match` **type-patterns**, which test and bind in one
+construct. Syntactically they are the same constructor patterns `match`
+already uses for enums:
+
+```ds
+fn render(v: string | number) string {
+  return match (v) {
+    string(s) => s,
+    number(n) => string(n),
+  }
+}
+
+console.log(render("hello")) // hello
+console.log(render(42)) // 42
+```
+
+Each type-pattern names a union member; the binding (`s`, `n`) has the
+member's type inside the arm. The pattern also **rebinds the operand
+itself** within the arm — plain shadowing, not a smart cast:
+
+```ds
+fn firstLength(v: string | number) number {
+  return match (v) {
+    string(s) => v.length, // `v` is `string` in this arm
+    number(n) => n,
+  }
+}
+```
+
+A type-pattern requires its binding — a bare `string` arm is a compile
+error — and a pattern naming something that is not a member errors, naming
+both the pattern and the union.
+
+### Exhaustiveness
+
+A `match` over a union must cover every member, via type-patterns or a
+catch-all:
+
+```ds
+fn bad(v: string | number) string {
+  return match (v) {
+    string(s) => s,
+  }
+}
+// error: non-exhaustive match: missing number
+```
+
+Or-patterns compose through the existing `A | B` pattern syntax for the
+coverage check.
+
+## Assignability
+
+- A member **widens** to a union: `string` is assignable to
+  `string | number`, because it matches some member.
+- A union does **not** narrow implicitly: `string | number` is not
+  assignable to `string`, because not every member is. Use `match`.
+- Union-to-union requires every member of the actual union to be
+  assignable to some member of the expected union.
+
+## How predicates are compiled
+
+Each member type compiles to the runtime test the compiler emitted for it:
+
+| member | emitted test |
+| --- | --- |
+| `string` / `number` / `boolean` | `typeof x === "..."` |
+| `void` | `typeof x === "undefined"` |
+| `bytes` | `x instanceof Uint8Array` |
+| struct `Point` | `deka.getStructId(x) === "Point"` |
+| enum `Color` | `x.__enum === "Color"` |
