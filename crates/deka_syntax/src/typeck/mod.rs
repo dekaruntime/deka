@@ -786,6 +786,24 @@ impl<'a> Checker<'a> {
         if matches!(actual, Type::Never) {
             return true;
         }
+        // Union assignability (rfd#42, deka#530). A union widens: `string` is
+        // assignable to `string | number` because it matches SOME member; a
+        // union actual is assignable to `expected` only when EVERY member is,
+        // so `string | number` is never assignable to `string`. Union-to-union
+        // requires every actual member to match some expected member. These
+        // arms sit after Var/Infer (a union never silently absorbs or leaks
+        // through them) and before the structural arms below.
+        if let Type::Union { members: expected_members } = expected {
+            return match actual {
+                Type::Union { members: actual_members } => actual_members
+                    .iter()
+                    .all(|am| expected_members.iter().any(|em| self.is_assignable(em, am))),
+                _ => expected_members.iter().any(|em| self.is_assignable(em, actual)),
+            };
+        }
+        if let Type::Union { members: actual_members } = actual {
+            return actual_members.iter().all(|am| self.is_assignable(expected, am));
+        }
         // `none` is assignable to any Option<T>.
         if matches!(expected, Type::Option { .. }) && matches!(actual, Type::None) {
             return true;

@@ -644,6 +644,19 @@ impl<'a> Checker<'a> {
                 Type::Error
             }),
             Type::Named { name } => self.resolve_primitive_field(name, field, span),
+            Type::Union { .. } => {
+                // A union value used without narrowing is a compile error
+                // (rfd#42, deka#530): the member that provides the field is
+                // not known until the value is narrowed with match.
+                self.error_span(
+                    span,
+                    format!(
+                        "cannot access field `{field}` on union type `{object_type}`; \
+                         narrow it with a match type-pattern first"
+                    ),
+                );
+                Type::Error
+            }
             _ => {
                 // Enum namespace access: `Color.Red` where `Color` is an enum name.
                 if let ast::Expr::Identifier { name: enum_name, .. } = object {
