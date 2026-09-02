@@ -16,31 +16,74 @@ pipeline *publishes* the runner's output; it does not decide anything.
 
 Everything below follows from that.
 
-## Vocabulary
+## Three groups, decided by which hosts a fixture can run on
 
-Every `(fixture, host)` pair lands in exactly one bucket:
+Report numbers in three groups, never as one blended total:
 
-| bucket | meaning |
-|---|---|
-| `passed` | ran, matched its expectation |
-| `failed` | ran, did not match — **breaks the build** |
-| `known` | ran, did not match, and is listed in `expected-failures.txt` |
-| `skipped` | not run, for a reason that is a fact about the fixture |
+```
+native-only     x pass · x fail
+shared          x pass · x fail · x diverge
+browser-only    x pass · x fail
+```
 
-The runner asserts `passed + failed + known + skipped == total` and exits
-non-zero if it does not hold. A fixture that falls between the cases is owned
-by nothing, which is the failure this whole file exists to prevent.
+A fixture's `hosts` decides its group. Membership is a property of the fixture,
+not a runtime outcome.
 
-## Skips must be facts about the fixture, never about tooling
+**Divergence only exists in `shared`.** It is the one metric that catches
+host-specific miscompilation, and it is meaningless for a fixture that only
+ever runs on one host. Computing it across the whole corpus is how infrastructure
+gaps get counted as compiler defects — at v0.38.2, 25 of 34 "divergences" were
+the browser harness failing to serve a stdlib module (#509).
 
-A legal skip reason describes the fixture: its `hosts` exclude this host, or it
-pins a different compiler. 
+### Nothing skips. There is no skip bucket, in any group.
 
-**A skip may never name another harness.** `"exercised by the dump, not the
-language gate"` was a legal-looking skip that hid **125 fixtures — 16% of the
-corpus — from every gate.** The dump did run them, failed 46, and exited `0`.
-Each side assumed the other held the line. If you find yourself writing a skip
-reason containing the name of another tool, you are creating that hole again.
+Every fixture in every group **runs**, and its result is `pass` or `fail`.
+No third state, no escape hatch, no reason code.
+
+"Skipped" used to do two unrelated jobs, and collapsing them is exactly how 125
+fixtures stayed invisible (#503):
+
+- *this fixture is not for this host* — that is **group membership**, decided by
+  `hosts`, and it is not a skip. A native-only fixture is not "skipped on wasm";
+  it was never a wasm test.
+- *we declined to run it* — that is a **hole**, and it is not allowed.
+
+If a fixture cannot run, that is a bug in the harness or the fixture, and it is
+fixed — not recorded. A fixture pinned to a different compiler is stale and gets
+updated or deleted. A module the harness cannot serve fails the **run**, loudly,
+naming the module (#509) — it never degrades into a per-fixture non-result.
+
+`known` is not a skip. A `known` fixture **runs and fails**; the ratchet only
+decides whether that failure breaks the build. Nothing is exempt from executing.
+
+Within a group, `pass + fail == group total`, asserted per group by the runner,
+non-zero exit otherwise.
+
+### Worked example — v0.38.2, commit 08e777b2
+
+```
+native-only     87 pass ·  46 fail              (133)
+shared         599 pass ·   0 fail ·  34 diverge (633)
+browser-only    28 pass ·   2 fail              ( 30)
+```
+
+Read in one pass: every failure is a native-only fixture, shared native is
+100%, and every wasm problem is a divergence. The single blended line this
+replaced — `638 passed | 0 failed | 155 skipped` — said none of that.
+
+## Never write a skip reason
+
+There is no legitimate one. The instinct to write a skip reason is the instinct
+to stop testing something, and it always reads as housekeeping at the time.
+
+`"index packages are exercised by the dump, not the language gate"` was a
+legal-looking skip that hid **125 fixtures — 16% of the corpus — from every
+gate.** The dump did run them, failed 46, and exited `0`. Each side assumed the
+other held the line, and the published `638 passed | 0 failed` was a zero
+measured over a population with every known failure removed from it.
+
+The tell is a reason naming another tool. If you are writing one, you are
+building that hole again. Make the fixture run, or delete it.
 
 ## `expected-failures.txt` is a ratchet, not a suppression list
 
