@@ -978,6 +978,20 @@ impl<'a> Checker<'a> {
             self.check_statement(stmt);
         }
 
+        // A function that declares a value-producing return type must actually
+        // return on every path. Without this, `fn f() string { }` typechecks
+        // and hands every caller `undefined` (deka#476).
+        if let Some(declared) = explicit_ret.as_ref() {
+            if return_type_requires_value(declared) && !body_always_returns(body) {
+                self.error_span(
+                    _span,
+                    format!(
+                        "function `{name}` declares return type `{declared}` but does not return a value on every path"
+                    ),
+                );
+            }
+        }
+
         self.in_async_function = saved_in_async;
 
         let final_ret = if is_async {
@@ -1192,5 +1206,58 @@ impl<'a> Checker<'a> {
         } else {
             self.return_type = Some(value_type);
         }
+    }
+}
+
+/// Whether a declared return type obliges the body to produce a value.
+///
+/// `void` is the annotation that explicitly says "returns nothing", and a
+/// `never` function is expected to diverge rather than return. Types that are
+/// already broken or unresolved are skipped so a missing-return diagnostic
+/// never stacks on top of the error that caused it.
+fn return_type_requires_value(ty: &Type<'_>) -> bool {
+    match ty {
+        Type::Named { name: "void" } => false,
+        Type::Never | Type::Error | Type::Infer | Type::Var => false,
+        // An async function annotated `Promise<void>` is the async spelling of
+        // the same "returns nothing" contract.
+        Type::Generic { base: "Promise", args } if args.len() == 1 => {
+            return_type_requires_value(&args[0])
+        }
+        _ => true,
+    }
+}
+
+/// Whether a statement list returns on every path through it.
+///
+/// Deliberately conservative: it answers `true` only for shapes where the
+/// return is certain. A construct it does not understand is treated as
+/// falling through, which is the safe direction — the analysis can fail to
+/// report a genuinely missing return, but it can never flag a function that
+/// does return (deka#476).
+fn body_always_returns(body: &[ast::Stmt<'_>]) -> bool {
+    body.iter().any(stmt_always_returns)
+}
+
+fn stmt_always_returns(stmt: &ast::Stmt<'_>) -> bool {
+    match stmt {
+        ast::Stmt::Return { .. } => true,
+        ast::Stmt::Block { body, .. } => body_always_returns(body),
+        // Only an `if` with an `else` where *both* sides return is a
+        // guaranteed return; an `if` with no `else` always leaves a path that
+        // falls through. `else_body` is an empty slice when there is no else.
+        ast::Stmt::If {
+            then_body,
+            else_body,
+            ..
+        } => {
+            !else_body.is_empty()
+                && body_always_returns(then_body)
+                && body_always_returns(else_body)
+        }
+        // Loops are not treated as diverging even when they cannot exit: the
+        // body may never run, and mis-reporting a real function is worse than
+        // missing an exotic one.
+        _ => false,
     }
 }
