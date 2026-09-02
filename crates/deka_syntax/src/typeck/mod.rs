@@ -1234,6 +1234,87 @@ mod tests {
     }
 
     #[test]
+    fn collection_element_preserves_unconstrained_var() {
+        assert_eq!(Type::Array { elem: Box::new(Type::Var) }.collection_element(), Type::Var);
+        assert_eq!(Type::Named { name: "string" }.collection_element(), Type::Named { name: "string" });
+    }
+
+    #[test]
+    fn array_and_string_index_types_are_checked_at_use_sites() {
+        let errors = typeck(
+            "fn takes_number(x: number) {} fn takes_string(x: string) {}\
+             takes_number([1, 2][0]); takes_string(\"ab\"[0]); takes_string([1, 2][0]);",
+        );
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn indexed_array_mutation_and_function_elements_are_typed() {
+        let errors = typeck(
+            "fn apply(f: fn(number) number) number { return f(1); }\
+             let numbers = [1]; numbers[0] = \"bad\";\
+             const funcs = [fn (x: number) number { return x }];\
+             apply(funcs[0]);",
+        );
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
+        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn generic_function_indexing_preserves_element_type() {
+        let errors = typeck(
+            "fn first<T>(values: Array<T>) T { return values[0]; }\
+             const item: string = first([\"ok\"]);\
+             const wrong: number = first([\"bad\"]);",
+        );
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
+        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn for_of_binds_array_element_type_in_sync_and_async_functions() {
+        let errors = typeck(
+            "fn takes_string(x: string) {}\
+             fn sync() { for (const item of [1, 2]) { takes_string(item); } }\
+             async fn double(x: number) Promise<number> { return x * 2; }\
+             async fn async_loop() { for (const item of [1, 2]) { await double(item); } }",
+        );
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn generic_indexing_propagates_across_module_boundary() {
+        let arena = Bump::new();
+        let lib_source = "export fn first(values: Array<string>) { return values[0]; }";
+        let lib_result = parse(lib_source, &arena);
+        assert!(lib_result.errors.is_empty(), "{:?}", lib_result.errors);
+        let lib_program = lib_result.program.expect("library parse produced no program");
+        let exports = collect_module_exports(&lib_program, &arena);
+
+        let main_source =
+            "import { first } from \"./lib.ds\";\
+             fn takes_string(x: string) {}\
+             takes_string(first([\"ok\"]));\
+             const wrong: number = first([\"bad\"]);";
+        let main_result = parse(main_source, &arena);
+        assert!(main_result.errors.is_empty(), "{:?}", main_result.errors);
+        let main_program = main_result.program.expect("main parse produced no program");
+        let mut imports = HashMap::new();
+        imports.insert("./lib.ds", &exports);
+        let errors = check_program_with_imports(&main_program, main_source, &imports).errors;
+
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
+        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+    }
+
+    #[test]
     fn fn_expression_literal_passes() {
         assert!(typeck("const double = fn (x: number) number { return x * 2 }; const y: number = double(5);").is_empty());
     }
