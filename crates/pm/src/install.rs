@@ -6,7 +6,7 @@ use crate::{
 use anyhow::{anyhow, bail, Context, Result};
 use deka_host::integrity::compute_package_integrity;
 use runtime_core::module_spec::canonical_php_package_spec;
-use runtime_core::modules::{install_modules_dir, is_modules_dir_name, MODULES_DIR};
+use runtime_core::modules::{install_modules_dir, is_modules_dir_name, read_links_at, MODULES_DIR};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -79,10 +79,21 @@ fn run_php_install_in_transaction(
     }
     let mut installed = BTreeMap::new();
 
+    // A linked package is provided by a local working tree, so there is
+    // nothing to fetch and no published version to resolve. Skipping it here
+    // is what makes `deka link` usable before a version exists on the
+    // registry -- which is the whole point of linking (deka#512).
+    let linked: std::collections::BTreeSet<String> = read_links_at(cwd)
+        .map(|manifest| manifest.packages.keys().cloned().collect())
+        .unwrap_or_default();
+
     // A release is source plus its declared dependencies, never a recursive
     // vendor tree. Resolve each declared dependency here so every package is a
     // sibling under the consumer's ds_modules directory.
     while let Some(name) = pending.pop_front() {
+        if linked.contains(&name) {
+            continue;
+        }
         let requirements = requested.get(&name).expect("queued package requirement");
         let locked = locked_package(&existing_lock, &name)?;
         let destination = php_modules_path_for_in(cwd, &name)?;

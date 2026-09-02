@@ -200,3 +200,59 @@ fn stale_link_fails_closed_instead_of_falling_back() {
         "stale link produced the wrong error: {combined}"
     );
 }
+
+/// deka#512: a linked package must not be resolved against the registry.
+///
+/// `deka check --as-package` links the working tree into a scratch consumer
+/// and then installs that consumer's dependencies. Because the package under
+/// test is declared there at its own version, install used to try to fetch a
+/// version that by definition does not exist yet -- so the gate could only
+/// pass for a release that did not need publishing.
+///
+/// The version here is deliberately absurd so the test cannot accidentally
+/// succeed by finding a real tarball.
+#[test]
+fn install_skips_linked_packages_so_unpublished_versions_resolve() {
+    let consumer = tempfile::tempdir().unwrap();
+    let package = tempfile::tempdir().unwrap();
+
+    std::fs::write(
+        package.path().join("deka.json"),
+        r#"{"name":"@deka/testonly","version":"99.99.99","main":"index.ds"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        package.path().join("index.ds"),
+        "export fn hello() string {\n  return \"hi\"\n}\n",
+    )
+    .unwrap();
+
+    std::fs::write(
+        consumer.path().join("deka.json"),
+        r#"{"name":"consumer","version":"0.0.0","main":"main.ds","dependencies":{"@deka/testonly":"99.99.99"}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        consumer.path().join("deka.lock"),
+        "{\n  \"version\": 1,\n  \"packages\": {}\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        consumer.path().join("main.ds"),
+        "import { hello } from \"@deka/testonly\"\nconst greeting: string = hello()\n",
+    )
+    .unwrap();
+
+    run(consumer.path(), &["link", package.path().to_str().unwrap()]);
+
+    let out = run(consumer.path(), &["install", "--yes"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "install must not try to fetch a linked package: {stderr}"
+    );
+    assert!(
+        !stderr.contains("99.99.99"),
+        "the linked version must never be resolved remotely: {stderr}"
+    );
+}
