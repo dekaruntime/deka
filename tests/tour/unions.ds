@@ -1,0 +1,12 @@
+import { echo } from "io"
+
+// A union describes a value that could be one of several types.
+fn render(v: string | number) string {
+  return match (v) {
+    string(s) => s,
+    number(n) => string(n),
+  }
+}
+
+echo(render("hello"))
+echo(render(42))
