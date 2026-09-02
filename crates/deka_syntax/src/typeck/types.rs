@@ -60,6 +60,10 @@ pub enum Type<'a> {
     Newtype { name: &'a str, repr: crate::ast::NewtypeRepr },
     /// A type parameter, e.g. `T` inside a generic function or type.
     Param { name: &'a str },
+    /// A union of types whose members each have a decidable runtime
+    /// predicate: primitives, named structs, enums, interfaces (rfd#42,
+    /// deka#530).
+    Union { members: Vec<Type<'a>> },
 }
 
 impl<'a> Type<'a> {
@@ -189,6 +193,19 @@ impl fmt::Display for Type<'_> {
             Type::Interface { name } => write!(f, "{name}"),
             Type::Newtype { name, .. } => write!(f, "{name}"),
             Type::Param { name } => write!(f, "{name}"),
+            Type::Union { members } => {
+                // Print members sorted so union types have one canonical
+                // spelling regardless of declaration order (rfd#42).
+                let mut sorted: Vec<&Type> = members.iter().collect();
+                sorted.sort_by_key(|m| m.to_string());
+                for (i, member) in sorted.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, " | ")?;
+                    }
+                    write!(f, "{member}")?;
+                }
+                Ok(())
+            }
         }
     }
 }

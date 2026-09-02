@@ -293,6 +293,12 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                 )),
             },
             ast::Type::Tuple { .. } | ast::Type::Record { .. } => Type::Error,
+            ast::Type::Union { members, .. } => Type::Union {
+                members: members
+                    .iter()
+                    .map(|m| ast_type_to_export_type(m, structs, enums, aliases, newtypes, seen))
+                    .collect(),
+            },
         }
     }
 

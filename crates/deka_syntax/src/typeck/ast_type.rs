@@ -126,6 +126,16 @@ impl<'a> Checker<'a> {
                 inner: Box::new(self.resolve_ast_type_rec(inner, seen)),
             },
 
+            // Membership and overlap validation for unions lives in
+            // `check_union_members` (deka#530, phase 3); here we only resolve
+            // members so aliases and type params keep working through them.
+            ast::Type::Union { members, .. } => Type::Union {
+                members: members
+                    .iter()
+                    .map(|member| self.resolve_ast_type_rec(member, seen))
+                    .collect(),
+            },
+
             ast::Type::Tuple { span, .. } | ast::Type::Record { span, .. } => {
                 self.error_span(*span, "tuple/record types are not supported in v2 typeck");
                 Type::Error
