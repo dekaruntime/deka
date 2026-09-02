@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use deka_compile::module_graph::{compile_module_graph, ModuleLoader};
+use deka_compile::module_graph::{compile_module_graph_with_options, GraphCompileOptions, ModuleLoader};
 use runtime_core::module_spec::ds_source_candidates;
 use serde::Serialize;
 
@@ -20,6 +20,11 @@ pub struct ProjectState {
     compiled: HashMap<String, CompiledModule>,
     diagnostics: Vec<Diagnostic>,
     ok: bool,
+    /// Base URL for bare stdlib import specifiers. When set, imports like
+    /// `import { echo } from "io"` are left virtual and emitted as
+    /// `import { echo } from "<module_base>/io.mjs"`, matching the
+    /// single-file compiler's `moduleBase` option (deka#497).
+    module_base: Option<String>,
 }
 
 struct CompiledModule {
@@ -55,11 +60,17 @@ impl ProjectState {
             compiled: HashMap::new(),
             diagnostics: Vec::new(),
             ok: false,
+            module_base: None,
         }
     }
 
     pub fn write(&mut self, path: &str, source: &str) {
         self.files.insert(normalize_path(path), source.to_string());
+    }
+
+    pub fn set_module_base(&mut self, module_base: &str) {
+        let trimmed = module_base.trim();
+        self.module_base = (!trimmed.is_empty()).then(|| trimmed.to_string());
     }
 
     pub fn compile(&mut self) -> String {
@@ -137,7 +148,11 @@ impl ProjectState {
             files: &self.files,
         };
 
-        match compile_module_graph(&entry, &loader) {
+        let options = GraphCompileOptions {
+            client: false,
+            module_base: self.module_base.clone(),
+        };
+        match compile_module_graph_with_options(&entry, &loader, options) {
             Ok(result) => {
                 // The graph contains the entry and all reachable modules. Return
                 // the emitted JS for the requested entry file.
@@ -186,6 +201,22 @@ impl<'a> ModuleLoader for ProjectModuleLoader<'a> {
                 specifier,
                 candidates.join(", ")
             ));
+        }
+        // Bare stdlib specifier (e.g. "io", "crypto"). If the project contains a
+        // matching type stub, resolve to it so the compiler can typecheck the
+        // import; otherwise the caller may leave it virtual for runtime serving
+        // (deka#497).
+        let bare = specifier.trim().strip_prefix("@deka/").unwrap_or(specifier.trim());
+        let candidates = vec![
+            format!("{}.ds", bare),
+            format!("{}/index.ds", bare),
+            format!("{}.dsx", bare),
+            format!("{}/index.dsx", bare),
+        ];
+        for candidate in &candidates {
+            if self.files.contains_key(candidate) {
+                return Ok(PathBuf::from(candidate));
+            }
         }
         Err(format!(
             "non-relative import '{}' is not supported in project mode; use './foo.ds'",
@@ -268,6 +299,28 @@ pub unsafe extern "C" fn deka_compiler_project_write(
     let source = crate::read_utf8(source_ptr, source_len, "source");
     if let (Ok(path), Ok(source)) = (path, source) {
         project.write(path, source);
+    }
+}
+
+/// Set the base URL used to rewrite bare stdlib import specifiers during
+/// compile (e.g. `io` becomes `<base>/io.mjs`). Optional; when unset, project
+/// mode only supports relative `./foo.ds` imports.
+///
+/// # Safety
+/// `project_id` must be a valid project handle. Pointer/length pairs must
+/// point to valid, immutable UTF-8 buffers in WASM memory.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn deka_compiler_project_set_module_base(
+    project_id: u32,
+    base_ptr: *const u8,
+    base_len: u32,
+) {
+    let project = match project_from_id(project_id) {
+        Some(p) => p,
+        None => return,
+    };
+    if let Ok(base) = crate::read_utf8(base_ptr, base_len, "module base") {
+        project.set_module_base(&base);
     }
 }
 
@@ -445,6 +498,90 @@ const item: string = match (first(["x"])) { Some(value) => value, None => "" }
         assert_eq!(
             relative_candidates(Path::new("src/foo.ds")),
             vec!["src/foo.ds"]
+        );
+    }
+
+    #[test]
+    fn project_with_module_base_resolves_stdlib_imports() {
+        let mut project = ProjectState::new();
+        project.set_module_base("https://hats.dump.invalid/modules");
+        project.write(
+            "math.ds",
+            "export fn add(a: number, b: number) number {\n  return a + b;\n}\n",
+        );
+        project.write(
+            "main.ds",
+            "import { echo } from \"io\";\nimport { add } from \"./math.ds\";\necho(add(1, 2));\n",
+        );
+
+        let json = project.compile();
+        let response: Value = serde_json::from_str(&json).expect("valid compile response JSON");
+
+        assert_eq!(response["ok"], true, "compile failed: {}", json);
+        let main = response["modules"]["main.ds"]["code"].as_str().unwrap();
+        assert!(
+            main.contains("import { echo } from \"https://hats.dump.invalid/modules/io.mjs\""),
+            "expected moduleBase rewrite, got:\n{}",
+            main
+        );
+        assert!(
+            main.contains("import { add } from \"./math.ds\""),
+            "expected relative import preserved, got:\n{}",
+            main
+        );
+    }
+
+    #[test]
+    fn project_without_module_base_still_rejects_stdlib_imports() {
+        let mut project = ProjectState::new();
+        project.write("main.ds", "import { echo } from \"io\";\necho(\"hi\");\n");
+
+        let json = project.compile();
+        let response: Value = serde_json::from_str(&json).expect("valid compile response JSON");
+
+        assert_eq!(response["ok"], false, "expected compile failure");
+        let messages: Vec<&str> = response["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|d| d["message"].as_str())
+            .collect();
+        assert!(
+            messages.iter().any(|m| m.contains("non-relative import 'io'")),
+            "expected non-relative import diagnostic, got: {:?}",
+            messages
+        );
+    }
+
+    #[test]
+    fn project_reports_missing_export_from_relative_import() {
+        let mut project = ProjectState::new();
+        project.set_module_base("https://hats.dump.invalid/modules");
+        project.write(
+            "math.ds",
+            "export fn add(a: number, b: number) number {\n  return a + b;\n}\n",
+        );
+        project.write(
+            "main.fail.ds",
+            "import { echo } from \"io\";\nimport { subtract } from \"./math.ds\";\necho(subtract(1, 2));\n",
+        );
+
+        let json = project.compile();
+        let response: Value = serde_json::from_str(&json).expect("valid compile response JSON");
+
+        assert_eq!(response["ok"], false, "expected compile failure");
+        let messages: Vec<&str> = response["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|d| d["message"].as_str())
+            .collect();
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("Missing export 'subtract' in './math.ds'")),
+            "expected missing export diagnostic, got: {:?}",
+            messages
         );
     }
 }

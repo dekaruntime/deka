@@ -1,0 +1,6 @@
+// Type stub for @deka/time. The harness provides a runtime shim; this file
+// gives the WASM project compiler enough type information to typecheck
+// fixtures that import from "time" (deka#497).
+export fn now() number {
+  return 0
+}

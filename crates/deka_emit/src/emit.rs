@@ -431,6 +431,9 @@ impl<'a> Emitter<'a> {
     /// is configured. Bare specifiers are those that do not start with `.`,
     /// `/`, or a URL scheme. The `@deka/` prefix is stripped so both `io` and
     /// `@deka/io` map to `<base>/io.mjs`.
+    ///
+    /// Note: unknown bare specifiers are rejected at compile time before emit
+    /// when module_base is set (deka#497), so this path only sees stdlib names.
     fn resolve_module_source(&self, source: &str) -> String {
         let Some(base) = &self.module_base else {
             return source.to_string();

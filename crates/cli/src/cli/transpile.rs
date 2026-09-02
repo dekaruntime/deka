@@ -312,7 +312,7 @@ fn compile_source_via_module_graph(input: &Path, client: bool) -> Result<String,
     let graph = module_graph::compile_module_graph_with_options(
         input,
         &loader,
-        GraphCompileOptions { client },
+        GraphCompileOptions { client, ..Default::default() },
     )
         .map_err(|diagnostics| {
             diagnostics
@@ -340,7 +340,7 @@ fn build_bundle(
     let graph = module_graph::compile_module_graph_with_options(
         &entry,
         &loader,
-        GraphCompileOptions { client },
+        GraphCompileOptions { client, ..Default::default() },
     )
     .map_err(|diagnostics| {
         diagnostics

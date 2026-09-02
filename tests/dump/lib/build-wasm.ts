@@ -16,6 +16,22 @@ interface WasmExports {
   ) => number
   deka_compiler_format_ds: (sourcePtr: number, sourceLen: number) => number
   deka_compiler_metadata?: () => number
+  deka_compiler_project_new: () => number
+  deka_compiler_project_write: (
+    projectId: number,
+    pathPtr: number,
+    pathLen: number,
+    sourcePtr: number,
+    sourceLen: number
+  ) => void
+  deka_compiler_project_compile: (projectId: number) => number
+  deka_compiler_project_free: (projectId: number) => void
+  // Added for deka#497; absent from artifacts published before it.
+  deka_compiler_project_set_module_base?: (
+    projectId: number,
+    basePtr: number,
+    baseLen: number
+  ) => void
 }
 
 export interface WasmCompilerMetadata {
@@ -215,6 +231,101 @@ export function compileWithWasm(
     js: parsed.output?.code,
     error,
     diagnostics,
+  }
+}
+
+export interface BuildCompileProjectResult {
+  ok: boolean
+  modules: Record<string, { code: string }>
+  error?: string
+  diagnostics: BuildCompileResult['diagnostics']
+}
+
+let warnedMissingProjectModuleBase = false
+
+/**
+ * Compile a multi-file project through the WASM project-mode ABI, using the
+ * same local/published compiler the single-file path uses. `moduleBase` gives
+ * project mode the same stdlib-shim resolution as single-file compiles: bare
+ * specifiers like `io` are emitted as `<moduleBase>/io.mjs` URLs, which the
+ * browser harness intercepts and serves from the vendored shims (deka#497).
+ */
+export function compileProjectWithWasm(
+  compiler: WasmCompiler,
+  files: Record<string, string>,
+  options?: { moduleBase?: string }
+): BuildCompileProjectResult {
+  const exports = compiler.exports
+  const allocate = exports.deka_compiler_alloc
+  const free = exports.deka_compiler_free
+
+  const writeString = (text: string): { ptr: number; len: number } => {
+    const bytes = textEncoder.encode(text)
+    const ptr = allocate(bytes.length)
+    new Uint8Array(exports.memory.buffer).set(bytes, ptr)
+    return { ptr, len: bytes.length }
+  }
+
+  const projectId = exports.deka_compiler_project_new()
+  if (projectId === 0) {
+    return {
+      ok: false,
+      modules: {},
+      error: 'failed to create compiler project',
+      diagnostics: [{ severity: 'error', message: 'failed to create compiler project' }],
+    }
+  }
+
+  try {
+    if (options?.moduleBase) {
+      if (typeof exports.deka_compiler_project_set_module_base === 'function') {
+        const base = writeString(options.moduleBase)
+        exports.deka_compiler_project_set_module_base(projectId, base.ptr, base.len)
+        free(base.ptr, base.len)
+      } else if (!warnedMissingProjectModuleBase) {
+        warnedMissingProjectModuleBase = true
+        console.warn(
+          '[build-wasm] compiler exports no deka_compiler_project_set_module_base; ' +
+            'project-mode stdlib imports (io, …) will fail. Rebuild the wasm compiler from a checkout with deka#497.'
+        )
+      }
+    }
+
+    for (const [filePath, source] of Object.entries(files)) {
+      const normalized = filePath.replace(/\\/g, '/').replace(/^\.\//, '')
+      const path = writeString(normalized)
+      const src = writeString(source)
+      exports.deka_compiler_project_write(projectId, path.ptr, path.len, src.ptr, src.len)
+      free(path.ptr, path.len)
+      free(src.ptr, src.len)
+    }
+
+    const resultPtr = exports.deka_compiler_project_compile(projectId)
+    const jsonText = readWasmJson(exports, resultPtr)
+
+    let parsed: { ok?: boolean; modules?: Record<string, { code: string }>; diagnostics?: unknown }
+    try {
+      parsed = JSON.parse(jsonText)
+    } catch {
+      return {
+        ok: false,
+        modules: {},
+        error: `Compiler returned invalid JSON: ${jsonText}`,
+        diagnostics: [],
+      }
+    }
+
+    const diagnostics = normalizeDiagnostics(parsed.diagnostics)
+    const modules = parsed.modules ?? {}
+    const ok = (parsed.ok ?? false) && Object.keys(modules).length > 0
+    return {
+      ok,
+      modules,
+      error: ok ? undefined : diagnostics.find((d) => d.severity === 'error')?.message ?? 'project compilation failed',
+      diagnostics,
+    }
+  } finally {
+    exports.deka_compiler_project_free(projectId)
   }
 }
 

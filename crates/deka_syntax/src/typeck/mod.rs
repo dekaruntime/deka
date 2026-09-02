@@ -79,6 +79,9 @@ pub struct ModuleExports<'a> {
     pub receiver_methods: HashMap<(&'a str, &'a str), MethodInfo<'a>>,
     /// Value bindings (functions / constants) exported by the module.
     pub values: HashMap<&'a str, Type<'a>>,
+    /// Names exported via `export { name }` that are not locally declared
+    /// (i.e. re-exports of imports). These pass through to importers.
+    pub re_exports: HashSet<&'a str>,
 }
 
 impl<'a> Default for ModuleExports<'a> {
@@ -90,6 +93,7 @@ impl<'a> Default for ModuleExports<'a> {
             newtypes: HashMap::new(),
             receiver_methods: HashMap::new(),
             values: HashMap::new(),
+            re_exports: HashSet::new(),
         }
     }
 }
@@ -425,6 +429,18 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                     }
                     if let Some(ty) = declared_values.get(local).cloned() {
                         exports.values.insert(external, ty);
+                    }
+                    // If the exported name is not declared in this module, it
+                    // must be a re-export of an import (`export { value }`
+                    // after `import { value } from "..."`). Record it so
+                    // importers can resolve through the chain.
+                    if !declared_structs.contains_key(local)
+                        && !declared_enums.contains_key(local)
+                        && !declared_aliases.contains_key(local)
+                        && !declared_newtypes.contains_key(local)
+                        && !declared_values.contains_key(local)
+                    {
+                        exports.re_exports.insert(external);
                     }
                 }
             }
