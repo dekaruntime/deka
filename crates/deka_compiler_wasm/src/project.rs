@@ -202,6 +202,22 @@ impl<'a> ModuleLoader for ProjectModuleLoader<'a> {
                 candidates.join(", ")
             ));
         }
+        // Bare stdlib specifier (e.g. "io", "crypto"). If the project contains a
+        // matching type stub, resolve to it so the compiler can typecheck the
+        // import; otherwise the caller may leave it virtual for runtime serving
+        // (deka#497).
+        let bare = specifier.trim().strip_prefix("@deka/").unwrap_or(specifier.trim());
+        let candidates = vec![
+            format!("{}.ds", bare),
+            format!("{}/index.ds", bare),
+            format!("{}.dsx", bare),
+            format!("{}/index.dsx", bare),
+        ];
+        for candidate in &candidates {
+            if self.files.contains_key(candidate) {
+                return Ok(PathBuf::from(candidate));
+            }
+        }
         Err(format!(
             "non-relative import '{}' is not supported in project mode; use './foo.ds'",
             specifier

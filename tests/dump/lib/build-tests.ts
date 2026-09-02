@@ -1,6 +1,13 @@
 import fs from 'fs'
 import path from 'path'
-import { loadWasmCompiler, compileWithWasm, formatDsWithWasm, readCompilerMetadata } from './build-wasm'
+import { fileURLToPath } from 'url'
+import {
+  loadWasmCompiler,
+  compileWithWasm,
+  compileProjectWithWasm,
+  formatDsWithWasm,
+  readCompilerMetadata,
+} from './build-wasm'
 import { nativeCliVersion, prepareNativeCli, runNativeCli, formatDsWithNative } from './build-native'
 import {
   closeBrowserHost,
@@ -138,15 +145,33 @@ async function runBrowserTest(
   source: string,
   slug: string,
   files?: Record<string, string>,
-  entryPath?: string
+  entryPath?: string,
+  packages?: string[]
 ): Promise<RuntimeResult> {
   const formatResult = formatDsWithWasm(globalHatsCompiler, source)
   const formattedCode = formatResult.ok ? formatResult.code : undefined
-  const isProject = Boolean(files && entryPath)
+  const hasProjectFiles = Boolean(files && entryPath)
+  const needsStdlibStubs = packages && packages.length > 0
+  const isProject = hasProjectFiles || (needsStdlibStubs && Boolean(entryPath))
 
   if (isProject) {
-    const projectFiles = { [entryPath!]: source, ...files }
-    const runResult = await runProjectInBrowser(entryPath!, projectFiles)
+    const projectFiles: Record<string, string> = { [entryPath!]: source, ...(files ?? {}) }
+    // Provide type stubs for declared stdlib packages so the WASM project
+    // compiler can typecheck imports that the native host resolves from
+    // ds_modules (deka#497). Runtime implementations are served by the harness.
+    if (packages) {
+      const stubsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'stdlib-stubs')
+      for (const pkg of packages) {
+        const stubPath = path.join(stubsDir, `${pkg}.ds`)
+        if (fs.existsSync(stubPath)) {
+          projectFiles[`${pkg}.ds`] = fs.readFileSync(stubPath, 'utf-8')
+        }
+      }
+    }
+    const projectCompileResult = compileProjectWithWasm(globalHatsCompiler, projectFiles, {
+      moduleBase: HARNESS_MODULE_BASE,
+    })
+    const runResult = await runProjectInBrowser(entryPath!, projectCompileResult)
     return { ...runResult, formattedCode }
   }
 
@@ -266,7 +291,7 @@ async function runAllTestsOnce(): Promise<HatsBuildResults> {
 
         const wasmResult =
           wantBrowser && browserAvailable
-            ? await runBrowserTest(test.source, test.slug, test.files, test.entryPath)
+            ? await runBrowserTest(test.source, test.slug, test.files, test.entryPath, test.packages)
             : skippedResult(
                 !wantBrowser
                   ? 'fixture is not a browser host test'

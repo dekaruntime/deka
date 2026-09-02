@@ -20,7 +20,7 @@ use crate::shake::{self, ShakeModule, ShakePlan};
 /// Compiler-provided JS runtime (`ui/jsx`, `ui/form`, …). These are not
 /// DekaScript modules: hosts materialize the files, and the graph leaves the
 /// import specifier intact.
-fn is_compiler_ui_spec(spec: &str) -> bool {
+pub(crate) fn is_compiler_ui_spec(spec: &str) -> bool {
     let bare = spec.trim().strip_prefix("@deka/").unwrap_or(spec.trim());
     bare == "ui" || bare.starts_with("ui/")
 }
@@ -357,9 +357,19 @@ pub fn compile_module_graph_with_options(
                 continue;
             }
             // With a module base configured (browser/WASM hosts), known stdlib
-            // bare specifiers are served by the host as `<base>/<spec>.mjs`.
-            // Leave them virtual: no `.ds` file exists for them in the project.
-            if options.module_base.is_some() && crate::is_stdlib_module_spec(&import.path) {
+            // bare specifiers are normally served by the host as `<base>/<spec>.mjs`
+            // and left virtual. If the loader can resolve the specifier (e.g. a
+            // type stub exists in the project), use that resolution for
+            // typechecking and still emit the original bare specifier (deka#497).
+            let is_stdlib = options.module_base.is_some() && crate::is_stdlib_module_spec(&import.path);
+            if is_stdlib {
+                if let Ok(dep) = loader.resolve(&import.path, &path) {
+                    dependencies.insert(import.path.clone(), dep.clone());
+                    if !modules.contains_key(&dep) {
+                        queue.push_back(dep);
+                    }
+                    continue;
+                }
                 continue;
             }
             match loader.resolve(&import.path, &path) {
@@ -476,7 +486,8 @@ pub fn compile_module_graph_with_options(
                     || dep_exports.structs.contains_key(spec.imported)
                     || dep_exports.enums.contains_key(spec.imported)
                     || dep_exports.aliases.contains_key(spec.imported)
-                    || dep_exports.newtypes.contains_key(spec.imported);
+                    || dep_exports.newtypes.contains_key(spec.imported)
+                    || dep_exports.re_exports.contains(spec.imported);
                 if !known {
                     errors.push(diag(
                         spec.span.start.line,

@@ -117,6 +117,23 @@ function uiModuleSource(file: string): string {
 }
 const MODULE_SHIMS: Record<string, string> = {
   'io.mjs': 'export function echo(message) {\n  console.log(message)\n}\n',
+  'time.mjs': 'export function now() {\n  return Date.now()\n}\n',
+  'crypto.mjs':
+    'function uuid_v4_value() {\n' +
+    '  const bytes = new Uint8Array(16);\n' +
+    '  if (globalThis.crypto && typeof globalThis.crypto.getRandomValues === "function") {\n' +
+    '    globalThis.crypto.getRandomValues(bytes);\n' +
+    '  } else {\n' +
+    '    for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);\n' +
+    '  }\n' +
+    '  bytes[6] = (bytes[6] & 0x0f) | 0x40;\n' +
+    '  bytes[8] = (bytes[8] & 0x3f) | 0x80;\n' +
+    '  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");\n' +
+    '  return hex.slice(0, 8) + "-" + hex.slice(8, 12) + "-" + hex.slice(12, 16) + "-" + hex.slice(16, 20) + "-" + hex.slice(20);\n' +
+    '}\n' +
+    'export function uuid_v4() {\n' +
+    '  return { __case: "Ok", value: uuid_v4_value() }\n' +
+    '}\n',
   'jsx.mjs': uiModuleSource('jsx.js'),
   'reactive.mjs': uiModuleSource('reactive.js'),
   'suspense.mjs': uiModuleSource('suspense.js'),

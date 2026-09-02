@@ -396,6 +396,37 @@ pub fn compile_to_js_with_imports_and_options<'a>(
     if let Some(diagnostic) = file_type_rule_error(file_path, source, &program) {
         return Err(vec![diagnostic]);
     }
+
+    // When a module base is configured (browser/WASM single-file mode), bare
+    // stdlib imports are left virtual and rewritten to `<base>/<spec>.mjs`.
+    // Any other bare specifier has no resolver, so fail early with the same
+    // shape as the native module validator instead of emitting a bad import
+    // that only fails at runtime (deka#497).
+    if options.module_base.is_some() {
+        let mut unknown = Vec::new();
+        for stmt in program.statements.iter() {
+            let deka_syntax::Stmt::Import { source: import_source, span, .. } = stmt else {
+                continue;
+            };
+            if import_source.starts_with('.')
+                || import_source.starts_with('/')
+                || import_source.contains(':')
+                || crate::module_graph::is_compiler_ui_spec(import_source)
+                || crate::is_stdlib_module_spec(import_source)
+            {
+                continue;
+            }
+            unknown.push(Diagnostic::error(
+                span.start.line,
+                span.start.column,
+                format!("Missing module '{}'", import_source),
+            ));
+        }
+        if !unknown.is_empty() {
+            return Err(unknown);
+        }
+    }
+
     if options.client {
         if let Some(diagnostic) = client_ui_server_error(source) {
             return Err(vec![diagnostic]);
