@@ -1989,7 +1989,10 @@ impl<'a> Checker<'a> {
                 if left_type == right_type
                     && (Self::is_number(&left_type)
                         || Self::is_string(&left_type)
-                        || Self::is_boolean(&left_type))
+                        || Self::is_boolean(&left_type)
+                        // `Type` descriptors are interned singletons, so
+                        // `==` is identity comparison (deka#529).
+                        || matches!(left_type, Type::Named { name: "Type" }))
                 {
                     Type::Named { name: "boolean" }
                 } else {
