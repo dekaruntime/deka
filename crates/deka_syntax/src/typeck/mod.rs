@@ -174,11 +174,33 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                         params: *params,
                         return_type: return_type.clone(),
                         mutable: false,
+                        // Filled in the second pass below, once every
+                        // declaration in the module is known.
+                        param_types: Vec::new(),
+                        resolved_return: None,
                     },
                 );
             }
             _ => {}
         }
+    }
+
+    // Second pass: resolve receiver-method annotations with the module's full
+    // declaration tables, so importers (and call sites) reuse one resolution
+    // instead of re-resolving per use (deka#494).
+    for info in receiver_methods.values_mut() {
+        info.param_types = info
+            .params
+            .iter()
+            .map(|p| match &p.ty {
+                Some(t) => ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()),
+                None => Type::Error,
+            })
+            .collect();
+        info.resolved_return = info
+            .return_type
+            .as_ref()
+            .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()));
     }
 
     // Helper: convert an AST type annotation into a typechecker type using the
@@ -442,6 +464,13 @@ pub struct MethodInfo<'a> {
     pub params: &'a [ast::Param<'a>],
     pub return_type: Option<ast::Type<'a>>,
     pub mutable: bool,
+    /// Parameter types resolved once, in the declaring module (deka#494).
+    /// Call sites and body checking reuse these instead of re-resolving the
+    /// annotations (which would re-report unknown types).
+    pub param_types: Vec<Type<'a>>,
+    /// The resolved return annotation; `None` when the method has no return
+    /// annotation.
+    pub resolved_return: Option<Type<'a>>,
 }
 
 /// Information about an interface's declared members.
@@ -1278,15 +1307,65 @@ mod tests {
     #[test]
     fn missing_return_does_not_stack_on_bad_annotation() {
         // An unresolvable return type is already an error; it must not also
-        // produce a missing-return diagnostic. Asserted by message rather than
-        // by count, because the unknown type is currently reported twice
-        // (pre-existing, tracked separately) and that count is not what this
-        // test is about.
+        // produce a missing-return diagnostic.
         let errors = typeck("fn bad() NotAType { }");
         assert!(
             errors.iter().all(|e| !e.message.contains("does not return")),
             "{errors:?}"
         );
+    }
+
+    #[test]
+    fn unknown_return_type_reported_once() {
+        // deka#494: the return annotation used to pass through
+        // resolve_ast_type twice (signature collection + check_function),
+        // producing two identical diagnostics.
+        let errors = typeck("fn bad() NotAType { }");
+        let unknown: Vec<_> = errors
+            .iter()
+            .filter(|e| e.message == "unknown type `NotAType`")
+            .collect();
+        assert_eq!(unknown.len(), 1, "{errors:?}");
+    }
+
+    #[test]
+    fn unknown_param_type_reported_once() {
+        // deka#494 companion check: parameter annotations are resolved during
+        // signature collection and reused by check_function, so they must
+        // report exactly once as well.
+        let errors = typeck("fn bad(x: NotAType) void { }");
+        let unknown: Vec<_> = errors
+            .iter()
+            .filter(|e| e.message == "unknown type `NotAType`")
+            .collect();
+        assert_eq!(unknown.len(), 1, "{errors:?}");
+    }
+
+    #[test]
+    fn unknown_receiver_method_return_type_reported_once() {
+        // deka#494 companion check: receiver method annotations are resolved
+        // in check_receiver_method and again at every call site; with no call
+        // site there must be exactly one report.
+        let errors = typeck("struct S { x: number } fn (s S) bad() NotAType { }");
+        let unknown: Vec<_> = errors
+            .iter()
+            .filter(|e| e.message == "unknown type `NotAType`")
+            .collect();
+        assert_eq!(unknown.len(), 1, "{errors:?}");
+    }
+
+    #[test]
+    fn unknown_receiver_method_return_type_not_rereported_at_call_site() {
+        // deka#494 companion check: a call site must not re-report the
+        // method's unresolvable return type.
+        let errors = typeck(
+            "struct S { x: number } fn (s S) bad() NotAType { } const s = S { x: 1 }; s.bad();",
+        );
+        let unknown: Vec<_> = errors
+            .iter()
+            .filter(|e| e.message == "unknown type `NotAType`")
+            .collect();
+        assert_eq!(unknown.len(), 1, "{errors:?}");
     }
 
     #[test]

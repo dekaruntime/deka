@@ -2132,14 +2132,10 @@ impl<'a> Checker<'a> {
             ast::MethodTarget { mangled, embed_path },
         );
 
-        let expected_params: Vec<Type<'a>> = info
-            .params
-            .iter()
-            .map(|p| match &p.ty {
-                Some(t) => self.resolve_ast_type(t),
-                None => Type::Error,
-            })
-            .collect();
+        // Annotations were resolved when the method was collected (deka#494);
+        // reusing them here keeps an unknown annotation from being re-reported
+        // at every call site.
+        let expected_params: Vec<Type<'a>> = info.param_types.clone();
 
         if expected_params.len() != args.len() {
             self.error_span(
@@ -2165,9 +2161,8 @@ impl<'a> Checker<'a> {
             }
         }
 
-        info.return_type
-            .as_ref()
-            .map(|t| self.resolve_ast_type(t))
+        info.resolved_return
+            .clone()
             .unwrap_or(Type::None)
             .into()
     }
