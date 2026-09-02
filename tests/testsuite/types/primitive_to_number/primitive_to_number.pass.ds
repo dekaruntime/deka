@@ -1,0 +1,5 @@
+import { echo } from "io"
+
+echo(string(to_number(7)))
+echo(string(to_number(true)))
+echo(string(to_number(false)))
