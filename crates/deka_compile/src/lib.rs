@@ -653,6 +653,45 @@ mod tests {
     }
 
     #[test]
+    fn collect_exports_preserves_generic_function_signatures() {
+        use bumpalo::Bump;
+        use deka_syntax::{collect_module_exports, parse, typeck::Type};
+
+        let arena = Bump::new();
+        let source = r#"
+fn constant<T>(value: T): Result<string, string> { return Ok("fixed") }
+export { constant }
+export fn first<T>(values: Array<T>): Option<T> { return Some(values[0]) }
+"#;
+        let result = parse(source, &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        let exports = collect_module_exports(&program, &arena);
+
+        let Type::Function { params, ret, .. } = &exports.values["constant"] else {
+            panic!("expected generic function signature");
+        };
+        assert!(matches!(params.as_slice(), [Type::Param { name: "T" }]));
+        assert!(matches!(
+            ret.as_ref(),
+            Type::Generic { base: "Result", args }
+                if matches!(args.as_slice(), [Type::Named { name: "string" }, Type::Named { name: "string" }])
+        ));
+
+        let Type::Function { params, ret, .. } = &exports.values["first"] else {
+            panic!("expected generic function signature");
+        };
+        assert!(matches!(
+            params.as_slice(),
+            [Type::Array { elem }] if matches!(elem.as_ref(), Type::Param { name: "T" })
+        ));
+        assert!(matches!(
+            ret.as_ref(),
+            Type::Option { inner } if matches!(inner.as_ref(), Type::Param { name: "T" })
+        ));
+    }
+
+    #[test]
     fn compile_array_object_index() {
         let result = compile_to_js(
             "const a = [1, 2, 3]; const o = { x: 1 }; const v = a[0] + o[\"x\"];",

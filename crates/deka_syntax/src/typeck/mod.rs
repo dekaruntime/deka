@@ -78,7 +78,6 @@ pub struct ModuleExports<'a> {
     pub newtypes: HashMap<&'a str, NewtypeInfo>,
     pub receiver_methods: HashMap<(&'a str, &'a str), MethodInfo<'a>>,
     /// Value bindings (functions / constants) exported by the module.
-    /// Currently stored as `Type::Infer` so uses typecheck generically.
     pub values: HashMap<&'a str, Type<'a>>,
 }
 
@@ -286,27 +285,30 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                 return_type,
                 ..
             } => {
-                if type_params.is_empty() {
-                    if let Some(ty) = inferred_globals.get(name) {
-                        declared_values.insert(*name, ty.clone());
-                    } else {
-                        let param_types: Vec<Type<'a>> = params
-                            .iter()
-                            .map(|p| {
-                                p.ty.as_ref()
-                                    .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
-                                    .unwrap_or(Type::Infer)
-                            })
-                            .collect();
-                        let ret = return_type
-                            .as_ref()
-                            .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
-                            .unwrap_or(Type::Infer);
-                        declared_values.insert(*name, Type::Function { params: param_types, ret: Box::new(ret), optional: 0 });
-                    }
+                if let Some(ty) = inferred_globals.get(name) {
+                    // The checker retains `Type::Param` in polymorphic
+                    // signatures, so keep that signature at the module
+                    // boundary instead of collapsing generic functions to
+                    // `Type::Infer` (deka#483).
+                    declared_values.insert(*name, ty.clone());
+                } else if type_params.is_empty() {
+                    let param_types: Vec<Type<'a>> = params
+                        .iter()
+                        .map(|p| {
+                            p.ty.as_ref()
+                                .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
+                                .unwrap_or(Type::Infer)
+                        })
+                        .collect();
+                    let ret = return_type
+                        .as_ref()
+                        .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
+                        .unwrap_or(Type::Infer);
+                    declared_values.insert(*name, Type::Function { params: param_types, ret: Box::new(ret), optional: 0 });
                 } else {
-                    // Generic function signatures depend on type arguments; keep
-                    // the conservative Infer placeholder until we model polymorphism.
+                    // A missing inferred signature is an error-recovery path.
+                    // Do not misrepresent an unresolved type parameter as a
+                    // concrete named type in the annotation-only fallback.
                     declared_values.insert(*name, Type::Infer);
                 }
             }
@@ -344,24 +346,22 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                 return_type,
                 ..
             } => {
-                if type_params.is_empty() {
-                    if let Some(ty) = inferred_globals.get(name) {
-                        exports.values.insert(*name, ty.clone());
-                    } else {
-                        let param_types: Vec<Type<'a>> = params
-                            .iter()
-                            .map(|p| {
-                                p.ty.as_ref()
-                                    .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
-                                    .unwrap_or(Type::Infer)
-                            })
-                            .collect();
-                        let ret = return_type
-                            .as_ref()
-                            .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
-                            .unwrap_or(Type::Infer);
-                        exports.values.insert(*name, Type::Function { params: param_types, ret: Box::new(ret), optional: 0 });
-                    }
+                if let Some(ty) = inferred_globals.get(name) {
+                    exports.values.insert(*name, ty.clone());
+                } else if type_params.is_empty() {
+                    let param_types: Vec<Type<'a>> = params
+                        .iter()
+                        .map(|p| {
+                            p.ty.as_ref()
+                                .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
+                                .unwrap_or(Type::Infer)
+                        })
+                        .collect();
+                    let ret = return_type
+                        .as_ref()
+                        .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
+                        .unwrap_or(Type::Infer);
+                    exports.values.insert(*name, Type::Function { params: param_types, ret: Box::new(ret), optional: 0 });
                 } else {
                     exports.values.insert(*name, Type::Infer);
                 }
