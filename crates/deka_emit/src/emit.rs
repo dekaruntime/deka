@@ -34,6 +34,7 @@ pub fn emit_js(program: &Program, _source: &str) -> Result<String, String> {
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
+        &HashSet::new(),
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
@@ -64,6 +65,7 @@ pub fn emit_js_with_imports<'a>(
         unwrap_calls,
         operator_rewrites,
         method_calls,
+        &HashSet::new(),
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
@@ -90,6 +92,9 @@ pub fn emit_js_with_options<'a>(
     // free-function calls (`slugify$string(s)`), lowered by the typechecker
     // (deka#527).
     method_calls: &HashMap<*const Expr<'a>, deka_syntax::MethodTarget<'a>>,
+    // Builtin `.getType()` call sites to rewrite to `deka.typeOf(x)`,
+    // lowered by the typechecker (rfd#41, deka#529).
+    type_of_calls: &HashSet<*const Expr<'a>>,
     jsx_optional_props: &HashMap<
         *const deka_syntax::JsxElement<'a>,
         deka_syntax::typeck::JsxOptionalProps<'a>,
@@ -111,6 +116,7 @@ pub fn emit_js_with_options<'a>(
     emitter.unwrap_calls = unwrap_calls.clone();
     emitter.operator_rewrites = operator_rewrites.clone();
     emitter.method_calls = method_calls.clone();
+    emitter.type_of_calls = type_of_calls.clone();
     emitter.jsx_optional_props = jsx_optional_props.clone();
     emitter.enum_case_patterns = enum_case_patterns.clone();
     emitter.union_type_patterns = union_type_patterns.clone();
@@ -185,6 +191,9 @@ struct Emitter<'a> {
     /// Primitive extension call sites lowered by the typechecker to
     /// free-function calls (`slugify$string(s)`) (deka#527).
     method_calls: HashMap<*const Expr<'a>, deka_syntax::MethodTarget<'a>>,
+    /// Builtin `.getType()` call sites lowered by the typechecker to
+    /// `deka.typeOf(x)` (rfd#41, deka#529).
+    type_of_calls: HashSet<*const Expr<'a>>,
     file_stem: String,
     fn_scope: String,
     jsx_path: Vec<usize>,
@@ -216,6 +225,7 @@ impl<'a> Emitter<'a> {
             unwrap_id: 0,
             operator_rewrites: HashMap::new(),
             method_calls: HashMap::new(),
+            type_of_calls: HashSet::new(),
             file_stem: "module".to_string(),
             fn_scope: "_".to_string(),
             jsx_path: Vec::new(),
@@ -585,6 +595,11 @@ impl<'a> Emitter<'a> {
         // Determine which helpers are needed by scanning the AST.
         self.uses_struct = self.needs_struct_helper();
         self.uses_prelude_enums = self.uses_prelude_enums || self.needs_prelude_enums();
+        // `type_of_calls` is fully populated by the typechecker before
+        // emission, so unlike the emission-time flags above it can gate the
+        // helper directly — no AST scan needed. A call in shaken code still
+        // forces the ~4-line helper; harmless bloat, never incorrectness.
+        let uses_typeof = !self.type_of_calls.is_empty();
 
         if self.uses_struct || self.uses_newtype {
             self.out.push_str("const __deka = {");
@@ -606,6 +621,20 @@ impl<'a> Emitter<'a> {
             if self.uses_newtype {
                 self.out.push_str("const __p = deka.__nt;\n");
             }
+        }
+
+        // Builtin `.getType()` support (rfd#41, deka#529): a module-local
+        // free function, emitted exactly the way deka#527 emits primitive
+        // extensions — tree-shakable, no `__deka` prelude, no globalThis.
+        // Tags are read directly (`v?.__deka_struct` / `v?.__enum` /
+        // `v?.__deka_newtype`): `deka.getStructId` only exists when the
+        // struct prelude is emitted, and `.getType()` alone must not force
+        // it. Descriptors are interned per (kind, name) and frozen, so `==`
+        // on them is identity.
+        if uses_typeof {
+            self.out.push_str("const __deka_type_cache = new Map();\n");
+            self.out.push_str(r###"function __deka_type_of(v){const mk=(k,n)=>{const key=k+":"+n;let t=__deka_type_cache.get(key);if(!t){t=Object.freeze({kind:k,name:n,toString(){return this.name;}});__deka_type_cache.set(key,t);}return t;};if(v===null||v===undefined)return mk("none","none");if(v instanceof Uint8Array)return mk("bytes","bytes");const ty=typeof v;if(ty==="string"||ty==="number"||ty==="boolean"||ty==="function")return mk(ty,ty);if(Array.isArray(v))return mk("array","Array");const nt=v.__deka_newtype;if(nt)return mk("newtype",nt);const st=v.__deka_struct;if(st)return mk("struct",st);const en=v.__enum;if(en)return mk("enum",en);return mk("object","object");}"###);
+            self.out.push('\n');
         }
 
         if self.uses_prelude_enums {
@@ -1633,6 +1662,19 @@ impl<'a> Emitter<'a> {
                     return Ok(());
                 }
 
+                // Builtin `.getType()`: rewrite `obj.getType()` to the
+                // module-local free function `__deka_type_of(obj)` — static
+                // dispatch, no prototype mutation, no globalThis (rfd#41,
+                // deka#529).
+                if self.type_of_calls.contains(&expr_ptr) {
+                    self.out.push_str("__deka_type_of(");
+                    if let Expr::FieldAccess { object, .. } = &**callee {
+                        self.emit_expr(object)?;
+                    }
+                    self.out.push(')');
+                    return Ok(());
+                }
+
                 // Primitive extension call: rewrite `obj.method(args)` to the
                 // module-local free function `method$receiver(obj, args)`.
                 // Primitives cannot be branded with a prototype, so static
@@ -2238,6 +2280,7 @@ impl<'a> Emitter<'a> {
                     unwrap_id: 0,
                     operator_rewrites: HashMap::new(),
                     method_calls: HashMap::new(),
+                    type_of_calls: HashSet::new(),
                     file_stem: self.file_stem.clone(),
                     fn_scope: self.fn_scope.clone(),
                     jsx_path: Vec::new(),

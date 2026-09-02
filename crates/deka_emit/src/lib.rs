@@ -41,6 +41,7 @@ mod tests {
             &typeck.unwrap_calls,
             &typeck.operator_rewrites,
             &typeck.method_calls,
+            &typeck.type_of_calls,
             &typeck.jsx_optional_props,
             &typeck.enum_case_patterns,
             &typeck.union_type_patterns,
