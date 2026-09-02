@@ -2,16 +2,16 @@ import { echo } from "io"
 enum Status {
   Loading,
   Ready,
-  Failed
+  Failed,
 }
 
-const current = Status.Ready;
+const current = Status.Ready
 
 const label = match (current) {
-  Status.Loading => "Loading...",
-  Status.Ready => "Ready",
-  Status.Failed => "Failed",
-  _ => "Unknown"
-};
+  Loading => "Loading...",
+  Ready => "Ready",
+  Failed => "Failed",
+  _ => "Unknown",
+}
 
-echo(label);
+echo(label)

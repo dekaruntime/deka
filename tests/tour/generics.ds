@@ -2,7 +2,7 @@ import { echo } from "io"
 
 // A type parameter lets one function work for many types.
 // `T` is chosen by the caller, not written into the function.
-fn first<T>(items: Array<T>, fallback: T): T {
+fn first<T>(items: Array<T>, fallback: T) T {
   if (items.length == 0) {
     return fallback
   }

@@ -1,6 +1,6 @@
 import { echo } from "io"
 struct CounterState {
-  count: number
+  count: number;
 }
 
 fn increment(s: CounterState) CounterState {

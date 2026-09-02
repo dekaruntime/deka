@@ -2,8 +2,10 @@ import { echo } from "io"
 import { jsxs } from "ui/jsx"
 import { renderToString } from "ui/server"
 interface CardProps {
-  title: string
+  title: string;
 }
-fn Card(props: CardProps) Component { return jsxs("div", { className: "card", children: props.title }) }
-const html = renderToString(jsxs(Card, { title: "Hello" }))
+fn Card(props: CardProps) Component {
+  return jsxs("div", {className: "card", children: props.title})
+}
+const html = renderToString(jsxs(Card, {title: "Hello"}))
 echo(html.html)

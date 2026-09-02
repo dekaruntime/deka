@@ -3,15 +3,15 @@ import { echo } from "io"
 // Enums take type parameters too. `Box<T>` is a container whose
 // contents are chosen at the use site.
 enum Box<T> {
-  Empty
-  Full(T)
+  Empty,
+  Full(T),
 }
 
 // Write the argument where you use the type: Box<number>, Box<string>.
-fn size(b: Box<number>): number {
+fn size(b: Box<number>) number {
   return match (b) {
     Full(value) => value,
-    Empty => 0
+    Empty => 0,
   }
 }
 
@@ -20,14 +20,14 @@ echo(string(size(Box.Full(5))))
 echo(string(size(Box.Empty)))
 
 enum Either<A, B> {
-  Left(A)
-  Right(B)
+  Left(A),
+  Right(B),
 }
 
-fn describe(e: Either<number, string>): string {
+fn describe(e: Either<number, string>) string {
   return match (e) {
     Left(n) => string(n),
-    Right(s) => s
+    Right(s) => s,
   }
 }
 
