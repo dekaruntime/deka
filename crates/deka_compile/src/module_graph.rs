@@ -769,7 +769,7 @@ mod tests {
         let mut files = HashMap::new();
         files.insert(
             math.clone(),
-            "export fn add(a: number, b: number): number { return a + b; }".to_string(),
+            "export fn add(a: number, b: number) number { return a + b; }".to_string(),
         );
         files.insert(
             main.clone(),
@@ -823,7 +823,7 @@ mod tests {
         let mut files = HashMap::new();
         files.insert(
             math.clone(),
-            "export fn add(a: number, b: number): number { return a + b; }".to_string(),
+            "export fn add(a: number, b: number) number { return a + b; }".to_string(),
         );
         files.insert(
             main.clone(),
