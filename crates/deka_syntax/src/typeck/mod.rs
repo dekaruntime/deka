@@ -1250,7 +1250,7 @@ mod tests {
     #[test]
     fn generic_function_indexing_preserves_element_type() {
         let errors = typeck(
-            "fn first<T>(values: Array<T>): T { return values[0]; }\
+            "fn first<T>(values: Array<T>) T { return values[0]; }\
              const item: string = first([\"ok\"]);\
              const wrong: number = first([\"bad\"]);",
         );
