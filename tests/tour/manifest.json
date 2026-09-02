@@ -317,6 +317,11 @@
     "expectCompile": true
   },
   {
+    "id": "unions",
+    "title": "unions",
+    "expectCompile": true
+  },
+  {
     "id": "multiple-awaits",
     "title": "multiple awaits",
     "expectCompile": true
