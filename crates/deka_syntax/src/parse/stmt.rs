@@ -224,9 +224,8 @@ impl<'a> Parser<'a> {
 
             let return_type = if self.at(TokenKind::LBrace) {
                 None
-            } else if self.eat(TokenKind::Colon) {
-                Some(self.parse_type()?)
             } else {
+                self.reject_return_type_colon();
                 Some(self.parse_type()?)
             };
 
@@ -246,7 +245,7 @@ impl<'a> Parser<'a> {
             });
         }
 
-        // Regular function: `fn add<T>(...): Ret { ... }`
+        // Regular function: `fn add<T>(...) Ret { ... }`
         let name = self.expect_identifier()?;
         let type_params = if self.at(TokenKind::Lt) {
             self.parse_type_params()?
@@ -260,9 +259,8 @@ impl<'a> Parser<'a> {
 
         let return_type = if self.at(TokenKind::LBrace) {
             None
-        } else if self.eat(TokenKind::Colon) {
-            Some(self.parse_type()?)
         } else {
+            self.reject_return_type_colon();
             Some(self.parse_type()?)
         };
 
