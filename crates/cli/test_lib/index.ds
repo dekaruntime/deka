@@ -30,7 +30,7 @@ export fn describe(name: string, body: fn() void) {
 }
 
 export fn it(name: string, body: fn() void) {
-  tests.push({ name: name, fullName: fullName(name), suite: currentSuite(), body: body, beforeEach: snapshot(beforeEachHooks), afterEach: snapshot(afterEachHooks), beforeAll: snapshot(beforeAllHooks), afterAll: snapshot(afterAllHooks) })
+  tests.push({name: name, fullName: fullName(name), suite: currentSuite(), body: body, beforeEach: snapshot(beforeEachHooks), afterEach: snapshot(afterEachHooks), beforeAll: snapshot(beforeAllHooks), afterAll: snapshot(afterAllHooks)})
 }
 
 export fn test(name: string, body: fn() void) {

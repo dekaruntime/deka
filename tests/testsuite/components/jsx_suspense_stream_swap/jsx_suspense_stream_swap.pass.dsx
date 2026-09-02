@@ -2,7 +2,7 @@ import { echo } from "io"
 import { Suspense } from "ui/suspense"
 
 interface RenderResult {
-  html: string
+  html: string;
 }
 
 async fn Slow() Promise<Component> {
@@ -15,7 +15,9 @@ async fn collect(node: Component) Promise<string> {
   // arm with string arms and only typechecked because every arm was `<infer>`
   // (deka#469).
   const boxed = unsafe<Promise<string>> { deka.ui.renderToStreamHtml(node) }
-  let prom = unwrap(boxed) or { return "" }
+  let prom = unwrap(boxed) or {
+    return ""
+  }
   return await prom
 }
 

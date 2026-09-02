@@ -2,8 +2,8 @@ import { echo } from "io"
 alias OnClick = fn() void
 
 struct ButtonProps {
-  label: string
-  onClick: OnClick
+  label: string;
+  onClick: OnClick;
 }
 
 fn Button(props: ButtonProps) Component {
@@ -14,4 +14,4 @@ fn handleClick() void {
   echo("clicked")
 }
 
-<Button label="Click me" onClick={handleClick} />
+<Button label={"Click me"} onClick={handleClick} />

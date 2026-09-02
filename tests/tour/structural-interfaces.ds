@@ -1,11 +1,11 @@
 import { echo } from "io"
 interface Named {
-  name: string
-  fn displayName() string
+  name: string;
+  fn displayName() string;
 }
 
 struct Person {
-  name: string
+  name: string;
 }
 
 fn (p Person) displayName() string {

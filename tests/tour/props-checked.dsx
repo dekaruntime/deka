@@ -1,10 +1,10 @@
 interface CardProps {
-  title: string
-  subtitle?: string
+  title: string;
+  subtitle?: string;
 }
 
 interface LayoutProps {
-  children: Component
+  children: Component;
 }
 
 // Props are checked at the call site, not only where they are read. A missing
@@ -13,12 +13,12 @@ interface LayoutProps {
 fn Card(props: CardProps) Component {
   const sub = match (props.subtitle) {
     Some(s) => <p>{s}</p>,
-    None => <></>
+    None => <></>,
   }
   return <article>
-    <h2>{props.title}</h2>
-    {sub}
-  </article>
+<h2>{props.title}</h2>
+{sub}
+</article>
 }
 
 // `children` is filled by nesting rather than by an attribute.
@@ -26,10 +26,10 @@ fn Layout(props: LayoutProps) Component {
   return <main>{props.children}</main>
 }
 
-const bare = <Card title="Hello" />                      // `subtitle?` may be omitted
-const full = <Card title="Hello" subtitle="DekaScript" />
-const page = <Layout><Card title="Hello" /></Layout>     // fills `children`
-
+const bare = <Card title={"Hello"} />
+// `subtitle?` may be omitted
+const full = <Card title={"Hello"} subtitle={"DekaScript"} />
+const page = <Layout><Card title={"Hello"} /></Layout>// fills `children`
 // Each of these is a compile error:
 //
 //   <Card />                          missing required prop `title`

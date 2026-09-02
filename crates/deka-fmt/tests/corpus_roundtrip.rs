@@ -22,10 +22,14 @@ use std::path::{Path, PathBuf};
 /// Collect every corpus source file: testsuite pass fixtures and tour
 /// lessons. Fail fixtures are excluded — they intentionally do not parse,
 /// and the formatter contract for unparseable input is "returned unchanged".
+/// Both .ds and .dsx pass fixtures are collected: matching "pass.ds" alone
+/// misses every "pass.dsx" (deka#493 — the same .ds-only assumption that made
+/// `cli fmt <dir>` silently skip .dsx).
 fn corpus_files() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests");
     let mut files = Vec::new();
     collect(&root.join("testsuite"), "pass.ds", &mut files);
+    collect(&root.join("testsuite"), "pass.dsx", &mut files);
     collect(&root.join("tour"), "ds", &mut files);
     collect(&root.join("tour"), "dsx", &mut files);
     files.sort();

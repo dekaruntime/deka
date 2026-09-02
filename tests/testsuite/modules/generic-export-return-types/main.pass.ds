@@ -1,12 +1,12 @@
 import { constant, first } from "./lib.ds"
 
-const fixed: string = match (constant({ sub: "1" })) {
+const fixed: string = match (constant({sub: "1"})) {
   Ok(value) => value,
-  Err(error) => error
+  Err(error) => error,
 }
 const item: string = match (first(["x"])) {
   Some(value) => value,
-  None => ""
+  None => "",
 }
 
 unsafe<void> { console.log(fixed + item) }

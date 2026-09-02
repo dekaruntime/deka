@@ -19,5 +19,5 @@ let cwd = unsafe<string> { process.cwd() }
 // `"env": ["HOME"]` under `security.allow` and the same line returns `Ok`.
 echo(match (cwd) {
   Ok(path) => "reached the host",
-  Err(_) => "denied: no env capability"
+  Err(_) => "denied: no env capability",
 })

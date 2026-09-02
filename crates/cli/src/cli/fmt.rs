@@ -139,7 +139,7 @@ fn format_js_file(path: &std::path::Path, check: bool) -> Result<(), String> {
 
 fn format_js_directory(root: &std::path::Path, check: bool) -> Result<(), String> {
     let mut changed = false;
-    for entry in walkdir(root, "js")? {
+    for entry in walkdir(root, &["js"])? {
         let source = fs::read_to_string(&entry)
             .map_err(|err| format!("failed to read {}: {err}", entry.display()))?;
         let formatted = deka_fmt::format_js(&source)?;
@@ -213,8 +213,10 @@ fn format_ds_file(path: &std::path::Path, check: bool) -> Result<(), String> {
 
 fn format_ds_directory(root: &std::path::Path, check: bool) -> Result<(), String> {
     let mut changed = false;
-    for entry in walkdir(root, "ds")? {
-        let source = fs::read_to_string(&entry)
+    let mut reformatted = 0usize;
+    let entries = walkdir(root, &["ds", "dsx"])?;
+    for entry in &entries {
+        let source = fs::read_to_string(entry)
             .map_err(|err| format!("failed to read {}: {err}", entry.display()))?;
         let formatted = deka_fmt::format_ds(&source)?;
         if formatted != source {
@@ -223,18 +225,28 @@ fn format_ds_directory(root: &std::path::Path, check: bool) -> Result<(), String
                 stdio::error("fmt", &format!("{} would be reformatted", entry.display()));
                 continue;
             }
-            fs::write(&entry, formatted)
+            fs::write(entry, formatted)
                 .map_err(|err| format!("failed to write {}: {err}", entry.display()))?;
+            reformatted += 1;
             stdio::success(&format!("formatted {}", entry.display()));
         }
     }
+    // Report what was actually visited: the formatter is mandatory for the
+    // corpus, so a directory run must state how many files it covered rather
+    // than silently succeeding. Both .ds and .dsx are DekaScript source.
+    stdio::success(&format!(
+        "visited {} DekaScript file(s) under {} ({} reformatted)",
+        entries.len(),
+        root.display(),
+        reformatted
+    ));
     if check && changed {
         std::process::exit(1);
     }
     Ok(())
 }
 
-fn walkdir(root: &std::path::Path, ext: &str) -> Result<Vec<PathBuf>, String> {
+fn walkdir(root: &std::path::Path, exts: &[&str]) -> Result<Vec<PathBuf>, String> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -245,7 +257,11 @@ fn walkdir(root: &std::path::Path, ext: &str) -> Result<Vec<PathBuf>, String> {
             let path = entry.path();
             if path.is_dir() {
                 stack.push(path);
-            } else if path.extension().and_then(|e| e.to_str()) == Some(ext) {
+            } else if path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| exts.contains(&e))
+            {
                 out.push(path);
             }
         }

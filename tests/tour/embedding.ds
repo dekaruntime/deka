@@ -6,13 +6,13 @@ fn (p Person) greet() string {
 }
 
 struct Employee {
-  Person
-  name: string
+  Person;
+  name: string;
 }
 
 fn (e Employee) greet() string {
   return "Hi, " + e.name
 }
 
-const e = Employee { name: "DekaScript" };
-echo(e.greet());
+const e = Employee { name: "DekaScript" }
+echo(e.greet())

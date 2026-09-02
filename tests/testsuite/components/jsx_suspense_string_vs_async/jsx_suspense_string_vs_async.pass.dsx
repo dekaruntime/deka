@@ -2,7 +2,7 @@ import { echo } from "io"
 import { Suspense } from "ui/suspense"
 
 interface RenderResult {
-  html: string
+  html: string;
 }
 
 async fn Slow() Promise<Component> {
@@ -19,7 +19,9 @@ async fn htmlAsync(node: Component) Promise<string> {
   // path and leaving on failure -- a match arm cannot hold statements, because
   // `{` after `=>` parses as an object literal (deka#445, deka#469).
   const boxed = unsafe<Promise<RenderResult>> { deka.ui.renderToStringAsync(node) }
-  let prom = unwrap(boxed) or { return "render failed" }
+  let prom = unwrap(boxed) or {
+    return "render failed"
+  }
   const resolved = await prom
   return resolved.html
 }
@@ -42,5 +44,3 @@ match (bare) {
   Err(e) => echo(e.message),
   _ => echo("bare-nomatch"),
 }
-
-
