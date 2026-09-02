@@ -157,6 +157,11 @@
     "expectCompile": true
   },
   {
+    "id": "method-chaining",
+    "title": "method chaining",
+    "expectCompile": true
+  },
+  {
     "id": "mutable-methods",
     "title": "mutable methods",
     "expectCompile": true
