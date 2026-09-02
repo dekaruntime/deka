@@ -82,6 +82,17 @@ function expectedStdoutForHost(test: HatsTest, host: HatsHost): string | undefin
   return test.expectedStdout
 }
 
+function stageMatchesExpectation(expected: string, actual: string): boolean {
+  if (expected === actual) return true
+  // Same equivalence as the native gate (tests/testsuite/run.mjs): a compile
+  // failure does not distinguish typecheck from parse, so a manifest asking
+  // for either accepts either.
+  return (
+    (expected === 'parse' || expected === 'typecheck') &&
+    (actual === 'parse' || actual === 'typecheck')
+  )
+}
+
 function runtimeMatchesExpectation(
   test: HatsTest,
   result: RuntimeResult,
@@ -90,7 +101,7 @@ function runtimeMatchesExpectation(
 ): boolean {
   if (result.skipped) return false
   if ((result.ok ? 'pass' : 'fail') !== test.status) return false
-  if (result.stage !== test.stage) return false
+  if (!stageMatchesExpectation(test.stage, result.stage)) return false
 
   const expectedStdout = expectedStdoutForHost(test, host)
   if (expectedStdout !== undefined) {

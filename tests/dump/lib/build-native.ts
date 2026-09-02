@@ -165,17 +165,30 @@ function parseNativeDiagnostics(stderr: string): NativeRunResult['diagnostics'] 
     }
   }
 
-  // Fallback: if no rich diagnostic was parsed, treat the first non-empty,
-  // non-bracketed line as a single-line diagnostic. This covers simple parser
-  // errors like "Missing semicolon" or "DekaScript parameters require a type
-  // annotation" that the native CLI emits without position annotations.
+  // Fallback: if no rich diagnostic was parsed, the CLI emitted the compact
+  // form (`LINE:COL: /path/file.ds: message`). Collect EVERY such line — a
+  // single failure can carry several diagnostics, and a fixture's expected
+  // diagnostic may be any of them (e.g. generic-export-return-types-negative
+  // expects the type-mismatch line, which is the second one). Previously only
+  // the first line became a diagnostic, so later lines were invisible to
+  // expectedDiagnosticContains.
   if (diagnostics.length === 0) {
-    const firstLine = lines.find((l) => {
-      const trimmed = l.trim()
-      return trimmed.length > 0 && !trimmed.startsWith('[') && !trimmed.startsWith('Validation') && !trimmed.startsWith('❌')
-    })
-    if (firstLine) {
-      diagnostics.push({ severity: 'error', message: firstLine.trim() })
+    let sawCompact = false
+    for (const l of lines) {
+      const compactMatch = l.match(/^\s*\d+:\d+:\s+\S+:\s+(.+)$/)
+      if (compactMatch) {
+        sawCompact = true
+        diagnostics.push({ severity: 'error', message: compactMatch[1].trim() })
+      }
+    }
+    if (!sawCompact) {
+      const firstLine = lines.find((l) => {
+        const trimmed = l.trim()
+        return trimmed.length > 0 && !trimmed.startsWith('[') && !trimmed.startsWith('Validation') && !trimmed.startsWith('❌')
+      })
+      if (firstLine) {
+        diagnostics.push({ severity: 'error', message: firstLine.trim() })
+      }
     }
   }
 
