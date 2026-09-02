@@ -2495,7 +2495,7 @@ impl<'a> Checker<'a> {
     /// when user code shadows the builtin (a declared receiver method,
     /// interface member, or primitive extension named `getType`) so the
     /// ordinary method paths handle the call. Otherwise validates arity,
-    /// records the rewrite for the emitter (`deka.typeOf(x)`), and returns
+    /// records the rewrite for the emitter (`__deka_type_of(x)`), and returns
     /// the `Type` descriptor type.
     fn check_builtin_get_type(
         &mut self,

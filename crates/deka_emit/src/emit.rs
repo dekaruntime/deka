@@ -92,7 +92,7 @@ pub fn emit_js_with_options<'a>(
     // free-function calls (`slugify$string(s)`), lowered by the typechecker
     // (deka#527).
     method_calls: &HashMap<*const Expr<'a>, deka_syntax::MethodTarget<'a>>,
-    // Builtin `.getType()` call sites to rewrite to `deka.typeOf(x)`,
+    // Builtin `.getType()` call sites to rewrite to `__deka_type_of(x)`,
     // lowered by the typechecker (rfd#41, deka#529).
     type_of_calls: &HashSet<*const Expr<'a>>,
     jsx_optional_props: &HashMap<
@@ -192,7 +192,7 @@ struct Emitter<'a> {
     /// free-function calls (`slugify$string(s)`) (deka#527).
     method_calls: HashMap<*const Expr<'a>, deka_syntax::MethodTarget<'a>>,
     /// Builtin `.getType()` call sites lowered by the typechecker to
-    /// `deka.typeOf(x)` (rfd#41, deka#529).
+    /// `__deka_type_of(x)` (rfd#41, deka#529).
     type_of_calls: HashSet<*const Expr<'a>>,
     file_stem: String,
     fn_scope: String,

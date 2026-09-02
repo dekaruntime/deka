@@ -38,7 +38,7 @@ pub struct TypeckResult<'a> {
     /// free-function call that should replace it during emission (deka#527).
     pub method_calls: HashMap<*const ast::Expr<'a>, MethodTarget<'a>>,
     /// Call sites of the builtin `.getType()` method, rewritten to
-    /// `deka.typeOf(x)` during emission (rfd#41, deka#529).
+    /// `__deka_type_of(x)` during emission (rfd#41, deka#529).
     pub type_of_calls: HashSet<*const ast::Expr<'a>>,
     /// Map from primitive conversion call expression pointer to how it should
     /// be lowered (`number(x)`, `string(x)`, `bool(x)`).
@@ -545,7 +545,7 @@ struct Checker<'a> {
     /// Lowering collections like this one must also be cleared in
     /// `reset_lowering_state` — the inference pass populates them too.
     method_calls: HashMap<*const ast::Expr<'a>, MethodTarget<'a>>,
-    /// Builtin `.getType()` call sites to rewrite to `deka.typeOf(x)`,
+    /// Builtin `.getType()` call sites to rewrite to `__deka_type_of(x)`,
     /// keyed by call expression pointer.
     /// Lowering collections like this one must also be cleared in
     /// `reset_lowering_state` — the inference pass populates them too.
@@ -1384,7 +1384,7 @@ mod tests {
     #[test]
     fn gettype_user_extension_shadows_builtin() {
         // A user extension named `getType` keeps the deka#527 rewrite; the
-        // builtin `deka.typeOf` rewrite is not recorded.
+        // builtin `__deka_type_of` rewrite is not recorded.
         let arena = Bump::new();
         let source = "fn (s string) getType() string { return s; } const u: string = \"x\".getType();";
         let result = parse(source, &arena);
