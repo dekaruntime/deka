@@ -96,7 +96,7 @@ impl<'a> Type<'a> {
 }
 
 /// How a primitive conversion call (`parse_number(x)`, `unbox_number(x)`,
-/// `to_number(x)`, `string(x)`, `bool(x)`) should be lowered after
+/// `to_number(x)`, `string(x)`) should be lowered after
 /// typechecking.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UnwrapKind {
@@ -108,8 +108,6 @@ pub enum UnwrapKind {
     WidenToString,
     /// Widen the argument to `to_number` (`Number(x)` in JS).
     WidenToNumber,
-    /// Widen the argument to `boolean` (`Boolean(x)` in JS).
-    WidenToBool,
     /// Convert a string argument to `Option<number>` for `parse_number`
     /// (`Number(x)` wrapped).
     StringToOptionNumber,

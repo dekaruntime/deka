@@ -22,7 +22,6 @@ fn is_panic_callee(callee: &ast::Expr<'_>) -> bool {
 #[derive(Clone, Copy)]
 enum PrimitiveConversionName {
     String,
-    Bool,
     LegacyNumber,
     ParseNumber,
     UnboxNumber,
@@ -32,7 +31,6 @@ enum PrimitiveConversionName {
 fn primitive_conversion_name(name: &str) -> Option<PrimitiveConversionName> {
     match name {
         "string" => Some(PrimitiveConversionName::String),
-        "bool" => Some(PrimitiveConversionName::Bool),
         "number" => Some(PrimitiveConversionName::LegacyNumber),
         "parse_number" => Some(PrimitiveConversionName::ParseNumber),
         "unbox_number" => Some(PrimitiveConversionName::UnboxNumber),
@@ -2604,7 +2602,7 @@ impl<'a> Checker<'a> {
             call_expr as *const ast::Expr<'a>,
             ast::MethodTarget {
                 mangled,
-                embed_path,
+                embed_path: Vec::new(),
             },
         );
 
@@ -2797,7 +2795,7 @@ impl<'a> Checker<'a> {
             }
         }
 
-        // Primitive conversion: `string(x)`, `bool(x)`, `parse_number(x)`,
+        // Primitive conversion: `string(x)`, `parse_number(x)`,
         // `unbox_number(x)`, `to_number(x)` — always public, no import
         // (#364). The old `number(x)` name remains a compatibility alias for
         // PR 1 while the corpus moves to the explicit APIs.
@@ -2830,20 +2828,6 @@ impl<'a> Checker<'a> {
                             // total but silently wrong. Ask for an annotation
                             // instead of trusting a value the checker cannot see
                             // (deka#370 review).
-                            Type::Infer => (None, ret),
-                            _ => (None, ret),
-                        }
-                    }
-                    PrimitiveConversionName::Bool => {
-                        let ret = Type::Named { name: "boolean" };
-                        use crate::ast::NewtypeRepr as Repr;
-                        match &arg_type {
-                            Type::Newtype {
-                                repr: Repr::Bool, ..
-                            } => (Some(super::types::UnwrapKind::Payload), ret),
-                            Type::Named { name: "boolean" } => {
-                                (Some(super::types::UnwrapKind::Identity), ret)
-                            }
                             Type::Infer => (None, ret),
                             _ => (None, ret),
                         }

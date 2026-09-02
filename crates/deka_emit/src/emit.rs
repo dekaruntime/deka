@@ -48,7 +48,7 @@ pub fn emit_js(program: &Program, _source: &str) -> Result<String, String> {
 /// literals and enum constructors defined in other modules can be emitted
 /// correctly in the current file. `unwrap_calls` maps primitive conversion
 /// call sites (`parse_number(x)`, `unbox_number(x)`, `to_number(x)`,
-/// `string(x)`, `bool(x)`) to their lowering kind.
+/// `string(x)`) to their lowering kind.
 pub fn emit_js_with_imports<'a>(
     program: &'a Program<'a>,
     _source: &str,
@@ -1623,11 +1623,6 @@ impl<'a> Emitter<'a> {
                             }
                             deka_syntax::typeck::UnwrapKind::WidenToNumber => {
                                 self.out.push_str("Number(");
-                                self.emit_expr(arg)?;
-                                self.out.push(')');
-                            }
-                            deka_syntax::typeck::UnwrapKind::WidenToBool => {
-                                self.out.push_str("Boolean(");
                                 self.emit_expr(arg)?;
                                 self.out.push(')');
                             }
