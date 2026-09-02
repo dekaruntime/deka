@@ -623,6 +623,22 @@ impl<'a> Checker<'a> {
         };
 
         match type_name {
+            // `JsError` is whatever JavaScript threw, surfaced through the
+            // emitter's try/catch. JS can throw anything -- `throw "boom"` has
+            // no `.message` -- so the emitter normalises a non-Error throw into
+            // an Error. These two fields are always present because of that
+            // guarantee; without it, declaring them would be a lie the type
+            // system could not catch (deka#460, deka#469).
+            "JsError" => match field {
+                "message" | "name" => string_ty,
+                _ => {
+                    self.error_span(
+                        span,
+                        format!("`JsError` has no field `{field}` (available: `message`, `name`)"),
+                    );
+                    Type::Error
+                }
+            },
             "string" => match field {
                 "length" => number_ty,
                 "toUpperCase" | "toLowerCase" | "trim" => fn0(string_ty.clone()),
