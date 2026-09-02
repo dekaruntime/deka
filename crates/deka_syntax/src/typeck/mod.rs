@@ -23,7 +23,7 @@ mod expr;
 mod stmt;
 mod types;
 
-pub use types::{NewtypeSide, OperatorRewrite, Type, UnwrapKind};
+pub use types::{NewtypeSide, OperatorRewrite, Type, UnionMemberTest, UnwrapKind};
 
 #[derive(Debug)]
 pub struct TypeError {
