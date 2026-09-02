@@ -1237,7 +1237,7 @@ mod tests {
     #[test]
     fn indexed_array_mutation_and_function_elements_are_typed() {
         let errors = typeck(
-            "fn apply(f: fn(number) number): number { return f(1); }\
+            "fn apply(f: fn(number) number) number { return f(1); }\
              let numbers = [1]; numbers[0] = \"bad\";\
              const funcs = [fn (x: number) number { return x }];\
              apply(funcs[0]);",
