@@ -54,12 +54,53 @@ pub fn parse<'a>(source: &'a str, arena: &'a Bump) -> ParseResult<'a> {
     }
 }
 
+/// True for tokens that are keywords (or keyword-like literals) in
+/// statement/expression position but may still serve as names after `.` or
+/// as object-literal keys. Keywords are contextual in name position:
+/// `{ type: "text" }` and `o.type` (HTML props) must parse even though
+/// `type` starts an alias declaration in statement position.
+fn kind_is_name_capable(kind: TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::Identifier
+            | TokenKind::True
+            | TokenKind::False
+            | TokenKind::None
+            | TokenKind::Const
+            | TokenKind::Let
+            | TokenKind::Mut
+            | TokenKind::Function
+            | TokenKind::Fn
+            | TokenKind::Struct
+            | TokenKind::Enum
+            | TokenKind::Interface
+            | TokenKind::Type
+            | TokenKind::Alias
+            | TokenKind::Import
+            | TokenKind::Export
+            | TokenKind::From
+            | TokenKind::As
+            | TokenKind::If
+            | TokenKind::Else
+            | TokenKind::For
+            | TokenKind::Of
+            | TokenKind::Return
+            | TokenKind::Match
+            | TokenKind::Unsafe
+            | TokenKind::Bridge
+            | TokenKind::Await
+            | TokenKind::Async
+            | TokenKind::Pub
+            | TokenKind::Break
+            | TokenKind::Continue
+    )
+}
+
 struct Parser<'a> {
     arena: &'a Bump,
     tokens: Vec<Token<'a>>,
     source: &'a str,
-    pos: usize,
-    prev: Token<'a>,
+    pos: usize,    prev: Token<'a>,
     errors: Vec<Diagnostic>,
 }
 
@@ -147,11 +188,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Accept `identifier` or the `none` keyword as a field/enum-case name.
-    /// This lets `Option.None` parse so canonicalization can resolve it.
+    /// Accept `identifier` or any keyword as a field/enum-case name. Keywords
+    /// are contextual in name position: after `.` the token can only be a
+    /// name, so `o.type` (HTML props) must parse. `none` is included via the
+    /// same rule so `Option.None` parses for canonicalization.
     fn expect_field_name(&mut self) -> Option<&'a str> {
         self.skip_newlines();
-        if self.at(TokenKind::Identifier) || self.at(TokenKind::None) {
+        if kind_is_name_capable(self.current_kind()) {
             let name = self.bump_str(self.current_text());
             self.advance();
             Some(name)
@@ -182,6 +225,7 @@ impl<'a> Parser<'a> {
             self.advance();
         }
     }
+
 
     /// Look past any immediately-following newlines and return the kind of
     /// the first non-newline token. Does not advance the parser.
@@ -217,6 +261,54 @@ impl<'a> Parser<'a> {
 mod tests {
     use super::*;
     use crate::ast::{BinOp, Expr, Pattern, Stmt, TemplatePart, Type, UnOp};
+
+    #[test]
+    fn parse_multiline_call_args() {
+        let arena = Bump::new();
+        let result = parse("echo(\n  \"hi\"\n)", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+    }
+
+    #[test]
+    fn parse_multiline_call_args_with_commas() {
+        let arena = Bump::new();
+        let result = parse("f(\n  a,\n  b,\n  c\n)", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+    }
+
+    #[test]
+    fn parse_multiline_index_access() {
+        let arena = Bump::new();
+        let result = parse("const x = arr[\n  0\n]", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+    }
+
+    #[test]
+    fn parse_keyword_as_object_key() {
+        let arena = Bump::new();
+        let result = parse("const o = { type: \"text\" }", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+    }
+
+    #[test]
+    fn parse_keyword_as_member_name() {
+        let arena = Bump::new();
+        let result = parse("const t = o.type", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+    }
+
+    #[test]
+    fn statement_keyword_without_colon_is_not_an_object_key() {
+        // `break` in a match arm body must keep erroring as a bad object key,
+        // not parse as a keyword key (deka#481 colon-lookahead rule).
+        let arena = Bump::new();
+        let result = parse("for (let i = 0; i < 3; i = i + 1) {\n  match (i) {\n    2 => { break },\n    _ => {}\n  }\n}", &arena);
+        assert!(
+            result.errors.iter().any(|e| e.message.contains("expected object key")),
+            "{:?}",
+            result.errors
+        );
+    }
 
     #[test]
     fn parse_const_number() {

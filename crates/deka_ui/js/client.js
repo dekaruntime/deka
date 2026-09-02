@@ -44,7 +44,10 @@ function decodeB64(value) {
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i) & 255;
   if (typeof TextDecoder === "function") {
     try {
-      return new TextDecoder("utf-8").decode(bytes);
+      const dec = new TextDecoder("utf-8");
+      // Sandboxed runtimes wrap throwing constructors in Result; unwrap.
+      const real = dec && dec.__case === "Ok" ? dec.value : dec;
+      return real.decode(bytes);
     } catch (_) {}
   }
   let out = "";

@@ -104,16 +104,23 @@ type HarnessRun = {
 }
 
 // Vendored stdlib shims served to the browser harness. Keep in sync with the
-// real packages; io's echo is the console.log shim by design. The ui/jsx
-// module is served straight from the deka_ui crate so the harness never
-// drifts from the real JSX runtime.
-const JSX_RUNTIME_SOURCE = fs.readFileSync(
-  path.join(DUMP_ROOT, '..', '..', 'crates', 'deka_ui', 'js', 'jsx.js'),
-  'utf8',
-)
+// real packages; io's echo is the console.log shim by design. The ui/*
+// modules are served straight from the deka_ui crate so the harness never
+// drifts from the real UI runtime. Relative imports inside them (`./jsx.js`)
+// are rewritten to the flat `.mjs` names the shim route serves.
+function uiModuleSource(file: string): string {
+  const source = fs.readFileSync(
+    path.join(DUMP_ROOT, '..', '..', 'crates', 'deka_ui', 'js', file),
+    'utf8',
+  )
+  return source.replace(/from\s+['"]\.\/(\w+)\.js['"]/g, 'from "./$1.mjs"')
+}
 const MODULE_SHIMS: Record<string, string> = {
   'io.mjs': 'export function echo(message) {\n  console.log(message)\n}\n',
-  'jsx.mjs': JSX_RUNTIME_SOURCE,
+  'jsx.mjs': uiModuleSource('jsx.js'),
+  'reactive.mjs': uiModuleSource('reactive.js'),
+  'suspense.mjs': uiModuleSource('suspense.js'),
+  'server.mjs': uiModuleSource('server.js'),
 }
 
 async function evaluateInFreshPage(jsCode: string): Promise<HarnessRun> {

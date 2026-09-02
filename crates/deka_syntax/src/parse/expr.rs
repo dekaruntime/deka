@@ -73,16 +73,22 @@ impl<'a> Parser<'a> {
 
             if self.at(TokenKind::LParen) {
                 self.advance();
+                // Newlines are insignificant inside call parens: a multi-line
+                // argument list must not terminate the expression (optional
+                // semicolons make the newline significant only outside).
+                self.skip_newlines();
                 let mut args = Vec::new();
                 if !self.at(TokenKind::RParen) {
                     loop {
                         args.push(self.parse_expression()?);
+                        self.skip_newlines();
                         if !self.eat(TokenKind::Comma) {
                             break;
                         }
                         self.skip_newlines();
                     }
                 }
+                self.skip_newlines();
                 self.expect(TokenKind::RParen)?;
                 let span = self.span_from(start, start_byte);
 
@@ -112,10 +118,13 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
-            // Index access: `arr[0]` or `obj["key"]`.
+            // Index access: `arr[0]` or `obj["key"]`. Newlines are
+            // insignificant inside the brackets, as in call parens.
             if self.at(TokenKind::LBracket) {
                 self.advance();
+                self.skip_newlines();
                 let index = self.parse_expression()?;
+                self.skip_newlines();
                 self.expect(TokenKind::RBracket)?;
                 let span = self.span_from(start, start_byte);
                 left = Expr::IndexAccess {
@@ -583,10 +592,21 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parse an object literal key: identifier or string.
+    /// Parse an object literal key: identifier, keyword (contextual in name
+    /// position, e.g. `{ type: "text" }`), or string. A keyword is only
+    /// treated as a key when a `:` follows, so statement-only keywords in a
+    /// block-like position (`match { 2 => { break } }`) still error instead
+    /// of being silently reinterpreted as an object key.
     fn expect_object_key(&mut self) -> Option<&'a str> {
         match self.current_kind() {
-            TokenKind::Identifier => {
+            kind if super::kind_is_name_capable(kind) => {
+                if kind != TokenKind::Identifier && self.tokens.get(self.pos + 1).map(|t| t.kind) != Some(TokenKind::Colon) {
+                    self.error(format!(
+                        "expected object key, found `{}`",
+                        token_name(self.current_kind())
+                    ));
+                    return None;
+                }
                 let key = self.bump_str(self.current_text());
                 self.advance();
                 Some(key)
