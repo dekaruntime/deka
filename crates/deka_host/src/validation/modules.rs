@@ -105,12 +105,31 @@ pub fn validate_wasm_imports(source: &str, file_path: &str) -> Vec<ValidationErr
     errors
 }
 
-pub fn validate_target_capabilities(source: &str, file_path: &str) -> Vec<ValidationError> {
-    let target = std::env::var("DEKA_TARGET")
+/// Reads the build target from the environment.
+///
+/// Split out so the validation below can be exercised without touching
+/// process-global state. `std::env::set_var` is process-wide and cargo runs
+/// tests as threads in one process, so tests that set `DEKA_TARGET` raced each
+/// other -- one clearing the variable while another was mid-validation
+/// (deka#536).
+fn target_from_env() -> String {
+    std::env::var("DEKA_TARGET")
         .ok()
         .or_else(|| std::env::var("DEKA_HOST_PROFILE").ok())
         .unwrap_or_else(|| "server".to_string())
-        .to_ascii_lowercase();
+        .to_ascii_lowercase()
+}
+
+pub fn validate_target_capabilities(source: &str, file_path: &str) -> Vec<ValidationError> {
+    validate_target_capabilities_for(&target_from_env(), source, file_path)
+}
+
+/// The validation itself, with the target passed in.
+pub fn validate_target_capabilities_for(
+    target: &str,
+    source: &str,
+    file_path: &str,
+) -> Vec<ValidationError> {
     if target != "adwa" {
         return Vec::new();
     }
@@ -1520,7 +1539,7 @@ fn wasm_error(
 mod tests {
     use super::{
         resolve_modules_root_with_env, validate_module_resolution, validate_package_integrity,
-        validate_target_capabilities, MODULES_DIR,
+        validate_target_capabilities, validate_target_capabilities_for, MODULES_DIR,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -1994,18 +2013,20 @@ import { now_ms } from '@deka/time'
         let _ = fs::remove_dir_all(root);
     }
 
+    // These pass the target in rather than setting `DEKA_TARGET`. The env is
+    // process-global and cargo runs tests as threads in one process, so the
+    // previous form raced its own neighbour: whichever ran second cleared or
+    // set the variable while the other was mid-validation. Two CI runs of one
+    // commit failed with opposite assertions -- once "expected one capability
+    // error: []", once with that same error reported as unexpected (deka#536).
+    //
+    // The old comment claimed "test process controls env mutations in this
+    // isolated test". The test was never isolated.
+
     #[test]
     fn blocks_db_imports_for_adwa_target() {
-        // SAFETY: test process controls env mutations in this isolated test.
-        unsafe {
-            std::env::set_var("DEKA_TARGET", "adwa");
-        }
         let source = "import { query } from 'db/postgres'\n";
-        let errors = validate_target_capabilities(source, "main.phpx");
-        // SAFETY: test process controls env mutations in this isolated test.
-        unsafe {
-            std::env::remove_var("DEKA_TARGET");
-        }
+        let errors = validate_target_capabilities_for("adwa", source, "main.phpx");
         assert_eq!(
             errors.len(),
             1,
@@ -2021,17 +2042,8 @@ import { now_ms } from '@deka/time'
 
     #[test]
     fn allows_db_imports_for_server_target() {
-        // SAFETY: test process controls env mutations in this isolated test.
-        unsafe {
-            std::env::remove_var("DEKA_TARGET");
-            std::env::set_var("DEKA_HOST_PROFILE", "server");
-        }
         let source = "import { query } from 'db/postgres'\n";
-        let errors = validate_target_capabilities(source, "main.phpx");
-        // SAFETY: test process controls env mutations in this isolated test.
-        unsafe {
-            std::env::remove_var("DEKA_HOST_PROFILE");
-        }
+        let errors = validate_target_capabilities_for("server", source, "main.phpx");
         assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
     }
 }
