@@ -347,4 +347,30 @@ mod tests {
         assert!(out.contains("Legs.impl(\"move\""), "got: {}", out);
         assert!(out.contains("r.move()"), "got: {}", out);
     }
+
+    #[test]
+    fn emit_struct_embed_promoted_field_literal() {
+        // deka#496: promoted fields in a struct literal are routed into the
+        // embedded struct's constructor.
+        let out = parse_and_emit(
+            "struct Person { name: string } struct Employee { Person } const e = Employee { name: \"Bob\" };",
+        );
+        assert!(
+            out.contains("Employee({ Person: Person({ name: \"Bob\" }) })"),
+            "got: {}",
+            out
+        );
+    }
+
+    #[test]
+    fn emit_struct_embed_nested_promoted_field_literal() {
+        let out = parse_and_emit(
+            "struct Legs { count: number } struct Robot { Legs } struct Cyborg { Robot } const c = Cyborg { count: 4 };",
+        );
+        assert!(
+            out.contains("Cyborg({ Robot: Robot({ Legs: Legs({ count: 4 }) }) })"),
+            "got: {}",
+            out
+        );
+    }
 }

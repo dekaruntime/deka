@@ -1809,6 +1809,9 @@ impl<'a> Emitter<'a> {
         self.uses_struct = true;
         let mut seen = HashSet::new();
         let mut entries = Vec::new();
+        // Fields promoted from embedded structs, recorded as (embed path from
+        // this struct to the owner, field name, emitted value).
+        let mut promoted: Vec<(Vec<String>, String, String)> = Vec::new();
 
         for field in fields.iter() {
             seen.insert(field.name.to_string());
@@ -1816,19 +1819,47 @@ impl<'a> Emitter<'a> {
             std::mem::swap(&mut self.out, &mut value_buf);
             self.emit_expr(&field.value)?;
             std::mem::swap(&mut self.out, &mut value_buf);
-            let key = if is_js_identifier(field.name) {
-                field.name.to_string()
+            if meta.fields.contains(field.name) || meta.embeds.iter().any(|e| e.as_str() == field.name) {
+                let key = if is_js_identifier(field.name) {
+                    field.name.to_string()
+                } else {
+                    json_string(field.name)
+                };
+                entries.push(format!("{}: {}", key, value_buf));
             } else {
-                json_string(field.name)
-            };
-            entries.push(format!("{}: {}", key, value_buf));
+                // Promoted field: route it into the embedded struct that owns
+                // it, e.g. `Employee { name: ... }` becomes
+                // `Employee({ Person: Person({ name: ... }) })`.
+                let mut path = Vec::new();
+                if !self.find_promoted_field_path(name, field.name, &mut path) {
+                    return Err(format!(
+                        "struct `{}` has no field or embed `{}` in emitter",
+                        name, field.name
+                    ));
+                }
+                promoted.push((path, field.name.to_string(), value_buf));
+            }
         }
 
-        // Auto-fill empty embedded structs.
+        // Auto-fill embedded structs: assemble them from promoted fields when
+        // supplied piecemeal, or default-construct them when entirely empty.
         for embed in &meta.embeds {
-            if !seen.contains(embed) && meta.empty_embeds.contains(embed) {
-                entries.push(format!("{}: {}({{}})", embed, embed));
+            if seen.contains(embed) {
+                continue;
             }
+            let group: Vec<(Vec<String>, String, String)> = promoted
+                .iter()
+                .filter(|(path, _, _)| path.first() == Some(embed))
+                .map(|(path, name, value)| (path[1..].to_vec(), name.clone(), value.clone()))
+                .collect();
+            if group.is_empty() {
+                if meta.empty_embeds.contains(embed) {
+                    entries.push(format!("{}: {}({{}})", embed, embed));
+                }
+                continue;
+            }
+            let body = self.emit_promoted_embed_body(embed, &group)?;
+            entries.push(format!("{}: {}({{ {} }})", embed, embed, body));
         }
 
         // Auto-fill omitted optional fields.
@@ -1850,6 +1881,92 @@ impl<'a> Emitter<'a> {
         self.out.push_str(&entries.join(", "));
         self.out.push_str(" })");
         Ok(())
+    }
+
+    /// Find the chain of embedded structs leading from `struct_name` to the
+    /// struct that declares `field`. Depth-first, mirroring the typechecker's
+    /// promoted-field resolution.
+    fn find_promoted_field_path(
+        &self,
+        struct_name: &str,
+        field: &str,
+        path: &mut Vec<String>,
+    ) -> bool {
+        let meta = match self.structs.get(struct_name) {
+            Some(m) => m,
+            None => return false,
+        };
+        for embed in &meta.embeds {
+            path.push(embed.clone());
+            let declares = self
+                .structs
+                .get(embed)
+                .map(|m| m.fields.contains(field))
+                .unwrap_or(false);
+            if declares || self.find_promoted_field_path(embed, field, path) {
+                return true;
+            }
+            path.pop();
+        }
+        false
+    }
+
+    /// Emit the object-literal body for an embedded struct assembled from
+    /// promoted fields. Each entry carries the remaining embed path below
+    /// this struct, the field name, and the already-emitted value.
+    fn emit_promoted_embed_body(
+        &mut self,
+        struct_name: &str,
+        fields: &[(Vec<String>, String, String)],
+    ) -> Result<String, String> {
+        let meta = self
+            .structs
+            .get(struct_name)
+            .cloned()
+            .ok_or_else(|| format!("unknown struct `{}` in emitter", struct_name))?;
+        let mut entries = Vec::new();
+        let mut supplied = HashSet::new();
+        for (path, name, value) in fields {
+            if path.is_empty() {
+                supplied.insert(name.clone());
+                let key = if is_js_identifier(name) {
+                    name.clone()
+                } else {
+                    json_string(name)
+                };
+                entries.push(format!("{}: {}", key, value));
+            }
+        }
+        // Recurse into sub-embeds that own any of the remaining fields.
+        for embed in &meta.embeds {
+            let group: Vec<(Vec<String>, String, String)> = fields
+                .iter()
+                .filter(|(path, _, _)| path.first() == Some(embed))
+                .map(|(path, name, value)| (path[1..].to_vec(), name.clone(), value.clone()))
+                .collect();
+            if group.is_empty() {
+                if meta.empty_embeds.contains(embed) {
+                    entries.push(format!("{}: {}({{}})", embed, embed));
+                }
+                continue;
+            }
+            let body = self.emit_promoted_embed_body(embed, &group)?;
+            entries.push(format!("{}: {}({{ {} }})", embed, embed, body));
+        }
+        // Auto-fill omitted optional fields, mirroring emit_struct_literal.
+        for (opt, default) in &meta.optional {
+            if !supplied.contains(opt) {
+                let value = match default {
+                    Some(expr) => expr.clone(),
+                    None => {
+                        self.uses_prelude_enums = true;
+                        "None".to_string()
+                    }
+                };
+                entries.push(format!("{}: {}", opt, value));
+            }
+        }
+        Ok(entries.join(", "))
     }
 
     fn emit_unsafe(&mut self, source: &str) -> Result<(), String> {
