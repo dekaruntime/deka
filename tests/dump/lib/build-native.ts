@@ -5,8 +5,6 @@ import os from 'os'
 
 const RELEASES_BASE = 'https://releases.deka.gg'
 
-const DEFAULT_DEKA_LOCK = '{\n  "lockfileVersion": 1,\n  "packages": {}\n}\n'
-
 const DEFAULT_DEKA_JSON = {
   name: 'conformance-fixture',
   security: {
@@ -370,7 +368,7 @@ export async function runNativeCli(
   source: string,
   entryPath?: string,
   files?: Record<string, string>,
-  options?: { dekaJson?: Record<string, unknown>; packages?: string[] }
+  options?: { dekaJson?: Record<string, unknown>; packages?: string[]; dir?: string }
 ): Promise<NativeRunResult> {
   const tmpDir = createPrivateTempDir()
   const packages = packagesFor(source, files, options?.packages)
@@ -378,10 +376,23 @@ export async function runNativeCli(
   try {
     const { isProject } = writeProjectFiles(tmpDir, entryPath ?? 'test.ds', source, files)
 
-    fs.writeFileSync(path.join(tmpDir, 'deka.lock'), DEFAULT_DEKA_LOCK)
+    const fixtureDir = options?.dir
+    const fixtureLockPath = fixtureDir ? path.join(fixtureDir, 'deka.lock') : null
+    const fixtureLockExists = fixtureLockPath ? fs.existsSync(fixtureLockPath) : false
+    if (fixtureLockExists && fixtureLockPath) {
+      fs.copyFileSync(fixtureLockPath, path.join(tmpDir, 'deka.lock'))
+    }
     const dekaJson =
       options?.dekaJson ?? (packages.length > 0 ? PACKAGE_DEKA_JSON : DEFAULT_DEKA_JSON)
     fs.writeFileSync(path.join(tmpDir, 'deka.json'), JSON.stringify(dekaJson, null, 2) + '\n')
+
+    const tmpLockPath = path.join(tmpDir, 'deka.lock')
+    if (!fixtureLockExists && !fs.existsSync(tmpLockPath)) {
+      fs.writeFileSync(
+        tmpLockPath,
+        '{\n  "lockfileVersion": 1,\n  "packages": {}\n}\n'
+      )
+    }
 
     if (packages.length > 0) {
       const installed = installPackages(cliPath, tmpDir, packages)
@@ -397,6 +408,10 @@ export async function runNativeCli(
             : [],
         }
       }
+    }
+
+    if (!fixtureLockExists && fixtureLockPath && fs.existsSync(path.join(tmpDir, 'deka.lock'))) {
+      fs.copyFileSync(path.join(tmpDir, 'deka.lock'), fixtureLockPath)
     }
 
     const entryRel = isProject

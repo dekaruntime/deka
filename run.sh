@@ -28,6 +28,7 @@ LIST=0
 SKIP_BUILD=0
 JOBS=""
 UPDATE_KNOWN_FAIL=0
+LOCKED=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -49,6 +50,7 @@ while [[ $# -gt 0 ]]; do
       JOBS="${1#*=}"
       shift
       ;;
+    --locked)               LOCKED=1; shift ;;
     --list|-l)              LIST=1; shift ;;
     --skip-build)           SKIP_BUILD=1; shift ;;
     --update-known-fail)    UPDATE_KNOWN_FAIL=1; shift ;;
@@ -149,6 +151,10 @@ if [[ "$LIST" -eq 1 ]]; then
 fi
 if [[ -n "$JOBS" ]]; then
   suite_cmd+=(--jobs "$JOBS")
+fi
+if [[ "$LOCKED" -eq 1 ]]; then
+  suite_cmd+=(--locked)
+  adhoc_cmd+=(--locked)
 fi
 if [[ "$UPDATE_KNOWN_FAIL" -eq 1 ]]; then
   suite_cmd+=(--update-known-fail)

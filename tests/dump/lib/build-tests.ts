@@ -209,12 +209,13 @@ async function runBrowserTest(
 async function runNativeTest(
   cliPath: string,
   source: string,
+  dir: string,
   files?: Record<string, string>,
   entryPath?: string,
   dekaJson?: Record<string, unknown>,
   packages?: string[]
 ): Promise<RuntimeResult> {
-  const nativeResult = await runNativeCli(cliPath, source, entryPath, files, { dekaJson, packages })
+  const nativeResult = await runNativeCli(cliPath, source, entryPath, files, { dekaJson, packages, dir })
   const stage: HatsTestStage = nativeResult.ok
     ? 'run'
     : nativeResult.transpileFailed
@@ -303,6 +304,7 @@ async function runAllTestsOnce(): Promise<HatsBuildResults> {
             ? await runNativeTest(
                 nativeCliPath,
                 test.source,
+                test.dir,
                 test.files,
                 test.entryPath,
                 test.dekaJson,

@@ -14,6 +14,8 @@ pub struct InstallPayload {
     pub quiet: bool,
     #[serde(default)]
     pub rehash: bool,
+    #[serde(default)]
+    pub locked: bool,
 }
 
 impl InstallPayload {
@@ -32,6 +34,7 @@ impl InstallPayload {
             prompt: false,
             quiet: false,
             rehash: false,
+            locked: false,
         }
     }
 }

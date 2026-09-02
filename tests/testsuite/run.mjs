@@ -29,8 +29,6 @@ function loadExpectedFailures() {
   );
 }
 
-const DEFAULT_DEKA_LOCK = '{\n  "lockfileVersion": 1,\n  "packages": {}\n}\n';
-
 const NL = String.fromCharCode(10);
 
 const DEFAULT_DEKA_JSON = {
@@ -209,6 +207,7 @@ function loadAllTests() {
         category: categoryName,
         status,
         name: testName,
+        dir: testDir,
         source,
         files,
         entryPath: entryFile,
@@ -334,21 +333,34 @@ function restoreCachedModules(cacheDir, tmpDir) {
   }
 }
 
-function installPackages(cliPath, tmpDir, packages) {
+function lockMatchesFixture(tmpDir, cacheDir) {
+  const tmpLock = join(tmpDir, "deka.lock");
+  const cachedLock = join(cacheDir, "deka.lock");
+  if (!existsSync(tmpLock) || !existsSync(cachedLock)) return false;
+  try {
+    return readFileSync(tmpLock, "utf-8") === readFileSync(cachedLock, "utf-8");
+  } catch {
+    return false;
+  }
+}
+
+function installPackages(cliPath, tmpDir, packages, locked) {
   const cacheKey = packages.slice().sort().join("+");
   const cacheDir = join(repoRoot, ".cache", "deka-packages", cacheKey);
   const cachedLock = join(cacheDir, "deka.lock");
   const hasCachedModules =
     existsSync(join(cacheDir, "ds_modules")) || existsSync(join(cacheDir, "php_modules"));
 
-  if (existsSync(cachedLock) && hasCachedModules) {
+  if (existsSync(cachedLock) && hasCachedModules && (!locked || lockMatchesFixture(tmpDir, cacheDir))) {
     restoreCachedModules(cacheDir, tmpDir);
     copyFileSync(cachedLock, join(tmpDir, "deka.lock"));
     declareRestoredModules(tmpDir);
     return { ok: true, stderr: "" };
   }
 
-  const spawned = spawnSync(cliPath, ["add", ...packages, "--yes"], {
+  const cliArgs = ["add", ...packages, "--yes"];
+  if (locked) cliArgs.push("--locked");
+  const spawned = spawnSync(cliPath, cliArgs, {
     cwd: tmpDir,
     encoding: "utf-8",
     timeout: 120000,
@@ -384,7 +396,7 @@ function installPackages(cliPath, tmpDir, packages) {
 }
 
 
-function runNative(cliPath, test) {
+function runNative(cliPath, test, locked) {
   mkdirSync(scratchRoot, { recursive: true });
   const tmpDir = mkdtempSync(join(scratchRoot, "case-"));
   chmodSync(tmpDir, 0o700);
@@ -392,12 +404,36 @@ function runNative(cliPath, test) {
 
   try {
     const { isProject, ext } = writeProjectFiles(tmpDir, test.entryPath ?? "test.ds", test.source, test.files);
-    writeFileSync(join(tmpDir, "deka.lock"), DEFAULT_DEKA_LOCK);
+    const fixtureLockPath = join(test.dir, "deka.lock");
+    const fixtureLockExists = existsSync(fixtureLockPath);
+    if (fixtureLockExists) {
+      copyFileSync(fixtureLockPath, join(tmpDir, "deka.lock"));
+    } else if (locked) {
+      return {
+        ok: false,
+        stdout: "",
+        stderr: "",
+        error: `locked run requires deka.lock in ${test.dir}`,
+        transpileFailed: true,
+        diagnostics: [{ severity: "error", message: `locked run requires deka.lock in ${test.dir}` }],
+      };
+    }
     const dekaJson = test.dekaJson ?? (packages.length > 0 ? PACKAGE_DEKA_JSON : DEFAULT_DEKA_JSON);
     writeFileSync(join(tmpDir, "deka.json"), JSON.stringify(dekaJson, null, 2) + "\n");
 
+    // The runtime project gate requires a deka.lock whenever deka.json exists.
+    // Fixtures without package dependencies carry an empty lock; fixtures with
+    // packages use the resolved lock produced by deka add.
+    const tmpLockPath = join(tmpDir, "deka.lock");
+    if (!existsSync(tmpLockPath)) {
+      writeFileSync(
+        tmpLockPath,
+        '{\n  "lockfileVersion": 1,\n  "packages": {}\n}\n'
+      );
+    }
+
     if (packages.length > 0) {
-      const installed = installPackages(cliPath, tmpDir, packages);
+      const installed = installPackages(cliPath, tmpDir, packages, locked);
       if (!installed.ok) {
         return {
           ok: false,
@@ -407,6 +443,13 @@ function runNative(cliPath, test) {
           transpileFailed: true,
           diagnostics: installed.error ? [{ severity: "error", message: installed.error }] : [],
         };
+      }
+    }
+
+    if (!fixtureLockExists) {
+      const tmpLock = join(tmpDir, "deka.lock");
+      if (existsSync(tmpLock)) {
+        copyFileSync(tmpLock, fixtureLockPath);
       }
     }
 
@@ -513,6 +556,7 @@ function parseArgs(argv) {
     json: false,
     filter: null,
     help: false,
+    locked: false,
     jobs: Math.min(8, os.availableParallelism?.() || 4),
   };
   for (let i = 0; i < argv.length; i++) {
@@ -521,6 +565,7 @@ function parseArgs(argv) {
     else if (arg === "--json") args.json = true;
     else if (arg === "--filter" || arg === "-f") args.filter = argv[++i] || "";
     else if (arg === "--jobs" || arg === "-j") args.jobs = Number(argv[++i] || args.jobs);
+    else if (arg === "--locked") args.locked = true;
     else if (arg === "--help" || arg === "-h") args.help = true;
   }
   return args;
@@ -534,6 +579,7 @@ options:
   --json                     Output a JSON array of per-fixture results
   -f, --filter <substr>      Run only fixtures whose slug or title matches
   -j, --jobs <n>             Parallel native runs (default: min(8, CPUs))
+  --locked                   Use existing deka.lock; fail if missing or stale
   -h, --help                 Show this help
 
 Native isolate only (\`deka run\`). Uses target/release/cli or DEKA_NATIVE.
@@ -621,7 +667,7 @@ async function main() {
     if (test.compiler && test.compiler !== activeCompiler) {
       return { test, skipped: true, reason: `compiler mismatch: fixture requires ${test.compiler}, running ${activeCompiler}` };
     }
-    const native = runNative(cliBinary, test);
+    const native = runNative(cliBinary, test, args.locked);
     const evaled = evaluate(test, native);
     return { test, skipped: false, native, ...evaled };
   });
