@@ -159,7 +159,7 @@ fn program_contains_jsx(program: &Program<'_>) -> bool {
     program.statements.iter().any(stmt_has_jsx)
 }
 
-fn is_stdlib_module_spec(spec: &str) -> bool {
+pub(crate) fn is_stdlib_module_spec(spec: &str) -> bool {
     if spec.starts_with("@user/") {
         return false;
     }

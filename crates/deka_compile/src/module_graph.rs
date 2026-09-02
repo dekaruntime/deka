@@ -260,6 +260,12 @@ impl ModuleLoader for FsModuleLoader {
 pub struct GraphCompileOptions {
     /// When true, any import-graph path to `ui/server` is a compile error.
     pub client: bool,
+    /// Base URL for bare stdlib module specifiers. When set, known stdlib
+    /// imports (`io`, `json`, …) are not resolved to `.ds` files; the emitter
+    /// rewrites them to `<module_base>/<spec>.mjs` and the host serves those
+    /// URLs. This mirrors the single-file compiler's `module_base` option for
+    /// browser hosts that have no stdlib filesystem (deka#497).
+    pub module_base: Option<String>,
 }
 
 /// A discovered module and its outgoing dependencies.
@@ -350,6 +356,12 @@ pub fn compile_module_graph_with_options(
             if is_compiler_ui_spec(&import.path) {
                 continue;
             }
+            // With a module base configured (browser/WASM hosts), known stdlib
+            // bare specifiers are served by the host as `<base>/<spec>.mjs`.
+            // Leave them virtual: no `.ds` file exists for them in the project.
+            if options.module_base.is_some() && crate::is_stdlib_module_spec(&import.path) {
+                continue;
+            }
             match loader.resolve(&import.path, &path) {
                 Ok(dep) => {
                     let from_ds = path
@@ -437,6 +449,53 @@ pub fn compile_module_graph_with_options(
         exports.insert(path.clone(), deka_syntax::collect_module_exports(program, &arena));
     }
 
+    // Reject imports of names the dependency does not export. The typechecker
+    // binds imported names loosely, so without this check a bad import only
+    // surfaced as a runtime link error (deka#198), and browser project mode
+    // could not report it at all (deka#497). Mirrors the native module
+    // validator's diagnostic.
+    for module in modules.values() {
+        let Some(program) = programs.get(&module.path) else {
+            continue;
+        };
+        for stmt in program.statements.iter() {
+            let deka_syntax::Stmt::Import {
+                specifiers, source, ..
+            } = stmt
+            else {
+                continue;
+            };
+            let Some(dep) = module.dependencies.get(*source) else {
+                continue;
+            };
+            let Some(dep_exports) = exports.get(dep) else {
+                continue;
+            };
+            for spec in specifiers.iter() {
+                let known = dep_exports.values.contains_key(spec.imported)
+                    || dep_exports.structs.contains_key(spec.imported)
+                    || dep_exports.enums.contains_key(spec.imported)
+                    || dep_exports.aliases.contains_key(spec.imported)
+                    || dep_exports.newtypes.contains_key(spec.imported);
+                if !known {
+                    errors.push(diag(
+                        spec.span.start.line,
+                        spec.span.start.column,
+                        format!(
+                            "Missing export '{}' in '{}' (imported by '{}').",
+                            spec.imported,
+                            source,
+                            module.path.display()
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+
     // Build per-module import maps pointing to dependency exports.
     let mut imports: HashMap<PathBuf, HashMap<&str, &deka_syntax::ModuleExports>> =
         HashMap::with_capacity(modules.len());
@@ -503,6 +562,7 @@ pub fn compile_module_graph_with_options(
         let compile_options = CompileOptions {
             used_exports: plan.live.get(&path).cloned().flatten(),
             client: options.client,
+            module_base: options.module_base.clone(),
             ..Default::default()
         };
         match compile_to_js_with_imports_and_options(
@@ -687,6 +747,90 @@ mod tests {
         assert_eq!(result.modules.len(), 2);
         assert!(result.modules[&main].contains("add(1, 2)"));
         assert!(result.modules[&math].contains("function add"));
+    }
+
+    #[test]
+    fn graph_with_module_base_leaves_stdlib_imports_virtual() {
+        let root = PathBuf::from("/project");
+        let math = root.join("math.ds");
+        let main = root.join("main.ds");
+
+        let mut files = HashMap::new();
+        files.insert(
+            math.clone(),
+            "export fn add(a: number, b: number): number { return a + b; }".to_string(),
+        );
+        files.insert(
+            main.clone(),
+            "import { echo } from \"io\";\nimport { add } from \"./math.ds\";\necho(add(1, 2));".to_string(),
+        );
+
+        let mut aliases = HashMap::new();
+        aliases.insert((main.clone(), "./math.ds".to_string()), math.clone());
+
+        let loader = InMemoryLoader { files, aliases };
+        // Without a module base, the loader is asked to resolve `io`.
+        let err = compile_module_graph(&main, &loader).expect_err("io is not a .ds module");
+        assert!(
+            err.iter().any(|d| d.message.contains("cannot resolve 'io'")),
+            "got: {:?}",
+            err
+        );
+
+        let loader = InMemoryLoader {
+            files: loader.files,
+            aliases: loader.aliases,
+        };
+        let result = compile_module_graph_with_options(
+            &main,
+            &loader,
+            GraphCompileOptions {
+                client: false,
+                module_base: Some("https://hats.dump.invalid/modules".to_string()),
+            },
+        )
+        .expect("compile graph with module base");
+        let main_js = &result.modules[&main];
+        assert!(
+            main_js.contains("import { echo } from \"https://hats.dump.invalid/modules/io.mjs\";"),
+            "got: {}",
+            main_js
+        );
+        assert!(
+            main_js.contains("import { add } from \"./math.ds\";"),
+            "got: {}",
+            main_js
+        );
+    }
+
+    #[test]
+    fn graph_reports_missing_export() {
+        let root = PathBuf::from("/project");
+        let math = root.join("math.ds");
+        let main = root.join("main.ds");
+
+        let mut files = HashMap::new();
+        files.insert(
+            math.clone(),
+            "export fn add(a: number, b: number): number { return a + b; }".to_string(),
+        );
+        files.insert(
+            main.clone(),
+            "import { subtract } from \"./math.ds\";\nconst r: number = subtract(1, 2);".to_string(),
+        );
+
+        let mut aliases = HashMap::new();
+        aliases.insert((main.clone(), "./math.ds".to_string()), math.clone());
+
+        let loader = InMemoryLoader { files, aliases };
+        let err = compile_module_graph(&main, &loader).expect_err("missing export should fail");
+        assert!(
+            err.iter().any(|d| d
+                .message
+                .contains("Missing export 'subtract' in './math.ds'")),
+            "got: {:?}",
+            err
+        );
     }
 
     #[test]
@@ -886,7 +1030,7 @@ mod tests {
         let err = compile_module_graph_with_options(
             &main,
             &loader,
-            GraphCompileOptions { client: true },
+            GraphCompileOptions { client: true, ..Default::default() },
         )
         .expect_err("ui/server on a client entry");
         assert!(

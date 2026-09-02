@@ -5,9 +5,9 @@ import { fileURLToPath } from 'url'
 
 const DUMP_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 import type { Browser, Page, Route } from 'playwright'
-import { compileDekaProject } from '@dekaruntime/web-ide-kit/runtime'
+import type { BuildCompileProjectResult } from './build-wasm'
 import type { HatsTestStage } from './tests'
-import { projectLoaderJs } from './project-loader'
+import { HARNESS_PROJECT_BASE, projectLoaderJs } from './project-loader'
 
 export interface BrowserRunResult {
   ok: boolean
@@ -123,7 +123,10 @@ const MODULE_SHIMS: Record<string, string> = {
   'server.mjs': uiModuleSource('server.js'),
 }
 
-async function evaluateInFreshPage(jsCode: string): Promise<HarnessRun> {
+async function evaluateInFreshPage(
+  jsCode: string,
+  projectModules?: Record<string, string>
+): Promise<HarnessRun> {
   if (!browser || !harnessBundlePath) {
     throw new Error(browserUnavailableReason ?? 'browser host not started')
   }
@@ -151,6 +154,27 @@ async function evaluateInFreshPage(jsCode: string): Promise<HarnessRun> {
   }
   await context.route('**/modules/*.mjs', shimHandler)
   await context.route('**/modules/**/*.mjs', shimHandler)
+  // Project mode emits real ES modules; serve the compiler's per-module
+  // output under HARNESS_PROJECT_BASE so relative specifiers (`./math.ds`)
+  // resolve as ordinary ESM URLs. Stdlib imports in those modules point at
+  // the shim routes above via the compiler's moduleBase rewrite.
+  if (projectModules) {
+    const projectPrefix = new URL(HARNESS_PROJECT_BASE).pathname // "/project"
+    await context.route('**/project/**', (route: Route) => {
+      const url = new URL(route.request().url())
+      const key = decodeURIComponent(url.pathname.slice(projectPrefix.length + 1))
+      const code = projectModules[key]
+      if (code === undefined) {
+        return route.fulfill({ status: 404, body: `no project module ${key}` })
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: 'text/javascript',
+        headers: { 'access-control-allow-origin': '*' },
+        body: code,
+      })
+    })
+  }
   const page = await context.newPage()
   try {
     await page.addScriptTag({ path: harnessBundlePath })
@@ -170,7 +194,10 @@ async function evaluateInFreshPage(jsCode: string): Promise<HarnessRun> {
   }
 }
 
-export async function runCompiledJsInBrowser(jsCode: string): Promise<BrowserRunResult> {
+export async function runCompiledJsInBrowser(
+  jsCode: string,
+  projectModules?: Record<string, string>
+): Promise<BrowserRunResult> {
   if (!browser) {
     return {
       ok: false,
@@ -192,13 +219,13 @@ export async function runCompiledJsInBrowser(jsCode: string): Promise<BrowserRun
   })
 
   try {
-    return toResult(await evaluateInFreshPage(jsCode))
+    return toResult(await evaluateInFreshPage(jsCode, projectModules))
   } catch (error) {
     // Retry only closed-browser / protocol failures. A Deka program that
     // returns ok:false is a fixture finding, never an infra retry.
     if (isInfraError(error) && (await relaunchBrowser())) {
       try {
-        return toResult(await evaluateInFreshPage(jsCode))
+        return toResult(await evaluateInFreshPage(jsCode, projectModules))
       } catch (retryError) {
         const message = retryError instanceof Error ? retryError.message : String(retryError)
         return {
@@ -224,31 +251,39 @@ export async function runCompiledJsInBrowser(jsCode: string): Promise<BrowserRun
 }
 
 
+/**
+ * Run a compiled project in the browser. The project is compiled beforehand
+ * by `compileProjectWithWasm` (build-wasm.ts) against the same local/published
+ * compiler as single-file fixtures, with `moduleBase` set so bare stdlib
+ * imports (`io`, …) resolve to the vendored shims (deka#497).
+ */
 export async function runProjectInBrowser(
   entryPath: string,
-  files: Record<string, string>
+  compileResult: BuildCompileProjectResult
 ): Promise<BrowserRunResult> {
-  const compileResult = await compileDekaProject(files)
-  const diagnostics = (compileResult.diagnostics ?? []).map((d) => ({
-    severity: (d.severity === 'error' || d.severity === 'warning' || d.severity === 'info'
-      ? d.severity
-      : 'error') as 'error' | 'warning' | 'info',
+  const diagnostics = compileResult.diagnostics.map((d) => ({
+    severity: d.severity,
     message: d.message,
+    ...(d.line !== undefined ? { line: d.line } : {}),
+    ...(d.column !== undefined ? { column: d.column } : {}),
   }))
 
-  if (!compileResult.ok || Object.keys(compileResult.modules).length === 0) {
+  if (!compileResult.ok) {
     return {
       ok: false,
       stage: 'parse',
       stdout: '',
       stderr: '',
-      error: diagnostics.find((d) => d.severity === 'error')?.message ?? 'project compilation failed',
+      error: compileResult.error ?? 'project compilation failed',
       diagnostics,
     }
   }
 
-  const loader = projectLoaderJs(entryPath, compileResult.modules)
-  const runResult = await runCompiledJsInBrowser(loader)
+  const projectModules = Object.fromEntries(
+    Object.entries(compileResult.modules).map(([modulePath, module]) => [modulePath, module.code])
+  )
+  const loader = projectLoaderJs(entryPath)
+  const runResult = await runCompiledJsInBrowser(loader, projectModules)
   if (!runResult.ok && runResult.error) {
     diagnostics.push({ severity: 'error', message: runResult.error })
   }
