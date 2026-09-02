@@ -2387,6 +2387,17 @@ impl<'a> Checker<'a> {
 
         let object_type = self.check_expr(object);
 
+        // Builtin `.getType()` (rfd#41, deka#529): returns a first-class
+        // `Type` value. User code named `getType` (interface member,
+        // receiver method, or primitive extension) shadows the builtin,
+        // mirroring the deka#527 shadowing rule; the helper returns `None`
+        // in that case so the ordinary paths below handle the call.
+        if method_name == "getType" {
+            if let Some(ty) = self.check_builtin_get_type(call_expr, &object_type, args, span) {
+                return Some(ty);
+            }
+        }
+
         // Interface receiver: dispatch is dynamic; validate against the
         // interface signature and enforce mutable-method requirements inferred
         // from satisfying structs.
@@ -2475,6 +2486,64 @@ impl<'a> Checker<'a> {
 
         self.check_method_call_args(method_name, receiver_type, &info, args, span)
             .into()
+    }
+
+    /// Check a builtin `.getType()` call (rfd#41, deka#529). Returns `None`
+    /// when user code shadows the builtin (a declared receiver method,
+    /// interface member, or primitive extension named `getType`) so the
+    /// ordinary method paths handle the call. Otherwise validates arity,
+    /// records the rewrite for the emitter (`deka.typeOf(x)`), and returns
+    /// the `Type` descriptor type.
+    fn check_builtin_get_type(
+        &mut self,
+        call_expr: &ast::Expr<'a>,
+        object_type: &Type<'a>,
+        args: &'a [ast::Expr<'a>],
+        span: ast::Span,
+    ) -> Option<Type<'a>> {
+        // User code shadows the builtin.
+        match object_type {
+            Type::Struct { name } | Type::Newtype { name, .. } => {
+                if self
+                    .find_receiver_method(name, "getType", &mut Vec::new())
+                    .is_some()
+                {
+                    return None;
+                }
+            }
+            Type::Named { name } => {
+                if self.receiver_methods.contains_key(&(*name, "getType")) {
+                    return None;
+                }
+            }
+            Type::Interface { name } => {
+                let info = self.interfaces.get(name)?;
+                let declared = info.members.iter().any(|m| match m {
+                    ast::InterfaceMember::Method { name: n, .. } => *n == "getType",
+                    _ => false,
+                });
+                if declared {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+
+        if !args.is_empty() {
+            self.error_span(span, "`getType` expects no arguments".to_string());
+            return Some(Type::Error);
+        }
+
+        // Record the rewrite for every real receiver kind, including
+        // Infer/Var: an unrecorded `v.getType()` on an unsafe-derived value
+        // would emit verbatim and miscompile silently. Error/None/Never
+        // receivers fall through to their existing diagnostics.
+        match object_type {
+            Type::Error | Type::None | Type::Never => return None,
+            _ => {}
+        }
+        self.type_of_calls.insert(call_expr as *const ast::Expr<'a>);
+        Some(Type::Named { name: "Type" })
     }
 
     /// Resolve a method call on a primitive receiver (deka#527). A declared
