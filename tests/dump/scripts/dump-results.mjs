@@ -52,12 +52,62 @@ for (const category of categories) {
 
 // Persist results so the static export can read them without re-running the
 // full conformance suite inside the Next.js SSG environment.
+// The pack carries the summary the site renders. Consumers must not recompute
+// it -- one producer owns every number (see TESTING.md, deka#503).
+//
+// Three groups, decided by each fixture's `hosts`. Divergence exists only in
+// `shared`, because it is meaningless for a fixture that runs on one host, and
+// computing it corpus-wide is how harness gaps get counted as compiler defects
+// (deka#509). There is no skip bucket in any group.
+function summarize(categories) {
+  const groups = {
+    'native-only': { pass: 0, fail: 0, total: 0 },
+    shared: { pass: 0, fail: 0, diverge: 0, total: 0 },
+    'browser-only': { pass: 0, fail: 0, total: 0 },
+  }
+  for (const category of categories) {
+    for (const test of category.tests) {
+      const hosts = new Set(test.hosts || [])
+      const onNative = hosts.has('native')
+      const onBrowser = hosts.has('browser')
+      const name = onNative && onBrowser ? 'shared' : onNative ? 'native-only' : 'browser-only'
+      const g = groups[name]
+      g.total++
+      if (name === 'shared') {
+        if (test.nativeMatches && test.wasmMatches) g.pass++
+        else if (test.nativeMatches !== test.wasmMatches) g.diverge++
+        else g.fail++
+      } else if (name === 'native-only') {
+        test.nativeMatches ? g.pass++ : g.fail++
+      } else {
+        test.wasmMatches ? g.pass++ : g.fail++
+      }
+    }
+  }
+  // Every fixture lands in exactly one group, and every group accounts for all
+  // of its own. Nothing skips, so a shortfall means a fixture fell out.
+  for (const [name, g] of Object.entries(groups)) {
+    const accounted = g.pass + g.fail + (g.diverge || 0)
+    if (accounted !== g.total) {
+      throw new Error(`reconciliation failed in ${name}: ${accounted} of ${g.total}`)
+    }
+  }
+  return groups
+}
+
+const groups = summarize(categories)
+console.log(
+  `[hats] native-only ${groups['native-only'].pass}/${groups['native-only'].total} · ` +
+    `shared ${groups.shared.pass}/${groups.shared.total} (${groups.shared.diverge} diverge) · ` +
+    `browser-only ${groups['browser-only'].pass}/${groups['browser-only'].total}`
+)
+
 const outPath =
   process.env.DEKA_DUMP_OUT ||
   path.join(repoRoot, 'dist', 'conformance', 'hats-results.json')
 fs.mkdirSync(path.dirname(outPath), { recursive: true })
 fs.writeFileSync(
   outPath,
-  JSON.stringify({ nativeAvailable, browserAvailable, version, wasmSourceCommit, webIdeKitVersion, categories }, null, 2)
+  JSON.stringify({ nativeAvailable, browserAvailable, version, wasmSourceCommit, webIdeKitVersion, groups, categories }, null, 2)
 )
 console.log(`[hats] wrote ${outPath}`)

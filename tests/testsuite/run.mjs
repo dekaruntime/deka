@@ -610,10 +610,14 @@ async function main() {
 
   const activeCompiler = currentCompiler();
 
-  const results = await mapPool(filtered, args.jobs, async (test) => {
-    if (!test.hosts.includes("native")) {
-      return { test, skipped: true, reason: "hosts does not include native" };
-    }
+  // Browser-only fixtures are not this gate's population -- they are the dump's.
+  // They are not "skipped": a fixture that never runs natively was never a
+  // native test. Group membership is decided by `hosts` (see TESTING.md).
+  const browserOnly = filtered.filter((t) => !t.hosts.includes("native"));
+  const pool = filtered.filter((t) => t.hosts.includes("native"));
+  const isNativeOnly = (t) => !t.hosts.includes("browser");
+
+  const results = await mapPool(pool, args.jobs, async (test) => {
     if (test.compiler && test.compiler !== activeCompiler) {
       return { test, skipped: true, reason: `compiler mismatch: fixture requires ${test.compiler}, running ${activeCompiler}` };
     }
@@ -623,10 +627,13 @@ async function main() {
   });
 
   const expectedFailures = loadExpectedFailures();
-  let passed = 0;
+  // Two groups run here: native-only and shared. Each is self-contained --
+  // `pass + fail == group total` -- and there is no skip bucket anywhere.
+  const groups = {
+    "native-only": { passed: 0, failed: 0, known: 0, total: 0 },
+    shared: { passed: 0, failed: 0, known: 0, total: 0 },
+  };
   let failed = 0;
-  let skipped = 0;
-  let known = 0;
   const unexpectedlyPassing = [];
 
   if (args.json) {
@@ -636,8 +643,7 @@ async function main() {
       name: r.test.name,
       expectedStatus: r.test.status,
       expectedStage: r.test.stage,
-      skipped: r.skipped ?? false,
-      skipReason: r.skipped ? r.reason : undefined,
+      group: r.test.hosts.includes("browser") ? "shared" : "native-only",
       matched: r.matched ?? false,
       actualStatus: r.native ? (r.native.ok ? "pass" : "fail") : undefined,
       actualStage: r.stage,
@@ -652,23 +658,22 @@ async function main() {
 
   console.log("");
   for (const result of results) {
-    if (result.skipped) {
-      skipped++;
-      continue;
-    }
+    const g = groups[isNativeOnly(result.test) ? "native-only" : "shared"];
+    g.total++;
     if (result.matched) {
       // A listed fixture that passes must be removed from the list; leaving it
       // would let a real regression hide behind a stale entry.
       if (expectedFailures.has(result.test.slug)) {
         unexpectedlyPassing.push(result.test.slug);
       }
-      passed++;
+      g.passed++;
       continue;
     }
     if (expectedFailures.has(result.test.slug)) {
-      known++;
+      g.known++;
       continue;
     }
+    g.failed++;
     failed++;
     console.log(`✗ ${result.test.slug}`);
     for (const reason of result.reasons) {
@@ -685,18 +690,34 @@ async function main() {
 
   // Every fixture must land in exactly one bucket. If this identity ever fails
   // a fixture has fallen between the cases and is owned by nothing (deka#503).
-  const accounted = passed + failed + skipped + known;
-  if (accounted !== filtered.length) {
-    console.error(
-      `\nreconciliation failed: ${accounted} accounted for, ${filtered.length} fixtures. ` +
-        `Every fixture must be exactly one of passed/failed/skipped/known.`
-    );
+  // Each group must account for every fixture in it. Nothing is skipped, so a
+  // shortfall means a fixture fell out of the run entirely (deka#503).
+  for (const [name, g] of Object.entries(groups)) {
+    const accounted = g.passed + g.failed + g.known;
+    if (accounted !== g.total) {
+      console.error(
+        `\nreconciliation failed in ${name}: ${accounted} accounted for, ${g.total} fixtures.`
+      );
+      process.exit(1);
+    }
+  }
+  if (groups["native-only"].total + groups.shared.total !== pool.length) {
+    console.error("\nreconciliation failed: group totals do not sum to the population.");
     process.exit(1);
   }
 
+  const line = (name, g) =>
+    ` ${name.padEnd(13)} ${String(g.passed).padStart(4)} pass · ${String(
+      g.failed
+    ).padStart(3)} fail${g.known ? ` · ${g.known} known` : ""}   (${g.total})`;
+
   console.log("\n============================================================");
+  console.log(line("native-only", groups["native-only"]));
+  console.log(line("shared", groups.shared));
   console.log(
-    ` Passed: ${passed} | Failed: ${failed} | Known: ${known} | Skipped: ${skipped} | Total: ${filtered.length}`
+    ` ${"browser-only".padEnd(13)} ${String(browserOnly.length).padStart(
+      4
+    )} not this gate's population — run tests/dump`
   );
   console.log("============================================================\n");
 
