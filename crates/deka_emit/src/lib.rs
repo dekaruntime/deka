@@ -508,4 +508,60 @@ mod tests {
         assert!(out.contains("\"abc\".length"), "got: {}", out);
         assert!(out.contains("\"abc\".toUpperCase()"), "got: {}", out);
     }
+
+    #[test]
+    fn emit_gettype_rewrite() {
+        // rfd#41, deka#529: `.getType()` is a compile-time rewrite to the
+        // module-local free function `__deka_type_of(x)`, emitted exactly
+        // the way deka#527 emits primitive extensions.
+        let out = parse_check_and_emit("const t = \"hi\".getType();");
+        assert!(out.contains("__deka_type_of(\"hi\")"), "got: {}", out);
+        // The descriptor helper and its interning cache are emitted.
+        assert!(out.contains("function __deka_type_of(v)"), "got: {}", out);
+        assert!(out.contains("__deka_type_cache"), "got: {}", out);
+        // Never touch JS prototypes, the `__deka` prelude, or globalThis.
+        assert!(!out.contains("prototype"), "got: {}", out);
+        assert!(!out.contains("globalThis"), "got: {}", out);
+        // `.getType()` alone must not force the struct prelude.
+        assert!(!out.contains("deka.Struct"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_gettype_toString_chaining() {
+        // The outer `.toString()` is an ordinary method call on the real
+        // descriptor object; it emits verbatim.
+        let out = parse_check_and_emit("const s = \"hi\".getType().toString();");
+        assert!(
+            out.contains("__deka_type_of(\"hi\").toString()"),
+            "got: {}",
+            out
+        );
+    }
+
+    #[test]
+    fn emit_gettype_union_receiver() {
+        let out = parse_check_and_emit(
+            "fn f(v: number | string) Type { return v.getType(); }",
+        );
+        assert!(out.contains("__deka_type_of(v)"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_gettype_user_extension_shadows() {
+        // A user extension named `getType` keeps the deka#527 free-function
+        // rewrite; the builtin helper stays absent.
+        let out = parse_check_and_emit(
+            "fn (s string) getType() string { return s; } const u = \"x\".getType();",
+        );
+        assert!(out.contains("function getType$string(s)"), "got: {}", out);
+        assert!(out.contains("getType$string(\"x\")"), "got: {}", out);
+        assert!(!out.contains("__deka_type_of"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_gettype_helper_absent_without_gettype() {
+        let out = parse_check_and_emit("const s = \"hi\".toUpperCase();");
+        assert!(!out.contains("__deka_type_of"), "got: {}", out);
+        assert!(!out.contains("__deka_type_cache"), "got: {}", out);
+    }
 }
