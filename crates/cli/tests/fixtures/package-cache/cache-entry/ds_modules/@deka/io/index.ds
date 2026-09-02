@@ -1,0 +1,20 @@
+// Program output. User DekaScript imports `echo`; it must not name `console`.
+//
+// No `bridge`. Native is V8 (isolate rebinds `console.log` to stdout);
+// the browser already has `console.log`. Same call on both hosts.
+// This package is the only place that may name it (RFD 21 / RFD 32).
+
+/// docid: phpx/io/echo()
+/// <Function name="echo">
+///   <Description>Write one line of program output. Trailing newline comes from the host `console.log`.</Description>
+///   <Parameter name="message" type="string" required="true" typeLink="/docs/php/types/string">
+///     Line to write. Non-strings: caller stringifies, e.g. `echo("" + n)`.
+///   </Parameter>
+///   <ReturnType type="void" />
+/// </Function>
+export fn echo(message: string) {
+  match (unsafe { console.log(message) }) {
+    Ok(v) => v,
+    Err(e) => e,
+  }
+}
