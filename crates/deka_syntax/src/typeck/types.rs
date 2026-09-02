@@ -129,6 +129,23 @@ pub enum NewtypeSide {
     Right,
 }
 
+/// The runtime predicate a union member type-pattern compiles to (rfd#42,
+/// deka#530). Computed by the checker and handed to the emitter through
+/// `TypeckResult::union_type_patterns`, parallel to `enum_case_patterns`,
+/// so the emitter never re-derives types.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnionMemberTest<'a> {
+    /// Primitive scalar: `typeof x === "..."` (string/number/boolean;
+    /// `void` tests `"undefined"`).
+    Primitive(&'a str),
+    /// `x instanceof Uint8Array`.
+    Bytes,
+    /// Named struct: `deka.getStructId(x) === "<Name>"`.
+    Struct(&'a str),
+    /// Enum: `x.__enum === "<Name>"`.
+    Enum(&'a str),
+}
+
 /// How a binary or unary operator on newtypes should be lowered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OperatorRewrite<'a> {

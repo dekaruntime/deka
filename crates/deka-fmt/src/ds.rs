@@ -1375,6 +1375,10 @@ fn type_to_string(ty: &Type<'_>) -> String {
                 .collect();
             format!("{{ {} }}", parts.join("; "))
         }
+        Type::Union { members, .. } => {
+            let parts: Vec<String> = members.iter().map(type_to_string).collect();
+            parts.join(" | ")
+        }
     }
 }
 

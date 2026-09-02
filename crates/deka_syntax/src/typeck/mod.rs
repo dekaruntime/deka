@@ -52,6 +52,9 @@ pub struct TypeckResult<'a> {
     /// Identifier patterns that name a payload-free case of the scrutinee's
     /// enum rather than binding it (deka#450).
     pub enum_case_patterns: HashMap<*const ast::Pattern<'a>, &'a str>,
+    /// Constructor patterns that are union member type-patterns (`string(s)`),
+    /// mapped to the runtime predicate the emitter must emit (rfd#42).
+    pub union_type_patterns: HashMap<*const ast::Pattern<'a>, types::UnionMemberTest<'a>>,
 }
 
 /// The `Option` materialisation for one JSX element.
@@ -116,6 +119,7 @@ pub fn check_program_with_imports<'a>(
         operator_rewrites: checker.operator_rewrites,
         jsx_optional_props: checker.jsx_optional_props,
         enum_case_patterns: checker.enum_case_patterns,
+        union_type_patterns: checker.union_type_patterns,
     }
 }
 
@@ -534,6 +538,9 @@ struct Checker<'a> {
     operator_rewrites: HashMap<*const ast::Expr<'a>, types::OperatorRewrite<'a>>,
     jsx_optional_props: HashMap<*const ast::JsxElement<'a>, JsxOptionalProps<'a>>,
     enum_case_patterns: HashMap<*const ast::Pattern<'a>, &'a str>,
+    /// Union member type-pattern sites to lower, keyed by pattern pointer
+    /// (rfd#42, deka#530).
+    union_type_patterns: HashMap<*const ast::Pattern<'a>, types::UnionMemberTest<'a>>,
     /// Local scopes. The first scope is the top-level scope.
     scopes: Vec<HashMap<&'a str, Type<'a>>>,
     /// Bindings that were introduced with `let` and may be reassigned.
@@ -573,6 +580,7 @@ impl<'a> Checker<'a> {
             operator_rewrites: HashMap::new(),
             jsx_optional_props: HashMap::new(),
             enum_case_patterns: HashMap::new(),
+            union_type_patterns: HashMap::new(),
             scopes: vec![HashMap::new()],
             mutables: vec![HashSet::new()],
             type_scopes: Vec::new(),

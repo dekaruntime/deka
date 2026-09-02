@@ -185,6 +185,9 @@ impl<'a> TypeResolver<'a> {
                     .collect();
                 BridgeType::ObjectShape { fields: out }
             }
+            // v2 union types (deka#530) have no PHP bridge representation yet;
+            // degrade to Mixed like function and tuple types.
+            deka_syntax::Type::Union { .. } => BridgeType::Mixed,
         }
     }
 
