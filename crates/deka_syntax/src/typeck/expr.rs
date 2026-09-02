@@ -459,11 +459,29 @@ impl<'a> Checker<'a> {
             } else if embed_names.contains(field_name) {
                 Type::Struct { name: field_name }
             } else {
-                self.error_span(
-                    *field_span,
-                    format!("struct `{name}` has no field or embed `{}`", field_name),
-                );
-                Type::Error
+                // Promoted field: a literal may initialize a field declared on
+                // an embedded struct directly (`Employee { name: ... }`
+                // instead of `Employee { Person: Person { name: ... } }`).
+                let mut embed_path = Vec::new();
+                if self.find_promoted_field_path(name, field_name, &mut embed_path) {
+                    let root = embed_path[0];
+                    if fields.iter().any(|(n, _, _)| *n == root) {
+                        self.error_span(
+                            *field_span,
+                            format!(
+                                "struct literal for `{name}` supplies embedded struct `{root}` both directly and via promoted field `{field_name}`"
+                            ),
+                        );
+                    }
+                    self.resolve_field_type(name, field_name)
+                        .unwrap_or(Type::Error)
+                } else {
+                    self.error_span(
+                        *field_span,
+                        format!("struct `{name}` has no field or embed `{}`", field_name),
+                    );
+                    Type::Error
+                }
             };
 
             let value_type = self.check_expr(value);
@@ -502,6 +520,11 @@ impl<'a> Checker<'a> {
             if self.is_empty_embed_struct(embed.name) {
                 continue;
             }
+            // An embedded struct may also be supplied piecemeal through its
+            // promoted fields (`Employee { name: ... }`).
+            if self.embed_satisfied_by_promoted_fields(embed.name, &seen_fields) {
+                continue;
+            }
             self.error_span(
                 span,
                 format!(
@@ -510,6 +533,55 @@ impl<'a> Checker<'a> {
                 ),
             );
         }
+    }
+
+    /// Search the embedded structs of `struct_name` for a field named `field`,
+    /// recording the chain of embed names that leads to the struct declaring
+    /// it. Own fields are not searched; callers check those first. The
+    /// traversal is depth-first, matching `resolve_field_type`.
+    fn find_promoted_field_path(
+        &self,
+        struct_name: &'a str,
+        field: &str,
+        path: &mut Vec<&'a str>,
+    ) -> bool {
+        let info = match self.structs.get(struct_name) {
+            Some(i) => i,
+            None => return false,
+        };
+        for embed in info.embeds {
+            path.push(embed.name);
+            let declares = self
+                .structs
+                .get(embed.name)
+                .map(|i| i.fields.iter().any(|f| f.name == field))
+                .unwrap_or(false);
+            if declares || self.find_promoted_field_path(embed.name, field, path) {
+                return true;
+            }
+            path.pop();
+        }
+        false
+    }
+
+    /// An embedded struct counts as supplied when every required field it
+    /// owns — directly or through its own embeds — appears in the literal as
+    /// a promoted field.
+    fn embed_satisfied_by_promoted_fields(&self, name: &'a str, supplied: &HashSet<&str>) -> bool {
+        let info = match self.structs.get(name) {
+            Some(i) => i,
+            None => return false,
+        };
+        for field in info.fields {
+            if field.default_value.is_none() && !field.optional && !supplied.contains(field.name) {
+                return false;
+            }
+        }
+        info.embeds.iter().all(|e| {
+            supplied.contains(e.name)
+                || self.is_empty_embed_struct(e.name)
+                || self.embed_satisfied_by_promoted_fields(e.name, supplied)
+        })
     }
 
     fn is_empty_embed_struct(&self, name: &'a str) -> bool {

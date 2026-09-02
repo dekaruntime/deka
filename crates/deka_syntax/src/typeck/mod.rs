@@ -1395,6 +1395,62 @@ mod tests {
     }
 
     #[test]
+    fn struct_embed_promoted_field_literal_passes() {
+        assert!(typeck(
+            "struct Person { name: string } struct Employee { Person } const e = Employee { name: \"Bob\" }; const n: string = e.name;"
+        ).is_empty());
+    }
+
+    #[test]
+    fn struct_embed_promoted_field_and_method_passes() {
+        // deka#496: the wasm fixture constructs an embedder with promoted
+        // fields and calls a promoted method on it.
+        assert!(typeck(
+            "struct Person { name: string } fn (p Person) greet() string { return \"hello\" } struct Employee { Person } const e = Employee { name: \"Bob\" }; const g: string = e.greet();"
+        ).is_empty());
+    }
+
+    #[test]
+    fn struct_embed_promoted_field_wrong_type_fails() {
+        let errors = typeck(
+            "struct Person { name: string } struct Employee { Person } const e = Employee { name: 1 };",
+        );
+        assert!(
+            errors.iter().any(|e| e.message.contains("field `name` expected type")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn struct_embed_missing_promoted_field_fails() {
+        let errors = typeck("struct Person { name: string } struct Employee { Person } const e = Employee {};");
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("missing embedded struct `Person`")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn struct_embed_direct_and_promoted_conflict_fails() {
+        let errors = typeck(
+            "struct Person { name: string } struct Employee { Person } const e = Employee { Person: Person { name: \"A\" }, name: \"B\" };",
+        );
+        assert!(
+            errors.iter().any(|e| e.message.contains("both directly and via promoted field")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn struct_embed_nested_promoted_field_literal_passes() {
+        assert!(typeck(
+            "struct Legs { count: number } struct Robot { Legs } struct Cyborg { Robot } const c = Cyborg { count: 4 }; const n: number = c.count;"
+        ).is_empty());
+    }
+
+    #[test]
     fn async_function_passes() {
         assert!(typeck("async fn value() Promise<number> { return 1 } const p: Promise<number> = value();").is_empty());
     }

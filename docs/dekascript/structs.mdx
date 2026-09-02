@@ -86,6 +86,12 @@ e.greet()         // Employee E54321
 e.Person.greet()  // Hello, Charlie
 ```
 
+Promoted fields can also be initialized directly in the literal; the compiler routes them into the embedded struct:
+
+```ds
+let e = Employee { name: "Charlie", employeeId: "E54321" }
+```
+
 If two embedded structs both define the same field or method, direct access is ambiguous and must be disambiguated with the embedded field name.
 
 ## Runtime representation
