@@ -208,7 +208,7 @@ fn build_bundles_api_handlers_into_worker() {
     fs::create_dir_all(&api_dir).expect("mkdir api/hello");
     fs::write(
         api_dir.join("route.ds"),
-        "interface RequestHeaders { accept: string }\ninterface Request { url: string, pathname: string, method: string, headers: RequestHeaders }\ninterface Response { status: number, body: string }\nexport fn GET(request: Request): Response {\n    return { status: 200, body: \"hello-api\" }\n}\nexport fn POST(request: Request): Response {\n    return { status: 200, body: \"posted\" }\n}\n",
+        "interface RequestHeaders { accept: string }\ninterface Request { url: string, pathname: string, method: string, headers: RequestHeaders }\ninterface Response { status: number, body: string }\nexport fn GET(request: Request) Response {\n    return { status: 200, body: \"hello-api\" }\n}\nexport fn POST(request: Request) Response {\n    return { status: 200, body: \"posted\" }\n}\n",
     )
     .expect("write api route");
 
@@ -266,7 +266,7 @@ fn build_rejects_static_kind_when_api_exists() {
     fs::create_dir_all(&api_dir).expect("mkdir api");
     fs::write(
         api_dir.join("route.ds"),
-        "interface Response { status: number, body: string }\nexport fn GET(): Response {\n    return { status: 200, body: \"ok\" }\n}\n",
+        "interface Response { status: number, body: string }\nexport fn GET() Response {\n    return { status: 200, body: \"ok\" }\n}\n",
     )
     .expect("write route");
     let (success, combined) = run_build(project.path());
@@ -283,7 +283,7 @@ fn build_emits_worker_for_middleware() {
     init_project(project.path());
     fs::write(
         project.path().join("middleware.ds"),
-        "export const matcher = [\"/dashboard/:path*\"]\ninterface RequestHeaders { accept: string }\ninterface ResponseHeaders { location: string }\ninterface Request { url: string, pathname: string, method: string, headers: RequestHeaders }\ninterface Response { status: number, body: string, headers: ResponseHeaders }\nexport fn middleware(request: Request): Option<Response> {\n    return Some({ status: 302, body: \"\", headers: { location: \"/login\" } })\n}\n",
+        "export const matcher = [\"/dashboard/:path*\"]\ninterface RequestHeaders { accept: string }\ninterface ResponseHeaders { location: string }\ninterface Request { url: string, pathname: string, method: string, headers: RequestHeaders }\ninterface Response { status: number, body: string, headers: ResponseHeaders }\nexport fn middleware(request: Request) Option<Response> {\n    return Some({ status: 302, body: \"\", headers: { location: \"/login\" } })\n}\n",
     )
     .expect("write middleware.ds");
     let (success, combined) = run_build(project.path());

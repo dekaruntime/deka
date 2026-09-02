@@ -672,7 +672,7 @@ mod tests {
         let mut files = HashMap::new();
         files.insert(
             math.clone(),
-            "export fn add(a: number, b: number): number { return a + b; }".to_string(),
+            "export fn add(a: number, b: number) number { return a + b; }".to_string(),
         );
         files.insert(
             main.clone(),
@@ -717,7 +717,7 @@ mod tests {
         let mut files = HashMap::new();
         files.insert(
             person.clone(),
-            "struct Person { name: string }\nfn (p Person) greet(): string { return p.name }\nexport { Person }".to_string(),
+            "struct Person { name: string }\nfn (p Person) greet() string { return p.name }\nexport { Person }".to_string(),
         );
         files.insert(
             main.clone(),
@@ -941,7 +941,7 @@ mod tests {
         let mut files = HashMap::new();
         files.insert(
             crypto.clone(),
-            "export fn random_bytes(n: number): Result<string, string> {\n  return unsafe { String(n) }\n}".to_string(),
+            "export fn random_bytes(n: number) Result<string, string> {\n  return unsafe { String(n) }\n}".to_string(),
         );
         files.insert(
             main.clone(),
@@ -1201,7 +1201,7 @@ interface RequestHeaders { accept: string }
 interface ResponseHeaders { location: string }
 interface Request { url: string, pathname: string, method: string, headers: RequestHeaders }
 interface Response { status: number, body: string, headers: ResponseHeaders }
-export fn middleware(request: Request): Option<Response> {
+export fn middleware(request: Request) Option<Response> {
     return None
 }
 "#,
@@ -1212,7 +1212,7 @@ export fn middleware(request: Request): Option<Response> {
             r#"interface RequestHeaders { accept: string }
 interface Request { url: string, pathname: string, method: string, headers: RequestHeaders }
 interface Response { status: number, body: string }
-export fn GET(request: Request): Response {
+export fn GET(request: Request) Response {
     return { status: 200, body: "ok" }
 }
 "#,

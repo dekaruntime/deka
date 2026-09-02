@@ -470,7 +470,7 @@ mod tests {
     #[test]
     fn compile_function_and_call() {
         let result = compile_to_js(
-            "fn add(a: number, b: number): number { return a + b; } const r = add(1, 2);",
+            "fn add(a: number, b: number) number { return a + b; } const r = add(1, 2);",
             "test.ds",
         )
         .expect("compile should succeed");
@@ -481,7 +481,7 @@ mod tests {
     #[test]
     fn compile_recursive_function() {
         let result = compile_to_js(
-            "fn forever(n: number): number { return forever(n); }",
+            "fn forever(n: number) number { return forever(n); }",
             "test.ds",
         )
         .expect("compile should succeed");
@@ -542,7 +542,7 @@ mod tests {
     #[test]
     fn compile_receiver_method() {
         let result = compile_to_js(
-            "struct Point { x: number\n  y: number }\nfn (p Point) distance(other: Point): number { return 0; }\nconst p1: Point = Point { x: 0, y: 0 };\nconst p2: Point = Point { x: 3, y: 4 };\nconst d: number = p1.distance(p2);",
+            "struct Point { x: number\n  y: number }\nfn (p Point) distance(other: Point) number { return 0; }\nconst p1: Point = Point { x: 0, y: 0 };\nconst p2: Point = Point { x: 3, y: 4 };\nconst d: number = p1.distance(p2);",
             "test.ds",
         )
         .expect("compile should succeed");
@@ -554,7 +554,7 @@ mod tests {
     #[test]
     fn compile_generic_function() {
         let result = compile_to_js(
-            "fn id<T>(x: T): T { return x; } const n: number = id(5);",
+            "fn id<T>(x: T) T { return x; } const n: number = id(5);",
             "test.ds",
         )
         .expect("compile should succeed");
@@ -586,7 +586,7 @@ mod tests {
     #[test]
     fn compile_export_function() {
         let result = compile_to_js(
-            "export fn add(a: number, b: number): number { return a + b; }",
+            "export fn add(a: number, b: number) number { return a + b; }",
             "test.ds",
         )
         .expect("compile should succeed");
@@ -609,7 +609,7 @@ mod tests {
         use deka_syntax::{parse, collect_module_exports, check_program_with_imports};
         use std::collections::HashMap;
         let arena = Bump::new();
-        let crypto_src = "export fn random_bytes(n: number): Result<string, string> { return unsafe { String(n) } }";
+        let crypto_src = "export fn random_bytes(n: number) Result<string, string> { return unsafe { String(n) } }";
         let crypto_parse = parse(crypto_src, &arena);
         let crypto_program = crypto_parse.program.unwrap();
         let crypto_exports = collect_module_exports(&crypto_program, &arena);
@@ -629,7 +629,7 @@ mod tests {
         use bumpalo::Bump;
         use deka_syntax::{parse, collect_module_exports, typeck::Type};
         let arena = Bump::new();
-        let source = "export fn random_bytes(n: number): Result<bytes, string> { return unsafe { new Uint8Array(n) } }";
+        let source = "export fn random_bytes(n: number) Result<bytes, string> { return unsafe { new Uint8Array(n) } }";
         let result = parse(source, &arena);
         assert!(result.errors.is_empty(), "{:?}", result.errors);
         let program = result.program.unwrap();
@@ -659,9 +659,9 @@ mod tests {
 
         let arena = Bump::new();
         let source = r#"
-fn constant<T>(value: T): Result<string, string> { return Ok("fixed") }
+fn constant<T>(value: T) Result<string, string> { return Ok("fixed") }
 export { constant }
-export fn first<T>(values: Array<T>): Option<T> { return Some(values[0]) }
+export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
 "#;
         let result = parse(source, &arena);
         assert!(result.errors.is_empty(), "{:?}", result.errors);
@@ -706,7 +706,7 @@ export fn first<T>(values: Array<T>): Option<T> { return Some(values[0]) }
     #[test]
     fn compile_await_and_pipe() {
         let result = compile_to_js(
-            "async fn fetch() Promise<number> { return 1; } fn double(n: number): number { return n * 2; } const y = await fetch() |> double;",
+            "async fn fetch() Promise<number> { return 1; } fn double(n: number) number { return n * 2; } const y = await fetch() |> double;",
             "test.ds",
         )
         .expect("compile should succeed");
@@ -818,7 +818,7 @@ export fn first<T>(values: Array<T>): Option<T> { return Some(values[0]) }
     #[test]
     fn extract_module_meta() {
         let meta = parse_source_module_meta(
-            "import { add } from \"./math.ds\";\nexport const x: number = 1;\nexport fn double(n: number): number { return n * 2; }",
+            "import { add } from \"./math.ds\";\nexport const x: number = 1;\nexport fn double(n: number) number { return n * 2; }",
         );
         assert_eq!(meta.imports.len(), 1);
         assert_eq!(meta.imports[0].path, "./math.ds");
