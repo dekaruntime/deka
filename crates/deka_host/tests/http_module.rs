@@ -1,7 +1,7 @@
 //! Integration tests for `@deka/http` (issue #128).
 //!
 //! These exercise the Rust bridge entry points directly — the same
-//! `http_call(action, payload)` that the pool's isolate bridge
+//! `http_call(action, payload)` entry the pool's isolate bridge
 //! dispatches to. PHPX-level smoke tests live in the module README and
 //! are validated via `deka serve`.
 //!
@@ -10,54 +10,33 @@
 //! `cargo test --release -p deka_host --test http_module -- --ignored`.
 //! The local-loopback tests (capability gate, WS echo) are always on.
 
-use deka_host::modules::http::http_call;
+use deka_host::modules::http::http_call_with_policy;
 use serde_json::json;
 use std::net::TcpListener;
-use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
-/// `DEKA_SECURITY_POLICY` is process-global env state. Tests that
-/// mutate it must serialize — cargo's default thread-parallel runner
-/// would otherwise let them race and produce false failures.
-fn policy_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
-struct PolicyGuard {
-    _guard: std::sync::MutexGuard<'static, ()>,
-}
-
-impl PolicyGuard {
-    fn allow_net(hosts: &[&str]) -> Self {
-        let guard = policy_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let allow_list: Vec<serde_json::Value> = hosts
-            .iter()
-            .map(|h| serde_json::Value::String(h.to_string()))
-            .collect();
-        let policy = serde_json::json!({
-            "security": { "allow": { "net": allow_list } }
-        });
-        unsafe {
-            std::env::set_var("DEKA_SECURITY_POLICY", policy.to_string());
-        }
-        PolicyGuard { _guard: guard }
-    }
-}
-
-impl Drop for PolicyGuard {
-    fn drop(&mut self) {
-        unsafe {
-            std::env::remove_var("DEKA_SECURITY_POLICY");
-        }
-    }
+/// Build a policy that allows the given net hosts. Tests pass this in
+/// directly instead of setting `DEKA_SECURITY_POLICY` — the env is
+/// process-global and cargo runs tests as threads in one process, so the
+/// previous PolicyGuard form raced every parallel reader of the variable
+/// (deka#537).
+fn allow_net_policy(hosts: &[&str]) -> runtime_core::security_policy::SecurityPolicy {
+    let allow_list: Vec<serde_json::Value> = hosts
+        .iter()
+        .map(|h| serde_json::Value::String(h.to_string()))
+        .collect();
+    let document = serde_json::json!({
+        "security": { "allow": { "net": allow_list } }
+    });
+    runtime_core::security_policy::parse_deka_security_policy(&document).policy
 }
 
 #[test]
 fn capability_gate_blocks_disallowed_host() {
-    let _g = PolicyGuard::allow_net(&["api.stripe.com"]);
-    let resp = http_call(
+    let policy = allow_net_policy(&["api.stripe.com"]);
+    let resp = http_call_with_policy(
+        &policy,
         "request",
         &json!({
             "method": "GET",
@@ -75,10 +54,11 @@ fn capability_gate_blocks_disallowed_host() {
 
 #[test]
 fn capability_gate_allows_exact_host() {
-    let _g = PolicyGuard::allow_net(&["example.com"]);
+    let policy = allow_net_policy(&["example.com"]);
     // Capability gate passes; network may or may not be available.
     // Accept any outcome except `host_not_allowed`.
-    let resp = http_call(
+    let resp = http_call_with_policy(
+        &policy,
         "request",
         &json!({
             "method": "HEAD",
@@ -92,11 +72,12 @@ fn capability_gate_allows_exact_host() {
 
 #[test]
 fn capability_gate_dns_wildcard_matches_subdomains() {
-    let _g = PolicyGuard::allow_net(&["*.squareup.com"]);
+    let policy = allow_net_policy(&["*.squareup.com"]);
     // Bare parent domain must NOT match the wildcard — this is the
     // cert-SAN rule and it keeps `squareup.com` from being implicitly
     // granted when the tenant only allowed subdomains.
-    let bare = http_call(
+    let bare = http_call_with_policy(
+        &policy,
         "request",
         &json!({
             "method": "HEAD",
@@ -112,7 +93,8 @@ fn capability_gate_dns_wildcard_matches_subdomains() {
     );
 
     // Subdomains match.
-    let sub = http_call(
+    let sub = http_call_with_policy(
+        &policy,
         "request",
         &json!({
             "method": "HEAD",
@@ -130,8 +112,9 @@ fn capability_gate_dns_wildcard_matches_subdomains() {
 
 #[test]
 fn invalid_url_rejected() {
-    let _g = PolicyGuard::allow_net(&["*"]);
-    let resp = http_call(
+    let policy = allow_net_policy(&["*"]);
+    let resp = http_call_with_policy(
+        &policy,
         "request",
         &json!({
             "method": "GET",
@@ -144,8 +127,9 @@ fn invalid_url_rejected() {
 #[test]
 #[ignore = "requires internet; run with --ignored"]
 fn httpbin_get_roundtrips() {
-    let _g = PolicyGuard::allow_net(&["httpbin.org"]);
-    let resp = http_call(
+    let policy = allow_net_policy(&["httpbin.org"]);
+    let resp = http_call_with_policy(
+        &policy,
         "request",
         &json!({
             "method": "GET",
@@ -168,8 +152,9 @@ fn httpbin_get_roundtrips() {
 #[test]
 #[ignore = "requires internet; run with --ignored"]
 fn httpbin_post_with_body_roundtrips() {
-    let _g = PolicyGuard::allow_net(&["httpbin.org"]);
-    let resp = http_call(
+    let policy = allow_net_policy(&["httpbin.org"]);
+    let resp = http_call_with_policy(
+        &policy,
         "request",
         &json!({
             "method": "POST",
@@ -192,8 +177,9 @@ fn httpbin_post_with_body_roundtrips() {
 #[test]
 #[ignore = "requires internet; run with --ignored"]
 fn http2_negotiated_via_alpn() {
-    let _g = PolicyGuard::allow_net(&["nghttp2.org"]);
-    let resp = http_call(
+    let policy = allow_net_policy(&["nghttp2.org"]);
+    let resp = http_call_with_policy(
+        &policy,
         "request",
         &json!({
             "method": "GET",
@@ -220,8 +206,9 @@ fn http2_negotiated_via_alpn() {
 #[test]
 #[ignore = "requires internet; run with --ignored"]
 fn cookie_jar_persists_across_requests() {
-    let _g = PolicyGuard::allow_net(&["httpbin.org"]);
-    let client = http_call(
+    let policy = allow_net_policy(&["httpbin.org"]);
+    let client = http_call_with_policy(
+        &policy,
         "client_new",
         &json!({
             "timeout_ms": 15000,
@@ -235,7 +222,8 @@ fn cookie_jar_persists_across_requests() {
         .unwrap();
 
     // httpbin /cookies/set/<name>/<value> returns Set-Cookie.
-    let _ = http_call(
+    let _ = http_call_with_policy(
+        &policy,
         "request",
         &json!({
             "method": "GET",
@@ -245,7 +233,8 @@ fn cookie_jar_persists_across_requests() {
     );
 
     // Second request echoes the jar.
-    let resp = http_call(
+    let resp = http_call_with_policy(
+        &policy,
         "request",
         &json!({
             "method": "GET",
@@ -256,7 +245,8 @@ fn cookie_jar_persists_across_requests() {
     let body = resp.get("body").and_then(|v| v.as_str()).unwrap_or("");
     assert!(body.contains("dekatest"), "cookie missing: {}", body);
 
-    let cookies = http_call(
+    let cookies = http_call_with_policy(
+        &policy,
         "client_cookies",
         &json!({
             "client_handle": handle,
@@ -274,7 +264,8 @@ fn cookie_jar_persists_across_requests() {
     );
 
     // Cross-origin should NOT see the cookie.
-    let cross = http_call(
+    let cross = http_call_with_policy(
+        &policy,
         "client_cookies",
         &json!({
             "client_handle": handle,
@@ -288,14 +279,15 @@ fn cookie_jar_persists_across_requests() {
         .unwrap_or_default();
     assert!(xlist.is_empty(), "cookies leaked cross-origin: {:?}", xlist);
 
-    let _ = http_call("client_close", &json!({ "client_handle": handle }));
+    let _ = http_call_with_policy(&policy, "client_close", &json!({ "client_handle": handle }));
 }
 
 #[test]
 #[ignore = "requires internet; run with --ignored"]
 fn streaming_response_reads_chunks() {
-    let _g = PolicyGuard::allow_net(&["httpbin.org"]);
-    let resp = http_call(
+    let policy = allow_net_policy(&["httpbin.org"]);
+    let resp = http_call_with_policy(
+        &policy,
         "request",
         &json!({
             "method": "GET",
@@ -314,7 +306,8 @@ fn streaming_response_reads_chunks() {
 
     let mut total = 0usize;
     loop {
-        let chunk = http_call(
+        let chunk = http_call_with_policy(
+            &policy,
             "stream_read",
             &json!({
                 "stream_handle": handle,
@@ -335,14 +328,14 @@ fn streaming_response_reads_chunks() {
         }
     }
     assert!(total > 0, "no bytes streamed");
-    let _ = http_call("stream_close", &json!({ "stream_handle": handle }));
+    let _ = http_call_with_policy(&policy, "stream_close", &json!({ "stream_handle": handle }));
 }
 
 #[test]
 #[ignore = "requires internet; allocates 100MB; run with --ignored"]
 fn streaming_upload_100mb_constant_memory() {
-    let _g = PolicyGuard::allow_net(&["httpbin.org"]);
-    let stream = http_call("req_stream_new", &json!({}));
+    let policy = allow_net_policy(&["httpbin.org"]);
+    let stream = http_call_with_policy(&policy, "req_stream_new", &json!({}));
     let handle = stream
         .get("stream_handle")
         .and_then(|v| v.as_u64())
@@ -351,8 +344,10 @@ fn streaming_upload_100mb_constant_memory() {
     // Dispatch the request on a background thread so we can feed the
     // body concurrently.
     let url = "https://httpbin.org/anything".to_string();
+    let upload_policy = policy.clone();
     let t = std::thread::spawn(move || {
-        http_call(
+        http_call_with_policy(
+            &upload_policy,
             "request",
             &json!({
                 "method": "POST",
@@ -371,7 +366,8 @@ fn streaming_upload_100mb_constant_memory() {
     let chunk_json: Vec<serde_json::Value> =
         chunk.iter().map(|b| serde_json::Value::from(*b)).collect();
     for _ in 0..100 {
-        let r = http_call(
+        let r = http_call_with_policy(
+            &policy,
             "req_stream_write",
             &json!({
                 "stream_handle": handle,
@@ -380,7 +376,11 @@ fn streaming_upload_100mb_constant_memory() {
         );
         assert_eq!(r.get("ok").and_then(|v| v.as_bool()), Some(true));
     }
-    let _ = http_call("req_stream_end", &json!({ "stream_handle": handle }));
+    let _ = http_call_with_policy(
+        &policy,
+        "req_stream_end",
+        &json!({ "stream_handle": handle }),
+    );
     let resp = t.join().unwrap();
     assert_eq!(
         resp.get("ok").and_then(|v| v.as_bool()),
@@ -455,11 +455,11 @@ fn spawn_ws_echo() -> u16 {
 
 #[test]
 fn websocket_local_echo_text_and_binary() {
-    let _g = PolicyGuard::allow_net(&["127.0.0.1"]);
+    let policy = allow_net_policy(&["127.0.0.1"]);
     let port = spawn_ws_echo();
     let url = format!("ws://127.0.0.1:{}", port);
 
-    let conn = http_call("ws_connect", &json!({ "url": url }));
+    let conn = http_call_with_policy(&policy, "ws_connect", &json!({ "url": url }));
     assert_eq!(
         conn.get("ok").and_then(|v| v.as_bool()),
         Some(true),
@@ -469,11 +469,13 @@ fn websocket_local_echo_text_and_binary() {
     let handle = conn.get("ws_handle").and_then(|v| v.as_u64()).unwrap();
 
     // Text round-trip.
-    let _ = http_call(
+    let _ = http_call_with_policy(
+        &policy,
         "ws_send_text",
         &json!({ "ws_handle": handle, "text": "hello" }),
     );
-    let text = http_call(
+    let text = http_call_with_policy(
+        &policy,
         "ws_recv",
         &json!({ "ws_handle": handle, "timeout_ms": 2000 }),
     );
@@ -481,14 +483,16 @@ fn websocket_local_echo_text_and_binary() {
     assert_eq!(text.get("text").and_then(|v| v.as_str()), Some("hello"));
 
     // Binary round-trip.
-    let _ = http_call(
+    let _ = http_call_with_policy(
+        &policy,
         "ws_send_binary",
         &json!({
             "ws_handle": handle,
             "bytes": [1, 2, 3, 255]
         }),
     );
-    let bin = http_call(
+    let bin = http_call_with_policy(
+        &policy,
         "ws_recv",
         &json!({ "ws_handle": handle, "timeout_ms": 2000 }),
     );
@@ -503,8 +507,13 @@ fn websocket_local_echo_text_and_binary() {
     assert_eq!(got, vec![1, 2, 3, 255]);
 
     // Ping/pong — server auto-pongs.
-    let _ = http_call("ws_ping", &json!({ "ws_handle": handle, "bytes": [9, 9] }));
-    let pong = http_call(
+    let _ = http_call_with_policy(
+        &policy,
+        "ws_ping",
+        &json!({ "ws_handle": handle, "bytes": [9, 9] }),
+    );
+    let pong = http_call_with_policy(
+        &policy,
         "ws_recv",
         &json!({ "ws_handle": handle, "timeout_ms": 2000 }),
     );
@@ -516,7 +525,8 @@ fn websocket_local_echo_text_and_binary() {
     );
 
     // Graceful close.
-    let closed = http_call(
+    let closed = http_call_with_policy(
+        &policy,
         "ws_close",
         &json!({
             "ws_handle": handle,
@@ -529,8 +539,9 @@ fn websocket_local_echo_text_and_binary() {
 
 #[test]
 fn websocket_capability_gate_blocks() {
-    let _g = PolicyGuard::allow_net(&["api.stripe.com"]);
-    let conn = http_call(
+    let policy = allow_net_policy(&["api.stripe.com"]);
+    let conn = http_call_with_policy(
+        &policy,
         "ws_connect",
         &json!({
             "url": "wss://echo.websocket.events"
@@ -609,7 +620,7 @@ use std::sync::Arc;
 fn redirect_to_disallowed_host_is_blocked() {
     // The trap server redirects to the attacker; the attacker server
     // must NEVER see a request.
-    let _g = PolicyGuard::allow_net(&["127.0.0.1"]);
+    let policy = allow_net_policy(&["127.0.0.1"]);
 
     let attacker_hits = Arc::new(AtomicU32::new(0));
     let attacker_port = spawn_http_server(attacker_hits.clone(), |_line| {
@@ -629,7 +640,8 @@ fn redirect_to_disallowed_host_is_blocked() {
     });
 
     let url = format!("http://127.0.0.1:{}/trap", redirector_port);
-    let resp = http_call(
+    let resp = http_call_with_policy(
+        &policy,
         "request",
         &json!({
             "method": "GET",
@@ -671,7 +683,7 @@ fn redirect_to_disallowed_host_is_blocked() {
 fn redirect_to_allowed_host_is_followed() {
     // Positive control: when the hop lands somewhere still in the
     // allowlist, the follow succeeds and the body comes back.
-    let _g = PolicyGuard::allow_net(&["127.0.0.1"]);
+    let policy = allow_net_policy(&["127.0.0.1"]);
 
     let final_hits = Arc::new(AtomicU32::new(0));
     let final_port = spawn_http_server(final_hits.clone(), |_line| {
@@ -687,7 +699,8 @@ fn redirect_to_allowed_host_is_followed() {
     });
 
     let url = format!("http://127.0.0.1:{}/start", hop_port);
-    let resp = http_call(
+    let resp = http_call_with_policy(
+        &policy,
         "request",
         &json!({
             "method": "GET",
@@ -717,7 +730,7 @@ fn redirect_to_allowed_host_is_followed() {
 fn redirect_via_client_handle_also_enforces_gate() {
     // Cover the second client builder path — explicit `client_new`
     // with `max_redirects` used to use `Policy::limited(N)` directly.
-    let _g = PolicyGuard::allow_net(&["127.0.0.1"]);
+    let policy = allow_net_policy(&["127.0.0.1"]);
 
     let attacker_hits = Arc::new(AtomicU32::new(0));
     let attacker_port = spawn_http_server(attacker_hits.clone(), |_line| {
@@ -731,7 +744,8 @@ fn redirect_via_client_handle_also_enforces_gate() {
         )
     });
 
-    let client = http_call(
+    let client = http_call_with_policy(
+        &policy,
         "client_new",
         &json!({ "max_redirects": 5, "timeout_ms": 3000 }),
     );
@@ -741,7 +755,8 @@ fn redirect_via_client_handle_also_enforces_gate() {
         .expect("client handle");
 
     let url = format!("http://127.0.0.1:{}/x", redirector_port);
-    let resp = http_call(
+    let resp = http_call_with_policy(
+        &policy,
         "request",
         &json!({
             "method": "GET",
@@ -764,7 +779,7 @@ fn redirect_via_client_handle_also_enforces_gate() {
         attacker_hits.load(Ordering::SeqCst)
     );
 
-    let _ = http_call("client_close", &json!({ "client_handle": handle }));
+    let _ = http_call_with_policy(&policy, "client_close", &json!({ "client_handle": handle }));
 }
 
 // ---------------------------------------------------------------------------
@@ -776,7 +791,7 @@ fn redirect_via_client_handle_also_enforces_gate() {
 
 #[test]
 fn plain_http_still_works_not_forced_h2() {
-    let _g = PolicyGuard::allow_net(&["127.0.0.1"]);
+    let policy = allow_net_policy(&["127.0.0.1"]);
     let hits = Arc::new(AtomicU32::new(0));
     let port = spawn_http_server(hits.clone(), |line| {
         // Sanity — if reqwest was forcing h2 prior knowledge the
@@ -791,7 +806,8 @@ fn plain_http_still_works_not_forced_h2() {
     });
 
     let url = format!("http://127.0.0.1:{}/ping", port);
-    let resp = http_call(
+    let resp = http_call_with_policy(
+        &policy,
         "request",
         &json!({
             "method": "GET",

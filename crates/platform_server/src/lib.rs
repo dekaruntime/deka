@@ -228,3 +228,16 @@ pub fn extensions_for_php_server() -> Vec<Extension> {
     extensions.extend(deka_host::extensions());
     extensions
 }
+
+/// Same as [`extensions_for_php_server`], but the net bridge enforces the
+/// given policy instead of re-reading `DEKA_SECURITY_POLICY` from the
+/// process env on every dispatch. Lets tests give each isolate pool its
+/// own net policy instead of racing on the process-global env var
+/// (deka#537).
+pub fn extensions_for_php_server_with_net_policy(
+    policy: deka_host::SecurityPolicy,
+) -> Vec<Extension> {
+    let mut extensions = vec![permissions_extension(), deno_napi::deno_napi::init(None)];
+    extensions.extend(deka_host::extensions_with_net_policy(policy));
+    extensions
+}

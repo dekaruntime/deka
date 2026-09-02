@@ -1,15 +1,7 @@
 use pool::{ExecutionMode, HandlerKey, IsolatePool, PoolConfig, RequestData, RequestParts};
 use std::net::TcpListener;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
-
-// DEKA_SECURITY_POLICY is process-global (std::env::set_var). Rust runs
-// #[test]s concurrently by default, so the two net-bridge tests below race
-// on this env var and intermittently read each other's allowed-target
-// policy (observed: connect fails SECURITY_CAPABILITY_DENIED against the
-// OTHER test's port). Mirrors the SERVE_ENV_LOCK precedent in
-// crates/runtime/src/serve.rs for the same tana#913-class flake.
-static NET_ENV_LOCK: Mutex<()> = Mutex::new(());
 
 fn test_pool() -> IsolatePool {
     let config = PoolConfig {
@@ -25,7 +17,39 @@ fn test_pool() -> IsolatePool {
     IsolatePool::new(config, Arc::new(Vec::new))
 }
 
-fn net_test_pool() -> IsolatePool {
+/// Pool whose isolates enforce an explicit net policy instead of reading
+/// `DEKA_SECURITY_POLICY` from the process env per dispatch. Tests pass
+/// their own policy so parallel tests stop racing on the process-global
+/// env var (deka#537).
+fn net_test_pool(policy: runtime_core::security_policy::SecurityPolicy) -> IsolatePool {
+    let config = PoolConfig {
+        num_workers: 1,
+        max_isolates_per_worker: 2,
+        idle_timeout_secs: 30,
+        enable_metrics: false,
+        enable_code_cache: false,
+        request_timeout_ms: 10_000,
+        queue_timeout_ms: 10_000,
+        ..PoolConfig::default()
+    };
+    IsolatePool::new(
+        config,
+        Arc::new(move || {
+            platform_server::extensions_for_php_server_with_net_policy(policy.clone())
+        }),
+    )
+}
+
+fn allow_net_policy(target: &str) -> runtime_core::security_policy::SecurityPolicy {
+    let document = serde_json::json!({
+        "security": { "allow": { "net": [target] } }
+    });
+    runtime_core::security_policy::parse_deka_security_policy(&document).policy
+}
+
+/// Pool backed by the platform-server (php) extensions with default
+/// env-driven policy. For tests that never touch the net bridge.
+fn php_server_pool() -> IsolatePool {
     let config = PoolConfig {
         num_workers: 1,
         max_isolates_per_worker: 2,
@@ -184,9 +208,6 @@ globalThis.app = function(req) {
 
 #[tokio::test]
 async fn net_bridge_connects_through_isolate_as_entry_pairs() {
-    let _env_lock = NET_ENV_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     const CONNECTS: usize = 24;
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind TCP listener");
     listener
@@ -208,14 +229,7 @@ async fn net_bridge_connects_through_isolate_as_entry_pairs() {
         count
     });
 
-    let previous_policy = std::env::var_os("DEKA_SECURITY_POLICY");
-    unsafe {
-        std::env::set_var(
-            "DEKA_SECURITY_POLICY",
-            format!(r#"{{"security":{{"allow":{{"net":["127.0.0.1:{port}"]}}}}}}"#),
-        );
-    }
-    let pool = net_test_pool();
+    let pool = net_test_pool(allow_net_policy(&format!("127.0.0.1:{port}")));
     let code = format!(
         r#"
 globalThis.app = function(req) {{
@@ -248,13 +262,6 @@ globalThis.app = function(req) {{
             test_request(&code),
         )
         .await;
-    unsafe {
-        match previous_policy {
-            Some(value) => std::env::set_var("DEKA_SECURITY_POLICY", value),
-            None => std::env::remove_var("DEKA_SECURITY_POLICY"),
-        }
-    }
-
     let response = res.expect("pool execution should succeed");
     assert!(response.success, "execution failed: {:?}", response.error);
     let result = response.result.expect("should have result");
@@ -268,9 +275,6 @@ globalThis.app = function(req) {{
 /// pool creates the two independent user isolates used in production.
 #[tokio::test]
 async fn net_bridge_rejects_foreign_handles_across_tenant_isolates() {
-    let _env_lock = NET_ENV_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind TCP listener");
     let port = listener.local_addr().expect("listener address").port();
     let server = std::thread::spawn(move || {
@@ -282,15 +286,7 @@ async fn net_bridge_rejects_foreign_handles_across_tenant_isolates() {
         std::io::Read::read(&mut stream, &mut byte).expect("wait for owner close")
     });
 
-    let previous_policy = std::env::var_os("DEKA_SECURITY_POLICY");
-    unsafe {
-        std::env::set_var(
-            "DEKA_SECURITY_POLICY",
-            format!(r#"{{"security":{{"allow":{{"net":["127.0.0.1:{port}"]}}}}}}"#),
-        );
-    }
-
-    let pool = net_test_pool();
+    let pool = net_test_pool(allow_net_policy(&format!("127.0.0.1:{port}")));
     let owner_code = format!(
         r#"
 globalThis.app = function(req) {{
@@ -404,13 +400,6 @@ globalThis.app = function(req) {{
         0,
         "foreign write reached socket"
     );
-
-    unsafe {
-        match previous_policy {
-            Some(value) => std::env::set_var("DEKA_SECURITY_POLICY", value),
-            None => std::env::remove_var("DEKA_SECURITY_POLICY"),
-        }
-    }
 }
 
 #[tokio::test]
@@ -562,7 +551,7 @@ globalThis.app = function(req) {
 
 #[tokio::test]
 async fn bridge_crypto_bcrypt_verify_resolves_to_op() {
-    let pool = net_test_pool();
+    let pool = php_server_pool();
     let code = r#"
 globalThis.app = function(req) {
   const hash = "$2b$10$DqpfeHg1RhyMilY/GTQvgeahRja6yf5aL8dYoH6EwABQY.CZ.pnNu";
@@ -584,7 +573,7 @@ globalThis.app = function(req) {
 
 #[tokio::test]
 async fn deka_host_digest_sha256_empty_known_vector() {
-    let pool = net_test_pool();
+    let pool = php_server_pool();
     let code = r#"
 globalThis.app = function(req) {
   const result = __deka_host('crypto', 'digest', ['sha256', new Uint8Array()]);
@@ -608,7 +597,7 @@ globalThis.app = function(req) {
 
 #[tokio::test]
 async fn deka_host_catalog_denies_php_only_kinds() {
-    let pool = net_test_pool();
+    let pool = php_server_pool();
     let code = r#"
 globalThis.app = function(req) {
   const result = __deka_host('db', 'query', []);
@@ -636,7 +625,7 @@ globalThis.app = function(req) {
 
 #[tokio::test]
 async fn deka_host_secure_compare_and_hmac() {
-    let pool = net_test_pool();
+    let pool = php_server_pool();
     let code = r#"
 globalThis.app = function(req) {
   const a = new Uint8Array([1, 2, 3]);
