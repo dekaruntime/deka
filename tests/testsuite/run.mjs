@@ -347,14 +347,65 @@ function lockMatchesFixture(tmpDir, cacheDir) {
   }
 }
 
-function installPackages(cliPath, tmpDir, packages, locked) {
-  const cacheKey = packages.slice().sort().join("+");
-  const cacheDir = join(repoRoot, ".cache", "deka-packages", cacheKey);
-  const cachedLock = join(cacheDir, "deka.lock");
-  const hasCachedModules =
-    existsSync(join(cacheDir, "ds_modules")) || existsSync(join(cacheDir, "php_modules"));
+/// Derive the package-cache key from the RESOLVED versions in the fixture's
+/// lock, not just the requested names (deka#535). A name-only key served
+/// pre-release package bytes to a post-release compiler: the failure blamed
+/// the package source and read as a compiler bug. Keying on name@version
+/// means a version change misses and reinstalls — no invalidation logic —
+/// and entries written under the old name-only format are never looked up.
+///
+/// Returns null when the lock carries no resolved packages — an unlocked
+/// fixture before its first resolution. Nothing resolved means there is no
+/// version to key on, so the cache is bypassed entirely (install fresh,
+/// do not serve, do not populate) rather than falling back to a name-only
+/// key that would serve stale bytes forever.
+export function cacheKeyFromLock(lockSource, packages) {
+  let lock = null;
+  try {
+    lock = JSON.parse(lockSource);
+  } catch {
+    return null;
+  }
+  const entries = Object.entries(lock?.packages ?? {});
+  if (entries.length === 0) return null;
+  return entries
+    .map(([name, value]) => {
+      // Lock entries are ["name@version", source, {gitRef, ...}, ""].
+      const version = Array.isArray(value)
+        ? String(value[0] ?? "").slice(String(value[0] ?? "").lastIndexOf("@") + 1)
+        : "";
+      return version ? `${name}@${version}` : name;
+    })
+    .sort()
+    .join("+");
+}
 
-  if (existsSync(cachedLock) && hasCachedModules && (!locked || lockMatchesFixture(tmpDir, cacheDir))) {
+function installPackages(cliPath, tmpDir, packages, locked, verbose) {
+  // The fixture lock is already in tmpDir (runNative copies or writes it
+  // before installing), so resolved versions are available for the key.
+  let lockSource = "";
+  try {
+    lockSource = readFileSync(join(tmpDir, "deka.lock"), "utf-8");
+  } catch {
+    // No lock yet: the cache is bypassed below.
+  }
+  const requestedKey = cacheKeyFromLock(lockSource, packages);
+  const cacheDir =
+    requestedKey === null
+      ? null
+      : join(repoRoot, ".cache", "deka-packages", requestedKey);
+  const cachedLock = cacheDir === null ? "" : join(cacheDir, "deka.lock");
+  const hasCachedModules =
+    cacheDir !== null &&
+    (existsSync(join(cacheDir, "ds_modules")) || existsSync(join(cacheDir, "php_modules")));
+
+  if (
+    requestedKey !== null &&
+    existsSync(cachedLock) &&
+    hasCachedModules &&
+    (!locked || lockMatchesFixture(tmpDir, cacheDir))
+  ) {
+    if (verbose) console.error(`[deka-packages cache hit] ${requestedKey}`);
     restoreCachedModules(cacheDir, tmpDir);
     copyFileSync(cachedLock, join(tmpDir, "deka.lock"));
     declareRestoredModules(tmpDir);
@@ -384,22 +435,39 @@ function installPackages(cliPath, tmpDir, packages, locked) {
     };
   }
 
-  mkdirSync(cacheDir, { recursive: true });
-  for (const name of ["ds_modules", "php_modules"]) {
-    const dir = join(tmpDir, name);
-    if (existsSync(dir)) {
-      cpSync(dir, join(cacheDir, name), { recursive: true });
-    }
-  }
+  // Populate under the versions the install ACTUALLY resolved, read back from
+  // the post-add lock — not the (possibly empty) pre-add lock. First-run
+  // fixtures then land under their versioned key and hit on the next run.
   const lockPath = join(tmpDir, "deka.lock");
+  let finalKey = requestedKey;
   if (existsSync(lockPath)) {
-    copyFileSync(lockPath, cachedLock);
+    let finalLock = "";
+    try {
+      finalLock = readFileSync(lockPath, "utf-8");
+    } catch {
+      finalLock = "";
+    }
+    finalKey = cacheKeyFromLock(finalLock, packages) ?? requestedKey;
+  }
+  if (finalKey !== null) {
+    const finalDir = join(repoRoot, ".cache", "deka-packages", finalKey);
+    mkdirSync(finalDir, { recursive: true });
+    for (const name of ["ds_modules", "php_modules"]) {
+      const dir = join(tmpDir, name);
+      if (existsSync(dir)) {
+        cpSync(dir, join(finalDir, name), { recursive: true });
+      }
+    }
+    if (existsSync(lockPath)) {
+      copyFileSync(lockPath, join(finalDir, "deka.lock"));
+    }
+    if (verbose) console.error(`[deka-packages cache populate] ${finalKey}`);
   }
   return { ok: true, stderr };
 }
 
 
-function runNative(cliPath, test, locked) {
+function runNative(cliPath, test, locked, verbose) {
   mkdirSync(scratchRoot, { recursive: true });
   const tmpDir = mkdtempSync(join(scratchRoot, "case-"));
   chmodSync(tmpDir, 0o700);
@@ -436,7 +504,7 @@ function runNative(cliPath, test, locked) {
     }
 
     if (packages.length > 0) {
-      const installed = installPackages(cliPath, tmpDir, packages, locked);
+      const installed = installPackages(cliPath, tmpDir, packages, locked, verbose);
       if (!installed.ok) {
         return {
           ok: false,
@@ -561,6 +629,7 @@ function parseArgs(argv) {
     help: false,
     locked: false,
     root: "",
+    verbose: false,
     jobs: Math.min(8, os.availableParallelism?.() || 4),
   };
   for (let i = 0; i < argv.length; i++) {
@@ -571,6 +640,7 @@ function parseArgs(argv) {
     else if (arg === "--jobs" || arg === "-j") args.jobs = Number(argv[++i] || args.jobs);
     else if (arg === "--locked") args.locked = true;
     else if (arg === "--root") args.root = argv[++i] || "";
+    else if (arg === "--verbose" || arg === "-v") args.verbose = true;
     else if (arg === "--help" || arg === "-h") args.help = true;
   }
   if (args.root) testsRoot = resolve(process.cwd(), args.root);
@@ -587,6 +657,7 @@ options:
   -j, --jobs <n>             Parallel native runs (default: min(8, CPUs))
   --locked                   Use existing deka.lock; fail if missing or stale
   --root <dir>               Fixture corpus root (default: tests/testsuite)
+  -v, --verbose              Log package-cache hits and populates to stderr
   -h, --help                 Show this help
 
 Native isolate only (\`deka run\`). Uses target/release/cli or DEKA_NATIVE.
@@ -674,7 +745,7 @@ async function main() {
     if (test.compiler && test.compiler !== activeCompiler) {
       return { test, skipped: true, reason: `compiler mismatch: fixture requires ${test.compiler}, running ${activeCompiler}` };
     }
-    const native = runNative(cliBinary, test, args.locked);
+    const native = runNative(cliBinary, test, args.locked, args.verbose);
     const evaled = evaluate(test, native);
     return { test, skipped: false, native, ...evaled };
   });
@@ -783,7 +854,11 @@ async function main() {
   process.exit(failed === 0 && unexpectedlyPassing.length === 0 ? 0 : 1);
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+// Run only when executed directly, not when imported for its exported
+// helpers (e.g. cacheKeyFromLock in tests).
+if (import.meta.main) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
