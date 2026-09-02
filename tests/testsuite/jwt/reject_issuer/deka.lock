@@ -1,0 +1,64 @@
+{
+  "lockfileVersion": 1,
+  "packages": {
+    "@deka/crypto": [
+      "@deka/crypto@0.3.1",
+      "deka.gg:@deka/crypto",
+      {
+        "repo": "https://github.com/dekaruntime/crypto.git",
+        "gitRef": "v0.3.1",
+        "source": "deka.gg",
+        "dependencies": [],
+        "moduleGraph": {
+          "algo": "sha256",
+          "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "fsGraph": {
+          "algo": "sha256",
+          "hash": "a7ff5504360dcce1ae454d2302d481c8181e486f3b053993d92c791393df6fb9"
+        }
+      },
+      ""
+    ],
+    "@deka/io": [
+      "@deka/io@0.1.1",
+      "deka.gg:@deka/io",
+      {
+        "repo": "https://github.com/dekaruntime/io.git",
+        "gitRef": "v0.1.1",
+        "source": "deka.gg",
+        "dependencies": [],
+        "moduleGraph": {
+          "algo": "sha256",
+          "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "fsGraph": {
+          "algo": "sha256",
+          "hash": "81b790e3d47cb1cb0ca5e2d9889618d099ba3f74d6e2be1ce819ff8f4f1e23db"
+        }
+      },
+      ""
+    ],
+    "@deka/jwt": [
+      "@deka/jwt@0.3.2",
+      "deka.gg:@deka/jwt",
+      {
+        "repo": "https://github.com/dekaruntime/jwt.git",
+        "gitRef": "v0.3.2",
+        "source": "deka.gg",
+        "dependencies": [
+          "@deka/crypto"
+        ],
+        "moduleGraph": {
+          "algo": "sha256",
+          "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "fsGraph": {
+          "algo": "sha256",
+          "hash": "7c97d0686f3ab428a31042b9d214d68004436314b7db89157d0710e1193dd68b"
+        }
+      },
+      ""
+    ]
+  }
+}

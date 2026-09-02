@@ -333,6 +333,17 @@ function restoreCachedModules(cacheDir, tmpDir) {
   }
 }
 
+function lockMatchesFixture(tmpDir, cacheDir) {
+  const tmpLock = join(tmpDir, "deka.lock");
+  const cachedLock = join(cacheDir, "deka.lock");
+  if (!existsSync(tmpLock) || !existsSync(cachedLock)) return false;
+  try {
+    return readFileSync(tmpLock, "utf-8") === readFileSync(cachedLock, "utf-8");
+  } catch {
+    return false;
+  }
+}
+
 function installPackages(cliPath, tmpDir, packages, locked) {
   const cacheKey = packages.slice().sort().join("+");
   const cacheDir = join(repoRoot, ".cache", "deka-packages", cacheKey);
@@ -340,7 +351,7 @@ function installPackages(cliPath, tmpDir, packages, locked) {
   const hasCachedModules =
     existsSync(join(cacheDir, "ds_modules")) || existsSync(join(cacheDir, "php_modules"));
 
-  if (!locked && existsSync(cachedLock) && hasCachedModules) {
+  if (existsSync(cachedLock) && hasCachedModules && (!locked || lockMatchesFixture(tmpDir, cacheDir))) {
     restoreCachedModules(cacheDir, tmpDir);
     copyFileSync(cachedLock, join(tmpDir, "deka.lock"));
     declareRestoredModules(tmpDir);
@@ -370,18 +381,16 @@ function installPackages(cliPath, tmpDir, packages, locked) {
     };
   }
 
-  if (!locked) {
-    mkdirSync(cacheDir, { recursive: true });
-    for (const name of ["ds_modules", "php_modules"]) {
-      const dir = join(tmpDir, name);
-      if (existsSync(dir)) {
-        cpSync(dir, join(cacheDir, name), { recursive: true });
-      }
+  mkdirSync(cacheDir, { recursive: true });
+  for (const name of ["ds_modules", "php_modules"]) {
+    const dir = join(tmpDir, name);
+    if (existsSync(dir)) {
+      cpSync(dir, join(cacheDir, name), { recursive: true });
     }
-    const lockPath = join(tmpDir, "deka.lock");
-    if (existsSync(lockPath)) {
-      copyFileSync(lockPath, cachedLock);
-    }
+  }
+  const lockPath = join(tmpDir, "deka.lock");
+  if (existsSync(lockPath)) {
+    copyFileSync(lockPath, cachedLock);
   }
   return { ok: true, stderr };
 }
