@@ -16,7 +16,7 @@ import {
   runProjectInBrowser,
 } from './run-browser'
 import { setCompilerArtifactPath } from '@dekaruntime/web-ide-kit/runtime'
-import { loadAllTests, type HatsCategory, type HatsHost, type HatsTest, type HatsTestStage } from './tests'
+import { loadAllTests, type HatsCategory, type HatsHost, type HatsTest, type HatsTestStage, type HatsTestStatus } from './tests'
 import { computeOverallStatus, type HatsOverallStatus } from './overall-status'
 
 // Bare stdlib imports (from "io") are rewritten by the compiler to this base;
@@ -55,7 +55,12 @@ export interface HatsTestWithBuildResult extends HatsTest {
   /// output; false on disagreement; undefined when a host did not format
   /// (deka#477).
   fmtHostsAgree?: boolean
+  /** What actually happened. Read this, not `expected`. */
+  verdict: HatsOverallStatus
+  /** @deprecated ambiguous name; use `verdict`. Kept for one release. */
   overallStatus: HatsOverallStatus
+  /** What the fixture EXPECTS -- a `.fail.ds` expects compilation to fail. */
+  expected: HatsTestStatus
 }
 
 export interface HatsCategoryWithResults extends HatsCategory {
@@ -330,14 +335,7 @@ async function runAllTestsOnce(): Promise<HatsBuildResults> {
             ? wasmResult.formattedCode === nativeResult.formattedCode
             : undefined
 
-        tests.push({
-          ...test,
-          wasmResult,
-          nativeResult,
-          wasmMatches,
-          nativeMatches,
-          fmtHostsAgree,
-          overallStatus: computeOverallStatus({
+        const verdict = computeOverallStatus({
             wantNative,
             wantBrowser,
             nativeAvailable,
@@ -347,7 +345,24 @@ async function runAllTestsOnce(): Promise<HatsBuildResults> {
             nativeSkipped: Boolean(nativeResult.skipped),
             browserSkipped: Boolean(wasmResult.skipped),
             fmtHostsAgree,
-          }),
+          })
+
+        tests.push({
+          ...test,
+          // deka#368: `status` is the fixture's EXPECTED outcome, not what
+          // happened -- a `.fail.ds` fixture expects compilation to fail. Read
+          // as a verdict it says 381 of 796 tests are failing, which is how it
+          // produced a wrong diagnosis twice. Emitted under honest names;
+          // the old ones stay for one release so a mid-upgrade site is not
+          // reading undefined.
+          expected: test.status,
+          wasmResult,
+          nativeResult,
+          wasmMatches,
+          nativeMatches,
+          fmtHostsAgree,
+          overallStatus: verdict,
+          verdict,
         })
       }
       results.push({ ...category, tests })
