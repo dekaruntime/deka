@@ -82,13 +82,24 @@ impl<'a> Checker<'a> {
     }
 
     fn collect_declarations(&mut self) {
+        // `Type` is the builtin first-class type descriptor (rfd#41,
+        // deka#529). Reserving the name keeps user declarations from
+        // colliding with the builtin in annotations; restriction-first,
+        // relaxable later.
+        const BUILTIN_TYPE_DIAGNOSTIC: &str = "`Type` is a builtin type";
         for stmt in self.program.statements {
             if let ast::Stmt::TypeAlias { name, value, span, .. } = stmt {
+                if *name == "Type" {
+                    self.error_span(*span, BUILTIN_TYPE_DIAGNOSTIC);
+                }
                 if self.aliases.insert(name, value.clone()).is_some() {
                     self.error_span(*span, format!("duplicate type alias `{name}`"));
                 }
             }
             if let ast::Stmt::Enum { name, cases, type_params, span } = stmt {
+                if *name == "Type" {
+                    self.error_span(*span, BUILTIN_TYPE_DIAGNOSTIC);
+                }
                 if self
                     .enums
                     .insert(name, super::EnumInfo { cases, type_params })
@@ -107,6 +118,9 @@ impl<'a> Checker<'a> {
                 }
             }
             if let ast::Stmt::Struct { name, fields, embeds, span, .. } = stmt {
+                if *name == "Type" {
+                    self.error_span(*span, BUILTIN_TYPE_DIAGNOSTIC);
+                }
                 if self.structs.insert(name, super::StructInfo { fields, embeds }).is_some() {
                     self.error_span(*span, format!("duplicate struct definition `{name}`"));
                     continue;
@@ -150,11 +164,17 @@ impl<'a> Checker<'a> {
                 }
             }
             if let ast::Stmt::Interface { name, members, span, .. } = stmt {
+                if *name == "Type" {
+                    self.error_span(*span, BUILTIN_TYPE_DIAGNOSTIC);
+                }
                 if self.interfaces.insert(name, super::InterfaceInfo { members, span: *span }).is_some() {
                     self.error_span(*span, format!("duplicate interface definition `{name}`"));
                 }
             }
             if let ast::Stmt::Newtype { name, repr, span } = stmt {
+                if *name == "Type" {
+                    self.error_span(*span, BUILTIN_TYPE_DIAGNOSTIC);
+                }
                 if self.newtypes.insert(name, super::NewtypeInfo { repr: *repr }).is_some() {
                     self.error_span(*span, format!("duplicate newtype definition `{name}`"));
                     continue;

@@ -225,7 +225,7 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
     ) -> Type<'a> {
         match ty {
             ast::Type::Named { name, .. } => match *name {
-                "number" | "string" | "boolean" | "never" | "void" | "bytes" | "Component" | "JsError" => {
+                "number" | "string" | "boolean" | "never" | "void" | "bytes" | "Component" | "JsError" | "Type" => {
                     Type::Named { name }
                 }
                 _ => {
@@ -1305,6 +1305,29 @@ mod tests {
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert!(errors[0].message.contains("wrap"), "{}", errors[0].message);
         assert!(errors[0].message.contains("1 argument"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn type_toString_is_builtin_method() {
+        // `Type` is seeded as a builtin named type; `toString` on it resolves
+        // through the primitive member table (rfd#41, deka#529).
+        assert!(typeck("fn f(t: Type) string { return t.toString(); }").is_empty());
+    }
+
+    #[test]
+    fn type_declaration_named_type_fails() {
+        // `Type` is reserved for the builtin descriptor type.
+        for src in [
+            "struct Type { x: number }",
+            "enum Type { Red }",
+            "type Type number",
+            "interface Type { fn get() number }",
+            "alias Type = number",
+        ] {
+            let errors = typeck(src);
+            assert_eq!(errors.len(), 1, "{src}: {errors:?}");
+            assert!(errors[0].message.contains("`Type` is a builtin type"), "{}", errors[0].message);
+        }
     }
 
     #[test]

@@ -152,6 +152,10 @@ pub(super) fn primitive_member<'a>(
         // guarantee; without it, declaring them would be a lie the type
         // system could not catch (deka#460, deka#469).
         ("JsError", "message" | "name") => PrimitiveMember::Property(string_ty),
+        // `Type` is the first-class runtime type descriptor returned by
+        // `.getType()` (rfd#41, deka#529). Only `toString()` is in scope for
+        // this slice; the rest of the descriptor API is deferred.
+        ("Type", "toString") => PrimitiveMember::BuiltinMethod(fn0(string_ty)),
         ("string", "length") => PrimitiveMember::Property(number_ty),
         ("string", "toUpperCase" | "toLowerCase" | "trim") => {
             PrimitiveMember::BuiltinMethod(fn0(string_ty))
