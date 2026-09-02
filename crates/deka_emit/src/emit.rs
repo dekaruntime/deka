@@ -35,6 +35,7 @@ pub fn emit_js(program: &Program, _source: &str) -> Result<String, String> {
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
+        &HashMap::new(),
         "module.ds",
         None,
     )
@@ -62,6 +63,7 @@ pub fn emit_js_with_imports<'a>(
         operator_rewrites,
         &HashMap::new(),
         &HashMap::new(),
+        &HashMap::new(),
         "module.ds",
         None,
     )
@@ -86,6 +88,12 @@ pub fn emit_js_with_options<'a>(
         deka_syntax::typeck::JsxOptionalProps<'a>,
     >,
     enum_case_patterns: &HashMap<*const deka_syntax::Pattern<'a>, &'a str>,
+    // Union member type-patterns (`string(s)`) and the runtime predicate
+    // each one compiles to (rfd#42, deka#530).
+    union_type_patterns: &HashMap<
+        *const deka_syntax::Pattern<'a>,
+        deka_syntax::typeck::UnionMemberTest<'a>,
+    >,
     file_path: &str,
     live_names: Option<&HashSet<String>>,
 ) -> Result<String, String> {
@@ -97,6 +105,7 @@ pub fn emit_js_with_options<'a>(
     emitter.operator_rewrites = operator_rewrites.clone();
     emitter.jsx_optional_props = jsx_optional_props.clone();
     emitter.enum_case_patterns = enum_case_patterns.clone();
+    emitter.union_type_patterns = union_type_patterns.clone();
     emitter.live_names = live_names.cloned();
     emitter.emit()
 }
@@ -156,6 +165,12 @@ struct Emitter<'a> {
         deka_syntax::typeck::JsxOptionalProps<'a>,
     >,
     enum_case_patterns: HashMap<*const deka_syntax::Pattern<'a>, &'a str>,
+    /// Union member type-patterns and their runtime predicates, lowered by
+    /// the typechecker (rfd#42, deka#530).
+    union_type_patterns: HashMap<
+        *const deka_syntax::Pattern<'a>,
+        deka_syntax::typeck::UnionMemberTest<'a>,
+    >,
     unwrap_id: usize,
     /// Newtype operator rewrites lowered by the typechecker.
     operator_rewrites: HashMap<*const Expr<'a>, deka_syntax::typeck::OperatorRewrite<'a>>,
@@ -186,6 +201,7 @@ impl<'a> Emitter<'a> {
             unwrap_calls: HashMap::new(),
             jsx_optional_props: HashMap::new(),
             enum_case_patterns: HashMap::new(),
+            union_type_patterns: HashMap::new(),
             unwrap_id: 0,
             operator_rewrites: HashMap::new(),
             file_stem: "module".to_string(),
@@ -634,7 +650,16 @@ impl<'a> Emitter<'a> {
     }
 
     fn needs_struct_helper(&self) -> bool {
-        !self.structs.is_empty() || !self.receiver_methods.is_empty()
+        // A struct-member union type-pattern emits `deka.getStructId(...)`,
+        // which only exists when the struct prelude block is emitted — even
+        // if the struct itself lives in an import and this module declares
+        // none (rfd#42, deka#530).
+        !self.structs.is_empty()
+            || !self.receiver_methods.is_empty()
+            || self
+                .union_type_patterns
+                .values()
+                .any(|t| matches!(t, deka_syntax::typeck::UnionMemberTest::Struct(_)))
     }
 
     fn needs_prelude_enums(&self) -> bool {
@@ -2083,7 +2108,7 @@ impl<'a> Emitter<'a> {
         Ok(())
     }
 
-    fn match_condition(&self, pattern: &Pattern<'a>, scrutinee_var: &str) -> String {
+    fn match_condition(&mut self, pattern: &Pattern<'a>, scrutinee_var: &str) -> String {
         match pattern {
             Pattern::Wildcard { .. } => "true".to_string(),
             // A bare name that resolved to a payload-free case is a case test,
@@ -2116,6 +2141,7 @@ impl<'a> Emitter<'a> {
                     unwrap_calls: HashMap::new(),
                     jsx_optional_props: HashMap::new(),
                     enum_case_patterns: HashMap::new(),
+                    union_type_patterns: HashMap::new(),
                     unwrap_id: 0,
                     operator_rewrites: HashMap::new(),
                     file_stem: self.file_stem.clone(),
@@ -2131,6 +2157,16 @@ impl<'a> Emitter<'a> {
                 format!("{} === {}", scrutinee_var, literal)
             }
             Pattern::Constructor { name, payload, .. } => {
+                // Union member type-patterns take priority: `string(s)` tests
+                // `typeof`, not a `__case` that primitives do not have
+                // (rfd#42, deka#530).
+                if let Some(test) = self
+                    .union_type_patterns
+                    .get(&(pattern as *const Pattern<'a>))
+                    .copied()
+                {
+                    return self.union_member_condition(&test, scrutinee_var);
+                }
                 let mut conditions = vec![format!("{}.__case === \"{}\"", scrutinee_var, name)];
                 if let Some(payload) = payload {
                     if let Pattern::Constructor { name: payload_name, .. } = payload {
@@ -2157,9 +2193,35 @@ impl<'a> Emitter<'a> {
         }
     }
 
+    /// The runtime predicate for a union member type-pattern (rfd#42,
+    /// deka#530). Structs force the struct prelude block — `getStructId`
+    /// only exists when it is emitted.
+    fn union_member_condition(
+        &mut self,
+        test: &deka_syntax::typeck::UnionMemberTest<'a>,
+        scrutinee_var: &str,
+    ) -> String {
+        match test {
+            deka_syntax::typeck::UnionMemberTest::Primitive(name) => {
+                let js_type = if *name == "void" { "undefined" } else { name };
+                format!("typeof {} === \"{}\"", scrutinee_var, js_type)
+            }
+            deka_syntax::typeck::UnionMemberTest::Bytes => {
+                format!("{} instanceof Uint8Array", scrutinee_var)
+            }
+            deka_syntax::typeck::UnionMemberTest::Struct(name) => {
+                self.uses_struct = true;
+                format!("deka.getStructId({}) === \"{}\"", scrutinee_var, name)
+            }
+            deka_syntax::typeck::UnionMemberTest::Enum(name) => {
+                format!("{}.__enum === \"{}\"", scrutinee_var, name)
+            }
+        }
+    }
+
     fn emit_pattern_bindings(
         &mut self,
-        pattern: &Pattern,
+        pattern: &Pattern<'a>,
         scrutinee_var: &str,
         indent: usize,
     ) -> Result<(), String> {
@@ -2178,6 +2240,19 @@ impl<'a> Emitter<'a> {
             // destructure here.
             Pattern::Or { .. } => {}
             Pattern::Constructor { name, payload, .. } => {
+                // Union type-patterns: the payload IS the scrutinee, so the
+                // binding is `const s = <scrutinee>;` — the Identifier arm
+                // below, reached by passing the scrutinee through unchanged
+                // (rfd#42, deka#530).
+                if self
+                    .union_type_patterns
+                    .contains_key(&(pattern as *const Pattern<'a>))
+                {
+                    if let Some(payload) = payload {
+                        self.emit_pattern_bindings(payload, scrutinee_var, indent)?;
+                    }
+                    return Ok(());
+                }
                 if let Some(payload) = payload {
                     let payload_access = if *name == "None" {
                         scrutinee_var.to_string()

@@ -24,6 +24,86 @@ mod tests {
         emit_js(&program, source).expect("emit failed")
     }
 
+    /// Union type-patterns are lowered by the typechecker, so emission of
+    /// them needs the checker results — unlike the erase-only `parse_and_emit`.
+    fn parse_check_and_emit(source: &str) -> String {
+        let arena = Bump::new();
+        let result = parse(source, &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.expect("parse produced no program");
+        let typeck = deka_syntax::typeck::check_program(&program, source);
+        assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
+        emit_js_with_options(
+            &program,
+            source,
+            &std::collections::HashMap::new(),
+            None,
+            &typeck.unwrap_calls,
+            &typeck.operator_rewrites,
+            &typeck.jsx_optional_props,
+            &typeck.enum_case_patterns,
+            &typeck.union_type_patterns,
+            "module.ds",
+            None,
+        )
+        .expect("emit failed")
+    }
+
+    #[test]
+    fn emit_union_type_pattern_primitive_predicates() {
+        let out = parse_check_and_emit(
+            "fn f(v: string | number) string { return match (v) { string(s) => s, number(n) => string(n) }; }",
+        );
+        assert!(
+            out.contains("typeof __deka_scrutinee === \"string\""),
+            "expected typeof predicate, got: {}",
+            out
+        );
+        assert!(
+            out.contains("typeof __deka_scrutinee === \"number\""),
+            "expected typeof predicate, got: {}",
+            out
+        );
+        // The payload is bound to the scrutinee itself.
+        assert!(out.contains("const s = __deka_scrutinee;"), "got: {}", out);
+        assert!(out.contains("const n = __deka_scrutinee;"), "got: {}", out);
+        // Primitives have no __case tag; emitting one would mean the union
+        // lookup was skipped.
+        assert!(!out.contains("__case === \"string\""), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_union_type_pattern_struct_predicate() {
+        let out = parse_check_and_emit(
+            "struct Point { x: number; y: number }\nfn f(v: Point | string) number { return match (v) { Point(p) => p.x, string(s) => s.length }; }",
+        );
+        assert!(
+            out.contains("deka.getStructId(__deka_scrutinee) === \"Point\""),
+            "expected getStructId predicate, got: {}",
+            out
+        );
+        // The struct prelude (which defines getStructId) must be emitted.
+        assert!(out.contains("getStructId:"), "got: {}", out);
+        assert!(out.contains("const p = __deka_scrutinee;"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_union_type_pattern_boolean_and_bytes_predicates() {
+        let out = parse_check_and_emit(
+            "fn f(v: boolean | bytes) number { return match (v) { boolean(b) => 1, bytes(raw) => 2 }; }",
+        );
+        assert!(
+            out.contains("typeof __deka_scrutinee === \"boolean\""),
+            "got: {}",
+            out
+        );
+        assert!(
+            out.contains("__deka_scrutinee instanceof Uint8Array"),
+            "got: {}",
+            out
+        );
+    }
+
     #[test]
     fn emit_const_number() {
         let out = parse_and_emit("const x = 42;");

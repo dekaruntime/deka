@@ -449,6 +449,7 @@ pub fn compile_to_js_with_imports_and_options<'a>(
         &typeck_result.operator_rewrites,
         &typeck_result.jsx_optional_props,
         &typeck_result.enum_case_patterns,
+        &typeck_result.union_type_patterns,
         file_path,
         options.used_exports.as_ref(),
     )
@@ -568,6 +569,36 @@ mod tests {
         .expect("compile should succeed");
         assert!(result.js.contains("__case"));
         assert!(result.js.contains("Red"));
+    }
+
+    #[test]
+    fn compile_union_match_type_patterns() {
+        let result = compile_to_js(
+            "struct Point { x: number; y: number }\nfn f(v: Point | string) number { return match (v) { Point(p) => p.x, string(s) => s.length }; }",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(
+            result.js.contains("deka.getStructId(__deka_scrutinee) === \"Point\""),
+            "got: {}",
+            result.js
+        );
+        assert!(
+            result.js.contains("typeof __deka_scrutinee === \"string\""),
+            "got: {}",
+            result.js
+        );
+    }
+
+    #[test]
+    fn compile_union_type_errors_are_diagnostics() {
+        let err = compile_to_js("const v: string | string = \"a\";", "test.ds")
+            .expect_err("compile should fail");
+        assert!(
+            err.iter().any(|d| d.message.contains("overlap")),
+            "expected overlap diagnostic, got: {:?}",
+            err
+        );
     }
 
     #[test]

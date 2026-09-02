@@ -331,6 +331,10 @@ pub enum Type<'a> {
         fields: &'a [RecordField<'a>],
         span: Span,
     },
+    Union {
+        members: &'a [Type<'a>],
+        span: Span,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -621,6 +625,7 @@ impl<'a> Type<'a> {
             Type::Option { span, .. } => *span,
             Type::Tuple { span, .. } => *span,
             Type::Record { span, .. } => *span,
+            Type::Union { span, .. } => *span,
         }
     }
 }

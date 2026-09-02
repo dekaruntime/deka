@@ -591,6 +591,113 @@ mod tests {
     }
 
     #[test]
+    fn parse_union_type() {
+        // `string | number` in a binding annotation (rfd#42, deka#530).
+        let arena = Bump::new();
+        let result = parse("const x: string | number = 1;", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { ty, .. } => match ty {
+                Some(Type::Union { members, .. }) => {
+                    assert_eq!(members.len(), 2);
+                    assert!(matches!(&members[0], Type::Named { name, .. } if name == &"string"));
+                    assert!(matches!(&members[1], Type::Named { name, .. } if name == &"number"));
+                }
+                _ => panic!("expected union type, got {:?}", ty),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_union_type_in_param_and_return() {
+        let arena = Bump::new();
+        let result = parse(
+            "fn f(a: string | number) string | number { return a; }",
+            &arena,
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Function {
+                params, return_type, ..
+            } => {
+                assert!(matches!(&params[0].ty, Some(Type::Union { members, .. }) if members.len() == 2));
+                assert!(matches!(return_type, Some(Type::Union { members, .. }) if members.len() == 2));
+            }
+            _ => panic!("expected function declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_union_postfix_question_binds_tighter_than_bar() {
+        // `A | B?` must parse as `A | (B?)`, not `(A | B)?` (rfd#42).
+        let arena = Bump::new();
+        let result = parse("const x: string | number? = 1;", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { ty, .. } => match ty {
+                Some(Type::Union { members, .. }) => {
+                    assert_eq!(members.len(), 2);
+                    assert!(matches!(&members[0], Type::Named { name, .. } if name == &"string"));
+                    assert!(matches!(&members[1], Type::Option { inner, .. } if matches!(&**inner, Type::Named { name, .. } if name == &"number")));
+                }
+                _ => panic!("expected union type, got {:?}", ty),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_grouped_union_with_postfix_question() {
+        // `(A | B)?` groups the union, then `?` applies to the whole group.
+        let arena = Bump::new();
+        let result = parse("const x: (string | number)? = None;", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { ty, .. } => match ty {
+                Some(Type::Option { inner, .. }) => {
+                    assert!(matches!(&**inner, Type::Union { members, .. } if members.len() == 2));
+                }
+                _ => panic!("expected optional union type, got {:?}", ty),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_union_inside_generic_args() {
+        let arena = Bump::new();
+        let result = parse("const x: Array<string | number> = [];", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.unwrap();
+        match &program.statements[0] {
+            Stmt::Const { ty, .. } => match ty {
+                Some(Type::Generic { base, args, .. }) => {
+                    assert_eq!(base, &"Array");
+                    assert_eq!(args.len(), 1);
+                    assert!(matches!(&args[0], Type::Union { members, .. } if members.len() == 2));
+                }
+                _ => panic!("expected generic with union args, got {:?}", ty),
+            },
+            _ => panic!("expected const declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_union_in_struct_field_and_type_alias() {
+        let arena = Bump::new();
+        let result = parse(
+            "struct Box { v: string | number } alias Alias = string | number;",
+            &arena,
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+    }
+
+    #[test]
     fn parse_unary_and_binary_precedence() {
         let arena = Bump::new();
         let result = parse("const z = -a.b + c * d;", &arena);

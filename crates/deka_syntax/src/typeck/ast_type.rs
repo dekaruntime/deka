@@ -126,10 +126,108 @@ impl<'a> Checker<'a> {
                 inner: Box::new(self.resolve_ast_type_rec(inner, seen)),
             },
 
+            // Membership and overlap validation live in `check_union_members`
+            // (rfd#42, deka#530); members resolve individually so aliases and
+            // type params keep working through them.
+            ast::Type::Union { members, span } => {
+                let resolved: Vec<Type<'a>> = members
+                    .iter()
+                    .map(|member| self.resolve_ast_type_rec(member, seen))
+                    .collect();
+                self.check_union_members(&resolved, *span);
+                Type::Union { members: resolved }
+            }
+
             ast::Type::Tuple { span, .. } | ast::Type::Record { span, .. } => {
                 self.error_span(*span, "tuple/record types are not supported in v2 typeck");
                 Type::Error
             }
+        }
+    }
+
+    /// Validate union membership and member overlap (rfd#42, deka#530).
+    ///
+    /// Membership rule: a type may appear in a union only if it has a
+    /// decidable runtime predicate — primitives (string/number/boolean/
+    /// bytes/void), named structs, enums and interfaces. Function types,
+    /// unconstrained type params (`Var`), checker-unknown types (`Infer`),
+    /// and `Option`/`Generic`/`Array`/`Object` are rejected: there is no
+    /// runtime test the emitter could emit for them today. Newtypes are
+    /// rejected in v1 even though they carry a `__deka_newtype` runtime tag:
+    /// the tag-based predicate is not wired into match emission yet, and
+    /// allowing them now would commit to a shape before it exists.
+    /// `Type::Error` propagates silently (error recovery).
+    ///
+    /// Overlap rule: two members may not both match a single value, or
+    /// narrowing is ambiguous. Distinct primitives never overlap; identical
+    /// members do; struct-vs-struct and interface-vs-interface overlap iff
+    /// either direction is assignable; anything vs a primitive never
+    /// overlaps; enum-vs-enum overlaps iff it is the same enum.
+    fn check_union_members(&mut self, members: &[Type<'a>], span: ast::Span) {
+        for member in members {
+            if member.is_error() {
+                continue;
+            }
+            let allowed = match member {
+                Type::Named { name } => {
+                    Self::is_union_primitive(name) || self.enums.contains_key(name)
+                }
+                Type::Struct { .. } | Type::Interface { .. } => true,
+                _ => false,
+            };
+            if !allowed {
+                self.error_span(
+                    span,
+                    format!(
+                        "union member `{member}` is not allowed: union members must have a \
+                         decidable runtime predicate — only primitives, structs, enums and \
+                         interfaces may appear in a union (rfd#42)"
+                    ),
+                );
+            }
+        }
+
+        for (i, a) in members.iter().enumerate() {
+            for b in members.iter().skip(i + 1) {
+                if a.is_error() || b.is_error() {
+                    continue;
+                }
+                if self.union_members_overlap(a, b) {
+                    self.error_span(
+                        span,
+                        format!(
+                            "union members `{a}` and `{b}` overlap — a value matching `{b}` \
+                             also matches `{a}`, so narrowing would be ambiguous"
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    fn is_union_primitive(name: &str) -> bool {
+        matches!(name, "string" | "number" | "boolean" | "bytes" | "void")
+    }
+
+    /// Conservative v1 overlap test. Assumes membership validation has
+    /// already run, so only allowed member shapes reach this.
+    fn union_members_overlap(&mut self, a: &Type<'a>, b: &Type<'a>) -> bool {
+        match (a, b) {
+            // Identical members always overlap (`string | string`).
+            _ if a == b => true,
+            (Type::Named { .. }, Type::Named { .. }) => {
+                // Distinct primitives never overlap; enum-vs-enum overlaps
+                // only for the same enum, which equality above caught.
+                false
+            }
+            (Type::Struct { .. }, Type::Struct { .. })
+            | (Type::Interface { .. }, Type::Interface { .. })
+            | (Type::Struct { .. }, Type::Interface { .. })
+            | (Type::Interface { .. }, Type::Struct { .. }) => {
+                self.is_assignable(a, b) || self.is_assignable(b, a)
+            }
+            // A primitive (or enum) value never matches a struct/interface.
+            _ => false,
         }
     }
 

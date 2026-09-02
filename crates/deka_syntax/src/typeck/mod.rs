@@ -23,7 +23,7 @@ mod expr;
 mod stmt;
 mod types;
 
-pub use types::{NewtypeSide, OperatorRewrite, Type, UnwrapKind};
+pub use types::{NewtypeSide, OperatorRewrite, Type, UnionMemberTest, UnwrapKind};
 
 #[derive(Debug)]
 pub struct TypeError {
@@ -52,6 +52,9 @@ pub struct TypeckResult<'a> {
     /// Identifier patterns that name a payload-free case of the scrutinee's
     /// enum rather than binding it (deka#450).
     pub enum_case_patterns: HashMap<*const ast::Pattern<'a>, &'a str>,
+    /// Constructor patterns that are union member type-patterns (`string(s)`),
+    /// mapped to the runtime predicate the emitter must emit (rfd#42).
+    pub union_type_patterns: HashMap<*const ast::Pattern<'a>, types::UnionMemberTest<'a>>,
 }
 
 /// The `Option` materialisation for one JSX element.
@@ -116,6 +119,7 @@ pub fn check_program_with_imports<'a>(
         operator_rewrites: checker.operator_rewrites,
         jsx_optional_props: checker.jsx_optional_props,
         enum_case_patterns: checker.enum_case_patterns,
+        union_type_patterns: checker.union_type_patterns,
     }
 }
 
@@ -293,6 +297,12 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                 )),
             },
             ast::Type::Tuple { .. } | ast::Type::Record { .. } => Type::Error,
+            ast::Type::Union { members, .. } => Type::Union {
+                members: members
+                    .iter()
+                    .map(|m| ast_type_to_export_type(m, structs, enums, aliases, newtypes, seen))
+                    .collect(),
+            },
         }
     }
 
@@ -528,6 +538,9 @@ struct Checker<'a> {
     operator_rewrites: HashMap<*const ast::Expr<'a>, types::OperatorRewrite<'a>>,
     jsx_optional_props: HashMap<*const ast::JsxElement<'a>, JsxOptionalProps<'a>>,
     enum_case_patterns: HashMap<*const ast::Pattern<'a>, &'a str>,
+    /// Union member type-pattern sites to lower, keyed by pattern pointer
+    /// (rfd#42, deka#530).
+    union_type_patterns: HashMap<*const ast::Pattern<'a>, types::UnionMemberTest<'a>>,
     /// Local scopes. The first scope is the top-level scope.
     scopes: Vec<HashMap<&'a str, Type<'a>>>,
     /// Bindings that were introduced with `let` and may be reassigned.
@@ -567,6 +580,7 @@ impl<'a> Checker<'a> {
             operator_rewrites: HashMap::new(),
             jsx_optional_props: HashMap::new(),
             enum_case_patterns: HashMap::new(),
+            union_type_patterns: HashMap::new(),
             scopes: vec![HashMap::new()],
             mutables: vec![HashSet::new()],
             type_scopes: Vec::new(),
@@ -779,6 +793,24 @@ impl<'a> Checker<'a> {
         // `never` is the bottom type: assignable to anything.
         if matches!(actual, Type::Never) {
             return true;
+        }
+        // Union assignability (rfd#42, deka#530). A union widens: `string` is
+        // assignable to `string | number` because it matches SOME member; a
+        // union actual is assignable to `expected` only when EVERY member is,
+        // so `string | number` is never assignable to `string`. Union-to-union
+        // requires every actual member to match some expected member. These
+        // arms sit after Var/Infer (a union never silently absorbs or leaks
+        // through them) and before the structural arms below.
+        if let Type::Union { members: expected_members } = expected {
+            return match actual {
+                Type::Union { members: actual_members } => actual_members
+                    .iter()
+                    .all(|am| expected_members.iter().any(|em| self.is_assignable(em, am))),
+                _ => expected_members.iter().any(|em| self.is_assignable(em, actual)),
+            };
+        }
+        if let Type::Union { members: actual_members } = actual {
+            return actual_members.iter().all(|am| self.is_assignable(expected, am));
         }
         // `none` is assignable to any Option<T>.
         if matches!(expected, Type::Option { .. }) && matches!(actual, Type::None) {
@@ -1570,5 +1602,183 @@ mod tests {
             "const r = match (unsafe { console.log(1) }) { Ok(v) => v, Err(e) => e };",
         );
         assert!(errors.is_empty(), "{:?}", errors);
+    }
+
+    // Union types (rfd#42, deka#530). The positive cases pass trivially if
+    // unions degrade to Infer, which is assignable to everything — every
+    // negative here is what proves the checker keeps unions real.
+
+    #[test]
+    fn union_widening_assign_passes() {
+        // `string` widens into `string | number`: assignable to SOME member.
+        assert!(typeck("const x: string | number = \"a\";").is_empty());
+        assert!(typeck("const x: string | number = 1;").is_empty());
+    }
+
+    #[test]
+    fn union_narrows_and_binds_in_match() {
+        let errors = typeck(
+            "fn f(v: string | number) string { return match (v) { string(s) => s, number(n) => string(n) }; }",
+        );
+        assert!(errors.is_empty(), "{:?}", errors);
+    }
+
+    #[test]
+    fn union_match_with_catch_all_passes() {
+        let errors = typeck(
+            "fn f(v: string | number) string { return match (v) { string(s) => s, _ => \"other\" }; }",
+        );
+        assert!(errors.is_empty(), "{:?}", errors);
+    }
+
+    #[test]
+    fn union_match_or_pattern_is_exhaustive() {
+        let errors = typeck(
+            "fn f(v: string | number) string { return match (v) { string(s) | number(s) => string(s) }; }",
+        );
+        // Alternatives cannot bind (deka#446) — the or-pattern must not
+        // silently become exhaustive by binding; it errors instead.
+        assert!(!errors.is_empty());
+    }
+
+    #[test]
+    fn union_match_rebinds_operand_in_arm() {
+        // Inside the arm, `v` is shadowed with `string`, so `v.length`
+        // typechecks; outside it the union still rejects member access.
+        let errors = typeck(
+            "fn f(v: string | number) number { return match (v) { string(s) => v.length, number(n) => n }; }",
+        );
+        assert!(errors.is_empty(), "{:?}", errors);
+    }
+
+    #[test]
+    fn union_assigned_to_member_fails() {
+        // `string | number` is NOT assignable to `string`: EVERY member must
+        // be assignable to the expected type.
+        let errors = typeck("const x: string | number = 1; const y: string = x;");
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn union_member_access_without_narrowing_fails() {
+        let errors = typeck("const v: string | number = \"a\"; const n = v.length;");
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert!(
+            errors[0].message.contains("narrow") && errors[0].message.contains("match"),
+            "{}",
+            errors[0].message
+        );
+    }
+
+    #[test]
+    fn union_match_missing_arm_fails() {
+        let errors = typeck(
+            "fn f(v: string | number) string { return match (v) { string(s) => s }; }",
+        );
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert!(
+            errors[0].message.contains("non-exhaustive") && errors[0].message.contains("number"),
+            "{}",
+            errors[0].message
+        );
+    }
+
+    #[test]
+    fn union_duplicate_members_fail() {
+        let errors = typeck("const v: string | string = \"a\";");
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert!(errors[0].message.contains("overlap"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn union_overlapping_struct_interface_members_fail() {
+        // A struct that satisfies an interface would match both predicates,
+        // so narrowing would be ambiguous.
+        let errors = typeck(
+            "struct User { name: string } interface Named { name: string } const v: User | Named = User { name: \"a\" };",
+        );
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert!(
+            errors[0].message.contains("User") && errors[0].message.contains("Named"),
+            "{}",
+            errors[0].message
+        );
+    }
+
+    #[test]
+    fn union_distinct_primitives_do_not_overlap() {
+        assert!(typeck("const v: string | number | boolean = true;").is_empty());
+    }
+
+    #[test]
+    fn union_function_member_fails() {
+        let errors = typeck("const f: (fn(number) number) | string = \"a\";");
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert!(
+            errors[0].message.contains("decidable runtime predicate"),
+            "{}",
+            errors[0].message
+        );
+    }
+
+    #[test]
+    fn union_unconstrained_type_param_fails() {
+        let errors = typeck("fn f<T>(x: T | string) string { return \"a\" }");
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert!(
+            errors[0].message.contains("decidable runtime predicate"),
+            "{}",
+            errors[0].message
+        );
+    }
+
+    #[test]
+    fn union_option_member_fails() {
+        // Option has no runtime predicate today (deka#401 shape requires
+        // explicit Some/None construction), so it cannot join a union.
+        let errors = typeck("const v: string | Option<number> = \"a\";");
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert!(
+            errors[0].message.contains("decidable runtime predicate"),
+            "{}",
+            errors[0].message
+        );
+    }
+
+    #[test]
+    fn union_type_pattern_requires_binding() {
+        let errors = typeck(
+            "fn f(v: string | number) string { return match (v) { string => \"a\", number(n) => string(n) }; }",
+        );
+        assert!(
+            errors.iter().any(|e| e.message.contains("requires a binding")),
+            "{:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn union_type_pattern_unknown_member_fails() {
+        let errors = typeck(
+            "fn f(v: string | number) string { return match (v) { boolean(b) => string(b), string(s) => s, number(n) => string(n) }; }",
+        );
+        assert!(
+            errors.iter().any(|e| e.message.contains("not a member of union")),
+            "{:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn union_newtype_member_fails() {
+        // v1 rejects newtypes: the __deka_newtype tag predicate is not wired
+        // into match emission yet.
+        let errors = typeck("type Meters number\nconst v: Meters | string = \"a\";");
+        assert!(
+            errors.iter().any(|e| e.message.contains("decidable runtime predicate")),
+            "{:?}",
+            errors
+        );
     }
 }

@@ -60,6 +60,10 @@ pub enum Type<'a> {
     Newtype { name: &'a str, repr: crate::ast::NewtypeRepr },
     /// A type parameter, e.g. `T` inside a generic function or type.
     Param { name: &'a str },
+    /// A union of types whose members each have a decidable runtime
+    /// predicate: primitives, named structs, enums, interfaces (rfd#42,
+    /// deka#530).
+    Union { members: Vec<Type<'a>> },
 }
 
 impl<'a> Type<'a> {
@@ -123,6 +127,23 @@ pub enum UnwrapKind {
 pub enum NewtypeSide {
     Left,
     Right,
+}
+
+/// The runtime predicate a union member type-pattern compiles to (rfd#42,
+/// deka#530). Computed by the checker and handed to the emitter through
+/// `TypeckResult::union_type_patterns`, parallel to `enum_case_patterns`,
+/// so the emitter never re-derives types.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnionMemberTest<'a> {
+    /// Primitive scalar: `typeof x === "..."` (string/number/boolean;
+    /// `void` tests `"undefined"`).
+    Primitive(&'a str),
+    /// `x instanceof Uint8Array`.
+    Bytes,
+    /// Named struct: `deka.getStructId(x) === "<Name>"`.
+    Struct(&'a str),
+    /// Enum: `x.__enum === "<Name>"`.
+    Enum(&'a str),
 }
 
 /// How a binary or unary operator on newtypes should be lowered.
@@ -189,6 +210,19 @@ impl fmt::Display for Type<'_> {
             Type::Interface { name } => write!(f, "{name}"),
             Type::Newtype { name, .. } => write!(f, "{name}"),
             Type::Param { name } => write!(f, "{name}"),
+            Type::Union { members } => {
+                // Print members sorted so union types have one canonical
+                // spelling regardless of declaration order (rfd#42).
+                let mut sorted: Vec<&Type> = members.iter().collect();
+                sorted.sort_by_key(|m| m.to_string());
+                for (i, member) in sorted.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, " | ")?;
+                    }
+                    write!(f, "{member}")?;
+                }
+                Ok(())
+            }
         }
     }
 }

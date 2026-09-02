@@ -1362,7 +1362,13 @@ fn type_to_string(ty: &Type<'_>) -> String {
             s
         }
         Type::Option { inner, .. } => {
-            format!("{}?", type_to_string(inner))
+            // A union inner needs parens: `(A | B)?` re-parsed from
+            // `A | B?` would bind the `?` to the LAST member (rfd#42).
+            let inner_s = match &**inner {
+                Type::Union { .. } => format!("({})", type_to_string(inner)),
+                _ => type_to_string(inner),
+            };
+            format!("{}?", inner_s)
         }
         Type::Tuple { elements, .. } => {
             let parts: Vec<String> = elements.iter().map(type_to_string).collect();
@@ -1374,6 +1380,21 @@ fn type_to_string(ty: &Type<'_>) -> String {
                 .map(|f| format!("{}: {}", f.name, type_to_string(&f.ty)))
                 .collect();
             format!("{{ {} }}", parts.join("; "))
+        }
+        Type::Union { members, .. } => {
+            // Function and nested-union members need parens: without them
+            // `(fn(A) B) | C` would re-parse as a function returning a
+            // union (rfd#42, deka#530).
+            let parts: Vec<String> = members
+                .iter()
+                .map(|m| match m {
+                    Type::Function { .. } | Type::Union { .. } => {
+                        format!("({})", type_to_string(m))
+                    }
+                    _ => type_to_string(m),
+                })
+                .collect();
+            parts.join(" | ")
         }
     }
 }

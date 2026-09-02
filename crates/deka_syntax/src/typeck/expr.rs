@@ -644,6 +644,19 @@ impl<'a> Checker<'a> {
                 Type::Error
             }),
             Type::Named { name } => self.resolve_primitive_field(name, field, span),
+            Type::Union { .. } => {
+                // A union value used without narrowing is a compile error
+                // (rfd#42, deka#530): the member that provides the field is
+                // not known until the value is narrowed with match.
+                self.error_span(
+                    span,
+                    format!(
+                        "cannot access field `{field}` on union type `{object_type}`; \
+                         narrow it with a match type-pattern first"
+                    ),
+                );
+                Type::Error
+            }
             _ => {
                 // Enum namespace access: `Color.Red` where `Color` is an enum name.
                 if let ast::Expr::Identifier { name: enum_name, .. } = object {
@@ -1241,6 +1254,36 @@ impl<'a> Checker<'a> {
             self.scopes.push(HashMap::new());
             self.mutables.push(HashSet::new());
             self.check_pattern(&arm.pattern, &scrutinee_type);
+            // Union type-patterns rebind the operand within the arm
+            // (rfd#42): `match (v) { string(s) => ... }` shadows `v` with
+            // `string` inside the arm. Plain shadowing — DekaScript has no
+            // flow-sensitive typing — and the scope pop above restores it.
+            // `match (v)` wraps the operand in `Expr::Paren`, so unwrap it.
+            let scrutinee_ident = match scrutinee {
+                ast::Expr::Identifier { name, .. } => Some(name),
+                ast::Expr::Paren { expr, .. } => match &**expr {
+                    ast::Expr::Identifier { name, .. } => Some(name),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let (Some(name), ast::Pattern::Constructor { name: pattern_name, .. }) =
+                (scrutinee_ident, &arm.pattern)
+            {
+                if self
+                    .union_type_patterns
+                    .contains_key(&(&arm.pattern as *const ast::Pattern<'a>))
+                {
+                    if let Type::Union { members } = &scrutinee_type {
+                        if let Some(member) = members
+                            .iter()
+                            .find(|m| Self::union_member_name(m) == Some(pattern_name))
+                        {
+                            self.declare_var(name, member.clone());
+                        }
+                    }
+                }
+            }
             if !has_catch_all && Self::pattern_is_catch_all(&arm.pattern, &self.enum_case_patterns) {
                 has_catch_all = true;
             }
@@ -1381,6 +1424,25 @@ impl<'a> Checker<'a> {
         let Coverage::Cases(covered) = coverage else {
             return;
         };
+        // A union is exhaustive only when every member is named by a
+        // type-pattern (or a catch-all made coverage `All` above) — v1
+        // requires one type-pattern per member rather than recursing into
+        // enum case coverage (rfd#42, deka#530).
+        if let Type::Union { members } = ty {
+            for member in members {
+                let Some(label) = Self::union_member_name(member) else {
+                    continue;
+                };
+                if !covered.contains_key(label) {
+                    out.push(if path.is_empty() {
+                        label.to_string()
+                    } else {
+                        format!("{path}({label})")
+                    });
+                }
+            }
+            return;
+        }
         let Some((label, cases)) = self.enum_shape(ty) else {
             // Not an enum: nothing to enumerate. A refutable pattern here (a
             // literal) is left alone rather than guessed at.
@@ -1432,6 +1494,23 @@ impl<'a> Checker<'a> {
                         return;
                     }
                 }
+                // A bare name that matches a union member is a type-pattern
+                // attempt without its binding (`match (v) { string => ... }`).
+                // Spec examples always bind; fail closed rather than silently
+                // treating the member name as a catch-all binding (rfd#42,
+                // deka#530).
+                if let Type::Union { members } = scrutinee_type {
+                    if members
+                        .iter()
+                        .any(|m| Self::union_member_name(m) == Some(name))
+                    {
+                        self.error_span(
+                            *span,
+                            format!("type pattern `{name}` requires a binding, e.g. `{name}(value)`"),
+                        );
+                        return;
+                    }
+                }
                 self.declare_var(name, scrutinee_type.clone());
             }
             ast::Pattern::Literal { expr, span } => {
@@ -1450,7 +1529,19 @@ impl<'a> Checker<'a> {
                 payload,
                 span,
             } => {
-                self.check_constructor_pattern(name, payload.as_deref(), *span, scrutinee_type);
+                // Union member type-patterns (`string(s)` on a `string | number`
+                // scrutinee) take priority over the user-enum constructor lookup
+                // so a primitive name is not reported as an unknown constructor
+                // (rfd#42, deka#530).
+                if !self.check_union_type_pattern(
+                    pattern,
+                    name,
+                    payload.as_deref(),
+                    *span,
+                    scrutinee_type,
+                ) {
+                    self.check_constructor_pattern(name, payload.as_deref(), *span, scrutinee_type);
+                }
             }
             ast::Pattern::Or { alternatives, span } => {
                 // Resolve each alternative first so a bare case name is known
@@ -1506,6 +1597,115 @@ impl<'a> Checker<'a> {
             ast::Pattern::Or { alternatives, .. } => alternatives
                 .iter()
                 .find_map(|alternative| Self::pattern_binding_name(alternative, cases)),
+            _ => None,
+        }
+    }
+
+    /// Union member type-patterns (rfd#42, deka#530): `match (v) {
+    /// string(s) => ... }` where `v: string | number`. The pattern tests
+    /// the member and binds the payload to the member type in one construct,
+    /// syntactically identical to the enum-case patterns `match` already
+    /// handles.
+    ///
+    /// Returns true when this pattern was handled here (matched member, or a
+    /// failed attempt against a union / Var / Infer scrutinee that must not
+    /// fall through to the unknown-constructor error).
+    fn check_union_type_pattern(
+        &mut self,
+        pattern: &ast::Pattern<'a>,
+        name: &'a str,
+        payload: Option<&ast::Pattern<'a>>,
+        span: ast::Span,
+        scrutinee_type: &Type<'a>,
+    ) -> bool {
+        let Type::Union { members } = scrutinee_type else {
+            // A primitive type name against a non-union scrutinee is a
+            // type-pattern attempt; guide instead of reporting an unknown
+            // constructor. `Var` must not silently unify with a union
+            // member (deka#468) — demand an annotation. `Infer` propagates
+            // silently as elsewhere in error recovery.
+            if !Self::is_union_primitive_name(name) {
+                return false;
+            }
+            match scrutinee_type {
+                Type::Var => self.error_span(
+                    span,
+                    format!(
+                        "cannot match type pattern `{name}` on an unconstrained type; \
+                         annotate the scrutinee with a union type, e.g. `v: string | number`"
+                    ),
+                ),
+                Type::Infer => {}
+                _ => return false,
+            }
+            return true;
+        };
+
+        let Some(member) = members.iter().find(|m| Self::union_member_name(m) == Some(name)) else {
+            self.error_span(
+                span,
+                format!("`{name}` is not a member of union `{scrutinee_type}`"),
+            );
+            return true;
+        };
+
+        // Interfaces are allowed as union members but have no runtime
+        // predicate to emit, so a type-pattern on one fails closed.
+        if matches!(member, Type::Interface { .. }) {
+            self.error_span(
+                span,
+                format!(
+                    "cannot match type pattern `{name}`: interface `{name}` has no \
+                     runtime predicate; match on a struct or primitive member instead"
+                ),
+            );
+            return true;
+        }
+
+        if let Some(test) = self.union_member_test(member) {
+            self.union_type_patterns
+                .insert(pattern as *const ast::Pattern<'a>, test);
+        }
+
+        match payload {
+            Some(p) => self.check_pattern(p, member),
+            // Spec examples always bind (`string(s)`); a bare test-only
+            // pattern is rejected to fail closed.
+            None => self.error_span(
+                span,
+                format!("type pattern `{name}` requires a binding, e.g. `{name}(value)`"),
+            ),
+        }
+        true
+    }
+
+    /// The name a union member is matched by in a type-pattern: the type
+    /// name for primitives, structs, enums and interfaces.
+    fn union_member_name(ty: &Type<'a>) -> Option<&'a str> {
+        match ty {
+            Type::Named { name } | Type::Struct { name } | Type::Interface { name } => {
+                Some(name)
+            }
+            _ => None,
+        }
+    }
+
+    fn is_union_primitive_name(name: &str) -> bool {
+        matches!(name, "string" | "number" | "boolean" | "bytes" | "void")
+    }
+
+    /// The runtime predicate for a union member, if one exists. Interfaces
+    /// have none; membership validation already rejected everything else.
+    fn union_member_test(&self, member: &Type<'a>) -> Option<super::types::UnionMemberTest<'a>> {
+        match member {
+            Type::Named { name: "bytes" } => Some(super::types::UnionMemberTest::Bytes),
+            Type::Named { name } if Self::is_union_primitive_name(name) => {
+                Some(super::types::UnionMemberTest::Primitive(name))
+            }
+            Type::Named { name } if self.enums.contains_key(name) => {
+                Some(super::types::UnionMemberTest::Enum(name))
+            }
+            Type::Struct { name } => Some(super::types::UnionMemberTest::Struct(name)),
             _ => None,
         }
     }
@@ -2745,6 +2945,9 @@ fn substitute_type<'a>(ty: &Type<'a>, subst: &HashMap<&'a str, Type<'a>>) -> Typ
         Type::Generic { base, args } => Type::Generic {
             base,
             args: args.iter().map(|a| substitute_type(a, subst)).collect(),
+        },
+        Type::Union { members } => Type::Union {
+            members: members.iter().map(|m| substitute_type(m, subst)).collect(),
         },
         other => other.clone(),
     }
