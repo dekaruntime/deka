@@ -14,8 +14,27 @@ function escapeHtml(text) {
     .replace(/'/g, "&#39;");
 }
 
+// Sandboxed runtimes wrap throwing host constructors in Result
+// (`new TextEncoder()` yields `{ __case: "Ok", value }`), so unwrap before
+// use and fall back when no real encoder is available.
+function newTextEncoder() {
+  if (typeof TextEncoder !== "function") return null;
+  const enc = new TextEncoder();
+  const real = enc && enc.__case === "Ok" ? enc.value : enc;
+  return real && typeof real.encode === "function" ? real : null;
+}
+
+// Same unwrap for TextDecoder (see newTextEncoder).
+function newTextDecoder() {
+  if (typeof TextDecoder !== "function") return null;
+  const dec = new TextDecoder();
+  const real = dec && dec.__case === "Ok" ? dec.value : dec;
+  return real && typeof real.decode === "function" ? real : null;
+}
+
 function utf8Bytes(str) {
-  if (typeof TextEncoder === "function") return Array.from(new TextEncoder().encode(String(str)));
+  const enc = newTextEncoder();
+  if (enc) return Array.from(enc.encode(String(str)));
   const s = String(str);
   const out = [];
   for (let i = 0; i < s.length; i++) {
@@ -219,9 +238,10 @@ function utf8U8(str) {
 
 function utf8Decode(bytes) {
   const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
-  if (typeof TextDecoder === "function") {
+  const dec = newTextDecoder();
+  if (dec) {
     try {
-      return new TextDecoder().decode(u8);
+      return dec.decode(u8);
     } catch (_) {}
   }
   let out = "";
@@ -651,7 +671,8 @@ function swapChunk(id, html) {
 }
 
 function encodeChunk(text) {
-  if (typeof TextEncoder === "function") return new TextEncoder().encode(text);
+  const enc = newTextEncoder();
+  if (enc) return enc.encode(text);
   return text;
 }
 
@@ -769,7 +790,7 @@ export function renderToStream(node, request) {
 
 export async function collectStream(stream) {
   const reader = stream.getReader();
-  const decoder = typeof TextDecoder === "function" ? new TextDecoder() : null;
+  const decoder = newTextDecoder();
   let out = "";
   for (;;) {
     const step = await reader.read();

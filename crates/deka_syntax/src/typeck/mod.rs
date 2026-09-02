@@ -574,7 +574,12 @@ impl<'a> Checker<'a> {
         // list. `parseInt`'s replacement is `number(s)`, which already yields
         // `Option<number>` rather than `NaN`, so removing it is a net
         // improvement rather than a subtraction.
-        for name in ["Math"] {
+        //
+        // `deka` is the host-capability global (`deka.ui.State.create`, …),
+        // settled by DS decision #6: host capabilities hang off the `deka`
+        // global, language and stdlib stay imports. It is declared here so
+        // the native and browser (wasm) compilers agree on it (deka#481).
+        for name in ["Math", "deka"] {
             self.globals.insert(name, Type::Infer);
         }
     }
