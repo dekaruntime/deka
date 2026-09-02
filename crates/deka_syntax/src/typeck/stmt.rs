@@ -240,8 +240,30 @@ impl<'a> Checker<'a> {
                 ..
             } = stmt
             {
-                if !self.structs.contains_key(receiver_type) && !self.newtypes.contains_key(receiver_type) {
+                if !self.structs.contains_key(receiver_type)
+                    && !self.newtypes.contains_key(receiver_type)
+                    && !super::is_primitive_receiver_name(receiver_type)
+                {
                     self.error_span(*span, format!("unknown receiver type `{receiver_type}`"));
+                    continue;
+                }
+                // A builtin property keeps its meaning for property-shaped
+                // access, so an extension of the same name would give one name
+                // two silent meanings (`s.length` vs `s.length()`). Builtin
+                // *methods* may be shadowed: call-shaped access has a single
+                // meaning either way (deka#527).
+                if super::is_primitive_receiver_name(receiver_type)
+                    && matches!(
+                        super::expr::primitive_member(receiver_type, name, None),
+                        Some(super::expr::PrimitiveMember::Property(_))
+                    )
+                {
+                    self.error_span(
+                        *span,
+                        format!(
+                            "cannot declare extension `{name}` on `{receiver_type}`: `{name}` is a builtin property"
+                        ),
+                    );
                     continue;
                 }
                 let key = (*receiver_type, *name);
@@ -1136,6 +1158,16 @@ impl<'a> Checker<'a> {
                 ),
             );
         }
+        if receiver_mutable && super::is_primitive_receiver_name(receiver_type) {
+            // Primitives are immutable values; there is no mutable location
+            // to receive (deka#527).
+            self.error_span(
+                _span,
+                format!(
+                    "mutable receiver methods are not allowed on primitive `{receiver_type}`"
+                ),
+            );
+        }
 
         let info = match self.receiver_methods.get(&(receiver_type, name)) {
             Some(i) => i.clone(),
@@ -1159,6 +1191,8 @@ impl<'a> Checker<'a> {
                 name: receiver_type,
                 repr: info.repr,
             }
+        } else if super::is_primitive_receiver_name(receiver_type) {
+            Type::Named { name: receiver_type }
         } else {
             Type::Struct { name: receiver_type }
         };

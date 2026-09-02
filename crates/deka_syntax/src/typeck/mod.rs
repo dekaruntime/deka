@@ -34,8 +34,8 @@ pub struct TypeckResult<'a> {
     pub program: &'a Program<'a>,
     pub errors: Vec<Diagnostic>,
     pub warnings: Vec<Diagnostic>,
-    /// Map from method call expression pointer to the lowering target for the
-    /// receiver method that should replace it during lowering.
+    /// Map from primitive extension call expression pointer to the mangled
+    /// free-function call that should replace it during emission (deka#527).
     pub method_calls: HashMap<*const ast::Expr<'a>, MethodTarget<'a>>,
     /// Map from primitive conversion call expression pointer to how it should
     /// be lowered (`number(x)`, `string(x)`, `bool(x)`).
@@ -484,7 +484,15 @@ pub struct StructInfo<'a> {
     pub embeds: &'a [ast::Embed<'a>],
 }
 
-/// Information about a receiver method declared on a struct.
+/// Names of the primitive types that support receiver (extension) methods
+/// (deka#527). Unlike structs and newtypes, primitives cannot carry methods
+/// on a prototype — calls are rewritten to free functions at compile time —
+/// and they are immutable values, so `mut` receivers are rejected.
+pub(super) fn is_primitive_receiver_name(name: &str) -> bool {
+    matches!(name, "string" | "number" | "boolean")
+}
+
+/// Information about a receiver method declared on a struct or primitive.
 #[derive(Clone, Debug)]
 pub struct MethodInfo<'a> {
     pub params: &'a [ast::Param<'a>],
@@ -524,9 +532,12 @@ struct Checker<'a> {
     interfaces: HashMap<&'a str, InterfaceInfo<'a>>,
     /// User-defined newtypes.
     newtypes: HashMap<&'a str, NewtypeInfo>,
-    /// Receiver methods keyed by `(receiver_type, method_name)`.
+    /// Receiver methods keyed by `(receiver_type, method_name)`. Primitive
+    /// receivers (`string`, `number`, `boolean`) hold extension methods whose
+    /// calls are rewritten to free functions (deka#527).
     receiver_methods: HashMap<(&'a str, &'a str), MethodInfo<'a>>,
-    /// Method call sites to lower, keyed by call expression pointer.
+    /// Primitive extension call sites to lower to free-function calls,
+    /// keyed by call expression pointer.
     /// Lowering collections like this one must also be cleared in
     /// `reset_lowering_state` — the inference pass populates them too.
     method_calls: HashMap<*const ast::Expr<'a>, MethodTarget<'a>>,
@@ -1244,6 +1255,118 @@ mod tests {
     fn receiver_method_passes() {
         assert!(typeck(
             "struct Point { x: number; y: number } fn (p Point) distance(other: Point) number { return 0; } const p1: Point = Point { x: 0, y: 0 }; const p2: Point = Point { x: 3, y: 4 }; const d: number = p1.distance(p2);"
+        ).is_empty());
+    }
+
+    #[test]
+    fn primitive_extension_method_passes() {
+        assert!(typeck(
+            "fn (s string) slugify() string { return s.toLowerCase(); } const title: string = \"Hello World\".slugify();"
+        ).is_empty());
+        // number and boolean receivers work too.
+        assert!(typeck(
+            "fn (n number) squared() number { return n * n; } fn (b boolean) flip() boolean { return !b; } const x: number = 3.squared(); const y: boolean = true.flip();"
+        ).is_empty());
+    }
+
+    #[test]
+    fn primitive_extension_call_records_mangled_target() {
+        let arena = Bump::new();
+        let source = "fn (s string) slugify() string { return s; } const title: string = \"Hi\".slugify();";
+        let result = parse(source, &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.expect("parse produced no program");
+        let typeck = check_program(&program, source);
+        assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
+        assert_eq!(typeck.method_calls.len(), 1);
+        assert!(
+            typeck.method_calls.values().all(|t| t.mangled == "slugify$string"),
+            "expected slugify$string, got {:?}",
+            typeck.method_calls.values().map(|t| &t.mangled).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn primitive_extension_wrong_receiver_names_both_types() {
+        let errors = typeck(
+            "fn (s string) slugify() string { return s; } const n: number = 42; const bad: string = n.slugify();"
+        );
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("slugify"), "{}", errors[0].message);
+        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn primitive_extension_wrong_arg_count_fails() {
+        let errors = typeck(
+            "fn (s string) wrap(prefix: string) string { return prefix + s; } const w: string = \"x\".wrap();"
+        );
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("wrap"), "{}", errors[0].message);
+        assert!(errors[0].message.contains("1 argument"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn primitive_extension_wrong_arg_type_fails() {
+        let errors = typeck(
+            "fn (s string) repeat(n: number) string { return s; } const r: string = \"x\".repeat(\"three\");"
+        );
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
+        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn primitive_extension_mut_receiver_fails() {
+        let errors = typeck("fn (s mut string) broken() string { return s; }");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("mutable receiver"), "{}", errors[0].message);
+        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn primitive_extension_duplicate_fails() {
+        let errors = typeck(
+            "fn (s string) slugify() string { return s; } fn (s string) slugify() string { return s; }"
+        );
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("duplicate receiver method"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn primitive_extension_property_read_fails() {
+        let errors = typeck(
+            "fn (s string) slugify() string { return s; } const f = \"x\".slugify;"
+        );
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("slugify"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn primitive_extension_shadows_builtin_call_only() {
+        // Call-shaped access routes to the extension...
+        assert!(typeck(
+            "fn (s string) toUpperCase() string { return s; } const u: string = \"x\".toUpperCase();"
+        ).is_empty());
+        // ...while the builtin property `length` is untouched.
+        assert!(typeck(
+            "fn (s string) slugify() string { return s; } const n: number = \"abc\".length;"
+        ).is_empty());
+    }
+
+    #[test]
+    fn primitive_extension_builtin_property_collision_fails() {
+        // `length` stays property-shaped even for call-shaped access, so an
+        // extension of the same name would give one name two silent meanings.
+        let errors = typeck("fn (s string) length() number { return 0; }");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("builtin property"), "{}", errors[0].message);
+        assert!(errors[0].message.contains("length"), "{}", errors[0].message);
+        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+        // Builtin methods stay shadowable.
+        assert!(typeck(
+            "fn (s string) toUpperCase() string { return s; } const u: string = \"x\".toUpperCase();"
         ).is_empty());
     }
 
