@@ -10,7 +10,7 @@ use std::path::Path;
 
 use deka_syntax::{BinOp, ExportDecl, Expr, ForInit, NewtypeRepr, Pattern, Program, Stmt, Type};
 
-use crate::util::{bin_op_str, escape_string, un_op_str, write_indent};
+use crate::util::{bin_op_str, escape_string, is_primitive_receiver, un_op_str, write_indent};
 
 fn is_panic_callee(callee: &Expr<'_>) -> bool {
     match callee {
@@ -36,6 +36,7 @@ pub fn emit_js(program: &Program, _source: &str) -> Result<String, String> {
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
+        &HashMap::new(),
         "module.ds",
         None,
     )
@@ -53,6 +54,7 @@ pub fn emit_js_with_imports<'a>(
     imports: &HashMap<&str, &deka_syntax::ModuleExports<'a>>,
     unwrap_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::UnwrapKind>,
     operator_rewrites: &HashMap<*const Expr<'a>, deka_syntax::typeck::OperatorRewrite<'a>>,
+    method_calls: &HashMap<*const Expr<'a>, deka_syntax::MethodTarget<'a>>,
 ) -> Result<String, String> {
     emit_js_with_options(
         program,
@@ -61,6 +63,7 @@ pub fn emit_js_with_imports<'a>(
         None,
         unwrap_calls,
         operator_rewrites,
+        method_calls,
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
@@ -83,6 +86,10 @@ pub fn emit_js_with_options<'a>(
     module_base: Option<String>,
     unwrap_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::UnwrapKind>,
     operator_rewrites: &HashMap<*const Expr<'a>, deka_syntax::typeck::OperatorRewrite<'a>>,
+    // Primitive extension call sites (`s.slugify()`) to rewrite to
+    // free-function calls (`slugify$string(s)`), lowered by the typechecker
+    // (deka#527).
+    method_calls: &HashMap<*const Expr<'a>, deka_syntax::MethodTarget<'a>>,
     jsx_optional_props: &HashMap<
         *const deka_syntax::JsxElement<'a>,
         deka_syntax::typeck::JsxOptionalProps<'a>,
@@ -103,6 +110,7 @@ pub fn emit_js_with_options<'a>(
     emitter.seed_imports(imports);
     emitter.unwrap_calls = unwrap_calls.clone();
     emitter.operator_rewrites = operator_rewrites.clone();
+    emitter.method_calls = method_calls.clone();
     emitter.jsx_optional_props = jsx_optional_props.clone();
     emitter.enum_case_patterns = enum_case_patterns.clone();
     emitter.union_type_patterns = union_type_patterns.clone();
@@ -174,6 +182,9 @@ struct Emitter<'a> {
     unwrap_id: usize,
     /// Newtype operator rewrites lowered by the typechecker.
     operator_rewrites: HashMap<*const Expr<'a>, deka_syntax::typeck::OperatorRewrite<'a>>,
+    /// Primitive extension call sites lowered by the typechecker to
+    /// free-function calls (`slugify$string(s)`) (deka#527).
+    method_calls: HashMap<*const Expr<'a>, deka_syntax::MethodTarget<'a>>,
     file_stem: String,
     fn_scope: String,
     jsx_path: Vec<usize>,
@@ -204,6 +215,7 @@ impl<'a> Emitter<'a> {
             union_type_patterns: HashMap::new(),
             unwrap_id: 0,
             operator_rewrites: HashMap::new(),
+            method_calls: HashMap::new(),
             file_stem: "module".to_string(),
             fn_scope: "_".to_string(),
             jsx_path: Vec::new(),
@@ -331,7 +343,20 @@ impl<'a> Emitter<'a> {
             | Stmt::TypeAlias { name, .. }
             | Stmt::Newtype { name, .. }
             | Stmt::Interface { name, .. } => self.is_live(name),
-            Stmt::ReceiverMethod { receiver_type, .. } => self.is_live(receiver_type),
+            Stmt::ReceiverMethod {
+                receiver_type,
+                name,
+                ..
+            } => {
+                // Primitive extensions are emitted as free functions named
+                // `method$receiver`; struct and newtype methods ride the
+                // receiver type's liveness (deka#527).
+                if is_primitive_receiver(receiver_type) {
+                    self.is_live(&format!("{name}${receiver_type}"))
+                } else {
+                    self.is_live(receiver_type)
+                }
+            }
             Stmt::Expr { .. }
             | Stmt::If { .. }
             | Stmt::Block { .. }
@@ -654,8 +679,14 @@ impl<'a> Emitter<'a> {
         // which only exists when the struct prelude block is emitted — even
         // if the struct itself lives in an import and this module declares
         // none (rfd#42, deka#530).
+        //
+        // Primitive extensions are plain free functions, not prototype
+        // registrations, so they must not force the struct prelude (deka#527).
         !self.structs.is_empty()
-            || !self.receiver_methods.is_empty()
+            || self
+                .receiver_methods
+                .keys()
+                .any(|name| !is_primitive_receiver(name))
             || self
                 .union_type_patterns
                 .values()
@@ -1279,6 +1310,45 @@ impl<'a> Emitter<'a> {
                 self.out.push_str("};\n");
             }
         }
+
+        // Primitive receiver methods cannot hang off a prototype (primitives
+        // cannot be branded), so they are emitted as module-local free
+        // functions named `method$receiver`; call sites are rewritten to
+        // match (deka#527). Unused extensions are dropped by the same
+        // liveness gate as everything else.
+        let primitive_methods: Vec<(String, Vec<ReceiverMethod<'a>>)> = self
+            .receiver_methods
+            .iter()
+            .filter(|(receiver_type, _)| is_primitive_receiver(receiver_type))
+            .map(|(receiver_type, methods)| (receiver_type.clone(), methods.clone()))
+            .collect();
+        for (receiver_type, methods) in primitive_methods {
+            for method in methods {
+                let mangled = format!("{}${}", method.name, receiver_type);
+                if !self.is_live(&mangled) {
+                    continue;
+                }
+                write_indent(&mut self.out, 0);
+                if method.is_async {
+                    self.out.push_str("async ");
+                }
+                self.out.push_str("function ");
+                self.out.push_str(&mangled);
+                self.out.push('(');
+                self.out.push_str(&method.receiver_name);
+                for param in method.params.iter() {
+                    self.out.push_str(", ");
+                    self.out.push_str(param);
+                }
+                self.out.push_str(") {\n");
+                for stmt in method.body.iter() {
+                    self.emit_stmt(stmt)?;
+                    self.out.push('\n');
+                }
+                write_indent(&mut self.out, 0);
+                self.out.push_str("}\n");
+            }
+        }
         Ok(())
     }
 
@@ -1560,6 +1630,29 @@ impl<'a> Emitter<'a> {
                             }
                         }
                     }
+                    return Ok(());
+                }
+
+                // Primitive extension call: rewrite `obj.method(args)` to the
+                // module-local free function `method$receiver(obj, args)`.
+                // Primitives cannot be branded with a prototype, so static
+                // dispatch is the only option (deka#527).
+                if let Some(target) = self.method_calls.get(&expr_ptr) {
+                    self.out.push_str(&target.mangled);
+                    self.out.push('(');
+                    let mut first = true;
+                    if let Expr::FieldAccess { object, .. } = &**callee {
+                        self.emit_expr(object)?;
+                        first = false;
+                    }
+                    for arg in args.iter() {
+                        if !first {
+                            self.out.push_str(", ");
+                        }
+                        first = false;
+                        self.emit_expr(arg)?;
+                    }
+                    self.out.push(')');
                     return Ok(());
                 }
 
@@ -2144,6 +2237,7 @@ impl<'a> Emitter<'a> {
                     union_type_patterns: HashMap::new(),
                     unwrap_id: 0,
                     operator_rewrites: HashMap::new(),
+                    method_calls: HashMap::new(),
                     file_stem: self.file_stem.clone(),
                     fn_scope: self.fn_scope.clone(),
                     jsx_path: Vec::new(),

@@ -40,6 +40,7 @@ mod tests {
             None,
             &typeck.unwrap_calls,
             &typeck.operator_rewrites,
+            &typeck.method_calls,
             &typeck.jsx_optional_props,
             &typeck.enum_case_patterns,
             &typeck.union_type_patterns,
@@ -452,5 +453,58 @@ mod tests {
             "got: {}",
             out
         );
+    }
+
+    #[test]
+    fn emit_primitive_extension_free_function() {
+        // deka#527: primitive extensions are module-local free functions;
+        // there is no prototype to hang them on.
+        let out = parse_check_and_emit(
+            "fn (s string) slugify() string { return s.toLowerCase(); } const title = \"Hello World\"; const slug = title.slugify();",
+        );
+        assert!(out.contains("function slugify$string(s)"), "got: {}", out);
+        assert!(out.contains("slugify$string(title)"), "got: {}", out);
+        // Never touch JS prototypes or globalThis: primitives cannot be branded.
+        assert!(!out.contains("prototype"), "got: {}", out);
+        assert!(!out.contains("globalThis"), "got: {}", out);
+        // Primitive extensions must not force the struct prelude either.
+        assert!(!out.contains("deka.Struct"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_primitive_extension_with_params() {
+        let out = parse_check_and_emit(
+            "fn (n number) add_tax(rate: number) number { return n * (1 + rate); } const total = 100.add_tax(0.2);",
+        );
+        assert!(out.contains("function add_tax$number(n, rate)"), "got: {}", out);
+        assert!(out.contains("add_tax$number(100, 0.2)"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_primitive_extension_chaining() {
+        let out = parse_check_and_emit(
+            "fn (s string) a() string { return s; } fn (s string) b() string { return s; } const x = \"v\".a().b();",
+        );
+        assert!(
+            out.contains("b$string(a$string(\"v\"))"),
+            "got: {}",
+            out
+        );
+    }
+
+    #[test]
+    fn emit_primitive_extension_shadows_builtin_call() {
+        // User extension wins for call-shaped access...
+        let out = parse_check_and_emit(
+            "fn (s string) toUpperCase() string { return s; } const u = \"x\".toUpperCase();",
+        );
+        assert!(out.contains("function toUpperCase$string(s)"), "got: {}", out);
+        assert!(out.contains("toUpperCase$string(\"x\")"), "got: {}", out);
+        // ...while builtin members stay verbatim.
+        let out = parse_check_and_emit(
+            "fn (s string) slugify() string { return s; } const n = \"abc\".length; const t = \"abc\".toUpperCase();",
+        );
+        assert!(out.contains("\"abc\".length"), "got: {}", out);
+        assert!(out.contains("\"abc\".toUpperCase()"), "got: {}", out);
     }
 }

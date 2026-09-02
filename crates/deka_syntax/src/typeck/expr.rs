@@ -99,6 +99,172 @@ impl<'a> Coverage<'a> {
     }
 }
 
+/// A builtin member of a primitive type or an array: either a plain property
+/// (`length`) or a builtin method that JavaScript provides (`toUpperCase`).
+/// User extensions shadow builtins only for call-shaped access; property-
+/// shaped reads keep resolving to the builtin entry (deka#527).
+pub(super) enum PrimitiveMember<'a> {
+    Property(Type<'a>),
+    BuiltinMethod(Type<'a>),
+}
+
+fn fn0<'a>(ret: Type<'a>) -> Type<'a> {
+    Type::Function {
+        params: Vec::new(),
+        ret: Box::new(ret),
+        optional: 0,
+    }
+}
+
+fn fn1<'a>(p: &Type<'a>, ret: &Type<'a>) -> Type<'a> {
+    Type::Function {
+        params: vec![p.clone()],
+        ret: Box::new(ret.clone()),
+        optional: 0,
+    }
+}
+
+fn fn2<'a>(p1: &Type<'a>, p2: &Type<'a>, ret: &Type<'a>) -> Type<'a> {
+    Type::Function {
+        params: vec![p1.clone(), p2.clone()],
+        ret: Box::new(ret.clone()),
+        optional: 0,
+    }
+}
+
+/// The builtin member table for primitives and arrays, keyed by
+/// `(type_name, field)`. `elem` supplies the array element type for the
+/// `"Array"` entries. Returns `None` for names outside the table.
+pub(super) fn primitive_member<'a>(
+    type_name: &str,
+    field: &str,
+    elem: Option<&Type<'a>>,
+) -> Option<PrimitiveMember<'a>> {
+    let string_ty = Type::Named { name: "string" };
+    let number_ty = Type::Named { name: "number" };
+    let boolean_ty = Type::Named { name: "boolean" };
+
+    let member = match (type_name, field) {
+        // `JsError` is whatever JavaScript threw, surfaced through the
+        // emitter's try/catch. JS can throw anything -- `throw "boom"` has
+        // no `.message` -- so the emitter normalises a non-Error throw into
+        // an Error. These two fields are always present because of that
+        // guarantee; without it, declaring them would be a lie the type
+        // system could not catch (deka#460, deka#469).
+        ("JsError", "message" | "name") => PrimitiveMember::Property(string_ty),
+        ("string", "length") => PrimitiveMember::Property(number_ty),
+        ("string", "toUpperCase" | "toLowerCase" | "trim") => {
+            PrimitiveMember::BuiltinMethod(fn0(string_ty))
+        }
+        ("string", "charAt" | "indexOf" | "lastIndexOf") => {
+            PrimitiveMember::BuiltinMethod(fn1(&number_ty, &number_ty))
+        }
+        ("string", "includes" | "startsWith" | "endsWith") => {
+            PrimitiveMember::BuiltinMethod(fn1(&string_ty, &boolean_ty))
+        }
+        ("string", "slice") => {
+            PrimitiveMember::BuiltinMethod(fn2(&number_ty, &number_ty, &string_ty))
+        }
+        ("string", "split") => PrimitiveMember::BuiltinMethod(fn1(
+            &string_ty,
+            &Type::Array {
+                elem: Box::new(string_ty.clone()),
+            },
+        )),
+        ("string", "replace" | "replaceAll" | "concat") => {
+            PrimitiveMember::BuiltinMethod(fn2(&string_ty, &string_ty, &string_ty))
+        }
+        ("string", "substring") => {
+            PrimitiveMember::BuiltinMethod(fn2(&number_ty, &number_ty, &string_ty))
+        }
+        ("Array", "length") => PrimitiveMember::Property(number_ty),
+        ("Array", "includes") => {
+            PrimitiveMember::BuiltinMethod(fn2(elem?, &number_ty, &boolean_ty))
+        }
+        ("Array", "slice") => PrimitiveMember::BuiltinMethod(fn2(
+            &number_ty,
+            &number_ty,
+            &Type::Array {
+                elem: Box::new(elem?.clone()),
+            },
+        )),
+        ("Array", "push") => PrimitiveMember::BuiltinMethod(fn1(elem?, &number_ty)),
+        ("Array", "pop") => PrimitiveMember::BuiltinMethod(fn0(Type::Option {
+            inner: Box::new(elem?.clone()),
+        })),
+        ("Array", "shift") => PrimitiveMember::BuiltinMethod(fn0(Type::Option {
+            inner: Box::new(elem?.clone()),
+        })),
+        ("Array", "unshift") => PrimitiveMember::BuiltinMethod(fn1(elem?, &number_ty)),
+        ("Array", "concat") => PrimitiveMember::BuiltinMethod(fn1(
+            &Type::Array {
+                elem: Box::new(elem?.clone()),
+            },
+            &Type::Array {
+                elem: Box::new(elem?.clone()),
+            },
+        )),
+        ("Array", "join") => PrimitiveMember::BuiltinMethod(fn1(&string_ty, &string_ty)),
+        ("Array", "reverse" | "sort") => PrimitiveMember::BuiltinMethod(fn0(Type::Array {
+            elem: Box::new(elem?.clone()),
+        })),
+        ("Array", "filter") => PrimitiveMember::BuiltinMethod(fn1(
+            &Type::Function {
+                params: vec![elem?.clone()],
+                ret: Box::new(boolean_ty.clone()),
+                optional: 0,
+            },
+            &Type::Array {
+                elem: Box::new(elem?.clone()),
+            },
+        )),
+        // `map` is generic in a second parameter U that `elem` cannot
+        // supply: (T -> U) -> Array<U>. U is unconstrained, not unresolved
+        // (deka#467, deka#468).
+        ("Array", "map") => PrimitiveMember::BuiltinMethod(Type::Function {
+            params: vec![Type::Function {
+                params: vec![elem?.clone()],
+                ret: Box::new(Type::Var),
+                optional: 0,
+            }],
+            ret: Box::new(Type::Array {
+                elem: Box::new(Type::Var),
+            }),
+            optional: 0,
+        }),
+        ("Array", "find") => PrimitiveMember::BuiltinMethod(fn1(
+            &Type::Function {
+                params: vec![elem?.clone()],
+                ret: Box::new(boolean_ty.clone()),
+                optional: 0,
+            },
+            &Type::Option {
+                inner: Box::new(elem?.clone()),
+            },
+        )),
+        ("Array", "forEach") => PrimitiveMember::BuiltinMethod(fn1(
+            &Type::Function {
+                params: vec![elem?.clone()],
+                ret: Box::new(Type::None),
+                optional: 0,
+            },
+            &Type::None,
+        )),
+        // `reduce` is generic in the accumulator A: ((A, T) -> A) -> A.
+        ("Array", "reduce") => PrimitiveMember::BuiltinMethod(Type::Function {
+            params: vec![Type::Function {
+                params: vec![Type::Var, elem?.clone()],
+                ret: Box::new(Type::Var),
+                optional: 0,
+            }],
+            ret: Box::new(Type::Var),
+            optional: 0,
+        }),
+        _ => return None,
+    };
+    Some(member)
+}
+
 impl<'a> Checker<'a> {
     pub(super) fn check_expr(&mut self, expr: &ast::Expr<'a>) -> Type<'a> {
         match expr {
@@ -686,67 +852,44 @@ impl<'a> Checker<'a> {
         field: &'a str,
         span: ast::Span,
     ) -> Type<'a> {
-        let string_ty = Type::Named { name: "string" };
-        let number_ty = Type::Named { name: "number" };
-        let boolean_ty = Type::Named { name: "boolean" };
-
-        let fn0 = |ret: Type<'a>| Type::Function {
-            params: Vec::new(),
-            ret: Box::new(ret),
-            optional: 0,
-        };
-        let fn1 = |p: Type<'a>, ret: Type<'a>| Type::Function {
-            params: vec![p],
-            ret: Box::new(ret),
-            optional: 0,
-        };
-        let fn2 = |p1: Type<'a>, p2: Type<'a>, ret: Type<'a>| Type::Function {
-            params: vec![p1, p2],
-            ret: Box::new(ret),
-            optional: 0,
-        };
-
+        if let Some(PrimitiveMember::Property(ty) | PrimitiveMember::BuiltinMethod(ty)) =
+            primitive_member(type_name, field, None)
+        {
+            return ty;
+        }
+        // User extensions are call-shaped; reading one as a property is a
+        // mistake worth naming (deka#527). Builtin members win above, so
+        // `s.length` stays a property even when an extension shadows
+        // call-shaped `s.length()`.
+        if super::is_primitive_receiver_name(type_name)
+            && self.receiver_methods.contains_key(&(type_name, field))
+        {
+            self.error_span(
+                span,
+                format!(
+                    "extension method `{field}` on `{type_name}` must be called, not read as a property"
+                ),
+            );
+            return Type::Error;
+        }
         match type_name {
-            // `JsError` is whatever JavaScript threw, surfaced through the
-            // emitter's try/catch. JS can throw anything -- `throw "boom"` has
-            // no `.message` -- so the emitter normalises a non-Error throw into
-            // an Error. These two fields are always present because of that
-            // guarantee; without it, declaring them would be a lie the type
-            // system could not catch (deka#460, deka#469).
-            "JsError" => match field {
-                "message" | "name" => string_ty,
-                _ => {
-                    self.error_span(
-                        span,
-                        format!("`JsError` has no field `{field}` (available: `message`, `name`)"),
-                    );
-                    Type::Error
-                }
-            },
-            "string" => match field {
-                "length" => number_ty,
-                "toUpperCase" | "toLowerCase" | "trim" => fn0(string_ty.clone()),
-                "charAt" | "indexOf" | "lastIndexOf" => fn1(number_ty.clone(), number_ty.clone()),
-                "includes" | "startsWith" | "endsWith" => fn1(string_ty.clone(), boolean_ty.clone()),
-                "slice" => fn2(number_ty.clone(), number_ty.clone(), string_ty.clone()),
-                "split" => fn1(string_ty.clone(), Type::Array { elem: Box::new(string_ty.clone()) }),
-                "replace" | "replaceAll" | "concat" => fn2(string_ty.clone(), string_ty.clone(), string_ty.clone()),
-                "substring" => fn2(number_ty.clone(), number_ty.clone(), string_ty.clone()),
-                _ => {
-                    self.error_span(span, format!("string has no field `{field}`"));
-                    Type::Error
-                }
-            },
-            "number" | "boolean" => {
-                self.error_span(span, format!("{type_name} has no field `{field}`"));
+            "JsError" => {
+                self.error_span(
+                    span,
+                    format!("`JsError` has no field `{field}` (available: `message`, `name`)"),
+                );
+                Type::Error
+            }
+            "string" | "number" | "boolean" => {
+                self.error_span(span, format!("`{type_name}` has no field `{field}`"));
                 Type::Error
             }
             _ => {
                 // Enum values expose a small reflective surface.
                 if self.enums.contains_key(type_name) {
                     return match field {
-                        "name" => string_ty,
-                        "index" => number_ty,
+                        "name" => Type::Named { name: "string" },
+                        "index" => Type::Named { name: "number" },
                         _ => {
                             self.error_span(
                                 span,
@@ -990,84 +1133,9 @@ impl<'a> Checker<'a> {
         elem: &Type<'a>,
         span: ast::Span,
     ) -> Type<'a> {
-        let number_ty = Type::Named { name: "number" };
-        let boolean_ty = Type::Named { name: "boolean" };
-        let array_ty = Type::Array { elem: Box::new(elem.clone()) };
-
-        let fn0 = |ret: Type<'a>| Type::Function {
-            params: Vec::new(),
-            ret: Box::new(ret),
-            optional: 0,
-        };
-        let fn1 = |p: Type<'a>, ret: Type<'a>| Type::Function {
-            params: vec![p],
-            ret: Box::new(ret),
-            optional: 0,
-        };
-        let fn2 = |p1: Type<'a>, p2: Type<'a>, ret: Type<'a>| Type::Function {
-            params: vec![p1, p2],
-            ret: Box::new(ret),
-            optional: 0,
-        };
-
-        match field {
-            "length" => number_ty,
-            "includes" => fn2(elem.clone(), number_ty.clone(), boolean_ty.clone()),
-            "slice" => fn2(number_ty.clone(), number_ty.clone(), array_ty.clone()),
-            "push" => fn1(elem.clone(), number_ty.clone()),
-            "pop" => fn0(Type::Option { inner: Box::new(elem.clone()) }),
-            "shift" => fn0(Type::Option { inner: Box::new(elem.clone()) }),
-            "unshift" => fn1(elem.clone(), number_ty.clone()),
-            "concat" => fn1(array_ty.clone(), array_ty.clone()),
-            "join" => fn1(Type::Named { name: "string" }, Type::Named { name: "string" }),
-            "reverse" | "sort" => fn0(array_ty.clone()),
-            "filter" => fn1(
-                Type::Function {
-                    params: vec![elem.clone()],
-                    ret: Box::new(boolean_ty.clone()),
-                    optional: 0,
-                },
-                array_ty.clone(),
-            ),
-            // `map` is generic in a second parameter U that `elem` cannot
-            // supply: (T -> U) -> Array<U>. U is unconstrained, not unresolved
-            // (deka#467, deka#468).
-            "map" => Type::Function {
-                params: vec![Type::Function {
-                    params: vec![elem.clone()],
-                    ret: Box::new(Type::Var),
-                    optional: 0,
-                }],
-                ret: Box::new(Type::Array { elem: Box::new(Type::Var) }),
-                optional: 0,
-            },
-            "find" => fn1(
-                Type::Function {
-                    params: vec![elem.clone()],
-                    ret: Box::new(boolean_ty.clone()),
-                    optional: 0,
-                },
-                Type::Option { inner: Box::new(elem.clone()) },
-            ),
-            "forEach" => fn1(
-                Type::Function {
-                    params: vec![elem.clone()],
-                    ret: Box::new(Type::None),
-                    optional: 0,
-                },
-                Type::None,
-            ),
-            // `reduce` is generic in the accumulator A: ((A, T) -> A) -> A.
-            "reduce" => Type::Function {
-                params: vec![Type::Function {
-                    params: vec![Type::Var, elem.clone()],
-                    ret: Box::new(Type::Var),
-                    optional: 0,
-                }],
-                ret: Box::new(Type::Var),
-                optional: 0,
-            },
-            _ => {
+        match primitive_member("Array", field, Some(elem)) {
+            Some(PrimitiveMember::Property(ty) | PrimitiveMember::BuiltinMethod(ty)) => ty,
+            None => {
                 self.error_span(span, format!("array has no field `{field}`"));
                 Type::Error
             }
@@ -2379,11 +2447,18 @@ impl<'a> Checker<'a> {
         let receiver_type = match &object_type {
             Type::Struct { name } => *name,
             Type::Newtype { name, .. } => *name,
+            Type::Named { name } => {
+                // Primitive receiver: a user extension shadows builtin members
+                // of the same name. On a miss, fall through to `check_call` so
+                // builtin property-functions keep working (deka#527).
+                return self.check_primitive_extension_call(
+                    call_expr, name, method_name, args, span,
+                );
+            }
             _ => return None,
         };
 
-        let mut embed_path = Vec::new();
-        let info = self.find_receiver_method(receiver_type, method_name, &mut embed_path)?;
+        let info = self.find_receiver_method(receiver_type, method_name, &mut Vec::new())?;
 
         if info.mutable && !self.is_mutable_expr(object) {
             self.error_at_expr(
@@ -2394,18 +2469,68 @@ impl<'a> Checker<'a> {
             );
         }
 
-        // Record this call site so the emitter can lower it to a mangled call.
-        // The owner of the method is the embedded struct (or the receiver itself).
-        let owner = embed_path.last().copied().unwrap_or(receiver_type);
-        let mangled = format!("{owner}_{method_name}");
+        self.check_method_call_args(method_name, receiver_type, &info, args, span)
+            .into()
+    }
+
+    /// Resolve a method call on a primitive receiver (deka#527). A declared
+    /// extension is rewritten to a free-function call; a miss falls through
+    /// to `check_call`, except when the same method name is declared on a
+    /// different primitive, where the diagnostic names the receiver type.
+    fn check_primitive_extension_call(
+        &mut self,
+        call_expr: &ast::Expr<'a>,
+        receiver_name: &'a str,
+        method_name: &'a str,
+        args: &'a [ast::Expr<'a>],
+        span: ast::Span,
+    ) -> Option<Type<'a>> {
+        let info = match self.receiver_methods.get(&(receiver_name, method_name)) {
+            Some(info) => info.clone(),
+            None => {
+                let declared_on = self.receiver_methods.keys().find(|(rt, mn)| {
+                    *mn == method_name
+                        && super::is_primitive_receiver_name(rt)
+                        && *rt != receiver_name
+                }).map(|(rt, _)| *rt);
+                if let Some(declared_on) = declared_on {
+                    self.error_span(
+                        span,
+                        format!(
+                            "method `{method_name}` is declared on `{declared_on}`, not `{receiver_name}`"
+                        ),
+                    );
+                    return Type::Error.into();
+                }
+                return None;
+            }
+        };
+
+        // Primitives cannot carry a prototype, so the emitter rewrites this
+        // call to a module-local free function named `method$receiver`.
+        let mangled = format!("{method_name}${receiver_name}");
         self.method_calls.insert(
             call_expr as *const ast::Expr<'a>,
-            ast::MethodTarget { mangled, embed_path },
+            ast::MethodTarget {
+                mangled,
+                embed_path: Vec::new(),
+            },
         );
 
-        // Annotations were resolved when the method was collected (deka#494);
-        // reusing them here keeps an unknown annotation from being re-reported
-        // at every call site.
+        Some(self.check_method_call_args(method_name, receiver_name, &info, args, span))
+    }
+
+    /// Check call arguments against a receiver method's resolved parameter
+    /// types (collected in the declaring module, deka#494) and produce the
+    /// call's result type.
+    fn check_method_call_args(
+        &mut self,
+        method_name: &'a str,
+        receiver_type: &str,
+        info: &super::MethodInfo<'a>,
+        args: &'a [ast::Expr<'a>],
+        span: ast::Span,
+    ) -> Type<'a> {
         let expected_params: Vec<Type<'a>> = info.param_types.clone();
 
         if expected_params.len() != args.len() {
@@ -2432,10 +2557,7 @@ impl<'a> Checker<'a> {
             }
         }
 
-        info.resolved_return
-            .clone()
-            .unwrap_or(Type::None)
-            .into()
+        info.resolved_return.clone().unwrap_or(Type::None)
     }
 
     /// Look up a receiver method on a struct type, recursively searching

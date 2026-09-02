@@ -2,6 +2,11 @@
 
 use deka_syntax::{BinOp, UnOp};
 
+/// Primitive types that support receiver (extension) methods (deka#527).
+pub fn is_primitive_receiver(name: &str) -> bool {
+    matches!(name, "string" | "number" | "boolean")
+}
+
 pub fn bin_op_str(op: BinOp) -> &'static str {
     match op {
         BinOp::Add => "+",

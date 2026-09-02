@@ -6,6 +6,7 @@
 //! that nothing live imports. Impure modules stay whole. A client entry that
 //! can reach `ui/server` is a build failure.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
@@ -130,7 +131,7 @@ pub fn live_names(
             if is_entry_seed(stmt) {
                 collect_stmt_idents(stmt, &mut live);
                 for name in declared_names(stmt) {
-                    live.insert(name.to_string());
+                    live.insert(name.into_owned());
                 }
             }
         }
@@ -152,14 +153,46 @@ pub fn live_names(
         }
     }
 
+    // Primitive extension calls are rewritten to `method$receiver` only after
+    // typechecking, which runs after shaking, so the mangled name never occurs
+    // as an identifier the graph could see. Bridge the gap: a field access
+    // matching a declared extension keeps that extension live (deka#527).
+    // Struct and newtype methods need no bridge — their receiver type name
+    // appears at construction sites.
+    let extensions: Vec<(String, String)> = program
+        .statements
+        .iter()
+        .filter_map(|stmt| {
+            if let Stmt::ReceiverMethod {
+                receiver_type,
+                name,
+                ..
+            } = stmt
+            {
+                if matches!(*receiver_type, "string" | "number" | "boolean") {
+                    return Some((name.to_string(), format!("{name}${receiver_type}")));
+                }
+            }
+            None
+        })
+        .collect();
+    if is_entry {
+        for stmt in program.statements.iter() {
+            if is_entry_seed(stmt) {
+                collect_primitive_extension_uses(stmt, &extensions, &mut live);
+            }
+        }
+    }
+
     let mut changed = true;
     while changed {
         changed = false;
         for stmt in program.statements.iter() {
             let names = declared_names(stmt);
-            if names.iter().any(|n| live.contains(*n)) {
+            if names.iter().any(|n| live.contains(n.as_ref())) {
                 let before = live.len();
                 collect_stmt_idents(stmt, &mut live);
+                collect_primitive_extension_uses(stmt, &extensions, &mut live);
                 if live.len() > before {
                     changed = true;
                 }
@@ -167,6 +200,32 @@ pub fn live_names(
         }
     }
     Some(live)
+}
+
+/// Insert `method$receiver` into `live` for every declared primitive
+/// extension whose method name appears as a field access in `stmt`. Call
+/// sites keep their pre-typecheck shape (`s.slugify()`), so the mangled name
+/// the emitter liveness-gates on is bridged here from the field name
+/// (deka#527). `extensions` pairs `(method_name, mangled_name)`.
+fn collect_primitive_extension_uses(
+    stmt: &Stmt<'_>,
+    extensions: &[(String, String)],
+    live: &mut HashSet<String>,
+) {
+    if extensions.is_empty() {
+        return;
+    }
+    let mut accessed = HashSet::new();
+    walk_stmt(stmt, &mut |expr| {
+        if let Expr::FieldAccess { field, .. } = expr {
+            accessed.insert((*field).to_string());
+        }
+    });
+    for (method, mangled) in extensions {
+        if accessed.contains(method) {
+            live.insert(mangled.clone());
+        }
+    }
 }
 
 fn is_entry_seed(stmt: &Stmt<'_>) -> bool {
@@ -200,7 +259,7 @@ fn exported_names<'a>(stmt: &'a Stmt<'a>) -> Vec<&'a str> {
     }
 }
 
-fn declared_names<'a>(stmt: &'a Stmt<'a>) -> Vec<&'a str> {
+fn declared_names<'a>(stmt: &'a Stmt<'a>) -> Vec<Cow<'a, str>> {
     match stmt {
         Stmt::Const { name, .. }
         | Stmt::Let { name, .. }
@@ -209,16 +268,35 @@ fn declared_names<'a>(stmt: &'a Stmt<'a>) -> Vec<&'a str> {
         | Stmt::Enum { name, .. }
         | Stmt::TypeAlias { name, .. }
         | Stmt::Newtype { name, .. }
-        | Stmt::Interface { name, .. } => vec![*name],
-        Stmt::ReceiverMethod { receiver_type, .. } => vec![*receiver_type],
+        | Stmt::Interface { name, .. } => vec![Cow::Borrowed(*name)],
+        Stmt::ReceiverMethod {
+            receiver_type,
+            name,
+            ..
+        } => {
+            // Primitive extensions are emitted (and thus live-keyed) under
+            // their mangled `method$receiver` name; struct and newtype
+            // methods ride the receiver type's name (deka#527).
+            if matches!(*receiver_type, "string" | "number" | "boolean") {
+                vec![Cow::Owned(format!("{name}${receiver_type}"))]
+            } else {
+                vec![Cow::Borrowed(*receiver_type)]
+            }
+        }
         Stmt::Export { decl, .. } => match decl {
-            ExportDecl::Const { name, .. } | ExportDecl::Function { name, .. } => vec![*name],
+            ExportDecl::Const { name, .. } | ExportDecl::Function { name, .. } => {
+                vec![Cow::Borrowed(*name)]
+            }
             ExportDecl::NamedGroup { names } => names
                 .iter()
                 .flat_map(|n| [n.name, n.alias.unwrap_or(n.name)])
+                .map(Cow::Borrowed)
                 .collect(),
         },
-        Stmt::Import { specifiers, .. } => specifiers.iter().map(|s| s.local).collect(),
+        Stmt::Import { specifiers, .. } => specifiers
+            .iter()
+            .map(|s| Cow::Borrowed(s.local))
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -687,5 +765,53 @@ mod tests {
         let live = live_names(&program, &used, false, true).expect("pure");
         assert!(live.contains("keep"));
         assert!(!live.contains("drop"));
+    }
+
+    #[test]
+    fn used_primitive_extension_is_live_by_mangled_name() {
+        let arena = Bump::new();
+        let program = parse_program(
+            &arena,
+            "fn (s string) slugify() string { return s; }\nfn (s string) unused_ext() string { return s; }\nconst title = \"Hello\";\necho(title.slugify());",
+        );
+        let live = live_names(&program, &HashSet::new(), true, true).expect("pure");
+        assert!(live.contains("slugify$string"));
+        assert!(!live.contains("unused_ext$string"));
+    }
+
+    #[test]
+    fn primitive_extension_in_dead_export_is_not_live() {
+        let arena = Bump::new();
+        let program = parse_program(
+            &arena,
+            "export fn keep() string { return \"x\".slugify(); }\nexport fn drop() string { return \"y\".unused_ext(); }\nfn (s string) slugify() string { return s; }\nfn (s string) unused_ext() string { return s; }",
+        );
+        let mut used = HashSet::new();
+        used.insert("keep".to_string());
+        let live = live_names(&program, &used, false, true).expect("pure");
+        assert!(live.contains("slugify$string"));
+        assert!(!live.contains("unused_ext$string"));
+    }
+
+    #[test]
+    fn unused_primitive_extension_is_absent_from_emitted_output() {
+        // End to end: liveness keyed by the mangled `method$receiver` name
+        // must drop the unused extension while its used sibling survives
+        // (deka#527).
+        let mut used = HashSet::new();
+        used.insert("keep".to_string());
+        used.insert("slugify$string".to_string());
+        let result = crate::compile_to_js_with_options(
+            "fn (s string) slugify() string { return s; }\nfn (s string) unused_ext() string { return \"UNUSED_EXT_UNIQUE\"; }\nexport fn keep() string { return \"x\".slugify(); }",
+            "module.ds",
+            crate::CompileOptions {
+                used_exports: Some(used),
+                ..Default::default()
+            },
+        )
+        .expect("compile failed");
+        assert!(result.js.contains("slugify$string"));
+        assert!(!result.js.contains("unused_ext$string"));
+        assert!(!result.js.contains("UNUSED_EXT_UNIQUE"));
     }
 }
