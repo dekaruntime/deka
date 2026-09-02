@@ -70,6 +70,11 @@ pub fn register(registry: &mut Registry) {
         aliases: &[],
         description: "rehash php package integrity and update deka.lock",
     });
+    registry.add_flag(FlagSpec {
+        name: "--locked",
+        aliases: &[],
+        description: "fail if deka.lock is missing or would change",
+    });
     registry.add_param(ParamSpec {
         name: "--payload",
         description: "path to a JSON payload describing the install",
@@ -443,6 +448,7 @@ fn build_payload_for_specs(context: &Context, specs: Vec<String>) -> Result<Inst
         prompt: false,
         quiet: false,
         rehash: false,
+        locked: false,
     };
 
     let mut resolved_specs = Vec::new();
@@ -481,6 +487,7 @@ fn build_update_payload(context: &Context) -> Result<InstallPayload> {
         prompt: false,
         quiet: false,
         rehash: false,
+        locked: false,
     };
     apply_flags(&mut payload, context);
     Ok(payload)
@@ -531,6 +538,9 @@ fn apply_flags(payload: &mut InstallPayload, context: &Context) {
     }
     if context.args.flags.contains_key("--rehash") {
         payload.rehash = true;
+    }
+    if context.args.flags.contains_key("--locked") {
+        payload.locked = true;
     }
 }
 

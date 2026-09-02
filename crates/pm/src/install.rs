@@ -27,19 +27,20 @@ pub async fn run_install(payload: InstallPayload) -> Result<()> {
 
     let specs = payload.specs.clone();
     let quiet = payload.quiet;
-    tokio::task::spawn_blocking(move || run_php_install(specs, quiet))
+    let locked = payload.locked;
+    tokio::task::spawn_blocking(move || run_php_install(specs, quiet, locked))
         .await
         .context("install task failed")?
 }
 
-fn run_php_install(specs: Vec<String>, quiet: bool) -> Result<()> {
+fn run_php_install(specs: Vec<String>, quiet: bool, locked: bool) -> Result<()> {
     let cwd = std::env::current_dir().context("failed to resolve current directory")?;
-    run_php_install_in(specs, quiet, &cwd)
+    run_php_install_in(specs, quiet, locked, &cwd)
 }
 
-fn run_php_install_in(specs: Vec<String>, quiet: bool, cwd: &Path) -> Result<()> {
+fn run_php_install_in(specs: Vec<String>, quiet: bool, locked: bool, cwd: &Path) -> Result<()> {
     recover_install_transaction(cwd)?;
-    let result = run_php_install_in_transaction(specs, quiet, cwd);
+    let result = run_php_install_in_transaction(specs, quiet, locked, cwd);
     if let Err(error) = result {
         let recovery = recover_install_transaction(cwd);
         return match recovery {
@@ -55,6 +56,7 @@ fn run_php_install_in(specs: Vec<String>, quiet: bool, cwd: &Path) -> Result<()>
 fn run_php_install_in_transaction(
     specs: Vec<String>,
     quiet: bool,
+    locked: bool,
     cwd: &Path,
 ) -> Result<()> {
     let explicit_add = !specs.is_empty();
@@ -70,6 +72,9 @@ fn run_php_install_in_transaction(
 
     let lock_path = cwd.join(lock::LOCKFILE_NAME);
     let existing_lock = lock::read_lockfile_at(&lock_path);
+    if locked && existing_lock.packages.is_empty() {
+        bail!("--locked install requires an existing deka.lock");
+    }
     let mut transaction = InstallTransaction::begin(cwd, &lock_path)?;
     let start = Instant::now();
     let mut pending = VecDeque::new();
@@ -95,7 +100,10 @@ fn run_php_install_in_transaction(
             continue;
         }
         let requirements = requested.get(&name).expect("queued package requirement");
-        let locked = locked_package(&existing_lock, &name)?;
+        let locked_pkg = locked_package(&existing_lock, &name)?;
+        if locked && locked_pkg.is_none() {
+            bail!("--locked install requires '{}' in deka.lock", name);
+        }
         let destination = php_modules_path_for_in(cwd, &name)?;
         let staging = install_staging_path(&destination)?;
         cleanup_install_staging(&staging);
@@ -109,7 +117,7 @@ fn run_php_install_in_transaction(
         // @deka stdlib packages are now served from deka.gg metadata + R2 tarballs.
         // Legacy linkhash/harar registry support has been removed.
         let install_source = if is_deka_package(&name) {
-            install_from_registry(&name, locked.as_ref(), requested_version, &staging)
+            install_from_registry(&name, locked_pkg.as_ref(), requested_version, &staging)
                 .with_context(|| format!("failed to install {} from deka.gg", name))?
         } else {
             bail!(
@@ -117,6 +125,16 @@ fn run_php_install_in_transaction(
                 name
             );
         };
+
+        if let Some(conflict) = first_unsatisfied_requirement(requirements, &install_source.version) {
+            bail!(
+                "{} {} does not satisfy requirement {} from {}",
+                name,
+                install_source.version,
+                conflict.range,
+                conflict.requested_by
+            );
+        }
 
         if let Err(err) = reject_vendored_php_modules(&staging, &name) {
             cleanup_install_staging(&staging);
@@ -126,7 +144,7 @@ fn run_php_install_in_transaction(
         let package_integrity = compute_package_integrity(&staging)
             .map_err(|err| anyhow!("failed to compute package integrity for {}: {}", name, err))?;
 
-        if let Some(locked) = &locked {
+        if let Some(locked) = &locked_pkg {
             if let Err(err) =
                 verify_locked_integrity(&name, locked, &install_source, &package_integrity)
             {
@@ -148,7 +166,7 @@ fn run_php_install_in_transaction(
         // A locked package has already been verified against its immutable
         // release bytes. Preserve its metadata byte-for-byte so a normal
         // fresh-checkout install does not rewrite the tracked lockfile.
-        let metadata = if locked.is_some() {
+        let metadata = if locked_pkg.is_some() {
             existing_lock
                 .packages
                 .get(&name)
@@ -182,6 +200,12 @@ fn run_php_install_in_transaction(
         );
         for dependency in dependencies {
             enqueue_package_spec(&mut pending, &mut requested, &dependency, &name)?;
+        }
+    }
+
+    if locked {
+        if let Some(diff) = lock_diff(&existing_lock, &installed) {
+            bail!("--locked install would change deka.lock: {}", diff);
         }
     }
 
@@ -232,6 +256,60 @@ fn enqueue_package_spec(
 struct VersionRequirement {
     range: String,
     requested_by: String,
+}
+
+struct UnsatisfiedRequirement {
+    range: String,
+    requested_by: String,
+}
+
+fn version_satisfies(range: &str, version: &str) -> bool {
+    let range = range.trim();
+    if range.is_empty() || range == "latest" || range == "*" {
+        return true;
+    }
+    let range = range.trim_start_matches('v');
+    let version = version.trim_start_matches('v');
+    range == version
+}
+
+fn first_unsatisfied_requirement(
+    requirements: &[VersionRequirement],
+    version: &str,
+) -> Option<UnsatisfiedRequirement> {
+    for req in requirements {
+        if !version_satisfies(&req.range, version) {
+            return Some(UnsatisfiedRequirement {
+                range: req.range.clone(),
+                requested_by: req.requested_by.clone(),
+            });
+        }
+    }
+    None
+}
+
+fn lock_diff(
+    existing: &lock::DekaLock,
+    installed: &BTreeMap<String, (String, String, Value, String)>,
+) -> Option<String> {
+    for (name, (descriptor, _, _, _)) in installed {
+        match existing.packages.get(name) {
+            Some((existing_descriptor, _, _, _)) if existing_descriptor == descriptor => {}
+            Some((existing_descriptor, _, _, _)) => {
+                return Some(format!(
+                    "{} resolved to {} but lock has {}",
+                    name, descriptor, existing_descriptor
+                ));
+            }
+            None => return Some(format!("{} is not in the existing lock", name)),
+        }
+    }
+    for name in existing.packages.keys() {
+        if !installed.contains_key(name) {
+            return Some(format!("{} is present in lock but was not installed", name));
+        }
+    }
+    None
 }
 
 fn package_dependencies(package_root: &Path, package_name: &str) -> Result<Vec<String>> {
@@ -1287,6 +1365,7 @@ mod tests {
             prompt: false,
             quiet: true,
             rehash: true,
+            locked: false,
         };
         rehash_php_packages_in(&payload, tmp.path())
             .await
@@ -1777,7 +1856,7 @@ mod tests {
             let root = tmp.path().to_path_buf();
             let _registry = registry.clone();
             move || {
-                run_php_install_in(vec!["@scope/a@^1.0.0".to_string()], true, &root)
+                run_php_install_in(vec!["@scope/a@^1.0.0".to_string()], true, false, &root)
             }
         })
         .await
@@ -1809,7 +1888,7 @@ mod tests {
         )
         .expect("write tracked alias");
 
-        run_php_install_in(vec!["@deka/string".to_string()], true, tmp.path())
+        run_php_install_in(vec!["@deka/string".to_string()], true, false, tmp.path())
             .expect("bundled deka install");
         assert!(tmp
             .path()
@@ -1831,7 +1910,7 @@ mod tests {
 
         // A second locked install must verify the canonical scoped package
         // without modifying the compatibility alias or relying on cache state.
-        run_php_install_in(vec!["@deka/string".to_string()], true, tmp.path())
+        run_php_install_in(vec!["@deka/string".to_string()], true, false, tmp.path())
             .expect("repeat bundled deka install");
         assert_eq!(
             fs::read_to_string(alias.join("index.phpx")).expect("tracked alias still survives"),
@@ -1861,6 +1940,7 @@ mod tests {
                 run_php_install_in(
                     vec!["@scope/a".to_string(), "@scope/b".to_string()],
                     true,
+                    false,
                     &root,
                 )
             }
@@ -1894,6 +1974,7 @@ mod tests {
                 run_php_install_in(
                     vec!["@scope/a".to_string(), "@scope/b".to_string()],
                     true,
+                    false,
                     &root,
                 )
             }

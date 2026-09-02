@@ -13,6 +13,7 @@ export interface HatsTest {
   category: string
   status: HatsTestStatus
   name: string
+  dir: string
   source: string
   files?: Record<string, string>
   entryPath?: string
@@ -157,6 +158,7 @@ export function loadAllTests(): HatsCategory[] {
         category: categoryName,
         status,
         name: testName,
+        dir: testDir,
         source,
         files: filesRecord,
         entryPath: entryFile,

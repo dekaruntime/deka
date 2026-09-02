@@ -200,7 +200,7 @@ jobs:
         run: cargo test --locked --workspace
 
       - name: Run tour + public conformance suite (native)
-        run: ./run.sh --skip-build
+        run: ./run.sh --skip-build --locked
 
       - name: Install dump harness deps + Chromium
         working-directory: tests/dump
