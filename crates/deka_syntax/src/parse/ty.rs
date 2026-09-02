@@ -8,6 +8,33 @@ use super::Parser;
 
 impl<'a> Parser<'a> {
     pub(super) fn parse_type(&mut self) -> Option<Type<'a>> {
+        let first = self.parse_type_postfix()?;
+        if !self.at(TokenKind::Bar) {
+            return Some(first);
+        }
+        // Union type: `A | B`. `|` binds looser than postfix `?`, so
+        // `A | B?` parses as `A | (B?)` (rfd#42, deka#530).
+        let mut members = vec![first];
+        while self.eat(TokenKind::Bar) {
+            self.skip_newlines();
+            members.push(self.parse_type_postfix()?);
+        }
+        let first_span = members.first().unwrap().span();
+        let last_span = members.last().unwrap().span();
+        let span = Span {
+            start: first_span.start,
+            end: last_span.end,
+            byte_start: first_span.byte_start,
+            byte_end: last_span.byte_end,
+        };
+        Some(Type::Union {
+            members: alloc_slice(self.arena, members),
+            span,
+        })
+    }
+
+    /// Primary type plus an optional postfix `?`.
+    fn parse_type_postfix(&mut self) -> Option<Type<'a>> {
         let ty = self.parse_type_primary()?;
         if self.eat(TokenKind::Question) {
             let span = ty.span();
