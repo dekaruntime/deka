@@ -8,7 +8,7 @@ fn utf8(value: string) bytes {
   }
 }
 const req = format_request("GET", "/", "example.com", {}, utf8(""))
-echo(match (unsafe<boolean> { req.indexOf("Host: example.com") >= 0 }) {
+echo(string(match (unsafe<boolean> { req.indexOf("Host: example.com") >= 0 }) {
   Ok(v) => v,
   Err(e) => false,
-})
+}))

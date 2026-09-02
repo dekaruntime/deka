@@ -17,6 +17,6 @@ async fn go() {
   },
     Err(e) => -2,
   }
-  echo(n)
+  echo(string(n))
 }
 go()

@@ -46,4 +46,4 @@ const round = match (aes_256_gcm_encrypt(key, nonce, pt, aad)) {
   Ok(out) => to_hex(out),
 },
 }
-echo(round == to_hex(pt))
+echo(string(round == to_hex(pt)))

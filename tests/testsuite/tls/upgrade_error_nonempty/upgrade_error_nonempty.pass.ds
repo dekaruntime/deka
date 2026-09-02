@@ -7,4 +7,4 @@ const msg = match (upgrade(0, "localhost")) {
   Err(err) => "",
 },
 }
-echo(msg.length > 0)
+echo(string(msg.length > 0))

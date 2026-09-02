@@ -11,7 +11,7 @@ const token = match (sign({sub: "1"}, utf8("secret"), {})) {
   Ok(v) => v,
   Err(e) => "",
 }
-echo(match (unsafe<number> { token.split(".").length }) {
+echo(string(match (unsafe<number> { token.split(".").length }) {
   Ok(n) => n,
   Err(e) => 0,
-})
+}))

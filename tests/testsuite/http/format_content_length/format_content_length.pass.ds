@@ -8,7 +8,7 @@ fn utf8(value: string) bytes {
   }
 }
 const req = format_request("POST", "/", "h", {}, utf8("abcd"))
-echo(match (unsafe<boolean> { req.indexOf("Content-Length: 4") >= 0 }) {
+echo(string(match (unsafe<boolean> { req.indexOf("Content-Length: 4") >= 0 }) {
   Ok(v) => v,
   Err(e) => false,
-})
+}))

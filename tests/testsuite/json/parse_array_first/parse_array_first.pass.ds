@@ -4,7 +4,7 @@ const v = match (parse("[10,20]")) {
   Ok(o) => o,
   Err(e) => [],
 }
-echo(match (unsafe<number> { Number(v[0]) }) {
+echo(string(match (unsafe<number> { Number(v[0]) }) {
   Ok(n) => n,
   Err(e) => -1,
-})
+}))
