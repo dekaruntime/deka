@@ -330,8 +330,12 @@ impl<'src> Formatter<'src> {
                 type_params,
                 fields,
                 embeds,
+                is_super,
                 ..
             } => {
+                if *is_super {
+                    self.write("super ");
+                }
                 self.write("struct ");
                 self.write(name);
                 if !type_params.is_empty() {
@@ -351,7 +355,10 @@ impl<'src> Formatter<'src> {
                     self.write("}");
                 }
             }
-            Stmt::Enum { name, type_params, cases, .. } => {
+            Stmt::Enum { name, type_params, cases, is_super, .. } => {
+                if *is_super {
+                    self.write("super ");
+                }
                 self.write("enum ");
                 self.write(name);
                 if !type_params.is_empty() {
@@ -1623,6 +1630,16 @@ mod tests {
     fn literals_and_patterns_round_trip() {
         round_trips("const a = true\nconst b = false\n");
         round_trips("fn f(n: number) number {\n  return match (n) { 1 => 1, _ => 0 }\n}\n");
+    }
+
+    #[test]
+    fn super_declarations_round_trip() {
+        // The `super` prefix must survive formatting on both struct and enum
+        // declarations; dropping it would silently demote a reflected type
+        // to a plain one without any formatter error.
+        round_trips("super struct User {\n  id: number\n  name: string\n}\n");
+        round_trips("super enum Status {\n  Active\n  Archived\n}\n");
+        round_trips("super struct Node {\n  next: Option<Node>\n}\nconst t = Node.type()\n");
     }
 
     #[test]

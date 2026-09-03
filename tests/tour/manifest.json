@@ -420,5 +420,10 @@
     "id": "type-values",
     "title": "type values and getType",
     "expectCompile": true
+  },
+  {
+    "id": "super",
+    "title": "super declarations",
+    "expectCompile": true
   }
 ]
