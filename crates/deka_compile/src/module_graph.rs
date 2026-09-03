@@ -966,7 +966,7 @@ mod tests {
         let mut files = HashMap::new();
         files.insert(
             money.clone(),
-            "type Cents number\nfn (c Cents) toDollars() number { return unbox_number(c) / 100 }\nexport { Cents }".to_string(),
+            "type Cents number\nfn (c Cents) toDollars() number { return unboxNumber(c) / 100 }\nexport { Cents }".to_string(),
         );
         files.insert(
             main.clone(),

@@ -47,7 +47,7 @@ pub fn emit_js(program: &Program, _source: &str) -> Result<String, String> {
 /// Imported structs and enums are seeded into the emitter so that struct
 /// literals and enum constructors defined in other modules can be emitted
 /// correctly in the current file. `unwrap_calls` maps primitive conversion
-/// call sites (`parse_number(x)`, `unbox_number(x)`, `to_number(x)`,
+/// call sites (`parseNumber(x)`, `unboxNumber(x)`, `toNumber(x)`,
 /// `string(x)`) to their lowering kind.
 pub fn emit_js_with_imports<'a>(
     program: &'a Program<'a>,
@@ -1627,7 +1627,7 @@ impl<'a> Emitter<'a> {
                                 self.out.push(')');
                             }
                             deka_syntax::typeck::UnwrapKind::StringToOptionNumber => {
-                                // `parse_number(s)` on a string can produce
+                                // `parseNumber(s)` on a string can produce
                                 // NaN; surface it as Option<number>.
                                 self.out.push_str("(() => { const __n = Number(");
                                 self.emit_expr(arg)?;

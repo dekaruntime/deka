@@ -982,7 +982,7 @@ export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
     #[test]
     fn compile_newtype_construct_and_unwrap() {
         let result = compile_to_js(
-            "type Cents number\nconst c: Cents = Cents(500)\nconst n: number = unbox_number(c)",
+            "type Cents number\nconst c: Cents = Cents(500)\nconst n: number = unboxNumber(c)",
             "test.ds",
         )
         .expect("compile should succeed");
@@ -1005,8 +1005,8 @@ export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
     }
 
     #[test]
-    fn compile_to_number_widens_boolean() {
-        let result = compile_to_js("const n: number = to_number(true)", "test.ds")
+    fn compile_toNumber_widens_boolean() {
+        let result = compile_to_js("const n: number = toNumber(true)", "test.ds")
             .expect("compile should succeed");
         assert!(
             result.js.contains("const n = Number(true)"),
@@ -1016,9 +1016,9 @@ export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
     }
 
     #[test]
-    fn compile_to_number_rejects_newtype() {
+    fn compile_toNumber_rejects_newtype() {
         let err = compile_to_js(
-            "type Cents number\nconst c: Cents = Cents(5)\nconst n: number = to_number(c)",
+            "type Cents number\nconst c: Cents = Cents(5)\nconst n: number = toNumber(c)",
             "test.ds",
         )
         .expect_err("compile should fail");
@@ -1212,7 +1212,7 @@ export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
     #[test]
     fn compile_newtype_receiver_method() {
         let result = compile_to_js(
-            "type Cents number\nfn (c Cents) toDollars() number { return unbox_number(c) / 100 }\nconst c: Cents = Cents(500)\nconst d: number = c.toDollars()",
+            "type Cents number\nfn (c Cents) toDollars() number { return unboxNumber(c) / 100 }\nconst c: Cents = Cents(500)\nconst d: number = c.toDollars()",
             "test.ds",
         )
         .expect("compile should succeed");
@@ -1237,7 +1237,7 @@ export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
     #[test]
     fn compile_newtype_receiver_method_uses_self() {
         let result = compile_to_js(
-            "type Cents number\nfn (c Cents) doubled() Cents { return Cents(unbox_number(c) * 2) }\nconst c: Cents = Cents(50)\nconst d: Cents = c.doubled()",
+            "type Cents number\nfn (c Cents) doubled() Cents { return Cents(unboxNumber(c) * 2) }\nconst c: Cents = Cents(50)\nconst d: Cents = c.doubled()",
             "test.ds",
         )
         .expect("compile should succeed");
@@ -1257,7 +1257,7 @@ export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
     #[test]
     fn compile_newtype_receiver_method_param() {
         let result = compile_to_js(
-            "type Cents number\nfn (c Cents) add(other: Cents) Cents { return Cents(unbox_number(c) + unbox_number(other)) }\nconst a: Cents = Cents(100)\nconst b: Cents = Cents(200)\nconst c: Cents = a.add(b)",
+            "type Cents number\nfn (c Cents) add(other: Cents) Cents { return Cents(unboxNumber(c) + unboxNumber(other)) }\nconst a: Cents = Cents(100)\nconst b: Cents = Cents(200)\nconst c: Cents = a.add(b)",
             "test.ds",
         )
         .expect("compile should succeed");

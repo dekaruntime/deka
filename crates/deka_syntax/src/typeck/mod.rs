@@ -38,7 +38,7 @@ pub struct TypeckResult<'a> {
     /// free-function call that should replace it during emission (deka#527).
     pub method_calls: HashMap<*const ast::Expr<'a>, MethodTarget<'a>>,
     /// Map from primitive conversion call expression pointer to how it should
-    /// be lowered (`parse_number(x)`, `unbox_number(x)`, `to_number(x)`,
+    /// be lowered (`parseNumber(x)`, `unboxNumber(x)`, `toNumber(x)`,
     /// `string(x)`). `number(x)` stays only as a compatibility
     /// alias during the split.
     pub unwrap_calls: HashMap<*const ast::Expr<'a>, types::UnwrapKind>,
@@ -746,7 +746,7 @@ impl<'a> Checker<'a> {
         // `Object`, `Promise` and `parseInt` are gone. `Promise` stays a
         // *type* -- 63 annotations across the corpora are unaffected, because
         // types resolve through `resolve_ast_type` and never consulted this
-        // list. `parseInt`'s replacement is `parse_number(s)`, which yields
+        // list. `parseInt`'s replacement is `parseNumber(s)`, which yields
         // `Option<number>` rather than `NaN`, so removing it is a net
         // improvement rather than a subtraction.
         //

@@ -32,9 +32,9 @@ fn primitive_conversion_name(name: &str) -> Option<PrimitiveConversionName> {
     match name {
         "string" => Some(PrimitiveConversionName::String),
         "number" => Some(PrimitiveConversionName::LegacyNumber),
-        "parse_number" => Some(PrimitiveConversionName::ParseNumber),
-        "unbox_number" => Some(PrimitiveConversionName::UnboxNumber),
-        "to_number" => Some(PrimitiveConversionName::ToNumber),
+        "parseNumber" => Some(PrimitiveConversionName::ParseNumber),
+        "unboxNumber" => Some(PrimitiveConversionName::UnboxNumber),
+        "toNumber" => Some(PrimitiveConversionName::ToNumber),
         _ => None,
     }
 }
@@ -2795,8 +2795,8 @@ impl<'a> Checker<'a> {
             }
         }
 
-        // Primitive conversion: `string(x)`, `parse_number(x)`,
-        // `unbox_number(x)`, `to_number(x)` — always public, no import
+        // Primitive conversion: `string(x)`, `parseNumber(x)`,
+        // `unboxNumber(x)`, `toNumber(x)` — always public, no import
         // (#364). The old `number(x)` name remains a compatibility alias for
         // PR 1 while the corpus moves to the explicit APIs.
         if let ast::Expr::Identifier { name, .. } = callee {
