@@ -46,8 +46,7 @@ pub struct TypeckResult<'a> {
     pub type_of_calls: HashSet<*const ast::Expr<'a>>,
     /// Map from primitive conversion call expression pointer to how it should
     /// be lowered (`parseNumber(x)`, `unboxNumber(x)`, `toNumber(x)`,
-    /// `string(x)`). `number(x)` stays only as a compatibility
-    /// alias during the split.
+    /// `string(x)`).
     pub unwrap_calls: HashMap<*const ast::Expr<'a>, types::UnwrapKind>,
     /// Map from binary/unary operator expression pointer to how a newtype
     /// operation should be lowered.
