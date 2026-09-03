@@ -494,7 +494,7 @@ impl<'a> Emitter<'a> {
                 ExportDecl::Const { name, .. } | ExportDecl::Function { name, .. } => {
                     self.is_live(name)
                 }
-                ExportDecl::NamedGroup { names } => names
+                ExportDecl::NamedGroup { names, .. } => names
                     .iter()
                     .any(|n| self.is_live(n.alias.unwrap_or(n.name)) || self.is_live(n.name)),
             },
@@ -1198,7 +1198,7 @@ impl<'a> Emitter<'a> {
                         write_indent(&mut self.out, 0);
                         self.out.push('}');
                     }
-                    ExportDecl::NamedGroup { names } => {
+                    ExportDecl::NamedGroup { names, source } => {
                         let kept: Vec<_> = names
                             .iter()
                             .filter(|n| {
@@ -1219,7 +1219,13 @@ impl<'a> Emitter<'a> {
                                 self.out.push_str(alias);
                             }
                         }
-                        self.out.push_str(" };");
+                        self.out.push_str(" }");
+                        if let Some(source) = source {
+                            self.out.push_str(" from \"");
+                            self.out.push_str(&self.resolve_module_source(source));
+                            self.out.push('"');
+                        }
+                        self.out.push(';');
                     }
                 }
             }

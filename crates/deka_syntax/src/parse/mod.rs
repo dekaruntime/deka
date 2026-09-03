@@ -1115,7 +1115,7 @@ mod tests {
         let program = result.program.unwrap();
         match &program.statements[1] {
             Stmt::Export { decl, .. } => match decl {
-                crate::ast::ExportDecl::NamedGroup { names } => {
+                crate::ast::ExportDecl::NamedGroup { names, .. } => {
                     assert_eq!(names.len(), 1);
                     assert_eq!(names[0].name, "answer");
                     assert!(names[0].alias.is_none());

@@ -140,7 +140,7 @@ pub fn live_names(
     // Named re-exports: if the exported alias is live, the local name is live.
     for stmt in program.statements.iter() {
         if let Stmt::Export {
-            decl: ExportDecl::NamedGroup { names },
+            decl: ExportDecl::NamedGroup { names, .. },
             ..
         } = stmt
         {
@@ -250,7 +250,7 @@ fn exported_names<'a>(stmt: &'a Stmt<'a>) -> Vec<&'a str> {
     match stmt {
         Stmt::Export { decl, .. } => match decl {
             ExportDecl::Const { name, .. } | ExportDecl::Function { name, .. } => vec![*name],
-            ExportDecl::NamedGroup { names } => names
+            ExportDecl::NamedGroup { names, .. } => names
                 .iter()
                 .map(|n| n.alias.unwrap_or(n.name))
                 .collect(),
@@ -287,7 +287,7 @@ fn declared_names<'a>(stmt: &'a Stmt<'a>) -> Vec<Cow<'a, str>> {
             ExportDecl::Const { name, .. } | ExportDecl::Function { name, .. } => {
                 vec![Cow::Borrowed(*name)]
             }
-            ExportDecl::NamedGroup { names } => names
+            ExportDecl::NamedGroup { names, .. } => names
                 .iter()
                 .flat_map(|n| [n.name, n.alias.unwrap_or(n.name)])
                 .map(Cow::Borrowed)
@@ -657,6 +657,31 @@ pub fn shake_graph(
                         needed = true;
                         let used = used_exports.entry(dep.clone()).or_default();
                         if used.insert(spec.imported.to_string()) && !queue.contains(dep) {
+                            queue.push_back(dep.clone());
+                        }
+                    }
+                }
+                if needed && keep.insert(dep.clone()) {
+                    queue.push_back(dep.clone());
+                }
+            }
+        }
+
+        // An `export { x } from "./module"` has no local import binding, so
+        // carry its liveness directly to the re-export source.
+        for stmt in program.statements.iter() {
+            if let Stmt::Export {
+                decl: ExportDecl::NamedGroup { names, source: Some(source) },
+                ..
+            } = stmt
+            {
+                let Some(dep) = module.dependencies.get(*source) else { continue };
+                let mut needed = false;
+                for spec in names.iter() {
+                    if live.contains(spec.alias.unwrap_or(spec.name)) {
+                        needed = true;
+                        let used = used_exports.entry(dep.clone()).or_default();
+                        if used.insert(spec.name.to_string()) && !queue.contains(dep) {
                             queue.push_back(dep.clone());
                         }
                     }

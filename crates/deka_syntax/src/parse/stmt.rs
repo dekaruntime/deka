@@ -901,10 +901,20 @@ impl<'a> Parser<'a> {
                     }
                 }
                 self.expect(TokenKind::RBrace)?;
+                let source = if self.eat(TokenKind::From) {
+                    if !self.at(TokenKind::String) {
+                        self.error(format!("expected module path string, found `{}`", token_name(self.current_kind())));
+                        return None;
+                    }
+                    let source = self.bump_str(self.current_text());
+                    self.advance();
+                    Some(source)
+                } else { None };
                 self.expect_statement_end(false)?;
                 Some(Stmt::Export {
                     decl: crate::ast::ExportDecl::NamedGroup {
                         names: alloc_slice(self.arena, names),
+                        source,
                     },
                     span: self.span_from(start, start_byte),
                 })

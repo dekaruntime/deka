@@ -309,10 +309,19 @@ pub fn parse_source_module_meta(source: &str) -> SourceModuleMeta {
                         name: name.to_string(),
                     });
                 }
-                deka_syntax::ExportDecl::NamedGroup { names } => {
+                deka_syntax::ExportDecl::NamedGroup { names, source } => {
                     for name in names.iter() {
                         exports.push(ExportDecl {
                             name: name.alias.unwrap_or(name.name).to_string(),
+                        });
+                    }
+                    if let Some(source) = source {
+                        imports.push(ImportDecl {
+                            path: source.to_string(),
+                            specs: names.iter().map(|name| ImportSpec {
+                                name: name.name.to_string(),
+                                alias: name.alias.map(str::to_string),
+                            }).collect(),
                         });
                     }
                 }
