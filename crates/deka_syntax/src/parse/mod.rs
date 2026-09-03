@@ -1582,6 +1582,109 @@ mod tests {
         }
     }
 
+    // deka#529, rfd#41: `super fn` and its compositions. The helper asserts the
+    // single parsed statement is a function with the expected flags.
+    fn assert_fn_flags(source: &str, expect_super: bool, expect_async: bool) {
+        let arena = Bump::new();
+        let result = parse(source, &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.expect("parse produced no program");
+        assert_eq!(program.statements.len(), 1);
+        match &program.statements[0] {
+            Stmt::Function { is_super, is_async, .. } => {
+                assert_eq!(*is_super, expect_super, "{source}");
+                assert_eq!(*is_async, expect_async, "{source}");
+            }
+            other => panic!("expected function for {source:?}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_super_fn() {
+        assert_fn_flags("super fn validate<T>(json: string) Type { return T.type(); }", true, false);
+        assert_fn_flags("fn plain<T>(x: T) T { return x }", false, false);
+    }
+
+    #[test]
+    fn parse_async_super_fn() {
+        assert_fn_flags(
+            "async super fn fetch<T>() Promise<Type> { return T.type(); }",
+            true,
+            true,
+        );
+    }
+
+    #[test]
+    fn parse_export_super_fn() {
+        for source in [
+            "export super fn validate<T>(json: string) Type { return T.type(); }",
+            "export async super fn validate<T>(json: string) Promise<Type> { return T.type(); }",
+        ] {
+            let arena = Bump::new();
+            let result = parse(source, &arena);
+            assert!(result.errors.is_empty(), "{:?}", result.errors);
+            let program = result.program.unwrap();
+            match &program.statements[0] {
+                Stmt::Export { decl, .. } => match decl {
+                    crate::ast::ExportDecl::Function { is_super, is_async, .. } => {
+                        assert!(*is_super, "{source}");
+                        assert_eq!(*is_async, source.contains("async"), "{source}");
+                    }
+                    other => panic!("expected function export, got {other:?}"),
+                },
+                other => panic!("expected export, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn super_rejected_outside_fn_declarations() {
+        for source in [
+            "super struct S { x: number }",
+            "super const x = 1",
+            "super enum E { A }",
+            "super(x)",
+            "const x = super",
+        ] {
+            let arena = Bump::new();
+            let result = parse(source, &arena);
+            assert!(
+                result.errors.iter().any(|e| e.message.contains("only allowed on function declarations")),
+                "{source:?} must be rejected with the fix named, got: {:?}",
+                result.errors
+            );
+        }
+    }
+
+    #[test]
+    fn super_fn_rejected_inside_block() {
+        let arena = Bump::new();
+        let result = parse("if (true) { super fn f<T>(x: T) T { return x } }", &arena);
+        assert!(
+            result.errors.iter().any(|e| e.message.contains("top level")),
+            "got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn super_rejected_on_receiver_method() {
+        let arena = Bump::new();
+        let result = parse("super fn (p Point) distance() number { return 0 }", &arena);
+        assert!(
+            result.errors.iter().any(|e| e.message.contains("receiver methods")),
+            "got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn super_rejected_as_property() {
+        let arena = Bump::new();
+        let result = parse("const x = obj.super", &arena);
+        assert!(!result.errors.is_empty(), "x.super must not parse");
+    }
+
     #[test]
     fn parse_async_fn_expression() {
         let arena = Bump::new();
