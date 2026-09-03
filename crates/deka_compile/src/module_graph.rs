@@ -675,9 +675,6 @@ fn copy_export<'a>(
             changed |= dest.receiver_methods.insert((external, *method), info.clone()).is_none();
         }
     }
-    if let Some(params) = source.instantiated_fns.get(imported) {
-        changed |= dest.instantiated_fns.insert(external, params.clone()).is_none();
-    }
     changed
 }
 
