@@ -288,7 +288,7 @@ export function toHatsCategory(results) {
   return {
     name: "ADHOC",
     tests: results.map((r) => {
-      const matched = r.skipped ? false : r.ok;
+      const matched = r.skipped ? null : r.ok;
       const nativeSkipped = Boolean(r.skipped);
       return {
         slug: `adhoc-${r.name}`,
@@ -302,7 +302,7 @@ export function toHatsCategory(results) {
         notes: "ADHOC scenario. Cached commands + stdout. Not a live playground.",
         overallStatus: r.skipped ? "skip" : r.ok ? "pass" : "fail",
         nativeMatches: matched,
-        wasmMatches: false,
+        wasmMatches: null,
         nativeResult: {
           ok: r.ok,
           stage: "run",

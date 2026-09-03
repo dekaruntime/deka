@@ -49,8 +49,8 @@ export interface RuntimeResult {
 export interface HatsTestWithBuildResult extends HatsTest {
   wasmResult: RuntimeResult
   nativeResult: RuntimeResult
-  wasmMatches: boolean
-  nativeMatches: boolean
+  wasmMatches: boolean | null
+  nativeMatches: boolean | null
   /// True when both hosts formatted the source and produced byte-identical
   /// output; false on disagreement; undefined when a host did not format
   /// (deka#477).
@@ -327,6 +327,8 @@ async function runAllTestsOnce(): Promise<HatsBuildResults> {
         const nativeMatches =
           !nativeResult.skipped &&
           runtimeMatchesExpectation(test, nativeResult, 'native', { ignoreCode: true })
+        const wasmMatchState = wasmResult.skipped ? null : wasmMatches
+        const nativeMatchState = nativeResult.skipped ? null : nativeMatches
 
         // deka#477: the native and wasm formatters must produce byte-
         // identical output. Only defined when both hosts actually formatted.
@@ -358,8 +360,8 @@ async function runAllTestsOnce(): Promise<HatsBuildResults> {
           expected: test.status,
           wasmResult,
           nativeResult,
-          wasmMatches,
-          nativeMatches,
+          wasmMatches: wasmMatchState,
+          nativeMatches: nativeMatchState,
           fmtHostsAgree,
           overallStatus: verdict,
           verdict,
