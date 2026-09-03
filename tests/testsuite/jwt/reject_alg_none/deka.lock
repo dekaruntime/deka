@@ -40,7 +40,7 @@
       ""
     ],
     "@deka/jwt": [
-      "@deka/jwt@0.3.2",
+      "@deka/jwt@0.3.3",
       "deka.gg:@deka/jwt",
       {
         "repo": "https://github.com/dekaruntime/jwt.git",
@@ -55,7 +55,7 @@
         },
         "fsGraph": {
           "algo": "sha256",
-          "hash": "7c97d0686f3ab428a31042b9d214d68004436314b7db89157d0710e1193dd68b"
+          "hash": "7d7e4c4d06a2c3dba9409008e859bbc450f74c7681eb80d186bb3a893ceef67e"
         }
       },
       ""
