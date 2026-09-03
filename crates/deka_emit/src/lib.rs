@@ -82,13 +82,49 @@ mod tests {
             "struct Point { x: number; y: number }\nfn f(v: Point | string) number { return match (v) { Point(p) => p.x, string(s) => s.length }; }",
         );
         assert!(
-            out.contains("deka.getStructId(__deka_scrutinee) === \"Point\""),
-            "expected getStructId predicate, got: {}",
+            out.contains("__deka_scrutinee?.__deka_struct === \"Point\""),
+            "expected brand-tag predicate, got: {}",
             out
         );
-        // The struct prelude (which defines getStructId) must be emitted.
-        assert!(out.contains("getStructId:"), "got: {}", out);
+        // The struct factory is emitted because the struct is declared in
+        // this module; the type-pattern itself reads the tag directly.
+        assert!(out.contains("function __deka_struct"), "got: {}", out);
         assert!(out.contains("const p = __deka_scrutinee;"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_struct_module_has_no_global_write() {
+        // deka#551: the prelude's `const deka = globalThis.deka = {...}`
+        // write is gone. Struct machinery is module-local, and the brand is
+        // a string id compared by value, so nothing needs a shared global.
+        let out = parse_and_emit(
+            "struct Point { x: number; y: number } const p = Point { x: 1, y: 2 };",
+        );
+        assert!(out.contains("const Point = __deka_struct(\"Point\")"), "got: {}", out);
+        assert!(!out.contains("globalThis"), "got: {}", out);
+        // A user binding named `deka` must not collide with emitted helpers.
+        let out = parse_and_emit(
+            "struct Point { x: number } const deka = Point { x: 1 };",
+        );
+        assert!(!out.contains("globalThis"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_newtype_module_has_no_global_write() {
+        // deka#551: the newtype payload key is shared through Symbol.for's
+        // registry, not a globalThis merge.
+        let out = parse_and_emit("type Cents number\nconst c = Cents(500);");
+        assert!(out.contains("const __p = Symbol.for('deka.nt');"), "got: {}", out);
+        assert!(!out.contains("globalThis"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_enum_module_has_no_global_write() {
+        // Enum machinery was always module-local; pin it so the prelude
+        // change cannot drag a global in (deka#551).
+        let out = parse_and_emit("enum Color { Red, Green } const c = Color.Red;");
+        assert!(out.contains("const Color = Object.freeze"), "got: {}", out);
+        assert!(!out.contains("globalThis"), "got: {}", out);
     }
 
     #[test]
@@ -172,7 +208,7 @@ mod tests {
         let out = parse_and_emit(
             "struct Point { x: number\n  y: number }\nfn (p Point) distance(other: Point) number { return 0; }\nconst p1 = Point { x: 0, y: 0 };\nconst p2 = Point { x: 3, y: 4 };\nconst d = p1.distance(p2);",
         );
-        assert!(out.contains("const Point = deka.Struct"), "got: {}", out);
+        assert!(out.contains("const Point = __deka_struct"), "got: {}", out);
         assert!(out.contains("Point.impl(\"distance\""), "got: {}", out);
         assert!(out.contains("p1.distance(p2)"), "got: {}", out);
     }
@@ -426,8 +462,8 @@ mod tests {
         let out = parse_and_emit(
             "struct Legs {} fn (l Legs) move() string { return \"walk\" } struct Robot { Legs } const r = Robot { Legs: Legs {} }; const m = r.move();",
         );
-        assert!(out.contains("const Legs = deka.Struct"), "got: {}", out);
-        assert!(out.contains("const Robot = deka.Struct(\"Robot\", { Legs: Legs })"), "got: {}", out);
+        assert!(out.contains("const Legs = __deka_struct"), "got: {}", out);
+        assert!(out.contains("const Robot = __deka_struct(\"Robot\", { Legs: Legs })"), "got: {}", out);
         assert!(out.contains("Legs.impl(\"move\""), "got: {}", out);
         assert!(out.contains("r.move()"), "got: {}", out);
     }
@@ -470,8 +506,8 @@ mod tests {
         // Never touch JS prototypes or globalThis: primitives cannot be branded.
         assert!(!out.contains("prototype"), "got: {}", out);
         assert!(!out.contains("globalThis"), "got: {}", out);
-        // Primitive extensions must not force the struct prelude either.
-        assert!(!out.contains("deka.Struct"), "got: {}", out);
+        // Primitive extensions must not force the struct factory either.
+        assert!(!out.contains("__deka_struct"), "got: {}", out);
     }
 
     #[test]
@@ -521,11 +557,12 @@ mod tests {
         // The descriptor helper and its interning cache are emitted.
         assert!(out.contains("function __deka_type_of(v)"), "got: {}", out);
         assert!(out.contains("__deka_type_cache"), "got: {}", out);
-        // Never touch JS prototypes, the `__deka` prelude, or globalThis.
+        // Never touch JS prototypes, the struct factory, or globalThis.
         assert!(!out.contains("prototype"), "got: {}", out);
         assert!(!out.contains("globalThis"), "got: {}", out);
-        // `.getType()` alone must not force the struct prelude.
-        assert!(!out.contains("deka.Struct"), "got: {}", out);
+        // `.getType()` alone must not force the struct factory (the tag read
+        // inside __deka_type_of is fine; the factory is what must stay out).
+        assert!(!out.contains("function __deka_struct"), "got: {}", out);
     }
 
     #[test]
@@ -623,7 +660,7 @@ mod tests {
         assert!(!out.contains("__deka_type_of"), "got: {}", out);
         assert!(!out.contains("prototype"), "got: {}", out);
         assert!(!out.contains("globalThis"), "got: {}", out);
-        assert!(!out.contains("deka.Struct"), "got: {}", out);
+        assert!(!out.contains("__deka_struct"), "got: {}", out);
     }
 
     #[test]

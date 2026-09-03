@@ -96,16 +96,19 @@ If two embedded structs both define the same field or method, direct access is a
 
 ## Runtime representation
 
-At runtime, a struct is a factory created by `deka.Struct("Point")`. Instances carry a hidden `__deka_struct` tag so pattern matching can identify them. `const` values are deep-frozen via `deka.freeze`.
+At runtime, a struct is a factory created by `__deka_struct("Point")` — a module-local helper the compiler emits into every module that needs it (deka#551). Nothing is written to `globalThis`, and no state is shared between modules: instances carry a hidden `__deka_struct` tag holding the struct's name, so pattern matching can identify them by value across module boundaries.
 
 ## JS output example
 
 ```js
-const Point = deka.Struct("Point");
-Point.impl("magnitude", function magnitude(p) {
+function __deka_struct(id, embeds) { /* ... module-local factory ... */ }
+
+const Point = __deka_struct("Point");
+Point.impl("magnitude", function() {
+  const p = this;
   return Math.sqrt((p.x * p.x) + (p.y * p.y));
 });
 
-const p = deka.freeze(Point({"x": 3, "y": 4}));
+const p = Point({ x: 3, y: 4 });
 console.log(p.magnitude());
 ```

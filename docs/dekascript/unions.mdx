@@ -151,5 +151,5 @@ Each member type compiles to the runtime test the compiler emitted for it:
 | `string` / `number` / `boolean` | `typeof x === "..."` |
 | `void` | `typeof x === "undefined"` |
 | `bytes` | `x instanceof Uint8Array` |
-| struct `Point` | `deka.getStructId(x) === "Point"` |
+| struct `Point` | `x?.__deka_struct === "Point"` |
 | enum `Color` | `x.__enum === "Color"` |

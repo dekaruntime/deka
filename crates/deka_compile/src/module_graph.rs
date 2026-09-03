@@ -887,7 +887,7 @@ mod tests {
         assert_eq!(result.modules.len(), 2);
         let person_js = &result.modules[&person];
         let main_js = &result.modules[&main];
-        assert!(person_js.contains("const Person = deka.Struct(\"Person\")"), "got: {}", person_js);
+        assert!(person_js.contains("const Person = __deka_struct(\"Person\")"), "got: {}", person_js);
         assert!(person_js.contains("Person.impl(\"greet\""), "got: {}", person_js);
         assert!(person_js.contains("export { Person };"), "got: {}", person_js);
         assert!(main_js.contains("import { Person } from \"./person.ds\";"), "got: {}", main_js);
@@ -1082,7 +1082,7 @@ mod tests {
         assert_eq!(result.modules.len(), 3);
         let robot_js = &result.modules[&robot];
         let main_js = &result.modules[&main];
-        assert!(robot_js.contains("Robot = deka.Struct(\"Robot\"") && robot_js.contains("{ Legs: Legs }"), "got: {}", robot_js);
+        assert!(robot_js.contains("Robot = __deka_struct(\"Robot\"") && robot_js.contains("{ Legs: Legs }"), "got: {}", robot_js);
         assert!(main_js.contains("Robot({ Legs: Legs({"), "got: {}", main_js);
         assert!(main_js.contains("r.move()"), "got: {}", main_js);
     }
