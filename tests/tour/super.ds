@@ -1,0 +1,18 @@
+import { echo } from "io"
+
+// A `super` function receives the caller's type as a value: inside the
+// body, `T.type()` is the argument's compile-time type at that call site.
+// The compiler writes the type for you — no annotation, nothing to forward.
+// (To reflect on the runtime type of a value, use value.getType().)
+super fn debug<T>(label: string, value: T) string {
+  return label + " <" + T.type().toString() + ">"
+}
+
+struct User {
+  id: number;
+  name: string;
+}
+
+echo(debug("greeting", "hello"))
+echo(debug("user", User { id: 1, name: "Deka" }))
+echo(debug("count", 42))

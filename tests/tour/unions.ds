@@ -1,12 +1,22 @@
 import { echo } from "io"
 
 // A union describes a value that could be one of several types.
-fn render(v: string | number) string {
-  return match (v) {
-    string(s) => s,
-    number(n) => string(n),
+// Structs, enums, and primitives can all be members.
+struct User {
+  name: string;
+}
+
+// Match on the type to find out which one you have. Each arm binds the
+// value narrowed to that member's type — inside `User(u)`, `u` is a User
+// and its fields are available.
+fn render(id: User | string | number) string {
+  return match (id) {
+    User(u) => "user: " + u.name,
+    string(s) => "slug: " + s,
+    number(n) => "id: " + string(n),
   }
 }
 
-echo(render("hello"))
+echo(render(User { name: "Deka" }))
+echo(render("samifouad"))
 echo(render(42))
