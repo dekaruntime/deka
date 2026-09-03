@@ -793,23 +793,6 @@ mod tests {
     }
 
     #[test]
-    fn super_fn_export_uses_base_name_liveness() {
-        // A `super fn` is emitted under its base name (the hidden descriptor
-        // parameter is emission-only), so graph shaking keys it exactly like
-        // a plain function — no per-instantiation names exist (deka#529).
-        let arena = Bump::new();
-        let program = parse_program(
-            &arena,
-            "export super fn keep<T>(x: T) Type { return T.type(); }\nexport super fn drop<T>(x: T) Type { return T.type(); }\nconst kept = keep<number>(1);",
-        );
-        let mut used = HashSet::new();
-        used.insert("keep".to_string());
-        let live = live_names(&program, &used, false, true).expect("pure");
-        assert!(live.contains("keep"));
-        assert!(!live.contains("drop"));
-    }
-
-    #[test]
     fn used_primitive_extension_is_live_by_mangled_name() {
         let arena = Bump::new();
         let program = parse_program(

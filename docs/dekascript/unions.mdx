@@ -43,10 +43,10 @@ const f: (fn(number) number) | string = "a"
 // enums and interfaces may appear in a union (rfd#42)
 ```
 
-Function types, unconstrained type parameters, and `Option`/`Array` and
+Function types and `Option`/`Array` and
 other generic or structural types have no runtime predicate, so they cannot
-join a union. This is the line that keeps union narrowing, `super
-unsafe<T>` validation and the schema system on one engine.
+join a union. This is the line that keeps union narrowing and the schema
+system on one engine.
 
 ### Overlapping members
 

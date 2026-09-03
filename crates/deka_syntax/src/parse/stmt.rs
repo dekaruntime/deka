@@ -10,6 +10,12 @@ use crate::lexer::TokenKind;
 use super::util::token_name;
 use super::Parser;
 
+/// User code cannot declare type parameters (deka#561). Generics stay in the
+/// compiler, reserved for the builtin containers. The diagnostic teaches the
+/// two patterns that cover the need: structural typing for capability, and
+/// builtin containers for carrying a value's identity across a boundary.
+const USER_TYPE_PARAMS_BANNED: &str = "user code cannot declare type parameters — generics are reserved for the language's own types (Array<T>, Option<T>, Result<T, E>, Promise<T>). For capability, define an interface and take it as a parameter, e.g. `interface Named { name: string }` then `fn greet(x: Named)`. To carry a value's identity, use a builtin container.";
+
 impl<'a> Parser<'a> {
     pub(super) fn parse_program(&mut self) -> Option<Program<'a>> {
         self.skip_newlines();
@@ -101,10 +107,7 @@ impl<'a> Parser<'a> {
 
             TokenKind::Async => {
                 let next_is_fn = self.tokens.get(self.pos + 1).map(|t| t.kind) == Some(TokenKind::Fn);
-                // `async super fn`: async outermost, matching `export async fn`.
-                let next_is_super_fn = self.tokens.get(self.pos + 1).map(|t| t.kind) == Some(TokenKind::Super)
-                    && self.tokens.get(self.pos + 2).map(|t| t.kind) == Some(TokenKind::Fn);
-                if next_is_fn || next_is_super_fn {
+                if next_is_fn {
                     if in_block {
                         self.error("function declarations are only allowed at the top level in DekaScript");
                         return None;
@@ -116,23 +119,11 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            // `super fn` / `async super fn` (deka#529, rfd#41). `super` is a
-            // hard keyword; anywhere outside a function declaration it is
-            // rejected with the fix named in the diagnostic.
+            // `super` is a hard keyword; it is reserved for declarations
+            // (super struct, super fn) which are not yet available (deka#561).
             TokenKind::Super => {
-                if self.tokens.get(self.pos + 1).map(|t| t.kind) == Some(TokenKind::Fn)
-                    || (self.tokens.get(self.pos + 1).map(|t| t.kind) == Some(TokenKind::Async)
-                        && self.tokens.get(self.pos + 2).map(|t| t.kind) == Some(TokenKind::Fn))
-                {
-                    if in_block {
-                        self.error("function declarations are only allowed at the top level in DekaScript");
-                        return None;
-                    }
-                    self.parse_fn_statement(start, start_byte)
-                } else {
-                    self.error("`super` is only allowed on function declarations (`super fn`)");
-                    None
-                }
+                self.error("`super` is reserved and not yet available");
+                None
             }
 
             TokenKind::For => self.parse_for_statement(start, start_byte),
@@ -223,15 +214,10 @@ impl<'a> Parser<'a> {
 
     fn parse_fn_statement(&mut self, start: Pos, start_byte: usize) -> Option<Stmt<'a>> {
         let is_async = self.eat(TokenKind::Async);
-        let is_super = self.eat(TokenKind::Super);
         self.advance(); // `fn`
 
         // Receiver method: `fn (p Point) distance<T>(...): Ret { ... }`
         if self.at(TokenKind::LParen) {
-            if is_super {
-                self.error("`super` is only allowed on plain functions, not receiver methods");
-                return None;
-            }
             self.advance(); // `(`
             let receiver_name = self.expect_identifier()?;
             let receiver_mutable = self.eat(TokenKind::Mut);
@@ -240,11 +226,11 @@ impl<'a> Parser<'a> {
 
             let name = self.expect_identifier()?;
 
-            let type_params = if self.at(TokenKind::Lt) {
-                self.parse_type_params()?
-            } else {
-                &[]
-            };
+            if self.at(TokenKind::Lt) {
+                self.error(USER_TYPE_PARAMS_BANNED);
+                return None;
+            }
+            let type_params: &[TypeParam] = &[];
 
             self.expect(TokenKind::LParen)?;
             let params = self.parse_params()?;
@@ -275,11 +261,11 @@ impl<'a> Parser<'a> {
 
         // Regular function: `fn add<T>(...) Ret { ... }`
         let name = self.expect_identifier()?;
-        let type_params = if self.at(TokenKind::Lt) {
-            self.parse_type_params()?
-        } else {
-            &[]
-        };
+        if self.at(TokenKind::Lt) {
+            self.error(USER_TYPE_PARAMS_BANNED);
+            return None;
+        }
+        let type_params: &[TypeParam] = &[];
 
         self.expect(TokenKind::LParen)?;
         let params = self.parse_params()?;
@@ -301,7 +287,6 @@ impl<'a> Parser<'a> {
             return_type,
             body,
             is_async,
-            is_super,
             span: self.span_from(start, start_byte),
         })
     }
@@ -423,11 +408,11 @@ impl<'a> Parser<'a> {
         self.advance(); // `struct`
 
         let name = self.expect_identifier()?;
-        let type_params = if self.at(TokenKind::Lt) {
-            self.parse_type_params()?
-        } else {
-            &[]
-        };
+        if self.at(TokenKind::Lt) {
+            self.error(USER_TYPE_PARAMS_BANNED);
+            return None;
+        }
+        let type_params: &[TypeParam] = &[];
 
         self.expect(TokenKind::LBrace)?;
         let mut fields = Vec::new();
@@ -517,11 +502,11 @@ impl<'a> Parser<'a> {
         self.advance(); // `enum`
 
         let name = self.expect_identifier()?;
-        let type_params = if self.at(TokenKind::Lt) {
-            self.parse_type_params()?
-        } else {
-            &[]
-        };
+        if self.at(TokenKind::Lt) {
+            self.error(USER_TYPE_PARAMS_BANNED);
+            return None;
+        }
+        let type_params: &[TypeParam] = &[];
 
         self.expect(TokenKind::LBrace)?;
         let mut cases = Vec::new();
@@ -590,11 +575,11 @@ impl<'a> Parser<'a> {
         self.advance(); // `interface`
 
         let name = self.expect_identifier()?;
-        let type_params = if self.at(TokenKind::Lt) {
-            self.parse_type_params()?
-        } else {
-            &[]
-        };
+        if self.at(TokenKind::Lt) {
+            self.error(USER_TYPE_PARAMS_BANNED);
+            return None;
+        }
+        let type_params: &[TypeParam] = &[];
 
         self.expect(TokenKind::LBrace)?;
         let mut members = Vec::new();
@@ -693,6 +678,11 @@ impl<'a> Parser<'a> {
 
         let name = self.expect_identifier()?;
 
+        if self.at(TokenKind::Lt) {
+            self.error(USER_TYPE_PARAMS_BANNED);
+            return None;
+        }
+
         // Newtype: `type Name Repr` (no `=`).
         if keyword == TokenKind::Type && !self.at(TokenKind::Eq) {
             let repr = self.parse_newtype_repr()?;
@@ -715,11 +705,11 @@ impl<'a> Parser<'a> {
             );
         }
 
-        let type_params = if self.at(TokenKind::Lt) {
-            self.parse_type_params()?
-        } else {
-            &[]
-        };
+        if self.at(TokenKind::Lt) {
+            self.error(USER_TYPE_PARAMS_BANNED);
+            return None;
+        }
+        let type_params: &[TypeParam] = &[];
 
         self.expect(TokenKind::Eq)?;
         let value = self.parse_type()?;
@@ -830,17 +820,11 @@ impl<'a> Parser<'a> {
             // async form needs no separate parse — only a way to reach it from
             // here. `export async fn` was rejected outright before (deka#410);
             // `@deka/fs` is written that way and could not be compiled at all.
-            // `super fn` reaches `parse_fn_statement` the same way `async fn`
-            // does (deka#529, rfd#41).
-            TokenKind::Fn | TokenKind::Async | TokenKind::Super => {
+            TokenKind::Fn | TokenKind::Async => {
                 if self.current_kind() == TokenKind::Async {
                     let next_is_fn =
                         self.tokens.get(self.pos + 1).map(|t| t.kind) == Some(TokenKind::Fn);
-                    let next_is_super_fn = self.tokens.get(self.pos + 1).map(|t| t.kind)
-                        == Some(TokenKind::Super)
-                        && self.tokens.get(self.pos + 2).map(|t| t.kind)
-                            == Some(TokenKind::Fn);
-                    if !next_is_fn && !next_is_super_fn {
+                    if !next_is_fn {
                         self.error("expected `fn` after `async`");
                         return None;
                     }
@@ -855,7 +839,6 @@ impl<'a> Parser<'a> {
                         return_type,
                         body,
                         is_async,
-                        is_super,
                         ..
                     } => crate::ast::ExportDecl::Function {
                         name,
@@ -864,7 +847,6 @@ impl<'a> Parser<'a> {
                         return_type,
                         body,
                         is_async,
-                        is_super,
                     },
                     Stmt::ReceiverMethod { .. } => {
                         self.error("cannot export a receiver method");
@@ -1053,25 +1035,6 @@ impl<'a> Parser<'a> {
         }
 
         self.skip_newlines();
-        Some(alloc_slice(self.arena, params))
-    }
-
-    pub(super) fn parse_type_params(&mut self) -> Option<&'a [TypeParam<'a>]> {
-        self.expect(TokenKind::Lt)?;
-        let mut params = Vec::new();
-
-        loop {
-            let name = self.expect_identifier()?;
-            let span = self.span_from(self.prev.span.start, self.prev.span.byte_start);
-            params.push(TypeParam { name, span });
-            if !self.eat(TokenKind::Comma) {
-                break;
-            }
-            self.skip_newlines();
-        }
-
-        self.skip_newlines();
-        self.expect(TokenKind::Gt)?;
         Some(alloc_slice(self.arena, params))
     }
 

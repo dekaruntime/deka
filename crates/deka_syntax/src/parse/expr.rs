@@ -414,8 +414,10 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Super => {
                 // `super` is a hard keyword; in expression position there is
-                // nothing it can validly start (deka#529, rfd#41).
-                self.error("`super` is only allowed on function declarations (`super fn`)");
+                // nothing it can validly start. It is reserved for
+                // declarations (super struct, super fn) which are not yet
+                // available (deka#561).
+                self.error("`super` is reserved and not yet available");
                 None
             }
             _ => {

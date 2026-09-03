@@ -435,22 +435,48 @@ mod tests {
     }
 
     #[test]
-    fn project_preserves_generic_return_types_across_modules() {
+    fn project_rejects_user_declared_type_parameters() {
+        // deka#561: user code cannot declare type parameters, at the wasm
+        // project boundary too. The ban diagnostic must surface in the
+        // compile response, naming the offending module.
         let mut project = ProjectState::new();
         project.write(
             "lib.ds",
-            r#"
-export fn constant<T>(payload: T) Result<string, string> { return Ok("y") }
-export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
-"#,
+            "export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }\n",
+        );
+        project.write("main.ds", "import { first } from \"./lib.ds\"\n");
+
+        let json = project.compile();
+        let response: Value = serde_json::from_str(&json).expect("valid compile response JSON");
+
+        assert_eq!(response["ok"], false, "expected compile failure");
+        let messages: Vec<&str> = response["diagnostics"]
+            .as_array()
+            .expect("diagnostics array")
+            .iter()
+            .map(|d| d["message"].as_str().unwrap_or(""))
+            .collect();
+        assert!(
+            messages.iter().any(|m| m.contains("user code cannot declare type parameters")),
+            "expected the ban diagnostic, got: {:?}",
+            messages
+        );
+    }
+
+    #[test]
+    fn project_preserves_builtin_container_return_types_across_modules() {
+        // The original test here covered user-generic exports, which the
+        // deka#561 ban removes. What it was really guarding — return-type
+        // preservation across a module boundary — still matters for the
+        // builtin containers, which remain legal.
+        let mut project = ProjectState::new();
+        project.write(
+            "lib.ds",
+            "export fn head(values: Array<string>) Option<string> { return Some(values[0]) }\n",
         );
         project.write(
             "main.ds",
-            r#"
-import { constant, first } from "./lib.ds"
-const fixed: string = match (constant({ sub: "1" })) { Ok(value) => value, Err(error) => error }
-const item: string = match (first(["x"])) { Some(value) => value, None => "" }
-"#,
+            "import { head } from \"./lib.ds\"\nconst item: string = match (head([\"x\"])) { Some(value) => value, None => \"\" }\n",
         );
 
         let json = project.compile();
@@ -458,8 +484,7 @@ const item: string = match (first(["x"])) { Some(value) => value, None => "" }
 
         assert_eq!(response["ok"], true, "compile failed: {}", json);
         let main = response["modules"]["main.ds"]["code"].as_str().unwrap();
-        assert!(main.contains("constant({sub: \"1\"})"), "got:\n{}", main);
-        assert!(main.contains("first([\"x\"])"), "got:\n{}", main);
+        assert!(main.contains("head([\"x\"])"), "got:\n{}", main);
     }
 
     #[test]

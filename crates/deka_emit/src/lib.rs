@@ -43,8 +43,11 @@ mod tests {
             &typeck.method_calls,
             &typeck.type_of_calls,
             &typeck.signature_calls,
-            &typeck.super_calls,
-            &typeck.static_type_calls,
+            &typeck.array_first_last_calls,
+            // super_calls/static_type_calls are no longer produced by the
+            // typechecker (deka#561); the parameters stay for PR B.
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
             &typeck.jsx_optional_props,
             &typeck.enum_case_patterns,
             &typeck.union_type_patterns,
@@ -606,138 +609,157 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // `super` functions (deka#529, rfd#41)
+    // `first`/`last` array methods (deka#561)
     // ------------------------------------------------------------------
 
     #[test]
-    fn emit_super_fn_hidden_arg() {
-        // The super fn is emitted once with a hidden descriptor parameter;
-        // the call passes the interned static tree const.
+    fn emit_array_first_last_rewrite() {
+        // JS arrays have no `first`/`last`, and the typed `pop`/`shift`
+        // builtins are emitted as raw passthroughs that return a bare value
+        // (not Option) — a known runtime lie this deliberately avoids. The
+        // rewrite evaluates the receiver once, works in expression position,
+        // and works on frozen arrays.
         let out = parse_check_and_emit(
-            "struct User { id: string }\
-             super fn validate<T>(json: string) Type { return T.type(); }\
-             const d = validate<User>(\"{}\");",
+            "const a: Array<number> = [1, 2, 3];\nlet f = unwrap(a.first()) or { 0 };\nlet l = unwrap(a.last()) or { 0 };",
         );
+        assert!(out.contains("((v) => v.length > 0 ? Some(v[0]) : None)(a)"), "got: {}", out);
         assert!(
-            out.contains("function validate(__deka_super$T, json)"),
+            out.contains("((v) => v.length > 0 ? Some(v[v.length - 1]) : None)(a)"),
             "got: {}",
             out
         );
-        assert!(
-            out.contains("validate(__deka_super_desc$0, \"{}\")"),
-            "got: {}",
-            out
-        );
-        // The tree const is frozen, carries the #550 shape triple, and
-        // exposes the struct fields.
-        assert!(out.contains("const __deka_super_desc$0"), "got: {}", out);
-        assert!(out.contains("kind: \"struct\""), "got: {}", out);
-        assert!(out.contains("name: \"User\""), "got: {}", out);
-        assert!(out.contains("toString() { return this.name; }"), "got: {}", out);
-        assert!(out.contains("{ name: \"id\", optional: false"), "got: {}", out);
+        // The rewrite needs `Some`/`None`, so the enum prelude is forced.
+        assert!(out.contains("const Some = Option.Some;"), "got: {}", out);
+        assert!(out.contains("const None = Option.None;"), "got: {}", out);
     }
 
     #[test]
-    fn emit_super_type_param_without_structs() {
-        // Without structs in play the #550 drift guard holds: no prototype
-        // mutation, no __deka prelude, no globalThis, and `T.type()` does
-        // NOT route through the runtime __deka_type_of helper.
-        let out = parse_check_and_emit(
-            "super fn describe<T>(x: T) string { return T.type().toString(); }\
-             const s = describe(42);",
-        );
+    fn emit_array_first_on_empty_returns_none() {
+        // Runtime shape, asserted on emitted JS: empty array -> None branch.
+        let out = parse_check_and_emit("const e: Array<string> = [];\nconst h = e.first();");
         assert!(
-            out.contains("function describe(__deka_super$T, x)"),
-            "got: {}",
-            out
-        );
-        assert!(
-            out.contains("return __deka_super$T.toString();"),
-            "got: {}",
-            out
-        );
-        assert!(out.contains("describe(__deka_super_desc$0, 42)"), "got: {}", out);
-        assert!(out.contains("kind: \"number\""), "got: {}", out);
-        assert!(!out.contains("__deka_type_of"), "got: {}", out);
-        assert!(!out.contains("prototype"), "got: {}", out);
-        assert!(!out.contains("globalThis"), "got: {}", out);
-        assert!(!out.contains("__deka_struct"), "got: {}", out);
-    }
-
-    #[test]
-    fn emit_super_recursive_passthrough() {
-        // `validate<T>(json)` inside `validate` forwards the hidden
-        // parameter; the outer call carries the static tree.
-        let out = parse_check_and_emit(
-            "super fn validate<T>(json: string) Type { return validate<T>(json); }\
-             const d = validate<number>(\"{}\");",
-        );
-        assert_eq!(
-            out.matches("return validate(__deka_super$T, json);").count(),
-            1,
-            "got: {}",
-            out
-        );
-        assert!(
-            out.contains("validate(__deka_super_desc$0, \"{}\")"),
+            out.contains("((v) => v.length > 0 ? Some(v[0]) : None)(e)"),
             "got: {}",
             out
         );
     }
 
     #[test]
-    fn emit_super_concrete_receiver_type_call() {
-        // `.type()` on a concrete receiver inside a super fn is the static
-        // tree const, not the runtime helper.
-        let out = parse_check_and_emit(
-            "super fn describe(x: number) string { return x.type().toString(); }\
-             const s = describe(42);",
-        );
-        assert!(
-            out.contains("return __deka_super_desc$0.toString();"),
-            "got: {}",
-            out
-        );
-        assert!(!out.contains("__deka_type_of"), "got: {}", out);
+    fn emit_array_first_last_absent_without_use() {
+        let out = parse_check_and_emit("const a: Array<number> = [1];\nconst n: number = a.length;");
+        assert!(!out.contains("Some(v["), "got: {}", out);
     }
 
-    #[test]
-    fn emit_super_unused_fn_emits_no_descriptor_consts() {
-        // A never-called super fn keeps its body but forces no tree consts;
-        // with a live_names set excluding it, the fn itself is absent too.
-        let source = "super fn validate<T>(json: string) Type { return T.type(); }";
-        let out = parse_check_and_emit(source);
-        assert!(out.contains("function validate(__deka_super$T, json)"), "got: {}", out);
-        assert!(!out.contains("__deka_super_desc$"), "got: {}", out);
+    // ------------------------------------------------------------------
+    // Descriptor const emission (kept for super declarations, PR B)
+    // ------------------------------------------------------------------
 
+    #[test]
+    fn emit_descriptor_consts_from_handbuilt_maps() {
+        // With `super fn` removed (deka#561) the typechecker no longer
+        // produces super_calls/static_type_calls, so this coverage feeds
+        // emit_js_with_options a hand-built static_type_calls map through
+        // the deka_syntax::typeck descriptor public API. Asserts the prelude
+        // still interns static trees: one `__deka_super_desc$N` const per
+        // distinct tree, deduped across two identical trees. (The
+        // emit_descriptor_ref call-site shape is no longer reachable — its
+        // only callers were the super-fn rewrites — so it is covered
+        // indirectly here via the interned consts PR B will reference.)
+        use deka_syntax::typeck::{DescriptorField, DescriptorTree, StaticTypeCall};
+
+        let source = "const a = 1; const b = 2; const c = 3;";
         let arena = Bump::new();
         let result = parse(source, &arena);
         assert!(result.errors.is_empty(), "{:?}", result.errors);
         let program = result.program.expect("parse produced no program");
-        let typeck = deka_syntax::typeck::check_program(&program, source);
-        assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
-        let live: std::collections::HashSet<String> = ["main".to_string()].into_iter().collect();
+
+        let mut expr_ptrs: Vec<*const deka_syntax::Expr> = Vec::new();
+        for stmt in program.statements.iter() {
+            if let deka_syntax::Stmt::Const { value, .. } = stmt {
+                expr_ptrs.push(value as *const deka_syntax::Expr);
+            }
+        }
+        assert_eq!(expr_ptrs.len(), 3, "expected three const value exprs");
+
+        let user_tree = DescriptorTree::Struct {
+            name: "User",
+            fields: vec![DescriptorField {
+                name: "id",
+                optional: false,
+                ty: DescriptorTree::Leaf {
+                    kind: "string",
+                    name: "string".to_string(),
+                },
+            }],
+        };
+        let number_tree = DescriptorTree::Leaf {
+            kind: "number",
+            name: "number".to_string(),
+        };
+
+        let mut static_type_calls: std::collections::HashMap<
+            *const deka_syntax::Expr,
+            StaticTypeCall,
+        > = std::collections::HashMap::new();
+        static_type_calls.insert(
+            expr_ptrs[0],
+            StaticTypeCall {
+                tree: Some(user_tree.clone()),
+                param: None,
+            },
+        );
+        static_type_calls.insert(
+            expr_ptrs[1],
+            StaticTypeCall {
+                tree: Some(user_tree),
+                param: None,
+            },
+        );
+        static_type_calls.insert(
+            expr_ptrs[2],
+            StaticTypeCall {
+                tree: Some(number_tree),
+                param: None,
+            },
+        );
+
         let out = emit_js_with_options(
             &program,
             source,
             &std::collections::HashMap::new(),
             None,
-            &typeck.unwrap_calls,
-            &typeck.operator_rewrites,
-            &typeck.method_calls,
-            &typeck.type_of_calls,
-            &typeck.signature_calls,
-            &typeck.super_calls,
-            &typeck.static_type_calls,
-            &typeck.jsx_optional_props,
-            &typeck.enum_case_patterns,
-            &typeck.union_type_patterns,
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+            &std::collections::HashSet::new(),
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+            &static_type_calls,
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
             "module.ds",
-            Some(&live),
+            None,
         )
         .expect("emit failed");
-        assert!(!out.contains("function validate"), "got: {}", out);
-        assert!(!out.contains("__deka_super_desc$"), "got: {}", out);
+
+        // Two distinct trees -> two consts; the identical User tree is
+        // deduped to a single const.
+        assert_eq!(
+            out.matches("const __deka_super_desc$").count(),
+            2,
+            "got: {}",
+            out
+        );
+        assert!(out.contains("const __deka_super_desc$0"), "got: {}", out);
+        assert!(out.contains("const __deka_super_desc$1"), "got: {}", out);
+        // The #550 shape triple and the struct fields survive serialization.
+        assert!(out.contains("kind: \"struct\""), "got: {}", out);
+        assert!(out.contains("name: \"User\""), "got: {}", out);
+        assert!(out.contains("toString() { return this.name; }"), "got: {}", out);
+        assert!(out.contains("{ name: \"id\", optional: false"), "got: {}", out);
+        assert!(out.contains("kind: \"number\""), "got: {}", out);
     }
 
     #[test]
@@ -763,40 +785,10 @@ mod tests {
         let live: std::collections::HashSet<String> = ["main".to_string()].into_iter().collect();
         let out = emit_js_with_options(&program, source, &std::collections::HashMap::new(), None,
             &typeck.unwrap_calls, &typeck.operator_rewrites, &typeck.method_calls,
-            &typeck.type_of_calls, &typeck.signature_calls, &typeck.super_calls,
-            &typeck.static_type_calls, &typeck.jsx_optional_props, &typeck.enum_case_patterns,
+            &typeck.type_of_calls, &typeck.signature_calls, &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(), &std::collections::HashMap::new(),
+            &typeck.jsx_optional_props, &typeck.enum_case_patterns,
             &typeck.union_type_patterns, "module.ds", Some(&live)).expect("emit failed");
         assert!(!out.contains("kind: \"union\""), "got: {}", out);
-    }
-
-    #[test]
-    fn emit_super_two_instantiations_dedup() {
-        // Same T twice: one const, two references. Two Ts: two consts.
-        // Const numbering is content-sorted, so Admin sorts before User.
-        let out = parse_check_and_emit(
-            "struct User { id: string } struct Admin { id: string }\
-             super fn validate<T>(json: string) Type { return T.type(); }\
-             const a = validate<User>(\"{}\");\
-             const b = validate<User>(\"{}\");\
-             const c = validate<Admin>(\"{}\");",
-        );
-        assert_eq!(
-            out.matches("const __deka_super_desc$").count(),
-            2,
-            "got: {}",
-            out
-        );
-        assert_eq!(
-            out.matches("validate(__deka_super_desc$0, \"{}\")").count(),
-            1,
-            "got: {}",
-            out
-        );
-        assert_eq!(
-            out.matches("validate(__deka_super_desc$1, \"{}\")").count(),
-            2,
-            "got: {}",
-            out
-        );
     }
 }

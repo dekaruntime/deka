@@ -1,6 +1,6 @@
 ---
 title: Reflection with getType()
-description: .getType() returns a first-class Type value describing a value's runtime type; super fn makes a type parameter's static descriptor available at compile time.
+description: .getType() returns a first-class Type value describing a value's runtime type.
 ---
 
 Every value answers the question "what are you?" at runtime. Calling
@@ -32,8 +32,8 @@ echo(t.toString()) // "string"
 Two honest limitations of runtime inspection:
 
 - An array's element type is not knowable at runtime — `[1, 2]` can only
-  report `Array`, never `Array<number>`. Finer descriptors are the static
-  trees `super` emits (below).
+  report `Array`, never `Array<number>`. Finer static descriptors are
+  deferred (see below).
 - Enum-tagged values report through the enum tag path: `Some(1).getType()`
   reports the name `"Option"`, matching the static type.
 
@@ -64,20 +64,23 @@ This is the difference between the declared type and the runtime type:
 the value's static type stays `number | string` while `getType()`
 reports what the value actually is.
 
-## Generics work without `super`
+## Works on the builtin containers
 
-Because the descriptor comes from inspecting the receiver value at
-runtime, `.getType()` works on generic type parameters with no additional
-keyword or capability:
+`.getType()` needs no extra keyword or capability on any receiver,
+including values of the language's generic containers:
 
 ```ds
-fn id<T>(x: T) Type {
-  return x.getType()
+fn describe(values: Array<number>) string {
+  return values.getType().toString()
 }
 
-echo(id("hi").toString()) // "string"
-echo(id(1).toString())     // "number"
+echo(describe([1, 2, 3])) // "Array"
 ```
+
+User code cannot declare type parameters (deka#561) — generics are
+reserved for the language's own types — so there is no `fn id<T>` form to
+accommodate. You can *use* `Array<T>`, `Option<T>`, `Result<T, E>`, and
+`Promise<T>`; you cannot declare your own.
 
 ## How it compiles
 
@@ -96,85 +99,14 @@ consistent with the extension shadowing rule.
 
 ## Deferred
 
-The following are explicitly out of scope for this slice and land with
-the `super` lane or later:
+The following are explicitly out of scope for this slice:
 
-- `super fn` and `T.type()` — the static descriptor for a type parameter
-  at a call site. (Landed; see below.)
+- Static descriptors for declared types — `super struct`/`super enum`
+  making a declaration's full structural descriptor available at runtime
+  via `.type()`. (deka#561 PR B; the emitter's descriptor-tree machinery
+  landed with deka#529's foundation and is kept for this.)
 - `.signature()` — the declared type of a value as opposed to its runtime
   type.
 - Walking descriptor fields/cases for schema validation.
 - Constructing `Type` values from library code (an open question in
   rfd#41).
-
-## super: types that survive erasure
-
-`.getType()` inspects a *value* at runtime. Sometimes the compiler already
-knows the type at a *call site* and you want that knowledge inside the
-function — the classic case being generic validation:
-
-```ds
-super fn validate<T>(json: string) Type {
-  return T.type()
-}
-
-echo(validate<User>("{}").toString()) // "User"
-```
-
-Marking a function `super` (only plain functions: not structs, constants,
-receiver methods, or closures) lets its body mention the type parameters
-*as types*: `T.type()` yields the descriptor for the argument the caller
-passed. The function is still generic and still erased — no
-monomorphization — but the compiler emits one hidden descriptor parameter
-per type parameter and rewrites every call site to pass the type's
-descriptor as a statically emitted, frozen, module-local constant. Two
-calls with the same type receive the identical object.
-
-`super` is marked on the function, not on type parameters, and it does
-not propagate: `validate<User>(json)` just works, with no annotation at
-the call site. This mirrors the design rule behind `Send` in Rust, in
-reverse: `Send` must propagate because it is a proof obligation the
-compiler must thread everywhere; `super` is only information retention —
-the compiler already knows the type's shape at the call site and is
-merely choosing to emit it. Needing call-site annotations or transitive
-propagation would be the model telling you it is wrong.
-
-Because the descriptor arrives as an ordinary parameter, it flows through
-recursion and closures for free: `validate<T>(x)` inside `validate`
-forwards the parameter unchanged, and a closure inside a super fn
-captures it like any other value. A super function cannot be used as a
-value (`const f = validate` is a compile error) — its emitted signature
-has an extra leading parameter, so every reference must be an explicit
-call like `validate<User>(json)`. Likewise, a type parameter can only be
-passed through from inside another `super fn`; an erased generic function
-has no descriptor value in scope to forward.
-
-### Static trees
-
-The static descriptor has the same `{ kind, name, toString() }` triple as
-the runtime one, so the two are interchangeable, and composite types
-expose their structure:
-
-- structs: `fields: [{ name, optional, type }]` (embedded structs appear
-  as required fields),
-- enums: `cases: [{ name, payload }]`,
-- arrays and options: `elem` / `inner`,
-- newtypes: `repr`,
-- unions: `members`.
-
-This is what the schema endgame needs: unlike the runtime descriptor, a
-static `Array<number>` tree knows its element type.
-
-### Limits and holes
-
-- A type the compiler cannot describe is an error at that specific call
-  site, not a viral constraint: function-valued types, types derived
-  from `unsafe`, and recursive types are rejected where they are named.
-- Inside a super fn, `x.type()` on a concrete receiver is also allowed
-  and emits a static tree of the receiver's type. Outside a super fn,
-  `.type()` is rejected — for runtime inspection use `.getType()`.
-- `super unsafe<T>` (rfd#41's future assertion-closing form) and the
-  interaction between `super` and `unsafe { }` blocks are unspecified;
-  nothing is designed or promised there.
-- Property-form `T.type` (no call) has no super meaning and falls through
-  to ordinary field-access errors.

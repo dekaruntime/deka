@@ -164,7 +164,6 @@ fn transform_stmt<'a>(
                     return_type,
                     body,
                     is_async,
-                    is_super,
                 } => {
                     let new_body: Vec<Stmt<'a>> = body
                         .iter()
@@ -177,7 +176,6 @@ fn transform_stmt<'a>(
                         return_type: return_type.clone(),
                         body: ast::alloc_slice(arena, new_body),
                         is_async: *is_async,
-                        is_super: *is_super,
                     }
                 }
                 ast::ExportDecl::NamedGroup { .. } => decl.clone(),
@@ -217,7 +215,6 @@ fn transform_stmt<'a>(
             return_type,
             body,
             is_async,
-            is_super,
             span,
         } => {
             let new_body: Vec<Stmt<'a>> = body
@@ -231,7 +228,6 @@ fn transform_stmt<'a>(
                 return_type: return_type.clone(),
                 body: ast::alloc_slice(arena, new_body),
                 is_async: *is_async,
-                is_super: *is_super,
                 span: *span,
             }
         }
@@ -807,7 +803,6 @@ fn lower_stmt<'a>(
                     return_type,
                     body,
                     is_async,
-                    is_super,
                 } => {
                     let new_body: Vec<Stmt<'a>> = body
                         .iter()
@@ -820,7 +815,6 @@ fn lower_stmt<'a>(
                         return_type: return_type.clone(),
                         body: ast::alloc_slice(arena, new_body),
                         is_async: *is_async,
-                        is_super: *is_super,
                     }
                 }
                 ast::ExportDecl::NamedGroup { .. } => decl.clone(),
@@ -860,7 +854,6 @@ fn lower_stmt<'a>(
             return_type,
             body,
             is_async,
-            is_super,
             span,
         } => {
             let new_body: Vec<Stmt<'a>> = body
@@ -874,7 +867,6 @@ fn lower_stmt<'a>(
                 return_type: return_type.clone(),
                 body: ast::alloc_slice(arena, new_body),
                 is_async: *is_async,
-                is_super: *is_super,
                 span: *span,
             }
         }

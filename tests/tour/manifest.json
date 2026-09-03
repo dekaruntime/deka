@@ -383,12 +383,12 @@
   },
   {
     "id": "generics",
-    "title": "Generics",
+    "title": "Generics and containers",
     "expectCompile": true
   },
   {
     "id": "generic-enums",
-    "title": "Generic enums",
+    "title": "Enums with payloads",
     "expectCompile": true
   },
   {
@@ -419,11 +419,6 @@
   {
     "id": "type-values",
     "title": "type values and getType",
-    "expectCompile": true
-  },
-  {
-    "id": "super",
-    "title": "super functions",
     "expectCompile": true
   }
 ]

@@ -1,6 +1,0 @@
-{
-  "title": "A super fn cannot be used as a value",
-  "stage": "typecheck",
-  "expectedDiagnosticContains": "cannot be used as a value",
-  "notes": "deka#529: the emitted function takes a hidden descriptor parameter, so a bare identifier would miscompile; every reference must be an explicit call like `validate<User>(json)`."
-}

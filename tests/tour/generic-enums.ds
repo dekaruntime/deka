@@ -1,35 +1,39 @@
 import { echo } from "io"
 
-// Enums take type parameters too. `Box<T>` is a container whose
-// contents are chosen at the use site.
-enum Box<T> {
+// Enums describe a fixed set of cases. Unlike the language's
+// containers, user enums do not take type parameters — each case
+// carries concrete payloads instead (deka#561).
+enum Box {
   Empty,
-  Full(T),
+  Full(number),
 }
 
-// Write the argument where you use the type: Box<number>, Box<string>.
-fn size(b: Box<number>) number {
+// Match on the cases to read the payload back out.
+fn size(b: Box) number {
   return match (b) {
     Full(value) => value,
     Empty => 0,
   }
 }
 
-// Box.Full(5) infers Box<number> from the payload.
 echo(string(size(Box.Full(5))))
 echo(string(size(Box.Empty)))
 
-enum Either<A, B> {
-  Left(A),
-  Right(B),
+// Cases without payloads work too — this is the plain choice when
+// the variants carry no data.
+enum State {
+  Draft,
+  Published,
+  Archived,
 }
 
-fn describe(e: Either<number, string>) string {
-  return match (e) {
-    Left(n) => string(n),
-    Right(s) => s,
+fn label(s: State) string {
+  return match (s) {
+    Draft => "work in progress",
+    Published => "live",
+    Archived => "on the shelf",
   }
 }
 
-echo(describe(Either.Left(1)))
-echo(describe(Either.Right("two")))
+echo(label(State.Draft))
+echo(label(State.Archived))
