@@ -116,7 +116,12 @@ echo(t.toString()) // "User"
 
 `super` is cost-controlled: emitting a structural descriptor for every
 declared type would be dead weight, so the author marks the types they
-actually reflect on. Composition does not repeat the mark — every
+actually reflect on. It exists for the runtime question — a value whose
+type is not known at compile time (parsed JSON, a union member narrowed
+at runtime). When the type is known statically the compiler walks the
+shape itself; JSON serialization (`.toJSON()`, rfd#43) is a
+compile-time walk over the static type and does not consume these
+descriptors. Composition does not repeat the mark — every
 struct or enum a super declaration references is described too, even
 when written plain — and fields that can never carry runtime type
 information (function types, unsafe-derived types) are rejected at the

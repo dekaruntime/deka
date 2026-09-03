@@ -101,30 +101,6 @@ pub struct StaticTypeCall<'a> {
     pub param: Option<&'a str>,
 }
 
-/// A recorded call site of a `super` function. Keyed by call-expression
-/// pointer, like every other lowering map. `args` entries name either a type
-/// parameter of the enclosing `super fn` (passed through unchanged — the
-/// emitter forwards the function's own hidden descriptor parameter) or a
-/// concrete type (the emitter references the interned
-/// `__deka_super_desc$N` const for its tree).
-#[derive(Clone, Debug)]
-pub struct SuperCallSite<'a> {
-    pub callee: &'a str,
-    pub args: Vec<SuperTypeArg<'a>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SuperTypeArg<'a> {
-    /// A type parameter of the enclosing `super fn`, passed through
-    /// unchanged — the emitter forwards the function's hidden descriptor
-    /// parameter.
-    Param(&'a str),
-    /// A concrete type, walked into its descriptor tree at the call site —
-    /// the emitter references the interned `__deka_super_desc$N` const for
-    /// this tree.
-    Concrete(DescriptorTree<'a>),
-}
-
 // Kept for super declarations (PR B): with `super fn` removed (deka#561)
 // nothing in the checker calls into these tree builders yet, but PR B's
 // `super struct` / `User.type()` work re-populates them.

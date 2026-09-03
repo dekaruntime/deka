@@ -1,8 +1,13 @@
 import { echo } from "io"
 
 // `super` marks a declaration whose type information survives to
-// runtime. A plain struct is compile-time only; a super struct carries
-// a descriptor you reach from the type itself.
+// runtime — for asking about a value whose type is NOT known at
+// compile time. When the type IS known statically, the compiler
+// already walks the shape for you: serializing a struct with
+// .toJSON() uses the static type at compile time and needs no
+// descriptor. super exists for the other case: values arriving from
+// JSON, unions narrowed at runtime, anything the type system cannot
+// see standing still.
 super struct User {
   id: number;
   name: string;

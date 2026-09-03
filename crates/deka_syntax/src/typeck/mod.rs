@@ -25,7 +25,7 @@ mod stmt;
 mod types;
 
 pub use descriptor::{
-    DescriptorField, DescriptorTree, StaticTypeCall, SuperCallSite, SuperTypeArg,
+    DescriptorField, DescriptorTree, StaticTypeCall,
 };
 pub use types::{ArrayAccess, NewtypeSide, OperatorRewrite, Type, UnionMemberTest, UnwrapKind};
 
