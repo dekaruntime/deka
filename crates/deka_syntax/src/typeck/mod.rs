@@ -2251,6 +2251,48 @@ mod tests {
     }
 
     #[test]
+    fn super_call_to_imported_super_fn_records_tree() {
+        // Cross-module is free under the hidden-argument design: every call
+        // site carries its own tree; the importer's checker recognizes the
+        // imported super fn through ModuleExports::instantiated_fns and
+        // records the site against the importer's own struct table.
+        let arena = Bump::new();
+        let lib_source = "export super fn validate<T>(json: string) Type { return T.type(); }";
+        let lib_result = parse(lib_source, &arena);
+        assert!(lib_result.errors.is_empty(), "{:?}", lib_result.errors);
+        let lib_program = lib_result.program.expect("library parse produced no program");
+        let exports = collect_module_exports(&lib_program, &arena);
+        assert!(exports.instantiated_fns.contains_key("validate"));
+
+        let main_source = "import { validate } from \"./lib.ds\"\n\
+                           struct User { id: string }\n\
+                           const d: Type = validate<User>(\"{}\");";
+        let main_result = parse(main_source, &arena);
+        assert!(main_result.errors.is_empty(), "{:?}", main_result.errors);
+        let main_program = main_result.program.expect("main parse produced no program");
+        let mut imports = HashMap::new();
+        imports.insert("./lib.ds", &exports);
+        let typeck = check_program_with_imports(&main_program, main_source, &imports);
+        assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
+        assert_eq!(typeck.super_calls.len(), 1);
+        let site = typeck.super_calls.values().next().unwrap();
+        assert_eq!(
+            site.args,
+            vec![SuperTypeArg::Concrete(DescriptorTree::Struct {
+                name: "User",
+                fields: vec![DescriptorField {
+                    name: "id",
+                    optional: false,
+                    ty: DescriptorTree::Leaf {
+                        kind: "string",
+                        name: "string".to_string(),
+                    },
+                }],
+            })]
+        );
+    }
+
+    #[test]
     fn super_type_param_shadowed_by_value() {
         // A value named `T` shadows the type parameter: `T.type()` resolves
         // against the value's type, not the hidden descriptor parameter.

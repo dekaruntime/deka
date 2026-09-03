@@ -1,0 +1,6 @@
+{
+  "title": "T.type() outside a super fn is rejected",
+  "stage": "typecheck",
+  "expectedDiagnosticContains": "`super fn`",
+  "notes": "deka#529, rfd#41: `T.type()` requires the enclosing function to be marked `super`; the diagnostic names the fix. For runtime inspection use `.getType()`."
+}

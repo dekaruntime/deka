@@ -1,0 +1,4 @@
+super fn validate<T>(json: string) Type {
+  return T.type()
+}
+const f = validate

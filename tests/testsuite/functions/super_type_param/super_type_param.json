@@ -1,0 +1,5 @@
+{
+  "title": "T.type() inside a super fn survives erasure",
+  "stage": "run",
+  "notes": "deka#529, rfd#41: the super fn is emitted once with a hidden descriptor parameter; the call site passes a statically emitted descriptor tree. Both the inferred and the explicit instantiation print `number`."
+}
