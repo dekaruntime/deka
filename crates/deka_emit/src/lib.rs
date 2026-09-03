@@ -42,6 +42,7 @@ mod tests {
             &typeck.operator_rewrites,
             &typeck.method_calls,
             &typeck.type_of_calls,
+            &typeck.signature_calls,
             &typeck.super_calls,
             &typeck.static_type_calls,
             &typeck.jsx_optional_props,
@@ -725,6 +726,7 @@ mod tests {
             &typeck.operator_rewrites,
             &typeck.method_calls,
             &typeck.type_of_calls,
+            &typeck.signature_calls,
             &typeck.super_calls,
             &typeck.static_type_calls,
             &typeck.jsx_optional_props,
@@ -736,6 +738,35 @@ mod tests {
         .expect("emit failed");
         assert!(!out.contains("function validate"), "got: {}", out);
         assert!(!out.contains("__deka_super_desc$"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_signature_uses_declared_type_and_not_runtime_type() {
+        let out = parse_check_and_emit("fn f(v: number | string) Type { return v.signature(); } const s = f(42);");
+        assert!(out.contains("kind: \"union\""), "got: {}", out);
+        assert!(out.contains("name: \"number | string\""), "got: {}", out);
+        assert!(out.contains("return Object.freeze({ kind: \"union\""), "got: {}", out);
+        assert!(!out.contains("__deka_type_of"), "got: {}", out);
+        assert!(!out.contains("globalThis"), "got: {}", out);
+        assert!(!out.contains("prototype"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_signature_descriptor_is_shaken_with_unused_function() {
+        let source = "fn describe(v: number | string) Type { return v.signature(); }";
+        let arena = Bump::new();
+        let result = parse(source, &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.expect("parse produced no program");
+        let typeck = deka_syntax::typeck::check_program(&program, source);
+        assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
+        let live: std::collections::HashSet<String> = ["main".to_string()].into_iter().collect();
+        let out = emit_js_with_options(&program, source, &std::collections::HashMap::new(), None,
+            &typeck.unwrap_calls, &typeck.operator_rewrites, &typeck.method_calls,
+            &typeck.type_of_calls, &typeck.signature_calls, &typeck.super_calls,
+            &typeck.static_type_calls, &typeck.jsx_optional_props, &typeck.enum_case_patterns,
+            &typeck.union_type_patterns, "module.ds", Some(&live)).expect("emit failed");
+        assert!(!out.contains("kind: \"union\""), "got: {}", out);
     }
 
     #[test]

@@ -2524,6 +2524,12 @@ impl<'a> Checker<'a> {
             }
         }
 
+        if method_name == "signature" {
+            if let Some(ty) = self.check_builtin_signature(call_expr, &object_type, args, span) {
+                return Some(ty);
+            }
+        }
+
         // Interface receiver: dispatch is dynamic; validate against the
         // interface signature and enforce mutable-method requirements inferred
         // from satisfying structs.
@@ -2802,6 +2808,53 @@ impl<'a> Checker<'a> {
             _ => {}
         }
         self.type_of_calls.insert(call_expr as *const ast::Expr<'a>);
+        Some(Type::Named { name: "Type" })
+    }
+
+    /// Check `.signature()`, which describes the receiver's declared type at
+    /// compile time. User-defined methods with the same name shadow it.
+    fn check_builtin_signature(
+        &mut self,
+        call_expr: &ast::Expr<'a>,
+        object_type: &Type<'a>,
+        args: &'a [ast::Expr<'a>],
+        span: ast::Span,
+    ) -> Option<Type<'a>> {
+        match object_type {
+            Type::Struct { name } | Type::Newtype { name, .. } => {
+                if self.find_receiver_method(name, "signature", &mut Vec::new()).is_some() {
+                    return None;
+                }
+            }
+            Type::Named { name } => {
+                if self.receiver_methods.contains_key(&(*name, "signature")) {
+                    return None;
+                }
+            }
+            Type::Interface { name } => {
+                let info = self.interfaces.get(name)?;
+                if info.members.iter().any(|m| matches!(m,
+                    ast::InterfaceMember::Method { name: n, .. } if *n == "signature")) {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+        if !args.is_empty() {
+            self.error_span(span, "`signature` expects no arguments".to_string());
+            return Some(Type::Error);
+        }
+        if matches!(object_type, Type::Error | Type::None | Type::Never) {
+            return None;
+        }
+        let tree = match self.descriptor_tree(object_type, span) {
+            Ok(tree) => tree,
+            Err(message) => {
+                self.error_span(span, message.replace("at this `super` call site", "at this `signature` call site"));
+                return Some(Type::Error);
+            }
+        };
+        self.signature_calls.insert(call_expr as *const ast::Expr<'a>, tree);
         Some(Type::Named { name: "Type" })
     }
 
