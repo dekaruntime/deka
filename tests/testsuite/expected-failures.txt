@@ -30,13 +30,6 @@ fs-write-count
 fs-write-empty
 fs-write-missing-parent
 fs-write-then-read
-http-parse-explicit-port
-http-parse-http-port
-http-parse-https-host
-http-parse-https-port
-http-parse-path-query
-http-parse-root-path
-http-parse-scheme
 tcp-listen-then-close
 tcp-set-deadline-zero
 time-sleep-ms-type
