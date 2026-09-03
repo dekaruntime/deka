@@ -37,6 +37,9 @@ pub struct TypeckResult<'a> {
     /// Map from primitive extension call expression pointer to the mangled
     /// free-function call that should replace it during emission (deka#527).
     pub method_calls: HashMap<*const ast::Expr<'a>, MethodTarget<'a>>,
+    /// Call sites of the builtin `.getType()` method, rewritten to
+    /// `__deka_type_of(x)` during emission (rfd#41, deka#529).
+    pub type_of_calls: HashSet<*const ast::Expr<'a>>,
     /// Map from primitive conversion call expression pointer to how it should
     /// be lowered (`number(x)`, `string(x)`, `bool(x)`).
     pub unwrap_calls: HashMap<*const ast::Expr<'a>, types::UnwrapKind>,
@@ -115,6 +118,7 @@ pub fn check_program_with_imports<'a>(
         errors: checker.errors,
         warnings: checker.warnings,
         method_calls: checker.method_calls,
+        type_of_calls: checker.type_of_calls,
         unwrap_calls: checker.unwrap_calls,
         operator_rewrites: checker.operator_rewrites,
         jsx_optional_props: checker.jsx_optional_props,
@@ -225,7 +229,7 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
     ) -> Type<'a> {
         match ty {
             ast::Type::Named { name, .. } => match *name {
-                "number" | "string" | "boolean" | "never" | "void" | "bytes" | "Component" | "JsError" => {
+                "number" | "string" | "boolean" | "never" | "void" | "bytes" | "Component" | "JsError" | "Type" => {
                     Type::Named { name }
                 }
                 _ => {
@@ -541,6 +545,11 @@ struct Checker<'a> {
     /// Lowering collections like this one must also be cleared in
     /// `reset_lowering_state` — the inference pass populates them too.
     method_calls: HashMap<*const ast::Expr<'a>, MethodTarget<'a>>,
+    /// Builtin `.getType()` call sites to rewrite to `__deka_type_of(x)`,
+    /// keyed by call expression pointer.
+    /// Lowering collections like this one must also be cleared in
+    /// `reset_lowering_state` — the inference pass populates them too.
+    type_of_calls: HashSet<*const ast::Expr<'a>>,
     /// Primitive conversion call sites to lower, keyed by call expression pointer.
     /// Cleared between passes by `reset_lowering_state`.
     unwrap_calls: HashMap<*const ast::Expr<'a>, types::UnwrapKind>,
@@ -587,6 +596,7 @@ impl<'a> Checker<'a> {
             newtypes: HashMap::new(),
             receiver_methods: HashMap::new(),
             method_calls: HashMap::new(),
+            type_of_calls: HashSet::new(),
             unwrap_calls: HashMap::new(),
             operator_rewrites: HashMap::new(),
             jsx_optional_props: HashMap::new(),
@@ -714,6 +724,7 @@ impl<'a> Checker<'a> {
     /// one surfaces as a lowering bug far away from this call site (deka#367).
     pub(super) fn reset_lowering_state(&mut self) {
         self.method_calls.clear();
+        self.type_of_calls.clear();
         self.unwrap_calls.clear();
         self.operator_rewrites.clear();
     }
@@ -1305,6 +1316,118 @@ mod tests {
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert!(errors[0].message.contains("wrap"), "{}", errors[0].message);
         assert!(errors[0].message.contains("1 argument"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn type_toString_is_builtin_method() {
+        // `Type` is seeded as a builtin named type; `toString` on it resolves
+        // through the primitive member table (rfd#41, deka#529).
+        assert!(typeck("fn f(t: Type) string { return t.toString(); }").is_empty());
+    }
+
+    #[test]
+    fn type_declaration_named_type_fails() {
+        // `Type` is reserved for the builtin descriptor type.
+        for src in [
+            "struct Type { x: number }",
+            "enum Type { Red }",
+            "type Type number",
+            "interface Type { fn get() number }",
+            "alias Type = number",
+        ] {
+            let errors = typeck(src);
+            assert_eq!(errors.len(), 1, "{src}: {errors:?}");
+            assert!(errors[0].message.contains("`Type` is a builtin type"), "{}", errors[0].message);
+        }
+    }
+
+    #[test]
+    fn gettype_on_receiver_kinds_returns_type() {
+        // Primitives, struct, newtype, enum, array, Option, Result, object.
+        assert!(typeck("const t: Type = \"x\".getType();").is_empty());
+        assert!(typeck("const n: number = 1; const t: Type = n.getType();").is_empty());
+        assert!(typeck("const b: boolean = true; const t: Type = b.getType();").is_empty());
+        assert!(typeck("struct Point { x: number } const p: Point = Point { x: 1 }; const t: Type = p.getType();").is_empty());
+        assert!(typeck("type Cents number; const c: Cents = Cents(5); const t: Type = c.getType();").is_empty());
+        assert!(typeck("enum Color { Red, Green } const c: Color = Color.Red; const t: Type = c.getType();").is_empty());
+        assert!(typeck("const t: Type = [1, 2].getType();").is_empty());
+        assert!(typeck("const t: Type = Some(1).getType();").is_empty());
+        assert!(typeck("const r: Result<number, string> = Ok(1); const t: Type = r.getType();").is_empty());
+        assert!(typeck("const o = { a: 1 }; const t: Type = o.getType();").is_empty());
+    }
+
+    #[test]
+    fn gettype_union_receiver_passes() {
+        // The rfd#41 headline case: a union value's runtime type.
+        assert!(typeck("fn f(v: number | string) Type { return v.getType(); }").is_empty());
+    }
+
+    #[test]
+    fn gettype_generic_receiver_passes() {
+        // Runtime inspection: generics work with no `super` keyword.
+        assert!(typeck("fn id<T>(x: T) Type { return x.getType(); }").is_empty());
+    }
+
+    #[test]
+    fn gettype_records_type_of_call() {
+        let arena = Bump::new();
+        let source = "const t: Type = \"hi\".getType();";
+        let result = parse(source, &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.expect("parse produced no program");
+        let typeck = check_program(&program, source);
+        assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
+        assert_eq!(typeck.type_of_calls.len(), 1);
+        assert!(typeck.method_calls.is_empty());
+    }
+
+    #[test]
+    fn gettype_user_extension_shadows_builtin() {
+        // A user extension named `getType` keeps the deka#527 rewrite; the
+        // builtin `__deka_type_of` rewrite is not recorded.
+        let arena = Bump::new();
+        let source = "fn (s string) getType() string { return s; } const u: string = \"x\".getType();";
+        let result = parse(source, &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.expect("parse produced no program");
+        let typeck = check_program(&program, source);
+        assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
+        assert_eq!(typeck.method_calls.len(), 1);
+        assert!(
+            typeck.method_calls.values().all(|t| t.mangled == "getType$string"),
+            "expected getType$string, got {:?}",
+            typeck.method_calls.values().map(|t| &t.mangled).collect::<Vec<_>>()
+        );
+        assert!(typeck.type_of_calls.is_empty());
+    }
+
+    #[test]
+    fn gettype_receiver_method_shadows_builtin() {
+        // A struct-declared `getType` wins over the builtin fallback.
+        assert!(typeck(
+            "struct A { x: number } fn (a A) getType() string { return \"A\" } const s: string = A { x: 1 }.getType();"
+        ).is_empty());
+    }
+
+    #[test]
+    fn gettype_interface_member_shadows_builtin() {
+        // An interface declaring `getType` dispatches dynamically, as with
+        // any declared member.
+        assert!(typeck(
+            "interface Has { fn getType() string } fn f(v: Has) string { return v.getType(); }"
+        ).is_empty());
+    }
+
+    #[test]
+    fn gettype_with_arguments_fails() {
+        let errors = typeck("const t: Type = \"x\".getType(1);");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("`getType` expects no arguments"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn gettype_toString_chaining_passes() {
+        assert!(typeck("const s: string = \"x\".getType().toString();").is_empty());
     }
 
     #[test]
