@@ -410,5 +410,20 @@
     "id": "unwrap-or",
     "title": "unwrap and the absent case",
     "expectCompile": true
+  },
+  {
+    "id": "primitive-extensions",
+    "title": "extension methods on primitives",
+    "expectCompile": true
+  },
+  {
+    "id": "type-values",
+    "title": "type values and getType",
+    "expectCompile": true
+  },
+  {
+    "id": "super",
+    "title": "super functions",
+    "expectCompile": true
   }
 ]
