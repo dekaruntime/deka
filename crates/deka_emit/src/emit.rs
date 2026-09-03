@@ -113,17 +113,18 @@ pub fn emit_js_with_options<'a>(
         *const Expr<'a>,
         deka_syntax::typeck::ArrayAccess,
     >,
-    // `super` function call sites, lowered by the typechecker: the call is
-    // rewritten to pass a descriptor argument (an interned
-    // `__deka_super_desc$N` const, or the enclosing super fn's hidden
-    // parameter for a passthrough argument) (deka#529, rfd#41). Kept for
-    // super declarations (PR B): this is the feed point PR B re-populates.
-    super_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::SuperCallSite<'a>>,
-    // Builtin `.type()` call sites inside `super` functions, lowered by the
-    // typechecker to the hidden descriptor parameter or a static tree const
-    // (deka#529, rfd#41). Kept for super declarations (PR B): this is the
-    // feed point PR B re-populates.
+    // Builtin `.type()` call sites on `super` declarations, lowered by the
+    // typechecker (rfd#41, deka#561 PR B): the emitter rewrites each call to
+    // the interned `__deka_super_desc$<Name>` const.
     static_type_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::StaticTypeCall<'a>>,
+    // Descriptor trees for every `super` declaration visible to the
+    // typechecker, keyed by declaration name. The emitter interns one
+    // frozen const per declaration referenced (directly or through a
+    // recursive group) by `static_type_calls`.
+    super_decl_trees: &std::collections::HashMap<
+        &'a str,
+        deka_syntax::typeck::DescriptorTree<'a>,
+    >,
     jsx_optional_props: &HashMap<
         *const deka_syntax::JsxElement<'a>,
         deka_syntax::typeck::JsxOptionalProps<'a>,
@@ -148,8 +149,8 @@ pub fn emit_js_with_options<'a>(
     emitter.type_of_calls = type_of_calls.clone();
     emitter.signature_calls = signature_calls.clone();
     emitter.array_first_last_calls = array_first_last_calls.clone();
-    emitter.super_calls = super_calls.clone();
     emitter.static_type_calls = static_type_calls.clone();
+    emitter.super_decl_trees = super_decl_trees.clone();
     emitter.jsx_optional_props = jsx_optional_props.clone();
     emitter.enum_case_patterns = enum_case_patterns.clone();
     emitter.union_type_patterns = union_type_patterns.clone();
@@ -173,6 +174,7 @@ fn descriptor_tree_name(tree: &deka_syntax::typeck::DescriptorTree) -> String {
     use deka_syntax::typeck::DescriptorTree as T;
     match tree {
         T::Leaf { name, .. } => name.clone(),
+        T::Recurse { name } => name.to_string(),
         T::Struct { name, .. } | T::Interface { name } | T::Newtype { name, .. } | T::Enum { name, .. } => {
             name.to_string()
         }
@@ -280,6 +282,202 @@ fn emit_descriptor_tree(tree: &deka_syntax::typeck::DescriptorTree) -> Result<St
             }
             out.push_str("]) })");
         }
+        // `Recurse` nodes are only produced by the super-declaration path
+        // (which emits through `emit_super_tree`, where they become const
+        // references). Reaching one here means a recursive tree leaked into
+        // an eager context (`.signature()`), which the typechecker
+        // guarantees cannot happen; fail loudly rather than emit a
+        // dangling reference.
+        T::Recurse { name } => {
+            return Err(format!(
+                "internal: recursive descriptor reference `{name}` in eager emission"
+            ));
+        }
+    }
+    Ok(out)
+}
+
+/// The interned const name for a `super` declaration's descriptor.
+fn super_const_name(name: &str) -> String {
+    format!("__deka_super_desc${name}")
+}
+
+/// The declaration name a static-type-call tree describes: the name of its
+/// top struct/enum node. Non-declaration trees (impossible from the
+/// typechecker) return None.
+fn super_decl_top_name<'a>(tree: &deka_syntax::typeck::DescriptorTree<'a>) -> Option<&'a str> {
+    use deka_syntax::typeck::DescriptorTree as T;
+    match tree {
+        T::Struct { name, .. } | T::Enum { name, .. } => Some(name),
+        _ => None,
+    }
+}
+
+/// Does this tree contain a recursive-reference node anywhere below (or at)
+/// its root?
+fn tree_contains_recurse(tree: &deka_syntax::typeck::DescriptorTree) -> bool {
+    use deka_syntax::typeck::DescriptorTree as T;
+    match tree {
+        T::Recurse { .. } => true,
+        T::Struct { fields, .. } => fields.iter().any(|f| tree_contains_recurse(&f.ty)),
+        T::Enum { cases, .. } => cases
+            .iter()
+            .any(|(_, payload)| payload.as_ref().is_some_and(tree_contains_recurse)),
+        T::Newtype { repr, .. } => tree_contains_recurse(repr),
+        T::Array { elem } | T::Option { inner: elem } => tree_contains_recurse(elem),
+        T::Union { members } => members.iter().any(tree_contains_recurse),
+        T::Leaf { .. } | T::Interface { .. } => false,
+    }
+}
+
+/// Collect the names of every `Recurse` node in a tree.
+fn collect_recurse_refs<'a>(
+    tree: &deka_syntax::typeck::DescriptorTree<'a>,
+    out: &mut Vec<&'a str>,
+) {
+    use deka_syntax::typeck::DescriptorTree as T;
+    match tree {
+        T::Recurse { name } => out.push(name),
+        T::Struct { fields, .. } => {
+            for field in fields.iter() {
+                collect_recurse_refs(&field.ty, out);
+            }
+        }
+        T::Enum { cases, .. } => {
+            for (_, payload) in cases.iter() {
+                if let Some(payload) = payload {
+                    collect_recurse_refs(payload, out);
+                }
+            }
+        }
+        T::Newtype { repr, .. } => collect_recurse_refs(repr, out),
+        T::Array { elem } | T::Option { inner: elem } => collect_recurse_refs(elem, out),
+        T::Union { members } => {
+            for member in members.iter() {
+                collect_recurse_refs(member, out);
+            }
+        }
+        T::Leaf { .. } | T::Interface { .. } => {}
+    }
+}
+
+/// Expand a referenced `super` declaration into its full const group: the
+/// declaration itself plus, transitively, every declaration its tree
+/// references recursively. `emitted` guards the walk; `group` accumulates
+/// first-visit order (emission order is unconstrained — recursive consts use
+/// lazy getters — but deterministic output is nicer to read and diff).
+fn collect_super_group<'a>(
+    name: &'a str,
+    decl_trees: &std::collections::HashMap<
+        &'a str,
+        deka_syntax::typeck::DescriptorTree<'a>,
+    >,
+    emitted: &mut HashSet<&'a str>,
+    group: &mut Vec<&'a str>,
+) {
+    if !emitted.insert(name) {
+        return;
+    }
+    group.push(name);
+    let Some(tree) = decl_trees.get(name) else {
+        // The typechecker records a call site only for declarations whose
+        // tree it built; a miss means the maps came from different passes.
+        // Emitting a dangling const reference would be a silent miscompile,
+        // so refuse (the caller turns this into a compile error).
+        return;
+    };
+    let mut refs = Vec::new();
+    collect_recurse_refs(tree, &mut refs);
+    for referenced in refs {
+        collect_super_group(referenced, decl_trees, emitted, group);
+    }
+}
+
+/// Serialize a `super` declaration's descriptor tree as its interned const
+/// body. Trees without recursion are plain eager frozen literals (the
+/// `emit_descriptor_tree` shape `.signature()` also uses). Trees with
+/// recursion emit their composite properties as lazy getters so a const may
+/// reference itself (or a cycle partner) without an initialization-order
+/// constraint; the `Recurse` nodes become references to the sibling consts.
+fn emit_super_tree(tree: &deka_syntax::typeck::DescriptorTree) -> Result<String, String> {
+    use deka_syntax::typeck::DescriptorTree as T;
+    if !tree_contains_recurse(tree) {
+        return emit_descriptor_tree(tree);
+    }
+    let mut out = String::new();
+    let header = |out: &mut String, kind: &str, name: &str| {
+        out.push_str("Object.freeze({ kind: \"");
+        out.push_str(kind);
+        out.push_str("\", name: \"");
+        out.push_str(&escape_string(name));
+        out.push_str("\", toString() { return this.name; }");
+    };
+    match tree {
+        T::Recurse { name } => out.push_str(&super_const_name(name)),
+        T::Struct { name, fields } => {
+            header(&mut out, "struct", name);
+            out.push_str(", get fields() { return Object.freeze([");
+            for (i, field) in fields.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str("{ name: \"");
+                out.push_str(&escape_string(field.name));
+                out.push_str("\", optional: ");
+                out.push_str(if field.optional { "true" } else { "false" });
+                out.push_str(", type: ");
+                out.push_str(&emit_super_tree(&field.ty)?);
+                out.push_str(" }");
+            }
+            out.push_str("]); } })");
+        }
+        T::Enum { name, cases } => {
+            header(&mut out, "enum", name);
+            out.push_str(", get cases() { return Object.freeze([");
+            for (i, (case_name, payload)) in cases.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str("{ name: \"");
+                out.push_str(&escape_string(case_name));
+                out.push_str("\", payload: ");
+                match payload {
+                    Some(payload_tree) => {
+                        out.push_str(&emit_super_tree(payload_tree)?);
+                    }
+                    None => out.push_str("null"),
+                }
+                out.push_str(" }");
+            }
+            out.push_str("]); } })");
+        }
+        T::Array { elem } => {
+            header(&mut out, "array", "Array");
+            out.push_str(", get elem() { return ");
+            out.push_str(&emit_super_tree(elem)?);
+            out.push_str("; } })");
+        }
+        T::Option { inner } => {
+            header(&mut out, "option", "Option");
+            out.push_str(", get inner() { return ");
+            out.push_str(&emit_super_tree(inner)?);
+            out.push_str("; } })");
+        }
+        T::Union { members } => {
+            let name = descriptor_tree_name(tree);
+            header(&mut out, "union", &name);
+            out.push_str(", get members() { return Object.freeze([");
+            for (i, member) in members.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(&emit_super_tree(member)?);
+            }
+            out.push_str("]); } })");
+        }
+        // Leaves, interfaces and newtypes have no recursion below them
+        // (tree_contains_recurse gated above): the eager literal is right.
+        _ => return emit_descriptor_tree(tree),
     }
     Ok(out)
 }
@@ -349,18 +547,17 @@ struct Emitter<'a> {
     /// typechecker (deka#561): JS arrays have no `first`/`last`, so the
     /// emitter rewrites the call to an Option-producing expression.
     array_first_last_calls: HashMap<*const Expr<'a>, deka_syntax::typeck::ArrayAccess>,
-    /// `super` function call sites lowered by the typechecker (deka#529):
-    /// each call gains a leading descriptor argument. Kept for super
-    /// declarations (PR B).
-    super_calls: HashMap<*const Expr<'a>, deka_syntax::typeck::SuperCallSite<'a>>,
-    /// Builtin `.type()` call sites inside `super` functions, lowered by the
-    /// typechecker (deka#529). Kept for super declarations (PR B).
+    /// Builtin `Name.type()` call sites on `super` declarations, lowered by
+    /// the typechecker (rfd#41, deka#561 PR B): the emitter rewrites each
+    /// call to the interned `__deka_super_desc$<Name>` const.
     static_type_calls: HashMap<*const Expr<'a>, deka_syntax::typeck::StaticTypeCall<'a>>,
-    /// Interned static descriptor trees: the tree's serialized form to its
-    /// `__deka_super_desc$N` const index. Populated by `emit_prelude` (which
-    /// runs before any call site is emitted), then read at call sites. Kept
-    /// for super declarations (PR B).
-    descriptor_consts: HashMap<String, usize>,
+    /// Descriptor trees for every `super` declaration visible to the
+    /// typechecker, keyed by declaration name. Read by `emit_prelude` to
+    /// intern one frozen const per referenced declaration.
+    super_decl_trees: std::collections::HashMap<
+        &'a str,
+        deka_syntax::typeck::DescriptorTree<'a>,
+    >,
     file_stem: String,
     fn_scope: String,
     jsx_path: Vec<usize>,
@@ -395,9 +592,8 @@ impl<'a> Emitter<'a> {
             type_of_calls: HashSet::new(),
             signature_calls: HashMap::new(),
             array_first_last_calls: HashMap::new(),
-            super_calls: HashMap::new(),
             static_type_calls: HashMap::new(),
-            descriptor_consts: HashMap::new(),
+            super_decl_trees: std::collections::HashMap::new(),
             file_stem: "module".to_string(),
             fn_scope: "_".to_string(),
             jsx_path: Vec::new(),
@@ -820,37 +1016,40 @@ impl<'a> Emitter<'a> {
             self.out.push('\n');
         }
 
-        // Static descriptor trees for `super` (deka#529, rfd#41): one frozen,
-        // content-deduped module-local const per distinct tree, printed
-        // before any use — the emission-ordering trap #550 documented for
-        // the prelude above. Like `type_of_calls`, both maps are fully
-        // populated by the typechecker before emission, so no AST scan is
-        // needed; entries pointing into shaken code force their const
-        // (harmless bloat, never incorrectness). Sorting the serialized
-        // trees before numbering makes the const names deterministic
-        // regardless of map iteration order. Kept for super declarations
-        // (PR B): with user `super fn` removed the maps are empty, but the
-        // interning path stays so PR B can re-feed it.
-        let mut trees: Vec<String> = Vec::new();
-        for site in self.super_calls.values() {
-            for arg in site.args.iter() {
-                if let deka_syntax::typeck::SuperTypeArg::Concrete(tree) = arg {
-                    trees.push(emit_descriptor_tree(tree)?);
+        // Static descriptor consts for `super` declarations (rfd#41,
+        // deka#561 PR B): one frozen, name-keyed module-local const per
+        // declaration actually referenced by a recorded `Name.type()` call —
+        // `User.type()` rewrites to `__deka_super_desc$User`. Emission is
+        // driven by use, so an unused `super` marking costs nothing, and a
+        // marking whose only calls sit in shaken code forces only its own
+        // const (harmless bloat, never incorrectness — same guarantee the
+        // type_of_calls gate documents above). Recursive groups expand: a
+        // declaration whose tree holds `Recurse` nodes pulls the consts of
+        // every declaration it references, via the typechecker's
+        // `super_decl_trees` map. Trees with recursion are emitted with lazy
+        // composite getters (`get fields() { ... }`), so const
+        // initialization order is unconstrained — a recursive const may be
+        // referenced before it is declared and is only dereferenced on
+        // access, after module init.
+        let mut emitted: HashSet<&'a str> = HashSet::new();
+        let mut group: Vec<&'a str> = Vec::new();
+        for call in self.static_type_calls.values() {
+            if let Some(tree) = call.tree.as_ref() {
+                if let Some(name) = super_decl_top_name(tree) {
+                    collect_super_group(name, &self.super_decl_trees, &mut emitted, &mut group);
                 }
             }
         }
-        for call in self.static_type_calls.values() {
-            if let Some(tree) = call.tree.as_ref() {
-                trees.push(emit_descriptor_tree(tree)?);
-            }
-        }
-        trees.sort();
-        trees.dedup();
-        for (index, tree_src) in trees.iter().enumerate() {
-            self.descriptor_consts
-                .insert(tree_src.clone(), index);
-            self.out
-                .push_str(&format!("const __deka_super_desc${} = {};\n", index, tree_src));
+        for name in group {
+            let tree = self
+                .super_decl_trees
+                .get(name)
+                .ok_or_else(|| format!("missing descriptor tree for super declaration `{name}`"))?;
+            self.out.push_str(&format!(
+                "const {} = {};\n",
+                super_const_name(name),
+                emit_super_tree(tree)?
+            ));
         }
 
         if self.uses_prelude_enums {
@@ -870,28 +1069,6 @@ impl<'a> Emitter<'a> {
             self.out.push_str("const None = Option.None;\n");
         }
 
-        Ok(())
-    }
-
-    /// Emit a reference to the interned const for a static descriptor tree
-    /// — normally `__deka_super_desc$N`. The prelude interned every recorded
-    /// tree, so a miss means the map came from a stale typeck pass; fall
-    /// back to inlining the tree rather than emitting a dangling reference.
-    /// Kept for super declarations (PR B): its only callers were the
-    /// super-fn rewrites removed in deka#561, and PR B's rewrites will call
-    /// it again.
-    #[allow(dead_code)]
-    fn emit_descriptor_ref(
-        &mut self,
-        tree: &deka_syntax::typeck::DescriptorTree,
-    ) -> Result<(), String> {
-        let src = emit_descriptor_tree(tree)?;
-        match self.descriptor_consts.get(&src) {
-            Some(index) => {
-                self.out.push_str(&format!("__deka_super_desc${}", index));
-            }
-            None => self.out.push_str(&src),
-        }
         Ok(())
     }
 
@@ -1916,6 +2093,19 @@ impl<'a> Emitter<'a> {
                     return Ok(());
                 }
 
+                // Builtin `Name.type()` on a `super` declaration (rfd#41,
+                // deka#561 PR B): rewrite to the interned frozen descriptor
+                // const emitted in the prelude — a module-local reference,
+                // no prototype mutation, no globalThis.
+                if let Some(site) = self.static_type_calls.get(&expr_ptr) {
+                    if let Some(tree) = site.tree.as_ref() {
+                        if let Some(name) = super_decl_top_name(tree) {
+                            self.out.push_str(&super_const_name(name));
+                            return Ok(());
+                        }
+                    }
+                }
+
                 // Builtin `first`/`last`: JS arrays have no such methods, and
                 // the typed `pop`/`shift` builtins are emitted as verbatim JS
                 // passthroughs that return raw values (not Option) — a known
@@ -2552,9 +2742,8 @@ impl<'a> Emitter<'a> {
                     type_of_calls: HashSet::new(),
                     signature_calls: HashMap::new(),
                     array_first_last_calls: HashMap::new(),
-                    super_calls: HashMap::new(),
                     static_type_calls: HashMap::new(),
-                    descriptor_consts: HashMap::new(),
+                    super_decl_trees: std::collections::HashMap::new(),
                     file_stem: self.file_stem.clone(),
                     fn_scope: self.fn_scope.clone(),
                     jsx_path: Vec::new(),
