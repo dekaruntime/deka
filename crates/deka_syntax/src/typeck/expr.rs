@@ -302,15 +302,13 @@ impl<'a> Checker<'a> {
                 Type::Named { name: "boolean" }
             }
             ast::Expr::None { .. } => Type::None,
-            ast::Expr::Identifier { name, span } => {
-                match self.lookup_var(name) {
-                    Some(ty) => ty,
-                    None => {
-                        self.error_span(*span, format!("unknown identifier `{name}`"));
-                        Type::Error
-                    }
+            ast::Expr::Identifier { name, span } => match self.lookup_var(name) {
+                Some(ty) => ty,
+                None => {
+                    self.error_span(*span, format!("unknown identifier `{name}`"));
+                    Type::Error
                 }
-            }
+            },
             ast::Expr::Binary {
                 op,
                 left,
@@ -329,7 +327,9 @@ impl<'a> Checker<'a> {
                 // is not a typed object (RFD 21 lang item).
                 if is_panic_callee(callee) {
                     self.check_call(expr, callee, type_args, args, *span)
-                } else if let Some(ret) = self.try_check_method_call(expr, callee, args, *span) {
+                } else if let Some(ret) =
+                    self.try_check_method_call(expr, callee, type_args, args, *span)
+                {
                     ret
                 } else {
                     self.check_call(expr, callee, type_args, args, *span)
@@ -1388,8 +1388,12 @@ impl<'a> Checker<'a> {
                 },
                 _ => None,
             };
-            if let (Some(name), ast::Pattern::Constructor { name: pattern_name, .. }) =
-                (scrutinee_ident, &arm.pattern)
+            if let (
+                Some(name),
+                ast::Pattern::Constructor {
+                    name: pattern_name, ..
+                },
+            ) = (scrutinee_ident, &arm.pattern)
             {
                 if self
                     .union_type_patterns
@@ -1405,7 +1409,8 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            if !has_catch_all && Self::pattern_is_catch_all(&arm.pattern, &self.enum_case_patterns) {
+            if !has_catch_all && Self::pattern_is_catch_all(&arm.pattern, &self.enum_case_patterns)
+            {
                 has_catch_all = true;
             }
             coverage = coverage.merge(Coverage::of_pattern(&arm.pattern, &self.enum_case_patterns));
@@ -1630,7 +1635,9 @@ impl<'a> Checker<'a> {
                     {
                         self.error_span(
                             *span,
-                            format!("type pattern `{name}` requires a binding, e.g. `{name}(value)`"),
+                            format!(
+                                "type pattern `{name}` requires a binding, e.g. `{name}(value)`"
+                            ),
                         );
                         return;
                     }
@@ -1768,7 +1775,10 @@ impl<'a> Checker<'a> {
             return true;
         };
 
-        let Some(member) = members.iter().find(|m| Self::union_member_name(m) == Some(name)) else {
+        let Some(member) = members
+            .iter()
+            .find(|m| Self::union_member_name(m) == Some(name))
+        else {
             self.error_span(
                 span,
                 format!("`{name}` is not a member of union `{scrutinee_type}`"),
@@ -1810,9 +1820,7 @@ impl<'a> Checker<'a> {
     /// name for primitives, structs, enums and interfaces.
     fn union_member_name(ty: &Type<'a>) -> Option<&'a str> {
         match ty {
-            Type::Named { name } | Type::Struct { name } | Type::Interface { name } => {
-                Some(name)
-            }
+            Type::Named { name } | Type::Struct { name } | Type::Interface { name } => Some(name),
             _ => None,
         }
     }
@@ -2481,6 +2489,7 @@ impl<'a> Checker<'a> {
         &mut self,
         call_expr: &ast::Expr<'a>,
         callee: &ast::Expr<'a>,
+        type_args: &'a [ast::Type<'a>],
         args: &'a [ast::Expr<'a>],
         span: ast::Span,
     ) -> Option<Type<'a>> {
@@ -2505,6 +2514,14 @@ impl<'a> Checker<'a> {
         if method_name == "signature" {
             if let Some(ty) = self.check_builtin_signature(call_expr, &object_type, args, span) {
                 return Some(ty);
+            }
+        }
+
+        if matches!(method_name, "toJSON" | "parseJSON") {
+            if let Some(ret) =
+                self.check_builtin_json(call_expr, &object_type, method_name, type_args, args, span)
+            {
+                return Some(ret);
             }
         }
 
@@ -2594,7 +2611,11 @@ impl<'a> Checker<'a> {
                 // of the same name. On a miss, fall through to `check_call` so
                 // builtin property-functions keep working (deka#527).
                 return self.check_primitive_extension_call(
-                    call_expr, name, method_name, args, span,
+                    call_expr,
+                    name,
+                    method_name,
+                    args,
+                    span,
                 );
             }
             _ => return None,
@@ -2683,7 +2704,10 @@ impl<'a> Checker<'a> {
     ) -> Option<Type<'a>> {
         match object_type {
             Type::Struct { name } | Type::Newtype { name, .. } => {
-                if self.find_receiver_method(name, "signature", &mut Vec::new()).is_some() {
+                if self
+                    .find_receiver_method(name, "signature", &mut Vec::new())
+                    .is_some()
+                {
                     return None;
                 }
             }
@@ -2694,8 +2718,10 @@ impl<'a> Checker<'a> {
             }
             Type::Interface { name } => {
                 let info = self.interfaces.get(name)?;
-                if info.members.iter().any(|m| matches!(m,
-                    ast::InterfaceMember::Method { name: n, .. } if *n == "signature")) {
+                if info.members.iter().any(|m| {
+                    matches!(m,
+                    ast::InterfaceMember::Method { name: n, .. } if *n == "signature")
+                }) {
                     return None;
                 }
             }
@@ -2711,12 +2737,123 @@ impl<'a> Checker<'a> {
         let tree = match self.descriptor_tree(object_type, span) {
             Ok(tree) => tree,
             Err(message) => {
-                self.error_span(span, message.replace("at this `super` call site", "at this `signature` call site"));
+                self.error_span(
+                    span,
+                    message.replace("at this `super` call site", "at this `signature` call site"),
+                );
                 return Some(Type::Error);
             }
         };
-        self.signature_calls.insert(call_expr as *const ast::Expr<'a>, tree);
+        self.signature_calls
+            .insert(call_expr as *const ast::Expr<'a>, tree);
         Some(Type::Named { name: "Type" })
+    }
+
+    fn check_builtin_json(
+        &mut self,
+        call_expr: &ast::Expr<'a>,
+        object_type: &Type<'a>,
+        method_name: &str,
+        type_args: &'a [ast::Type<'a>],
+        args: &'a [ast::Expr<'a>],
+        span: ast::Span,
+    ) -> Option<Type<'a>> {
+        // User-defined receiver methods take precedence over the builtin.
+        match object_type {
+            Type::Struct { name } | Type::Newtype { name, .. } => {
+                if self
+                    .find_receiver_method(name, method_name, &mut Vec::new())
+                    .is_some()
+                {
+                    return None;
+                }
+            }
+            Type::Named { name } => {
+                if self.receiver_methods.contains_key(&(*name, method_name)) {
+                    return None;
+                }
+            }
+            Type::Interface { name } => {
+                let Some(info) = self.interfaces.get(name) else {
+                    return None;
+                };
+                if info.members.iter().any(|member| {
+                    matches!(member,
+                    ast::InterfaceMember::Method { name, .. } if *name == method_name)
+                }) {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+        let operation = if method_name == "toJSON" {
+            super::descriptor::JsonOperation::ToJson
+        } else {
+            super::descriptor::JsonOperation::ParseJson
+        };
+        if !args.is_empty() {
+            self.error_span(span, format!("`{method_name}` expects no arguments"));
+            return Some(Type::Error);
+        }
+        if operation == super::descriptor::JsonOperation::ToJson && !type_args.is_empty() {
+            self.error_span(span, "`toJSON` does not accept type arguments");
+            return Some(Type::Error);
+        }
+        if operation == super::descriptor::JsonOperation::ParseJson {
+            if !matches!(object_type, Type::Named { name: "string" }) {
+                return None;
+            }
+            if type_args.len() != 1 {
+                self.error_span(span, "`parseJSON` expects exactly one type argument");
+                return Some(Type::Error);
+            }
+            let target = self.resolve_ast_type(&type_args[0]);
+            let shape = match self.descriptor_tree(&target, span) {
+                Ok(shape) => shape,
+                Err(message) => {
+                    self.error_span(
+                        span,
+                        message
+                            .replace("at this `super` call site", "at this `parseJSON` call site"),
+                    );
+                    return Some(Type::Error);
+                }
+            };
+            if let Err(message) = json_shape_error(&shape, None) {
+                self.error_span(span, message);
+                return Some(Type::Error);
+            }
+            self.json_calls.insert(
+                call_expr as *const ast::Expr<'a>,
+                super::descriptor::JsonCall { operation, shape },
+            );
+            return Some(Type::Generic {
+                base: "Result",
+                args: vec![target, Type::Named { name: "string" }],
+            });
+        }
+        if matches!(object_type, Type::Error | Type::None | Type::Never) {
+            return None;
+        }
+        let shape = match self.descriptor_tree(object_type, span) {
+            Ok(shape) => shape,
+            Err(message) => {
+                self.error_span(
+                    span,
+                    message.replace("at this `super` call site", "at this `toJSON` call site"),
+                );
+                return Some(Type::Error);
+            }
+        };
+        if let Err(message) = json_shape_error(&shape, None) {
+            self.error_span(span, message);
+            return Some(Type::Error);
+        }
+        self.json_calls.insert(
+            call_expr as *const ast::Expr<'a>,
+            super::descriptor::JsonCall { operation, shape },
+        );
+        Some(Type::Named { name: "string" })
     }
 
     /// Resolve a method call on a primitive receiver (deka#527). A declared
@@ -2734,11 +2871,15 @@ impl<'a> Checker<'a> {
         let info = match self.receiver_methods.get(&(receiver_name, method_name)) {
             Some(info) => info.clone(),
             None => {
-                let declared_on = self.receiver_methods.keys().find(|(rt, mn)| {
-                    *mn == method_name
-                        && super::is_primitive_receiver_name(rt)
-                        && *rt != receiver_name
-                }).map(|(rt, _)| *rt);
+                let declared_on = self
+                    .receiver_methods
+                    .keys()
+                    .find(|(rt, mn)| {
+                        *mn == method_name
+                            && super::is_primitive_receiver_name(rt)
+                            && *rt != receiver_name
+                    })
+                    .map(|(rt, _)| *rt);
                 if let Some(declared_on) = declared_on {
                     self.error_span(
                         span,
@@ -3063,10 +3204,8 @@ impl<'a> Checker<'a> {
                     HashMap::new()
                 };
 
-                let substituted_params: Vec<Type<'a>> = params
-                    .iter()
-                    .map(|p| substitute_type(p, &subst))
-                    .collect();
+                let substituted_params: Vec<Type<'a>> =
+                    params.iter().map(|p| substitute_type(p, &subst)).collect();
                 let substituted_ret = substitute_type(&ret, &subst);
 
                 let hole_positions: Vec<usize> = args
@@ -3195,6 +3334,50 @@ impl<'a> Checker<'a> {
                 Type::Error
             }
         }
+    }
+}
+
+fn json_shape_error(
+    shape: &super::descriptor::DescriptorTree<'_>,
+    field: Option<&str>,
+) -> Result<(), String> {
+    use super::descriptor::DescriptorTree as T;
+    match shape {
+        T::Leaf {
+            kind: "unknown",
+            name,
+        } => Err(match field {
+            Some(field) => format!("cannot serialize field `{field}` of unknown type `{name}`"),
+            None => format!("cannot serialize unknown type `{name}`"),
+        }),
+        T::Interface { name } => Err(match field {
+            Some(field) => format!("cannot serialize field `{field}` of interface `{name}`"),
+            None => format!("cannot serialize interface `{name}`"),
+        }),
+        T::Struct { fields, .. } => {
+            for item in fields {
+                json_shape_error(&item.ty, Some(item.name))?;
+            }
+            Ok(())
+        }
+        T::Newtype { repr, .. } | T::Option { inner: repr } | T::Array { elem: repr } => {
+            json_shape_error(repr, field)
+        }
+        T::Enum { cases, .. } => {
+            for (_, payload) in cases {
+                if let Some(payload) = payload {
+                    json_shape_error(payload, field)?;
+                }
+            }
+            Ok(())
+        }
+        T::Union { members } => {
+            for member in members {
+                json_shape_error(member, field)?;
+            }
+            Ok(())
+        }
+        T::Leaf { .. } => Ok(()),
     }
 }
 

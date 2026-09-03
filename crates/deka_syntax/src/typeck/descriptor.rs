@@ -28,12 +28,17 @@ use super::Checker;
 pub enum DescriptorTree<'a> {
     /// Scalar / marker node: `{kind, name}` with `kind` drawn from the same
     /// vocabulary `__deka_type_of` uses (`number`, `string`, `struct`, …).
-    Leaf { kind: &'a str, name: String },
+    Leaf {
+        kind: &'a str,
+        name: String,
+    },
     Struct {
         name: &'a str,
         fields: Vec<DescriptorField<'a>>,
     },
-    Interface { name: &'a str },
+    Interface {
+        name: &'a str,
+    },
     Newtype {
         name: &'a str,
         repr: Box<DescriptorTree<'a>>,
@@ -42,9 +47,15 @@ pub enum DescriptorTree<'a> {
         name: &'a str,
         cases: Vec<(&'a str, Option<DescriptorTree<'a>>)>,
     },
-    Array { elem: Box<DescriptorTree<'a>> },
-    Option { inner: Box<DescriptorTree<'a>> },
-    Union { members: Vec<DescriptorTree<'a>> },
+    Array {
+        elem: Box<DescriptorTree<'a>>,
+    },
+    Option {
+        inner: Box<DescriptorTree<'a>>,
+    },
+    Union {
+        members: Vec<DescriptorTree<'a>>,
+    },
 }
 
 /// One struct field in a descriptor tree.
@@ -53,6 +64,19 @@ pub struct DescriptorField<'a> {
     pub name: &'a str,
     pub optional: bool,
     pub ty: DescriptorTree<'a>,
+}
+
+/// A compile-time JSON method call and the static shape it specializes.
+#[derive(Clone, Debug)]
+pub struct JsonCall<'a> {
+    pub operation: JsonOperation,
+    pub shape: DescriptorTree<'a>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JsonOperation {
+    ToJson,
+    ParseJson,
 }
 
 /// A recorded `.type()` call site inside a `super` function. `param` is set
@@ -153,10 +177,7 @@ impl<'a> Checker<'a> {
                     let err = self.descriptor_tree_rec(&args[1], span, seen)?;
                     Ok(DescriptorTree::Enum {
                         name: "Result",
-                        cases: vec![
-                            ("Ok", Some(ok)),
-                            ("Err", Some(err)),
-                        ],
+                        cases: vec![("Ok", Some(ok)), ("Err", Some(err))],
                     })
                 } else {
                     Err(format!(
@@ -254,7 +275,9 @@ impl<'a> Checker<'a> {
                     Some(ref subst) => super::types::substitute_type(&resolved, subst),
                     None => resolved,
                 };
-                let tree = self.descriptor_tree_rec(&resolved, span, seen)?;
+                let tree = self.descriptor_tree_rec(&resolved, span, seen).map_err(|message| {
+                    format!("cannot serialize field `{}`: {}", field.name, message)
+                })?;
                 fields.push(DescriptorField {
                     name: field.name,
                     optional: field.optional,

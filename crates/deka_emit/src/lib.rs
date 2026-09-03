@@ -43,6 +43,7 @@ mod tests {
             &typeck.method_calls,
             &typeck.type_of_calls,
             &typeck.signature_calls,
+            &typeck.json_calls,
             &typeck.array_first_last_calls,
             // super_calls/static_type_calls are no longer produced by the
             // typechecker (deka#561); the parameters stay for PR B.
@@ -55,6 +56,19 @@ mod tests {
             None,
         )
         .expect("emit failed")
+    }
+
+    #[test]
+    fn emit_json_struct_round_trip_shape() {
+        let out = parse_check_and_emit(
+            "struct User { name: string; nickname: Option<string> }\nconst u = User { name: \"bo\", nickname: Some(\"\") }\nconst text = u.toJSON()\nconst back = text.parseJSON<User>()",
+        );
+        assert!(out.contains("function toJSON$User(v)"), "got: {out}");
+        assert!(out.contains("function parseJSON$User(s)"), "got: {out}");
+        assert!(out.contains("\"User\""), "got: {out}");
+        assert!(out.contains("\"Option\""), "got: {out}");
+        assert!(!out.contains("globalThis"), "got: {out}");
+        assert!(!out.contains("prototype.toJSON"), "got: {out}");
     }
 
     #[test]
@@ -735,6 +749,7 @@ mod tests {
             &std::collections::HashMap::new(),
             &std::collections::HashMap::new(),
             &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
             &static_type_calls,
             &std::collections::HashMap::new(),
             &std::collections::HashMap::new(),
@@ -786,6 +801,7 @@ mod tests {
         let out = emit_js_with_options(&program, source, &std::collections::HashMap::new(), None,
             &typeck.unwrap_calls, &typeck.operator_rewrites, &typeck.method_calls,
             &typeck.type_of_calls, &typeck.signature_calls, &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
             &std::collections::HashMap::new(), &std::collections::HashMap::new(),
             &typeck.jsx_optional_props, &typeck.enum_case_patterns,
             &typeck.union_type_patterns, "module.ds", Some(&live)).expect("emit failed");
