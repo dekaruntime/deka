@@ -573,11 +573,17 @@ impl<'src> Formatter<'src> {
                 self.write(" ");
                 self.fmt_block(body, stmt_end_line);
             }
-            ExportDecl::NamedGroup { names } => {
+            ExportDecl::NamedGroup { names, source } => {
                 self.write("export { ");
                 let parts: Vec<String> = names.iter().map(export_name_to_string).collect();
                 self.write(&parts.join(", "));
                 self.write(" }");
+                if let Some(source) = source {
+                    self.write(" from ");
+                    self.write("\"");
+                    self.write(source);
+                    self.write("\"");
+                }
             }
         }
     }

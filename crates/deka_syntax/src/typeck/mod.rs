@@ -557,7 +557,7 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                     exports.values.insert(*name, Type::Infer);
                 }
             }
-            ast::ExportDecl::NamedGroup { names } => {
+            ast::ExportDecl::NamedGroup { names, .. } => {
                 for export_name in names.iter() {
                     let local = export_name.name;
                     let external = export_name.alias.unwrap_or(local);

@@ -460,6 +460,45 @@ pub fn compile_module_graph_with_options(
         );
     }
 
+    // `collect_module_exports` can identify a re-export name, but the graph
+    // must resolve that name through the barrel's import edge so downstream
+    // modules receive the actual signature and runtime export metadata.
+    for _ in 0..modules.len() {
+        let mut changed = false;
+        for module in modules.values() {
+            let Some(program) = programs.get(&module.path) else { continue };
+            let mut imports_by_local: HashMap<&str, (&str, &PathBuf)> = HashMap::new();
+            for stmt in program.statements.iter() {
+                if let deka_syntax::Stmt::Import { specifiers, source, .. } = stmt {
+                    if let Some(dep) = module.dependencies.get(*source) {
+                        for spec in specifiers.iter() {
+                            imports_by_local.insert(spec.local, (spec.imported, dep));
+                        }
+                    }
+                }
+            }
+            let export_specs: Vec<(&str, &str, Option<&str>)> = program.statements.iter()
+                .filter_map(|stmt| match stmt {
+                    deka_syntax::Stmt::Export { decl: deka_syntax::ExportDecl::NamedGroup { names, source }, .. } =>
+                        Some(names.iter().map(move |n| (n.name, n.alias.unwrap_or(n.name), *source)).collect::<Vec<_>>()),
+                    _ => None,
+                })
+                .flatten().collect();
+            for (local, external, explicit_source) in export_specs {
+                let (imported, dep) = if let Some(source) = explicit_source {
+                    let Some(dep) = module.dependencies.get(source) else { continue };
+                    (local, dep)
+                } else {
+                    let Some((imported, dep)) = imports_by_local.get(local).copied() else { continue };
+                    (imported, dep)
+                };
+                let Some(dep_exports) = exports.get(dep).cloned() else { continue };
+                changed |= copy_export(&mut exports, &module.path, &dep_exports, imported, external);
+            }
+        }
+        if !changed { break; }
+    }
+
     // Reject imports of names the dependency does not export. The typechecker
     // binds imported names loosely, so without this check a bad import only
     // surfaced as a runtime link error (deka#198), and browser project mode
@@ -605,6 +644,41 @@ pub fn compile_module_graph_with_options(
         modules: emitted,
         imports: all_imports,
     })
+}
+
+fn copy_export<'a>(
+    exports: &mut HashMap<PathBuf, deka_syntax::ModuleExports<'a>>,
+    target: &Path,
+    source: &deka_syntax::ModuleExports<'a>,
+    imported: &'a str,
+    external: &'a str,
+) -> bool {
+    let Some(dest) = exports.get_mut(target) else { return false };
+    let mut changed = false;
+    if let Some(value) = source.values.get(imported) {
+        changed |= dest.values.insert(external, value.clone()) != Some(value.clone());
+    }
+    if let Some(info) = source.structs.get(imported) {
+        changed |= dest.structs.insert(external, info.clone()).is_none();
+    }
+    if let Some(info) = source.enums.get(imported) {
+        changed |= dest.enums.insert(external, info.clone()).is_none();
+    }
+    if let Some(info) = source.aliases.get(imported) {
+        changed |= dest.aliases.insert(external, info.clone()).is_none();
+    }
+    if let Some(info) = source.newtypes.get(imported) {
+        changed |= dest.newtypes.insert(external, info.clone()).is_none();
+    }
+    for ((receiver, method), info) in &source.receiver_methods {
+        if *receiver == imported {
+            changed |= dest.receiver_methods.insert((external, *method), info.clone()).is_none();
+        }
+    }
+    if let Some(params) = source.instantiated_fns.get(imported) {
+        changed |= dest.instantiated_fns.insert(external, params.clone()).is_none();
+    }
+    changed
 }
 
 fn diag(line: usize, column: usize, message: String) -> Diagnostic {
@@ -758,6 +832,40 @@ mod tests {
         assert_eq!(result.modules.len(), 2);
         assert!(result.modules[&main].contains("add(1, 2)"));
         assert!(result.modules[&math].contains("function add"));
+    }
+
+    #[test]
+    fn graph_resolves_imported_symbol_through_barrel() {
+        let root = PathBuf::from("/project");
+        let a = root.join("a.ds");
+        let b = root.join("b.ds");
+        let c = root.join("c.ds");
+        let mut files = HashMap::new();
+        files.insert(a.clone(), "export fn validate(json: string) string { return json; }".to_string());
+        files.insert(b.clone(), "import { validate } from \"./a.ds\"; export { validate };".to_string());
+        files.insert(c.clone(), "import { validate } from \"./b.ds\"; const result: string = validate(\"{}\");".to_string());
+        let mut aliases = HashMap::new();
+        aliases.insert((c.clone(), "./b.ds".to_string()), b.clone());
+        aliases.insert((b.clone(), "./a.ds".to_string()), a.clone());
+        let result = compile_module_graph(&c, &InMemoryLoader { files, aliases }).expect("barrel compiles");
+        assert_eq!(result.modules.len(), 3);
+    }
+
+    #[test]
+    fn graph_resolves_direct_reexport_through_barrel() {
+        let root = PathBuf::from("/project");
+        let a = root.join("a.ds");
+        let b = root.join("b.ds");
+        let c = root.join("c.ds");
+        let mut files = HashMap::new();
+        files.insert(a.clone(), "export fn validate(json: string) string { return json; }".to_string());
+        files.insert(b.clone(), "export { validate } from \"./a.ds\";".to_string());
+        files.insert(c.clone(), "import { validate } from \"./b.ds\"; const result: string = validate(\"{}\");".to_string());
+        let mut aliases = HashMap::new();
+        aliases.insert((c.clone(), "./b.ds".to_string()), b.clone());
+        aliases.insert((b.clone(), "./a.ds".to_string()), a.clone());
+        let result = compile_module_graph(&c, &InMemoryLoader { files, aliases }).expect("direct reexport compiles");
+        assert_eq!(result.modules.len(), 3);
     }
 
     #[test]

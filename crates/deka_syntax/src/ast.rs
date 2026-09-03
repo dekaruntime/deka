@@ -218,6 +218,7 @@ pub enum ExportDecl<'a> {
     /// `export { a, b as c }` — re-exports already-declared names.
     NamedGroup {
         names: &'a [ExportName<'a>],
+        source: Option<&'a str>,
     },
 }
 
