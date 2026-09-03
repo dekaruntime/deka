@@ -37,7 +37,9 @@ Chaining works because every call is rewritten independently:
   `` method `slugify` is declared on `string`, not `number` ``.
 - A user extension shadows a builtin **method** of the same name:
   declaring `fn (s string) toUpperCase() string` reroutes `s.toUpperCase()`
-  to your implementation.
+  to your implementation. The shadow is total within the module: every
+  call-shaped `s.toUpperCase()` resolves to the extension, including calls
+  written textually before the declaration.
 - Declaring an extension on a builtin **property** is rejected:
   `fn (s string) length() number` fails with
   `` cannot declare extension `length` on `string`: `length` is a builtin property ``.
