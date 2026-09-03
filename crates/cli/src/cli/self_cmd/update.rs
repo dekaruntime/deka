@@ -599,13 +599,16 @@ fn get_uid() -> Result<String, String> {
 }
 
 fn load_managed_units(context: &Context) -> Result<Vec<String>, String> {
-    if let Some(config_path) = context.args.params.get("--config") {
-        let units = load_managed_units_from_config_path(Path::new(config_path))?;
-        if !units.is_empty() {
-            return Ok(units);
-        }
-    }
+    load_managed_units_for(managed_units_from_env()?, context)
+}
 
+/// Reads and validates `DEKA_SELF_MANAGED_UNITS`.
+///
+/// Split out so the loader below can be exercised without touching
+/// process-global state. `std::env::set_var` is process-wide and cargo runs
+/// tests as threads in one process, so tests that set this variable raced
+/// readers of the same variable running in parallel threads (deka#537).
+fn managed_units_from_env() -> Result<Vec<String>, String> {
     let mut units = Vec::new();
     if let Ok(env_units) = std::env::var("DEKA_SELF_MANAGED_UNITS") {
         for s in env_units.split(',') {
@@ -616,8 +619,24 @@ fn load_managed_units(context: &Context) -> Result<Vec<String>, String> {
             }
         }
     }
-
     Ok(units)
+}
+
+/// The loader itself, with the env-resolved units passed in. An explicit
+/// `--config` with a non-empty `managed_units` list wins over the env
+/// fallback; a CWD `deka.json` is never consulted.
+fn load_managed_units_for(
+    env_units: Vec<String>,
+    context: &Context,
+) -> Result<Vec<String>, String> {
+    if let Some(config_path) = context.args.params.get("--config") {
+        let units = load_managed_units_from_config_path(Path::new(config_path))?;
+        if !units.is_empty() {
+            return Ok(units);
+        }
+    }
+
+    Ok(env_units)
 }
 
 fn load_managed_units_from_config_path(path: &Path) -> Result<Vec<String>, String> {
@@ -821,15 +840,11 @@ mod tests {
     fn load_managed_units_from_env() {
         let _guard = ENV_TEST_GUARD.lock().expect("env test guard");
 
-        let dir = std::env::temp_dir().join(format!("deka-env-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let ctx = dummy_context(dir.clone());
-
         // Clear any stale value from a previously interrupted run.
         unsafe { std::env::remove_var("DEKA_SELF_MANAGED_UNITS"); }
 
-        // no deka.json, no env -> empty
-        assert!(load_managed_units(&ctx).unwrap().is_empty());
+        // no env -> empty
+        assert!(managed_units_from_env().unwrap().is_empty());
 
         unsafe {
             std::env::set_var(
@@ -837,41 +852,29 @@ mod tests {
                 "gg.tana.deka-platform,gg.tana.deka-edge",
             );
         }
-        let units = load_managed_units(&ctx).unwrap();
+        let units = managed_units_from_env().unwrap();
         assert_eq!(units, vec!["gg.tana.deka-platform", "gg.tana.deka-edge"]);
         unsafe {
             std::env::remove_var("DEKA_SELF_MANAGED_UNITS");
         }
-
-        let _ = std::fs::remove_dir(&dir);
     }
 
     #[test]
     fn load_managed_units_does_not_trust_cwd_deka_json() {
-        let _guard = ENV_TEST_GUARD.lock().expect("env test guard");
-
         let dir = std::env::temp_dir().join(format!("deka-json-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let deka_json = dir.join("deka.json");
         let content = r#"{"self":{"update":{"managed_units":["ssh.service"]}}}"#;
         std::fs::write(&deka_json, content).unwrap();
 
-        // Ensure the env variable is not set from another test.
-        unsafe { std::env::remove_var("DEKA_SELF_MANAGED_UNITS"); }
-
         let ctx = dummy_context(dir.clone());
-        let units = load_managed_units(&ctx).unwrap();
+        // No env units: the CWD deka.json must not be consulted.
+        let units = load_managed_units_for(Vec::new(), &ctx).unwrap();
         assert!(units.is_empty());
 
         // CWD deka.json does not override the explicit env fallback.
-        unsafe {
-            std::env::set_var("DEKA_SELF_MANAGED_UNITS", "gg.tana.other");
-        }
-        let units2 = load_managed_units(&ctx).unwrap();
+        let units2 = load_managed_units_for(vec!["gg.tana.other".to_string()], &ctx).unwrap();
         assert_eq!(units2, vec!["gg.tana.other"]);
-        unsafe {
-            std::env::remove_var("DEKA_SELF_MANAGED_UNITS");
-        }
 
         // cleanup
         let _ = std::fs::remove_file(&deka_json);
@@ -896,7 +899,9 @@ mod tests {
             config_path.to_string_lossy().to_string(),
         );
 
-        let units = load_managed_units(&ctx).unwrap();
+        // Pass the env-resolved units in directly: this test must not read
+        // `DEKA_SELF_MANAGED_UNITS` while the env-mutating tests above run.
+        let units = load_managed_units_for(Vec::new(), &ctx).unwrap();
         assert_eq!(units, vec!["gg.tana.deka-platform"]);
 
         let _ = std::fs::remove_file(&config_path);
@@ -921,7 +926,7 @@ mod tests {
             config_path.to_string_lossy().to_string(),
         );
 
-        let err = load_managed_units(&ctx).expect_err("non-Tana unit should fail");
+        let err = load_managed_units_for(Vec::new(), &ctx).expect_err("non-Tana unit should fail");
         assert!(err.contains("gg.tana."));
 
         let _ = std::fs::remove_file(&config_path);
@@ -932,20 +937,14 @@ mod tests {
     fn env_rejects_non_tana_managed_unit() {
         let _guard = ENV_TEST_GUARD.lock().expect("env test guard");
 
-        let dir = std::env::temp_dir().join(format!("deka-env-bad-unit-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let ctx = dummy_context(dir.clone());
-
         unsafe {
             std::env::set_var("DEKA_SELF_MANAGED_UNITS", "ssh.service");
         }
-        let err = load_managed_units(&ctx).expect_err("non-Tana env unit should fail");
+        let err = managed_units_from_env().expect_err("non-Tana env unit should fail");
         assert!(err.contains("gg.tana."));
         unsafe {
             std::env::remove_var("DEKA_SELF_MANAGED_UNITS");
         }
-
-        let _ = std::fs::remove_dir(&dir);
     }
 
     #[test]

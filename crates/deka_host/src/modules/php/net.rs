@@ -1,5 +1,5 @@
 use super::bridge_metrics::record_bridge_proto_metric;
-use super::security::enforce_net;
+use super::security::{enforce_net_with, security_policy_from_env};
 use super::*;
 use deno_core::OpState;
 use rustls::{Certificate, PrivateKey, ServerName};
@@ -44,6 +44,12 @@ pub(super) struct NetState {
     next_listener_handle: u64,
     handles: HashMap<u64, NetHandle>,
     listeners: HashMap<u64, NetListenerHandle>,
+    /// Fixed policy for this isolate's net bridge. `None` (the
+    /// production default) re-reads `DEKA_SECURITY_POLICY` from the
+    /// process env on every dispatch, preserving the historical
+    /// behaviour. Tests seed a policy via `with_policy` so isolates stop
+    /// racing on the process-global env var (deka#537).
+    policy: Option<SecurityPolicy>,
 }
 
 impl NetState {
@@ -53,6 +59,14 @@ impl NetState {
             next_listener_handle: 1,
             handles: HashMap::new(),
             listeners: HashMap::new(),
+            policy: None,
+        }
+    }
+
+    pub(super) fn with_policy(policy: SecurityPolicy) -> Self {
+        Self {
+            policy: Some(policy),
+            ..Self::new()
         }
     }
 }
@@ -547,7 +561,7 @@ pub(super) fn net_call_impl(
                             "data": out,
                             "found": false,
                             "eof": true
-                        }))
+                        }));
                     }
                     Ok(1) => {
                         out.push(byte[0]);
@@ -563,7 +577,9 @@ pub(super) fn net_call_impl(
                     }
                     Ok(_) => unreachable!("single-byte read returned more than one byte"),
                     Err(e) => {
-                        return Ok(serde_json::json!({ "ok": false, "error": format!("read_until: {}", e) }))
+                        return Ok(
+                            serde_json::json!({ "ok": false, "error": format!("read_until: {}", e) }),
+                        );
                     }
                 }
             }
@@ -1031,7 +1047,10 @@ pub(super) fn net_proto_response_to_json(
             }
             Action::ReadUntil(read_until) => {
                 out.insert("data".to_string(), bytes_to_json_array(&read_until.data));
-                out.insert("found".to_string(), serde_json::Value::Bool(read_until.found));
+                out.insert(
+                    "found".to_string(),
+                    serde_json::Value::Bool(read_until.found),
+                );
                 out.insert("eof".to_string(), serde_json::Value::Bool(read_until.eof));
             }
         }
@@ -1042,6 +1061,22 @@ pub(super) fn net_proto_response_to_json(
 
 pub(super) fn net_call_proto_impl(
     state: &mut NetState,
+    request: &[u8],
+) -> Result<Vec<u8>, deno_core::error::CoreError> {
+    // A seeded policy wins; otherwise fall back to the env read the
+    // bridge has always done (production path).
+    let policy = state
+        .policy
+        .clone()
+        .unwrap_or_else(security_policy_from_env);
+    net_call_proto_impl_with(state, &policy, request)
+}
+
+/// The dispatch itself, with the policy passed in. See `NetState::policy`
+/// for why this exists.
+pub(super) fn net_call_proto_impl_with(
+    state: &mut NetState,
+    policy: &SecurityPolicy,
     request: &[u8],
 ) -> Result<Vec<u8>, deno_core::error::CoreError> {
     let started = Instant::now();
@@ -1078,7 +1113,7 @@ pub(super) fn net_call_proto_impl(
             handle_target(state, handle)?
         }
     };
-    enforce_net(Some(&net_target))?;
+    enforce_net_with(policy, Some(&net_target))?;
     let response_json = net_call_impl(state, action, payload)?;
     let response = net_json_response_to_proto(&response_json, kind);
     let out = response.encode_to_vec();
@@ -1167,16 +1202,20 @@ pub(super) fn op_php_net_proto_decode(
 #[cfg(test)]
 mod tests {
     use super::proto;
-    use super::{NetState, net_call_proto_impl, net_policy_target, tcp_connect_port};
+    use super::{
+        NetState, SecurityPolicy, net_call_proto_impl_with, net_policy_target, tcp_connect_port,
+    };
     use prost::Message;
     use serde_json::json;
     use std::io::{ErrorKind, Write};
     use std::net::TcpListener;
-    use std::sync::{Mutex, OnceLock};
 
-    fn policy_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
+    /// Build a policy that allows exactly one net target. Tests pass this
+    /// in directly instead of setting `DEKA_SECURITY_POLICY` — the env is
+    /// process-global and parallel tests raced on it (deka#537).
+    fn test_net_policy(allow: &str) -> SecurityPolicy {
+        let document = json!({ "security": { "allow": { "net": [allow] } } });
+        runtime_core::security_policy::parse_deka_security_policy(&document).policy
     }
 
     #[test]
@@ -1208,20 +1247,12 @@ mod tests {
     #[test]
     fn tcp_proto_rejects_overflow_before_policy_or_socket_connect() {
         let mut state = NetState::new();
-        let _lock = policy_lock().lock().expect("policy lock");
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
         listener
             .set_nonblocking(true)
             .expect("set listener nonblocking");
         let wrapped_port = listener.local_addr().expect("listener address").port() as u32;
         let overflow_port = wrapped_port + 65_536;
-        let previous = std::env::var_os("DEKA_SECURITY_POLICY");
-        unsafe {
-            std::env::set_var(
-                "DEKA_SECURITY_POLICY",
-                format!(r#"{{"security":{{"allow":{{"net":["127.0.0.1:{overflow_port}"]}}}}}}"#),
-            );
-        }
 
         let request = proto::bridge_v1::NetRequest {
             schema_version: 1,
@@ -1233,47 +1264,25 @@ mod tests {
                 },
             )),
         };
-        let error = net_call_proto_impl(&mut state, &request.encode_to_vec())
+        let policy = test_net_policy(&format!("127.0.0.1:{overflow_port}"));
+        let error = net_call_proto_impl_with(&mut state, &policy, &request.encode_to_vec())
             .expect_err("overflow rejected");
         assert!(error.to_string().contains("1..=65535"));
         assert!(matches!(listener.accept(), Err(error) if error.kind() == ErrorKind::WouldBlock));
-
-        unsafe {
-            match previous {
-                Some(value) => std::env::set_var("DEKA_SECURITY_POLICY", value),
-                None => std::env::remove_var("DEKA_SECURITY_POLICY"),
-            }
-        }
     }
 
     #[test]
     fn tcp_host_port_policy_allows_only_the_manifest_endpoint() {
-        let _lock = policy_lock().lock().expect("policy lock");
-        let previous = std::env::var_os("DEKA_SECURITY_POLICY");
-        unsafe {
-            std::env::set_var(
-                "DEKA_SECURITY_POLICY",
-                r#"{"security":{"allow":{"net":["127.0.0.1:9418"]}}}"#,
-            );
-        }
+        let policy = test_net_policy("127.0.0.1:9418");
 
-        assert!(super::super::security::enforce_net(Some("127.0.0.1:9418")).is_ok());
-        assert!(super::super::security::enforce_net(Some("127.0.0.1:9419")).is_err());
-        assert!(super::super::security::enforce_net(Some("127.0.0.1")).is_err());
-
-        unsafe {
-            match previous {
-                Some(value) => std::env::set_var("DEKA_SECURITY_POLICY", value),
-                None => std::env::remove_var("DEKA_SECURITY_POLICY"),
-            }
-        }
+        assert!(super::super::security::enforce_net_with(&policy, Some("127.0.0.1:9418")).is_ok());
+        assert!(super::super::security::enforce_net_with(&policy, Some("127.0.0.1:9419")).is_err());
+        assert!(super::super::security::enforce_net_with(&policy, Some("127.0.0.1")).is_err());
     }
 
     #[test]
     fn tcp_handle_operations_retain_the_allowed_connect_target() {
         let mut state = NetState::new();
-        let _lock = policy_lock().lock().expect("policy lock");
-        let previous = std::env::var_os("DEKA_SECURITY_POLICY");
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
         let address = listener.local_addr().expect("listener address");
         let server = std::thread::spawn(move || {
@@ -1283,13 +1292,7 @@ mod tests {
             std::io::Write::write_all(&mut stream, &buffer).expect("write response");
         });
         let allowed = format!("127.0.0.1:{}", address.port());
-
-        unsafe {
-            std::env::set_var(
-                "DEKA_SECURITY_POLICY",
-                format!(r#"{{"security":{{"allow":{{"net":["{allowed}"]}}}}}}"#),
-            );
-        }
+        let allowed_policy = test_net_policy(&allowed);
 
         let connect = super::net_action_payload_to_proto_request(
             "connect",
@@ -1297,7 +1300,8 @@ mod tests {
         )
         .expect("encode connect");
         let connect_response =
-            net_call_proto_impl(&mut state, &connect.encode_to_vec()).expect("connect");
+            net_call_proto_impl_with(&mut state, &allowed_policy, &connect.encode_to_vec())
+                .expect("connect");
         let connect_response = proto::bridge_v1::NetResponse::decode(connect_response.as_slice())
             .expect("decode connect response");
         let handle = match connect_response.action.expect("connect action") {
@@ -1312,56 +1316,45 @@ mod tests {
             let request = super::net_action_payload_to_proto_request(action, &payload)
                 .expect("encode handle operation");
             assert!(
-                net_call_proto_impl(&mut state, &request.encode_to_vec()).is_ok(),
+                net_call_proto_impl_with(&mut state, &allowed_policy, &request.encode_to_vec())
+                    .is_ok(),
                 "{action} must use the allowed connect target"
             );
         }
 
-        unsafe {
-            std::env::set_var(
-                "DEKA_SECURITY_POLICY",
-                r#"{"security":{"allow":{"net":["127.0.0.1:1"]}}}"#,
-            );
-        }
+        let denied_policy = test_net_policy("127.0.0.1:1");
         let denied_write = super::net_action_payload_to_proto_request(
             "write",
             &json!({ "handle": handle, "data": "nope" }),
         )
         .expect("encode denied write");
-        assert!(net_call_proto_impl(&mut state, &denied_write.encode_to_vec()).is_err());
+        assert!(
+            net_call_proto_impl_with(&mut state, &denied_policy, &denied_write.encode_to_vec())
+                .is_err()
+        );
 
         let denied_connect = super::net_action_payload_to_proto_request(
             "connect",
             &json!({ "host": "127.0.0.1", "port": address.port() }),
         )
         .expect("encode denied connect");
-        assert!(net_call_proto_impl(&mut state, &denied_connect.encode_to_vec()).is_err());
+        assert!(
+            net_call_proto_impl_with(&mut state, &denied_policy, &denied_connect.encode_to_vec())
+                .is_err()
+        );
 
-        unsafe {
-            std::env::set_var(
-                "DEKA_SECURITY_POLICY",
-                format!(r#"{{"security":{{"allow":{{"net":["{allowed}"]}}}}}}"#),
-            );
-        }
         let close =
             super::net_action_payload_to_proto_request("close", &json!({ "handle": handle }))
                 .expect("encode close");
-        assert!(net_call_proto_impl(&mut state, &close.encode_to_vec()).is_ok());
+        assert!(
+            net_call_proto_impl_with(&mut state, &allowed_policy, &close.encode_to_vec()).is_ok()
+        );
         server.join().expect("server join");
-
-        unsafe {
-            match previous {
-                Some(value) => std::env::set_var("DEKA_SECURITY_POLICY", value),
-                None => std::env::remove_var("DEKA_SECURITY_POLICY"),
-            }
-        }
     }
 
     #[test]
     fn tcp_proto_binary_roundtrip_preserves_non_utf8_bytes() {
         let mut state = NetState::new();
-        let _lock = policy_lock().lock().expect("policy lock");
-        let previous = std::env::var_os("DEKA_SECURITY_POLICY");
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
         let address = listener.local_addr().expect("listener address");
         let payload = vec![0_u8, 1, 2, 127, 128, 200, 255];
@@ -1376,13 +1369,7 @@ mod tests {
             }
         });
         let allowed = format!("127.0.0.1:{}", address.port());
-
-        unsafe {
-            std::env::set_var(
-                "DEKA_SECURITY_POLICY",
-                format!(r#"{{"security":{{"allow":{{"net":["{allowed}"]}}}}}}"#),
-            );
-        }
+        let policy = test_net_policy(&allowed);
 
         let connect = super::net_action_payload_to_proto_request(
             "connect",
@@ -1390,7 +1377,8 @@ mod tests {
         )
         .expect("encode connect");
         let connect_response =
-            net_call_proto_impl(&mut state, &connect.encode_to_vec()).expect("connect");
+            net_call_proto_impl_with(&mut state, &policy, &connect.encode_to_vec())
+                .expect("connect");
         let connect_response = proto::bridge_v1::NetResponse::decode(connect_response.as_slice())
             .expect("decode connect response");
         let handle = match connect_response.action.expect("connect action") {
@@ -1407,7 +1395,7 @@ mod tests {
         )
         .expect("encode write");
         let write_response =
-            net_call_proto_impl(&mut state, &write.encode_to_vec()).expect("write");
+            net_call_proto_impl_with(&mut state, &policy, &write.encode_to_vec()).expect("write");
         let write_response = proto::bridge_v1::NetResponse::decode(write_response.as_slice())
             .expect("decode write response");
         assert_eq!(
@@ -1426,7 +1414,8 @@ mod tests {
             &json!({ "handle": handle, "max_bytes": payload.len() as u64 }),
         )
         .expect("encode read");
-        let read_response = net_call_proto_impl(&mut state, &read.encode_to_vec()).expect("read");
+        let read_response =
+            net_call_proto_impl_with(&mut state, &policy, &read.encode_to_vec()).expect("read");
         let read_response = proto::bridge_v1::NetResponse::decode(read_response.as_slice())
             .expect("decode read response");
         let read_bytes = match read_response.action.expect("read action") {
@@ -1438,34 +1427,19 @@ mod tests {
         let close =
             super::net_action_payload_to_proto_request("close", &json!({ "handle": handle }))
                 .expect("encode close");
-        assert!(net_call_proto_impl(&mut state, &close.encode_to_vec()).is_ok());
+        assert!(net_call_proto_impl_with(&mut state, &policy, &close.encode_to_vec()).is_ok());
         server.join().expect("server join");
-
-        unsafe {
-            match previous {
-                Some(value) => std::env::set_var("DEKA_SECURITY_POLICY", value),
-                None => std::env::remove_var("DEKA_SECURITY_POLICY"),
-            }
-        }
     }
 
     #[test]
     fn tcp_listen_accept_roundtrip() {
         let mut state = NetState::new();
-        let _lock = policy_lock().lock().expect("policy lock");
-        let previous = std::env::var_os("DEKA_SECURITY_POLICY");
 
         let raw_listener = TcpListener::bind("127.0.0.1:0").expect("reserve listener");
         let addr = raw_listener.local_addr().expect("listener address");
         let allowed = format!("127.0.0.1:{}", addr.port());
+        let policy = test_net_policy(&allowed);
         drop(raw_listener);
-
-        unsafe {
-            std::env::set_var(
-                "DEKA_SECURITY_POLICY",
-                format!(r#"{{"security":{{"allow":{{"net":["{allowed}"]}}}}}}"#),
-            );
-        }
 
         let listen = super::net_action_payload_to_proto_request(
             "listen",
@@ -1477,7 +1451,7 @@ mod tests {
         )
         .expect("encode listen");
         let listen_response =
-            net_call_proto_impl(&mut state, &listen.encode_to_vec()).expect("listen");
+            net_call_proto_impl_with(&mut state, &policy, &listen.encode_to_vec()).expect("listen");
         let listen_response = proto::bridge_v1::NetResponse::decode(listen_response.as_slice())
             .expect("decode listen response");
         let listen_handle = match listen_response.action.expect("listen action") {
@@ -1499,7 +1473,7 @@ mod tests {
         )
         .expect("encode accept");
         let accept_response =
-            net_call_proto_impl(&mut state, &accept.encode_to_vec()).expect("accept");
+            net_call_proto_impl_with(&mut state, &policy, &accept.encode_to_vec()).expect("accept");
         let accept_response = proto::bridge_v1::NetResponse::decode(accept_response.as_slice())
             .expect("decode accept response");
         let conn_handle = match accept_response.action.expect("accept action") {
@@ -1512,7 +1486,8 @@ mod tests {
             &json!({ "handle": conn_handle, "max_bytes": 4 }),
         )
         .expect("encode read");
-        let read_response = net_call_proto_impl(&mut state, &read.encode_to_vec()).expect("read");
+        let read_response =
+            net_call_proto_impl_with(&mut state, &policy, &read.encode_to_vec()).expect("read");
         let read_response = proto::bridge_v1::NetResponse::decode(read_response.as_slice())
             .expect("decode read response");
         let read_bytes = match read_response.action.expect("read action") {
@@ -1529,16 +1504,9 @@ mod tests {
             }),
         )
         .expect("encode write");
-        net_call_proto_impl(&mut state, &write.encode_to_vec()).expect("write");
+        net_call_proto_impl_with(&mut state, &policy, &write.encode_to_vec()).expect("write");
 
         client.join().expect("client join");
-
-        unsafe {
-            match previous {
-                Some(value) => std::env::set_var("DEKA_SECURITY_POLICY", value),
-                None => std::env::remove_var("DEKA_SECURITY_POLICY"),
-            }
-        }
     }
 
     #[test]
@@ -1549,20 +1517,12 @@ mod tests {
         let key_pem = cert.key_pair.serialize_pem().into_bytes();
 
         let mut state = NetState::new();
-        let _lock = policy_lock().lock().expect("policy lock");
-        let previous = std::env::var_os("DEKA_SECURITY_POLICY");
 
         let raw_listener = TcpListener::bind("127.0.0.1:0").expect("reserve listener");
         let addr = raw_listener.local_addr().expect("listener address");
         let allowed = format!("127.0.0.1:{}", addr.port());
+        let policy = test_net_policy(&allowed);
         drop(raw_listener);
-
-        unsafe {
-            std::env::set_var(
-                "DEKA_SECURITY_POLICY",
-                format!(r#"{{"security":{{"allow":{{"net":["{allowed}"]}}}}}}"#),
-            );
-        }
 
         let listen = super::net_action_payload_to_proto_request(
             "listen_tls",
@@ -1576,7 +1536,8 @@ mod tests {
         )
         .expect("encode listen_tls");
         let listen_response =
-            net_call_proto_impl(&mut state, &listen.encode_to_vec()).expect("listen_tls");
+            net_call_proto_impl_with(&mut state, &policy, &listen.encode_to_vec())
+                .expect("listen_tls");
         let listen_response = proto::bridge_v1::NetResponse::decode(listen_response.as_slice())
             .expect("decode listen response");
         let listen_handle = match listen_response.action.expect("listen action") {
@@ -1585,6 +1546,7 @@ mod tests {
         };
 
         let client_ca_cert = cert_pem.clone();
+        let client_policy = policy.clone();
         let client = std::thread::spawn(move || {
             let mut client_state = NetState::new();
             let connect_tls = super::net_action_payload_to_proto_request(
@@ -1598,9 +1560,12 @@ mod tests {
                 }),
             )
             .expect("encode connect_tls");
-            let connect_response =
-                net_call_proto_impl(&mut client_state, &connect_tls.encode_to_vec())
-                    .expect("connect_tls");
+            let connect_response = net_call_proto_impl_with(
+                &mut client_state,
+                &client_policy,
+                &connect_tls.encode_to_vec(),
+            )
+            .expect("connect_tls");
             let connect_response =
                 proto::bridge_v1::NetResponse::decode(connect_response.as_slice())
                     .expect("decode connect response");
@@ -1617,7 +1582,8 @@ mod tests {
                 }),
             )
             .expect("encode write");
-            net_call_proto_impl(&mut client_state, &write.encode_to_vec()).expect("write");
+            net_call_proto_impl_with(&mut client_state, &client_policy, &write.encode_to_vec())
+                .expect("write");
 
             let read = super::net_action_payload_to_proto_request(
                 "read",
@@ -1625,7 +1591,8 @@ mod tests {
             )
             .expect("encode read");
             let read_response =
-                net_call_proto_impl(&mut client_state, &read.encode_to_vec()).expect("read");
+                net_call_proto_impl_with(&mut client_state, &client_policy, &read.encode_to_vec())
+                    .expect("read");
             let read_response = proto::bridge_v1::NetResponse::decode(read_response.as_slice())
                 .expect("decode read response");
             let read_bytes = match read_response.action.expect("read action") {
@@ -1637,7 +1604,8 @@ mod tests {
             let close =
                 super::net_action_payload_to_proto_request("close", &json!({ "handle": handle }))
                     .expect("encode close");
-            net_call_proto_impl(&mut client_state, &close.encode_to_vec()).expect("close");
+            net_call_proto_impl_with(&mut client_state, &client_policy, &close.encode_to_vec())
+                .expect("close");
         });
 
         let accept = super::net_action_payload_to_proto_request(
@@ -1646,7 +1614,7 @@ mod tests {
         )
         .expect("encode accept");
         let accept_response =
-            net_call_proto_impl(&mut state, &accept.encode_to_vec()).expect("accept");
+            net_call_proto_impl_with(&mut state, &policy, &accept.encode_to_vec()).expect("accept");
         let accept_response = proto::bridge_v1::NetResponse::decode(accept_response.as_slice())
             .expect("decode accept response");
         let (conn_handle, peer_addr) = match accept_response.action.expect("accept action") {
@@ -1662,7 +1630,8 @@ mod tests {
             &json!({ "handle": conn_handle, "max_bytes": 4 }),
         )
         .expect("encode read");
-        let read_response = net_call_proto_impl(&mut state, &read.encode_to_vec()).expect("read");
+        let read_response =
+            net_call_proto_impl_with(&mut state, &policy, &read.encode_to_vec()).expect("read");
         let read_response = proto::bridge_v1::NetResponse::decode(read_response.as_slice())
             .expect("decode read response");
         let read_bytes = match read_response.action.expect("read action") {
@@ -1679,23 +1648,14 @@ mod tests {
             }),
         )
         .expect("encode write");
-        net_call_proto_impl(&mut state, &write.encode_to_vec()).expect("write");
+        net_call_proto_impl_with(&mut state, &policy, &write.encode_to_vec()).expect("write");
 
         client.join().expect("client join");
-
-        unsafe {
-            match previous {
-                Some(value) => std::env::set_var("DEKA_SECURITY_POLICY", value),
-                None => std::env::remove_var("DEKA_SECURITY_POLICY"),
-            }
-        }
     }
 
     #[test]
     fn tcp_proto_read_until_finds_delimiter_and_eof() {
         let mut state = NetState::new();
-        let _lock = policy_lock().lock().expect("policy lock");
-        let previous = std::env::var_os("DEKA_SECURITY_POLICY");
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
         let address = listener.local_addr().expect("listener address");
         let payload = b"hello\r\nworld";
@@ -1704,15 +1664,7 @@ mod tests {
             std::io::Write::write_all(&mut stream, payload).expect("write payload");
         });
 
-        unsafe {
-            std::env::set_var(
-                "DEKA_SECURITY_POLICY",
-                format!(
-                    r#"{{"security":{{"allow":{{"net":["127.0.0.1:{}"]}}}}}}"#,
-                    address.port()
-                ),
-            );
-        }
+        let policy = test_net_policy(&format!("127.0.0.1:{}", address.port()));
 
         let connect = super::net_action_payload_to_proto_request(
             "connect",
@@ -1720,7 +1672,8 @@ mod tests {
         )
         .expect("encode connect");
         let connect_response =
-            net_call_proto_impl(&mut state, &connect.encode_to_vec()).expect("connect");
+            net_call_proto_impl_with(&mut state, &policy, &connect.encode_to_vec())
+                .expect("connect");
         let connect_response = proto::bridge_v1::NetResponse::decode(connect_response.as_slice())
             .expect("decode connect response");
         let handle = match connect_response.action.expect("connect action") {
@@ -1738,7 +1691,8 @@ mod tests {
         )
         .expect("encode read_until");
         let read_response =
-            net_call_proto_impl(&mut state, &read_until.encode_to_vec()).expect("read_until");
+            net_call_proto_impl_with(&mut state, &policy, &read_until.encode_to_vec())
+                .expect("read_until");
         let read_response = proto::bridge_v1::NetResponse::decode(read_response.as_slice())
             .expect("decode read_until response");
         let (data, found, eof) = match read_response.action.expect("read_until action") {
@@ -1752,14 +1706,7 @@ mod tests {
         let close =
             super::net_action_payload_to_proto_request("close", &json!({ "handle": handle }))
                 .expect("encode close");
-        net_call_proto_impl(&mut state, &close.encode_to_vec()).expect("close");
+        net_call_proto_impl_with(&mut state, &policy, &close.encode_to_vec()).expect("close");
         server.join().expect("server join");
-
-        unsafe {
-            match previous {
-                Some(value) => std::env::set_var("DEKA_SECURITY_POLICY", value),
-                None => std::env::remove_var("DEKA_SECURITY_POLICY"),
-            }
-        }
     }
 }

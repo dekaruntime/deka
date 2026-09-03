@@ -245,6 +245,31 @@ fn apply_event(
 mod tests {
     use super::*;
 
+    /// Restores an env var on drop. The process env is globally shared
+    /// even though tests run on separate threads, so a test that sets a
+    /// var must put the previous value back (deka#537 hygiene).
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: String) -> Self {
+            let previous = std::env::var(key).ok();
+            unsafe { std::env::set_var(key, &value) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => unsafe { std::env::set_var(self.key, value) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
+
     fn header_map(pairs: &[(&str, &str)]) -> HashMap<String, String> {
         pairs
             .iter()
@@ -381,10 +406,9 @@ mod tests {
         };
 
         // Point both the pageview worker *and* the tenant resolver at the
-        // test Redis. SAFETY: tests set these before the worker spawns.
-        unsafe {
-            std::env::set_var("DEKA_REDIS_URL", &url);
-        }
+        // test Redis; the guard restores the previous value when the test
+        // ends (the var leaked past this test before, deka#537).
+        let _env = EnvGuard::set("DEKA_REDIS_URL", url.clone());
         let pid = std::process::id();
         let subdomain = format!("pvtest{}", pid);
         let shop = format!("shop_pvtest_{}", pid);

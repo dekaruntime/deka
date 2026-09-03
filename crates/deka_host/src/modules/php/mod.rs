@@ -40,7 +40,7 @@ mod phpx_types;
 mod security;
 mod wit;
 
-pub use security::enforce_net_public;
+pub use security::{enforce_net_public, enforce_net_public_with, security_policy_from_env};
 
 fn core_err(msg: impl Into<String>) -> deno_core::error::CoreError {
     deno_core::error::CoreError::from(std::io::Error::other(msg.into()))
@@ -94,6 +94,23 @@ deno_core::extension!(
 
 pub fn init() -> deno_core::Extension {
     php_core::init()
+}
+
+/// Same as [`init`], but the net bridge enforces the given policy instead
+/// of re-reading `DEKA_SECURITY_POLICY` from the process env on every
+/// dispatch. Tests use this to give each isolate its own policy rather
+/// than racing on the process-global env var (deka#537); production keeps
+/// calling [`init`] and reading the env per dispatch.
+pub fn init_with_net_policy(policy: SecurityPolicy) -> deno_core::Extension {
+    let mut extension = php_core::init();
+    let base_state_fn = extension.op_state_fn.take();
+    extension.op_state_fn = Some(Box::new(move |state| {
+        if let Some(base) = base_state_fn {
+            base(state);
+        }
+        state.put(net::NetState::with_policy(policy.clone()));
+    }));
+    extension
 }
 
 #[cfg(test)]

@@ -922,17 +922,7 @@ mod tests {
     use std::collections::HashMap;
     use std::fs;
     use std::net::TcpListener;
-    use std::sync::Mutex;
     use std::time::{Duration, Instant};
-
-    // DEKA_SECURITY_POLICY, ISOLATE_WORKERS, and the DEKA_*_ENV probe vars
-    // set by the real-topology serve tests below are all process-global
-    // (std::env::set_var). Rust runs `#[test]`s concurrently by default, so
-    // without serialization these tests race on the same env vars and
-    // intermittently read each other's policy/values (tana#913 QA flake).
-    // Mirrors the TEST_ENV_LOCK precedent in js_pipeline.rs for
-    // DEKA_MODULE_ROOT-mutating tests.
-    static SERVE_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     /// Verify the static handler template contains the __dekaFs confinement
     /// wrapper.  We check for the key guard identifiers that must be present
