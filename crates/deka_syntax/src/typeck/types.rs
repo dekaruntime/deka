@@ -170,7 +170,8 @@ pub enum UnionMemberTest<'a> {
     Primitive(&'a str),
     /// `x instanceof Uint8Array`.
     Bytes,
-    /// Named struct: `deka.getStructId(x) === "<Name>"`.
+    /// Named struct: `x?.__deka_struct === "<Name>"` (the brand tag is read
+    /// directly; no helper, no global — deka#551).
     Struct(&'a str),
     /// Enum: `x.__enum === "<Name>"`.
     Enum(&'a str),

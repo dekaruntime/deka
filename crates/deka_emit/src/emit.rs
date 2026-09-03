@@ -1,9 +1,9 @@
 //! Stateful JavaScript emitter for DekaScript compiler v2.
 //!
-//! Emits real runtime factories for structs (`deka.Struct`) and frozen case
+//! Emits real runtime factories for structs (`__deka_struct`) and frozen case
 //! objects for enums.  Receiver methods are registered on the struct factory
 //! prototype so `p.greet()` works, including methods promoted from embedded
-//! structs via the `deka.Struct` helper's embed map.
+//! structs via the `__deka_struct` helper's embed map.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -744,35 +744,34 @@ impl<'a> Emitter<'a> {
         let uses_typeof = !self.type_of_calls.is_empty();
 
         if self.uses_struct || self.uses_newtype {
-            self.out.push_str("const __deka = {");
             if self.uses_struct {
-                self.out.push_str(r###"Struct:(id,embeds)=>{function f(fields){const o=Object.create(f.prototype);Object.assign(o,fields);Object.defineProperty(o,'__deka_struct',{value:id,enumerable:false,writable:false,configurable:false});return o;}f.id=id;Object.defineProperty(f,'name',{value:id,configurable:true});f.prototype=Object.create(null);f.prototype.constructor=f;f.impl=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){return b.apply(this,x);};}else{for(const k in a)f.prototype[k]=a[k];}return f;};f.implMut=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka.MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return b.apply(this,x);};}else{for(const k in a){const fn=a[k];f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka.MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return fn.apply(this,x);};}}return f;};if(embeds){for(const [embedName,embedFactory] of Object.entries(embeds)){for(const key of Object.keys(embedFactory.prototype)){f.prototype[key]=function(...args){return this[embedName][key](...args);};}}}return f;},"###);
-                self.out.push_str("getStructId:(v)=>v?.__deka_struct,");
+                // Module-local factory, emitted in the same shape as
+                // deka#527's extensions and deka#529's descriptors: a mangled
+                // free function, no `globalThis` write, no cross-module merge
+                // (deka#551). The struct brand is a string id stored on the
+                // instance and compared by value, so cross-module identity
+                // needs no shared object — and no module pays for another
+                // module's helpers.
+                self.out.push_str(r###"function __deka_struct(id,embeds){function f(fields){const o=Object.create(f.prototype);Object.assign(o,fields);Object.defineProperty(o,'__deka_struct',{value:id,enumerable:false,writable:false,configurable:false});return o;}f.id=id;Object.defineProperty(f,'name',{value:id,configurable:true});f.prototype=Object.create(null);f.prototype.constructor=f;f.impl=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){return b.apply(this,x);};}else{for(const k in a)f.prototype[k]=a[k];}return f;};f.implMut=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka_MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return b.apply(this,x);};}else{for(const k in a){const fn=a[k];f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka_MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return fn.apply(this,x);};}}return f;};if(embeds){for(const [embedName,embedFactory] of Object.entries(embeds)){for(const key of Object.keys(embedFactory.prototype)){f.prototype[key]=function(...args){return this[embedName][key](...args);};}}}return f;}"###);
+                self.out.push('\n');
                 self.out.push_str(
-                    "MutationError:class extends Error{constructor(m){super(m);this.name='MutationError';}}",
+                    "class __deka_MutationError extends Error{constructor(m){super(m);this.name='MutationError';}}\n",
                 );
             }
             if self.uses_newtype {
-                if self.uses_struct {
-                    self.out.push_str(",");
-                }
-                self.out.push_str("__nt:Symbol.for('deka.nt')");
-            }
-            self.out.push_str("};\n");
-            self.out.push_str("const deka = globalThis.deka = { ...globalThis.deka, ...__deka };\n");
-            if self.uses_newtype {
-                self.out.push_str("const __p = deka.__nt;\n");
+                // The payload key is shared across modules through
+                // Symbol.for's registry — not through a globalThis merge.
+                self.out.push_str("const __p = Symbol.for('deka.nt');\n");
             }
         }
 
         // Builtin `.getType()` support (rfd#41, deka#529): a module-local
         // free function, emitted exactly the way deka#527 emits primitive
-        // extensions — tree-shakable, no `__deka` prelude, no globalThis.
+        // extensions — tree-shakable, no struct factory, no globalThis.
         // Tags are read directly (`v?.__deka_struct` / `v?.__enum` /
-        // `v?.__deka_newtype`): `deka.getStructId` only exists when the
-        // struct prelude is emitted, and `.getType()` alone must not force
-        // it. Descriptors are interned per (kind, name) and frozen, so `==`
-        // on them is identity.
+        // `v?.__deka_newtype`), so `.getType()` alone must not force the
+        // struct factory (deka#551). Descriptors are interned per (kind,
+        // name) and frozen, so `==` on them is identity.
         if uses_typeof {
             self.out.push_str("const __deka_type_cache = new Map();\n");
             self.out.push_str(r###"function __deka_type_of(v){const mk=(k,n)=>{const key=k+":"+n;let t=__deka_type_cache.get(key);if(!t){t=Object.freeze({kind:k,name:n,toString(){return this.name;}});__deka_type_cache.set(key,t);}return t;};if(v===null||v===undefined)return mk("none","none");if(v instanceof Uint8Array)return mk("bytes","bytes");const ty=typeof v;if(ty==="string"||ty==="number"||ty==="boolean"||ty==="function")return mk(ty,ty);if(Array.isArray(v))return mk("array","Array");const nt=v.__deka_newtype;if(nt)return mk("newtype",nt);const st=v.__deka_struct;if(st)return mk("struct",st);const en=v.__enum;if(en)return mk("enum",en);return mk("object","object");}"###);
@@ -895,22 +894,16 @@ impl<'a> Emitter<'a> {
     }
 
     fn needs_struct_helper(&self) -> bool {
-        // A struct-member union type-pattern emits `deka.getStructId(...)`,
-        // which only exists when the struct prelude block is emitted — even
-        // if the struct itself lives in an import and this module declares
-        // none (rfd#42, deka#530).
-        //
-        // Primitive extensions are plain free functions, not prototype
-        // registrations, so they must not force the struct prelude (deka#527).
+        // Receiver methods for struct receivers install on the factory
+        // prototype via `.impl`, so they need the factory emitted; primitive
+        // extensions are plain free functions and must not force it
+        // (deka#527). Struct type-patterns read the `__deka_struct` brand tag
+        // directly and need nothing (deka#551).
         !self.structs.is_empty()
             || self
                 .receiver_methods
                 .keys()
                 .any(|name| !is_primitive_receiver(name))
-            || self
-                .union_type_patterns
-                .values()
-                .any(|t| matches!(t, deka_syntax::typeck::UnionMemberTest::Struct(_)))
     }
 
     fn needs_prelude_enums(&self) -> bool {
@@ -1344,7 +1337,7 @@ impl<'a> Emitter<'a> {
                 write_indent(&mut self.out, 0);
                 self.out.push_str("const ");
                 self.out.push_str(name);
-                self.out.push_str(" = deka.Struct(");
+                self.out.push_str(" = __deka_struct(");
                 self.out.push_str(&json_string(name));
                 if !embeds.is_empty() {
                     self.out.push_str(", { ");
@@ -2609,8 +2602,8 @@ impl<'a> Emitter<'a> {
     }
 
     /// The runtime predicate for a union member type-pattern (rfd#42,
-    /// deka#530). Structs force the struct prelude block — `getStructId`
-    /// only exists when it is emitted.
+    /// deka#530). Structs read the `__deka_struct` brand tag directly — no
+    /// factory, no helper, nothing to force (deka#551).
     fn union_member_condition(
         &mut self,
         test: &deka_syntax::typeck::UnionMemberTest<'a>,
@@ -2625,8 +2618,9 @@ impl<'a> Emitter<'a> {
                 format!("{} instanceof Uint8Array", scrutinee_var)
             }
             deka_syntax::typeck::UnionMemberTest::Struct(name) => {
-                self.uses_struct = true;
-                format!("deka.getStructId({}) === \"{}\"", scrutinee_var, name)
+                // Read the brand tag directly, the same way
+                // `__deka_type_of` does — no prelude helper needed (deka#551).
+                format!("{}?.__deka_struct === \"{}\"", scrutinee_var, name)
             }
             deka_syntax::typeck::UnionMemberTest::Enum(name) => {
                 format!("{}.__enum === \"{}\"", scrutinee_var, name)
