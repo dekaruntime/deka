@@ -41,6 +41,9 @@ mod tests {
             &typeck.unwrap_calls,
             &typeck.operator_rewrites,
             &typeck.method_calls,
+            &typeck.type_of_calls,
+            &typeck.super_calls,
+            &typeck.static_type_calls,
             &typeck.jsx_optional_props,
             &typeck.enum_case_patterns,
             &typeck.union_type_patterns,
@@ -79,13 +82,49 @@ mod tests {
             "struct Point { x: number; y: number }\nfn f(v: Point | string) number { return match (v) { Point(p) => p.x, string(s) => s.length }; }",
         );
         assert!(
-            out.contains("deka.getStructId(__deka_scrutinee) === \"Point\""),
-            "expected getStructId predicate, got: {}",
+            out.contains("__deka_scrutinee?.__deka_struct === \"Point\""),
+            "expected brand-tag predicate, got: {}",
             out
         );
-        // The struct prelude (which defines getStructId) must be emitted.
-        assert!(out.contains("getStructId:"), "got: {}", out);
+        // The struct factory is emitted because the struct is declared in
+        // this module; the type-pattern itself reads the tag directly.
+        assert!(out.contains("function __deka_struct"), "got: {}", out);
         assert!(out.contains("const p = __deka_scrutinee;"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_struct_module_has_no_global_write() {
+        // deka#551: the prelude's `const deka = globalThis.deka = {...}`
+        // write is gone. Struct machinery is module-local, and the brand is
+        // a string id compared by value, so nothing needs a shared global.
+        let out = parse_and_emit(
+            "struct Point { x: number; y: number } const p = Point { x: 1, y: 2 };",
+        );
+        assert!(out.contains("const Point = __deka_struct(\"Point\")"), "got: {}", out);
+        assert!(!out.contains("globalThis"), "got: {}", out);
+        // A user binding named `deka` must not collide with emitted helpers.
+        let out = parse_and_emit(
+            "struct Point { x: number } const deka = Point { x: 1 };",
+        );
+        assert!(!out.contains("globalThis"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_newtype_module_has_no_global_write() {
+        // deka#551: the newtype payload key is shared through Symbol.for's
+        // registry, not a globalThis merge.
+        let out = parse_and_emit("type Cents number\nconst c = Cents(500);");
+        assert!(out.contains("const __p = Symbol.for('deka.nt');"), "got: {}", out);
+        assert!(!out.contains("globalThis"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_enum_module_has_no_global_write() {
+        // Enum machinery was always module-local; pin it so the prelude
+        // change cannot drag a global in (deka#551).
+        let out = parse_and_emit("enum Color { Red, Green } const c = Color.Red;");
+        assert!(out.contains("const Color = Object.freeze"), "got: {}", out);
+        assert!(!out.contains("globalThis"), "got: {}", out);
     }
 
     #[test]
@@ -169,7 +208,7 @@ mod tests {
         let out = parse_and_emit(
             "struct Point { x: number\n  y: number }\nfn (p Point) distance(other: Point) number { return 0; }\nconst p1 = Point { x: 0, y: 0 };\nconst p2 = Point { x: 3, y: 4 };\nconst d = p1.distance(p2);",
         );
-        assert!(out.contains("const Point = deka.Struct"), "got: {}", out);
+        assert!(out.contains("const Point = __deka_struct"), "got: {}", out);
         assert!(out.contains("Point.impl(\"distance\""), "got: {}", out);
         assert!(out.contains("p1.distance(p2)"), "got: {}", out);
     }
@@ -423,8 +462,8 @@ mod tests {
         let out = parse_and_emit(
             "struct Legs {} fn (l Legs) move() string { return \"walk\" } struct Robot { Legs } const r = Robot { Legs: Legs {} }; const m = r.move();",
         );
-        assert!(out.contains("const Legs = deka.Struct"), "got: {}", out);
-        assert!(out.contains("const Robot = deka.Struct(\"Robot\", { Legs: Legs })"), "got: {}", out);
+        assert!(out.contains("const Legs = __deka_struct"), "got: {}", out);
+        assert!(out.contains("const Robot = __deka_struct(\"Robot\", { Legs: Legs })"), "got: {}", out);
         assert!(out.contains("Legs.impl(\"move\""), "got: {}", out);
         assert!(out.contains("r.move()"), "got: {}", out);
     }
@@ -467,8 +506,8 @@ mod tests {
         // Never touch JS prototypes or globalThis: primitives cannot be branded.
         assert!(!out.contains("prototype"), "got: {}", out);
         assert!(!out.contains("globalThis"), "got: {}", out);
-        // Primitive extensions must not force the struct prelude either.
-        assert!(!out.contains("deka.Struct"), "got: {}", out);
+        // Primitive extensions must not force the struct factory either.
+        assert!(!out.contains("__deka_struct"), "got: {}", out);
     }
 
     #[test]
@@ -506,5 +545,227 @@ mod tests {
         );
         assert!(out.contains("\"abc\".length"), "got: {}", out);
         assert!(out.contains("\"abc\".toUpperCase()"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_gettype_rewrite() {
+        // rfd#41, deka#529: `.getType()` is a compile-time rewrite to the
+        // module-local free function `__deka_type_of(x)`, emitted exactly
+        // the way deka#527 emits primitive extensions.
+        let out = parse_check_and_emit("const t = \"hi\".getType();");
+        assert!(out.contains("__deka_type_of(\"hi\")"), "got: {}", out);
+        // The descriptor helper and its interning cache are emitted.
+        assert!(out.contains("function __deka_type_of(v)"), "got: {}", out);
+        assert!(out.contains("__deka_type_cache"), "got: {}", out);
+        // Never touch JS prototypes, the struct factory, or globalThis.
+        assert!(!out.contains("prototype"), "got: {}", out);
+        assert!(!out.contains("globalThis"), "got: {}", out);
+        // `.getType()` alone must not force the struct factory (the tag read
+        // inside __deka_type_of is fine; the factory is what must stay out).
+        assert!(!out.contains("function __deka_struct"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_gettype_toString_chaining() {
+        // The outer `.toString()` is an ordinary method call on the real
+        // descriptor object; it emits verbatim.
+        let out = parse_check_and_emit("const s = \"hi\".getType().toString();");
+        assert!(
+            out.contains("__deka_type_of(\"hi\").toString()"),
+            "got: {}",
+            out
+        );
+    }
+
+    #[test]
+    fn emit_gettype_union_receiver() {
+        let out = parse_check_and_emit(
+            "fn f(v: number | string) Type { return v.getType(); }",
+        );
+        assert!(out.contains("__deka_type_of(v)"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_gettype_user_extension_shadows() {
+        // A user extension named `getType` keeps the deka#527 free-function
+        // rewrite; the builtin helper stays absent.
+        let out = parse_check_and_emit(
+            "fn (s string) getType() string { return s; } const u = \"x\".getType();",
+        );
+        assert!(out.contains("function getType$string(s)"), "got: {}", out);
+        assert!(out.contains("getType$string(\"x\")"), "got: {}", out);
+        assert!(!out.contains("__deka_type_of"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_gettype_helper_absent_without_gettype() {
+        let out = parse_check_and_emit("const s = \"hi\".toUpperCase();");
+        assert!(!out.contains("__deka_type_of"), "got: {}", out);
+        assert!(!out.contains("__deka_type_cache"), "got: {}", out);
+    }
+
+    // ------------------------------------------------------------------
+    // `super` functions (deka#529, rfd#41)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn emit_super_fn_hidden_arg() {
+        // The super fn is emitted once with a hidden descriptor parameter;
+        // the call passes the interned static tree const.
+        let out = parse_check_and_emit(
+            "struct User { id: string }\
+             super fn validate<T>(json: string) Type { return T.type(); }\
+             const d = validate<User>(\"{}\");",
+        );
+        assert!(
+            out.contains("function validate(__deka_super$T, json)"),
+            "got: {}",
+            out
+        );
+        assert!(
+            out.contains("validate(__deka_super_desc$0, \"{}\")"),
+            "got: {}",
+            out
+        );
+        // The tree const is frozen, carries the #550 shape triple, and
+        // exposes the struct fields.
+        assert!(out.contains("const __deka_super_desc$0"), "got: {}", out);
+        assert!(out.contains("kind: \"struct\""), "got: {}", out);
+        assert!(out.contains("name: \"User\""), "got: {}", out);
+        assert!(out.contains("toString() { return this.name; }"), "got: {}", out);
+        assert!(out.contains("{ name: \"id\", optional: false"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_super_type_param_without_structs() {
+        // Without structs in play the #550 drift guard holds: no prototype
+        // mutation, no __deka prelude, no globalThis, and `T.type()` does
+        // NOT route through the runtime __deka_type_of helper.
+        let out = parse_check_and_emit(
+            "super fn describe<T>(x: T) string { return T.type().toString(); }\
+             const s = describe(42);",
+        );
+        assert!(
+            out.contains("function describe(__deka_super$T, x)"),
+            "got: {}",
+            out
+        );
+        assert!(
+            out.contains("return __deka_super$T.toString();"),
+            "got: {}",
+            out
+        );
+        assert!(out.contains("describe(__deka_super_desc$0, 42)"), "got: {}", out);
+        assert!(out.contains("kind: \"number\""), "got: {}", out);
+        assert!(!out.contains("__deka_type_of"), "got: {}", out);
+        assert!(!out.contains("prototype"), "got: {}", out);
+        assert!(!out.contains("globalThis"), "got: {}", out);
+        assert!(!out.contains("__deka_struct"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_super_recursive_passthrough() {
+        // `validate<T>(json)` inside `validate` forwards the hidden
+        // parameter; the outer call carries the static tree.
+        let out = parse_check_and_emit(
+            "super fn validate<T>(json: string) Type { return validate<T>(json); }\
+             const d = validate<number>(\"{}\");",
+        );
+        assert_eq!(
+            out.matches("return validate(__deka_super$T, json);").count(),
+            1,
+            "got: {}",
+            out
+        );
+        assert!(
+            out.contains("validate(__deka_super_desc$0, \"{}\")"),
+            "got: {}",
+            out
+        );
+    }
+
+    #[test]
+    fn emit_super_concrete_receiver_type_call() {
+        // `.type()` on a concrete receiver inside a super fn is the static
+        // tree const, not the runtime helper.
+        let out = parse_check_and_emit(
+            "super fn describe(x: number) string { return x.type().toString(); }\
+             const s = describe(42);",
+        );
+        assert!(
+            out.contains("return __deka_super_desc$0.toString();"),
+            "got: {}",
+            out
+        );
+        assert!(!out.contains("__deka_type_of"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_super_unused_fn_emits_no_descriptor_consts() {
+        // A never-called super fn keeps its body but forces no tree consts;
+        // with a live_names set excluding it, the fn itself is absent too.
+        let source = "super fn validate<T>(json: string) Type { return T.type(); }";
+        let out = parse_check_and_emit(source);
+        assert!(out.contains("function validate(__deka_super$T, json)"), "got: {}", out);
+        assert!(!out.contains("__deka_super_desc$"), "got: {}", out);
+
+        let arena = Bump::new();
+        let result = parse(source, &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.expect("parse produced no program");
+        let typeck = deka_syntax::typeck::check_program(&program, source);
+        assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
+        let live: std::collections::HashSet<String> = ["main".to_string()].into_iter().collect();
+        let out = emit_js_with_options(
+            &program,
+            source,
+            &std::collections::HashMap::new(),
+            None,
+            &typeck.unwrap_calls,
+            &typeck.operator_rewrites,
+            &typeck.method_calls,
+            &typeck.type_of_calls,
+            &typeck.super_calls,
+            &typeck.static_type_calls,
+            &typeck.jsx_optional_props,
+            &typeck.enum_case_patterns,
+            &typeck.union_type_patterns,
+            "module.ds",
+            Some(&live),
+        )
+        .expect("emit failed");
+        assert!(!out.contains("function validate"), "got: {}", out);
+        assert!(!out.contains("__deka_super_desc$"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_super_two_instantiations_dedup() {
+        // Same T twice: one const, two references. Two Ts: two consts.
+        // Const numbering is content-sorted, so Admin sorts before User.
+        let out = parse_check_and_emit(
+            "struct User { id: string } struct Admin { id: string }\
+             super fn validate<T>(json: string) Type { return T.type(); }\
+             const a = validate<User>(\"{}\");\
+             const b = validate<User>(\"{}\");\
+             const c = validate<Admin>(\"{}\");",
+        );
+        assert_eq!(
+            out.matches("const __deka_super_desc$").count(),
+            2,
+            "got: {}",
+            out
+        );
+        assert_eq!(
+            out.matches("validate(__deka_super_desc$0, \"{}\")").count(),
+            1,
+            "got: {}",
+            out
+        );
+        assert_eq!(
+            out.matches("validate(__deka_super_desc$1, \"{}\")").count(),
+            2,
+            "got: {}",
+            out
+        );
     }
 }

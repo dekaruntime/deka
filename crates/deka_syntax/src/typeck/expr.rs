@@ -172,6 +172,10 @@ pub(super) fn primitive_member<'a>(
         // guarantee; without it, declaring them would be a lie the type
         // system could not catch (deka#460, deka#469).
         ("JsError", "message" | "name") => PrimitiveMember::Property(string_ty),
+        // `Type` is the first-class runtime type descriptor returned by
+        // `.getType()` (rfd#41, deka#529). Only `toString()` is in scope for
+        // this slice; the rest of the descriptor API is deferred.
+        ("Type", "toString") => PrimitiveMember::BuiltinMethod(fn0(string_ty)),
         ("string", "length") => PrimitiveMember::Property(number_ty),
         ("string", "toUpperCase" | "toLowerCase" | "trim") => {
             PrimitiveMember::BuiltinMethod(fn0(string_ty))
@@ -294,10 +298,32 @@ impl<'a> Checker<'a> {
                 Type::Named { name: "boolean" }
             }
             ast::Expr::None { .. } => Type::None,
-            ast::Expr::Identifier { name, span } => self.lookup_var(name).unwrap_or_else(|| {
-                self.error_span(*span, format!("unknown identifier `{name}`"));
-                Type::Error
-            }),
+            ast::Expr::Identifier { name, span } => {
+                match self.lookup_var(name) {
+                    Some(ty) => {
+                        // A bare reference to a `super` function in value
+                        // position is a compile error: the emitted function
+                        // takes a hidden descriptor parameter, so there is no
+                        // value a bare identifier could correctly denote
+                        // (deka#529, rfd#41). Every reference must be a
+                        // rewritten call site.
+                        if self.is_super_fn(name) {
+                            self.error_span(
+                                *span,
+                                format!(
+                                    "`{name}` is a `super` function and cannot be used as a value — call it with explicit type arguments, e.g. `{name}<T>(…)`"
+                                ),
+                            );
+                            return Type::Error;
+                        }
+                        ty
+                    }
+                    None => {
+                        self.error_span(*span, format!("unknown identifier `{name}`"));
+                        Type::Error
+                    }
+                }
+            }
             ast::Expr::Binary {
                 op,
                 left,
@@ -2035,7 +2061,10 @@ impl<'a> Checker<'a> {
                 if left_type == right_type
                     && (Self::is_number(&left_type)
                         || Self::is_string(&left_type)
-                        || Self::is_boolean(&left_type))
+                        || Self::is_boolean(&left_type)
+                        // `Type` descriptors are interned singletons, so
+                        // `==` is identity comparison (deka#529).
+                        || matches!(left_type, Type::Named { name: "Type" }))
                 {
                     Type::Named { name: "boolean" }
                 } else {
@@ -2473,7 +2502,29 @@ impl<'a> Checker<'a> {
             _ => return None,
         };
 
+        // Builtin `.type()` (deka#529, rfd#41): inside a `super fn`, `T.type()`
+        // yields the descriptor for the type parameter and `x.type()` a
+        // static descriptor tree of the receiver's type. Both typecheck to
+        // the first-class `Type` from #550. User code named `type` shadows
+        // the builtin, mirroring the `getType` rule.
+        if method_name == "type" {
+            if let Some(ty) = self.check_builtin_type_call(call_expr, object, args, span) {
+                return Some(ty);
+            }
+        }
+
         let object_type = self.check_expr(object);
+
+        // Builtin `.getType()` (rfd#41, deka#529): returns a first-class
+        // `Type` value. User code named `getType` (interface member,
+        // receiver method, or primitive extension) shadows the builtin,
+        // mirroring the deka#527 shadowing rule; the helper returns `None`
+        // in that case so the ordinary paths below handle the call.
+        if method_name == "getType" {
+            if let Some(ty) = self.check_builtin_get_type(call_expr, &object_type, args, span) {
+                return Some(ty);
+            }
+        }
 
         // Interface receiver: dispatch is dynamic; validate against the
         // interface signature and enforce mutable-method requirements inferred
@@ -2560,6 +2611,200 @@ impl<'a> Checker<'a> {
 
         self.check_method_call_args(method_name, receiver_type, &info, args, span)
             .into()
+    }
+
+    /// Check a builtin `.type()` call (deka#529, rfd#41). Returns `None` when
+    /// the call is not a builtin `.type()` site — a value named `T` shadows
+    /// the type parameter, or user code declares a member named `type` — so
+    /// the ordinary method paths handle it.
+    ///
+    /// Two forms exist. `T.type()` (receiver is a type parameter) is only
+    /// legal inside a `super fn`; the emitter resolves it to the hidden
+    /// descriptor parameter. A concrete receiver (`json.type()`) is allowed
+    /// inside a `super fn` in v1 and records a static descriptor tree;
+    /// outside a `super fn` the diagnostic points at `.getType()` for
+    /// runtime inspection.
+    fn check_builtin_type_call(
+        &mut self,
+        call_expr: &ast::Expr<'a>,
+        object: &ast::Expr<'a>,
+        args: &'a [ast::Expr<'a>],
+        span: ast::Span,
+    ) -> Option<Type<'a>> {
+        // Type-parameter receiver: `T` resolves as a type, not a value.
+        // Order matters — a *value* named `T` shadows the type parameter.
+        let type_param_receiver = match object {
+            ast::Expr::Identifier { name, .. }
+                if self.lookup_var(name).is_none()
+                    && self.lookup_type_param(name).is_some() =>
+            {
+                Some(*name)
+            }
+            _ => None,
+        };
+
+        let Some(param) = type_param_receiver else {
+            // Concrete receiver. User code named `type` shadows the builtin;
+            // let the ordinary paths handle it.
+            match object {
+                ast::Expr::Identifier { name, .. } => {
+                    if self.instantiated_fns.contains_key(name) {
+                        // A super function has no fields; the value-use
+                        // diagnostic in the Identifier arm covers this.
+                        return None;
+                    }
+                }
+                _ => {}
+            }
+            let object_type = self.check_expr(object);
+            match &object_type {
+                Type::Struct { name } | Type::Newtype { name, .. } => {
+                    if self
+                        .find_receiver_method(name, "type", &mut Vec::new())
+                        .is_some()
+                    {
+                        return None;
+                    }
+                }
+                Type::Named { name } => {
+                    if self.receiver_methods.contains_key(&(*name, "type")) {
+                        return None;
+                    }
+                }
+                Type::Interface { name } => {
+                    let declared = self.interfaces.get(name).map_or(false, |info| {
+                        info.members.iter().any(|m| match m {
+                            ast::InterfaceMember::Method { name: n, .. } => *n == "type",
+                            _ => false,
+                        })
+                    });
+                    if declared {
+                        return None;
+                    }
+                }
+                _ => {}
+            }
+
+            if !self.in_super_function {
+                self.error_span(
+                    span,
+                    "`type()` on a concrete receiver requires the enclosing function to be `super`; for runtime type inspection use `.getType()`"
+                        .to_string(),
+                );
+                return Some(Type::Error);
+            }
+            if let Type::Error | Type::None | Type::Never = object_type {
+                return None;
+            }
+            if matches!(object_type, Type::Infer | Type::Var) {
+                self.error_span(
+                    span,
+                    "`type()` cannot describe this value's type: it is derived from `unsafe` or otherwise unknown to the compiler"
+                        .to_string(),
+                );
+                return Some(Type::Error);
+            }
+            if !args.is_empty() {
+                self.error_span(span, "`type` expects no arguments".to_string());
+                return Some(Type::Error);
+            }
+            let tree = match self.descriptor_tree(&object_type, span) {
+                Ok(tree) => tree,
+                Err(message) => {
+                    self.error_span(span, message);
+                    return Some(Type::Error);
+                }
+            };
+            self.static_type_calls.insert(
+                call_expr as *const ast::Expr<'a>,
+                super::StaticTypeCall {
+                    tree: Some(tree),
+                    param: None,
+                },
+            );
+            return Some(Type::Named { name: "Type" });
+        };
+
+        // Type-parameter receiver.
+        if !self.in_super_function {
+            self.error_span(
+                span,
+                format!(
+                    "`{param}.type()` requires the enclosing function to be marked `super` — change `fn` to `super fn`"
+                ),
+            );
+            return Some(Type::Error);
+        }
+        if !args.is_empty() {
+            self.error_span(span, "`type` expects no arguments".to_string());
+            return Some(Type::Error);
+        }
+        self.static_type_calls.insert(
+            call_expr as *const ast::Expr<'a>,
+            super::StaticTypeCall {
+                tree: None,
+                param: Some(param),
+            },
+        );
+        Some(Type::Named { name: "Type" })
+    }
+
+    /// Check a builtin `.getType()` call (rfd#41, deka#529). Returns `None`
+    /// when user code shadows the builtin (a declared receiver method,
+    /// interface member, or primitive extension named `getType`) so the
+    /// ordinary method paths handle the call. Otherwise validates arity,
+    /// records the rewrite for the emitter (`__deka_type_of(x)`), and returns
+    /// the `Type` descriptor type.
+    fn check_builtin_get_type(
+        &mut self,
+        call_expr: &ast::Expr<'a>,
+        object_type: &Type<'a>,
+        args: &'a [ast::Expr<'a>],
+        span: ast::Span,
+    ) -> Option<Type<'a>> {
+        // User code shadows the builtin.
+        match object_type {
+            Type::Struct { name } | Type::Newtype { name, .. } => {
+                if self
+                    .find_receiver_method(name, "getType", &mut Vec::new())
+                    .is_some()
+                {
+                    return None;
+                }
+            }
+            Type::Named { name } => {
+                if self.receiver_methods.contains_key(&(*name, "getType")) {
+                    return None;
+                }
+            }
+            Type::Interface { name } => {
+                let info = self.interfaces.get(name)?;
+                let declared = info.members.iter().any(|m| match m {
+                    ast::InterfaceMember::Method { name: n, .. } => *n == "getType",
+                    _ => false,
+                });
+                if declared {
+                    return None;
+                }
+            }
+            _ => {}
+        }
+
+        if !args.is_empty() {
+            self.error_span(span, "`getType` expects no arguments".to_string());
+            return Some(Type::Error);
+        }
+
+        // Record the rewrite for every real receiver kind, including
+        // Infer/Var: an unrecorded `v.getType()` on an unsafe-derived value
+        // would emit verbatim and miscompile silently. Error/None/Never
+        // receivers fall through to their existing diagnostics.
+        match object_type {
+            Type::Error | Type::None | Type::Never => return None,
+            _ => {}
+        }
+        self.type_of_calls.insert(call_expr as *const ast::Expr<'a>);
+        Some(Type::Named { name: "Type" })
     }
 
     /// Resolve a method call on a primitive receiver (deka#527). A declared
@@ -2920,7 +3165,15 @@ impl<'a> Checker<'a> {
             }
         }
 
-        let callee_type = self.check_expr(callee);
+        // A call to a `super` function names the callee directly; resolving
+        // it through `check_expr` would trip the bare-identifier value
+        // rejection, so look the signature up here instead (deka#529).
+        let callee_type = match callee {
+            ast::Expr::Identifier { name, .. } if self.is_super_fn(name) => {
+                self.lookup_var(name).unwrap_or(Type::Error)
+            }
+            _ => self.check_expr(callee),
+        };
 
         match callee_type {
             Type::Function {
@@ -2931,14 +3184,37 @@ impl<'a> Checker<'a> {
                 // Build a substitution for any type parameters appearing in the
                 // function signature. Explicit type args are used when present;
                 // otherwise we try to infer from the first argument.
-                let subst = if params.iter().any(|p| contains_param(p)) || contains_param(&ret) {
+                let mut subst = if params.iter().any(|p| contains_param(p)) || contains_param(&ret) {
                     self.infer_substitution(type_args, &params, args)
                 } else {
                     HashMap::new()
                 };
 
-                let substituted_params: Vec<Type<'a>> =
-                    params.iter().map(|p| substitute_type(p, &subst)).collect();
+                // Super functions carry a hidden descriptor parameter: every
+                // type parameter must resolve concretely at the call site, or
+                // pass through unchanged from the enclosing super fn
+                // (deka#529). This runs before the ordinary argument checks
+                // and may replace `subst`.
+                if let ast::Expr::Identifier { name, .. } = callee {
+                    if self.is_super_fn(name) {
+                        if let Some(result) = self.check_super_call(
+                            expr,
+                            name,
+                            type_args,
+                            args,
+                            span,
+                            &params,
+                            &mut subst,
+                        ) {
+                            return result;
+                        }
+                    }
+                }
+
+                let substituted_params: Vec<Type<'a>> = params
+                    .iter()
+                    .map(|p| substitute_type(p, &subst))
+                    .collect();
                 let substituted_ret = substitute_type(&ret, &subst);
 
                 let hole_positions: Vec<usize> = args
@@ -3107,6 +3383,133 @@ impl<'a> Checker<'a> {
         }
         subst
     }
+
+    /// Validate and record a call to a `super` function (deka#529, rfd#41).
+    ///
+    /// The super fn is emitted once with a hidden descriptor parameter per
+    /// declared type parameter; the emitter rewrites this call to pass the
+    /// arguments. Every declared type parameter must therefore resolve here:
+    /// to a concrete type (the call site carries a static descriptor tree),
+    /// or to a type parameter of the *enclosing super fn* passed through
+    /// unchanged (the emitter forwards the hidden parameter). A type
+    /// parameter of a non-super generic function cannot be passed through —
+    /// its erased body has no descriptor value in scope to forward — and
+    /// constructing a new type from a parameter (`validate<Array<T>>`) would
+    /// never terminate; both are rejected.
+    ///
+    /// Returns `Some(Type::Error)` on a validation error; `None` after
+    /// recording so the ordinary argument checks run with the updated
+    /// `subst`.
+    fn check_super_call(
+        &mut self,
+        expr: &ast::Expr<'a>,
+        name: &'a str,
+        type_args: &'a [ast::Type<'a>],
+        args: &'a [ast::Expr<'a>],
+        span: ast::Span,
+        signature_params: &[Type<'a>],
+        subst: &mut HashMap<&'a str, Type<'a>>,
+    ) -> Option<Type<'a>> {
+        let declared = self.instantiated_fns.get(name).cloned().unwrap_or_default();
+
+        if !type_args.is_empty() && type_args.len() != declared.len() {
+            self.error_span(
+                span,
+                format!(
+                    "`{name}` takes {} type parameter{}, found {}",
+                    declared.len(),
+                    if declared.len() == 1 { "" } else { "s" },
+                    type_args.len()
+                ),
+            );
+            return Some(Type::Error);
+        }
+
+        if !type_args.is_empty() {
+            subst.clear();
+            for (pname, ast_ty) in declared.iter().zip(type_args.iter()) {
+                subst.insert(*pname, self.resolve_ast_type(ast_ty));
+            }
+        } else {
+            // Inference against the declared parameters the *signature*
+            // mentions; a super-only parameter (used solely via `T.type()`)
+            // has nothing to infer from and must be named explicitly.
+            for (param_ty, arg) in signature_params.iter().zip(args.iter()) {
+                if !contains_param(param_ty) {
+                    continue;
+                }
+                let arg_type = self.check_expr(arg);
+                infer_type_args(param_ty, &arg_type, &declared, subst);
+            }
+        }
+
+        // Validate every declared parameter and classify the argument.
+        // `site_args` stays parallel to `declared`.
+        let mut site_args: Vec<super::SuperTypeArg<'a>> = Vec::new();
+        for pname in &declared {
+            let ty = match subst.get(pname).cloned() {
+                Some(ty) => ty,
+                None => {
+                    self.error_span(
+                        span,
+                        format!(
+                            "`{name}` is a `super` function; its type parameter `{pname}` must be known at the call site — specify it explicitly: `{name}<{pname}>(…)`"
+                        ),
+                    );
+                    return Some(Type::Error);
+                }
+            };
+            match &ty {
+                Type::Param { name: p } => {
+                    if self.lookup_type_param(p).is_none() {
+                        self.error_span(
+                            span,
+                            format!(
+                                "type parameter `{p}` is not in scope here; `{name}` must be called with a concrete type"
+                            ),
+                        );
+                        return Some(Type::Error);
+                    }
+                    if !self.in_super_function {
+                        self.error_span(
+                            span,
+                            format!(
+                                "`{name}` cannot be called with type parameter `{p}` here: only a `super fn` has a descriptor to forward — change the enclosing function to `super fn`, or pass a concrete type"
+                            ),
+                        );
+                        return Some(Type::Error);
+                    }
+                    site_args.push(super::SuperTypeArg::Param(p));
+                }
+                other if contains_param(other) => {
+                    self.error_span(
+                        span,
+                        format!(
+                            "cannot call `{name}` with `{ty}` here: constructing a new type from a type parameter inside a super function would never terminate — pass a type parameter unchanged"
+                        ),
+                    );
+                    return Some(Type::Error);
+                }
+                other => match self.descriptor_tree(other, span) {
+                    Ok(tree) => site_args.push(super::SuperTypeArg::Concrete(tree)),
+                    Err(message) => {
+                        self.error_span(span, message);
+                        return Some(Type::Error);
+                    }
+                },
+            }
+        }
+
+        // Record the call-site rewrite for the emitter.
+        self.super_calls.insert(
+            expr as *const ast::Expr<'a>,
+            super::SuperCallSite {
+                callee: name,
+                args: site_args,
+            },
+        );
+        None
+    }
 }
 
 fn collect_param_names<'a>(tys: &[Type<'a>]) -> Vec<&'a str> {
@@ -3189,33 +3592,6 @@ fn infer_type_args<'a>(
 }
 
 fn substitute_type<'a>(ty: &Type<'a>, subst: &HashMap<&'a str, Type<'a>>) -> Type<'a> {
-    match ty {
-        Type::Param { name } => subst
-            .get(name)
-            .cloned()
-            .unwrap_or_else(|| Type::Param { name }),
-        Type::Option { inner } => Type::Option {
-            inner: Box::new(substitute_type(inner, subst)),
-        },
-        Type::Array { elem } => Type::Array {
-            elem: Box::new(substitute_type(elem, subst)),
-        },
-        Type::Function {
-            params,
-            ret,
-            optional,
-        } => Type::Function {
-            params: params.iter().map(|p| substitute_type(p, subst)).collect(),
-            ret: Box::new(substitute_type(ret, subst)),
-            optional: *optional,
-        },
-        Type::Generic { base, args } => Type::Generic {
-            base,
-            args: args.iter().map(|a| substitute_type(a, subst)).collect(),
-        },
-        Type::Union { members } => Type::Union {
-            members: members.iter().map(|m| substitute_type(m, subst)).collect(),
-        },
-        other => other.clone(),
-    }
+    super::types::substitute_type(ty, subst)
 }
+

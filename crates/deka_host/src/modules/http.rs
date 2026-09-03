@@ -28,6 +28,7 @@
 use futures_util::{SinkExt, StreamExt};
 use reqwest::cookie::Jar;
 use reqwest::{Client, ClientBuilder, Method, Response};
+use runtime_core::security_policy::SecurityPolicy;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -199,10 +200,15 @@ fn host_of(url_str: &str) -> Option<String> {
 /// Check a URL's host against the tenant's `net` allowlist. Returns
 /// `Ok(())` when allowed, `Err(reason)` otherwise. Privileged code
 /// (platform server / framework) is already exempted by the shared
-/// `enforce_net` helper.
-pub(crate) fn enforce_host_allowed(url_str: &str) -> Result<(), String> {
+/// `enforce_net` helper. The policy is passed in so callers can pin it
+/// instead of racing on the process-global `DEKA_SECURITY_POLICY` env var
+/// (deka#537).
+pub(crate) fn enforce_host_allowed_with(
+    policy: &SecurityPolicy,
+    url_str: &str,
+) -> Result<(), String> {
     let host = host_of(url_str).ok_or_else(|| format!("invalid url: '{}'", url_str))?;
-    match crate::modules::php::enforce_net_public(&host) {
+    match crate::modules::php::enforce_net_public_with(policy, &host) {
         Ok(()) => Ok(()),
         Err(err) => Err(format!("host_not_allowed: {} ({})", host, err)),
     }
@@ -221,7 +227,10 @@ pub(crate) fn enforce_host_allowed(url_str: &str) -> Result<(), String> {
 /// error which `encode_reqwest_error` maps to `too_many_redirects`;
 /// we upgrade that to an explicit `host_not_allowed` classification
 /// in the dispatch path by inspecting the error chain.
-fn host_checked_redirect_policy(max_hops: usize) -> reqwest::redirect::Policy {
+fn host_checked_redirect_policy(
+    policy: SecurityPolicy,
+    max_hops: usize,
+) -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(move |attempt| {
         // Snapshot what we need from `attempt` before any terminal
         // call consumes it — `attempt.error()` / `attempt.follow()`
@@ -235,7 +244,7 @@ fn host_checked_redirect_policy(max_hops: usize) -> reqwest::redirect::Policy {
                 reason: format!("too many redirects (> {})", max_hops),
             });
         }
-        if let Err(err) = enforce_host_allowed(&url) {
+        if let Err(err) = enforce_host_allowed_with(&policy, &url) {
             return attempt.error(RedirectHostDenied { host, reason: err });
         }
         attempt.follow()
@@ -273,18 +282,30 @@ impl std::error::Error for RedirectHostDenied {}
 
 /// Public entry — called from `op_deka_http_call` which the pool's
 /// bridge layer routes `bridge('http', action, payload)` through.
+/// Reads `DEKA_SECURITY_POLICY` once per call; use
+/// `http_call_with_policy` to pin the policy instead.
 pub fn http_call(action: &str, payload: &Value) -> Value {
+    http_call_with_policy(
+        &crate::modules::php::security_policy_from_env(),
+        action,
+        payload,
+    )
+}
+
+/// The dispatch itself, with the policy passed in. See `http_call` for
+/// why this exists.
+pub fn http_call_with_policy(policy: &SecurityPolicy, action: &str, payload: &Value) -> Value {
     match action {
-        "request" => request(payload),
+        "request" => request_with_policy(policy, payload),
         "stream_read" => stream_read(payload),
         "stream_close" => stream_close(payload),
         "req_stream_new" => req_stream_new(payload),
         "req_stream_write" => req_stream_write(payload),
         "req_stream_end" => req_stream_end(payload),
-        "client_new" => client_new(payload),
+        "client_new" => client_new_with_policy(policy, payload),
         "client_close" => client_close(payload),
         "client_cookies" => client_cookies(payload),
-        "ws_connect" => ws_connect(payload),
+        "ws_connect" => ws_connect_with_policy(policy, payload),
         "ws_send_text" => ws_send_text(payload),
         "ws_send_binary" => ws_send_binary(payload),
         "ws_recv" => ws_recv(payload),
@@ -298,7 +319,7 @@ pub fn http_call(action: &str, payload: &Value) -> Value {
 // HTTP request — buffered or streaming.
 // ---------------------------------------------------------------------------
 
-fn request(payload: &Value) -> Value {
+fn request_with_policy(policy: &SecurityPolicy, payload: &Value) -> Value {
     let url_str = payload
         .get("url")
         .and_then(|v| v.as_str())
@@ -307,7 +328,7 @@ fn request(payload: &Value) -> Value {
     if url_str.is_empty() {
         return json!({ "ok": false, "error": "invalid_url", "message": "url is required" });
     }
-    if let Err(err) = enforce_host_allowed(&url_str) {
+    if let Err(err) = enforce_host_allowed_with(policy, &url_str) {
         return json!({ "ok": false, "error": "host_not_allowed", "message": err });
     }
 
@@ -393,6 +414,8 @@ fn request(payload: &Value) -> Value {
         None
     };
 
+    // Owned copy for the `'static` async block (redirect re-checks).
+    let policy = policy.clone();
     block_on(async move {
         // Build or reuse the client.
         let client = if let Some(entry) = &client_entry {
@@ -408,7 +431,7 @@ fn request(payload: &Value) -> Value {
                 // default `Policy::limited(N)` would silently follow a
                 // 302 to an attacker host and ship Authorization /
                 // Cookie headers with it — see issue #128 review.
-                .redirect(host_checked_redirect_policy(10));
+                .redirect(host_checked_redirect_policy(policy.clone(), 10));
             if let Some(t) = timeout_ms {
                 b = b.timeout(Duration::from_millis(t));
             }
@@ -735,7 +758,7 @@ fn req_stream_end(payload: &Value) -> Value {
 // HttpClient — persistent config + optional cookie jar.
 // ---------------------------------------------------------------------------
 
-fn client_new(payload: &Value) -> Value {
+fn client_new_with_policy(policy: &SecurityPolicy, payload: &Value) -> Value {
     let timeout_ms = payload.get("timeout_ms").and_then(|v| v.as_u64());
     let max_redirects = payload
         .get("max_redirects")
@@ -754,7 +777,7 @@ fn client_new(payload: &Value) -> Value {
         // host — that lets an allowlisted origin 302 us at an
         // attacker. Use a custom policy that re-enforces the
         // capability gate on every hop. See issue #128 review.
-        .redirect(host_checked_redirect_policy(max_redirects));
+        .redirect(host_checked_redirect_policy(policy.clone(), max_redirects));
     if let Some(t) = timeout_ms {
         b = b.timeout(Duration::from_millis(t));
     }
@@ -846,7 +869,7 @@ fn client_cookies(payload: &Value) -> Value {
 // WebSocket client.
 // ---------------------------------------------------------------------------
 
-fn ws_connect(payload: &Value) -> Value {
+fn ws_connect_with_policy(policy: &SecurityPolicy, payload: &Value) -> Value {
     let url_str = payload
         .get("url")
         .and_then(|v| v.as_str())
@@ -855,7 +878,7 @@ fn ws_connect(payload: &Value) -> Value {
     if url_str.is_empty() {
         return json!({ "ok": false, "error": "invalid_url" });
     }
-    if let Err(err) = enforce_host_allowed(&url_str) {
+    if let Err(err) = enforce_host_allowed_with(policy, &url_str) {
         return json!({ "ok": false, "error": "host_not_allowed", "message": err });
     }
 

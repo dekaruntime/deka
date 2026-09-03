@@ -1,0 +1,5 @@
+{
+  "title": "super fn spacing is normalized",
+  "stage": "run",
+  "notes": "Formatter keeps `super fn` and `async super fn` in canonical order (async outermost) and preserves the hidden-argument call sites."
+}

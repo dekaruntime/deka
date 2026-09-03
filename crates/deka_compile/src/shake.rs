@@ -768,6 +768,23 @@ mod tests {
     }
 
     #[test]
+    fn super_fn_export_uses_base_name_liveness() {
+        // A `super fn` is emitted under its base name (the hidden descriptor
+        // parameter is emission-only), so graph shaking keys it exactly like
+        // a plain function — no per-instantiation names exist (deka#529).
+        let arena = Bump::new();
+        let program = parse_program(
+            &arena,
+            "export super fn keep<T>(x: T) Type { return T.type(); }\nexport super fn drop<T>(x: T) Type { return T.type(); }\nconst kept = keep<number>(1);",
+        );
+        let mut used = HashSet::new();
+        used.insert("keep".to_string());
+        let live = live_names(&program, &used, false, true).expect("pure");
+        assert!(live.contains("keep"));
+        assert!(!live.contains("drop"));
+    }
+
+    #[test]
     fn used_primitive_extension_is_live_by_mangled_name() {
         let arena = Bump::new();
         let program = parse_program(
@@ -797,21 +814,27 @@ mod tests {
     fn unused_primitive_extension_is_absent_from_emitted_output() {
         // End to end: liveness keyed by the mangled `method$receiver` name
         // must drop the unused extension while its used sibling survives
-        // (deka#527).
+        // (deka#527). Route used exports through live_names so the bridge is
+        // exercised, and assert on the FUNCTION DEFINITION: the rewritten
+        // call site alone also contains the string "slugify$string", so a
+        // bare substring assertion on it can pass with the extension missing.
+        let source = "fn (s string) slugify() string { return s; }\nfn (s string) unused_ext() string { return \"UNUSED_EXT_UNIQUE\"; }\nexport fn keep() string { return \"x\".slugify(); }";
+        let arena = Bump::new();
+        let program = parse_program(&arena, source);
         let mut used = HashSet::new();
         used.insert("keep".to_string());
-        used.insert("slugify$string".to_string());
+        let live = live_names(&program, &used, false, true).expect("pure");
         let result = crate::compile_to_js_with_options(
-            "fn (s string) slugify() string { return s; }\nfn (s string) unused_ext() string { return \"UNUSED_EXT_UNIQUE\"; }\nexport fn keep() string { return \"x\".slugify(); }",
+            source,
             "module.ds",
             crate::CompileOptions {
-                used_exports: Some(used),
+                used_exports: Some(live),
                 ..Default::default()
             },
         )
         .expect("compile failed");
-        assert!(result.js.contains("slugify$string"));
-        assert!(!result.js.contains("unused_ext$string"));
+        assert!(result.js.contains("function slugify$string"));
+        assert!(!result.js.contains("function unused_ext$string"));
         assert!(!result.js.contains("UNUSED_EXT_UNIQUE"));
     }
 }

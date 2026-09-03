@@ -1,0 +1,7 @@
+super fn describe<T>(x: T) Type {
+  return T.type()
+}
+const g = fn (x: number) number {
+  return x
+}
+const d = describe(g)

@@ -664,8 +664,8 @@ const origin = Point { x: 3, y: 4 };
             .as_str()
             .expect("compiled code should be present");
         assert!(
-            code.contains("const Point = deka.Struct(\"Point\")"),
-            "expected deka.Struct factory, got:\n{code}"
+            code.contains("const Point = __deka_struct(\"Point\")"),
+            "expected struct factory, got:\n{code}"
         );
         assert!(
             code.contains("const origin = Point({ x: 3, y: 4 })"),

@@ -1,11 +1,24 @@
 use super::*;
 
-fn security_policy_from_env() -> SecurityPolicy {
+/// Reads `DEKA_SECURITY_POLICY` from the process environment.
+///
+/// Split out from the `enforce_*` gates below so callers can pass a
+/// parsed policy in directly. `DEKA_SECURITY_POLICY` is process-global
+/// state and cargo runs tests as threads in one process, so tests that
+/// set the variable raced every reader of it — including tests that only
+/// read it implicitly through `net_call_proto_impl` / `http_call`
+/// (deka#537). A caller-supplied policy removes the shared state instead
+/// of serializing access to it.
+pub fn security_policy_from_env() -> SecurityPolicy {
     let raw = match std::env::var("DEKA_SECURITY_POLICY") {
         Ok(v) => v,
         Err(_) => return SecurityPolicy::default(),
     };
-    let json = match serde_json::from_str::<serde_json::Value>(&raw) {
+    security_policy_from_json_str(&raw)
+}
+
+fn security_policy_from_json_str(raw: &str) -> SecurityPolicy {
+    let json = match serde_json::from_str::<serde_json::Value>(raw) {
         Ok(v) => v,
         Err(_) => return SecurityPolicy::default(),
     };
@@ -72,7 +85,13 @@ fn match_rule_item(capability: &str, rule_item: &str, target: &str) -> bool {
 /// string lowercase and without port — the allowlist match handles
 /// exact hosts, DNS wildcards, and `*`.
 pub fn enforce_net_public(host: &str) -> Result<(), String> {
-    match enforce_net(Some(host)) {
+    enforce_net_public_with(&security_policy_from_env(), host)
+}
+
+/// The gate itself, with the policy passed in. See
+/// `security_policy_from_env` for why this exists.
+pub fn enforce_net_public_with(policy: &SecurityPolicy, host: &str) -> Result<(), String> {
+    match enforce_net_with(policy, Some(host)) {
         Ok(()) => Ok(()),
         Err(e) => Err(e.to_string()),
     }
@@ -887,7 +906,15 @@ pub(super) fn enforce_write(target: Option<&str>) -> Result<(), deno_core::error
 }
 
 pub(super) fn enforce_net(target: Option<&str>) -> Result<(), deno_core::error::CoreError> {
-    let policy = security_policy_from_env();
+    enforce_net_with(&security_policy_from_env(), target)
+}
+
+/// The gate itself, with the policy passed in. See
+/// `security_policy_from_env` for why this exists.
+pub(super) fn enforce_net_with(
+    policy: &SecurityPolicy,
+    target: Option<&str>,
+) -> Result<(), deno_core::error::CoreError> {
     enforce_scope("net", &policy.allow.net, &policy.deny.net, target)
 }
 
@@ -924,7 +951,6 @@ pub(super) fn enforce_wasm(target: Option<&str>) -> Result<(), deno_core::error:
     let policy = security_policy_from_env();
     enforce_scope("wasm", &policy.allow.wasm, &policy.deny.wasm, target)
 }
-
 
 #[cfg(test)]
 mod path_normalization_tests {

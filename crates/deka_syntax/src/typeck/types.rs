@@ -95,6 +95,37 @@ impl<'a> Type<'a> {
     }
 }
 
+
+/// Replace type parameters according to `subst`.
+///
+/// Lives in `types` (not `expr`) because the `super` descriptor walker
+/// (deka#529) substitutes struct/enum type arguments the same way call-site
+/// substitution does.
+pub fn substitute_type<'a>(ty: &Type<'a>, subst: &std::collections::HashMap<&'a str, Type<'a>>) -> Type<'a> {
+    match ty {
+        Type::Param { name } => subst.get(name).cloned().unwrap_or_else(|| Type::Param { name }),
+        Type::Option { inner } => Type::Option {
+            inner: Box::new(substitute_type(inner, subst)),
+        },
+        Type::Array { elem } => Type::Array {
+            elem: Box::new(substitute_type(elem, subst)),
+        },
+        Type::Function { params, ret, optional } => Type::Function {
+            params: params.iter().map(|p| substitute_type(p, subst)).collect(),
+            ret: Box::new(substitute_type(ret, subst)),
+            optional: *optional,
+        },
+        Type::Generic { base, args } => Type::Generic {
+            base,
+            args: args.iter().map(|a| substitute_type(a, subst)).collect(),
+        },
+        Type::Union { members } => Type::Union {
+            members: members.iter().map(|m| substitute_type(m, subst)).collect(),
+        },
+        other => other.clone(),
+    }
+}
+
 /// How a primitive conversion call (`parseNumber(x)`, `unboxNumber(x)`,
 /// `toNumber(x)`, `string(x)`) should be lowered after
 /// typechecking.
@@ -131,7 +162,8 @@ pub enum UnionMemberTest<'a> {
     Primitive(&'a str),
     /// `x instanceof Uint8Array`.
     Bytes,
-    /// Named struct: `deka.getStructId(x) === "<Name>"`.
+    /// Named struct: `x?.__deka_struct === "<Name>"` (the brand tag is read
+    /// directly; no helper, no global — deka#551).
     Struct(&'a str),
     /// Enum: `x.__enum === "<Name>"`.
     Enum(&'a str),

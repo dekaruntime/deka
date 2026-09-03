@@ -1,0 +1,5 @@
+{
+  "title": "Two instantiations with the same T share one descriptor const",
+  "stage": "run",
+  "notes": "deka#529: descriptor trees are interned by content, so both calls receive the identical frozen object and `==` is true."
+}

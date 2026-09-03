@@ -119,8 +119,8 @@ pub fn is_shop_id_subdomain(subdomain: &str) -> bool {
 /// 1. `DEKA_REDIS_URL` env var (explicit operator override).
 /// 2. Hard-coded `redis://localhost:6380` (last-resort dev fallback).
 pub fn resolve_tenant_record(subdomain: &str) -> Option<SubdomainRecord> {
-    let redis_url = std::env::var("DEKA_REDIS_URL")
-        .unwrap_or_else(|_| "redis://localhost:6380".to_string());
+    let redis_url =
+        std::env::var("DEKA_REDIS_URL").unwrap_or_else(|_| "redis://localhost:6380".to_string());
 
     let raw: Option<String> = TENANT_REDIS.with(|cell: &RefCell<Option<Connection>>| {
         let mut conn = cell.borrow_mut();
@@ -250,6 +250,31 @@ pub fn resolve_tenant_info_from_host_strict(headers: &[(String, String)]) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Restores an env var on drop. The process env is globally shared
+    /// even though tests run on separate threads, so a test that sets a
+    /// var must put the previous value back (deka#537 hygiene).
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => unsafe { std::env::set_var(self.key, value) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
 
     #[test]
     fn extract_subdomain_from_host() {
@@ -504,10 +529,10 @@ mod tests {
         // Seed test data
         let _: () = conn.set("subdomain:test-shop", "shop_test_001").unwrap();
 
-        // Set env so tenant resolver uses our test Redis
-        unsafe {
-            std::env::set_var("DEKA_REDIS_URL", redis_url);
-        }
+        // Set env so tenant resolver uses our test Redis; the guard
+        // restores the previous value when the test ends (the var leaked
+        // past this test before, deka#537).
+        let _env = EnvGuard::set("DEKA_REDIS_URL", redis_url);
 
         let result = resolve_tenant("test-shop");
         assert_eq!(result, Some("shop_test_001".to_string()));
@@ -515,5 +540,4 @@ mod tests {
         // Clean up
         let _: () = conn.del("subdomain:test-shop").unwrap();
     }
-
 }

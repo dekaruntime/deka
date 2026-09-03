@@ -412,6 +412,12 @@ impl<'a> Parser<'a> {
                     span: self.span_from(start, start_byte),
                 })
             }
+            TokenKind::Super => {
+                // `super` is a hard keyword; in expression position there is
+                // nothing it can validly start (deka#529, rfd#41).
+                self.error("`super` is only allowed on function declarations (`super fn`)");
+                None
+            }
             _ => {
                 self.error(format!(
                     "expected expression, found `{}`",

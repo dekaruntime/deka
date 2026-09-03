@@ -294,9 +294,10 @@ impl<'src> Formatter<'src> {
                 return_type,
                 body,
                 is_async,
+                is_super,
                 ..
             } => {
-                self.fmt_fn_sig(*is_async, Some(name), type_params, params, return_type.as_ref());
+                self.fmt_fn_sig(*is_async, *is_super, Some(name), type_params, params, return_type.as_ref());
                 self.write(" ");
                 self.fmt_block(body, stmt_end_line);
             }
@@ -565,9 +566,10 @@ impl<'src> Formatter<'src> {
                 return_type,
                 body,
                 is_async,
+                is_super,
             } => {
                 self.write("export ");
-                self.fmt_fn_sig(*is_async, Some(name), type_params, params, return_type.as_ref());
+                self.fmt_fn_sig(*is_async, *is_super, Some(name), type_params, params, return_type.as_ref());
                 self.write(" ");
                 self.fmt_block(body, stmt_end_line);
             }
@@ -697,6 +699,7 @@ impl<'src> Formatter<'src> {
     fn fmt_fn_sig(
         &mut self,
         is_async: bool,
+        is_super: bool,
         name: Option<&str>,
         type_params: &[TypeParam<'_>],
         params: &[Param<'_>],
@@ -704,6 +707,9 @@ impl<'src> Formatter<'src> {
     ) {
         if is_async {
             self.write("async ");
+        }
+        if is_super {
+            self.write("super ");
         }
         self.write("fn");
         if let Some(name) = name {

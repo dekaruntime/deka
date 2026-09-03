@@ -1,9 +1,9 @@
 //! Stateful JavaScript emitter for DekaScript compiler v2.
 //!
-//! Emits real runtime factories for structs (`deka.Struct`) and frozen case
+//! Emits real runtime factories for structs (`__deka_struct`) and frozen case
 //! objects for enums.  Receiver methods are registered on the struct factory
 //! prototype so `p.greet()` works, including methods promoted from embedded
-//! structs via the `deka.Struct` helper's embed map.
+//! structs via the `__deka_struct` helper's embed map.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -32,6 +32,9 @@ pub fn emit_js(program: &Program, _source: &str) -> Result<String, String> {
         &HashMap::new(),
         None,
         &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashSet::new(),
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
@@ -65,6 +68,9 @@ pub fn emit_js_with_imports<'a>(
         unwrap_calls,
         operator_rewrites,
         method_calls,
+        &HashSet::new(),
+        &HashMap::new(),
+        &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
@@ -91,6 +97,18 @@ pub fn emit_js_with_options<'a>(
     // free-function calls (`slugify$string(s)`), lowered by the typechecker
     // (deka#527).
     method_calls: &HashMap<*const Expr<'a>, deka_syntax::MethodTarget<'a>>,
+    // Builtin `.getType()` call sites to rewrite to `__deka_type_of(x)`,
+    // lowered by the typechecker (rfd#41, deka#529).
+    type_of_calls: &HashSet<*const Expr<'a>>,
+    // `super` function call sites, lowered by the typechecker: the call is
+    // rewritten to pass a descriptor argument (an interned
+    // `__deka_super_desc$N` const, or the enclosing super fn's hidden
+    // parameter for a passthrough argument) (deka#529, rfd#41).
+    super_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::SuperCallSite<'a>>,
+    // Builtin `.type()` call sites inside `super` functions, lowered by the
+    // typechecker to the hidden descriptor parameter or a static tree const
+    // (deka#529, rfd#41).
+    static_type_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::StaticTypeCall<'a>>,
     jsx_optional_props: &HashMap<
         *const deka_syntax::JsxElement<'a>,
         deka_syntax::typeck::JsxOptionalProps<'a>,
@@ -112,6 +130,9 @@ pub fn emit_js_with_options<'a>(
     emitter.unwrap_calls = unwrap_calls.clone();
     emitter.operator_rewrites = operator_rewrites.clone();
     emitter.method_calls = method_calls.clone();
+    emitter.type_of_calls = type_of_calls.clone();
+    emitter.super_calls = super_calls.clone();
+    emitter.static_type_calls = static_type_calls.clone();
     emitter.jsx_optional_props = jsx_optional_props.clone();
     emitter.enum_case_patterns = enum_case_patterns.clone();
     emitter.union_type_patterns = union_type_patterns.clone();
@@ -126,6 +147,120 @@ fn file_stem_from_path(path: &str) -> String {
         .filter(|s| !s.is_empty())
         .unwrap_or("module")
         .to_string()
+}
+
+/// The display name of a descriptor tree node: the name scalars, structs,
+/// newtypes and enums carry, `Array<…>`/`Option<…>` for the collection
+/// nodes, and `… | …` for unions.
+fn descriptor_tree_name(tree: &deka_syntax::typeck::DescriptorTree) -> String {
+    use deka_syntax::typeck::DescriptorTree as T;
+    match tree {
+        T::Leaf { name, .. } => name.clone(),
+        T::Struct { name, .. } | T::Newtype { name, .. } | T::Enum { name, .. } => {
+            name.to_string()
+        }
+        T::Array { elem } => format!("Array<{}>", descriptor_tree_name(elem)),
+        T::Option { inner } => format!("Option<{}>", descriptor_tree_name(inner)),
+        T::Union { members } => members
+            .iter()
+            .map(descriptor_tree_name)
+            .collect::<Vec<_>>()
+            .join(" | "),
+    }
+}
+
+/// Serialize a static descriptor tree to its frozen JavaScript literal
+/// (deka#529, rfd#41).
+///
+/// Every node carries `{kind, name, toString}` so static trees stay
+/// interchangeable with the runtime descriptors `__deka_type_of` returns
+/// (the shape rule #550 applied to the `{kind, name, toString}` triple);
+/// composites additionally expose `fields`/`cases`/`elem`/`inner`/
+/// `members`/`repr` so the schema endgame is not precluded.
+fn emit_descriptor_tree(tree: &deka_syntax::typeck::DescriptorTree) -> Result<String, String> {
+    use deka_syntax::typeck::DescriptorTree as T;
+    let mut out = String::new();
+    let header = |out: &mut String, kind: &str, name: &str| {
+        out.push_str("Object.freeze({ kind: \"");
+        out.push_str(kind);
+        out.push_str("\", name: \"");
+        out.push_str(&escape_string(name));
+        out.push_str("\", toString() { return this.name; }");
+    };
+    match tree {
+        T::Leaf { kind, name } => {
+            header(&mut out, kind, name);
+            out.push_str(" })");
+        }
+        T::Struct { name, fields } => {
+            header(&mut out, "struct", name);
+            out.push_str(", fields: Object.freeze([");
+            for (i, field) in fields.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str("{ name: \"");
+                out.push_str(&escape_string(field.name));
+                out.push_str("\", optional: ");
+                out.push_str(if field.optional { "true" } else { "false" });
+                out.push_str(", type: ");
+                out.push_str(&emit_descriptor_tree(&field.ty)?);
+                out.push_str(" }");
+            }
+            out.push_str("]) })");
+        }
+        T::Newtype { name, repr } => {
+            header(&mut out, "newtype", name);
+            out.push_str(", repr: ");
+            out.push_str(&emit_descriptor_tree(repr)?);
+            out.push_str(" })");
+        }
+        T::Enum { name, cases } => {
+            header(&mut out, "enum", name);
+            out.push_str(", cases: Object.freeze([");
+            for (i, (case_name, payload)) in cases.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str("{ name: \"");
+                out.push_str(&escape_string(case_name));
+                out.push_str("\", payload: ");
+                match payload {
+                    Some(payload_tree) => {
+                        out.push_str(&emit_descriptor_tree(payload_tree)?);
+                    }
+                    None => out.push_str("null"),
+                }
+                out.push_str(" }");
+            }
+            out.push_str("]) })");
+        }
+        T::Array { elem } => {
+            header(&mut out, "array", "Array");
+            out.push_str(", elem: ");
+            out.push_str(&emit_descriptor_tree(elem)?);
+            out.push_str(" })");
+        }
+        T::Option { inner } => {
+            header(&mut out, "option", "Option");
+            out.push_str(", inner: ");
+            out.push_str(&emit_descriptor_tree(inner)?);
+            out.push_str(" })");
+        }
+        T::Union { members } => {
+            let name = descriptor_tree_name(tree);
+            header(&mut out, "union", &name);
+            out.push_str(", members: Object.freeze([");
+            for (i, member) in members.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(&emit_descriptor_tree(member)?);
+            }
+            out.push_str("]) })");
+        }
+    }
+    Ok(out)
 }
 
 #[derive(Default, Clone)]
@@ -184,6 +319,19 @@ struct Emitter<'a> {
     /// Primitive extension call sites lowered by the typechecker to
     /// free-function calls (`slugify$string(s)`) (deka#527).
     method_calls: HashMap<*const Expr<'a>, deka_syntax::MethodTarget<'a>>,
+    /// Builtin `.getType()` call sites lowered by the typechecker to
+    /// `__deka_type_of(x)` (rfd#41, deka#529).
+    type_of_calls: HashSet<*const Expr<'a>>,
+    /// `super` function call sites lowered by the typechecker (deka#529):
+    /// each call gains a leading descriptor argument.
+    super_calls: HashMap<*const Expr<'a>, deka_syntax::typeck::SuperCallSite<'a>>,
+    /// Builtin `.type()` call sites inside `super` functions, lowered by the
+    /// typechecker (deka#529).
+    static_type_calls: HashMap<*const Expr<'a>, deka_syntax::typeck::StaticTypeCall<'a>>,
+    /// Interned static descriptor trees: the tree's serialized form to its
+    /// `__deka_super_desc$N` const index. Populated by `emit_prelude` (which
+    /// runs before any call site is emitted), then read at call sites.
+    descriptor_consts: HashMap<String, usize>,
     file_stem: String,
     fn_scope: String,
     jsx_path: Vec<usize>,
@@ -215,6 +363,10 @@ impl<'a> Emitter<'a> {
             unwrap_id: 0,
             operator_rewrites: HashMap::new(),
             method_calls: HashMap::new(),
+            type_of_calls: HashSet::new(),
+            super_calls: HashMap::new(),
+            static_type_calls: HashMap::new(),
+            descriptor_consts: HashMap::new(),
             file_stem: "module".to_string(),
             fn_scope: "_".to_string(),
             jsx_path: Vec::new(),
@@ -591,28 +743,76 @@ impl<'a> Emitter<'a> {
         // Determine which helpers are needed by scanning the AST.
         self.uses_struct = self.needs_struct_helper();
         self.uses_prelude_enums = self.uses_prelude_enums || self.needs_prelude_enums();
+        // `type_of_calls` is fully populated by the typechecker before
+        // emission, so unlike the emission-time flags above it can gate the
+        // helper directly — no AST scan needed. A call in shaken code still
+        // forces the ~4-line helper; harmless bloat, never incorrectness.
+        let uses_typeof = !self.type_of_calls.is_empty();
 
         if self.uses_struct || self.uses_newtype {
-            self.out.push_str("const __deka = {");
             if self.uses_struct {
-                self.out.push_str(r###"Struct:(id,embeds)=>{function f(fields){const o=Object.create(f.prototype);Object.assign(o,fields);Object.defineProperty(o,'__deka_struct',{value:id,enumerable:false,writable:false,configurable:false});return o;}f.id=id;Object.defineProperty(f,'name',{value:id,configurable:true});f.prototype=Object.create(null);f.prototype.constructor=f;f.impl=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){return b.apply(this,x);};}else{for(const k in a)f.prototype[k]=a[k];}return f;};f.implMut=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka.MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return b.apply(this,x);};}else{for(const k in a){const fn=a[k];f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka.MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return fn.apply(this,x);};}}return f;};if(embeds){for(const [embedName,embedFactory] of Object.entries(embeds)){for(const key of Object.keys(embedFactory.prototype)){f.prototype[key]=function(...args){return this[embedName][key](...args);};}}}return f;},"###);
-                self.out.push_str("getStructId:(v)=>v?.__deka_struct,");
+                // Module-local factory, emitted in the same shape as
+                // deka#527's extensions and deka#529's descriptors: a mangled
+                // free function, no `globalThis` write, no cross-module merge
+                // (deka#551). The struct brand is a string id stored on the
+                // instance and compared by value, so cross-module identity
+                // needs no shared object — and no module pays for another
+                // module's helpers.
+                self.out.push_str(r###"function __deka_struct(id,embeds){function f(fields){const o=Object.create(f.prototype);Object.assign(o,fields);Object.defineProperty(o,'__deka_struct',{value:id,enumerable:false,writable:false,configurable:false});return o;}f.id=id;Object.defineProperty(f,'name',{value:id,configurable:true});f.prototype=Object.create(null);f.prototype.constructor=f;f.impl=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){return b.apply(this,x);};}else{for(const k in a)f.prototype[k]=a[k];}return f;};f.implMut=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka_MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return b.apply(this,x);};}else{for(const k in a){const fn=a[k];f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka_MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return fn.apply(this,x);};}}return f;};if(embeds){for(const [embedName,embedFactory] of Object.entries(embeds)){for(const key of Object.keys(embedFactory.prototype)){f.prototype[key]=function(...args){return this[embedName][key](...args);};}}}return f;}"###);
+                self.out.push('\n');
                 self.out.push_str(
-                    "MutationError:class extends Error{constructor(m){super(m);this.name='MutationError';}}",
+                    "class __deka_MutationError extends Error{constructor(m){super(m);this.name='MutationError';}}\n",
                 );
             }
             if self.uses_newtype {
-                if self.uses_struct {
-                    self.out.push_str(",");
+                // The payload key is shared across modules through
+                // Symbol.for's registry — not through a globalThis merge.
+                self.out.push_str("const __p = Symbol.for('deka.nt');\n");
+            }
+        }
+
+        // Builtin `.getType()` support (rfd#41, deka#529): a module-local
+        // free function, emitted exactly the way deka#527 emits primitive
+        // extensions — tree-shakable, no struct factory, no globalThis.
+        // Tags are read directly (`v?.__deka_struct` / `v?.__enum` /
+        // `v?.__deka_newtype`), so `.getType()` alone must not force the
+        // struct factory (deka#551). Descriptors are interned per (kind,
+        // name) and frozen, so `==` on them is identity.
+        if uses_typeof {
+            self.out.push_str("const __deka_type_cache = new Map();\n");
+            self.out.push_str(r###"function __deka_type_of(v){const mk=(k,n)=>{const key=k+":"+n;let t=__deka_type_cache.get(key);if(!t){t=Object.freeze({kind:k,name:n,toString(){return this.name;}});__deka_type_cache.set(key,t);}return t;};if(v===null||v===undefined)return mk("none","none");if(v instanceof Uint8Array)return mk("bytes","bytes");const ty=typeof v;if(ty==="string"||ty==="number"||ty==="boolean"||ty==="function")return mk(ty,ty);if(Array.isArray(v))return mk("array","Array");const nt=v.__deka_newtype;if(nt)return mk("newtype",nt);const st=v.__deka_struct;if(st)return mk("struct",st);const en=v.__enum;if(en)return mk("enum",en);return mk("object","object");}"###);
+            self.out.push('\n');
+        }
+
+        // Static descriptor trees for `super` (deka#529, rfd#41): one frozen,
+        // content-deduped module-local const per distinct tree, printed
+        // before any use — the emission-ordering trap #550 documented for
+        // the prelude above. Like `type_of_calls`, both maps are fully
+        // populated by the typechecker before emission, so no AST scan is
+        // needed; entries pointing into shaken code force their const
+        // (harmless bloat, never incorrectness). Sorting the serialized
+        // trees before numbering makes the const names deterministic
+        // regardless of map iteration order.
+        let mut trees: Vec<String> = Vec::new();
+        for site in self.super_calls.values() {
+            for arg in site.args.iter() {
+                if let deka_syntax::typeck::SuperTypeArg::Concrete(tree) = arg {
+                    trees.push(emit_descriptor_tree(tree)?);
                 }
-                self.out.push_str("__nt:Symbol.for('deka.nt')");
             }
-            self.out.push_str("};\n");
+        }
+        for call in self.static_type_calls.values() {
+            if let Some(tree) = call.tree.as_ref() {
+                trees.push(emit_descriptor_tree(tree)?);
+            }
+        }
+        trees.sort();
+        trees.dedup();
+        for (index, tree_src) in trees.iter().enumerate() {
+            self.descriptor_consts
+                .insert(tree_src.clone(), index);
             self.out
-                .push_str("const deka = globalThis.deka = { ...globalThis.deka, ...__deka };\n");
-            if self.uses_newtype {
-                self.out.push_str("const __p = deka.__nt;\n");
-            }
+                .push_str(&format!("const __deka_super_desc${} = {};\n", index, tree_src));
         }
 
         if self.uses_prelude_enums {
@@ -632,6 +832,24 @@ impl<'a> Emitter<'a> {
             self.out.push_str("const None = Option.None;\n");
         }
 
+        Ok(())
+    }
+
+    /// Emit a reference to the interned const for a static descriptor tree
+    /// — normally `__deka_super_desc$N`. The prelude interned every recorded
+    /// tree, so a miss means the map came from a stale typeck pass; fall
+    /// back to inlining the tree rather than emitting a dangling reference.
+    fn emit_descriptor_ref(
+        &mut self,
+        tree: &deka_syntax::typeck::DescriptorTree,
+    ) -> Result<(), String> {
+        let src = emit_descriptor_tree(tree)?;
+        match self.descriptor_consts.get(&src) {
+            Some(index) => {
+                self.out.push_str(&format!("__deka_super_desc${}", index));
+            }
+            None => self.out.push_str(&src),
+        }
         Ok(())
     }
 
@@ -684,22 +902,16 @@ impl<'a> Emitter<'a> {
     }
 
     fn needs_struct_helper(&self) -> bool {
-        // A struct-member union type-pattern emits `deka.getStructId(...)`,
-        // which only exists when the struct prelude block is emitted — even
-        // if the struct itself lives in an import and this module declares
-        // none (rfd#42, deka#530).
-        //
-        // Primitive extensions are plain free functions, not prototype
-        // registrations, so they must not force the struct prelude (deka#527).
+        // Receiver methods for struct receivers install on the factory
+        // prototype via `.impl`, so they need the factory emitted; primitive
+        // extensions are plain free functions and must not force it
+        // (deka#527). Struct type-patterns read the `__deka_struct` brand tag
+        // directly and need nothing (deka#551).
         !self.structs.is_empty()
             || self
                 .receiver_methods
                 .keys()
                 .any(|name| !is_primitive_receiver(name))
-            || self
-                .union_type_patterns
-                .values()
-                .any(|t| matches!(t, deka_syntax::typeck::UnionMemberTest::Struct(_)))
     }
 
     fn needs_prelude_enums(&self) -> bool {
@@ -850,9 +1062,11 @@ impl<'a> Emitter<'a> {
             }
             Stmt::Function {
                 name,
+                type_params,
                 params,
                 body,
                 is_async,
+                is_super,
                 ..
             } => {
                 write_indent(&mut self.out, 0);
@@ -863,11 +1077,27 @@ impl<'a> Emitter<'a> {
                 }
                 self.out.push_str(name);
                 self.out.push('(');
-                for (i, param) in params.iter().enumerate() {
-                    if i > 0 {
+                let mut emitted_params = 0;
+                if *is_super {
+                    // The hidden descriptor parameter per type parameter
+                    // (deka#529): call sites pass the static tree; the body
+                    // resolves `T.type()` against it. `$` keeps the name
+                    // unwritable in user source.
+                    for type_param in type_params.iter() {
+                        if emitted_params > 0 {
+                            self.out.push_str(", ");
+                        }
+                        self.out
+                            .push_str(&format!("__deka_super${}", type_param.name));
+                        emitted_params += 1;
+                    }
+                }
+                for param in params.iter() {
+                    if emitted_params > 0 {
                         self.out.push_str(", ");
                     }
                     self.emit_param(param, !is_async)?;
+                    emitted_params += 1;
                 }
                 self.out.push_str(") {\n");
                 if *is_async {
@@ -910,9 +1140,11 @@ impl<'a> Emitter<'a> {
                     }
                     ExportDecl::Function {
                         name,
+                        type_params,
                         params,
                         body,
                         is_async,
+                        is_super,
                         ..
                     } => {
                         if *is_async {
@@ -922,11 +1154,23 @@ impl<'a> Emitter<'a> {
                         }
                         self.out.push_str(name);
                         self.out.push('(');
-                        for (i, param) in params.iter().enumerate() {
-                            if i > 0 {
+                        let mut emitted_params = 0;
+                        if *is_super {
+                            for type_param in type_params.iter() {
+                                if emitted_params > 0 {
+                                    self.out.push_str(", ");
+                                }
+                                self.out
+                                    .push_str(&format!("__deka_super${}", type_param.name));
+                                emitted_params += 1;
+                            }
+                        }
+                        for param in params.iter() {
+                            if emitted_params > 0 {
                                 self.out.push_str(", ");
                             }
                             self.emit_param(param, !is_async)?;
+                            emitted_params += 1;
                         }
                         self.out.push_str(") {\n");
                         if *is_async {
@@ -1100,7 +1344,7 @@ impl<'a> Emitter<'a> {
                 write_indent(&mut self.out, 0);
                 self.out.push_str("const ");
                 self.out.push_str(name);
-                self.out.push_str(" = deka.Struct(");
+                self.out.push_str(" = __deka_struct(");
                 self.out.push_str(&json_string(name));
                 if !embeds.is_empty() {
                     self.out.push_str(", { ");
@@ -1635,6 +1879,71 @@ impl<'a> Emitter<'a> {
                             }
                         }
                     }
+                    return Ok(());
+                }
+
+                // Builtin `.type()` inside a `super` function (deka#529):
+                // `T.type()` is the hidden descriptor parameter itself;
+                // `x.type()` on a concrete receiver is the interned static
+                // tree const.
+                if let Some(call) = self.static_type_calls.get(&expr_ptr).cloned() {
+                    match (&call.param, &call.tree) {
+                        (Some(param), None) => {
+                            self.out.push_str(&format!("__deka_super${}", param));
+                        }
+                        (None, Some(tree)) => {
+                            self.emit_descriptor_ref(&tree)?;
+                        }
+                        _ => {}
+                    }
+                    return Ok(());
+                }
+
+                // `super` function call (deka#529): the emitted function
+                // takes a hidden descriptor parameter per type parameter,
+                // so the call gains leading descriptor arguments — the
+                // interned static tree const per concrete type argument, or
+                // the enclosing super fn's hidden parameter for a passthrough
+                // (`validate<T>(x)` inside `validate`).
+                if let Some(site) = self.super_calls.get(&expr_ptr).cloned() {
+                    self.emit_expr(callee)?;
+                    self.out.push('(');
+                    let mut first = true;
+                    for arg in site.args.iter() {
+                        if !first {
+                            self.out.push_str(", ");
+                        }
+                        first = false;
+                        match arg {
+                            deka_syntax::typeck::SuperTypeArg::Param(param) => {
+                                self.out.push_str(&format!("__deka_super${}", param));
+                            }
+                            deka_syntax::typeck::SuperTypeArg::Concrete(tree) => {
+                                self.emit_descriptor_ref(tree)?;
+                            }
+                        }
+                    }
+                    for arg in args.iter() {
+                        if !first {
+                            self.out.push_str(", ");
+                        }
+                        first = false;
+                        self.emit_expr(arg)?;
+                    }
+                    self.out.push(')');
+                    return Ok(());
+                }
+
+                // Builtin `.getType()`: rewrite `obj.getType()` to the
+                // module-local free function `__deka_type_of(obj)` — static
+                // dispatch, no prototype mutation, no globalThis (rfd#41,
+                // deka#529).
+                if self.type_of_calls.contains(&expr_ptr) {
+                    self.out.push_str("__deka_type_of(");
+                    if let Expr::FieldAccess { object, .. } = &**callee {
+                        self.emit_expr(object)?;
+                    }
+                    self.out.push(')');
                     return Ok(());
                 }
 
@@ -2250,6 +2559,10 @@ impl<'a> Emitter<'a> {
                     unwrap_id: 0,
                     operator_rewrites: HashMap::new(),
                     method_calls: HashMap::new(),
+                    type_of_calls: HashSet::new(),
+                    super_calls: HashMap::new(),
+                    static_type_calls: HashMap::new(),
+                    descriptor_consts: HashMap::new(),
                     file_stem: self.file_stem.clone(),
                     fn_scope: self.fn_scope.clone(),
                     jsx_path: Vec::new(),
@@ -2306,8 +2619,8 @@ impl<'a> Emitter<'a> {
     }
 
     /// The runtime predicate for a union member type-pattern (rfd#42,
-    /// deka#530). Structs force the struct prelude block — `getStructId`
-    /// only exists when it is emitted.
+    /// deka#530). Structs read the `__deka_struct` brand tag directly — no
+    /// factory, no helper, nothing to force (deka#551).
     fn union_member_condition(
         &mut self,
         test: &deka_syntax::typeck::UnionMemberTest<'a>,
@@ -2322,8 +2635,9 @@ impl<'a> Emitter<'a> {
                 format!("{} instanceof Uint8Array", scrutinee_var)
             }
             deka_syntax::typeck::UnionMemberTest::Struct(name) => {
-                self.uses_struct = true;
-                format!("deka.getStructId({}) === \"{}\"", scrutinee_var, name)
+                // Read the brand tag directly, the same way
+                // `__deka_type_of` does — no prelude helper needed (deka#551).
+                format!("{}?.__deka_struct === \"{}\"", scrutinee_var, name)
             }
             deka_syntax::typeck::UnionMemberTest::Enum(name) => {
                 format!("{}.__enum === \"{}\"", scrutinee_var, name)

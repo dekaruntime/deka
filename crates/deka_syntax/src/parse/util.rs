@@ -78,6 +78,7 @@ pub(super) fn token_name(kind: TokenKind) -> &'static str {
         Bridge => "`bridge`",
         Await => "`await`",
         Async => "`async`",
+        Super => "`super`",
         Pub => "`pub`",
         Break => "`break`",
         Continue => "`continue`",

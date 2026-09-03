@@ -473,6 +473,9 @@ pub fn compile_to_js_with_imports_and_options<'a>(
         &typeck_result.unwrap_calls,
         &typeck_result.operator_rewrites,
         &typeck_result.method_calls,
+        &typeck_result.type_of_calls,
+        &typeck_result.super_calls,
+        &typeck_result.static_type_calls,
         &typeck_result.jsx_optional_props,
         &typeck_result.enum_case_patterns,
         &typeck_result.union_type_patterns,
@@ -610,7 +613,7 @@ mod tests {
         )
         .expect("compile should succeed");
         assert!(
-            result.js.contains("deka.getStructId(__deka_scrutinee) === \"Point\""),
+            result.js.contains("__deka_scrutinee?.__deka_struct === \"Point\""),
             "got: {}",
             result.js
         );
@@ -639,16 +642,8 @@ mod tests {
             "test.ds",
         )
         .expect("compile should succeed");
-        assert!(
-            result.js.contains("const Point = deka.Struct"),
-            "got: {}",
-            result.js
-        );
-        assert!(
-            result.js.contains("Point.impl(\"distance\""),
-            "got: {}",
-            result.js
-        );
+        assert!(result.js.contains("const Point = __deka_struct"), "got: {}", result.js);
+        assert!(result.js.contains("Point.impl(\"distance\""), "got: {}", result.js);
         assert!(result.js.contains("p1.distance(p2)"), "got: {}", result.js);
     }
 
@@ -877,23 +872,9 @@ export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
             "test.ds",
         )
         .expect("compile should succeed");
-        assert!(
-            result.js.contains("const Legs = deka.Struct"),
-            "got: {}",
-            result.js
-        );
-        assert!(
-            result
-                .js
-                .contains("const Robot = deka.Struct(\"Robot\", { Legs: Legs })"),
-            "got: {}",
-            result.js
-        );
-        assert!(
-            result.js.contains("Legs.impl(\"move\""),
-            "got: {}",
-            result.js
-        );
+        assert!(result.js.contains("const Legs = __deka_struct"), "got: {}", result.js);
+        assert!(result.js.contains("const Robot = __deka_struct(\"Robot\", { Legs: Legs })"), "got: {}", result.js);
+        assert!(result.js.contains("Legs.impl(\"move\""), "got: {}", result.js);
         assert!(result.js.contains("r.move()"), "got: {}", result.js);
     }
 
