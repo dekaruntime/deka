@@ -1,0 +1,6 @@
+import { echo } from "io"
+super fn describe<T>(x: T) string {
+  return T.type().toString()
+}
+echo(describe(42))
+echo(describe<number>(42))

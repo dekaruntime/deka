@@ -1,0 +1,1 @@
+super struct User { id: string }

@@ -93,6 +93,9 @@ pub enum Stmt<'a> {
         return_type: Option<Type<'a>>,
         body: &'a [Stmt<'a>],
         is_async: bool,
+        /// `super fn` — the function's type parameters may be described at
+        /// direct call sites via `T.type()` (deka#529, rfd#41).
+        is_super: bool,
         span: Span,
     },
     /// Receiver method: `fn StructName.method<T>(args): Ret { body }`
@@ -209,6 +212,8 @@ pub enum ExportDecl<'a> {
         return_type: Option<Type<'a>>,
         body: &'a [Stmt<'a>],
         is_async: bool,
+        /// `export super fn` — see [`Stmt::Function`](Stmt::Function).
+        is_super: bool,
     },
     /// `export { a, b as c }` — re-exports already-declared names.
     NamedGroup {

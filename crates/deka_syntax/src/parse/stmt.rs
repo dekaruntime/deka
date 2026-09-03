@@ -100,7 +100,11 @@ impl<'a> Parser<'a> {
             }
 
             TokenKind::Async => {
-                if self.tokens.get(self.pos + 1).map(|t| t.kind) == Some(TokenKind::Fn) {
+                let next_is_fn = self.tokens.get(self.pos + 1).map(|t| t.kind) == Some(TokenKind::Fn);
+                // `async super fn`: async outermost, matching `export async fn`.
+                let next_is_super_fn = self.tokens.get(self.pos + 1).map(|t| t.kind) == Some(TokenKind::Super)
+                    && self.tokens.get(self.pos + 2).map(|t| t.kind) == Some(TokenKind::Fn);
+                if next_is_fn || next_is_super_fn {
                     if in_block {
                         self.error("function declarations are only allowed at the top level in DekaScript");
                         return None;
@@ -108,6 +112,25 @@ impl<'a> Parser<'a> {
                     self.parse_fn_statement(start, start_byte)
                 } else {
                     self.error("expected `fn` after `async`");
+                    None
+                }
+            }
+
+            // `super fn` / `async super fn` (deka#529, rfd#41). `super` is a
+            // hard keyword; anywhere outside a function declaration it is
+            // rejected with the fix named in the diagnostic.
+            TokenKind::Super => {
+                if self.tokens.get(self.pos + 1).map(|t| t.kind) == Some(TokenKind::Fn)
+                    || (self.tokens.get(self.pos + 1).map(|t| t.kind) == Some(TokenKind::Async)
+                        && self.tokens.get(self.pos + 2).map(|t| t.kind) == Some(TokenKind::Fn))
+                {
+                    if in_block {
+                        self.error("function declarations are only allowed at the top level in DekaScript");
+                        return None;
+                    }
+                    self.parse_fn_statement(start, start_byte)
+                } else {
+                    self.error("`super` is only allowed on function declarations (`super fn`)");
                     None
                 }
             }
@@ -200,10 +223,15 @@ impl<'a> Parser<'a> {
 
     fn parse_fn_statement(&mut self, start: Pos, start_byte: usize) -> Option<Stmt<'a>> {
         let is_async = self.eat(TokenKind::Async);
+        let is_super = self.eat(TokenKind::Super);
         self.advance(); // `fn`
 
         // Receiver method: `fn (p Point) distance<T>(...): Ret { ... }`
         if self.at(TokenKind::LParen) {
+            if is_super {
+                self.error("`super` is only allowed on plain functions, not receiver methods");
+                return None;
+            }
             self.advance(); // `(`
             let receiver_name = self.expect_identifier()?;
             let receiver_mutable = self.eat(TokenKind::Mut);
@@ -273,6 +301,7 @@ impl<'a> Parser<'a> {
             return_type,
             body,
             is_async,
+            is_super,
             span: self.span_from(start, start_byte),
         })
     }
@@ -801,12 +830,20 @@ impl<'a> Parser<'a> {
             // async form needs no separate parse — only a way to reach it from
             // here. `export async fn` was rejected outright before (deka#410);
             // `@deka/fs` is written that way and could not be compiled at all.
-            TokenKind::Fn | TokenKind::Async => {
-                if self.current_kind() == TokenKind::Async
-                    && self.tokens.get(self.pos + 1).map(|t| t.kind) != Some(TokenKind::Fn)
-                {
-                    self.error("expected `fn` after `async`");
-                    return None;
+            // `super fn` reaches `parse_fn_statement` the same way `async fn`
+            // does (deka#529, rfd#41).
+            TokenKind::Fn | TokenKind::Async | TokenKind::Super => {
+                if self.current_kind() == TokenKind::Async {
+                    let next_is_fn =
+                        self.tokens.get(self.pos + 1).map(|t| t.kind) == Some(TokenKind::Fn);
+                    let next_is_super_fn = self.tokens.get(self.pos + 1).map(|t| t.kind)
+                        == Some(TokenKind::Super)
+                        && self.tokens.get(self.pos + 2).map(|t| t.kind)
+                            == Some(TokenKind::Fn);
+                    if !next_is_fn && !next_is_super_fn {
+                        self.error("expected `fn` after `async`");
+                        return None;
+                    }
                 }
                 let fn_stmt = self.parse_fn_statement(start, start_byte)?;
                 let span = self.span_from(start, start_byte);
@@ -818,6 +855,7 @@ impl<'a> Parser<'a> {
                         return_type,
                         body,
                         is_async,
+                        is_super,
                         ..
                     } => crate::ast::ExportDecl::Function {
                         name,
@@ -826,6 +864,7 @@ impl<'a> Parser<'a> {
                         return_type,
                         body,
                         is_async,
+                        is_super,
                     },
                     Stmt::ReceiverMethod { .. } => {
                         self.error("cannot export a receiver method");

@@ -33,8 +33,9 @@ impl<'a> Checker<'a> {
                     body,
                     span,
                     is_async,
+                    is_super,
                     ..
-                } => self.check_function(name, type_params, params, return_type.as_ref(), body, *is_async, *span),
+                } => self.check_function(name, type_params, params, return_type.as_ref(), body, *is_async, *is_super, *span),
                 ast::Stmt::ReceiverMethod {
                     receiver_type,
                     receiver_name,
@@ -117,11 +118,11 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            if let ast::Stmt::Struct { name, fields, embeds, span, .. } = stmt {
+            if let ast::Stmt::Struct { name, fields, embeds, type_params, span, .. } = stmt {
                 if *name == "Type" {
                     self.error_span(*span, BUILTIN_TYPE_DIAGNOSTIC);
                 }
-                if self.structs.insert(name, super::StructInfo { fields, embeds }).is_some() {
+                if self.structs.insert(name, super::StructInfo { fields, embeds, type_params }).is_some() {
                     self.error_span(*span, format!("duplicate struct definition `{name}`"));
                     continue;
                 }
@@ -381,14 +382,15 @@ impl<'a> Checker<'a> {
 
     fn collect_function_signatures(&mut self) {
         for stmt in self.program.statements {
-            let (name, type_params, params, return_type) = match stmt {
+            let (name, type_params, params, return_type, is_super) = match stmt {
                 ast::Stmt::Function {
                     name,
                     type_params,
                     params,
                     return_type,
+                    is_super,
                     ..
-                } => (*name, *type_params, *params, return_type.as_ref()),
+                } => (*name, *type_params, *params, return_type.as_ref(), *is_super),
                 ast::Stmt::Export {
                     decl:
                         ast::ExportDecl::Function {
@@ -396,12 +398,21 @@ impl<'a> Checker<'a> {
                             type_params,
                             params,
                             return_type,
+                            is_super,
                             ..
                         },
                     ..
-                } => (*name, *type_params, *params, return_type.as_ref()),
+                } => (*name, *type_params, *params, return_type.as_ref(), *is_super),
                 _ => continue,
             };
+
+            // `super fn`s are recorded in the registry up front (the flag is
+            // syntactic, so no body checking is needed); membership drives
+            // call-site rewriting and value-use rejection (deka#529).
+            if is_super {
+                let names: Vec<&'a str> = type_params.iter().map(|p| p.name).collect();
+                self.instantiated_fns.insert(name, names);
+            }
 
             self.push_type_params(type_params);
 
@@ -479,9 +490,10 @@ impl<'a> Checker<'a> {
                         body,
                         span,
                         is_async,
+                        is_super,
                         ..
                     } if return_type.is_none() => {
-                        Some((*name, *type_params, *params, *body, *is_async, *span))
+                        Some((*name, *type_params, *params, *body, *is_async, *is_super, *span))
                     }
                     ast::Stmt::Export {
                         decl:
@@ -492,16 +504,17 @@ impl<'a> Checker<'a> {
                                 return_type,
                                 body,
                                 is_async,
+                                is_super,
                                 ..
                             },
                         span,
                         ..
                     } if return_type.is_none() => {
-                        Some((*name, *type_params, *params, *body, *is_async, *span))
+                        Some((*name, *type_params, *params, *body, *is_async, *is_super, *span))
                     }
                     _ => None,
                 };
-                if let Some((name, type_params, params, body, is_async, span)) = info {
+                if let Some((name, type_params, params, body, is_async, is_super, span)) = info {
                     pending.push((name, span));
                     let prev = self.globals.get(name).cloned();
                     self.check_function(
@@ -511,6 +524,7 @@ impl<'a> Checker<'a> {
                         None,
                         body,
                         is_async,
+                        is_super,
                         span,
                     );
                     let new = self.globals.get(name).cloned();
@@ -585,9 +599,10 @@ impl<'a> Checker<'a> {
                 body,
                 span,
                 is_async,
+                is_super,
                 ..
             } => {
-                self.check_function(name, type_params, params, return_type.as_ref(), body, *is_async, *span);
+                self.check_function(name, type_params, params, return_type.as_ref(), body, *is_async, *is_super, *span);
             }
             ast::Stmt::Export { decl, .. } => match decl {
                 ast::ExportDecl::Const {
@@ -771,12 +786,13 @@ impl<'a> Checker<'a> {
                     return_type,
                     body,
                     is_async,
+                    is_super,
                     ..
                 },
             span,
         } = stmt
         {
-            self.check_function(name, type_params, params, return_type.as_ref(), body, *is_async, *span);
+            self.check_function(name, type_params, params, return_type.as_ref(), body, *is_async, *is_super, *span);
         }
     }
 
@@ -976,6 +992,7 @@ impl<'a> Checker<'a> {
         return_type: Option<&ast::Type<'a>>,
         body: &'a [ast::Stmt<'a>],
         is_async: bool,
+        is_super: bool,
         _span: ast::Span,
     ) {
         // Use the previously collected signature for parameter types so that
@@ -1025,13 +1042,18 @@ impl<'a> Checker<'a> {
 
         // Make the function available to its own body for recursion. Use the
         // signature collected earlier; the return type will be refined after
-        // the body is checked.
-        let self_type = Type::Function {
-            params: param_types.clone(),
-            ret: Box::new(final_ret.clone()),
-            optional,
-        };
-        self.declare_var(name, self_type);
+        // the body is checked. Super functions are excluded: their recursion
+        // goes through the rewritten call path (the hidden descriptor
+        // argument), and a body-scope self-binding would shadow that
+        // classification.
+        if !self.is_super_fn(name) {
+            let self_type = Type::Function {
+                params: param_types.clone(),
+                ret: Box::new(final_ret.clone()),
+                optional,
+            };
+            self.declare_var(name, self_type);
+        }
 
         for (p, t) in params.iter().zip(param_types.iter()) {
             self.declare_var(p.name, t.clone());
@@ -1039,9 +1061,11 @@ impl<'a> Checker<'a> {
 
         let saved_in_function = self.in_function;
         let saved_in_async = self.in_async_function;
+        let saved_in_super = self.in_super_function;
         let saved_return_type = self.return_type.clone();
         self.in_function = true;
         self.in_async_function = is_async;
+        self.in_super_function = is_super;
         self.return_type = body_expected_ret.clone();
 
         for stmt in body {
@@ -1063,6 +1087,7 @@ impl<'a> Checker<'a> {
         }
 
         self.in_async_function = saved_in_async;
+        self.in_super_function = saved_in_super;
 
         let final_ret = if is_async {
             // The public signature is always the declared Promise type (or a
