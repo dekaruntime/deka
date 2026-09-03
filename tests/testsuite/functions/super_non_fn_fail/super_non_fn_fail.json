@@ -1,6 +1,0 @@
-{
-  "title": "super on a struct declaration is rejected",
-  "stage": "parse",
-  "expectedDiagnosticContains": "only allowed on function declarations",
-  "notes": "deka#529: `super` is only allowed on plain function declarations (`super fn`)."
-}

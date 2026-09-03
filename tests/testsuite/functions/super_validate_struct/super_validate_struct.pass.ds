@@ -1,9 +1,0 @@
-import { echo } from "io"
-struct User {
-  id: string;
-  age: number;
-}
-super fn validate<T>(json: string) Type {
-  return T.type()
-}
-echo(validate<User>("{}").toString())

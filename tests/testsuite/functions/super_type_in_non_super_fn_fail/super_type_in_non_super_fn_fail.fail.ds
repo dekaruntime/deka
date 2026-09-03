@@ -1,3 +1,0 @@
-fn describe<T>(x: T) string {
-  return T.type().toString()
-}

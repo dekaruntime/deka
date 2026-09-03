@@ -166,9 +166,9 @@ function parseNativeDiagnostics(stderr: string): NativeRunResult['diagnostics'] 
   // Fallback: if no rich diagnostic was parsed, the CLI emitted the compact
   // form (`LINE:COL: /path/file.ds: message`). Collect EVERY such line — a
   // single failure can carry several diagnostics, and a fixture's expected
-  // diagnostic may be any of them (e.g. generic-export-return-types-negative
-  // expects the type-mismatch line, which is the second one). Previously only
-  // the first line became a diagnostic, so later lines were invisible to
+  // diagnostic may be any of them (e.g. a type-mismatch fixture expecting the
+  // second of two emitted diagnostics). Previously only the first line became
+  // a diagnostic, so later lines were invisible to
   // expectedDiagnosticContains.
   if (diagnostics.length === 0) {
     let sawCompact = false

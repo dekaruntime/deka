@@ -41,6 +41,7 @@ pub fn emit_js(program: &Program, _source: &str) -> Result<String, String> {
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
+        &HashMap::new(),
         "module.ds",
         None,
     )
@@ -76,6 +77,7 @@ pub fn emit_js_with_imports<'a>(
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
+        &HashMap::new(),
         "module.ds",
         None,
     )
@@ -104,14 +106,23 @@ pub fn emit_js_with_options<'a>(
     type_of_calls: &HashSet<*const Expr<'a>>,
     // `.signature()` call sites lowered to declared-type descriptor literals.
     signature_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::DescriptorTree<'a>>,
+    // Builtin `first`/`last` array method call sites, lowered by the
+    // typechecker (deka#561): the emitter rewrites them to an
+    // Option-producing expression since JS arrays have no `first`/`last`.
+    array_first_last_calls: &HashMap<
+        *const Expr<'a>,
+        deka_syntax::typeck::ArrayAccess,
+    >,
     // `super` function call sites, lowered by the typechecker: the call is
     // rewritten to pass a descriptor argument (an interned
     // `__deka_super_desc$N` const, or the enclosing super fn's hidden
-    // parameter for a passthrough argument) (deka#529, rfd#41).
+    // parameter for a passthrough argument) (deka#529, rfd#41). Kept for
+    // super declarations (PR B): this is the feed point PR B re-populates.
     super_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::SuperCallSite<'a>>,
     // Builtin `.type()` call sites inside `super` functions, lowered by the
     // typechecker to the hidden descriptor parameter or a static tree const
-    // (deka#529, rfd#41).
+    // (deka#529, rfd#41). Kept for super declarations (PR B): this is the
+    // feed point PR B re-populates.
     static_type_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::StaticTypeCall<'a>>,
     jsx_optional_props: &HashMap<
         *const deka_syntax::JsxElement<'a>,
@@ -136,6 +147,7 @@ pub fn emit_js_with_options<'a>(
     emitter.method_calls = method_calls.clone();
     emitter.type_of_calls = type_of_calls.clone();
     emitter.signature_calls = signature_calls.clone();
+    emitter.array_first_last_calls = array_first_last_calls.clone();
     emitter.super_calls = super_calls.clone();
     emitter.static_type_calls = static_type_calls.clone();
     emitter.jsx_optional_props = jsx_optional_props.clone();
@@ -156,7 +168,7 @@ fn file_stem_from_path(path: &str) -> String {
 
 /// The display name of a descriptor tree node: the name scalars, structs,
 /// newtypes and enums carry, `Array<…>`/`Option<…>` for the collection
-/// nodes, and `… | …` for unions.
+/// nodes, and `… | …` for unions. Kept for super declarations (PR B).
 fn descriptor_tree_name(tree: &deka_syntax::typeck::DescriptorTree) -> String {
     use deka_syntax::typeck::DescriptorTree as T;
     match tree {
@@ -175,7 +187,7 @@ fn descriptor_tree_name(tree: &deka_syntax::typeck::DescriptorTree) -> String {
 }
 
 /// Serialize a static descriptor tree to its frozen JavaScript literal
-/// (deka#529, rfd#41).
+/// (deka#529, rfd#41). Kept for super declarations (PR B).
 ///
 /// Every node carries `{kind, name, toString}` so static trees stay
 /// interchangeable with the runtime descriptors `__deka_type_of` returns
@@ -333,15 +345,21 @@ struct Emitter<'a> {
     type_of_calls: HashSet<*const Expr<'a>>,
     /// `.signature()` call sites lowered to static descriptor literals.
     signature_calls: HashMap<*const Expr<'a>, deka_syntax::typeck::DescriptorTree<'a>>,
+    /// Builtin `first`/`last` array method call sites lowered by the
+    /// typechecker (deka#561): JS arrays have no `first`/`last`, so the
+    /// emitter rewrites the call to an Option-producing expression.
+    array_first_last_calls: HashMap<*const Expr<'a>, deka_syntax::typeck::ArrayAccess>,
     /// `super` function call sites lowered by the typechecker (deka#529):
-    /// each call gains a leading descriptor argument.
+    /// each call gains a leading descriptor argument. Kept for super
+    /// declarations (PR B).
     super_calls: HashMap<*const Expr<'a>, deka_syntax::typeck::SuperCallSite<'a>>,
     /// Builtin `.type()` call sites inside `super` functions, lowered by the
-    /// typechecker (deka#529).
+    /// typechecker (deka#529). Kept for super declarations (PR B).
     static_type_calls: HashMap<*const Expr<'a>, deka_syntax::typeck::StaticTypeCall<'a>>,
     /// Interned static descriptor trees: the tree's serialized form to its
     /// `__deka_super_desc$N` const index. Populated by `emit_prelude` (which
-    /// runs before any call site is emitted), then read at call sites.
+    /// runs before any call site is emitted), then read at call sites. Kept
+    /// for super declarations (PR B).
     descriptor_consts: HashMap<String, usize>,
     file_stem: String,
     fn_scope: String,
@@ -376,6 +394,7 @@ impl<'a> Emitter<'a> {
             method_calls: HashMap::new(),
             type_of_calls: HashSet::new(),
             signature_calls: HashMap::new(),
+            array_first_last_calls: HashMap::new(),
             super_calls: HashMap::new(),
             static_type_calls: HashMap::new(),
             descriptor_consts: HashMap::new(),
@@ -760,6 +779,11 @@ impl<'a> Emitter<'a> {
         // helper directly — no AST scan needed. A call in shaken code still
         // forces the ~4-line helper; harmless bloat, never incorrectness.
         let uses_typeof = !self.type_of_calls.is_empty();
+        // Same guarantee for `array_first_last_calls` (deka#561): the emitted
+        // rewrite calls `Some`/`None`, which the enum prelude defines.
+        if !self.array_first_last_calls.is_empty() {
+            self.uses_prelude_enums = true;
+        }
 
         if self.uses_struct || self.uses_newtype {
             if self.uses_struct {
@@ -804,7 +828,9 @@ impl<'a> Emitter<'a> {
         // needed; entries pointing into shaken code force their const
         // (harmless bloat, never incorrectness). Sorting the serialized
         // trees before numbering makes the const names deterministic
-        // regardless of map iteration order.
+        // regardless of map iteration order. Kept for super declarations
+        // (PR B): with user `super fn` removed the maps are empty, but the
+        // interning path stays so PR B can re-feed it.
         let mut trees: Vec<String> = Vec::new();
         for site in self.super_calls.values() {
             for arg in site.args.iter() {
@@ -851,6 +877,10 @@ impl<'a> Emitter<'a> {
     /// — normally `__deka_super_desc$N`. The prelude interned every recorded
     /// tree, so a miss means the map came from a stale typeck pass; fall
     /// back to inlining the tree rather than emitting a dangling reference.
+    /// Kept for super declarations (PR B): its only callers were the
+    /// super-fn rewrites removed in deka#561, and PR B's rewrites will call
+    /// it again.
+    #[allow(dead_code)]
     fn emit_descriptor_ref(
         &mut self,
         tree: &deka_syntax::typeck::DescriptorTree,
@@ -1074,11 +1104,9 @@ impl<'a> Emitter<'a> {
             }
             Stmt::Function {
                 name,
-                type_params,
                 params,
                 body,
                 is_async,
-                is_super,
                 ..
             } => {
                 write_indent(&mut self.out, 0);
@@ -1089,27 +1117,11 @@ impl<'a> Emitter<'a> {
                 }
                 self.out.push_str(name);
                 self.out.push('(');
-                let mut emitted_params = 0;
-                if *is_super {
-                    // The hidden descriptor parameter per type parameter
-                    // (deka#529): call sites pass the static tree; the body
-                    // resolves `T.type()` against it. `$` keeps the name
-                    // unwritable in user source.
-                    for type_param in type_params.iter() {
-                        if emitted_params > 0 {
-                            self.out.push_str(", ");
-                        }
-                        self.out
-                            .push_str(&format!("__deka_super${}", type_param.name));
-                        emitted_params += 1;
-                    }
-                }
-                for param in params.iter() {
-                    if emitted_params > 0 {
+                for (i, param) in params.iter().enumerate() {
+                    if i > 0 {
                         self.out.push_str(", ");
                     }
                     self.emit_param(param, !is_async)?;
-                    emitted_params += 1;
                 }
                 self.out.push_str(") {\n");
                 if *is_async {
@@ -1152,11 +1164,9 @@ impl<'a> Emitter<'a> {
                     }
                     ExportDecl::Function {
                         name,
-                        type_params,
                         params,
                         body,
                         is_async,
-                        is_super,
                         ..
                     } => {
                         if *is_async {
@@ -1166,23 +1176,11 @@ impl<'a> Emitter<'a> {
                         }
                         self.out.push_str(name);
                         self.out.push('(');
-                        let mut emitted_params = 0;
-                        if *is_super {
-                            for type_param in type_params.iter() {
-                                if emitted_params > 0 {
-                                    self.out.push_str(", ");
-                                }
-                                self.out
-                                    .push_str(&format!("__deka_super${}", type_param.name));
-                                emitted_params += 1;
-                            }
-                        }
-                        for param in params.iter() {
-                            if emitted_params > 0 {
+                        for (i, param) in params.iter().enumerate() {
+                            if i > 0 {
                                 self.out.push_str(", ");
                             }
                             self.emit_param(param, !is_async)?;
-                            emitted_params += 1;
                         }
                         self.out.push_str(") {\n");
                         if *is_async {
@@ -1894,58 +1892,6 @@ impl<'a> Emitter<'a> {
                     return Ok(());
                 }
 
-                // Builtin `.type()` inside a `super` function (deka#529):
-                // `T.type()` is the hidden descriptor parameter itself;
-                // `x.type()` on a concrete receiver is the interned static
-                // tree const.
-                if let Some(call) = self.static_type_calls.get(&expr_ptr).cloned() {
-                    match (&call.param, &call.tree) {
-                        (Some(param), None) => {
-                            self.out.push_str(&format!("__deka_super${}", param));
-                        }
-                        (None, Some(tree)) => {
-                            self.emit_descriptor_ref(&tree)?;
-                        }
-                        _ => {}
-                    }
-                    return Ok(());
-                }
-
-                // `super` function call (deka#529): the emitted function
-                // takes a hidden descriptor parameter per type parameter,
-                // so the call gains leading descriptor arguments — the
-                // interned static tree const per concrete type argument, or
-                // the enclosing super fn's hidden parameter for a passthrough
-                // (`validate<T>(x)` inside `validate`).
-                if let Some(site) = self.super_calls.get(&expr_ptr).cloned() {
-                    self.emit_expr(callee)?;
-                    self.out.push('(');
-                    let mut first = true;
-                    for arg in site.args.iter() {
-                        if !first {
-                            self.out.push_str(", ");
-                        }
-                        first = false;
-                        match arg {
-                            deka_syntax::typeck::SuperTypeArg::Param(param) => {
-                                self.out.push_str(&format!("__deka_super${}", param));
-                            }
-                            deka_syntax::typeck::SuperTypeArg::Concrete(tree) => {
-                                self.emit_descriptor_ref(tree)?;
-                            }
-                        }
-                    }
-                    for arg in args.iter() {
-                        if !first {
-                            self.out.push_str(", ");
-                        }
-                        first = false;
-                        self.emit_expr(arg)?;
-                    }
-                    self.out.push(')');
-                    return Ok(());
-                }
-
                 // Builtin `.getType()`: rewrite `obj.getType()` to the
                 // module-local free function `__deka_type_of(obj)` — static
                 // dispatch, no prototype mutation, no globalThis (rfd#41,
@@ -1961,6 +1907,27 @@ impl<'a> Emitter<'a> {
 
                 if let Some(tree) = self.signature_calls.get(&expr_ptr).cloned() {
                     self.out.push_str(&emit_descriptor_tree(&tree)?);
+                    return Ok(());
+                }
+
+                // Builtin `first`/`last`: JS arrays have no such methods, and
+                // the typed `pop`/`shift` builtins are emitted as verbatim JS
+                // passthroughs that return raw values (not Option) — a known
+                // runtime lie this deliberately avoids (deka#561). The arrow
+                // IIFE evaluates the receiver once, is expression-position
+                // safe, and works on frozen arrays.
+                if let Some(kind) = self.array_first_last_calls.get(&expr_ptr) {
+                    let index = match kind {
+                        deka_syntax::typeck::ArrayAccess::First => "0",
+                        deka_syntax::typeck::ArrayAccess::Last => "v.length - 1",
+                    };
+                    self.out.push_str("((v) => v.length > 0 ? Some(v[");
+                    self.out.push_str(index);
+                    self.out.push_str("]) : None)(");
+                    if let Expr::FieldAccess { object, .. } = &**callee {
+                        self.emit_expr(object)?;
+                    }
+                    self.out.push(')');
                     return Ok(());
                 }
 
@@ -2578,6 +2545,7 @@ impl<'a> Emitter<'a> {
                     method_calls: HashMap::new(),
                     type_of_calls: HashSet::new(),
                     signature_calls: HashMap::new(),
+                    array_first_last_calls: HashMap::new(),
                     super_calls: HashMap::new(),
                     static_type_calls: HashMap::new(),
                     descriptor_consts: HashMap::new(),
@@ -2883,10 +2851,6 @@ fn is_js_identifier(s: &str) -> bool {
 
 fn is_hole_expr(expr: &Expr) -> bool {
     matches!(expr, Expr::Identifier { name: "_", .. })
-}
-
-fn is_builtin_call<'a>(callee: &Expr<'a>, name: &str) -> bool {
-    matches!(callee, Expr::Identifier { name: n, .. } if *n == name)
 }
 
 #[derive(Default)]

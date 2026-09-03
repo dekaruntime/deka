@@ -1136,64 +1136,6 @@ mod tests {
     }
 
     #[test]
-    fn graph_propagates_declared_return_type_for_imported_generic_function() {
-        let root = PathBuf::from("/project");
-        let lib = root.join("lib.ds");
-        let main = root.join("main.ds");
-
-        let mut files = HashMap::new();
-        files.insert(
-            lib.clone(),
-            "export fn generic<T>(payload: T) Result<string, string> {\n  return Ok(\"y\")\n}"
-                .to_string(),
-        );
-        files.insert(
-            main.clone(),
-            "import { generic } from \"./lib.ds\";\nconst value: string = match (generic({sub: \"1\"})) { Ok(v) => v, Err(e) => e };".to_string(),
-        );
-
-        let mut aliases = HashMap::new();
-        aliases.insert((main.clone(), "./lib.ds".to_string()), lib);
-
-        let loader = InMemoryLoader { files, aliases };
-        let result = compile_module_graph(&main, &loader).expect("compile graph");
-        let main_js = &result.modules[&main];
-        assert!(
-            main_js.contains("generic({sub: \"1\"})"),
-            "got: {}",
-            main_js
-        );
-        assert!(main_js.contains("__case"), "got: {}", main_js);
-    }
-
-    #[test]
-    fn graph_substitutes_imported_generic_return_type() {
-        let root = PathBuf::from("/project");
-        let lib = root.join("lib.ds");
-        let main = root.join("main.ds");
-
-        let mut files = HashMap::new();
-        files.insert(
-            lib.clone(),
-            "export fn first<T>(values: Array<T>) Option<T> {\n  return Some(values[0])\n}"
-                .to_string(),
-        );
-        files.insert(
-            main.clone(),
-            "import { first } from \"./lib.ds\";\nconst value: string = match (first([\"x\"])) { Some(v) => v, None => \"\" };".to_string(),
-        );
-
-        let mut aliases = HashMap::new();
-        aliases.insert((main.clone(), "./lib.ds".to_string()), lib);
-
-        let loader = InMemoryLoader { files, aliases };
-        let result = compile_module_graph(&main, &loader).expect("compile graph");
-        let main_js = &result.modules[&main];
-        assert!(main_js.contains("first([\"x\"])"), "got: {}", main_js);
-        assert!(main_js.contains("__case"), "got: {}", main_js);
-    }
-
-    #[test]
     fn fs_loader_resolves_relative_and_index() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = tmp.path().to_path_buf();

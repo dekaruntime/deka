@@ -475,8 +475,12 @@ pub fn compile_to_js_with_imports_and_options<'a>(
         &typeck_result.method_calls,
         &typeck_result.type_of_calls,
         &typeck_result.signature_calls,
-        &typeck_result.super_calls,
-        &typeck_result.static_type_calls,
+        &typeck_result.array_first_last_calls,
+        // super_calls/static_type_calls are no longer produced by the
+        // typechecker (deka#561); the emitter parameters stay and PR B
+        // (super declarations) re-feeds them.
+        &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
         &typeck_result.jsx_optional_props,
         &typeck_result.enum_case_patterns,
         &typeck_result.union_type_patterns,
@@ -649,17 +653,6 @@ mod tests {
     }
 
     #[test]
-    fn compile_generic_function() {
-        let result = compile_to_js(
-            "fn id<T>(x: T) T { return x; } const n: number = id(5);",
-            "test.ds",
-        )
-        .expect("compile should succeed");
-        assert!(result.js.contains("function id"));
-        assert!(result.js.contains("id(5)"));
-    }
-
-    #[test]
     fn compile_import_and_use() {
         let result = compile_to_js(
             "import { add } from \"./math.ds\"; const r: number = add(1, 2);",
@@ -763,45 +756,6 @@ mod tests {
             }
             other => panic!("expected function type, got {:?}", other),
         }
-    }
-
-    #[test]
-    fn collect_exports_preserves_generic_function_signatures() {
-        use bumpalo::Bump;
-        use deka_syntax::{collect_module_exports, parse, typeck::Type};
-
-        let arena = Bump::new();
-        let source = r#"
-fn constant<T>(value: T) Result<string, string> { return Ok("fixed") }
-export { constant }
-export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
-"#;
-        let result = parse(source, &arena);
-        assert!(result.errors.is_empty(), "{:?}", result.errors);
-        let program = result.program.unwrap();
-        let exports = collect_module_exports(&program, &arena);
-
-        let Type::Function { params, ret, .. } = &exports.values["constant"] else {
-            panic!("expected generic function signature");
-        };
-        assert!(matches!(params.as_slice(), [Type::Param { name: "T" }]));
-        assert!(matches!(
-            ret.as_ref(),
-            Type::Generic { base: "Result", args }
-                if matches!(args.as_slice(), [Type::Named { name: "string" }, Type::Named { name: "string" }])
-        ));
-
-        let Type::Function { params, ret, .. } = &exports.values["first"] else {
-            panic!("expected generic function signature");
-        };
-        assert!(matches!(
-            params.as_slice(),
-            [Type::Array { elem }] if matches!(elem.as_ref(), Type::Param { name: "T" })
-        ));
-        assert!(matches!(
-            ret.as_ref(),
-            Type::Option { inner } if matches!(inner.as_ref(), Type::Param { name: "T" })
-        ));
     }
 
     #[test]

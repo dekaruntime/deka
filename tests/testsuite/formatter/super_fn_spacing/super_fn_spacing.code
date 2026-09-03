@@ -1,9 +1,0 @@
-import { echo } from "io"
-super fn describe<T>(x: T) string {
-  return T.type().toString()
-}
-async super fn describeAsync<T>(x: T) Promise<string> {
-  return T.type().toString()
-}
-echo(describe(42))
-echo(string(await describeAsync<number>(42)))

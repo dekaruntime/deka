@@ -1,5 +1,0 @@
-{
-  "title": "validate<User> receives a static struct descriptor",
-  "stage": "run",
-  "notes": "deka#529, rfd#41: the emitted descriptor tree carries the struct fields ({name, optional, type}); toString() names the struct."
-}

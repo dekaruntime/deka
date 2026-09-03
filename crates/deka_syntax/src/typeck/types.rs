@@ -150,6 +150,16 @@ pub enum NewtypeSide {
     Right,
 }
 
+/// Which end of the array a builtin `first`/`last` call reads (deka#561).
+/// JS has no `Array.prototype.first`/`last`, so the emitter rewrites these
+/// calls to an Option-producing expression; the checker records each call
+/// site, parallel to `type_of_calls`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArrayAccess {
+    First,
+    Last,
+}
+
 /// The runtime predicate a union member type-pattern compiles to (rfd#42,
 /// deka#530). Computed by the checker and handed to the emitter through
 /// `TypeckResult::union_type_patterns`, parallel to `enum_case_patterns`,

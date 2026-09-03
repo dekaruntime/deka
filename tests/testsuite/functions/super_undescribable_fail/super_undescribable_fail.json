@@ -1,6 +1,0 @@
-{
-  "title": "A function-valued type argument cannot be described",
-  "stage": "typecheck",
-  "expectedDiagnosticContains": "function-valued",
-  "notes": "deka#529, rfd#41: a type the compiler cannot describe is an error at the specific call site, not a viral constraint."
-}

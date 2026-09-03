@@ -1,7 +1,0 @@
-export fn constant<T>(payload: T) Result<string, string> {
-  return Result.Ok("y")
-}
-
-export fn first<T>(values: Array<T>) Option<T> {
-  return Option.Some(values[0])
-}

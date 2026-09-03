@@ -1,3 +1,0 @@
-export fn first<T>(values: Array<T>) Option<T> {
-  return Option.Some(values[0])
-}

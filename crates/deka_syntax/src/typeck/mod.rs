@@ -27,7 +27,7 @@ mod types;
 pub use descriptor::{
     DescriptorField, DescriptorTree, StaticTypeCall, SuperCallSite, SuperTypeArg,
 };
-pub use types::{NewtypeSide, OperatorRewrite, Type, UnionMemberTest, UnwrapKind};
+pub use types::{ArrayAccess, NewtypeSide, OperatorRewrite, Type, UnionMemberTest, UnwrapKind};
 
 #[derive(Debug)]
 pub struct TypeError {
@@ -46,6 +46,9 @@ pub struct TypeckResult<'a> {
     pub type_of_calls: HashSet<*const ast::Expr<'a>>,
     /// `.signature()` call sites and their compile-time declared descriptors.
     pub signature_calls: HashMap<*const ast::Expr<'a>, descriptor::DescriptorTree<'a>>,
+    /// Builtin `Array.first()`/`Array.last()` call sites, rewritten to an
+    /// Option-producing expression during emission (deka#561).
+    pub array_first_last_calls: HashMap<*const ast::Expr<'a>, types::ArrayAccess>,
     /// Map from primitive conversion call expression pointer to how it should
     /// be lowered (`parseNumber(x)`, `unboxNumber(x)`, `toNumber(x)`,
     /// `string(x)`).
@@ -65,15 +68,6 @@ pub struct TypeckResult<'a> {
     /// Constructor patterns that are union member type-patterns (`string(s)`),
     /// mapped to the runtime predicate the emitter must emit (rfd#42).
     pub union_type_patterns: HashMap<*const ast::Pattern<'a>, types::UnionMemberTest<'a>>,
-    /// Call sites of `super` functions, rewritten to pass a descriptor
-    /// argument during emission (deka#529, rfd#41). `Param` arguments
-    /// forward the enclosing super fn's hidden parameter; `Concrete`
-    /// arguments reference an interned module-local descriptor const.
-    pub super_calls: HashMap<*const ast::Expr<'a>, descriptor::SuperCallSite<'a>>,
-    /// `.type()` call sites inside `super` functions: `T.type()` resolves to
-    /// the hidden descriptor parameter, concrete receivers to a static tree
-    /// const (deka#529, rfd#41).
-    pub static_type_calls: HashMap<*const ast::Expr<'a>, descriptor::StaticTypeCall<'a>>,
 }
 
 /// The `Option` materialisation for one JSX element.
@@ -104,17 +98,6 @@ pub struct ModuleExports<'a> {
     /// Names exported via `export { name }` that are not locally declared
     /// (i.e. re-exports of imports). These pass through to importers.
     pub re_exports: HashSet<&'a str>,
-    /// Functions importers must call with a descriptor argument: exported
-    /// `super fn`s (syntactic), keyed by name, mapping to their declared
-    /// type parameter names (deka#529, rfd#41). An importer seeds its own
-    /// registry from this map so call sites to imported super functions are
-    /// recognized and rewritten.
-    ///
-    /// Known limitation: a super function re-exported through an
-    /// intermediate module (`export { validate }` of an import) is not
-    /// recognized — import super functions directly from their declaring
-    /// module.
-    pub instantiated_fns: HashMap<&'a str, Vec<&'a str>>,
 }
 
 impl<'a> Default for ModuleExports<'a> {
@@ -127,7 +110,6 @@ impl<'a> Default for ModuleExports<'a> {
             receiver_methods: HashMap::new(),
             values: HashMap::new(),
             re_exports: HashSet::new(),
-            instantiated_fns: HashMap::new(),
         }
     }
 }
@@ -148,13 +130,12 @@ pub fn check_program_with_imports<'a>(
         method_calls: checker.method_calls,
         type_of_calls: checker.type_of_calls,
         signature_calls: checker.signature_calls,
+        array_first_last_calls: checker.array_first_last_calls,
         unwrap_calls: checker.unwrap_calls,
         operator_rewrites: checker.operator_rewrites,
         jsx_optional_props: checker.jsx_optional_props,
         enum_case_patterns: checker.enum_case_patterns,
         union_type_patterns: checker.union_type_patterns,
-        super_calls: checker.super_calls,
-        static_type_calls: checker.static_type_calls,
     }
 }
 
@@ -385,10 +366,6 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
     // over raw annotations when available.
     let inferred_globals = infer_module_function_signatures(program);
     let mut declared_values: HashMap<&'a str, Type<'a>> = HashMap::new();
-    // `super fn`s declared in this module (syntactic). Exported ones land in
-    // `exports.instantiated_fns` below so importers recognize and rewrite
-    // call sites to them.
-    let mut declared_super: HashMap<&'a str, Vec<&'a str>> = HashMap::new();
     for stmt in program.statements.iter() {
         match stmt {
             ast::Stmt::Function {
@@ -396,12 +373,8 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                 type_params,
                 params,
                 return_type,
-                is_super,
                 ..
             } => {
-                if *is_super {
-                    declared_super.insert(*name, type_params.iter().map(|p| p.name).collect());
-                }
                 if let Some(ty) = inferred_globals.get(name) {
                     // The checker retains `Type::Param` in polymorphic
                     // signatures, so keep that signature at the module
@@ -504,14 +477,8 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                 type_params,
                 params,
                 return_type,
-                is_super,
                 ..
             } => {
-                if *is_super {
-                    exports
-                        .instantiated_fns
-                        .insert(*name, type_params.iter().map(|p| p.name).collect());
-                }
                 if let Some(ty) = inferred_globals.get(name) {
                     exports.values.insert(*name, ty.clone());
                 } else if type_params.is_empty() {
@@ -591,9 +558,6 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                     if let Some(ty) = declared_values.get(local).cloned() {
                         exports.values.insert(external, ty);
                     }
-                    if let Some(params) = declared_super.get(local) {
-                        exports.instantiated_fns.insert(external, params.clone());
-                    }
                     // If the exported name is not declared in this module, it
                     // must be a re-export of an import (`export { value }`
                     // after `import { value } from "..."`). Record it so
@@ -638,8 +602,8 @@ pub struct StructInfo<'a> {
     pub embeds: &'a [ast::Embed<'a>],
     /// Declared type parameters, e.g. `T` in `struct Box<T>`. Kept so a use
     /// site spelled `Box<number>` can substitute them into field types when
-    /// building a `super` descriptor tree (deka#529); previously they were
-    /// parsed and discarded.
+    /// building a `super` descriptor tree (kept for super declarations, PR B);
+    /// previously they were parsed and discarded.
     pub type_params: &'a [ast::TypeParam<'a>],
 }
 
@@ -706,6 +670,11 @@ struct Checker<'a> {
     /// `reset_lowering_state` — the inference pass populates them too.
     type_of_calls: HashSet<*const ast::Expr<'a>>,
     signature_calls: HashMap<*const ast::Expr<'a>, descriptor::DescriptorTree<'a>>,
+    /// Builtin `Array.first()`/`Array.last()` call sites to rewrite to an
+    /// Option-producing expression, keyed by call expression pointer.
+    /// Lowering collections like this one must also be cleared in
+    /// `reset_lowering_state` — the inference pass populates them too.
+    array_first_last_calls: HashMap<*const ast::Expr<'a>, types::ArrayAccess>,
     /// Primitive conversion call sites to lower, keyed by call expression pointer.
     /// Cleared between passes by `reset_lowering_state`.
     unwrap_calls: HashMap<*const ast::Expr<'a>, types::UnwrapKind>,
@@ -717,20 +686,6 @@ struct Checker<'a> {
     /// Union member type-pattern sites to lower, keyed by pattern pointer
     /// (rfd#42, deka#530).
     union_type_patterns: HashMap<*const ast::Pattern<'a>, types::UnionMemberTest<'a>>,
-    /// Call sites of `super` functions, keyed by call-expression pointer
-    /// (deka#529, rfd#41). Lowering collection: cleared in
-    /// `reset_lowering_state`.
-    super_calls: HashMap<*const ast::Expr<'a>, descriptor::SuperCallSite<'a>>,
-    /// `.type()` call sites inside `super` functions, keyed by
-    /// call-expression pointer (deka#529, rfd#41). Lowering collection:
-    /// cleared in `reset_lowering_state`.
-    static_type_calls: HashMap<*const ast::Expr<'a>, descriptor::StaticTypeCall<'a>>,
-    /// The `super fn` registry: function names that must be called with a
-    /// descriptor argument, mapped to their declared type parameter names.
-    /// Populated from local declarations (`collect_function_signatures`) and
-    /// imports (`seed_imports`); membership in the map is the test, so a
-    /// bare value use can be rejected (deka#529).
-    instantiated_fns: HashMap<&'a str, Vec<&'a str>>,
     /// Local scopes. The first scope is the top-level scope.
     scopes: Vec<HashMap<&'a str, Type<'a>>>,
     /// Bindings that were introduced with `let` and may be reassigned.
@@ -742,12 +697,6 @@ struct Checker<'a> {
     in_function: bool,
     /// Are we currently inside an async function body?
     in_async_function: bool,
-    /// Are we currently inside a `super fn` body? Deliberately inherited by
-    /// nested closures: a closure inside a super fn captures the hidden
-    /// descriptor parameter like any other parameter, so it retains the
-    /// capability (unlike `in_function`, which tracks a language rule
-    /// like `await`, super-ness is an emission context).
-    in_super_function: bool,
     /// Expected / inferred return type of the current function.
     return_type: Option<Type<'a>>,
     /// How many nested loops currently enclose the checked statement?
@@ -774,20 +723,17 @@ impl<'a> Checker<'a> {
             method_calls: HashMap::new(),
             type_of_calls: HashSet::new(),
             signature_calls: HashMap::new(),
+            array_first_last_calls: HashMap::new(),
             unwrap_calls: HashMap::new(),
             operator_rewrites: HashMap::new(),
             jsx_optional_props: HashMap::new(),
             enum_case_patterns: HashMap::new(),
             union_type_patterns: HashMap::new(),
-            super_calls: HashMap::new(),
-            static_type_calls: HashMap::new(),
-            instantiated_fns: HashMap::new(),
             scopes: vec![HashMap::new()],
             mutables: vec![HashSet::new()],
             type_scopes: Vec::new(),
             in_function: false,
             in_async_function: false,
-            in_super_function: false,
             return_type: None,
             loop_depth: 0,
             infer_only: false,
@@ -860,10 +806,6 @@ impl<'a> Checker<'a> {
                 let imported = spec.imported;
                 let local = spec.local;
 
-                if let Some(params) = exports.instantiated_fns.get(imported) {
-                    self.instantiated_fns.insert(local, params.clone());
-                }
-
                 if let Some(info) = exports.structs.get(imported) {
                     self.structs.insert(local, info.clone());
                     for ((rt, mn), mi) in exports.receiver_methods.iter() {
@@ -914,21 +856,9 @@ impl<'a> Checker<'a> {
         self.method_calls.clear();
         self.type_of_calls.clear();
         self.signature_calls.clear();
+        self.array_first_last_calls.clear();
         self.unwrap_calls.clear();
         self.operator_rewrites.clear();
-        self.super_calls.clear();
-        self.static_type_calls.clear();
-    }
-
-    /// True when `name` refers to a `super` function binding (not shadowed
-    /// by a local variable in a nested scope). Such functions carry a hidden
-    /// descriptor parameter, so every call must be rewritten to pass it and
-    /// a bare value use is a compile error (deka#529). The `scopes[1..]`
-    /// slice skips the top-level scope: imports and top-level consts live
-    /// there and must not count as shadowing, while function-body locals do.
-    pub(super) fn is_super_fn(&self, name: &str) -> bool {
-        self.instantiated_fns.contains_key(name)
-            && !self.scopes[1..].iter().any(|scope| scope.contains_key(name))
     }
 
     // ------------------------------------------------------------------
@@ -1647,8 +1577,10 @@ mod tests {
 
     #[test]
     fn gettype_generic_receiver_passes() {
-        // Runtime inspection: generics work with no `super` keyword.
-        assert!(typeck("fn id<T>(x: T) Type { return x.getType(); }").is_empty());
+        // Runtime inspection: `.getType()` works on a builtin-generic
+        // receiver with no `super` keyword (user-declared type parameters
+        // are banned, deka#561).
+        assert!(typeck("fn id(x: Array<number>) Type { return x.getType(); }").is_empty());
     }
 
     #[test]
@@ -1662,6 +1594,51 @@ mod tests {
         assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
         assert_eq!(typeck.type_of_calls.len(), 1);
         assert!(typeck.method_calls.is_empty());
+    }
+
+    #[test]
+    fn array_first_last_record_calls_and_have_option_type() {
+        let arena = Bump::new();
+        let source = "const a: Array<number> = [1, 2, 3];\nlet f = unwrap(a.first()) or { 0 };\nlet l = unwrap(a.last()) or { 0 };";
+        let result = parse(source, &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.expect("parse produced no program");
+        let checked = check_program(&program, source);
+        assert!(checked.errors.is_empty(), "{:?}", checked.errors);
+        // Both call sites are recorded for the emitter, with the right kinds.
+        assert_eq!(checked.array_first_last_calls.len(), 2, "{:?}", checked.array_first_last_calls);
+        assert_eq!(
+            checked.array_first_last_calls.values().filter(|k| matches!(k, ArrayAccess::First)).count(),
+            1
+        );
+        assert_eq!(
+            checked.array_first_last_calls.values().filter(|k| matches!(k, ArrayAccess::Last)).count(),
+            1
+        );
+        // The result type is Option<number>, not number — matching pop/shift's
+        // declared type, but this pair is actually emitted that way (deka#561).
+        let errors = typeck("const a: Array<number> = [1];\nconst bad: string = a.first();");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("Option<number>"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn array_first_last_arity_is_checked() {
+        let errors = typeck("const a: Array<number> = [1];\nconst f = a.first(1);");
+        assert!(!errors.is_empty());
+        assert!(errors.iter().any(|e| e.message.contains("argument")), "{errors:?}");
+    }
+
+    #[test]
+    fn array_other_methods_are_not_recorded() {
+        let arena = Bump::new();
+        let source = "const a: Array<number> = [1];\nconst n: number = a.length;\nconst m: Array<number> = a.slice(0, 1);";
+        let result = parse(source, &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.expect("parse produced no program");
+        let typeck = check_program(&program, source);
+        assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
+        assert!(typeck.array_first_last_calls.is_empty());
     }
 
     #[test]
@@ -1777,37 +1754,6 @@ mod tests {
     }
 
     #[test]
-    fn generic_function_inferred_passes() {
-        assert!(typeck(
-            "fn id<T>(x: T) T { return x; } const n: number = id(5); const s: string = id(\"hi\");"
-        )
-        .is_empty());
-    }
-
-    #[test]
-    fn generic_function_explicit_type_args_passes() {
-        assert!(
-            typeck("fn id<T>(x: T) T { return x; } const n: number = id<number>(5);").is_empty()
-        );
-    }
-
-    #[test]
-    fn generic_function_wrong_arg_type_fails() {
-        let errors = typeck("fn id<T>(x: T) T { return x; } const n: number = id(\"hi\");");
-        assert_eq!(errors.len(), 1);
-        assert!(
-            errors[0].message.contains("number"),
-            "{}",
-            errors[0].message
-        );
-        assert!(
-            errors[0].message.contains("string"),
-            "{}",
-            errors[0].message
-        );
-    }
-
-    #[test]
     fn collection_element_preserves_unconstrained_var() {
         assert_eq!(
             Type::Array {
@@ -1848,26 +1794,6 @@ mod tests {
              let numbers = [1]; numbers[0] = \"bad\";\
              const funcs = [fn (x: number) number { return x }];\
              apply(funcs[0]);",
-        );
-        assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(
-            errors[0].message.contains("number"),
-            "{}",
-            errors[0].message
-        );
-        assert!(
-            errors[0].message.contains("string"),
-            "{}",
-            errors[0].message
-        );
-    }
-
-    #[test]
-    fn generic_function_indexing_preserves_element_type() {
-        let errors = typeck(
-            "fn first<T>(values: Array<T>) T { return values[0]; }\
-             const item: string = first([\"ok\"]);\
-             const wrong: number = first([\"bad\"]);",
         );
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert!(
@@ -2358,17 +2284,6 @@ mod tests {
     }
 
     #[test]
-    fn union_unconstrained_type_param_fails() {
-        let errors = typeck("fn f<T>(x: T | string) string { return \"a\" }");
-        assert_eq!(errors.len(), 1, "{:?}", errors);
-        assert!(
-            errors[0].message.contains("decidable runtime predicate"),
-            "{}",
-            errors[0].message
-        );
-    }
-
-    #[test]
     fn union_option_member_fails() {
         // Option has no runtime predicate today (deka#401 shape requires
         // explicit Some/None construction), so it cannot join a union.
@@ -2414,218 +2329,6 @@ mod tests {
             errors.iter().any(|e| e.message.contains("decidable runtime predicate")),
             "{:?}",
             errors
-        );
-    }
-
-    // ------------------------------------------------------------------
-    // `super` functions (deka#529, rfd#41)
-    // ------------------------------------------------------------------
-
-    #[test]
-    fn super_fn_accepted() {
-        assert!(typeck("super fn validate<T>(json: string) Type { return T.type(); }").is_empty());
-    }
-
-    #[test]
-    fn type_param_type_requires_super() {
-        let errors = typeck("fn f<T>(x: T) Type { return T.type(); }");
-        assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(errors[0].message.contains("`super fn`"), "{}", errors[0].message);
-    }
-
-    #[test]
-    fn concrete_type_requires_super() {
-        let errors = typeck("fn f() Type { return \"x\".type(); }");
-        assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(errors[0].message.contains(".getType()"), "{}", errors[0].message);
-    }
-
-    #[test]
-    fn super_call_records_tree() {
-        let arena = Bump::new();
-        let source = "struct User { id: string }\
-                      super fn validate<T>(json: string) Type { return T.type(); }\
-                      const d: Type = validate<User>(\"{}\");";
-        let result = parse(source, &arena);
-        assert!(result.errors.is_empty(), "{:?}", result.errors);
-        let program = result.program.expect("parse produced no program");
-        let typeck = check_program(&program, source);
-        assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
-        assert_eq!(typeck.super_calls.len(), 1);
-        let site = typeck.super_calls.values().next().unwrap();
-        assert_eq!(site.callee, "validate");
-        assert_eq!(
-            site.args,
-            vec![SuperTypeArg::Concrete(DescriptorTree::Struct {
-                name: "User",
-                fields: vec![DescriptorField {
-                    name: "id",
-                    optional: false,
-                    ty: DescriptorTree::Leaf {
-                        kind: "string",
-                        name: "string".to_string(),
-                    },
-                }],
-            })]
-        );
-    }
-
-    #[test]
-    fn super_call_recursive_passthrough() {
-        // `validate<T>(json)` inside `validate` records a passthrough: the
-        // emitter forwards the hidden descriptor parameter.
-        let arena = Bump::new();
-        let source = "super fn validate<T>(json: string) Type { return validate<T>(json); }\
-                      const d: Type = validate<number>(\"{}\");";
-        let result = parse(source, &arena);
-        assert!(result.errors.is_empty(), "{:?}", result.errors);
-        let program = result.program.expect("parse produced no program");
-        let typeck = check_program(&program, source);
-        assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
-        assert_eq!(typeck.super_calls.len(), 2);
-        let mut sites: Vec<_> = typeck.super_calls.values().collect();
-        sites.sort_by_key(|site| site.args.len());
-        assert!(
-            sites
-                .iter()
-                .any(|site| site.args == vec![SuperTypeArg::Param("T")]),
-            "expected a passthrough site, got {:?}",
-            sites
-        );
-        assert!(
-            sites.iter().any(|site| site.args
-                == vec![SuperTypeArg::Concrete(DescriptorTree::Leaf {
-                    kind: "number",
-                    name: "number".to_string(),
-                })]),
-            "expected a concrete site, got {:?}",
-            sites
-        );
-    }
-
-    #[test]
-    fn super_call_arity_fail() {
-        let errors = typeck(
-            "super fn validate<T>(json: string) Type { return T.type(); }\
-             const d: Type = validate<User, number>(\"{}\");",
-        );
-        assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(errors[0].message.contains("takes 1 type parameter"), "{}", errors[0].message);
-    }
-
-    #[test]
-    fn super_call_unresolved_T_fail() {
-        // A super-only parameter (used solely via `T.type()`) has nothing to
-        // infer from; the diagnostic names the explicit spelling.
-        let errors = typeck(
-            "super fn describe<T>() Type { return T.type(); } const d: Type = describe();",
-        );
-        assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(errors[0].message.contains("specify it explicitly"), "{}", errors[0].message);
-        assert!(errors[0].message.contains("describe<T>"), "{}", errors[0].message);
-    }
-
-    #[test]
-    fn super_call_undescribable_fail() {
-        // A function-valued type argument is the spec's named error case:
-        // the failure is reported at the call site.
-        let errors = typeck(
-            "super fn f<T>(x: T) Type { return T.type(); }\
-             const g = fn (x: number) number { return x };\
-             const d: Type = f(g);",
-        );
-        assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(errors[0].message.contains("function-valued"), "{}", errors[0].message);
-        assert!(errors[0].message.contains("super"), "{}", errors[0].message);
-    }
-
-    #[test]
-    fn super_fn_as_value_fail() {
-        let errors = typeck(
-            "super fn validate<T>(json: string) Type { return T.type(); } const f = validate;",
-        );
-        assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(errors[0].message.contains("cannot be used as a value"), "{}", errors[0].message);
-    }
-
-    #[test]
-    fn super_call_to_imported_super_fn_records_tree() {
-        // Cross-module is free under the hidden-argument design: every call
-        // site carries its own tree; the importer's checker recognizes the
-        // imported super fn through ModuleExports::instantiated_fns and
-        // records the site against the importer's own struct table.
-        let arena = Bump::new();
-        let lib_source = "export super fn validate<T>(json: string) Type { return T.type(); }";
-        let lib_result = parse(lib_source, &arena);
-        assert!(lib_result.errors.is_empty(), "{:?}", lib_result.errors);
-        let lib_program = lib_result.program.expect("library parse produced no program");
-        let exports = collect_module_exports(&lib_program, &arena);
-        assert!(exports.instantiated_fns.contains_key("validate"));
-
-        let main_source = "import { validate } from \"./lib.ds\"\n\
-                           struct User { id: string }\n\
-                           const d: Type = validate<User>(\"{}\");";
-        let main_result = parse(main_source, &arena);
-        assert!(main_result.errors.is_empty(), "{:?}", main_result.errors);
-        let main_program = main_result.program.expect("main parse produced no program");
-        let mut imports = HashMap::new();
-        imports.insert("./lib.ds", &exports);
-        let typeck = check_program_with_imports(&main_program, main_source, &imports);
-        assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
-        assert_eq!(typeck.super_calls.len(), 1);
-        let site = typeck.super_calls.values().next().unwrap();
-        assert_eq!(
-            site.args,
-            vec![SuperTypeArg::Concrete(DescriptorTree::Struct {
-                name: "User",
-                fields: vec![DescriptorField {
-                    name: "id",
-                    optional: false,
-                    ty: DescriptorTree::Leaf {
-                        kind: "string",
-                        name: "string".to_string(),
-                    },
-                }],
-            })]
-        );
-    }
-
-    #[test]
-    fn super_type_param_shadowed_by_value() {
-        // A value named `T` shadows the type parameter: `T.type()` resolves
-        // against the value's type, not the hidden descriptor parameter.
-        let arena = Bump::new();
-        let source = "super fn f<T>() Type { const T = \"x\"; return T.type(); }";
-        let result = parse(source, &arena);
-        assert!(result.errors.is_empty(), "{:?}", result.errors);
-        let program = result.program.expect("parse produced no program");
-        let typeck = check_program(&program, source);
-        assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
-        assert_eq!(typeck.static_type_calls.len(), 1);
-        let call = typeck.static_type_calls.values().next().unwrap();
-        assert_eq!(call.param, None);
-        assert_eq!(
-            call.tree,
-            Some(DescriptorTree::Leaf {
-                kind: "string",
-                name: "string".to_string(),
-            })
-        );
-    }
-
-    #[test]
-    fn super_call_in_non_super_generic_fn_fail() {
-        // Passthrough requires the *enclosing* function to be `super`: an
-        // erased generic body has no descriptor value to forward.
-        let errors = typeck(
-            "super fn validate<T>(x: T) Type { return T.type(); }\
-             fn helper<T>(x: T) Type { return validate<T>(x); }",
-        );
-        assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(
-            errors[0].message.contains("only a `super fn` has a descriptor to forward"),
-            "{}",
-            errors[0].message
         );
     }
 }

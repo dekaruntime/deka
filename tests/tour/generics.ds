@@ -1,15 +1,46 @@
 import { echo } from "io"
 
-// A type parameter lets one function work for many types.
-// `T` is chosen by the caller, not written into the function.
-fn first<T>(items: Array<T>, fallback: T) T {
-  if (items.length == 0) {
-    return fallback
+// Generics exist in DekaScript, but only on the language's own
+// containers: Array<T>, Option<T>, Result<T, E>, Promise<T>. Your
+// functions and types stay concrete — you can USE a parameterized
+// type, but you cannot DECLARE one.
+//
+// Why the rule: reflection and generics are opposed by construction.
+// A type parameter says "any type"; reflection asks "which type,
+// exactly?" DekaScript chose reflection (deka#561).
+
+// The containers cover the cases people reach for generics to get:
+const nums: Array<number> = [3, 4, 5]
+
+// first() and last() return Option<T> — the array may be empty.
+// unwrap … or supplies the absent case.
+let head = unwrap(nums.first()) or { 0 }
+echo(string(head))
+
+// When the fallback needs the whole value, match reads better:
+fn describe(ns: Array<number>) string {
+  return match (ns.first()) {
+    Some(n) => "starts with " + string(n),
+    None => "empty",
   }
-  return items[0]
 }
 
-// The compiler infers T from the arguments — you rarely name it.
-echo(string(first([3, 4, 5], 0)))
-echo(first(["a", "b"], "none"))
-echo(first([], "empty"))
+echo(describe(nums))
+echo(describe([]))
+
+// For capability, take an interface instead of a type parameter:
+// anything with the right shape is accepted.
+interface Named {
+  name: string
+}
+
+fn greet(x: Named) string {
+  return "hello, " + x.name
+}
+
+struct User {
+  id: number;
+  name: string;
+}
+
+echo(greet(User { id: 1, name: "Deka" }))

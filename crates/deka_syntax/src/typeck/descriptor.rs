@@ -1,4 +1,7 @@
-//! Static descriptor trees for `super` (deka#529, rfd#41).
+//! Static descriptor trees for `super` (deka#529, rfd#41). Kept for super
+//! declarations (PR B): the `super fn` feature that produced these trees was
+//! removed (deka#561), but the tree machinery is reused by PR B's
+//! `super struct` / `User.type()` work.
 //!
 //! A `super fn validate<T>` call site names a concrete `T`, and the compiler
 //! walks that type into a [`DescriptorTree`] — the static counterpart of the
@@ -86,6 +89,10 @@ pub enum SuperTypeArg<'a> {
     Concrete(DescriptorTree<'a>),
 }
 
+// Kept for super declarations (PR B): with `super fn` removed (deka#561)
+// nothing in the checker calls into these tree builders yet, but PR B's
+// `super struct` / `User.type()` work re-populates them.
+#[allow(dead_code)]
 impl<'a> Checker<'a> {
     /// Walk a concrete type into its descriptor tree. Returns the "cannot
     /// describe" message on failure; the caller (a super call site) turns it

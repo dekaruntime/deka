@@ -1,5 +1,0 @@
-{
-  "title": "generic exports preserve and substitute return types",
-  "stage": "run",
-  "compiler": "v2"
-}
