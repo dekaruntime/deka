@@ -265,6 +265,7 @@ fn transform_stmt<'a>(
             type_params,
             fields,
             embeds,
+            is_super,
             span,
         } => {
             let new_fields: Vec<ast::StructField<'a>> = fields
@@ -285,6 +286,7 @@ fn transform_stmt<'a>(
                 type_params,
                 fields: ast::alloc_slice(arena, new_fields),
                 embeds,
+                is_super: *is_super,
                 span: *span,
             }
         }
@@ -904,6 +906,7 @@ fn lower_stmt<'a>(
             type_params,
             fields,
             embeds,
+            is_super,
             span,
         } => {
             let new_fields: Vec<ast::StructField<'a>> = fields
@@ -924,6 +927,7 @@ fn lower_stmt<'a>(
                 type_params,
                 fields: ast::alloc_slice(arena, new_fields),
                 embeds,
+                is_super: *is_super,
                 span: *span,
             }
         }

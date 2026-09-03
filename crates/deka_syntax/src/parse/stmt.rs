@@ -119,11 +119,29 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            // `super` is a hard keyword; it is reserved for declarations
-            // (super struct, super fn) which are not yet available (deka#561).
+            // `super struct` / `super enum` (rfd#41, deka#561 PR B): marks a
+            // declaration whose type information survives to runtime, so
+            // `Name.type()` is legal. Anything else after `super` is an error.
             TokenKind::Super => {
-                self.error("`super` is reserved and not yet available");
-                None
+                if in_block {
+                    self.error("struct and enum declarations are only allowed at the top level in DekaScript");
+                    return None;
+                }
+                let next = self.tokens.get(self.pos + 1).map(|t| t.kind);
+                match next {
+                    Some(TokenKind::Struct) => {
+                        self.advance(); // `super`
+                        self.parse_struct_statement(start, start_byte, true)
+                    }
+                    Some(TokenKind::Enum) => {
+                        self.advance(); // `super`
+                        self.parse_enum_statement(start, start_byte, true)
+                    }
+                    _ => {
+                        self.error("`super` is only available on `struct` and `enum` declarations (e.g. `super struct User { ... }`)");
+                        None
+                    }
+                }
             }
 
             TokenKind::For => self.parse_for_statement(start, start_byte),
@@ -159,7 +177,7 @@ impl<'a> Parser<'a> {
                     self.error("struct declarations are only allowed at the top level in DekaScript");
                     return None;
                 }
-                self.parse_struct_statement(start, start_byte)
+                self.parse_struct_statement(start, start_byte, false)
             }
 
             TokenKind::Enum => {
@@ -167,7 +185,7 @@ impl<'a> Parser<'a> {
                     self.error("enum declarations are only allowed at the top level in DekaScript");
                     return None;
                 }
-                self.parse_enum_statement(start, start_byte)
+                self.parse_enum_statement(start, start_byte, false)
             }
 
             TokenKind::Interface => {
@@ -404,7 +422,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_struct_statement(&mut self, start: Pos, start_byte: usize) -> Option<Stmt<'a>> {
+    fn parse_struct_statement(&mut self, start: Pos, start_byte: usize, is_super: bool) -> Option<Stmt<'a>> {
         self.advance(); // `struct`
 
         let name = self.expect_identifier()?;
@@ -494,11 +512,12 @@ impl<'a> Parser<'a> {
             type_params,
             fields: alloc_slice(self.arena, fields),
             embeds: alloc_slice(self.arena, embeds),
+            is_super,
             span: self.span_from(start, start_byte),
         })
     }
 
-    fn parse_enum_statement(&mut self, start: Pos, start_byte: usize) -> Option<Stmt<'a>> {
+    fn parse_enum_statement(&mut self, start: Pos, start_byte: usize, is_super: bool) -> Option<Stmt<'a>> {
         self.advance(); // `enum`
 
         let name = self.expect_identifier()?;
@@ -567,6 +586,7 @@ impl<'a> Parser<'a> {
             name,
             type_params,
             cases: alloc_slice(self.arena, cases),
+            is_super,
             span: self.span_from(start, start_byte),
         })
     }

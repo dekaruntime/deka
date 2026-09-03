@@ -2489,6 +2489,19 @@ impl<'a> Checker<'a> {
             _ => return None,
         };
 
+        // Builtin `Name.type()` on `super` declarations (rfd#41, deka#561
+        // PR B): the receiver is a type name, not a value, so this must be
+        // intercepted BEFORE `check_expr(object)` — a bare struct/enum name
+        // is not a value expression. Instance calls (`user.type()`) have a
+        // non-identifier object and are unaffected.
+        if method_name == "type" {
+            if let ast::Expr::Identifier { name, .. } = object {
+                if let Some(ty) = self.check_builtin_static_type(call_expr, name, args, span) {
+                    return Some(ty);
+                }
+            }
+        }
+
         let object_type = self.check_expr(object);
 
         // Builtin `.getType()` (rfd#41, deka#529): returns a first-class
@@ -2669,6 +2682,104 @@ impl<'a> Checker<'a> {
             _ => {}
         }
         self.type_of_calls.insert(call_expr as *const ast::Expr<'a>);
+        Some(Type::Named { name: "Type" })
+    }
+
+    /// Check builtin `Name.type()` on a `super` declaration (rfd#41, deka#561
+    /// PR B). Returns `None` when `name` is not a struct/enum declaration so
+    /// the ordinary path reports `unknown identifier`; otherwise validates
+    /// arity and the super mark, records the rewrite for the emitter (the
+    /// interned `__deka_super_desc$<Name>` const), and returns `Type`.
+    fn check_builtin_static_type(
+        &mut self,
+        call_expr: &ast::Expr<'a>,
+        name: &'a str,
+        args: &'a [ast::Expr<'a>],
+        span: ast::Span,
+    ) -> Option<Type<'a>> {
+        let (decl_name, kind) = if self.structs.contains_key(name) {
+            (name, "struct")
+        } else if self.enums.contains_key(name) {
+            (name, "enum")
+        } else if let Some(target) = self.alias_target_decl(name) {
+            let kind = if self.structs.contains_key(target) {
+                "struct"
+            } else {
+                "enum"
+            };
+            (target, kind)
+        } else if self.newtypes.contains_key(name) || self.aliases.contains_key(name) {
+            self.error_span(
+                span,
+                format!(
+                    "`{name}.type()` is only available on `super struct` and `super enum` declarations"
+                ),
+            );
+            return Some(Type::Error);
+        } else {
+            return None;
+        };
+
+        if !args.is_empty() {
+            self.error_span(span, "`type` expects no arguments".to_string());
+            return Some(Type::Error);
+        }
+
+        if !self.is_super_decl(decl_name) {
+            self.error_span(
+                span,
+                format!(
+                    "`{decl_name}` does not carry runtime type information; declare it \
+                     `super {kind} {decl_name}` to use `{decl_name}.type()`"
+                ),
+            );
+            return Some(Type::Error);
+        }
+
+        // Imported super declarations have no locally built tree yet; build
+        // on demand — including the recursive group, since a tree may
+        // reference sibling declarations via `Recurse` nodes and the emitter
+        // interns consts for the whole group. Errors surface at the call
+        // site naming the reason.
+        let mut worklist: Vec<&'a str> = vec![decl_name];
+        while let Some(n) = worklist.pop() {
+            if self.super_trees.contains_key(n) {
+                continue;
+            }
+            let tree = if self.structs.contains_key(n) {
+                self.super_struct_tree(n, span)
+            } else {
+                self.super_enum_tree(n, span)
+            };
+            match tree {
+                Ok(tree) => {
+                    let mut refs = Vec::new();
+                    super::descriptor::collect_recurse_refs(&tree, &mut refs);
+                    self.super_trees.insert(n, tree);
+                    for referenced in refs {
+                        if !self.super_trees.contains_key(referenced) {
+                            worklist.push(referenced);
+                        }
+                    }
+                }
+                Err(message) => {
+                    self.error_span(
+                        span,
+                        format!("`{decl_name}.type()` cannot be described here: {message}"),
+                    );
+                    return Some(Type::Error);
+                }
+            }
+        }
+
+        let tree = self.super_trees.get(decl_name).unwrap().clone();
+        self.static_type_calls.insert(
+            call_expr as *const ast::Expr<'a>,
+            super::descriptor::StaticTypeCall {
+                tree: Some(tree),
+                param: None,
+            },
+        );
         Some(Type::Named { name: "Type" })
     }
 
