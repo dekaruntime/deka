@@ -40,6 +40,7 @@ pub fn emit_js(program: &Program, _source: &str) -> Result<String, String> {
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
+        &HashMap::new(),
         "module.ds",
         None,
     )
@@ -74,6 +75,7 @@ pub fn emit_js_with_imports<'a>(
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
+        &HashMap::new(),
         "module.ds",
         None,
     )
@@ -100,6 +102,8 @@ pub fn emit_js_with_options<'a>(
     // Builtin `.getType()` call sites to rewrite to `__deka_type_of(x)`,
     // lowered by the typechecker (rfd#41, deka#529).
     type_of_calls: &HashSet<*const Expr<'a>>,
+    // `.signature()` call sites lowered to declared-type descriptor literals.
+    signature_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::DescriptorTree<'a>>,
     // `super` function call sites, lowered by the typechecker: the call is
     // rewritten to pass a descriptor argument (an interned
     // `__deka_super_desc$N` const, or the enclosing super fn's hidden
@@ -131,6 +135,7 @@ pub fn emit_js_with_options<'a>(
     emitter.operator_rewrites = operator_rewrites.clone();
     emitter.method_calls = method_calls.clone();
     emitter.type_of_calls = type_of_calls.clone();
+    emitter.signature_calls = signature_calls.clone();
     emitter.super_calls = super_calls.clone();
     emitter.static_type_calls = static_type_calls.clone();
     emitter.jsx_optional_props = jsx_optional_props.clone();
@@ -156,7 +161,7 @@ fn descriptor_tree_name(tree: &deka_syntax::typeck::DescriptorTree) -> String {
     use deka_syntax::typeck::DescriptorTree as T;
     match tree {
         T::Leaf { name, .. } => name.clone(),
-        T::Struct { name, .. } | T::Newtype { name, .. } | T::Enum { name, .. } => {
+        T::Struct { name, .. } | T::Interface { name } | T::Newtype { name, .. } | T::Enum { name, .. } => {
             name.to_string()
         }
         T::Array { elem } => format!("Array<{}>", descriptor_tree_name(elem)),
@@ -208,6 +213,10 @@ fn emit_descriptor_tree(tree: &deka_syntax::typeck::DescriptorTree) -> Result<St
                 out.push_str(" }");
             }
             out.push_str("]) })");
+        }
+        T::Interface { name } => {
+            header(&mut out, "interface", name);
+            out.push_str(" })");
         }
         T::Newtype { name, repr } => {
             header(&mut out, "newtype", name);
@@ -322,6 +331,8 @@ struct Emitter<'a> {
     /// Builtin `.getType()` call sites lowered by the typechecker to
     /// `__deka_type_of(x)` (rfd#41, deka#529).
     type_of_calls: HashSet<*const Expr<'a>>,
+    /// `.signature()` call sites lowered to static descriptor literals.
+    signature_calls: HashMap<*const Expr<'a>, deka_syntax::typeck::DescriptorTree<'a>>,
     /// `super` function call sites lowered by the typechecker (deka#529):
     /// each call gains a leading descriptor argument.
     super_calls: HashMap<*const Expr<'a>, deka_syntax::typeck::SuperCallSite<'a>>,
@@ -364,6 +375,7 @@ impl<'a> Emitter<'a> {
             operator_rewrites: HashMap::new(),
             method_calls: HashMap::new(),
             type_of_calls: HashSet::new(),
+            signature_calls: HashMap::new(),
             super_calls: HashMap::new(),
             static_type_calls: HashMap::new(),
             descriptor_consts: HashMap::new(),
@@ -1947,6 +1959,11 @@ impl<'a> Emitter<'a> {
                     return Ok(());
                 }
 
+                if let Some(tree) = self.signature_calls.get(&expr_ptr).cloned() {
+                    self.out.push_str(&emit_descriptor_tree(&tree)?);
+                    return Ok(());
+                }
+
                 // Primitive extension call: rewrite `obj.method(args)` to the
                 // module-local free function `method$receiver(obj, args)`.
                 // Primitives cannot be branded with a prototype, so static
@@ -2560,6 +2577,7 @@ impl<'a> Emitter<'a> {
                     operator_rewrites: HashMap::new(),
                     method_calls: HashMap::new(),
                     type_of_calls: HashSet::new(),
+                    signature_calls: HashMap::new(),
                     super_calls: HashMap::new(),
                     static_type_calls: HashMap::new(),
                     descriptor_consts: HashMap::new(),

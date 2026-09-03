@@ -30,6 +30,7 @@ pub enum DescriptorTree<'a> {
         name: &'a str,
         fields: Vec<DescriptorField<'a>>,
     },
+    Interface { name: &'a str },
     Newtype {
         name: &'a str,
         repr: Box<DescriptorTree<'a>>,
@@ -204,7 +205,8 @@ impl<'a> Checker<'a> {
                  `unsafe` or otherwise unknown to the compiler"
                     .to_string(),
             ),
-            Type::Interface { .. } | Type::Object { .. } => Err(format!(
+            Type::Interface { name } => Ok(DescriptorTree::Interface { name }),
+            Type::Object { .. } => Err(format!(
                 "cannot describe type `{ty}` at this `super` call site"
             )),
             Type::Error => Err("cannot describe this type at this `super` call site".to_string()),

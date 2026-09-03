@@ -44,6 +44,8 @@ pub struct TypeckResult<'a> {
     /// Call sites of the builtin `.getType()` method, rewritten to
     /// `__deka_type_of(x)` during emission (rfd#41, deka#529).
     pub type_of_calls: HashSet<*const ast::Expr<'a>>,
+    /// `.signature()` call sites and their compile-time declared descriptors.
+    pub signature_calls: HashMap<*const ast::Expr<'a>, descriptor::DescriptorTree<'a>>,
     /// Map from primitive conversion call expression pointer to how it should
     /// be lowered (`parseNumber(x)`, `unboxNumber(x)`, `toNumber(x)`,
     /// `string(x)`).
@@ -145,6 +147,7 @@ pub fn check_program_with_imports<'a>(
         warnings: checker.warnings,
         method_calls: checker.method_calls,
         type_of_calls: checker.type_of_calls,
+        signature_calls: checker.signature_calls,
         unwrap_calls: checker.unwrap_calls,
         operator_rewrites: checker.operator_rewrites,
         jsx_optional_props: checker.jsx_optional_props,
@@ -702,6 +705,7 @@ struct Checker<'a> {
     /// Lowering collections like this one must also be cleared in
     /// `reset_lowering_state` — the inference pass populates them too.
     type_of_calls: HashSet<*const ast::Expr<'a>>,
+    signature_calls: HashMap<*const ast::Expr<'a>, descriptor::DescriptorTree<'a>>,
     /// Primitive conversion call sites to lower, keyed by call expression pointer.
     /// Cleared between passes by `reset_lowering_state`.
     unwrap_calls: HashMap<*const ast::Expr<'a>, types::UnwrapKind>,
@@ -769,6 +773,7 @@ impl<'a> Checker<'a> {
             receiver_methods: HashMap::new(),
             method_calls: HashMap::new(),
             type_of_calls: HashSet::new(),
+            signature_calls: HashMap::new(),
             unwrap_calls: HashMap::new(),
             operator_rewrites: HashMap::new(),
             jsx_optional_props: HashMap::new(),
@@ -908,6 +913,7 @@ impl<'a> Checker<'a> {
     pub(super) fn reset_lowering_state(&mut self) {
         self.method_calls.clear();
         self.type_of_calls.clear();
+        self.signature_calls.clear();
         self.unwrap_calls.clear();
         self.operator_rewrites.clear();
         self.super_calls.clear();
@@ -1619,6 +1625,24 @@ mod tests {
     fn gettype_union_receiver_passes() {
         // The rfd#41 headline case: a union value's runtime type.
         assert!(typeck("fn f(v: number | string) Type { return v.getType(); }").is_empty());
+    }
+
+    #[test]
+    fn signature_records_declared_type_descriptor() {
+        let arena = Bump::new();
+        let source = "fn f(v: number | string) Type { return v.signature(); }";
+        let result = parse(source, &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.expect("parse produced no program");
+        let typeck = check_program(&program, source);
+        assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
+        assert_eq!(typeck.signature_calls.len(), 1);
+        assert!(matches!(typeck.signature_calls.values().next(), Some(DescriptorTree::Union { members }) if members.len() == 2));
+    }
+
+    #[test]
+    fn signature_describes_interface_declaration() {
+        assert!(typeck("interface Named { name: string } fn f(v: Named) Type { return v.signature(); }").is_empty());
     }
 
     #[test]
