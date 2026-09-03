@@ -45,7 +45,9 @@ pub struct TypeckResult<'a> {
     /// `__deka_type_of(x)` during emission (rfd#41, deka#529).
     pub type_of_calls: HashSet<*const ast::Expr<'a>>,
     /// Map from primitive conversion call expression pointer to how it should
-    /// be lowered (`number(x)`, `string(x)`, `bool(x)`).
+    /// be lowered (`parseNumber(x)`, `unboxNumber(x)`, `toNumber(x)`,
+    /// `string(x)`). `number(x)` stays only as a compatibility
+    /// alias during the split.
     pub unwrap_calls: HashMap<*const ast::Expr<'a>, types::UnwrapKind>,
     /// Map from binary/unary operator expression pointer to how a newtype
     /// operation should be lowered.
@@ -159,7 +161,9 @@ pub fn check_program_with_imports<'a>(
 /// This is used by `collect_module_exports` so that unannotated exported
 /// functions (common in the stdlib, e.g. `export fn sha512() { digest(...) }`)
 /// still expose a usable return type to importers.
-pub fn infer_module_function_signatures<'a>(program: &'a Program<'a>) -> HashMap<&'a str, Type<'a>> {
+pub fn infer_module_function_signatures<'a>(
+    program: &'a Program<'a>,
+) -> HashMap<&'a str, Type<'a>> {
     let imports = HashMap::new();
     let mut checker = Checker::new(program, &imports);
     checker.infer_all_function_signatures();
@@ -192,8 +196,19 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                     },
                 );
             }
-            ast::Stmt::Enum { name, cases, type_params, .. } => {
-                declared_enums.insert(*name, EnumInfo { cases: *cases, type_params: *type_params });
+            ast::Stmt::Enum {
+                name,
+                cases,
+                type_params,
+                ..
+            } => {
+                declared_enums.insert(
+                    *name,
+                    EnumInfo {
+                        cases: *cases,
+                        type_params: *type_params,
+                    },
+                );
             }
             ast::Stmt::TypeAlias { name, value, .. } => {
                 declared_aliases.insert(*name, value.clone());
@@ -233,14 +248,27 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
             .params
             .iter()
             .map(|p| match &p.ty {
-                Some(t) => ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()),
+                Some(t) => ast_type_to_export_type(
+                    t,
+                    &declared_structs,
+                    &declared_enums,
+                    &declared_aliases,
+                    &declared_newtypes,
+                    &mut HashSet::new(),
+                ),
                 None => Type::Error,
             })
             .collect();
-        info.resolved_return = info
-            .return_type
-            .as_ref()
-            .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()));
+        info.resolved_return = info.return_type.as_ref().map(|t| {
+            ast_type_to_export_type(
+                t,
+                &declared_structs,
+                &declared_enums,
+                &declared_aliases,
+                &declared_newtypes,
+                &mut HashSet::new(),
+            )
+        });
     }
 
     // Helper: convert an AST type annotation into a typechecker type using the
@@ -274,7 +302,8 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                         if !seen.insert(name) {
                             return Type::Error;
                         }
-                        let resolved = ast_type_to_export_type(alias, structs, enums, aliases, newtypes, seen);
+                        let resolved =
+                            ast_type_to_export_type(alias, structs, enums, aliases, newtypes, seen);
                         seen.remove(name);
                         resolved
                     } else {
@@ -300,7 +329,11 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                         base,
                         args: args
                             .iter()
-                            .map(|arg| ast_type_to_export_type(arg, structs, enums, aliases, newtypes, seen))
+                            .map(|arg| {
+                                ast_type_to_export_type(
+                                    arg, structs, enums, aliases, newtypes, seen,
+                                )
+                            })
                             .collect(),
                     }
                 } else if structs.contains_key(base) || enums.contains_key(base) {
@@ -308,7 +341,11 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                         base,
                         args: args
                             .iter()
-                            .map(|arg| ast_type_to_export_type(arg, structs, enums, aliases, newtypes, seen))
+                            .map(|arg| {
+                                ast_type_to_export_type(
+                                    arg, structs, enums, aliases, newtypes, seen,
+                                )
+                            })
                             .collect(),
                     }
                 } else {
@@ -320,7 +357,9 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                     .iter()
                     .map(|p| ast_type_to_export_type(p, structs, enums, aliases, newtypes, seen))
                     .collect(),
-                ret: Box::new(ast_type_to_export_type(ret, structs, enums, aliases, newtypes, seen)),
+                ret: Box::new(ast_type_to_export_type(
+                    ret, structs, enums, aliases, newtypes, seen,
+                )),
                 optional: 0,
             },
             ast::Type::Option { inner, .. } => Type::Option {
@@ -372,15 +411,40 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                         .iter()
                         .map(|p| {
                             p.ty.as_ref()
-                                .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
+                                .map(|t| {
+                                    ast_type_to_export_type(
+                                        t,
+                                        &declared_structs,
+                                        &declared_enums,
+                                        &declared_aliases,
+                                        &declared_newtypes,
+                                        &mut HashSet::new(),
+                                    )
+                                })
                                 .unwrap_or(Type::Infer)
                         })
                         .collect();
                     let ret = return_type
                         .as_ref()
-                        .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
+                        .map(|t| {
+                            ast_type_to_export_type(
+                                t,
+                                &declared_structs,
+                                &declared_enums,
+                                &declared_aliases,
+                                &declared_newtypes,
+                                &mut HashSet::new(),
+                            )
+                        })
                         .unwrap_or(Type::Infer);
-                    declared_values.insert(*name, Type::Function { params: param_types, ret: Box::new(ret), optional: 0 });
+                    declared_values.insert(
+                        *name,
+                        Type::Function {
+                            params: param_types,
+                            ret: Box::new(ret),
+                            optional: 0,
+                        },
+                    );
                 } else {
                     // A missing inferred signature is an error-recovery path.
                     // Do not misrepresent an unresolved type parameter as a
@@ -391,7 +455,16 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
             ast::Stmt::Const { name, ty, .. } | ast::Stmt::Let { name, ty, .. } => {
                 let value_ty = inferred_globals.get(name).cloned().unwrap_or_else(|| {
                     ty.as_ref()
-                        .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
+                        .map(|t| {
+                            ast_type_to_export_type(
+                                t,
+                                &declared_structs,
+                                &declared_enums,
+                                &declared_aliases,
+                                &declared_newtypes,
+                                &mut HashSet::new(),
+                            )
+                        })
                         .unwrap_or(Type::Infer)
                 });
                 declared_values.insert(*name, value_ty);
@@ -410,7 +483,16 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
             ast::ExportDecl::Const { name, ty, .. } => {
                 let value_ty = inferred_globals.get(name).cloned().unwrap_or_else(|| {
                     ty.as_ref()
-                        .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
+                        .map(|t| {
+                            ast_type_to_export_type(
+                                t,
+                                &declared_structs,
+                                &declared_enums,
+                                &declared_aliases,
+                                &declared_newtypes,
+                                &mut HashSet::new(),
+                            )
+                        })
                         .unwrap_or(Type::Infer)
                 });
                 exports.values.insert(*name, value_ty);
@@ -435,15 +517,40 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                         .iter()
                         .map(|p| {
                             p.ty.as_ref()
-                                .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
+                                .map(|t| {
+                                    ast_type_to_export_type(
+                                        t,
+                                        &declared_structs,
+                                        &declared_enums,
+                                        &declared_aliases,
+                                        &declared_newtypes,
+                                        &mut HashSet::new(),
+                                    )
+                                })
                                 .unwrap_or(Type::Infer)
                         })
                         .collect();
                     let ret = return_type
                         .as_ref()
-                        .map(|t| ast_type_to_export_type(t, &declared_structs, &declared_enums, &declared_aliases, &declared_newtypes, &mut HashSet::new()))
+                        .map(|t| {
+                            ast_type_to_export_type(
+                                t,
+                                &declared_structs,
+                                &declared_enums,
+                                &declared_aliases,
+                                &declared_newtypes,
+                                &mut HashSet::new(),
+                            )
+                        })
                         .unwrap_or(Type::Infer);
-                    exports.values.insert(*name, Type::Function { params: param_types, ret: Box::new(ret), optional: 0 });
+                    exports.values.insert(
+                        *name,
+                        Type::Function {
+                            params: param_types,
+                            ret: Box::new(ret),
+                            optional: 0,
+                        },
+                    );
                 } else {
                     exports.values.insert(*name, Type::Infer);
                 }
@@ -459,9 +566,7 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                         // struct to the exported name.
                         for ((rt, mn), mi) in receiver_methods.iter() {
                             if *rt == local {
-                                exports
-                                    .receiver_methods
-                                    .insert((external, *mn), mi.clone());
+                                exports.receiver_methods.insert((external, *mn), mi.clone());
                             }
                         }
                     }
@@ -477,9 +582,7 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                         // newtype to the exported name.
                         for ((rt, mn), mi) in receiver_methods.iter() {
                             if *rt == local {
-                                exports
-                                    .receiver_methods
-                                    .insert((external, *mn), mi.clone());
+                                exports.receiver_methods.insert((external, *mn), mi.clone());
                             }
                         }
                     }
@@ -725,7 +828,7 @@ impl<'a> Checker<'a> {
         // `Object`, `Promise` and `parseInt` are gone. `Promise` stays a
         // *type* -- 63 annotations across the corpora are unaffected, because
         // types resolve through `resolve_ast_type` and never consulted this
-        // list. `parseInt`'s replacement is `number(s)`, which already yields
+        // list. `parseInt`'s replacement is `parseNumber(s)`, which yields
         // `Option<number>` rather than `NaN`, so removing it is a net
         // improvement rather than a subtraction.
         //
@@ -740,7 +843,10 @@ impl<'a> Checker<'a> {
 
     fn seed_imports(&mut self, imports: &HashMap<&str, &ModuleExports<'a>>) {
         for stmt in self.program.statements.iter() {
-            let ast::Stmt::Import { specifiers, source, .. } = stmt else {
+            let ast::Stmt::Import {
+                specifiers, source, ..
+            } = stmt
+            else {
                 continue;
             };
             let Some(exports) = imports.get(source) else {
@@ -855,7 +961,13 @@ impl<'a> Checker<'a> {
     }
 
     fn is_promise(ty: &Type<'_>) -> bool {
-        matches!(ty, Type::Generic { base: "Promise", .. })
+        matches!(
+            ty,
+            Type::Generic {
+                base: "Promise",
+                ..
+            }
+        )
     }
 
     fn is_hole_expr(expr: &ast::Expr<'_>) -> bool {
@@ -940,8 +1052,14 @@ impl<'a> Checker<'a> {
         // the first `match`. `Some(x)` must be written explicitly, matching how
         // `Result` already behaves (deka#401).
         // `Option<A>` is assignable to `Option<B>` when `A` is assignable to `B`.
-        if let (Type::Option { inner: expected_inner }, Type::Option { inner: actual_inner }) =
-            (expected, actual)
+        if let (
+            Type::Option {
+                inner: expected_inner,
+            },
+            Type::Option {
+                inner: actual_inner,
+            },
+        ) = (expected, actual)
         {
             if self.is_assignable(expected_inner, actual_inner) {
                 return true;
@@ -949,8 +1067,14 @@ impl<'a> Checker<'a> {
         }
         // Structural subtyping for generic types like Result<T, E>.
         if let (
-            Type::Generic { base: expected_base, args: expected_args },
-            Type::Generic { base: actual_base, args: actual_args },
+            Type::Generic {
+                base: expected_base,
+                args: expected_args,
+            },
+            Type::Generic {
+                base: actual_base,
+                args: actual_args,
+            },
         ) = (expected, actual)
         {
             if expected_base == actual_base && expected_args.len() == actual_args.len() {
@@ -961,14 +1085,24 @@ impl<'a> Checker<'a> {
             }
         }
         // Arrays are covariant in their element type.
-        if let (Type::Array { elem: expected_elem }, Type::Array { elem: actual_elem }) =
-            (expected, actual)
+        if let (
+            Type::Array {
+                elem: expected_elem,
+            },
+            Type::Array { elem: actual_elem },
+        ) = (expected, actual)
         {
             return self.is_assignable(expected_elem, actual_elem);
         }
         // Object structural subtyping: actual must supply at least the expected fields.
-        if let (Type::Object { fields: expected_fields }, Type::Object { fields: actual_fields }) =
-            (expected, actual)
+        if let (
+            Type::Object {
+                fields: expected_fields,
+            },
+            Type::Object {
+                fields: actual_fields,
+            },
+        ) = (expected, actual)
         {
             return expected_fields.iter().all(|(name, expected_ty)| {
                 actual_fields
@@ -992,7 +1126,8 @@ impl<'a> Checker<'a> {
             },
         ) = (expected, actual)
         {
-            if expected_params.len() == actual_params.len() && expected_optional == actual_optional {
+            if expected_params.len() == actual_params.len() && expected_optional == actual_optional
+            {
                 return actual_params
                     .iter()
                     .zip(expected_params.iter())
@@ -1013,7 +1148,9 @@ impl<'a> Checker<'a> {
             }
 
             match actual {
-                Type::Object { fields: actual_fields } => {
+                Type::Object {
+                    fields: actual_fields,
+                } => {
                     for member in members.iter() {
                         match member {
                             ast::InterfaceMember::Field {
@@ -1033,9 +1170,8 @@ impl<'a> Checker<'a> {
                                         inner: Box::new(expected_ty),
                                     };
                                 }
-                                let Some((_, actual_ty)) = actual_fields
-                                    .iter()
-                                    .find(|(n, _)| n == field_name)
+                                let Some((_, actual_ty)) =
+                                    actual_fields.iter().find(|(n, _)| n == field_name)
                                 else {
                                     // Omission is not allowed in a plain object
                                     // literal: there is no construction site
@@ -1074,9 +1210,8 @@ impl<'a> Checker<'a> {
                                     optional: 0,
                                 };
 
-                                let Some((_, actual_ty)) = actual_fields
-                                    .iter()
-                                    .find(|(n, _)| n == method_name)
+                                let Some((_, actual_ty)) =
+                                    actual_fields.iter().find(|(n, _)| n == method_name)
                                 else {
                                     return false;
                                 };
@@ -1092,12 +1227,7 @@ impl<'a> Checker<'a> {
                     let struct_fields: Vec<(&'a str, ast::Type<'a>)> = self
                         .structs
                         .get(struct_name)
-                        .map(|info| {
-                            info.fields
-                                .iter()
-                                .map(|f| (f.name, f.ty.clone()))
-                                .collect()
-                        })
+                        .map(|info| info.fields.iter().map(|f| (f.name, f.ty.clone())).collect())
                         .unwrap_or_default();
                     let struct_methods: Vec<(&'a str, MethodInfo<'a>)> =
                         self.collect_struct_methods(struct_name);
@@ -1114,9 +1244,8 @@ impl<'a> Checker<'a> {
                                 if expected_ty.is_error() {
                                     continue;
                                 }
-                                let Some((_, actual_ast_ty)) = struct_fields
-                                    .iter()
-                                    .find(|(n, _)| n == field_name)
+                                let Some((_, actual_ast_ty)) =
+                                    struct_fields.iter().find(|(n, _)| n == field_name)
                                 else {
                                     if *optional {
                                         continue;
@@ -1152,9 +1281,8 @@ impl<'a> Checker<'a> {
                                     optional: 0,
                                 };
 
-                                let Some((_, method_info)) = struct_methods
-                                    .iter()
-                                    .find(|(n, _)| n == method_name)
+                                let Some((_, method_info)) =
+                                    struct_methods.iter().find(|(n, _)| n == method_name)
                                 else {
                                     return false;
                                 };
@@ -1244,17 +1372,23 @@ mod tests {
 
     #[test]
     fn function_add_passes() {
-        assert!(
-            typeck("fn add(a: number, b: number) number { return a + b; }").is_empty()
-        );
+        assert!(typeck("fn add(a: number, b: number) number { return a + b; }").is_empty());
     }
 
     #[test]
     fn const_string_mismatch_fails() {
         let errors = typeck("const x: string = 42;");
         assert_eq!(errors.len(), 1);
-        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
-        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("string"),
+            "{}",
+            errors[0].message
+        );
+        assert!(
+            errors[0].message.contains("number"),
+            "{}",
+            errors[0].message
+        );
     }
 
     #[test]
@@ -1262,37 +1396,63 @@ mod tests {
         let errors =
             typeck("fn add(a: number, b: number) number { return a + b; } add(\"one\", 2);");
         assert_eq!(errors.len(), 1);
-        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
-        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("number"),
+            "{}",
+            errors[0].message
+        );
+        assert!(
+            errors[0].message.contains("string"),
+            "{}",
+            errors[0].message
+        );
     }
 
     #[test]
     fn return_wrong_type_fails() {
         let errors = typeck("fn f() number { return \"x\"; }");
         assert_eq!(errors.len(), 1);
-        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
-        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("number"),
+            "{}",
+            errors[0].message
+        );
+        assert!(
+            errors[0].message.contains("string"),
+            "{}",
+            errors[0].message
+        );
     }
 
     #[test]
     fn recursive_function_passes() {
+        assert!(typeck("fn forever(n: number) number { return forever(n); }").is_empty());
+    }
+
+    #[test]
+    fn match_option_number_passes() {
         assert!(typeck(
-            "fn forever(n: number) number { return forever(n); }"
+            "const o = Some(5); const x: number = match o { Some(n) => n, None => 0 };"
         )
         .is_empty());
     }
 
     #[test]
-    fn match_option_number_passes() {
-        assert!(typeck("const o = Some(5); const x: number = match o { Some(n) => n, None => 0 };").is_empty());
-    }
-
-    #[test]
     fn match_arm_type_mismatch_fails() {
-        let errors = typeck("const o = Some(5); const x: number = match o { Some(n) => n, None => \"oops\" };");
+        let errors = typeck(
+            "const o = Some(5); const x: number = match o { Some(n) => n, None => \"oops\" };",
+        );
         assert_eq!(errors.len(), 1);
-        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
-        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("number"),
+            "{}",
+            errors[0].message
+        );
+        assert!(
+            errors[0].message.contains("string"),
+            "{}",
+            errors[0].message
+        );
     }
 
     #[test]
@@ -1342,10 +1502,19 @@ mod tests {
 
     #[test]
     fn user_defined_enum_wrong_payload_type_fails() {
-        let errors = typeck("enum Shape { Circle(number) } const s: Shape = Shape.Circle(\"oops\");");
+        let errors =
+            typeck("enum Shape { Circle(number) } const s: Shape = Shape.Circle(\"oops\");");
         assert_eq!(errors.len(), 1);
-        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
-        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("number"),
+            "{}",
+            errors[0].message
+        );
+        assert!(
+            errors[0].message.contains("string"),
+            "{}",
+            errors[0].message
+        );
     }
 
     #[test]
@@ -1586,26 +1755,48 @@ mod tests {
 
     #[test]
     fn generic_function_inferred_passes() {
-        assert!(typeck("fn id<T>(x: T) T { return x; } const n: number = id(5); const s: string = id(\"hi\");").is_empty());
+        assert!(typeck(
+            "fn id<T>(x: T) T { return x; } const n: number = id(5); const s: string = id(\"hi\");"
+        )
+        .is_empty());
     }
 
     #[test]
     fn generic_function_explicit_type_args_passes() {
-        assert!(typeck("fn id<T>(x: T) T { return x; } const n: number = id<number>(5);").is_empty());
+        assert!(
+            typeck("fn id<T>(x: T) T { return x; } const n: number = id<number>(5);").is_empty()
+        );
     }
 
     #[test]
     fn generic_function_wrong_arg_type_fails() {
         let errors = typeck("fn id<T>(x: T) T { return x; } const n: number = id(\"hi\");");
         assert_eq!(errors.len(), 1);
-        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
-        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("number"),
+            "{}",
+            errors[0].message
+        );
+        assert!(
+            errors[0].message.contains("string"),
+            "{}",
+            errors[0].message
+        );
     }
 
     #[test]
     fn collection_element_preserves_unconstrained_var() {
-        assert_eq!(Type::Array { elem: Box::new(Type::Var) }.collection_element(), Type::Var);
-        assert_eq!(Type::Named { name: "string" }.collection_element(), Type::Named { name: "string" });
+        assert_eq!(
+            Type::Array {
+                elem: Box::new(Type::Var)
+            }
+            .collection_element(),
+            Type::Var
+        );
+        assert_eq!(
+            Type::Named { name: "string" }.collection_element(),
+            Type::Named { name: "string" }
+        );
     }
 
     #[test]
@@ -1615,8 +1806,16 @@ mod tests {
              takes_number([1, 2][0]); takes_string(\"ab\"[0]); takes_string([1, 2][0]);",
         );
         assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
-        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("string"),
+            "{}",
+            errors[0].message
+        );
+        assert!(
+            errors[0].message.contains("number"),
+            "{}",
+            errors[0].message
+        );
     }
 
     #[test]
@@ -1628,8 +1827,16 @@ mod tests {
              apply(funcs[0]);",
         );
         assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
-        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("number"),
+            "{}",
+            errors[0].message
+        );
+        assert!(
+            errors[0].message.contains("string"),
+            "{}",
+            errors[0].message
+        );
     }
 
     #[test]
@@ -1640,8 +1847,16 @@ mod tests {
              const wrong: number = first([\"bad\"]);",
         );
         assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
-        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("number"),
+            "{}",
+            errors[0].message
+        );
+        assert!(
+            errors[0].message.contains("string"),
+            "{}",
+            errors[0].message
+        );
     }
 
     #[test]
@@ -1653,8 +1868,16 @@ mod tests {
              async fn async_loop() { for (const item of [1, 2]) { await double(item); } }",
         );
         assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
-        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("string"),
+            "{}",
+            errors[0].message
+        );
+        assert!(
+            errors[0].message.contains("number"),
+            "{}",
+            errors[0].message
+        );
     }
 
     #[test]
@@ -1663,11 +1886,12 @@ mod tests {
         let lib_source = "export fn first(values: Array<string>) { return values[0]; }";
         let lib_result = parse(lib_source, &arena);
         assert!(lib_result.errors.is_empty(), "{:?}", lib_result.errors);
-        let lib_program = lib_result.program.expect("library parse produced no program");
+        let lib_program = lib_result
+            .program
+            .expect("library parse produced no program");
         let exports = collect_module_exports(&lib_program, &arena);
 
-        let main_source =
-            "import { first } from \"./lib.ds\";\
+        let main_source = "import { first } from \"./lib.ds\";\
              fn takes_string(x: string) {}\
              takes_string(first([\"ok\"]));\
              const wrong: number = first([\"bad\"]);";
@@ -1679,21 +1903,40 @@ mod tests {
         let errors = check_program_with_imports(&main_program, main_source, &imports).errors;
 
         assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
-        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("number"),
+            "{}",
+            errors[0].message
+        );
+        assert!(
+            errors[0].message.contains("string"),
+            "{}",
+            errors[0].message
+        );
     }
 
     #[test]
     fn fn_expression_literal_passes() {
-        assert!(typeck("const double = fn (x: number) number { return x * 2 }; const y: number = double(5);").is_empty());
+        assert!(typeck(
+            "const double = fn (x: number) number { return x * 2 }; const y: number = double(5);"
+        )
+        .is_empty());
     }
 
     #[test]
     fn fn_expression_return_type_mismatch_fails() {
         let errors = typeck("const double = fn (x: number) number { return \"oops\" };");
         assert_eq!(errors.len(), 1);
-        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
-        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("number"),
+            "{}",
+            errors[0].message
+        );
+        assert!(
+            errors[0].message.contains("string"),
+            "{}",
+            errors[0].message
+        );
     }
 
     // deka#476: a declared return type must be honoured on every path.
@@ -1702,7 +1945,11 @@ mod tests {
     fn declared_return_with_empty_body_fails() {
         let errors = typeck("fn no_return() string { }");
         assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("string"),
+            "{}",
+            errors[0].message
+        );
         assert!(
             errors[0].message.contains("does not return"),
             "{}",
@@ -1714,7 +1961,11 @@ mod tests {
     fn declared_return_with_fallthrough_body_fails() {
         let errors = typeck("fn wrong_tail() string { const x: number = 1 }");
         assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("string"),
+            "{}",
+            errors[0].message
+        );
     }
 
     #[test]
@@ -1735,10 +1986,10 @@ mod tests {
 
     #[test]
     fn return_after_if_passes() {
-        assert!(typeck(
-            "fn after(x: number) string { if (x > 0) { return \"y\" } return \"n\" }"
-        )
-        .is_empty());
+        assert!(
+            typeck("fn after(x: number) string { if (x > 0) { return \"y\" } return \"n\" }")
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1776,7 +2027,9 @@ mod tests {
         // produce a missing-return diagnostic.
         let errors = typeck("fn bad() NotAType { }");
         assert!(
-            errors.iter().all(|e| !e.message.contains("does not return")),
+            errors
+                .iter()
+                .all(|e| !e.message.contains("does not return")),
             "{errors:?}"
         );
     }
@@ -1836,14 +2089,21 @@ mod tests {
 
     #[test]
     fn for_loop_break_continue_passes() {
-        assert!(typeck("for (let i = 0; i < 10; i = i + 1) { if (i == 5) { break } else { continue } }").is_empty());
+        assert!(typeck(
+            "for (let i = 0; i < 10; i = i + 1) { if (i == 5) { break } else { continue } }"
+        )
+        .is_empty());
     }
 
     #[test]
     fn break_outside_loop_fails() {
         let errors = typeck("break;");
         assert_eq!(errors.len(), 1);
-        assert!(errors[0].message.contains("outside of loop"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("outside of loop"),
+            "{}",
+            errors[0].message
+        );
     }
 
     #[test]
@@ -1882,14 +2142,18 @@ mod tests {
             "struct Person { name: string } struct Employee { Person } const e = Employee { name: 1 };",
         );
         assert!(
-            errors.iter().any(|e| e.message.contains("field `name` expected type")),
+            errors
+                .iter()
+                .any(|e| e.message.contains("field `name` expected type")),
             "{errors:?}"
         );
     }
 
     #[test]
     fn struct_embed_missing_promoted_field_fails() {
-        let errors = typeck("struct Person { name: string } struct Employee { Person } const e = Employee {};");
+        let errors = typeck(
+            "struct Person { name: string } struct Employee { Person } const e = Employee {};",
+        );
         assert!(
             errors
                 .iter()
@@ -1904,7 +2168,9 @@ mod tests {
             "struct Person { name: string } struct Employee { Person } const e = Employee { Person: Person { name: \"A\" }, name: \"B\" };",
         );
         assert!(
-            errors.iter().any(|e| e.message.contains("both directly and via promoted field")),
+            errors
+                .iter()
+                .any(|e| e.message.contains("both directly and via promoted field")),
             "{errors:?}"
         );
     }
@@ -1918,26 +2184,35 @@ mod tests {
 
     #[test]
     fn async_function_passes() {
-        assert!(typeck("async fn value() Promise<number> { return 1 } const p: Promise<number> = value();").is_empty());
+        assert!(typeck(
+            "async fn value() Promise<number> { return 1 } const p: Promise<number> = value();"
+        )
+        .is_empty());
     }
 
     #[test]
     fn top_level_await_passes() {
-        assert!(typeck("async fn main() Promise<number> { return 1 } const n: number = await main();").is_empty());
+        assert!(typeck(
+            "async fn main() Promise<number> { return 1 } const n: number = await main();"
+        )
+        .is_empty());
     }
 
     #[test]
     fn await_in_sync_function_fails() {
         let errors = typeck("fn f() { await 1 }");
         assert!(!errors.is_empty());
-        assert!(errors.iter().any(|e| e.message.contains("await")), "{:?}", errors);
+        assert!(
+            errors.iter().any(|e| e.message.contains("await")),
+            "{:?}",
+            errors
+        );
     }
 
     #[test]
     fn unsafe_block_match_result_passes() {
-        let errors = typeck(
-            "const r = match (unsafe { console.log(1) }) { Ok(v) => v, Err(e) => e };",
-        );
+        let errors =
+            typeck("const r = match (unsafe { console.log(1) }) { Ok(v) => v, Err(e) => e };");
         assert!(errors.is_empty(), "{:?}", errors);
     }
 

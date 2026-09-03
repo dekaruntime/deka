@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast;
 
-use super::types::{newtype_repr_from_name, Type};
+use super::types::Type;
 use super::Checker;
 
 fn is_panic_callee(callee: &ast::Expr<'_>) -> bool {
@@ -16,6 +16,26 @@ fn is_panic_callee(callee: &ast::Expr<'_>) -> bool {
             ..
         } => matches!(object, ast::Expr::Identifier { name: "deka", .. }),
         _ => false,
+    }
+}
+
+#[derive(Clone, Copy)]
+enum PrimitiveConversionName {
+    String,
+    LegacyNumber,
+    ParseNumber,
+    UnboxNumber,
+    ToNumber,
+}
+
+fn primitive_conversion_name(name: &str) -> Option<PrimitiveConversionName> {
+    match name {
+        "string" => Some(PrimitiveConversionName::String),
+        "number" => Some(PrimitiveConversionName::LegacyNumber),
+        "parseNumber" => Some(PrimitiveConversionName::ParseNumber),
+        "unboxNumber" => Some(PrimitiveConversionName::UnboxNumber),
+        "toNumber" => Some(PrimitiveConversionName::ToNumber),
+        _ => None,
     }
 }
 
@@ -310,11 +330,7 @@ impl<'a> Checker<'a> {
                 right,
                 span,
             } => self.check_binary(expr, *op, left, right, *span),
-            ast::Expr::Unary {
-                op,
-                operand,
-                span,
-            } => self.check_unary(expr, *op, operand, *span),
+            ast::Expr::Unary { op, operand, span } => self.check_unary(expr, *op, operand, *span),
             ast::Expr::Call {
                 callee,
                 type_args,
@@ -332,14 +348,14 @@ impl<'a> Checker<'a> {
                     self.check_call(expr, callee, type_args, args, *span)
                 }
             }
-            ast::Expr::FieldAccess { object, field, span } => {
-                self.check_field_access(object, field, *span)
-            }
-            ast::Expr::StructLiteral {
-                name,
-                fields,
+            ast::Expr::FieldAccess {
+                object,
+                field,
                 span,
-            } => self.check_struct_literal(name, fields, *span),
+            } => self.check_field_access(object, field, *span),
+            ast::Expr::StructLiteral { name, fields, span } => {
+                self.check_struct_literal(name, fields, *span)
+            }
             ast::Expr::Paren { expr, .. } => self.check_expr(expr),
             ast::Expr::Match {
                 scrutinee,
@@ -377,7 +393,9 @@ impl<'a> Checker<'a> {
                     }
                     field_types.push((field.key, ty));
                 }
-                Type::Object { fields: field_types }
+                Type::Object {
+                    fields: field_types,
+                }
             }
             ast::Expr::IndexAccess { object, index, .. } => {
                 let object_type = self.check_expr(object);
@@ -397,10 +415,16 @@ impl<'a> Checker<'a> {
                 }
                 let operand_type = self.check_expr(expr);
                 match operand_type {
-                    Type::Generic { base: "Promise", args } if args.len() == 1 => args.into_iter().next().unwrap(),
+                    Type::Generic {
+                        base: "Promise",
+                        args,
+                    } if args.len() == 1 => args.into_iter().next().unwrap(),
                     Type::Infer | Type::Error => Type::Infer,
                     other => {
-                        self.error_span(*span, format!("`await` expected Promise<T>, found type `{other}`"));
+                        self.error_span(
+                            *span,
+                            format!("`await` expected Promise<T>, found type `{other}`"),
+                        );
                         Type::Infer
                     }
                 }
@@ -489,8 +513,14 @@ impl<'a> Checker<'a> {
                 span,
             } => {
                 let cond_type = self.check_expr(condition);
-                if !Self::is_boolean(&cond_type) && !cond_type.is_error() && !matches!(cond_type, Type::Infer) {
-                    self.error_span(*span, format!("ternary condition must be boolean, found type `{cond_type}`"));
+                if !Self::is_boolean(&cond_type)
+                    && !cond_type.is_error()
+                    && !matches!(cond_type, Type::Infer)
+                {
+                    self.error_span(
+                        *span,
+                        format!("ternary condition must be boolean, found type `{cond_type}`"),
+                    );
                 }
                 let then_type = self.check_expr(then_branch);
                 let else_type = self.check_expr(else_branch);
@@ -618,10 +648,8 @@ impl<'a> Checker<'a> {
             }
         };
 
-        let fields: Vec<( &'a str, &ast::Expr<'a>, ast::Span)> = fields
-            .iter()
-            .map(|f| (f.name, &f.value, f.span))
-            .collect();
+        let fields: Vec<(&'a str, &ast::Expr<'a>, ast::Span)> =
+            fields.iter().map(|f| (f.name, &f.value, f.span)).collect();
         self.check_struct_literal_fields(name, &info, &fields, span);
         Type::Struct { name }
     }
@@ -630,7 +658,7 @@ impl<'a> Checker<'a> {
         &mut self,
         name: &'a str,
         info: &super::StructInfo<'a>,
-        fields: &[( &'a str, &ast::Expr<'a>, ast::Span)],
+        fields: &[(&'a str, &ast::Expr<'a>, ast::Span)],
         span: ast::Span,
     ) {
         let embed_names: HashSet<&str> = info.embeds.iter().map(|e| e.name).collect();
@@ -643,7 +671,8 @@ impl<'a> Checker<'a> {
                 );
             }
 
-            let expected_type = if let Some(f) = info.fields.iter().find(|f| f.name == *field_name) {
+            let expected_type = if let Some(f) = info.fields.iter().find(|f| f.name == *field_name)
+            {
                 self.resolve_ast_type(&f.ty)
             } else if embed_names.contains(field_name) {
                 Type::Struct { name: field_name }
@@ -686,9 +715,7 @@ impl<'a> Checker<'a> {
         }
 
         for field in info.fields {
-            if field.default_value.is_none()
-                && !field.optional
-                && !seen_fields.contains(field.name)
+            if field.default_value.is_none() && !field.optional && !seen_fields.contains(field.name)
             {
                 self.error_span(
                     span,
@@ -781,7 +808,9 @@ impl<'a> Checker<'a> {
         if !info.fields.is_empty() {
             return false;
         }
-        info.embeds.iter().all(|e| self.is_empty_embed_struct(e.name))
+        info.embeds
+            .iter()
+            .all(|e| self.is_empty_embed_struct(e.name))
     }
 
     fn check_field_access(
@@ -821,18 +850,18 @@ impl<'a> Checker<'a> {
                 if let Some((_, ty)) = fields.iter().find(|(name, _)| *name == field) {
                     ty.clone()
                 } else {
-                    self.error_span(
-                        span,
-                        format!("object has no field `{field}`"),
-                    );
+                    self.error_span(span, format!("object has no field `{field}`"));
                     Type::Error
                 }
             }
             Type::Array { elem } => self.resolve_array_field(field, elem, span),
-            Type::Interface { name } => self.resolve_interface_field(name, field).unwrap_or_else(|| {
-                self.error_span(span, format!("interface `{name}` has no field `{field}`"));
-                Type::Error
-            }),
+            Type::Interface { name } => {
+                self.resolve_interface_field(name, field)
+                    .unwrap_or_else(|| {
+                        self.error_span(span, format!("interface `{name}` has no field `{field}`"));
+                        Type::Error
+                    })
+            }
             Type::Named { name } => self.resolve_primitive_field(name, field, span),
             Type::Union { .. } => {
                 // A union value used without narrowing is a compile error
@@ -849,7 +878,10 @@ impl<'a> Checker<'a> {
             }
             _ => {
                 // Enum namespace access: `Color.Red` where `Color` is an enum name.
-                if let ast::Expr::Identifier { name: enum_name, .. } = object {
+                if let ast::Expr::Identifier {
+                    name: enum_name, ..
+                } = object
+                {
                     if let Some(info) = self.enums.get(enum_name).cloned() {
                         if info.cases.iter().any(|c| c.name == field) {
                             return Type::Named { name: enum_name };
@@ -897,6 +929,12 @@ impl<'a> Checker<'a> {
             return Type::Error;
         }
         match type_name {
+            // `JsError` is whatever JavaScript threw, surfaced through the
+            // emitter's try/catch. JS can throw anything -- `throw "boom"` has
+            // no `.message` -- so the emitter normalises a non-Error throw into
+            // an Error. These two fields are always present because of that
+            // guarantee; without it, declaring them would be a lie the type
+            // system could not catch (deka#460, deka#469).
             "JsError" => {
                 self.error_span(
                     span,
@@ -1026,10 +1064,7 @@ impl<'a> Checker<'a> {
                 }
                 self.error_span(
                     attr.span,
-                    format!(
-                        "interface `{interface_name}` has no prop `{}`",
-                        attr.name
-                    ),
+                    format!("interface `{interface_name}` has no prop `{}`", attr.name),
                 );
                 continue;
             };
@@ -1038,9 +1073,7 @@ impl<'a> Checker<'a> {
 
             // `<Card flag />` is boolean shorthand.
             let Some(value) = &attr.value else {
-                if !Self::is_boolean(&expected)
-                    && !matches!(expected, Type::Infer | Type::Error)
-                {
+                if !Self::is_boolean(&expected) && !matches!(expected, Type::Infer | Type::Error) {
                     self.error_span(
                         attr.span,
                         format!(
@@ -1097,10 +1130,7 @@ impl<'a> Checker<'a> {
             if !*optional && !supplied.contains(name) {
                 self.error_span(
                     span,
-                    format!(
-                        "missing required prop `{name}` on `{}`",
-                        element.tag
-                    ),
+                    format!("missing required prop `{name}` on `{}`", element.tag),
                 );
             }
         }
@@ -1114,7 +1144,9 @@ impl<'a> Checker<'a> {
         let info = self.interfaces.get(interface_name)?;
         for member in info.members.iter() {
             match member {
-                ast::InterfaceMember::Field { name, ty, optional, .. } if *name == field => {
+                ast::InterfaceMember::Field {
+                    name, ty, optional, ..
+                } if *name == field => {
                     let resolved = self.resolve_ast_type(ty);
                     //  is the same thing as  -- one
                     // meaning for optional, whichever way it is spelled
@@ -1126,7 +1158,12 @@ impl<'a> Checker<'a> {
                     }
                     return Some(resolved);
                 }
-                ast::InterfaceMember::Method { name, params, return_type, .. } if *name == field => {
+                ast::InterfaceMember::Method {
+                    name,
+                    params,
+                    return_type,
+                    ..
+                } if *name == field => {
                     let param_types: Vec<Type<'a>> = params
                         .iter()
                         .map(|p| {
@@ -1256,7 +1293,10 @@ impl<'a> Checker<'a> {
             .iter()
             .map(|p| inferred.get(p).cloned().unwrap_or(Type::Infer))
             .collect();
-        Type::Generic { base: enum_name, args }
+        Type::Generic {
+            base: enum_name,
+            args,
+        }
     }
 
     fn check_option_constructor(
@@ -1280,7 +1320,9 @@ impl<'a> Checker<'a> {
                 }
                 // `None` is polymorphic: it names no payload type at all, so the
                 // inner type is unconstrained rather than unresolved (deka#468).
-                Type::Option { inner: Box::new(Type::Var) }
+                Type::Option {
+                    inner: Box::new(Type::Var),
+                }
             }
             _ => {
                 self.error_span(span, format!("unknown Option case `{case_name}`"));
@@ -1396,9 +1438,7 @@ impl<'a> Checker<'a> {
                     if !self.is_assignable(expected, &arm_type) {
                         self.error_at_expr(
                             &arm.body,
-                            format!(
-                                "match arm has type `{arm_type}`, expected type `{expected}`"
-                            ),
+                            format!("match arm has type `{arm_type}`, expected type `{expected}`"),
                         );
                     }
                 }
@@ -1455,9 +1495,15 @@ impl<'a> Checker<'a> {
                 "Option".to_string(),
                 vec![("Some", Some((**inner).clone())), ("None", None)],
             )),
-            Type::Generic { base: "Result", args } if args.len() == 2 => Some((
+            Type::Generic {
+                base: "Result",
+                args,
+            } if args.len() == 2 => Some((
                 "Result".to_string(),
-                vec![("Ok", Some(args[0].clone())), ("Err", Some(args[1].clone()))],
+                vec![
+                    ("Ok", Some(args[0].clone())),
+                    ("Err", Some(args[1].clone())),
+                ],
             )),
             Type::Named { name } => {
                 let info = self.enums.get(name)?.clone();
@@ -1570,8 +1616,7 @@ impl<'a> Checker<'a> {
                 // compiled `Red` to a test of `true` and returned the first arm
                 // for every input, with exhaustiveness satisfied (deka#450).
                 if let Some((_, cases)) = self.enum_shape(scrutinee_type) {
-                    if let Some((case_name, payload)) =
-                        cases.iter().find(|(case, _)| case == name)
+                    if let Some((case_name, payload)) = cases.iter().find(|(case, _)| case == name)
                     {
                         if payload.is_some() {
                             self.error_span(
@@ -1665,7 +1710,10 @@ impl<'a> Checker<'a> {
                 }
             }
             ast::Pattern::Struct { span, .. } | ast::Pattern::Tuple { span, .. } => {
-                self.error_span(*span, "struct/tuple patterns are not supported in v2 typeck");
+                self.error_span(
+                    *span,
+                    "struct/tuple patterns are not supported in v2 typeck",
+                );
             }
         }
     }
@@ -1828,9 +1876,7 @@ impl<'a> Checker<'a> {
                 _ => {
                     self.error_span(
                         span,
-                        format!(
-                            "`{name}` is not a case of type `{scrutinee_type}`"
-                        ),
+                        format!("`{name}` is not a case of type `{scrutinee_type}`"),
                     );
                     return;
                 }
@@ -1840,7 +1886,10 @@ impl<'a> Checker<'a> {
         // Built-in Result cases.
         if name == "Ok" || name == "Err" {
             match scrutinee_type {
-                Type::Generic { base: "Result", args } if args.len() == 2 => {
+                Type::Generic {
+                    base: "Result",
+                    args,
+                } if args.len() == 2 => {
                     let expected_payload = if name == "Ok" { &args[0] } else { &args[1] };
                     if let Some(p) = payload {
                         self.check_pattern(p, expected_payload);
@@ -1853,9 +1902,7 @@ impl<'a> Checker<'a> {
                 _ => {
                     self.error_span(
                         span,
-                        format!(
-                            "`{name}` is not a case of type `{scrutinee_type}`"
-                        ),
+                        format!("`{name}` is not a case of type `{scrutinee_type}`"),
                     );
                     return;
                 }
@@ -1895,7 +1942,10 @@ impl<'a> Checker<'a> {
         let case = match info.cases.iter().find(|c| c.name == name) {
             Some(c) => c,
             None => {
-                self.error_span(span, format!("case `{name}` not found in enum `{enum_name}`"));
+                self.error_span(
+                    span,
+                    format!("case `{name}` not found in enum `{enum_name}`"),
+                );
                 return;
             }
         };
@@ -1953,7 +2003,9 @@ impl<'a> Checker<'a> {
                 if matches!(left_type, Type::Infer) || matches!(right_type, Type::Infer) {
                     return Type::Infer;
                 }
-                if let Some(ty) = self.check_newtype_arithmetic(expr, op, &left_type, &right_type, span) {
+                if let Some(ty) =
+                    self.check_newtype_arithmetic(expr, op, &left_type, &right_type, span)
+                {
                     return ty;
                 }
                 if Self::is_number(&left_type) && Self::is_number(&right_type) {
@@ -1961,31 +2013,29 @@ impl<'a> Checker<'a> {
                 } else if Self::is_string(&left_type) || Self::is_string(&right_type) {
                     // String concatenation: JS coerces the other operand to string.
                     Type::Named { name: "string" }
-                } else if Self::is_promise(&left_type)
-                    || Self::is_promise(&right_type)
-                {
+                } else if Self::is_promise(&left_type) || Self::is_promise(&right_type) {
                     // Promise<T> + primitive coerces to string in JS.
                     Type::Named { name: "string" }
-                } else if matches!(left_type, Type::Newtype { .. }) || matches!(right_type, Type::Newtype { .. }) {
+                } else if matches!(left_type, Type::Newtype { .. })
+                    || matches!(right_type, Type::Newtype { .. })
+                {
                     self.error_span(
                         span,
-                        format!(
-                            "cannot add types `{left_type}` and `{right_type}`"
-                        ),
+                        format!("cannot add types `{left_type}` and `{right_type}`"),
                     );
                     Type::Error
                 } else {
                     self.error_span(
                         span,
-                        format!(
-                            "cannot add types `{left_type}` and `{right_type}`"
-                        ),
+                        format!("cannot add types `{left_type}` and `{right_type}`"),
                     );
                     Type::Error
                 }
             }
             Sub | Mul | Div | Mod => {
-                if let Some(rewrite) = self.check_newtype_arithmetic(expr, op, &left_type, &right_type, span) {
+                if let Some(rewrite) =
+                    self.check_newtype_arithmetic(expr, op, &left_type, &right_type, span)
+                {
                     return rewrite;
                 }
                 if !matches!(left_type, Type::Infer) {
@@ -2003,7 +2053,9 @@ impl<'a> Checker<'a> {
                 if matches!(left_type, Type::Infer) || matches!(right_type, Type::Infer) {
                     return Type::Named { name: "boolean" };
                 }
-                if let Some(rewrite) = self.check_newtype_comparison(expr, op, &left_type, &right_type, span) {
+                if let Some(rewrite) =
+                    self.check_newtype_comparison(expr, op, &left_type, &right_type, span)
+                {
                     return rewrite;
                 }
                 if left_type == right_type
@@ -2018,9 +2070,7 @@ impl<'a> Checker<'a> {
                 } else {
                     self.error_span(
                         span,
-                        format!(
-                            "cannot compare types `{left_type}` and `{right_type}`"
-                        ),
+                        format!("cannot compare types `{left_type}` and `{right_type}`"),
                     );
                     Type::Named { name: "boolean" }
                 }
@@ -2039,7 +2089,12 @@ impl<'a> Checker<'a> {
                 match right {
                     ast::Expr::Identifier { name, span } => {
                         let callee_type = self.lookup_var(name).unwrap_or(Type::Infer);
-                        if let Type::Function { params, ret, optional } = callee_type {
+                        if let Type::Function {
+                            params,
+                            ret,
+                            optional,
+                        } = callee_type
+                        {
                             let required = params.len().saturating_sub(optional);
                             if params.len() < 1 || required > 1 {
                                 self.error_span(
@@ -2068,18 +2123,28 @@ impl<'a> Checker<'a> {
                             Type::Infer
                         }
                     }
-                    ast::Expr::Call { callee, type_args, args, span } => {
+                    ast::Expr::Call {
+                        callee,
+                        type_args,
+                        args,
+                        span,
+                    } => {
                         let callee_type = self.check_expr(callee);
-                        if let Type::Function { params, ret, optional } = callee_type {
-                            let subst = if params.iter().any(|p| contains_param(p)) || contains_param(&ret) {
+                        if let Type::Function {
+                            params,
+                            ret,
+                            optional,
+                        } = callee_type
+                        {
+                            let subst = if params.iter().any(|p| contains_param(p))
+                                || contains_param(&ret)
+                            {
                                 self.infer_substitution(type_args, &params, args)
                             } else {
                                 HashMap::new()
                             };
-                            let substituted_params: Vec<Type<'a>> = params
-                                .iter()
-                                .map(|p| substitute_type(p, &subst))
-                                .collect();
+                            let substituted_params: Vec<Type<'a>> =
+                                params.iter().map(|p| substitute_type(p, &subst)).collect();
                             let substituted_ret = substitute_type(&ret, &subst);
 
                             let has_hole = args.iter().any(|a| Self::is_hole_expr(a));
@@ -2107,7 +2172,10 @@ impl<'a> Checker<'a> {
 
                             if !has_hole {
                                 if substituted_params.is_empty() {
-                                    self.error_span(*span, "pipe right-hand call takes no arguments");
+                                    self.error_span(
+                                        *span,
+                                        "pipe right-hand call takes no arguments",
+                                    );
                                 } else if !self.is_assignable(&substituted_params[0], &left_type)
                                     && !matches!(left_type, Type::Infer)
                                     && !matches!(substituted_params[0], Type::Infer)
@@ -2123,8 +2191,11 @@ impl<'a> Checker<'a> {
                             }
 
                             let required = substituted_params.len().saturating_sub(optional);
-                            let effective_count = if has_hole { args.len() } else { args.len() + 1 };
-                            if effective_count < required || effective_count > substituted_params.len() {
+                            let effective_count =
+                                if has_hole { args.len() } else { args.len() + 1 };
+                            if effective_count < required
+                                || effective_count > substituted_params.len()
+                            {
                                 self.error_span(
                                     *span,
                                     format!(
@@ -2143,7 +2214,10 @@ impl<'a> Checker<'a> {
                             }
                             Type::Infer
                         } else {
-                            self.error_span(*span, format!("value of type `{callee_type}` is not callable"));
+                            self.error_span(
+                                *span,
+                                format!("value of type `{callee_type}` is not callable"),
+                            );
                             Type::Error
                         }
                     }
@@ -2177,9 +2251,7 @@ impl<'a> Checker<'a> {
                         if !self.is_mutable_expr(object) && !field_mutable {
                             self.error_span(
                                 left.span(),
-                                format!(
-                                    "cannot assign to field `{field}` of immutable value"
-                                ),
+                                format!("cannot assign to field `{field}` of immutable value"),
                             );
                         }
                     }
@@ -2230,7 +2302,10 @@ impl<'a> Checker<'a> {
                 left_type
             }
             _ => {
-                self.error_span(span, format!("binary operator `{op:?}` is not supported in v2 typeck"));
+                self.error_span(
+                    span,
+                    format!("binary operator `{op:?}` is not supported in v2 typeck"),
+                );
                 Type::Error
             }
         }
@@ -2249,7 +2324,10 @@ impl<'a> Checker<'a> {
     ) -> Option<Type<'a>> {
         use ast::BinOp::*;
         let newtype_name = |t: &Type<'a>| match t {
-            Type::Newtype { name, repr: crate::ast::NewtypeRepr::Number } => Some(*name),
+            Type::Newtype {
+                name,
+                repr: crate::ast::NewtypeRepr::Number,
+            } => Some(*name),
             _ => None,
         };
 
@@ -2281,11 +2359,15 @@ impl<'a> Checker<'a> {
                 _ => None,
             };
             if let Some(rewrite) = rewrite {
-                self.operator_rewrites.insert(expr as *const ast::Expr<'a>, rewrite);
+                self.operator_rewrites
+                    .insert(expr as *const ast::Expr<'a>, rewrite);
             }
             return Some(match op {
                 Div => Type::Named { name: "number" },
-                _ => Type::Newtype { name, repr: crate::ast::NewtypeRepr::Number },
+                _ => Type::Newtype {
+                    name,
+                    repr: crate::ast::NewtypeRepr::Number,
+                },
             });
         }
 
@@ -2306,9 +2388,13 @@ impl<'a> Checker<'a> {
                     _ => None,
                 };
                 if let Some(rewrite) = rewrite {
-                    self.operator_rewrites.insert(expr as *const ast::Expr<'a>, rewrite);
+                    self.operator_rewrites
+                        .insert(expr as *const ast::Expr<'a>, rewrite);
                 }
-                return Some(Type::Newtype { name, repr: crate::ast::NewtypeRepr::Number });
+                return Some(Type::Newtype {
+                    name,
+                    repr: crate::ast::NewtypeRepr::Number,
+                });
             }
         }
 
@@ -2329,9 +2415,13 @@ impl<'a> Checker<'a> {
                     _ => None,
                 };
                 if let Some(rewrite) = rewrite {
-                    self.operator_rewrites.insert(expr as *const ast::Expr<'a>, rewrite);
+                    self.operator_rewrites
+                        .insert(expr as *const ast::Expr<'a>, rewrite);
                 }
-                return Some(Type::Newtype { name, repr: crate::ast::NewtypeRepr::Number });
+                return Some(Type::Newtype {
+                    name,
+                    repr: crate::ast::NewtypeRepr::Number,
+                });
             }
         }
 
@@ -2359,10 +2449,7 @@ impl<'a> Checker<'a> {
                 Some(Type::Named { name: "boolean" })
             }
             (Type::Newtype { name, .. }, other) | (other, Type::Newtype { name, .. }) => {
-                self.error_span(
-                    span,
-                    format!("cannot compare `{name}` with `{other}`"),
-                );
+                self.error_span(span, format!("cannot compare `{name}` with `{other}`"));
                 Some(Type::Named { name: "boolean" })
             }
             _ => None,
@@ -2379,12 +2466,19 @@ impl<'a> Checker<'a> {
         let operand_type = self.check_expr(operand);
         match op {
             ast::UnOp::Neg | ast::UnOp::Plus => {
-                if let Type::Newtype { name, repr: crate::ast::NewtypeRepr::Number } = &operand_type {
+                if let Type::Newtype {
+                    name,
+                    repr: crate::ast::NewtypeRepr::Number,
+                } = &operand_type
+                {
                     self.operator_rewrites.insert(
                         expr as *const ast::Expr<'a>,
                         super::types::OperatorRewrite::NewtypeUnary { name: *name },
                     );
-                    return Type::Newtype { name: *name, repr: crate::ast::NewtypeRepr::Number };
+                    return Type::Newtype {
+                        name: *name,
+                        repr: crate::ast::NewtypeRepr::Number,
+                    };
                 }
                 self.expect_number(&operand_type, operand.span());
                 Type::Named { name: "number" }
@@ -2441,20 +2535,20 @@ impl<'a> Checker<'a> {
                 ast::InterfaceMember::Method { name, .. } => *name == method_name,
                 _ => false,
             })?;
-            let method_mutable = matches!(
-                method,
-                ast::InterfaceMember::Method { mutable: true, .. }
-            );
+            let method_mutable =
+                matches!(method, ast::InterfaceMember::Method { mutable: true, .. });
             if method_mutable && !self.is_mutable_expr(object) {
                 self.error_at_expr(
                     object,
-                    format!(
-                        "cannot call mutable method `{method_name}` on an immutable receiver"
-                    ),
+                    format!("cannot call mutable method `{method_name}` on an immutable receiver"),
                 );
             }
             let (params, return_type) = match method {
-                ast::InterfaceMember::Method { params, return_type, .. } => (*params, return_type.as_ref()),
+                ast::InterfaceMember::Method {
+                    params,
+                    return_type,
+                    ..
+                } => (*params, return_type.as_ref()),
                 _ => unreachable!(),
             };
             let expected_params: Vec<Type<'a>> = params
@@ -2480,9 +2574,7 @@ impl<'a> Checker<'a> {
                     if !self.is_assignable(expected, &arg_type) {
                         self.error_at_expr(
                             arg,
-                            format!(
-                                "expected argument type `{expected}`, found type `{arg_type}`"
-                            ),
+                            format!("expected argument type `{expected}`, found type `{arg_type}`"),
                         );
                     }
                 }
@@ -2507,14 +2599,13 @@ impl<'a> Checker<'a> {
             _ => return None,
         };
 
-        let info = self.find_receiver_method(receiver_type, method_name, &mut Vec::new())?;
+        let mut embed_path = Vec::new();
+        let info = self.find_receiver_method(receiver_type, method_name, &mut embed_path)?;
 
         if info.mutable && !self.is_mutable_expr(object) {
             self.error_at_expr(
                 object,
-                format!(
-                    "cannot call mutable method `{method_name}` on an immutable receiver"
-                ),
+                format!("cannot call mutable method `{method_name}` on an immutable receiver"),
             );
         }
 
@@ -2792,9 +2883,7 @@ impl<'a> Checker<'a> {
                 if !self.is_assignable(expected, &arg_type) {
                     self.error_at_expr(
                         arg,
-                        format!(
-                            "expected argument type `{expected}`, found type `{arg_type}`"
-                        ),
+                        format!("expected argument type `{expected}`, found type `{arg_type}`"),
                     );
                 }
             }
@@ -2944,17 +3033,19 @@ impl<'a> Checker<'a> {
                         format!("expected `{expected}` for newtype `{name}`, found `{arg_type}`"),
                     );
                 }
-                return Type::Newtype { name, repr: info.repr };
+                return Type::Newtype {
+                    name,
+                    repr: info.repr,
+                };
             }
         }
 
-        // Primitive conversion: `string(x)`, `number(x)`, `bool(x)` — always
-        // public, no import (#364). The primary job is unwrapping a newtype to
-        // its representation; the secondary job is widening between primitives
-        // (`string(42)`). `number("abc")` returns `Option<number>` because JS
-        // `Number` can produce `NaN`.
+        // Primitive conversion: `string(x)`, `parseNumber(x)`,
+        // `unboxNumber(x)`, `toNumber(x)` — always public, no import
+        // (#364). The old `number(x)` name remains a compatibility alias for
+        // PR 1 while the corpus moves to the explicit APIs.
         if let ast::Expr::Identifier { name, .. } = callee {
-            if let Some(repr) = newtype_repr_from_name(name) {
+            if let Some(conversion) = primitive_conversion_name(name) {
                 if args.len() != 1 {
                     self.error_span(
                         span,
@@ -2963,55 +3054,95 @@ impl<'a> Checker<'a> {
                     return Type::Error;
                 }
                 let arg_type = self.check_expr(&args[0]);
-                let ret = Type::from_newtype_repr(repr);
-                let number_ret = || Type::Option {
-                    inner: Box::new(Type::Named { name: "number" }),
-                };
-                use crate::ast::NewtypeRepr as Repr;
-                let (kind, ret) = match repr {
-                    Repr::String => match &arg_type {
-                        Type::Newtype {
-                            repr: Repr::String, ..
-                        } => (Some(super::types::UnwrapKind::Payload), ret.clone()),
-                        Type::Named { name: "string" } => {
-                            (Some(super::types::UnwrapKind::Identity), ret.clone())
+                let (kind, ret) = match conversion {
+                    PrimitiveConversionName::String => {
+                        let ret = Type::Named { name: "string" };
+                        use crate::ast::NewtypeRepr as Repr;
+                        match &arg_type {
+                            Type::Newtype {
+                                repr: Repr::String, ..
+                            } => (Some(super::types::UnwrapKind::Payload), ret),
+                            Type::Named { name: "string" } => {
+                                (Some(super::types::UnwrapKind::Identity), ret)
+                            }
+                            Type::Named {
+                                name: "number" | "boolean",
+                            } => (Some(super::types::UnwrapKind::WidenToString), ret),
+                            // Rejected, not widened: `String(undefined)` is
+                            // "undefined", `String({})` is "[object Object]" —
+                            // total but silently wrong. Ask for an annotation
+                            // instead of trusting a value the checker cannot see
+                            // (deka#370 review).
+                            Type::Infer => (None, ret),
+                            _ => (None, ret),
                         }
-                        Type::Named {
-                            name: "number" | "boolean",
-                        } => (Some(super::types::UnwrapKind::WidenToString), ret.clone()),
-                        // Rejected, not widened: `String(undefined)` is
-                        // "undefined", `String({})` is "[object Object]" —
-                        // total but silently wrong. Ask for an annotation
-                        // instead of trusting a value the checker cannot see
-                        // (deka#370 review).
-                        Type::Infer => (None, ret.clone()),
-                        _ => (None, ret.clone()),
-                    },
-                    Repr::Number => match &arg_type {
-                        Type::Newtype {
-                            repr: Repr::Number, ..
-                        } => (Some(super::types::UnwrapKind::Payload), ret.clone()),
-                        Type::Named { name: "number" } => {
-                            (Some(super::types::UnwrapKind::Identity), ret.clone())
+                    }
+                    PrimitiveConversionName::LegacyNumber => {
+                        let number_ret = Type::Named { name: "number" };
+                        let option_number_ret = Type::Option {
+                            inner: Box::new(Type::Named { name: "number" }),
+                        };
+                        use crate::ast::NewtypeRepr as Repr;
+                        match &arg_type {
+                            Type::Newtype {
+                                repr: Repr::String, ..
+                            }
+                            | Type::Newtype {
+                                repr: Repr::Number, ..
+                            }
+                            | Type::Newtype {
+                                repr: Repr::Bool, ..
+                            } => (Some(super::types::UnwrapKind::Payload), number_ret),
+                            Type::Named { name: "number" } => {
+                                (Some(super::types::UnwrapKind::Identity), number_ret)
+                            }
+                            Type::Named { name: "string" } => (
+                                Some(super::types::UnwrapKind::StringToOptionNumber),
+                                option_number_ret,
+                            ),
+                            Type::Named { name: "boolean" } => {
+                                (Some(super::types::UnwrapKind::WidenToNumber), number_ret)
+                            }
+                            Type::Infer => (None, number_ret),
+                            _ => (None, number_ret),
                         }
-                        Type::Named { name: "string" } => (
-                            Some(super::types::UnwrapKind::StringToOptionNumber),
-                            number_ret(),
-                        ),
-                        // Same rule: unknown input is rejected, not guarded.
-                        Type::Infer => (None, ret.clone()),
-                        _ => (None, ret.clone()),
-                    },
-                    Repr::Bool => match &arg_type {
-                        Type::Newtype {
-                            repr: Repr::Bool, ..
-                        } => (Some(super::types::UnwrapKind::Payload), ret.clone()),
-                        Type::Named { name: "boolean" } => {
-                            (Some(super::types::UnwrapKind::Identity), ret.clone())
+                    }
+                    PrimitiveConversionName::ParseNumber => {
+                        let ret = Type::Option {
+                            inner: Box::new(Type::Named { name: "number" }),
+                        };
+                        match &arg_type {
+                            Type::Named { name: "string" } => {
+                                (Some(super::types::UnwrapKind::StringToOptionNumber), ret)
+                            }
+                            Type::Infer => (None, ret),
+                            _ => (None, ret),
                         }
-                        Type::Infer => (None, ret.clone()),
-                        _ => (None, ret.clone()),
-                    },
+                    }
+                    PrimitiveConversionName::UnboxNumber => {
+                        let ret = Type::Named { name: "number" };
+                        use crate::ast::NewtypeRepr as Repr;
+                        match &arg_type {
+                            Type::Newtype {
+                                repr: Repr::Number, ..
+                            } => (Some(super::types::UnwrapKind::Payload), ret),
+                            Type::Infer => (None, ret),
+                            _ => (None, ret),
+                        }
+                    }
+                    PrimitiveConversionName::ToNumber => {
+                        let ret = Type::Named { name: "number" };
+                        match &arg_type {
+                            Type::Named { name: "number" } => {
+                                (Some(super::types::UnwrapKind::Identity), ret)
+                            }
+                            Type::Named { name: "boolean" } => {
+                                (Some(super::types::UnwrapKind::WidenToNumber), ret)
+                            }
+                            Type::Infer => (None, ret),
+                            _ => (None, ret),
+                        }
+                    }
                 };
                 if let Some(kind) = kind {
                     self.unwrap_calls.insert(expr as *const ast::Expr<'a>, kind);
@@ -3019,7 +3150,9 @@ impl<'a> Checker<'a> {
                     if matches!(arg_type, Type::Infer) {
                         self.error_at_expr(
                             &args[0],
-                            format!("cannot convert a value of unknown type to `{name}`; add a type annotation"),
+                            format!(
+                                "cannot convert a value of unknown type to `{name}`; add a type annotation"
+                            ),
                         );
                     } else {
                         self.error_at_expr(
@@ -3043,7 +3176,11 @@ impl<'a> Checker<'a> {
         };
 
         match callee_type {
-            Type::Function { params, ret, optional } => {
+            Type::Function {
+                params,
+                ret,
+                optional,
+            } => {
                 // Build a substitution for any type parameters appearing in the
                 // function signature. Explicit type args are used when present;
                 // otherwise we try to infer from the first argument.
@@ -3097,7 +3234,9 @@ impl<'a> Checker<'a> {
                 if !hole_positions.is_empty() {
                     // Partial application: `add(1, _)` becomes a function that
                     // takes the hole arguments and forwards them.
-                    for (i, (expected, arg)) in substituted_params.iter().zip(args.iter()).enumerate() {
+                    for (i, (expected, arg)) in
+                        substituted_params.iter().zip(args.iter()).enumerate()
+                    {
                         if Self::is_hole_expr(arg) {
                             continue;
                         }
@@ -3130,7 +3269,11 @@ impl<'a> Checker<'a> {
                         format!(
                             "{} argument{}",
                             substituted_params.len(),
-                            if substituted_params.len() == 1 { "" } else { "s" }
+                            if substituted_params.len() == 1 {
+                                ""
+                            } else {
+                                "s"
+                            }
                         )
                     };
                     self.error_span(
@@ -3182,18 +3325,14 @@ impl<'a> Checker<'a> {
                 let arg = &args[0];
                 match arg {
                     ast::Expr::Object { fields, .. } => {
-                        let mapped: Vec<(&'a str, &ast::Expr<'a>, ast::Span)> = fields
-                            .iter()
-                            .map(|f| (f.key, &f.value, f.span))
-                            .collect();
+                        let mapped: Vec<(&'a str, &ast::Expr<'a>, ast::Span)> =
+                            fields.iter().map(|f| (f.key, &f.value, f.span)).collect();
                         self.check_struct_literal_fields(name, &info, &mapped, span);
                     }
                     _ => {
                         self.error_at_expr(
                             arg,
-                            format!(
-                                "struct factory `{name}` expects an object literal argument"
-                            ),
+                            format!("struct factory `{name}` expects an object literal argument"),
                         );
                     }
                 }
@@ -3382,7 +3521,11 @@ fn collect_param_names<'a>(tys: &[Type<'a>]) -> Vec<&'a str> {
     names
 }
 
-fn collect_param_names_rec<'a>(ty: &Type<'a>, names: &mut Vec<&'a str>, seen: &mut std::collections::HashSet<&'a str>) {
+fn collect_param_names_rec<'a>(
+    ty: &Type<'a>,
+    names: &mut Vec<&'a str>,
+    seen: &mut std::collections::HashSet<&'a str>,
+) {
     match ty {
         Type::Param { name } => {
             if seen.insert(*name) {
@@ -3437,10 +3580,9 @@ fn infer_type_args<'a>(
             infer_type_args(d, a, params, out)
         }
         (Type::Array { elem: d }, Type::Array { elem: a }) => infer_type_args(d, a, params, out),
-        (
-            Type::Generic { base: db, args: da },
-            Type::Generic { base: ab, args: aa },
-        ) if db == ab && da.len() == aa.len() => {
+        (Type::Generic { base: db, args: da }, Type::Generic { base: ab, args: aa })
+            if db == ab && da.len() == aa.len() =>
+        {
             for (d, a) in da.iter().zip(aa.iter()) {
                 infer_type_args(d, a, params, out);
             }

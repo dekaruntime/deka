@@ -44,10 +44,7 @@ pub enum Type<'a> {
         optional: usize,
     },
     /// Generic instantiation, e.g. `Result<number, string>`.
-    Generic {
-        base: &'a str,
-        args: Vec<Type<'a>>,
-    },
+    Generic { base: &'a str, args: Vec<Type<'a>> },
     /// A user-defined struct type.
     Struct { name: &'a str },
     /// An array type, e.g. `Array<number>` or `number[]`.
@@ -57,7 +54,10 @@ pub enum Type<'a> {
     /// A declared interface type.
     Interface { name: &'a str },
     /// A boxed newtype over a primitive representation.
-    Newtype { name: &'a str, repr: crate::ast::NewtypeRepr },
+    Newtype {
+        name: &'a str,
+        repr: crate::ast::NewtypeRepr,
+    },
     /// A type parameter, e.g. `T` inside a generic function or type.
     Param { name: &'a str },
     /// A union of types whose members each have a decidable runtime
@@ -95,14 +95,6 @@ impl<'a> Type<'a> {
     }
 }
 
-pub fn newtype_repr_from_name(name: &str) -> Option<crate::ast::NewtypeRepr> {
-    match name {
-        "number" => Some(crate::ast::NewtypeRepr::Number),
-        "string" => Some(crate::ast::NewtypeRepr::String),
-        "bool" => Some(crate::ast::NewtypeRepr::Bool),
-        _ => None,
-    }
-}
 
 /// Replace type parameters according to `subst`.
 ///
@@ -134,8 +126,9 @@ pub fn substitute_type<'a>(ty: &Type<'a>, subst: &std::collections::HashMap<&'a 
     }
 }
 
-/// How a primitive conversion call (`number(x)`, `string(x)`, `bool(x)`) should
-/// be lowered after typechecking.
+/// How a primitive conversion call (`parseNumber(x)`, `unboxNumber(x)`,
+/// `toNumber(x)`, `string(x)`) should be lowered after
+/// typechecking.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UnwrapKind {
     /// The argument is already the primitive; erase the call.
@@ -144,11 +137,10 @@ pub enum UnwrapKind {
     Payload,
     /// Widen the argument to `string` (`String(x)` in JS).
     WidenToString,
-    /// Widen the argument to `number` (`Number(x)` in JS).
+    /// Widen the argument to `toNumber` (`Number(x)` in JS).
     WidenToNumber,
-    /// Widen the argument to `boolean` (`Boolean(x)` in JS).
-    WidenToBool,
-    /// Convert a string argument to `Option<number>` (`Number(x)` wrapped).
+    /// Convert a string argument to `Option<number>` for `parseNumber`
+    /// (`Number(x)` wrapped).
     StringToOptionNumber,
 }
 
@@ -202,7 +194,11 @@ impl fmt::Display for Type<'_> {
             Type::None => write!(f, "none"),
             Type::Named { name } => write!(f, "{name}"),
             Type::Option { inner } => write!(f, "Option<{inner}>"),
-            Type::Function { params, ret, optional } => {
+            Type::Function {
+                params,
+                ret,
+                optional,
+            } => {
                 write!(f, "fn(")?;
                 let required = params.len().saturating_sub(*optional);
                 for (i, p) in params.iter().enumerate() {
@@ -257,5 +253,3 @@ impl fmt::Display for Type<'_> {
         }
     }
 }
-
-

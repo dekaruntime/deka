@@ -12,10 +12,8 @@ use std::path::{Path, PathBuf};
 use bumpalo::Bump;
 use deka_syntax::Diagnostic;
 
-use crate::{
-    compile_to_js_with_imports_and_options, parse_source_module_meta, CompileOptions,
-};
 use crate::shake::{self, ShakeModule, ShakePlan};
+use crate::{compile_to_js_with_imports_and_options, parse_source_module_meta, CompileOptions};
 
 /// Compiler-provided JS runtime (`ui/jsx`, `ui/form`, …). These are not
 /// DekaScript modules: hosts materialize the files, and the graph leaves the
@@ -89,8 +87,8 @@ impl FsModuleLoader {
 
     fn guard_project_root(&self, path: &Path) -> Result<PathBuf, String> {
         let canon_path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        let canon_root = std::fs::canonicalize(&self.project_root)
-            .unwrap_or_else(|_| self.project_root.clone());
+        let canon_root =
+            std::fs::canonicalize(&self.project_root).unwrap_or_else(|_| self.project_root.clone());
         if canon_path.starts_with(&canon_root) {
             return Ok(canon_path);
         }
@@ -361,7 +359,8 @@ pub fn compile_module_graph_with_options(
             // and left virtual. If the loader can resolve the specifier (e.g. a
             // type stub exists in the project), use that resolution for
             // typechecking and still emit the original bare specifier (deka#497).
-            let is_stdlib = options.module_base.is_some() && crate::is_stdlib_module_spec(&import.path);
+            let is_stdlib =
+                options.module_base.is_some() && crate::is_stdlib_module_spec(&import.path);
             if is_stdlib {
                 if let Ok(dep) = loader.resolve(&import.path, &path) {
                     dependencies.insert(import.path.clone(), dep.clone());
@@ -374,14 +373,8 @@ pub fn compile_module_graph_with_options(
             }
             match loader.resolve(&import.path, &path) {
                 Ok(dep) => {
-                    let from_ds = path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        == Some("ds");
-                    let to_dsx = dep
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        == Some("dsx");
+                    let from_ds = path.extension().and_then(|e| e.to_str()) == Some("ds");
+                    let to_dsx = dep.extension().and_then(|e| e.to_str()) == Some("dsx");
                     if from_ds && to_dsx {
                         errors.push(diag(
                             0,
@@ -402,7 +395,12 @@ pub fn compile_module_graph_with_options(
                     errors.push(diag(
                         0,
                         0,
-                        format!("{}: cannot resolve '{}': {}", path.display(), import.path, msg),
+                        format!(
+                            "{}: cannot resolve '{}': {}",
+                            path.display(),
+                            import.path,
+                            msg
+                        ),
                     ));
                 }
             }
@@ -456,7 +454,10 @@ pub fn compile_module_graph_with_options(
         }
     }
     for (path, program) in programs.iter() {
-        exports.insert(path.clone(), deka_syntax::collect_module_exports(program, &arena));
+        exports.insert(
+            path.clone(),
+            deka_syntax::collect_module_exports(program, &arena),
+        );
     }
 
     // Reject imports of names the dependency does not export. The typechecker
@@ -541,10 +542,7 @@ pub fn compile_module_graph_with_options(
         errors.push(diag(
             0,
             0,
-            format!(
-                "{}: client bundle cannot import ui/server",
-                entry.display()
-            ),
+            format!("{}: client bundle cannot import ui/server", entry.display()),
         ));
         return Err(errors);
     }
@@ -615,11 +613,10 @@ fn diag(line: usize, column: usize, message: String) -> Diagnostic {
 
 /// Compute a topological ordering of the discovered modules.  Returns the
 /// first cycle found if the graph is not a DAG.
-fn topological_order(modules: &HashMap<PathBuf, GraphModule>) -> Result<Vec<PathBuf>, Vec<PathBuf>> {
-    let mut in_degree: HashMap<PathBuf, usize> = modules
-        .keys()
-        .map(|p| (p.clone(), 0))
-        .collect();
+fn topological_order(
+    modules: &HashMap<PathBuf, GraphModule>,
+) -> Result<Vec<PathBuf>, Vec<PathBuf>> {
+    let mut in_degree: HashMap<PathBuf, usize> = modules.keys().map(|p| (p.clone(), 0)).collect();
     let mut adj: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
 
     for (path, module) in modules.iter() {
@@ -720,17 +717,20 @@ mod tests {
     impl ModuleLoader for InMemoryLoader {
         fn resolve(&self, specifier: &str, referrer: &Path) -> Result<PathBuf, String> {
             let key = (referrer.to_path_buf(), specifier.to_string());
-            self.aliases
-                .get(&key)
-                .cloned()
-                .ok_or_else(|| format!("unmapped specifier {} from {}", specifier, referrer.display()))
+            self.aliases.get(&key).cloned().ok_or_else(|| {
+                format!(
+                    "unmapped specifier {} from {}",
+                    specifier,
+                    referrer.display()
+                )
+            })
         }
 
         fn load(&self, path: &Path) -> Result<String, String> {
             self.files
                 .get(path)
                 .cloned()
-            .ok_or_else(|| format!("missing in-memory file {}", path.display()))
+                .ok_or_else(|| format!("missing in-memory file {}", path.display()))
         }
     }
 
@@ -773,7 +773,8 @@ mod tests {
         );
         files.insert(
             main.clone(),
-            "import { echo } from \"io\";\nimport { add } from \"./math.ds\";\necho(add(1, 2));".to_string(),
+            "import { echo } from \"io\";\nimport { add } from \"./math.ds\";\necho(add(1, 2));"
+                .to_string(),
         );
 
         let mut aliases = HashMap::new();
@@ -783,7 +784,8 @@ mod tests {
         // Without a module base, the loader is asked to resolve `io`.
         let err = compile_module_graph(&main, &loader).expect_err("io is not a .ds module");
         assert!(
-            err.iter().any(|d| d.message.contains("cannot resolve 'io'")),
+            err.iter()
+                .any(|d| d.message.contains("cannot resolve 'io'")),
             "got: {:?}",
             err
         );
@@ -827,7 +829,8 @@ mod tests {
         );
         files.insert(
             main.clone(),
-            "import { subtract } from \"./math.ds\";\nconst r: number = subtract(1, 2);".to_string(),
+            "import { subtract } from \"./math.ds\";\nconst r: number = subtract(1, 2);"
+                .to_string(),
         );
 
         let mut aliases = HashMap::new();
@@ -919,9 +922,17 @@ mod tests {
         assert_eq!(result.modules.len(), 2);
         let color_js = &result.modules[&color];
         let main_js = &result.modules[&main];
-        assert!(color_js.contains("const Color = Object.freeze"), "got: {}", color_js);
+        assert!(
+            color_js.contains("const Color = Object.freeze"),
+            "got: {}",
+            color_js
+        );
         assert!(color_js.contains("export { Color };"), "got: {}", color_js);
-        assert!(main_js.contains("import { Color } from \"./color.ds\";"), "got: {}", main_js);
+        assert!(
+            main_js.contains("import { Color } from \"./color.ds\";"),
+            "got: {}",
+            main_js
+        );
         assert!(main_js.contains("Color.Red"), "got: {}", main_js);
         assert!(main_js.contains("__deka_scrutinee"), "got: {}", main_js);
     }
@@ -935,7 +946,7 @@ mod tests {
         let mut files = HashMap::new();
         files.insert(
             money.clone(),
-            "type Cents number\nfn (c Cents) toDollars() number { return number(c) / 100 }\nexport { Cents }".to_string(),
+            "type Cents number\nfn (c Cents) toDollars() number { return unboxNumber(c) / 100 }\nexport { Cents }".to_string(),
         );
         files.insert(
             main.clone(),
@@ -957,7 +968,11 @@ mod tests {
             money_js
         );
         assert!(money_js.contains("export { Cents };"), "got: {}", money_js);
-        assert!(main_js.contains("import { Cents } from \"./money.ds\";"), "got: {}", main_js);
+        assert!(
+            main_js.contains("import { Cents } from \"./money.ds\";"),
+            "got: {}",
+            main_js
+        );
         assert!(main_js.contains("Cents(500)"), "got: {}", main_js);
         assert!(main_js.contains("c.toDollars()"), "got: {}", main_js);
     }
@@ -1031,7 +1046,8 @@ mod tests {
         let mut files = HashMap::new();
         files.insert(
             main.clone(),
-            "import { renderToString } from \"ui/server\";\nexport const x = renderToString;".to_string(),
+            "import { renderToString } from \"ui/server\";\nexport const x = renderToString;"
+                .to_string(),
         );
 
         let loader = InMemoryLoader {
@@ -1041,7 +1057,10 @@ mod tests {
         let err = compile_module_graph_with_options(
             &main,
             &loader,
-            GraphCompileOptions { client: true, ..Default::default() },
+            GraphCompileOptions {
+                client: true,
+                ..Default::default()
+            },
         )
         .expect_err("ui/server on a client entry");
         assert!(
@@ -1061,11 +1080,13 @@ mod tests {
         let mut files = HashMap::new();
         files.insert(
             legs.clone(),
-            "struct Legs {}\nfn (l Legs) move() string { return \"walk\" }\nexport { Legs }".to_string(),
+            "struct Legs {}\nfn (l Legs) move() string { return \"walk\" }\nexport { Legs }"
+                .to_string(),
         );
         files.insert(
             robot.clone(),
-            "import { Legs } from \"./legs.ds\";\nstruct Robot { Legs }\nexport { Robot }".to_string(),
+            "import { Legs } from \"./legs.ds\";\nstruct Robot { Legs }\nexport { Robot }"
+                .to_string(),
         );
         files.insert(
             main.clone(),
@@ -1123,7 +1144,8 @@ mod tests {
         let mut files = HashMap::new();
         files.insert(
             lib.clone(),
-            "export fn generic<T>(payload: T) Result<string, string> {\n  return Ok(\"y\")\n}".to_string(),
+            "export fn generic<T>(payload: T) Result<string, string> {\n  return Ok(\"y\")\n}"
+                .to_string(),
         );
         files.insert(
             main.clone(),
@@ -1136,7 +1158,11 @@ mod tests {
         let loader = InMemoryLoader { files, aliases };
         let result = compile_module_graph(&main, &loader).expect("compile graph");
         let main_js = &result.modules[&main];
-        assert!(main_js.contains("generic({sub: \"1\"})"), "got: {}", main_js);
+        assert!(
+            main_js.contains("generic({sub: \"1\"})"),
+            "got: {}",
+            main_js
+        );
         assert!(main_js.contains("__case"), "got: {}", main_js);
     }
 
@@ -1149,7 +1175,8 @@ mod tests {
         let mut files = HashMap::new();
         files.insert(
             lib.clone(),
-            "export fn first<T>(values: Array<T>) Option<T> {\n  return Some(values[0])\n}".to_string(),
+            "export fn first<T>(values: Array<T>) Option<T> {\n  return Some(values[0])\n}"
+                .to_string(),
         );
         files.insert(
             main.clone(),
@@ -1194,7 +1221,11 @@ mod tests {
         let root = tmp.path().to_path_buf();
         let ds_modules = root.join("ds_modules");
         std::fs::create_dir_all(ds_modules.join("json")).unwrap();
-        std::fs::write(ds_modules.join("json").join("index.ds"), "export fn parse() {}").unwrap();
+        std::fs::write(
+            ds_modules.join("json").join("index.ds"),
+            "export fn parse() {}",
+        )
+        .unwrap();
 
         let loader = FsModuleLoader::new(root.clone());
         let referrer = root.join("main.ds");
@@ -1309,8 +1340,8 @@ mod tests {
             "export fn Post() {\n    return <article>blog-secret</article>;\n}\nexport fn Page() {\n    return <main><Post server:defer><span slot=\"fallback\">loading-post</span></Post></main>;\n}\n",
         )
         .unwrap();
-        let entry = runtime_core::framework::write_defer_router_entry(&tmp)
-            .expect("write defer-entry");
+        let entry =
+            runtime_core::framework::write_defer_router_entry(&tmp).expect("write defer-entry");
         let loader = FsModuleLoader::new(tmp.clone());
         if let Err(errs) = compile_module_graph(&entry, &loader) {
             let _ = std::fs::remove_dir_all(&tmp);
@@ -1376,8 +1407,7 @@ export fn GET(request: Request) Response {
         let mw = runtime_core::framework::write_middleware_router_entry(&tmp)
             .expect("write middleware-entry");
         compile_or_panic(&mw, &tmp, "middleware-entry");
-        let api =
-            runtime_core::framework::write_api_router_entry(&tmp).expect("write api-entry");
+        let api = runtime_core::framework::write_api_router_entry(&tmp).expect("write api-entry");
         compile_or_panic(&api, &tmp, "api-entry");
         let worker =
             runtime_core::framework::write_worker_router_entry(&tmp).expect("write worker-entry");

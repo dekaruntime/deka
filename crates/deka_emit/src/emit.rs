@@ -50,7 +50,8 @@ pub fn emit_js(program: &Program, _source: &str) -> Result<String, String> {
 /// Imported structs and enums are seeded into the emitter so that struct
 /// literals and enum constructors defined in other modules can be emitted
 /// correctly in the current file. `unwrap_calls` maps primitive conversion
-/// call sites (`number(x)`, `string(x)`, `bool(x)`) to their lowering kind.
+/// call sites (`parseNumber(x)`, `unboxNumber(x)`, `toNumber(x)`,
+/// `string(x)`) to their lowering kind.
 pub fn emit_js_with_imports<'a>(
     program: &'a Program<'a>,
     _source: &str,
@@ -303,10 +304,8 @@ struct Emitter<'a> {
     module_base: Option<String>,
     /// Primitive conversion calls lowered by the typechecker.
     unwrap_calls: HashMap<*const Expr<'a>, deka_syntax::typeck::UnwrapKind>,
-    jsx_optional_props: HashMap<
-        *const deka_syntax::JsxElement<'a>,
-        deka_syntax::typeck::JsxOptionalProps<'a>,
-    >,
+    jsx_optional_props:
+        HashMap<*const deka_syntax::JsxElement<'a>, deka_syntax::typeck::JsxOptionalProps<'a>>,
     enum_case_patterns: HashMap<*const deka_syntax::Pattern<'a>, &'a str>,
     /// Union member type-patterns and their runtime predicates, lowered by
     /// the typechecker (rfd#42, deka#530).
@@ -483,9 +482,9 @@ impl<'a> Emitter<'a> {
                 ExportDecl::Const { name, .. } | ExportDecl::Function { name, .. } => {
                     self.is_live(name)
                 }
-                ExportDecl::NamedGroup { names } => names.iter().any(|n| {
-                    self.is_live(n.alias.unwrap_or(n.name)) || self.is_live(n.name)
-                }),
+                ExportDecl::NamedGroup { names } => names
+                    .iter()
+                    .any(|n| self.is_live(n.alias.unwrap_or(n.name)) || self.is_live(n.name)),
             },
             Stmt::Const { name, .. }
             | Stmt::Let { name, .. }
@@ -558,10 +557,14 @@ impl<'a> Emitter<'a> {
                     let mut meta = StructMeta::default();
                     for field in fields.iter() {
                         meta.fields.insert(field.name.to_string());
-                        if field.default_value.is_some() || field.optional || is_optional_type(&field.ty) {
+                        if field.default_value.is_some()
+                            || field.optional
+                            || is_optional_type(&field.ty)
+                        {
                             let default = field.default_value.as_ref().map(|v| {
                                 // If a default value cannot be pre-emitted, fall back to null.
-                                self.emit_expr_to_string(v).unwrap_or_else(|_| "null".to_string())
+                                self.emit_expr_to_string(v)
+                                    .unwrap_or_else(|_| "null".to_string())
                             });
                             if default.is_none() {
                                 // Omitted optional fields auto-fill to Option.None, so the
@@ -652,7 +655,10 @@ impl<'a> Emitter<'a> {
                 let mut meta = StructMeta::default();
                 for field in info.fields.iter() {
                     meta.fields.insert(field.name.to_string());
-                    if field.default_value.is_some() || field.optional || is_optional_type(&field.ty) {
+                    if field.default_value.is_some()
+                        || field.optional
+                        || is_optional_type(&field.ty)
+                    {
                         // Imported struct defaults are not pre-emitted here;
                         // omitting the field produces Option.None for Option-typed fields.
                         if field.default_value.is_none() {
@@ -816,7 +822,9 @@ impl<'a> Emitter<'a> {
             self.out.push_str("});\n");
             self.out.push_str("const Option = Object.freeze({\n");
             self.out.push_str("  Some: (value) => Object.freeze({ __enum: \"Option\", __case: \"Some\", name: \"Some\", value }),\n");
-            self.out.push_str("  None: Object.freeze({ __enum: \"Option\", __case: \"None\", name: \"None\" })\n");
+            self.out.push_str(
+                "  None: Object.freeze({ __enum: \"Option\", __case: \"None\", name: \"None\" })\n",
+            );
             self.out.push_str("});\n");
             self.out.push_str("const Ok = Result.Ok;\n");
             self.out.push_str("const Err = Result.Err;\n");
@@ -943,20 +951,18 @@ impl<'a> Emitter<'a> {
     fn scan_needs_live(&self) -> bool {
         self.program.statements.iter().any(|stmt| {
             let mut found = false;
-            visit_stmt_exprs(stmt, &mut |expr| {
-                match expr {
-                    Expr::JsxElement { element, .. } => {
-                        if element.children.iter().any(jsx_child_needs_live) {
-                            found = true;
-                        }
+            visit_stmt_exprs(stmt, &mut |expr| match expr {
+                Expr::JsxElement { element, .. } => {
+                    if element.children.iter().any(jsx_child_needs_live) {
+                        found = true;
                     }
-                    Expr::JsxFragment { children, .. } => {
-                        if children.iter().any(jsx_child_needs_live) {
-                            found = true;
-                        }
-                    }
-                    _ => {}
                 }
+                Expr::JsxFragment { children, .. } => {
+                    if children.iter().any(jsx_child_needs_live) {
+                        found = true;
+                    }
+                }
+                _ => {}
             });
             found
         })
@@ -1047,9 +1053,8 @@ impl<'a> Emitter<'a> {
                             self.out.push_str(";\n}\n");
                         }
                         if !arms.is_empty() {
-                            self.out.push_str(
-                                "else { throw new Error(\"non-exhaustive match\"); }\n",
-                            );
+                            self.out
+                                .push_str("else { throw new Error(\"non-exhaustive match\"); }\n");
                         }
                     }
                 }
@@ -1206,7 +1211,9 @@ impl<'a> Emitter<'a> {
                     }
                 }
             }
-            Stmt::Import { specifiers, source, .. } => {
+            Stmt::Import {
+                specifiers, source, ..
+            } => {
                 if source_is_css(source) && specifiers.is_empty() {
                     // Side-effect `import "./x.css"` is collected per-route as <link>.
                     // Keep specifier imports (CSS modules) so the bundler can resolve them.
@@ -1426,11 +1433,7 @@ impl<'a> Emitter<'a> {
         Ok(())
     }
 
-    fn emit_newtype_factory(
-        &mut self,
-        name: &str,
-        _repr: NewtypeRepr,
-    ) -> Result<(), String> {
+    fn emit_newtype_factory(&mut self, name: &str, _repr: NewtypeRepr) -> Result<(), String> {
         write_indent(&mut self.out, 0);
         self.out.push_str("const ");
         self.out.push_str(name);
@@ -1440,10 +1443,12 @@ impl<'a> Emitter<'a> {
         self.out.push_str(name);
         self.out.push_str("$proto, '__deka_newtype', { value: ");
         self.out.push_str(&json_string(name));
-        self.out.push_str(", enumerable: false, writable: false, configurable: false });\n");
+        self.out
+            .push_str(", enumerable: false, writable: false, configurable: false });\n");
         write_indent(&mut self.out, 0);
         self.out.push_str(name);
-        self.out.push_str("$proto.toJSON = function () { return this[__p]; };\n");
+        self.out
+            .push_str("$proto.toJSON = function () { return this[__p]; };\n");
         write_indent(&mut self.out, 0);
         self.out.push_str("function ");
         self.out.push_str(name);
@@ -1482,33 +1487,37 @@ impl<'a> Emitter<'a> {
             }
             let methods = self.collect_methods_for_struct(&struct_name, &mut HashSet::new());
             for method in methods {
-                    write_indent(&mut self.out, 0);
-                    self.out.push_str(&struct_name);
-                    self.out.push_str(if method.receiver_mutable { ".implMut(" } else { ".impl(" });
-                    self.out.push_str(&json_string(&method.name));
-                    self.out.push_str(", ");
-                    if method.is_async {
-                        self.out.push_str("async ");
-                    }
-                    self.out.push_str("function(");
-                    for (i, param) in method.params.iter().enumerate() {
-                        if i > 0 {
-                            self.out.push_str(", ");
-                        }
-                        self.out.push_str(param);
-                    }
-                    self.out.push_str(") {\n");
-                    write_indent(&mut self.out, 2);
-                    self.out.push_str("const ");
-                    self.out.push_str(&method.receiver_name);
-                    self.out.push_str(" = this;\n");
-                    for stmt in method.body.iter() {
-                        self.emit_stmt(stmt)?;
-                        self.out.push('\n');
-                    }
-                    write_indent(&mut self.out, 0);
-                    self.out.push_str("});\n");
+                write_indent(&mut self.out, 0);
+                self.out.push_str(&struct_name);
+                self.out.push_str(if method.receiver_mutable {
+                    ".implMut("
+                } else {
+                    ".impl("
+                });
+                self.out.push_str(&json_string(&method.name));
+                self.out.push_str(", ");
+                if method.is_async {
+                    self.out.push_str("async ");
                 }
+                self.out.push_str("function(");
+                for (i, param) in method.params.iter().enumerate() {
+                    if i > 0 {
+                        self.out.push_str(", ");
+                    }
+                    self.out.push_str(param);
+                }
+                self.out.push_str(") {\n");
+                write_indent(&mut self.out, 2);
+                self.out.push_str("const ");
+                self.out.push_str(&method.receiver_name);
+                self.out.push_str(" = this;\n");
+                for stmt in method.body.iter() {
+                    self.emit_stmt(stmt)?;
+                    self.out.push('\n');
+                }
+                write_indent(&mut self.out, 0);
+                self.out.push_str("});\n");
+            }
         }
 
         // Newtype receiver methods are installed directly on the newtype
@@ -1736,11 +1745,7 @@ impl<'a> Emitter<'a> {
     /// A trailing expression statement is the block's value and is assigned to
     /// the binding; everything else is emitted as-is, so a `return` in there
     /// leaves the enclosing function.
-    fn emit_stmt_in_unwrap(
-        &mut self,
-        stmt: &'a Stmt<'a>,
-        binding: &str,
-    ) -> Result<(), String> {
+    fn emit_stmt_in_unwrap(&mut self, stmt: &'a Stmt<'a>, binding: &str) -> Result<(), String> {
         if let Stmt::Expr { expr, .. } = stmt {
             self.out.push_str(&format!("{binding} = "));
             self.emit_expr(expr)?;
@@ -1790,7 +1795,9 @@ impl<'a> Emitter<'a> {
             Expr::Identifier { name, .. } => {
                 self.out.push_str(name);
             }
-            Expr::Binary { op, left, right, .. } => {
+            Expr::Binary {
+                op, left, right, ..
+            } => {
                 let expr_ptr = expr as *const Expr<'a>;
                 let rewrite = self.operator_rewrites.get(&expr_ptr).copied();
                 if let Some(rewrite) = rewrite {
@@ -1839,7 +1846,9 @@ impl<'a> Emitter<'a> {
                 self.out.push_str(un_op_str(*op));
                 self.emit_expr(operand)?;
             }
-            Expr::Call { callee, args, span, .. } => {
+            Expr::Call {
+                callee, args, span, ..
+            } => {
                 let expr_ptr = expr as *const Expr<'a>;
                 if let Some(kind) = self.unwrap_calls.get(&expr_ptr) {
                     if let Some(arg) = args.first() {
@@ -1861,14 +1870,9 @@ impl<'a> Emitter<'a> {
                                 self.emit_expr(arg)?;
                                 self.out.push(')');
                             }
-                            deka_syntax::typeck::UnwrapKind::WidenToBool => {
-                                self.out.push_str("Boolean(");
-                                self.emit_expr(arg)?;
-                                self.out.push(')');
-                            }
                             deka_syntax::typeck::UnwrapKind::StringToOptionNumber => {
-                                // `number(s)` on a string can produce NaN;
-                                // surface it as Option<number>.
+                                // `parseNumber(s)` on a string can produce
+                                // NaN; surface it as Option<number>.
                                 self.out.push_str("(() => { const __n = Number(");
                                 self.emit_expr(arg)?;
                                 self.out.push_str("); return isNaN(__n) ? { __enum: \"Option\", __case: \"None\", name: \"None\" } : { __enum: \"Option\", __case: \"Some\", name: \"Some\", value: __n }; })()");
@@ -2092,10 +2096,7 @@ impl<'a> Emitter<'a> {
                 self.emit_unsafe(source)?;
             }
             Expr::Bridge {
-                kind,
-                action,
-                args,
-                ..
+                kind, action, args, ..
             } => {
                 self.emit_bridge(kind, action, args)?;
             }
@@ -2129,7 +2130,9 @@ impl<'a> Emitter<'a> {
                     self.out.push(')');
                 }
             }
-            Expr::Match { scrutinee, arms, .. } => {
+            Expr::Match {
+                scrutinee, arms, ..
+            } => {
                 self.emit_match(scrutinee, arms)?;
             }
             Expr::Await { expr, .. } => {
@@ -2195,7 +2198,11 @@ impl<'a> Emitter<'a> {
         Ok(())
     }
 
-    fn emit_param(&mut self, param: &deka_syntax::Param<'a>, emit_default: bool) -> Result<(), String> {
+    fn emit_param(
+        &mut self,
+        param: &deka_syntax::Param<'a>,
+        emit_default: bool,
+    ) -> Result<(), String> {
         self.out.push_str(param.name);
         if emit_default {
             if let Some(default) = &param.default_value {
@@ -2250,7 +2257,9 @@ impl<'a> Emitter<'a> {
             std::mem::swap(&mut self.out, &mut value_buf);
             self.emit_expr(&field.value)?;
             std::mem::swap(&mut self.out, &mut value_buf);
-            if meta.fields.contains(field.name) || meta.embeds.iter().any(|e| e.as_str() == field.name) {
+            if meta.fields.contains(field.name)
+                || meta.embeds.iter().any(|e| e.as_str() == field.name)
+            {
                 let key = if is_js_identifier(field.name) {
                     field.name.to_string()
                 } else {
@@ -2410,7 +2419,11 @@ impl<'a> Emitter<'a> {
         let is_async = js_has_top_level_await(trimmed);
         let is_statement_block = raw_js_looks_like_statements(trimmed);
 
-        let fn_kw = if is_async { "async function" } else { "function" };
+        let fn_kw = if is_async {
+            "async function"
+        } else {
+            "function"
+        };
         // The body is raw JavaScript spliced verbatim, so the delimiters that
         // follow it must start on their own line. Without the newlines a body
         // whose last line is a `//` comment swallows the closing `}` and `)()`
@@ -2430,20 +2443,17 @@ impl<'a> Emitter<'a> {
 
         self.out.push('(');
         self.out.push_str(fn_kw);
-        self.out.push_str("() { try { return { __case: \"Ok\", value: ");
+        self.out
+            .push_str("() { try { return { __case: \"Ok\", value: ");
         self.out.push_str(&awaited);
         self.out.push_str(" }; } catch (err) { return { __case: \"Err\", error: err instanceof Error ? err : new Error(String(err)) }; } })()");
 
         Ok(())
     }
 
-    fn emit_bridge(
-        &mut self,
-        kind: &str,
-        action: &str,
-        args: &[Expr<'a>],
-    ) -> Result<(), String> {
-        self.out.push_str("(function() { const __deka_r = __deka_host(");
+    fn emit_bridge(&mut self, kind: &str, action: &str, args: &[Expr<'a>]) -> Result<(), String> {
+        self.out
+            .push_str("(function() { const __deka_r = __deka_host(");
         self.out.push_str(&json_string(kind));
         self.out.push_str(", ");
         self.out.push_str(&json_string(action));
@@ -2473,7 +2483,8 @@ impl<'a> Emitter<'a> {
             self.emit_match_arm(arm, scrutinee_var, is_last)?;
         }
 
-        self.out.push_str("  throw new Error(\"non-exhaustive match\");\n");
+        self.out
+            .push_str("  throw new Error(\"non-exhaustive match\");\n");
         self.out.push_str("})(");
         self.emit_expr(scrutinee)?;
         self.out.push_str(")");
@@ -2577,13 +2588,19 @@ impl<'a> Emitter<'a> {
                 }
                 let mut conditions = vec![format!("{}.__case === \"{}\"", scrutinee_var, name)];
                 if let Some(payload) = payload {
-                    if let Pattern::Constructor { name: payload_name, .. } = payload {
+                    if let Pattern::Constructor {
+                        name: payload_name, ..
+                    } = payload
+                    {
                         let payload_access = if *name == "Err" {
                             format!("{}.error", scrutinee_var)
                         } else {
                             format!("{}.value", scrutinee_var)
                         };
-                        conditions.push(format!("{}.__case === \"{}\"", payload_access, payload_name));
+                        conditions.push(format!(
+                            "{}.__case === \"{}\"",
+                            payload_access, payload_name
+                        ));
                     }
                 }
                 conditions.join(" && ")
@@ -2645,7 +2662,7 @@ impl<'a> Emitter<'a> {
                 self.out.push_str(";\n");
             }
             Pattern::Literal { .. } => {}
-                        // Alternatives cannot bind (deka#446), so there is nothing to
+            // Alternatives cannot bind (deka#446), so there is nothing to
             // destructure here.
             Pattern::Or { .. } => {}
             Pattern::Constructor { name, payload, .. } => {
@@ -2766,7 +2783,11 @@ impl<'a> Emitter<'a> {
             }
         }
 
-        let fn_name = if child_values.len() > 1 { "jsxs" } else { "jsx" };
+        let fn_name = if child_values.len() > 1 {
+            "jsxs"
+        } else {
+            "jsx"
+        };
         self.out.push_str(fn_name);
         self.out.push('(');
         self.out.push_str(&tag_expr);
@@ -2798,7 +2819,11 @@ impl<'a> Emitter<'a> {
             child_values.push(self.emit_jsx_child(child)?);
         }
 
-        let fn_name = if child_values.len() > 1 { "jsxs" } else { "jsx" };
+        let fn_name = if child_values.len() > 1 {
+            "jsxs"
+        } else {
+            "jsx"
+        };
         self.out.push_str(fn_name);
         self.out.push('(');
         self.out.push_str("Fragment, {");
@@ -3033,11 +3058,14 @@ fn scan_token<'a>(
     brace_depth: usize,
 ) {
     let at_top_level = paren_depth == 0 && bracket_depth == 0 && brace_depth == 0;
-    let can_start_expression = matches!(class, RawJsTokenClass::Word | RawJsTokenClass::Number | RawJsTokenClass::String | RawJsTokenClass::Template);
-    if line_break_before
-        && at_top_level
-        && scan.previous_can_end_expression
-        && can_start_expression
+    let can_start_expression = matches!(
+        class,
+        RawJsTokenClass::Word
+            | RawJsTokenClass::Number
+            | RawJsTokenClass::String
+            | RawJsTokenClass::Template
+    );
+    if line_break_before && at_top_level && scan.previous_can_end_expression && can_start_expression
     {
         scan.has_top_level_semicolon = true;
     }
@@ -3154,13 +3182,40 @@ fn word_allows_regex_after(word: &str) -> bool {
 fn punctuation_allows_regex_after(punct: u8) -> bool {
     matches!(
         punct,
-        b'(' | b'[' | b'{' | b'=' | b':' | b',' | b';' | b'!' | b'?' | b'&' | b'|'
-            | b'+' | b'-' | b'*' | b'%' | b'^' | b'~' | b'<' | b'>'
+        b'(' | b'['
+            | b'{'
+            | b'='
+            | b':'
+            | b','
+            | b';'
+            | b'!'
+            | b'?'
+            | b'&'
+            | b'|'
+            | b'+'
+            | b'-'
+            | b'*'
+            | b'%'
+            | b'^'
+            | b'~'
+            | b'<'
+            | b'>'
     )
 }
 
 fn is_two_byte_js_punctuation(first: u8, second: u8) -> bool {
-    matches!((first, second), (b'=', b'=') | (b'!', b'=') | (b'&', b'&') | (b'|', b'|') | (b'=', b'>') | (b'+', b'+') | (b'-', b'-') | (b'<', b'=') | (b'>', b'='))
+    matches!(
+        (first, second),
+        (b'=', b'=')
+            | (b'!', b'=')
+            | (b'&', b'&')
+            | (b'|', b'|')
+            | (b'=', b'>')
+            | (b'+', b'+')
+            | (b'-', b'-')
+            | (b'<', b'=')
+            | (b'>', b'=')
+    )
 }
 
 fn raw_js_looks_like_statements(raw: &str) -> bool {
@@ -3233,7 +3288,9 @@ fn visit_stmt_exprs(stmt: &Stmt, visitor: &mut dyn FnMut(&Expr)) {
         Stmt::Const { value, .. }
         | Stmt::Let { value, .. }
         | Stmt::Expr { expr: value, .. }
-        | Stmt::Return { value: Some(value), .. } => visit_expr(value, visitor),
+        | Stmt::Return {
+            value: Some(value), ..
+        } => visit_expr(value, visitor),
         Stmt::Export { decl, .. } => match decl {
             ExportDecl::Const { value, .. } => visit_expr(value, visitor),
             ExportDecl::Function { body, .. } => {
@@ -3251,7 +3308,11 @@ fn visit_stmt_exprs(stmt: &Stmt, visitor: &mut dyn FnMut(&Expr)) {
                 visit_stmt_exprs(s, visitor);
             }
         }
-        Stmt::If { then_body, else_body, .. } => {
+        Stmt::If {
+            then_body,
+            else_body,
+            ..
+        } => {
             for s in then_body.iter() {
                 visit_stmt_exprs(s, visitor);
             }
@@ -3297,7 +3358,9 @@ fn visit_expr(expr: &Expr, visitor: &mut dyn FnMut(&Expr)) {
                 visit_expr(p, visitor);
             }
         }
-        Expr::Match { scrutinee, arms, .. } => {
+        Expr::Match {
+            scrutinee, arms, ..
+        } => {
             visit_expr(scrutinee, visitor);
             for arm in arms.iter() {
                 if let Some(guard) = &arm.guard {

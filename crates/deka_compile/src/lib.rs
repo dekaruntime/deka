@@ -8,8 +8,11 @@ use std::path::PathBuf;
 
 use bumpalo::Bump;
 use deka_emit::emit_js_with_options;
-use deka_syntax::{check_program_with_imports, parse, resolve_imported_enum_constructors, Diagnostic, Expr, ModuleExports, Program, Stmt};
 use deka_syntax::typeck::Type;
+use deka_syntax::{
+    check_program_with_imports, parse, resolve_imported_enum_constructors, Diagnostic, Expr,
+    ModuleExports, Program, Stmt,
+};
 
 /// Bare specifiers that are treated as stdlib modules in the single-file WASM
 /// compiler path. Imports from these modules are accepted with `Type::Infer`
@@ -18,12 +21,17 @@ fn file_allows_jsx(file_path: &str) -> bool {
     file_path.to_ascii_lowercase().ends_with(".dsx")
 }
 
-fn file_type_rule_error(file_path: &str, source: &str, program: &Program<'_>) -> Option<Diagnostic> {
+fn file_type_rule_error(
+    file_path: &str,
+    source: &str,
+    program: &Program<'_>,
+) -> Option<Diagnostic> {
     if !file_allows_jsx(file_path) && program_contains_jsx(program) {
         return Some(Diagnostic::error(
             1,
             1,
-            "JSX is only allowed in `.dsx` files; rename this file from `.ds` to `.dsx`".to_string(),
+            "JSX is only allowed in `.dsx` files; rename this file from `.ds` to `.dsx`"
+                .to_string(),
         ));
     }
     let meta = parse_source_module_meta(source);
@@ -85,9 +93,7 @@ fn program_contains_jsx(program: &Program<'_>) -> bool {
             Expr::Array { elements, .. } => elements.iter().any(expr_has_jsx),
             Expr::Object { fields, .. } => fields.iter().any(|f| expr_has_jsx(&f.value)),
             Expr::FieldAccess { object, .. } => expr_has_jsx(object),
-            Expr::IndexAccess { object, index, .. } => {
-                expr_has_jsx(object) || expr_has_jsx(index)
-            }
+            Expr::IndexAccess { object, index, .. } => expr_has_jsx(object) || expr_has_jsx(index),
             Expr::Ternary {
                 condition,
                 then_branch,
@@ -95,10 +101,9 @@ fn program_contains_jsx(program: &Program<'_>) -> bool {
                 ..
             } => expr_has_jsx(condition) || expr_has_jsx(then_branch) || expr_has_jsx(else_branch),
             Expr::Function { body, .. } => body.iter().any(stmt_has_jsx),
-            Expr::Match { scrutinee, arms, .. } => {
-                expr_has_jsx(scrutinee)
-                    || arms.iter().any(|arm| expr_has_jsx(&arm.body))
-            }
+            Expr::Match {
+                scrutinee, arms, ..
+            } => expr_has_jsx(scrutinee) || arms.iter().any(|arm| expr_has_jsx(&arm.body)),
             Expr::EnumConstructor { payload, .. } => payload.is_some_and(|p| expr_has_jsx(p)),
             Expr::StructLiteral { fields, .. } => fields.iter().any(|f| expr_has_jsx(&f.value)),
             Expr::TemplateLiteral { parts, .. } => parts.iter().any(|part| match part {
@@ -110,9 +115,9 @@ fn program_contains_jsx(program: &Program<'_>) -> bool {
     }
     fn stmt_has_jsx(stmt: &Stmt<'_>) -> bool {
         match stmt {
-            Stmt::Const { value, .. } | Stmt::Let { value, .. } | Stmt::Expr { expr: value, .. } => {
-                expr_has_jsx(value)
-            }
+            Stmt::Const { value, .. }
+            | Stmt::Let { value, .. }
+            | Stmt::Expr { expr: value, .. } => expr_has_jsx(value),
             Stmt::Return { value, .. } => value.as_ref().is_some_and(expr_has_jsx),
             Stmt::Function { body, .. } | Stmt::ReceiverMethod { body, .. } => {
                 body.iter().any(stmt_has_jsx)
@@ -208,7 +213,12 @@ pub fn infer_stdlib_imports_for_source<'a>(
         return exports_by_spec;
     };
     for stmt in program.statements.iter() {
-        let deka_syntax::Stmt::Import { specifiers, source: spec, .. } = stmt else {
+        let deka_syntax::Stmt::Import {
+            specifiers,
+            source: spec,
+            ..
+        } = stmt
+        else {
             continue;
         };
         if !is_stdlib_module_spec(spec) {
@@ -267,7 +277,11 @@ pub fn parse_source_module_meta(source: &str) -> SourceModuleMeta {
 
     for stmt in program.statements.iter() {
         match stmt {
-            deka_syntax::Stmt::Import { specifiers, source: src, .. } => {
+            deka_syntax::Stmt::Import {
+                specifiers,
+                source: src,
+                ..
+            } => {
                 let specs = specifiers
                     .iter()
                     .map(|spec| ImportSpec {
@@ -284,23 +298,25 @@ pub fn parse_source_module_meta(source: &str) -> SourceModuleMeta {
                     specs,
                 });
             }
-            deka_syntax::Stmt::Export { decl, .. } => {
-                match decl {
-                    deka_syntax::ExportDecl::Const { name, .. } => {
-                        exports.push(ExportDecl { name: name.to_string() });
-                    }
-                    deka_syntax::ExportDecl::Function { name, .. } => {
-                        exports.push(ExportDecl { name: name.to_string() });
-                    }
-                    deka_syntax::ExportDecl::NamedGroup { names } => {
-                        for name in names.iter() {
-                            exports.push(ExportDecl {
-                                name: name.alias.unwrap_or(name.name).to_string(),
-                            });
-                        }
+            deka_syntax::Stmt::Export { decl, .. } => match decl {
+                deka_syntax::ExportDecl::Const { name, .. } => {
+                    exports.push(ExportDecl {
+                        name: name.to_string(),
+                    });
+                }
+                deka_syntax::ExportDecl::Function { name, .. } => {
+                    exports.push(ExportDecl {
+                        name: name.to_string(),
+                    });
+                }
+                deka_syntax::ExportDecl::NamedGroup { names } => {
+                    for name in names.iter() {
+                        exports.push(ExportDecl {
+                            name: name.alias.unwrap_or(name.name).to_string(),
+                        });
                     }
                 }
-            }
+            },
             _ => {}
         }
     }
@@ -351,10 +367,8 @@ pub fn compile_to_js_with_options(
 ) -> Result<CompileResult, Vec<Diagnostic>> {
     let arena = Bump::new();
     let stdlib_exports = infer_stdlib_imports_for_source(source, &arena);
-    let imports: HashMap<&str, &ModuleExports> = stdlib_exports
-        .iter()
-        .map(|(k, v)| (*k, v))
-        .collect();
+    let imports: HashMap<&str, &ModuleExports> =
+        stdlib_exports.iter().map(|(k, v)| (*k, v)).collect();
     compile_to_js_with_imports_and_options(source, file_path, &arena, &imports, options)
 }
 
@@ -368,7 +382,13 @@ pub fn compile_to_js_with_imports<'a>(
     arena: &'a Bump,
     imports: &HashMap<&str, &ModuleExports<'a>>,
 ) -> Result<CompileResult, Vec<Diagnostic>> {
-    compile_to_js_with_imports_and_options(source, file_path, arena, imports, CompileOptions::default())
+    compile_to_js_with_imports_and_options(
+        source,
+        file_path,
+        arena,
+        imports,
+        CompileOptions::default(),
+    )
 }
 
 /// Compile a DekaScript source to JavaScript with imported module signatures
@@ -405,7 +425,12 @@ pub fn compile_to_js_with_imports_and_options<'a>(
     if options.module_base.is_some() {
         let mut unknown = Vec::new();
         for stmt in program.statements.iter() {
-            let deka_syntax::Stmt::Import { source: import_source, span, .. } = stmt else {
+            let deka_syntax::Stmt::Import {
+                source: import_source,
+                span,
+                ..
+            } = stmt
+            else {
                 continue;
             };
             if import_source.starts_with('.')
@@ -477,7 +502,10 @@ pub fn compile(source: &str, path: &str) -> Result<String, String> {
 
 /// Format a diagnostic in a stable, human-readable form.
 pub fn format_diagnostic(diagnostic: &Diagnostic) -> String {
-    format!("{}:{}: {}", diagnostic.line, diagnostic.column, diagnostic.message)
+    format!(
+        "{}:{}: {}",
+        diagnostic.line, diagnostic.column, diagnostic.message
+    )
 }
 
 /// Format a list of diagnostics into a single multi-line string.
@@ -533,9 +561,11 @@ mod tests {
 
     #[test]
     fn compile_type_error_returns_diagnostics() {
-        let err = compile_to_js("const x: string = 42;", "test.ds").expect_err("compile should fail");
+        let err =
+            compile_to_js("const x: string = 42;", "test.ds").expect_err("compile should fail");
         assert!(
-            err.iter().any(|d| d.message.contains("string") && d.message.contains("number")),
+            err.iter()
+                .any(|d| d.message.contains("string") && d.message.contains("number")),
             "expected type mismatch diagnostic, got: {:?}",
             err
         );
@@ -635,18 +665,23 @@ mod tests {
             "test.ds",
         )
         .expect("compile should succeed");
-        assert!(result.js.contains("import { add } from \"./math.ds\";"), "got: {}", result.js);
+        assert!(
+            result.js.contains("import { add } from \"./math.ds\";"),
+            "got: {}",
+            result.js
+        );
         assert!(result.js.contains("add(1, 2)"), "got: {}", result.js);
     }
 
     #[test]
     fn compile_export_const() {
-        let result = compile_to_js(
-            "export const x: number = 42;",
-            "test.ds",
-        )
-        .expect("compile should succeed");
-        assert!(result.js.contains("export const x = 42;"), "got: {}", result.js);
+        let result = compile_to_js("export const x: number = 42;", "test.ds")
+            .expect("compile should succeed");
+        assert!(
+            result.js.contains("export const x = 42;"),
+            "got: {}",
+            result.js
+        );
     }
 
     #[test]
@@ -656,23 +691,28 @@ mod tests {
             "test.ds",
         )
         .expect("compile should succeed");
-        assert!(result.js.contains("export function add(a, b) {"), "got: {}", result.js);
+        assert!(
+            result.js.contains("export function add(a, b) {"),
+            "got: {}",
+            result.js
+        );
     }
 
     #[test]
     fn compile_export_named_group() {
-        let result = compile_to_js(
-            "const answer = 42; export { answer };",
-            "test.ds",
-        )
-        .expect("compile should succeed");
-        assert!(result.js.contains("export { answer };"), "got: {}", result.js);
+        let result = compile_to_js("const answer = 42; export { answer };", "test.ds")
+            .expect("compile should succeed");
+        assert!(
+            result.js.contains("export { answer };"),
+            "got: {}",
+            result.js
+        );
     }
 
     #[test]
     fn typeck_uses_imported_function_signature() {
         use bumpalo::Bump;
-        use deka_syntax::{parse, collect_module_exports, check_program_with_imports};
+        use deka_syntax::{check_program_with_imports, collect_module_exports, parse};
         use std::collections::HashMap;
         let arena = Bump::new();
         let crypto_src = "export fn random_bytes(n: number) Result<string, string> { return unsafe { String(n) } }";
@@ -693,20 +733,26 @@ mod tests {
     #[test]
     fn collect_exports_preserves_function_signature() {
         use bumpalo::Bump;
-        use deka_syntax::{parse, collect_module_exports, typeck::Type};
+        use deka_syntax::{collect_module_exports, parse, typeck::Type};
         let arena = Bump::new();
         let source = "export fn random_bytes(n: number) Result<bytes, string> { return unsafe { new Uint8Array(n) } }";
         let result = parse(source, &arena);
         assert!(result.errors.is_empty(), "{:?}", result.errors);
         let program = result.program.unwrap();
         let exports = collect_module_exports(&program, &arena);
-        let ty = exports.values.get("random_bytes").expect("random_bytes export");
+        let ty = exports
+            .values
+            .get("random_bytes")
+            .expect("random_bytes export");
         match ty {
             Type::Function { params, ret, .. } => {
                 assert_eq!(params.len(), 1);
                 assert!(matches!(params[0], Type::Named { name: "number" }));
                 match ret.as_ref() {
-                    Type::Generic { base: "Result", args } => {
+                    Type::Generic {
+                        base: "Result",
+                        args,
+                    } => {
                         assert_eq!(args.len(), 2);
                         assert!(matches!(args[0], Type::Named { name: "bytes" }));
                         assert!(matches!(args[1], Type::Named { name: "string" }));
@@ -764,8 +810,16 @@ export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
             "test.ds",
         )
         .expect("compile should succeed");
-        assert!(result.js.contains("const a = Object.freeze([1, 2, 3]);"), "got: {}", result.js);
-        assert!(result.js.contains("const o = Object.freeze({x: 1});"), "got: {}", result.js);
+        assert!(
+            result.js.contains("const a = Object.freeze([1, 2, 3]);"),
+            "got: {}",
+            result.js
+        );
+        assert!(
+            result.js.contains("const o = Object.freeze({x: 1});"),
+            "got: {}",
+            result.js
+        );
         assert!(result.js.contains("a[0] + o[\"x\"]"), "got: {}", result.js);
     }
 
@@ -793,7 +847,11 @@ export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
         let result = compile_to_js("const x: number = panic(\"boom\");", "test.ds")
             .expect("compile should succeed");
         assert!(result.js.contains("throw new Error"), "got: {}", result.js);
-        assert!(!result.js.contains("globalThis.panic"), "got: {}", result.js);
+        assert!(
+            !result.js.contains("globalThis.panic"),
+            "got: {}",
+            result.js
+        );
         let result = compile_to_js("const x: number = deka.panic(\"boom\");", "test.ds")
             .expect("compile should succeed");
         assert!(result.js.contains("throw new Error"), "got: {}", result.js);
@@ -834,7 +892,13 @@ export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
     fn compile_jsx_element() {
         let result = compile_to_js("const el = <div class=\"box\" />;", "test.dsx")
             .expect("compile should succeed");
-        assert!(result.js.contains("import { jsx, jsxs, Fragment } from \"ui/jsx\""), "got: {}", result.js);
+        assert!(
+            result
+                .js
+                .contains("import { jsx, jsxs, Fragment } from \"ui/jsx\""),
+            "got: {}",
+            result.js
+        );
         assert!(result.js.contains("jsx("), "got: {}", result.js);
     }
 
@@ -853,7 +917,11 @@ export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
         )
         .expect("compile should succeed");
         assert!(result.js.contains("jsx(Greeting"), "got: {}", result.js);
-        assert!(result.js.contains("\"name\": \"Deka\""), "got: {}", result.js);
+        assert!(
+            result.js.contains("\"name\": \"Deka\""),
+            "got: {}",
+            result.js
+        );
     }
 
     #[test]
@@ -863,11 +931,7 @@ export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
             "test.dsx",
         )
         .expect("ui/form is a compiler-provided specifier");
-        assert!(
-            result.js.contains("from \"ui/form\""),
-            "got: {}",
-            result.js
-        );
+        assert!(result.js.contains("from \"ui/form\""), "got: {}", result.js);
         assert!(result.js.contains("Form"), "got: {}", result.js);
     }
 
@@ -899,14 +963,51 @@ export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
     #[test]
     fn compile_newtype_construct_and_unwrap() {
         let result = compile_to_js(
-            "type Cents number\nconst c: Cents = Cents(500)\nconst n: number = number(c)",
+            "type Cents number\nconst c: Cents = Cents(500)\nconst n: number = unboxNumber(c)",
             "test.ds",
         )
         .expect("compile should succeed");
-        assert!(result.js.contains("const Cents$proto"), "got: {}", result.js);
-        assert!(result.js.contains("function Cents(v)"), "got: {}", result.js);
-        assert!(result.js.contains("const c = Cents(500)"), "got: {}", result.js);
+        assert!(
+            result.js.contains("const Cents$proto"),
+            "got: {}",
+            result.js
+        );
+        assert!(
+            result.js.contains("function Cents(v)"),
+            "got: {}",
+            result.js
+        );
+        assert!(
+            result.js.contains("const c = Cents(500)"),
+            "got: {}",
+            result.js
+        );
         assert!(result.js.contains("const n = c[__p]"), "got: {}", result.js);
+    }
+
+    #[test]
+    fn compile_toNumber_widens_boolean() {
+        let result = compile_to_js("const n: number = toNumber(true)", "test.ds")
+            .expect("compile should succeed");
+        assert!(
+            result.js.contains("const n = Number(true)"),
+            "got: {}",
+            result.js
+        );
+    }
+
+    #[test]
+    fn compile_toNumber_rejects_newtype() {
+        let err = compile_to_js(
+            "type Cents number\nconst c: Cents = Cents(5)\nconst n: number = toNumber(c)",
+            "test.ds",
+        )
+        .expect_err("compile should fail");
+        assert!(
+            err.iter().any(|d| d.message.contains("cannot convert")),
+            "expected conversion error, got: {:?}",
+            err
+        );
     }
 
     #[test]
@@ -941,7 +1042,11 @@ export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
             "test.ds",
         )
         .expect("compile should succeed");
-        assert!(result.js.contains("Cents((a[__p] + b[__p]))"), "got: {}", result.js);
+        assert!(
+            result.js.contains("Cents((a[__p] + b[__p]))"),
+            "got: {}",
+            result.js
+        );
     }
 
     #[test]
@@ -951,7 +1056,11 @@ export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
             "test.ds",
         )
         .expect("compile should succeed");
-        assert!(result.js.contains("Cents((a[__p] - b[__p]))"), "got: {}", result.js);
+        assert!(
+            result.js.contains("Cents((a[__p] - b[__p]))"),
+            "got: {}",
+            result.js
+        );
     }
 
     #[test]
@@ -961,8 +1070,15 @@ export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
             "test.ds",
         )
         .expect("compile should succeed");
-        assert!(result.js.contains("(a[__p] / b[__p])"), "got: {}", result.js);
-        assert!(!result.js.contains("Cents((a[__p] / b[__p]))"), "division must not rewrap");
+        assert!(
+            result.js.contains("(a[__p] / b[__p])"),
+            "got: {}",
+            result.js
+        );
+        assert!(
+            !result.js.contains("Cents((a[__p] / b[__p]))"),
+            "division must not rewrap"
+        );
     }
 
     #[test]
@@ -972,7 +1088,11 @@ export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
             "test.ds",
         )
         .expect("compile should succeed");
-        assert!(result.js.contains("Cents((a[__p] * 2))"), "got: {}", result.js);
+        assert!(
+            result.js.contains("Cents((a[__p] * 2))"),
+            "got: {}",
+            result.js
+        );
     }
 
     #[test]
@@ -982,7 +1102,11 @@ export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
             "test.ds",
         )
         .expect("compile should succeed");
-        assert!(result.js.contains("Cents((2 * a[__p]))"), "got: {}", result.js);
+        assert!(
+            result.js.contains("Cents((2 * a[__p]))"),
+            "got: {}",
+            result.js
+        );
     }
 
     #[test]
@@ -992,7 +1116,11 @@ export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
             "test.ds",
         )
         .expect("compile should succeed");
-        assert!(result.js.contains("(a[__p] == b[__p])"), "got: {}", result.js);
+        assert!(
+            result.js.contains("(a[__p] == b[__p])"),
+            "got: {}",
+            result.js
+        );
     }
 
     #[test]
@@ -1041,7 +1169,8 @@ export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
         )
         .expect_err("compile should fail");
         assert!(
-            err.iter().any(|d| d.message.contains("number") && d.message.contains("Cents")),
+            err.iter()
+                .any(|d| d.message.contains("number") && d.message.contains("Cents")),
             "expected division type error, got: {:?}",
             err
         );
@@ -1064,40 +1193,60 @@ export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
     #[test]
     fn compile_newtype_receiver_method() {
         let result = compile_to_js(
-            "type Cents number\nfn (c Cents) toDollars() number { return number(c) / 100 }\nconst c: Cents = Cents(500)\nconst d: number = c.toDollars()",
+            "type Cents number\nfn (c Cents) toDollars() number { return unboxNumber(c) / 100 }\nconst c: Cents = Cents(500)\nconst d: number = c.toDollars()",
             "test.ds",
         )
         .expect("compile should succeed");
-        assert!(result.js.contains("const Cents$proto"), "got: {}", result.js);
+        assert!(
+            result.js.contains("const Cents$proto"),
+            "got: {}",
+            result.js
+        );
         assert!(
             result.js.contains("Cents$proto.toDollars = function()"),
             "got: {}",
             result.js
         );
-        assert!(result.js.contains("const c = Cents(500)"), "got: {}", result.js);
+        assert!(
+            result.js.contains("const c = Cents(500)"),
+            "got: {}",
+            result.js
+        );
         assert!(result.js.contains("c.toDollars()"), "got: {}", result.js);
     }
 
     #[test]
     fn compile_newtype_receiver_method_uses_self() {
         let result = compile_to_js(
-            "type Cents number\nfn (c Cents) doubled() Cents { return Cents(number(c) * 2) }\nconst c: Cents = Cents(50)\nconst d: Cents = c.doubled()",
+            "type Cents number\nfn (c Cents) doubled() Cents { return Cents(unboxNumber(c) * 2) }\nconst c: Cents = Cents(50)\nconst d: Cents = c.doubled()",
             "test.ds",
         )
         .expect("compile should succeed");
-        assert!(result.js.contains("Cents$proto.doubled = function()"), "got: {}", result.js);
+        assert!(
+            result.js.contains("Cents$proto.doubled = function()"),
+            "got: {}",
+            result.js
+        );
         assert!(result.js.contains("const c = this"), "got: {}", result.js);
-        assert!(result.js.contains("Cents(c[__p] * 2)"), "got: {}", result.js);
+        assert!(
+            result.js.contains("Cents(c[__p] * 2)"),
+            "got: {}",
+            result.js
+        );
     }
 
     #[test]
     fn compile_newtype_receiver_method_param() {
         let result = compile_to_js(
-            "type Cents number\nfn (c Cents) add(other: Cents) Cents { return Cents(number(c) + number(other)) }\nconst a: Cents = Cents(100)\nconst b: Cents = Cents(200)\nconst c: Cents = a.add(b)",
+            "type Cents number\nfn (c Cents) add(other: Cents) Cents { return Cents(unboxNumber(c) + unboxNumber(other)) }\nconst a: Cents = Cents(100)\nconst b: Cents = Cents(200)\nconst c: Cents = a.add(b)",
             "test.ds",
         )
         .expect("compile should succeed");
-        assert!(result.js.contains("Cents$proto.add = function(other)"), "got: {}", result.js);
+        assert!(
+            result.js.contains("Cents$proto.add = function(other)"),
+            "got: {}",
+            result.js
+        );
         assert!(result.js.contains("a.add(b)"), "got: {}", result.js);
     }
 
@@ -1109,7 +1258,8 @@ export fn first<T>(values: Array<T>) Option<T> { return Some(values[0]) }
         )
         .expect_err("compile should fail");
         assert!(
-            err.iter().any(|d| d.message.contains("mutable") && d.message.contains("newtype")),
+            err.iter()
+                .any(|d| d.message.contains("mutable") && d.message.contains("newtype")),
             "expected mutable newtype receiver error, got: {:?}",
             err
         );
