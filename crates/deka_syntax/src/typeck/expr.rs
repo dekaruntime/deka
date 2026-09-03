@@ -22,7 +22,6 @@ fn is_panic_callee(callee: &ast::Expr<'_>) -> bool {
 #[derive(Clone, Copy)]
 enum PrimitiveConversionName {
     String,
-    LegacyNumber,
     ParseNumber,
     UnboxNumber,
     ToNumber,
@@ -31,7 +30,6 @@ enum PrimitiveConversionName {
 fn primitive_conversion_name(name: &str) -> Option<PrimitiveConversionName> {
     match name {
         "string" => Some(PrimitiveConversionName::String),
-        "number" => Some(PrimitiveConversionName::LegacyNumber),
         "parseNumber" => Some(PrimitiveConversionName::ParseNumber),
         "unboxNumber" => Some(PrimitiveConversionName::UnboxNumber),
         "toNumber" => Some(PrimitiveConversionName::ToNumber),
@@ -3042,8 +3040,7 @@ impl<'a> Checker<'a> {
 
         // Primitive conversion: `string(x)`, `parseNumber(x)`,
         // `unboxNumber(x)`, `toNumber(x)` — always public, no import
-        // (#364). The old `number(x)` name remains a compatibility alias for
-        // PR 1 while the corpus moves to the explicit APIs.
+        // (#364). `number(x)` is removed in PR 2.
         if let ast::Expr::Identifier { name, .. } = callee {
             if let Some(conversion) = primitive_conversion_name(name) {
                 if args.len() != 1 {
@@ -3075,36 +3072,6 @@ impl<'a> Checker<'a> {
                             // (deka#370 review).
                             Type::Infer => (None, ret),
                             _ => (None, ret),
-                        }
-                    }
-                    PrimitiveConversionName::LegacyNumber => {
-                        let number_ret = Type::Named { name: "number" };
-                        let option_number_ret = Type::Option {
-                            inner: Box::new(Type::Named { name: "number" }),
-                        };
-                        use crate::ast::NewtypeRepr as Repr;
-                        match &arg_type {
-                            Type::Newtype {
-                                repr: Repr::String, ..
-                            }
-                            | Type::Newtype {
-                                repr: Repr::Number, ..
-                            }
-                            | Type::Newtype {
-                                repr: Repr::Bool, ..
-                            } => (Some(super::types::UnwrapKind::Payload), number_ret),
-                            Type::Named { name: "number" } => {
-                                (Some(super::types::UnwrapKind::Identity), number_ret)
-                            }
-                            Type::Named { name: "string" } => (
-                                Some(super::types::UnwrapKind::StringToOptionNumber),
-                                option_number_ret,
-                            ),
-                            Type::Named { name: "boolean" } => {
-                                (Some(super::types::UnwrapKind::WidenToNumber), number_ret)
-                            }
-                            Type::Infer => (None, number_ret),
-                            _ => (None, number_ret),
                         }
                     }
                     PrimitiveConversionName::ParseNumber => {
@@ -3594,4 +3561,3 @@ fn infer_type_args<'a>(
 fn substitute_type<'a>(ty: &Type<'a>, subst: &HashMap<&'a str, Type<'a>>) -> Type<'a> {
     super::types::substitute_type(ty, subst)
 }
-

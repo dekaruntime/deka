@@ -95,7 +95,6 @@ impl<'a> Type<'a> {
     }
 }
 
-
 /// Replace type parameters according to `subst`.
 ///
 /// Lives in `types` (not `expr`) because the `super` descriptor walker
