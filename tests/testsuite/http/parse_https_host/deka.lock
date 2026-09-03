@@ -2,7 +2,7 @@
   "lockfileVersion": 1,
   "packages": {
     "@deka/http": [
-      "@deka/http@0.3.1",
+      "@deka/http@0.3.2",
       "deka.gg:@deka/http",
       {
         "repo": "https://github.com/dekaruntime/http.git",
@@ -18,7 +18,7 @@
         },
         "fsGraph": {
           "algo": "sha256",
-          "hash": "ca7dd636be153c67581bcf0a41bdd1e75187e66b2e2214a9d8f2b46b91af5896"
+          "hash": "79ccf425c7fafde45818b7bd481db54638a4f7ff4d4fc6cad31d092838a840a4"
         }
       },
       ""

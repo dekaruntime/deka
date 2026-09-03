@@ -38,15 +38,8 @@ tls-upgrade-string-handle
 
 # Cluster: stdlib packages declare banned user generics (http, json, jwt) --
 # the module fails to parse under the deka#561 ban and its exports resolve to
-# <infer> at the use site. See deka#565. Delete these lines as the packages
-# are migrated and republished; the ratchet fails if any of them passes.
-http-format-content-length
-http-format-custom-header
-http-format-get-line
-http-format-host-header
-http-get-refused
-http-invalid-url
-http-post-refused
+# <infer> at the use site. See deka#565. The JSON entries remain until RFD 43
+# adds the language-level JSON methods and the fixtures are rewritten.
 json-parse-array-first
 json-parse-empty-object
 json-parse-invalid
@@ -62,18 +55,3 @@ json-stringify-nested
 json-stringify-object
 json-validate-bad
 json-validate-ok
-jwt-accept-audience
-jwt-accept-issuer
-jwt-hs256-jwtio-vector
-jwt-reject-alg-none
-jwt-reject-audience
-jwt-reject-empty
-jwt-reject-expired
-jwt-reject-issuer
-jwt-reject-nbf-future
-jwt-reject-tampered
-jwt-reject-two-parts
-jwt-reject-wrong-key
-jwt-three-parts
-jwt-unsupported-alg-option
-jwt-verify-roundtrip-sub
