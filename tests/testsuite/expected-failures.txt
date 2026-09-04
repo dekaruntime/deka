@@ -37,21 +37,3 @@ tls-upgrade-number-sni
 tls-upgrade-string-handle
 
 # Cluster: stdlib packages declare banned user generics (http, json, jwt) --
-# the module fails to parse under the deka#561 ban and its exports resolve to
-# <infer> at the use site. See deka#565. The JSON entries remain until RFD 43
-# adds the language-level JSON methods and the fixtures are rewritten.
-json-parse-array-first
-json-parse-empty-object
-json-parse-invalid
-json-parse-null
-json-parse-number
-json-parse-object-x
-json-parse-string
-json-parse-true
-json-roundtrip-name
-json-stringify-array-field
-json-stringify-empty
-json-stringify-nested
-json-stringify-object
-json-validate-bad
-json-validate-ok

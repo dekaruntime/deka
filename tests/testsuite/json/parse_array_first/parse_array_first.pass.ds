@@ -1,10 +1,5 @@
 import { echo } from "io"
-import { parse } from "json"
-const v = match (parse("[10,20]")) {
-  Ok(o) => o,
-  Err(e) => [],
-}
-echo(string(match (unsafe<number> { Number(v[0]) }) {
-  Ok(n) => n,
-  Err(e) => -1,
-}))
+echo(match ("[10,20]".parseJSON<Array<number> >()) {
+  Ok(v) => string(v[0]),
+  Err(e) => "-1",
+})
