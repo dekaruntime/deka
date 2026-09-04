@@ -766,8 +766,8 @@ impl WorkerThread {
                     // __enum/name exactly like the prelude's Result
                     // constructors so .getType() and __enum readers agree.
                     const __deka_to_result = (r) => (r && r.ok)
-                        ? Object.freeze({ __enum: "Result", __case: "Ok", name: "Ok", value: r.value })
-                        : Object.freeze({ __enum: "Result", __case: "Err", name: "Err", error: (r && r.error) ? r.error : "host bridge failed" });
+                        ? ({ __enum: "Result", __case: "Ok", name: "Ok", value: r.value })
+                        : ({ __enum: "Result", __case: "Err", name: "Err", error: (r && r.error) ? r.error : "host bridge failed" });
 
                     const __bridge = (kind, action, payload) => {
                         try {
