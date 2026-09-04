@@ -45,7 +45,7 @@ mod tests {
             &typeck.type_of_calls,
             &typeck.signature_calls,
             &typeck.json_calls,
-            &typeck.array_first_last_calls,
+            &typeck.array_builtin_calls,
             &typeck.number_math_calls,
             &typeck.static_type_calls,
             &typeck.super_trees,
@@ -668,11 +668,11 @@ mod tests {
 
     #[test]
     fn emit_array_first_last_rewrite() {
-        // JS arrays have no `first`/`last`, and the typed `pop`/`shift`
-        // builtins are emitted as raw passthroughs that return a bare value
-        // (not Option) — a known runtime lie this deliberately avoids. The
-        // rewrite evaluates the receiver once, works in expression position,
-        // and works on frozen arrays.
+        // JS arrays have no `first`/`last`. The rewrite evaluates the
+        // receiver once, works in expression position, and reads (never
+        // mutates), so it is safe on frozen (const) arrays too. pop/shift
+        // get the same Option-construction treatment plus the mutation
+        // (deka#566, tested separately below).
         let out = parse_check_and_emit(
             "const a: Array<number> = [1, 2, 3];\nlet f = unwrap(a.first()) or { 0 };\nlet l = unwrap(a.last()) or { 0 };",
         );
@@ -785,6 +785,37 @@ mod tests {
             out.contains("const Result = Object.freeze({") && out.contains("const Option = Object.freeze({"),
             "shared constructor tables should remain frozen: {out}"
         );
+    }
+
+    #[test]
+    fn emit_array_pop_shift_construct_real_option() {
+        // deka#566: pop/shift are typed Option<T>, so the emitted JS must
+        // construct a real Some/None — a bare `v.pop()` returns the raw
+        // element with no `__case` tag and unwrap read a present value as
+        // absent. The length guard also turns empty-array pop/shift into
+        // None instead of Some(undefined). Asserted on emitted JS.
+        let out = parse_check_and_emit(
+            "let a: Array<number> = [1, 2, 3];\nlet p = unwrap(a.pop()) or { -1 };\nlet s = unwrap(a.shift()) or { -1 };",
+        );
+        assert!(
+            out.contains("((v) => v.length > 0 ? Some(v.pop()) : None)(a)"),
+            "got: {}",
+            out
+        );
+        assert!(
+            out.contains("((v) => v.length > 0 ? Some(v.shift()) : None)(a)"),
+            "got: {}",
+            out
+        );
+        assert!(out.contains("const Some = Option.Some;"), "got: {}", out);
+        assert!(out.contains("const None = Option.None;"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_array_pop_shift_absent_without_use() {
+        let out = parse_check_and_emit("let a: Array<number> = [1];\nconst n: number = a.length;");
+        assert!(!out.contains("v.pop()"), "got: {}", out);
+        assert!(!out.contains("v.shift()"), "got: {}", out);
     }
 
     // ------------------------------------------------------------------
@@ -1022,7 +1053,7 @@ mod tests {
             &typeck.type_of_calls,
             &typeck.signature_calls,
             &typeck.json_calls,
-            &typeck.array_first_last_calls,
+            &typeck.array_builtin_calls,
             &typeck.number_math_calls,
             &typeck.static_type_calls,
             &typeck.super_trees,
@@ -1082,7 +1113,7 @@ mod tests {
         let out = emit_js_with_options(&program, source, &std::collections::HashMap::new(), None,
             &typeck.unwrap_calls, &typeck.operator_rewrites, &typeck.method_calls,
             &typeck.type_of_calls, &typeck.signature_calls, &typeck.json_calls,
-            &typeck.array_first_last_calls,
+            &typeck.array_builtin_calls,
             &typeck.number_math_calls,
             &typeck.static_type_calls, &typeck.super_trees,
             &typeck.jsx_optional_props, &typeck.enum_case_patterns,

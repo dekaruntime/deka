@@ -253,9 +253,10 @@ pub(super) fn primitive_member<'a>(
         ("Array", "pop") => PrimitiveMember::BuiltinMethod(fn0(Type::Option {
             inner: Box::new(elem?.clone()),
         })),
-        // `first`/`last` have no JS builtin; the emitter rewrites the call to
-        // an Option-producing expression, recorded in `array_first_last_calls`
-        // (deka#561).
+        // `first`/`last` have no JS builtin; `pop`/`shift` return raw values
+        // where the type system declares Option<T>. The emitter rewrites all
+        // four to a real Option construction at the site, recorded in
+        // `array_builtin_calls` (deka#561, deka#566).
         ("Array", "first" | "last") => PrimitiveMember::BuiltinMethod(fn0(Type::Option {
             inner: Box::new(elem?.clone()),
         })),
@@ -2767,19 +2768,22 @@ impl<'a> Checker<'a> {
                         ),
                     );
                 }
-                // Record `first`/`last` so the emitter rewrites them to an
-                // Option-producing expression. Returning `None` keeps the
-                // existing `check_call` flow (argument arity checking against
-                // the `BuiltinMethod` signature). Extensions cannot target
-                // `Array` receivers (deka#527), so this cannot shadow user
-                // code.
-                if matches!(method_name, "first" | "last") {
-                    self.array_first_last_calls.insert(
+                // Record `first`/`last`/`pop`/`shift` so the emitter rewrites
+                // them to an Option-producing expression. Returning `None`
+                // keeps the existing `check_call` flow (argument arity
+                // checking against the `BuiltinMethod` signature). Extensions
+                // cannot target `Array` receivers (deka#527), so this cannot
+                // shadow user code. The mutability guard above already
+                // rejects pop/shift on immutable receivers (deka#590's
+                // richer message), so no per-method check is needed here.
+                if matches!(method_name, "first" | "last" | "pop" | "shift") {
+                    self.array_builtin_calls.insert(
                         call_expr as *const ast::Expr,
-                        if method_name == "first" {
-                            super::types::ArrayAccess::First
-                        } else {
-                            super::types::ArrayAccess::Last
+                        match method_name {
+                            "first" => super::types::ArrayAccess::First,
+                            "last" => super::types::ArrayAccess::Last,
+                            "pop" => super::types::ArrayAccess::Pop,
+                            _ => super::types::ArrayAccess::Shift,
                         },
                     );
                 }
