@@ -25,8 +25,7 @@ mod stmt;
 mod types;
 
 pub use descriptor::{
-    DescriptorField, DescriptorTree, JsonCall, JsonOperation, StaticTypeCall, SuperCallSite,
-    SuperTypeArg,
+    DescriptorField, DescriptorTree, JsonCall, JsonOperation, StaticTypeCall,
 };
 pub use types::{ArrayAccess, NewtypeSide, OperatorRewrite, Type, UnionMemberTest, UnwrapKind};
 
@@ -47,6 +46,14 @@ pub struct TypeckResult<'a> {
     pub type_of_calls: HashSet<*const ast::Expr<'a>>,
     /// `.signature()` call sites and their compile-time declared descriptors.
     pub signature_calls: HashMap<*const ast::Expr<'a>, descriptor::DescriptorTree<'a>>,
+    /// Builtin `Name.type()` call sites on `super` declarations (rfd#41,
+    /// deka#561 PR B), rewritten to the interned `__deka_super_desc$<Name>`
+    /// const during emission.
+    pub static_type_calls: HashMap<*const ast::Expr<'a>, descriptor::StaticTypeCall<'a>>,
+    /// Descriptor trees for every `super` declaration visible in this module,
+    /// keyed by declaration name. The emitter interns one frozen const per
+    /// referenced declaration (and its recursive-reference group).
+    pub super_trees: HashMap<&'a str, descriptor::DescriptorTree<'a>>,
     /// `.toJSON()` and `.parseJSON<T>()` call sites specialized to a static shape.
     pub json_calls: HashMap<*const ast::Expr<'a>, descriptor::JsonCall<'a>>,
     /// Builtin `Array.first()`/`Array.last()` call sites, rewritten to an
@@ -85,6 +92,48 @@ pub struct JsxOptionalProps<'a> {
 pub fn check_program<'a>(program: &'a Program<'a>, _source: &str) -> TypeckResult<'a> {
     let imports = HashMap::new();
     check_program_with_imports(program, _source, &imports)
+}
+
+/// Collect the declared struct/enum names an export-side type annotation
+/// refers to (alias-transparent), for the super-marking closure in
+/// `collect_module_exports`.
+fn export_type_ast_refs<'a>(
+    ty: &ast::Type<'a>,
+    aliases: &HashMap<&'a str, ast::Type<'a>>,
+    structs: &HashMap<&'a str, StructInfo<'a>>,
+    enums: &HashMap<&'a str, EnumInfo<'a>>,
+    out: &mut Vec<&'a str>,
+    depth: usize,
+) {
+    if depth > 16 {
+        return;
+    }
+    match ty {
+        ast::Type::Named { name, .. } => {
+            if structs.contains_key(name) || enums.contains_key(name) {
+                out.push(name);
+            } else if let Some(target) = aliases.get(name) {
+                export_type_ast_refs(target, aliases, structs, enums, out, depth + 1);
+            }
+        }
+        ast::Type::Generic { base, args, .. } => {
+            if structs.contains_key(base) || enums.contains_key(base) {
+                out.push(base);
+            }
+            for arg in args.iter() {
+                export_type_ast_refs(arg, aliases, structs, enums, out, depth + 1);
+            }
+        }
+        ast::Type::Option { inner, .. } => {
+            export_type_ast_refs(inner, aliases, structs, enums, out, depth + 1);
+        }
+        ast::Type::Union { members, .. } => {
+            for member in members.iter() {
+                export_type_ast_refs(member, aliases, structs, enums, out, depth + 1);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Type information exported by a compiled module, used to seed the
@@ -133,6 +182,8 @@ pub fn check_program_with_imports<'a>(
         method_calls: checker.method_calls,
         type_of_calls: checker.type_of_calls,
         signature_calls: checker.signature_calls,
+        static_type_calls: checker.static_type_calls,
+        super_trees: checker.super_trees,
         json_calls: checker.json_calls,
         array_first_last_calls: checker.array_first_last_calls,
         unwrap_calls: checker.unwrap_calls,
@@ -172,11 +223,7 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
     for stmt in program.statements.iter() {
         match stmt {
             ast::Stmt::Struct {
-                name,
-                fields,
-                embeds,
-                type_params,
-                ..
+                name, fields, embeds, type_params, is_super, ..
             } => {
                 declared_structs.insert(
                     *name,
@@ -184,6 +231,7 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                         fields: *fields,
                         embeds: *embeds,
                         type_params,
+                        is_super: *is_super,
                     },
                 );
             }
@@ -191,6 +239,7 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                 name,
                 cases,
                 type_params,
+                is_super,
                 ..
             } => {
                 declared_enums.insert(
@@ -198,6 +247,7 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                     EnumInfo {
                         cases: *cases,
                         type_params: *type_params,
+                        is_super: *is_super,
                     },
                 );
             }
@@ -228,6 +278,61 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
                 );
             }
             _ => {}
+        }
+    }
+
+    // Super marking is transitive within a module (deka#561 PR B): a `super`
+    // declaration's descriptor embeds the descriptors of the structs/enums
+    // it references, so those declarations are marked too. Propagate that
+    // marking into the exported infos — otherwise an importer of an
+    // auto-marked type would wrongly be told it "does not carry runtime
+    // type information".
+    {
+        let mut marked: HashSet<&'a str> = declared_structs
+            .iter()
+            .filter(|(_, i)| i.is_super)
+            .map(|(n, _)| *n)
+            .chain(
+                declared_enums
+                    .iter()
+                    .filter(|(_, i)| i.is_super)
+                    .map(|(n, _)| *n),
+            )
+            .collect();
+        let mut worklist: Vec<&'a str> = marked.iter().cloned().collect();
+        while let Some(name) = worklist.pop() {
+            let member_types: Vec<&'a ast::Type<'a>> = match declared_structs.get(name) {
+                Some(info) => info
+                    .fields
+                    .iter()
+                    .map(|f| &f.ty)
+                    .collect(),
+                None => match declared_enums.get(name) {
+                    Some(info) => info
+                        .cases
+                        .iter()
+                        .filter_map(|c| c.payload.as_ref())
+                        .collect(),
+                    None => continue,
+                },
+            };
+            let mut refs = Vec::new();
+            for ty in member_types {
+                export_type_ast_refs(ty, &declared_aliases, &declared_structs, &declared_enums, &mut refs, 0);
+            }
+            for referenced in refs {
+                if marked.insert(referenced) {
+                    worklist.push(referenced);
+                }
+            }
+        }
+        for name in marked {
+            if let Some(info) = declared_structs.get_mut(name) {
+                info.is_super = true;
+            }
+            if let Some(info) = declared_enums.get_mut(name) {
+                info.is_super = true;
+            }
         }
     }
 
@@ -593,6 +698,9 @@ pub struct EnumInfo<'a> {
     /// spelled `Box<number>` can substitute them into case payload types
     /// (deka#372); previously they were parsed and discarded.
     pub type_params: &'a [ast::TypeParam<'a>],
+    /// Declared `super enum` (rfd#41, deka#561 PR B): the type's descriptor
+    /// survives to runtime and `Name.type()` is legal.
+    pub is_super: bool,
 }
 
 /// Information about a newtype's primitive representation.
@@ -612,6 +720,9 @@ pub struct StructInfo<'a> {
     /// building a `super` descriptor tree (kept for super declarations, PR B);
     /// previously they were parsed and discarded.
     pub type_params: &'a [ast::TypeParam<'a>],
+    /// Declared `super struct` (rfd#41, deka#561 PR B): the type's descriptor
+    /// survives to runtime and `Name.type()` is legal.
+    pub is_super: bool,
 }
 
 /// Names of the primitive types that support receiver (extension) methods
@@ -677,6 +788,20 @@ struct Checker<'a> {
     /// `reset_lowering_state` — the inference pass populates them too.
     type_of_calls: HashSet<*const ast::Expr<'a>>,
     signature_calls: HashMap<*const ast::Expr<'a>, descriptor::DescriptorTree<'a>>,
+    /// Builtin `Name.type()` call sites on `super` declarations (rfd#41,
+    /// deka#561 PR B), keyed by call expression pointer. The emitter
+    /// rewrites each call to the interned `__deka_super_desc$<Name>` const.
+    /// Lowering collections like this one must also be cleared in
+    /// `reset_lowering_state` — the inference pass populates them too.
+    static_type_calls: HashMap<*const ast::Expr<'a>, descriptor::StaticTypeCall<'a>>,
+    /// Descriptor trees for `super` declarations visible in this module
+    /// (rfd#41, deka#561 PR B): built during declaration collection, seeded
+    /// with local declarations and their transitive closure, extended on
+    /// demand for imported super declarations at `Name.type()` call sites.
+    /// Passed to the emitter, which interns one frozen const per referenced
+    /// declaration. Declaration-derived, not a lowering pass effect — NOT
+    /// cleared by `reset_lowering_state`.
+    super_trees: HashMap<&'a str, descriptor::DescriptorTree<'a>>,
     json_calls: HashMap<*const ast::Expr<'a>, descriptor::JsonCall<'a>>,
     /// Builtin `Array.first()`/`Array.last()` call sites to rewrite to an
     /// Option-producing expression, keyed by call expression pointer.
@@ -731,6 +856,8 @@ impl<'a> Checker<'a> {
             method_calls: HashMap::new(),
             type_of_calls: HashSet::new(),
             signature_calls: HashMap::new(),
+            static_type_calls: HashMap::new(),
+            super_trees: HashMap::new(),
             json_calls: HashMap::new(),
             array_first_last_calls: HashMap::new(),
             unwrap_calls: HashMap::new(),
@@ -865,6 +992,7 @@ impl<'a> Checker<'a> {
         self.method_calls.clear();
         self.type_of_calls.clear();
         self.signature_calls.clear();
+        self.static_type_calls.clear();
         self.json_calls.clear();
         self.array_first_last_calls.clear();
         self.unwrap_calls.clear();
@@ -1564,6 +1692,128 @@ mod tests {
         // `Type` is seeded as a builtin named type; `toString` on it resolves
         // through the primitive member table (rfd#41, deka#529).
         assert!(typeck("fn f(t: Type) string { return t.toString(); }").is_empty());
+    }
+
+    // ------------------------------------------------------------------
+    // `super` declarations (rfd#41, deka#561 PR B)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn super_struct_type_call_passes_and_records() {
+        let arena = Bump::new();
+        let source = "super struct User { id: number }\nconst t = User.type();";
+        let result = parse(source, &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.expect("parse produced no program");
+        let typeck = check_program(&program, source);
+        assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
+        assert_eq!(typeck.static_type_calls.len(), 1);
+        assert!(typeck.super_trees.contains_key("User"));
+        assert!(
+            matches!(typeck.super_trees.get("User"), Some(DescriptorTree::Struct { name, .. }) if *name == "User")
+        );
+    }
+
+    #[test]
+    fn super_type_on_plain_struct_fails_teaching_super() {
+        let errors = typeck("struct User { id: number }\nconst t = User.type();");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("User"), "{}", errors[0].message);
+        assert!(errors[0].message.contains("super struct"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn super_type_on_plain_enum_fails_teaching_super() {
+        let errors = typeck("enum Status { Active }\nconst t = Status.type();");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("super enum"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn super_type_on_unknown_name_still_unknown_identifier() {
+        let errors = typeck("const t = Nope.type();");
+        // The unknown name is reported on both the object and callee paths;
+        // what matters is it stays an unknown-identifier error, not a
+        // super-specific one.
+        assert!(errors.iter().any(|e| e.message.contains("unknown identifier")), "{errors:?}");
+    }
+
+    #[test]
+    fn super_type_on_newtype_explains_the_limit() {
+        let errors = typeck("type Cents number\nconst t = Cents.type();");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("only available"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn super_type_with_args_fails() {
+        let errors = typeck("super struct User { id: number }\nconst t = User.type(1);");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("no arguments"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn super_marking_is_transitive() {
+        // `Address` is never written `super`, but `super struct User`
+        // references it, so its descriptor is built too — composition must
+        // not require repeating the mark.
+        let arena = Bump::new();
+        let source = "struct Address { city: string }\nsuper struct User { id: number; address: Address }\nconst a = Address.type();";
+        let result = parse(source, &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.expect("parse produced no program");
+        let typeck = check_program(&program, source);
+        assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
+        assert!(typeck.super_trees.contains_key("Address"));
+    }
+
+    #[test]
+    fn super_struct_recursive_type_passes() {
+        let arena = Bump::new();
+        let source = "super struct Node { next: Option<Node> }\nconst t = Node.type();";
+        let result = parse(source, &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.expect("parse produced no program");
+        let typeck = check_program(&program, source);
+        assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
+        // The tree holds a Recurse reference, not an infinite expansion.
+        let tree = typeck.super_trees.get("Node").expect("Node tree");
+        let fields = match tree {
+            DescriptorTree::Struct { fields, .. } => fields,
+            other => panic!("expected struct tree, got {other:?}"),
+        };
+        assert!(
+            matches!(&fields[0].ty, DescriptorTree::Option { inner } if matches!(&**inner, DescriptorTree::Recurse { name } if *name == "Node")),
+            "expected Option<Recurse Node>, got {:?}",
+            fields[0].ty
+        );
+    }
+
+    #[test]
+    fn super_struct_undescribable_field_fails_at_declaration() {
+        // A function-typed field can never be reflected; the error must name
+        // the declaration and the field, even with no `.type()` call.
+        let errors = typeck("super struct S { f: fn(number) number }");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("cannot carry runtime type information"), "{}", errors[0].message);
+        assert!(errors[0].message.contains("field `f`"), "{}", errors[0].message);
+    }
+
+    #[test]
+    fn super_type_through_alias_resolves_to_decl() {
+        let arena = Bump::new();
+        let source = "super struct User { id: number }\nalias Alias = User\nconst t = Alias.type();";
+        let result = parse(source, &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.expect("parse produced no program");
+        let typeck = check_program(&program, source);
+        assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
+        assert_eq!(typeck.static_type_calls.len(), 1);
+    }
+
+    #[test]
+    fn super_enum_type_call_passes() {
+        assert!(typeck("super enum Status { Active, Archived }\nconst t = Status.type();").is_empty());
     }
 
     #[test]

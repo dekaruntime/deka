@@ -1599,23 +1599,39 @@ mod tests {
 
     #[test]
     fn super_rejected_everywhere() {
-        // `super` is a hard keyword reserved for declarations (super struct,
-        // super fn) which are not yet available (deka#561).
+        // `super` is a hard keyword, now available only on `struct` and
+        // `enum` declarations (rfd#41, deka#561 PR B); every other use is
+        // still rejected.
         for source in [
-            "super struct S { x: number }",
             "super const x = 1",
-            "super enum E { A }",
             "super(x)",
             "const x = super",
             "super fn f<T>(x: T) T { return x }",
+            "super interface I { m: number }",
         ] {
             let arena = Bump::new();
             let result = parse(source, &arena);
             assert!(
-                result.errors.iter().any(|e| e.message.contains("reserved and not yet available")),
-                "{source:?} must be rejected as reserved, got: {:?}",
+                result.errors.iter().any(|e| e.message.contains("super")),
+                "{source:?} must be rejected, got: {:?}",
                 result.errors
             );
+        }
+
+        // `super struct` / `super enum` parse and carry the mark.
+        let arena = Bump::new();
+        let result = parse("super struct S { x: number }", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        match &result.program.expect("program").statements[0] {
+            Stmt::Struct { is_super, .. } => assert!(*is_super),
+            other => panic!("expected super struct, got {other:?}"),
+        }
+        let arena = Bump::new();
+        let result = parse("super enum E { A }", &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        match &result.program.expect("program").statements[0] {
+            Stmt::Enum { is_super, .. } => assert!(*is_super),
+            other => panic!("expected super enum, got {other:?}"),
         }
 
         // After `export` the reserved-word diagnostic names the expected

@@ -96,13 +96,13 @@ impl<'a> Checker<'a> {
                     self.error_span(*span, format!("duplicate type alias `{name}`"));
                 }
             }
-            if let ast::Stmt::Enum { name, cases, type_params, span } = stmt {
+            if let ast::Stmt::Enum { name, cases, type_params, is_super, span } = stmt {
                 if *name == "Type" {
                     self.error_span(*span, BUILTIN_TYPE_DIAGNOSTIC);
                 }
                 if self
                     .enums
-                    .insert(name, super::EnumInfo { cases, type_params })
+                    .insert(name, super::EnumInfo { cases, type_params, is_super: *is_super })
                     .is_some()
                 {
                     self.error_span(*span, format!("duplicate enum definition `{name}`"));
@@ -117,11 +117,11 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            if let ast::Stmt::Struct { name, fields, embeds, type_params, span, .. } = stmt {
+            if let ast::Stmt::Struct { name, fields, embeds, type_params, is_super, span, .. } = stmt {
                 if *name == "Type" {
                     self.error_span(*span, BUILTIN_TYPE_DIAGNOSTIC);
                 }
-                if self.structs.insert(name, super::StructInfo { fields, embeds, type_params }).is_some() {
+                if self.structs.insert(name, super::StructInfo { fields, embeds, type_params, is_super: *is_super }).is_some() {
                     self.error_span(*span, format!("duplicate struct definition `{name}`"));
                     continue;
                 }
@@ -184,6 +184,12 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+
+        // Super declarations (rfd#41, deka#561 PR B): after every type
+        // declaration is collected, compute the transitive super marking and
+        // build/validate descriptor trees so both this pass and later
+        // `Name.type()` call sites see them.
+        self.collect_super_declarations();
     }
 
     /// Eagerly resolve interface member types so that unknown types and other
@@ -708,6 +714,7 @@ impl<'a> Checker<'a> {
                 type_params,
                 fields,
                 embeds,
+                is_super: _,
                 span: _,
             } => {
                 self.push_type_params(type_params);
@@ -724,7 +731,7 @@ impl<'a> Checker<'a> {
                 }
                 self.pop_type_params();
             }
-            ast::Stmt::Enum { name: _, cases, type_params, span: _ } => {
+            ast::Stmt::Enum { name: _, cases, type_params, is_super: _, span: _ } => {
                 // `enum Box<T> { Full(T) }` — T must be in scope while the case
                 // payload types are resolved, or it reports `unknown type T`.
                 self.push_type_params(type_params);

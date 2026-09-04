@@ -45,10 +45,8 @@ mod tests {
             &typeck.signature_calls,
             &typeck.json_calls,
             &typeck.array_first_last_calls,
-            // super_calls/static_type_calls are no longer produced by the
-            // typechecker (deka#561); the parameters stay for PR B.
-            &std::collections::HashMap::new(),
-            &std::collections::HashMap::new(),
+            &typeck.static_type_calls,
+            &typeck.super_trees,
             &typeck.jsx_optional_props,
             &typeck.enum_case_patterns,
             &typeck.union_type_patterns,
@@ -669,16 +667,15 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[test]
-    fn emit_descriptor_consts_from_handbuilt_maps() {
-        // With `super fn` removed (deka#561) the typechecker no longer
-        // produces super_calls/static_type_calls, so this coverage feeds
-        // emit_js_with_options a hand-built static_type_calls map through
-        // the deka_syntax::typeck descriptor public API. Asserts the prelude
-        // still interns static trees: one `__deka_super_desc$N` const per
-        // distinct tree, deduped across two identical trees. (The
-        // emit_descriptor_ref call-site shape is no longer reachable — its
-        // only callers were the super-fn rewrites — so it is covered
-        // indirectly here via the interned consts PR B will reference.)
+    fn emit_super_decl_consts_from_handbuilt_maps() {
+        // Direct coverage of the emitter's super-decl const interning,
+        // feeding emit_js_with_options hand-built maps through the
+        // deka_syntax::typeck descriptor public API (the typechecker's own
+        // output is covered end-to-end by the parse_check_and_emit tests
+        // below). Asserts: one name-keyed const per referenced declaration,
+        // shared across call sites of the same declaration, no const for an
+        // unreferenced declaration, and a recursive group expanding to both
+        // cycle members with lazy composite getters.
         use deka_syntax::typeck::{DescriptorField, DescriptorTree, StaticTypeCall};
 
         let source = "const a = 1; const b = 2; const c = 3;";
@@ -706,9 +703,22 @@ mod tests {
                 },
             }],
         };
-        let number_tree = DescriptorTree::Leaf {
-            kind: "number",
-            name: "number".to_string(),
+        // Unused is in the decl map but referenced by no call site: no const.
+        let unused_tree = DescriptorTree::Struct {
+            name: "Unused",
+            fields: vec![],
+        };
+        // Node is recursive: next is Option<Node>. The group walk must pull
+        // Node's const in alongside Root's.
+        let node_tree = DescriptorTree::Struct {
+            name: "Node",
+            fields: vec![DescriptorField {
+                name: "next",
+                optional: false,
+                ty: DescriptorTree::Option {
+                    inner: Box::new(DescriptorTree::Recurse { name: "Node" }),
+                },
+            }],
         };
 
         let mut static_type_calls: std::collections::HashMap<
@@ -722,6 +732,7 @@ mod tests {
                 param: None,
             },
         );
+        // A second call site of the SAME declaration shares the const.
         static_type_calls.insert(
             expr_ptrs[1],
             StaticTypeCall {
@@ -732,10 +743,32 @@ mod tests {
         static_type_calls.insert(
             expr_ptrs[2],
             StaticTypeCall {
-                tree: Some(number_tree),
+                tree: Some(node_tree.clone()),
                 param: None,
             },
         );
+
+        let mut super_decl_trees: std::collections::HashMap<
+            &str,
+            DescriptorTree,
+        > = std::collections::HashMap::new();
+        super_decl_trees.insert("User", user_tree_for_map());
+        super_decl_trees.insert("Unused", unused_tree);
+        super_decl_trees.insert("Node", node_tree);
+
+        fn user_tree_for_map() -> DescriptorTree<'static> {
+            DescriptorTree::Struct {
+                name: "User",
+                fields: vec![DescriptorField {
+                    name: "id",
+                    optional: false,
+                    ty: DescriptorTree::Leaf {
+                        kind: "string",
+                        name: "string".to_string(),
+                    },
+                }],
+            }
+        }
 
         let out = emit_js_with_options(
             &program,
@@ -749,8 +782,8 @@ mod tests {
             &std::collections::HashMap::new(),
             &std::collections::HashMap::new(),
             &std::collections::HashMap::new(),
-            &std::collections::HashMap::new(),
             &static_type_calls,
+            &super_decl_trees,
             &std::collections::HashMap::new(),
             &std::collections::HashMap::new(),
             &std::collections::HashMap::new(),
@@ -759,22 +792,143 @@ mod tests {
         )
         .expect("emit failed");
 
-        // Two distinct trees -> two consts; the identical User tree is
-        // deduped to a single const.
+        // Exactly two consts: User (deduped across both call sites) and the
+        // recursive Node — its self-reference expands to a single group
+        // const, not an infinite tree. Unused emitted nothing.
         assert_eq!(
             out.matches("const __deka_super_desc$").count(),
             2,
             "got: {}",
             out
         );
-        assert!(out.contains("const __deka_super_desc$0"), "got: {}", out);
-        assert!(out.contains("const __deka_super_desc$1"), "got: {}", out);
-        // The #550 shape triple and the struct fields survive serialization.
+        assert!(out.contains("const __deka_super_desc$User"), "got: {}", out);
+        assert!(out.contains("const __deka_super_desc$Node"), "got: {}", out);
+        assert!(
+            !out.contains("__deka_super_desc$Unused"),
+            "unused super declaration must not emit a const: {}",
+            out
+        );
+        // The #550 shape triple survives serialization.
         assert!(out.contains("kind: \"struct\""), "got: {}", out);
         assert!(out.contains("name: \"User\""), "got: {}", out);
         assert!(out.contains("toString() { return this.name; }"), "got: {}", out);
+        // The recursive declaration uses the lazy getter form and references
+        // its own const inside it.
+        assert!(out.contains("get fields()"), "got: {}", out);
+        assert!(
+            out.contains("get inner() { return __deka_super_desc$Node; }"),
+            "recursive reference must point at the interned const: {}",
+            out
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // `super` declarations: `super struct` / `super enum` + `Name.type()`
+    // (rfd#41, deka#561 PR B)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn emit_super_struct_type_call() {
+        let out = parse_check_and_emit(
+            "super struct User { id: number; name: string }\nconst t = User.type();",
+        );
+        // Call site rewrites to the interned const.
+        assert!(out.contains("const t = __deka_super_desc$User;"), "got: {}", out);
+        assert!(out.contains("const __deka_super_desc$User"), "got: {}", out);
+        assert!(out.contains("kind: \"struct\""), "got: {}", out);
+        assert!(out.contains("name: \"User\""), "got: {}", out);
         assert!(out.contains("{ name: \"id\", optional: false"), "got: {}", out);
-        assert!(out.contains("kind: \"number\""), "got: {}", out);
+        // The drift guard: no prototype mutation, no globalThis.
+        assert!(!out.contains("globalThis"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_super_enum_type_call() {
+        let out = parse_check_and_emit(
+            "super enum Status { Active, Archived(number) }\nconst t = Status.type();",
+        );
+        assert!(out.contains("const t = __deka_super_desc$Status;"), "got: {}", out);
+        assert!(out.contains("kind: \"enum\""), "got: {}", out);
+        assert!(out.contains("name: \"Active\""), "got: {}", out);
+        assert!(out.contains("name: \"Archived\""), "got: {}", out);
+        assert!(!out.contains("globalThis"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_super_decl_unused_marking_emits_nothing() {
+        // The factory is used (so the struct is live) but `.type()` is never
+        // called: no descriptor const, no drag.
+        let out = parse_check_and_emit(
+            "super struct User { id: number }\nconst u = User { id: 1 };",
+        );
+        assert!(
+            !out.contains("__deka_super_desc$"),
+            "unused super marking must emit no descriptor const: {}",
+            out
+        );
+        assert!(!out.contains("globalThis"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_super_decl_const_forced_by_shaken_call_is_documented_bloat() {
+        // A `.type()` call inside a function DCE removes still forces its
+        // const: prelude interning is driven by the typechecker's recorded
+        // call sites, exactly the "entries pointing into shaken code force
+        // their const (harmless bloat, never incorrectness)" guarantee the
+        // type_of_calls gate documents. What MUST hold is that the call site
+        // itself is gone (no dangling reference) and the const is inert.
+        let source =
+            "super struct User { id: number }\nfn describe() Type { return User.type(); }";
+        let arena = Bump::new();
+        let result = parse(source, &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.expect("parse produced no program");
+        let typeck = deka_syntax::typeck::check_program(&program, source);
+        assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
+        let out = emit_js_with_options(
+            &program,
+            source,
+            &std::collections::HashMap::new(),
+            None,
+            &typeck.unwrap_calls,
+            &typeck.operator_rewrites,
+            &typeck.method_calls,
+            &typeck.type_of_calls,
+            &typeck.signature_calls,
+            &typeck.json_calls,
+            &typeck.array_first_last_calls,
+            &typeck.static_type_calls,
+            &typeck.super_trees,
+            &typeck.jsx_optional_props,
+            &typeck.enum_case_patterns,
+            &typeck.union_type_patterns,
+            "module.ds",
+            Some(&std::collections::HashSet::new()),
+        )
+        .expect("emit failed");
+        assert!(
+            !out.contains("return __deka_super_desc$User"),
+            "the shaken call site must not survive: {}",
+            out
+        );
+    }
+
+    #[test]
+    fn emit_super_struct_recursive_lazy_const() {
+        // `super struct Node { next: Option<Node> }` cannot be an eager
+        // frozen literal; it must emit the lazy-getter form referencing its
+        // own const.
+        let out = parse_check_and_emit(
+            "super struct Node { next: Option<Node> }\nconst t = Node.type();",
+        );
+        assert!(out.contains("const __deka_super_desc$Node"), "got: {}", out);
+        assert!(out.contains("get fields()"), "got: {}", out);
+        assert!(
+            out.contains("get inner() { return __deka_super_desc$Node; }"),
+            "self-reference must resolve to the interned const: {}",
+            out
+        );
+        assert!(!out.contains("globalThis"), "got: {}", out);
     }
 
     #[test]
@@ -800,9 +954,9 @@ mod tests {
         let live: std::collections::HashSet<String> = ["main".to_string()].into_iter().collect();
         let out = emit_js_with_options(&program, source, &std::collections::HashMap::new(), None,
             &typeck.unwrap_calls, &typeck.operator_rewrites, &typeck.method_calls,
-            &typeck.type_of_calls, &typeck.signature_calls, &std::collections::HashMap::new(),
-            &std::collections::HashMap::new(),
-            &std::collections::HashMap::new(), &std::collections::HashMap::new(),
+            &typeck.type_of_calls, &typeck.signature_calls, &typeck.json_calls,
+            &typeck.array_first_last_calls,
+            &typeck.static_type_calls, &typeck.super_trees,
             &typeck.jsx_optional_props, &typeck.enum_case_patterns,
             &typeck.union_type_patterns, "module.ds", Some(&live)).expect("emit failed");
         assert!(!out.contains("kind: \"union\""), "got: {}", out);
