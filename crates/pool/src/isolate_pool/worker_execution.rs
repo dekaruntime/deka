@@ -4,7 +4,7 @@ use super::*;
 /// `__deka_host` without those identifiers living on user `globalThis`.
 fn wrap_with_host_bindings(body: &str) -> String {
     format!(
-        "(function() {{\nconst __h = globalThis[Symbol.for('deka.host.internal')];\n(function(__deka_host, __bridge, __bridge_async, __deka_wasm_call, __deka_wasm_call_async) {{\n{body}\n}})(__h && __h.host, __h && __h.bridge, __h && __h.bridgeAsync, __h && __h.wasmCall, __h && __h.wasmCallAsync);\n}})();"
+        "(function() {{\nconst __h = globalThis[Symbol.for('deka.host.internal')];\n(function(__deka_host, __bridge, __bridge_async, __deka_wasm_call, __deka_wasm_call_async, __deka_to_result) {{\n{body}\n}})(__h && __h.host, __h && __h.bridge, __h && __h.bridgeAsync, __h && __h.wasmCall, __h && __h.wasmCallAsync, __h && __h.toResult);\n}})();"
     )
 }
 
@@ -761,6 +761,14 @@ impl WorkerThread {
                         return val;
                     };
 
+                    // DS bridge Result tagging (deka#578): one shared helper
+                    // instead of a per-call IIFE, and the literal carries
+                    // __enum/name exactly like the prelude's Result
+                    // constructors so .getType() and __enum readers agree.
+                    const __deka_to_result = (r) => (r && r.ok)
+                        ? Object.freeze({ __enum: "Result", __case: "Ok", name: "Ok", value: r.value })
+                        : Object.freeze({ __enum: "Result", __case: "Err", name: "Err", error: (r && r.error) ? r.error : "host bridge failed" });
+
                     const __bridge = (kind, action, payload) => {
                         try {
                             return __dekaFixProto(routeHostCall(String(kind || ''), String(action || ''), payload || {}));
@@ -847,27 +855,43 @@ impl WorkerThread {
                             })();
                             const routeKind = (k === 'tls' && a === 'upgrade') ? 'net' : k;
                             const routeAction = (k === 'tls' && a === 'upgrade') ? 'tls_upgrade' : a;
-                            const raw = __dekaFixProto(routeHostCall(routeKind, routeAction, payload));
-                            const assoc = (Array.isArray(raw) && raw.length && Array.isArray(raw[0]))
-                                ? Object.fromEntries(raw)
-                                : (raw || {});
-                            if (assoc && assoc.ok === true && typeof assoc.data === 'undefined') {
-                                if (typeof assoc.handle !== 'undefined') assoc.data = assoc.handle;
-                                else if (typeof assoc.written === 'number') assoc.data = assoc.written;
-                                else if (typeof assoc.valid === 'boolean') assoc.data = assoc.valid;
-                                else if (a === 'read_dir' && Array.isArray(assoc.entries)) assoc.data = assoc.entries;
-                                else if (typeof assoc.slept_ms === 'number') assoc.data = assoc.slept_ms;
-                                else assoc.data = true;
+                            const finish = (raw) => {
+                                const assoc = (Array.isArray(raw) && raw.length && Array.isArray(raw[0]))
+                                    ? Object.fromEntries(raw)
+                                    : (raw || {});
+                                if (assoc && assoc.ok === true && typeof assoc.data === 'undefined') {
+                                    if (typeof assoc.handle !== 'undefined') assoc.data = assoc.handle;
+                                    else if (typeof assoc.written === 'number') assoc.data = assoc.written;
+                                    else if (typeof assoc.valid === 'boolean') assoc.data = assoc.valid;
+                                    else if (a === 'read_dir' && Array.isArray(assoc.entries)) assoc.data = assoc.entries;
+                                    else if (typeof assoc.slept_ms === 'number') assoc.data = assoc.slept_ms;
+                                    else assoc.data = true;
+                                }
+                                if (assoc && assoc.ok === true && a !== 'read_dir' && Array.isArray(assoc.data)
+                                    && typeof Uint8Array !== 'undefined') {
+                                    assoc.data = new Uint8Array(assoc.data);
+                                }
+                                // v2 bridge emit expects { ok, value }; legacy PHPX bridge uses { ok, data }.
+                                if (assoc && assoc.ok === true && typeof assoc.value === 'undefined' && typeof assoc.data !== 'undefined') {
+                                    assoc.value = assoc.data;
+                                }
+                                return assoc;
+                            };
+                            // Async catalog entries (deka#578): fs ops run
+                            // std::fs IO on the tokio blocking pool via
+                            // op_php_fs_call_proto_async, so a read or write
+                            // no longer stalls the isolate. The Promise is
+                            // handed back to the caller; DS emit chains
+                            // `.then(__deka_to_result)` and the source-level
+                            // `await` resolves it. Keep the flag in sync with
+                            // the compiler-side catalog (deka_syntax bridge.rs).
+                            if (k === 'fs' && typeof ops.op_php_fs_call_proto_async === 'function') {
+                                const request = ops.op_php_fs_proto_encode(routeAction, payload);
+                                return Promise.resolve(ops.op_php_fs_call_proto_async(request))
+                                    .then((response) => finish(Object.entries(ops.op_php_fs_proto_decode(response) || {})))
+                                    .catch((err) => ({ ok: false, error: err && err.message ? String(err.message) : String(err) }));
                             }
-                            if (assoc && assoc.ok === true && a !== 'read_dir' && Array.isArray(assoc.data)
-                                && typeof Uint8Array !== 'undefined') {
-                                assoc.data = new Uint8Array(assoc.data);
-                            }
-                            // v2 bridge emit expects { ok, value }; legacy PHPX bridge uses { ok, data }.
-                            if (assoc && assoc.ok === true && typeof assoc.value === 'undefined' && typeof assoc.data !== 'undefined') {
-                                assoc.value = assoc.data;
-                            }
-                            return assoc;
+                            return finish(__dekaFixProto(routeHostCall(routeKind, routeAction, payload)));
                         } catch (err) {
                             return { ok: false, error: err && err.message ? String(err.message) : String(err) };
                         }
@@ -880,6 +904,7 @@ impl WorkerThread {
                         bridgeAsync: __bridge_async,
                         wasmCall: __deka_wasm_call,
                         wasmCallAsync: __deka_wasm_call_async,
+                        toResult: __deka_to_result,
                         ops: __ops,
                     });
                     try {

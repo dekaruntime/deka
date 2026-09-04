@@ -961,4 +961,55 @@ mod tests {
             &typeck.union_type_patterns, "module.ds", Some(&live)).expect("emit failed");
         assert!(!out.contains("kind: \"union\""), "got: {}", out);
     }
+
+    #[test]
+    fn emit_bridge_sync_op_is_plain_tagged_result_call() {
+        // deka#578: sync catalog ops dispatch to a plain value. The Result
+        // tagging is a shared host helper (no per-call IIFE), and the
+        // envelope carries __enum exactly like the prelude's Result.
+        let out = parse_and_emit("const r = bridge crypto.random_bytes(16)");
+        assert!(
+            out.contains("__deka_to_result(__deka_host(\"crypto\", \"random_bytes\", [16]))"),
+            "got: {}",
+            out
+        );
+        assert!(
+            !out.contains("(function()"),
+            "bridge emit must not wrap the call in an IIFE: {}",
+            out
+        );
+    }
+
+    #[test]
+    fn emit_bridge_async_op_returns_promise_for_source_await() {
+        // deka#578: async catalog ops (fs.*) return a Promise; the
+        // source-level `await` drives the resolution (rfd#27), and the
+        // emitted chain tags the envelope through the shared helper.
+        let out = parse_and_emit("const r = await bridge fs.read_file(path)");
+        assert!(
+            out.contains(
+                "await __deka_host(\"fs\", \"read_file\", [path]).then(__deka_to_result)"
+            ),
+            "got: {}",
+            out
+        );
+        assert!(
+            !out.contains("(function()"),
+            "bridge emit must not wrap the call in an IIFE: {}",
+            out
+        );
+    }
+
+    #[test]
+    fn emit_bridge_sync_and_async_share_no_per_call_closure() {
+        // Two bridge calls must not each mint a closure (the old non-arrow
+        // IIFE did, twice per call site).
+        let out = parse_and_emit(
+            "const a = bridge crypto.random_bytes(8)\nconst b = await bridge fs.mkdirs(\"out\")",
+        );
+        assert!(out.contains("__deka_to_result(__deka_host("), "got: {}", out);
+        assert!(out.contains(".then(__deka_to_result)"), "got: {}", out);
+        assert!(!out.contains("function("), "got: {}", out);
+        assert!(!out.contains("=>"), "got: {}", out);
+    }
 }

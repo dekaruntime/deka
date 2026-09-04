@@ -108,6 +108,11 @@ pub const OPERATION_CAPABILITY_MATRIX: &[OperationCapability] = &[
         notes: "Dispatch FS bridge request; child action decides read/write",
     },
     OperationCapability {
+        op_id: "php.op_php_fs_call_proto_async",
+        capability: Capability::Unknown,
+        notes: "Dispatch FS bridge request without blocking the isolate (deka#578); child action decides read/write",
+    },
+    OperationCapability {
         op_id: "php.op_php_fs_proto_encode",
         capability: Capability::Unknown,
         notes: "Encode FS bridge payload",
@@ -338,6 +343,7 @@ pub const KNOWN_RUNTIME_OPERATION_IDS: &[&str] = &[
     "php.op_php_net_proto_encode",
     "php.op_php_net_proto_decode",
     "php.op_php_fs_call_proto",
+    "php.op_php_fs_call_proto_async",
     "php.op_php_fs_proto_encode",
     "php.op_php_fs_proto_decode",
     "php.op_php_bridge_proto_stats",

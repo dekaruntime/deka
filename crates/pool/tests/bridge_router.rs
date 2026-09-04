@@ -656,3 +656,94 @@ globalThis.app = function(req) {
     assert_eq!(parsed["diff"], true, "body={body}");
     assert_eq!(parsed["macOk"], true, "body={body}");
 }
+
+/// Restores a process env var on drop. Scoped to one test; the policy set
+/// through it only grants read/write under that test's own tempdir, so
+/// concurrent readers of `DEKA_SECURITY_POLICY` see an equivalent net scope
+/// (deka#537 was about net rules racing, which this does not touch).
+struct EnvGuard {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, value: String) -> Self {
+        let previous = std::env::var(key).ok();
+        // SAFETY: single-process test binary; the guard restores the
+        // previous value on drop. Same pattern as deka_host's fs symlink
+        // tests.
+        unsafe { std::env::set_var(key, value) };
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => unsafe { std::env::set_var(self.key, value) },
+            None => unsafe { std::env::remove_var(self.key) },
+        }
+    }
+}
+
+/// deka#578: fs bridge ops dispatch through the async op. The caller gets a
+/// Promise back — the old code ran the blocking op inline, stalling the
+/// isolate, and a Promise result read `.ok` as undefined which silently
+/// became `Err("host bridge failed")`. Awaiting the promise must resolve to
+/// the same `{ok, value}` envelope as the sync path.
+#[tokio::test]
+async fn deka_host_fs_ops_dispatch_async_and_resolve() {
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let root = dir.path().canonicalize().expect("canonicalize tempdir");
+    let target = root.join("round-trip.txt");
+    let policy = serde_json::json!({
+        "security": {
+            "allow": {
+                "read": [root.to_string_lossy()],
+                "write": [root.to_string_lossy()]
+            },
+            "prompt": false
+        }
+    })
+    .to_string();
+    let _policy_guard = EnvGuard::set("DEKA_SECURITY_POLICY", policy);
+
+    let path_js = serde_json::to_string(&target.to_string_lossy()).expect("json path");
+    let pool = php_server_pool();
+    let code = format!(
+        r#"
+globalThis.app = async function(req) {{
+  const written = __deka_host('fs', 'write_file', [{path_js}, new TextEncoder().encode('hello deka#578')]);
+  const writeIsPromise = written && typeof written.then === 'function';
+  const w = await written;
+  const pending = __deka_host('fs', 'read_file', [{path_js}]);
+  const readIsPromise = pending && typeof pending.then === 'function';
+  const r = await pending;
+  const text = r && r.ok ? new TextDecoder().decode(r.value) : ('ERR:' + (r && r.error));
+  return {{ status: 200, headers: {{}}, body: JSON.stringify({{
+    writeIsPromise: writeIsPromise,
+    readIsPromise: readIsPromise,
+    writeOk: !!(w && w.ok),
+    readOk: !!(r && r.ok),
+    text: text
+  }}) }};
+}};
+"#
+    );
+    let res = pool
+        .execute(
+            HandlerKey::new("deka_host_fs_async"),
+            test_request(&code),
+        )
+        .await;
+    let response = res.expect("pool execution should succeed");
+    assert!(response.success, "execution failed: {:?}", response.error);
+    let result = response.result.expect("should have result");
+    let body = result.get("body").and_then(|v| v.as_str()).expect("body");
+    let parsed: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(parsed["writeIsPromise"], true, "body={body}");
+    assert_eq!(parsed["readIsPromise"], true, "body={body}");
+    assert_eq!(parsed["writeOk"], true, "body={body}");
+    assert_eq!(parsed["readOk"], true, "body={body}");
+    assert_eq!(parsed["text"], "hello deka#578", "body={body}");
+}

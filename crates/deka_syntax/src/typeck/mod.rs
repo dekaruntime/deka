@@ -2727,4 +2727,38 @@ mod tests {
             errors
         );
     }
+
+    #[test]
+    fn bridge_async_op_awaits_to_result() {
+        // deka#578: async catalog ops (fs.*) have type Promise<Result<T, E>>,
+        // so `await bridge fs.read_file(path)` typechecks as rfd#27
+        // describes.
+        assert!(
+            typeck("const r = await bridge fs.read_file(\"a.txt\");").is_empty(),
+            "await on an async bridge op must typecheck"
+        );
+    }
+
+    #[test]
+    fn bridge_sync_op_is_plain_result_without_await() {
+        // rfd#27: sync ops (crypto.*) stay plain Results and are used without
+        // await.
+        assert!(
+            typeck("const r = bridge crypto.random_bytes(16);").is_empty(),
+            "sync bridge op must typecheck as a plain Result"
+        );
+    }
+
+    #[test]
+    fn bridge_sync_op_rejects_await() {
+        // Awaiting a sync op is a type error, same as awaiting any other
+        // non-Promise value.
+        let errors = typeck("const r = await bridge crypto.random_bytes(16);");
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert!(
+            errors[0].message.contains("Promise"),
+            "{}",
+            errors[0].message
+        );
+    }
 }

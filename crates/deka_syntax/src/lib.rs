@@ -3,6 +3,7 @@
 //! Contains the DS-only lexer, parser, AST, and typechecker. No PHPX.
 
 pub mod ast;
+pub mod bridge;
 pub mod canonicalize;
 pub mod diagnostics;
 pub mod lexer;
@@ -10,6 +11,7 @@ pub mod parse;
 pub mod typeck;
 
 pub use ast::*;
+pub use bridge::{BRIDGE_OPS, BridgeOp, bridge_op_is_async};
 pub use canonicalize::{lower_method_calls, resolve_imported_enum_constructors};
 pub use diagnostics::{Diagnostic, Severity};
 pub use lexer::Lexer;

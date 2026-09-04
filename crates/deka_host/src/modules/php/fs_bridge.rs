@@ -653,6 +653,22 @@ pub(super) fn op_php_fs_call_proto(
     fs_call_proto_impl(request)
 }
 
+/// Async counterpart of `op_php_fs_call_proto` (deka#578). The fs bridge does
+/// blocking std::fs IO; running it inline stalls the isolate and every
+/// request routed to it. `spawn_blocking` moves the work to the tokio
+/// blocking pool so the isolate thread yields while the op is in flight.
+/// `op2` treats the `async fn` as an async op, so calling it from JS returns
+/// a Promise.
+#[op2]
+#[buffer]
+pub(super) async fn op_php_fs_call_proto_async(
+    #[buffer(copy)] request: Vec<u8>,
+) -> Result<Vec<u8>, deno_core::error::CoreError> {
+    tokio::task::spawn_blocking(move || fs_call_proto_impl(&request))
+        .await
+        .map_err(|e| core_err(format!("fs bridge task failed: {e}")))?
+}
+
 #[op2]
 #[buffer]
 pub(super) fn op_php_fs_proto_encode(
