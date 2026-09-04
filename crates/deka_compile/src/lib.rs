@@ -485,11 +485,8 @@ pub fn compile_to_js_with_imports_and_options<'a>(
         &typeck_result.type_of_calls,
         &typeck_result.signature_calls,
         &typeck_result.array_first_last_calls,
-        // super_calls/static_type_calls are no longer produced by the
-        // typechecker (deka#561); the emitter parameters stay and PR B
-        // (super declarations) re-feeds them.
-        &std::collections::HashMap::new(),
-        &std::collections::HashMap::new(),
+        &typeck_result.static_type_calls,
+        &typeck_result.super_trees,
         &typeck_result.jsx_optional_props,
         &typeck_result.enum_case_patterns,
         &typeck_result.union_type_patterns,
@@ -731,6 +728,101 @@ mod tests {
         deka_syntax::resolve_imported_enum_constructors(&mut main_program, &arena, &imports);
         let result = check_program_with_imports(&main_program, main_src, &imports);
         assert!(result.errors.is_empty(), "{:?}", result.errors);
+    }
+
+    /// Fixture-first guard for PR B of deka#561 (super declarations,
+    /// `User.type()`): the identity mechanism the feature rides on is the
+    /// struct brand — a string id compared by value across module boundaries
+    /// (deka#556), read at runtime by `__deka_type_of`. If a super-decl
+    /// descriptor const ever stops agreeing with what `u.getType()` reports
+    /// for an imported struct, the failure is silent, so this test pins the
+    /// baseline BEFORE the feature lands and must stay green throughout.
+    ///
+    /// Compiled against unmodified main it proves: an importing module sees
+    /// the imported struct's shape, constructs values through the imported
+    /// factory binding, and `getType()` rewrites to the module-local
+    /// `__deka_type_of` reading the `__deka_struct` tag.
+    #[test]
+    fn cross_module_struct_brand_identity_baseline() {
+        use bumpalo::Bump;
+        use deka_syntax::{collect_module_exports, parse};
+        use std::collections::HashMap;
+        let arena = Bump::new();
+        let lib_src = "struct User { id: number; name: string }\nexport { User }";
+        let lib_parse = parse(lib_src, &arena);
+        assert!(lib_parse.errors.is_empty(), "{:?}", lib_parse.errors);
+        let lib_program = lib_parse.program.unwrap();
+        let lib_exports = collect_module_exports(&lib_program, &arena);
+        assert!(
+            lib_exports.structs.contains_key("User"),
+            "lib must export the User struct"
+        );
+
+        let main_src = "import { User } from \"./lib.ds\";\nconst u = User { id: 1, name: \"D\" };\nconst t = u.getType().toString();";
+        let result = compile_to_js_with_imports(main_src, "main.ds", &arena, &{
+            let mut m: HashMap<&str, &deka_syntax::typeck::ModuleExports> = HashMap::new();
+            m.insert("./lib.ds", &lib_exports);
+            m
+        })
+        .expect("compile should succeed");
+        // The importing module constructs through the imported binding — the
+        // factory is declared once, in the declaring module.
+        assert!(result.js.contains("User({ id: 1, name: \"D\" })"), "got:\n{}", result.js);
+        // getType() rewrites to the module-local tag read; the brand id is
+        // the struct name, so cross-module identity is by value, not object.
+        assert!(result.js.contains("__deka_type_of(u)"), "got:\n{}", result.js);
+        // The importing module must not re-instantiate the factory with its
+        // own brand: it constructs through the imported `User` binding. (The
+        // module-local `__deka_struct` HELPER is emitted per module by design,
+        // deka#556 — only the brand-bearing instantiation must stay singular.)
+        assert!(
+            !result.js.contains("__deka_struct(\"User\""),
+            "the importing module re-declared the User factory:\n{}",
+            result.js
+        );
+    }
+
+    /// The PR B feature case of the baseline above: `super struct` declared
+    /// in lib, `User.type()` called from the importing module. The descriptor
+    /// const must be emitted where the call is recorded (the importer), the
+    /// call must rewrite to the const — not to a fresh structural literal per
+    /// call site — and the importer must not re-instantiate the factory or
+    /// touch globalThis.
+    #[test]
+    fn cross_module_super_type_call_uses_imported_struct() {
+        use bumpalo::Bump;
+        use deka_syntax::{collect_module_exports, parse};
+        use std::collections::HashMap;
+        let arena = Bump::new();
+        let lib_src = "super struct User { id: number; name: string }\nexport { User }";
+        let lib_parse = parse(lib_src, &arena);
+        assert!(lib_parse.errors.is_empty(), "{:?}", lib_parse.errors);
+        let lib_program = lib_parse.program.unwrap();
+        let lib_exports = collect_module_exports(&lib_program, &arena);
+        assert!(
+            lib_exports.structs.get("User").map(|i| i.is_super).unwrap_or(false),
+            "lib must export User as a super struct"
+        );
+
+        let main_src = "import { User } from \"./lib.ds\";\nconst u = User { id: 1, name: \"D\" };\nconst t = User.type();\nconst s = t.toString();";
+        let result = compile_to_js_with_imports(main_src, "main.ds", &arena, &{
+            let mut m: HashMap<&str, &deka_syntax::typeck::ModuleExports> = HashMap::new();
+            m.insert("./lib.ds", &lib_exports);
+            m
+        })
+        .expect("compile should succeed");
+        // The importer references the descriptor const emitted for the super
+        // group; a per-call-site structural literal would bloat N calls into
+        // N copies and was the rejected design.
+        assert!(result.js.contains("__deka_super_desc$User"), "got:\n{}", result.js);
+        // The factory stays declared once, in lib; the importer constructs
+        // through the imported binding (same invariant as the baseline).
+        assert!(
+            !result.js.contains("__deka_struct(\"User\""),
+            "the importing module re-declared the User factory:\n{}",
+            result.js
+        );
+        assert!(!result.js.contains("globalThis"), "got:\n{}", result.js);
     }
 
     #[test]

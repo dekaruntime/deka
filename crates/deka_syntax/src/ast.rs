@@ -109,11 +109,15 @@ pub enum Stmt<'a> {
         span: Span,
     },
     /// `struct Name<T> { field: Type, embed Other }`
+    ///
+    /// `is_super`: declared `super struct` (rfd#41, deka#561 PR B) — the
+    /// type's descriptor survives to runtime and `Name.type()` is legal.
     Struct {
         name: &'a str,
         type_params: &'a [TypeParam<'a>],
         fields: &'a [StructField<'a>],
         embeds: &'a [Embed<'a>],
+        is_super: bool,
         span: Span,
     },
     /// `enum Name<T> { A, B(number), C(T) }`
@@ -121,6 +125,7 @@ pub enum Stmt<'a> {
         name: &'a str,
         type_params: &'a [TypeParam<'a>],
         cases: &'a [EnumCase<'a>],
+        is_super: bool,
         span: Span,
     },
     /// `type Name<T> = SomeType;`
