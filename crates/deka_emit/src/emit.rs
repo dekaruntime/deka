@@ -1302,13 +1302,13 @@ impl<'a> Emitter<'a> {
 
         if self.uses_prelude_enums {
             self.out.push_str("const Result = Object.freeze({\n");
-            self.out.push_str("  Ok: (value) => Object.freeze({ __enum: \"Result\", __case: \"Ok\", name: \"Ok\", value }),\n");
-            self.out.push_str("  Err: (error) => Object.freeze({ __enum: \"Result\", __case: \"Err\", name: \"Err\", error })\n");
+            self.out.push_str("  Ok: (value) => ({ __enum: \"Result\", __case: \"Ok\", name: \"Ok\", value }),\n");
+            self.out.push_str("  Err: (error) => ({ __enum: \"Result\", __case: \"Err\", name: \"Err\", error })\n");
             self.out.push_str("});\n");
             self.out.push_str("const Option = Object.freeze({\n");
-            self.out.push_str("  Some: (value) => Object.freeze({ __enum: \"Option\", __case: \"Some\", name: \"Some\", value }),\n");
+            self.out.push_str("  Some: (value) => ({ __enum: \"Option\", __case: \"Some\", name: \"Some\", value }),\n");
             self.out.push_str(
-                "  None: Object.freeze({ __enum: \"Option\", __case: \"None\", name: \"None\" })\n",
+                "  None: ({ __enum: \"Option\", __case: \"None\", name: \"None\" })\n",
             );
             self.out.push_str("});\n");
             self.out.push_str("const Ok = Result.Ok;\n");
