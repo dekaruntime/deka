@@ -1,0 +1,6 @@
+# Keep generated parser artifacts out of language stats.
+tooling/tree-sitter-phpx/**/parser.c linguist-generated=true
+tooling/tree-sitter-phpx/**/scanner.c linguist-generated=true
+
+# Treat PHPX source as PHP for GitHub linguist classification.
+*.phpx linguist-language=PHP

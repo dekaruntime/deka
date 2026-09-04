@@ -1,0 +1,5 @@
+import { foo } from 'missing/mod';
+
+function ok() {
+    return foo();
+}

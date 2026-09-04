@@ -1,0 +1,5 @@
+function App() {
+    return <div class="x">Hello</div>;
+}
+
+$node = <App />;

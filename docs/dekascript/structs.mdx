@@ -1,0 +1,114 @@
+---
+title: Structs
+description: Nominal record types, embedding, and methods in DekaScript.
+---
+
+Structs are nominal record types: two structs with the same fields but different names are not interchangeable.
+
+## Defining a struct
+
+```ds
+struct Point {
+  x: number
+  y: number
+}
+```
+
+## Creating values
+
+```ds
+const origin = Point { x: 0, y: 0 }
+let cursor = Point { x: 10, y: 20 }
+```
+
+`const` bindings are immutable; `let` bindings are mutable.
+
+```ds
+origin.x = 5 // compile error: cannot mutate immutable value
+cursor.x = 5 // ok
+```
+
+## Methods
+
+Attach methods with Go-style receiver syntax. The receiver name is scoped inside the method body.
+
+```ds
+fn (p Point) magnitude(): number {
+  return Math.sqrt((p.x * p.x) + (p.y * p.y))
+}
+
+const p = Point { x: 3, y: 4 }
+console.log(p.magnitude())
+```
+
+### Mutable methods
+
+Methods that mutate the receiver use a `mut` receiver and may only be called on mutable values (`let` bindings).
+
+```ds
+fn (p mut Point) translate(dx: number, dy: number): void {
+  p.x += dx
+  p.y += dy
+}
+
+let p = Point { x: 1, y: 2 }
+p.translate(3, 4)
+```
+
+## Embedding
+
+Embed one struct inside another to promote its fields and methods.
+
+```ds
+struct Person {
+  name: string
+}
+
+fn (p Person) greet(): string {
+  return "Hello, " . p.name
+}
+
+struct Employee {
+  Person
+  employeeId: string
+}
+
+fn (e Employee) greet(): string {
+  return "Employee " . e.employeeId
+}
+
+let e = Employee {
+  Person: Person { name: "Charlie" },
+  employeeId: "E54321"
+}
+
+e.greet()         // Employee E54321
+e.Person.greet()  // Hello, Charlie
+```
+
+Promoted fields can also be initialized directly in the literal; the compiler routes them into the embedded struct:
+
+```ds
+let e = Employee { name: "Charlie", employeeId: "E54321" }
+```
+
+If two embedded structs both define the same field or method, direct access is ambiguous and must be disambiguated with the embedded field name.
+
+## Runtime representation
+
+At runtime, a struct is a factory created by `__deka_struct("Point")` — a module-local helper the compiler emits into every module that needs it (deka#551). Nothing is written to `globalThis`, and no state is shared between modules: instances carry a hidden `__deka_struct` tag holding the struct's name, so pattern matching can identify them by value across module boundaries.
+
+## JS output example
+
+```js
+function __deka_struct(id, embeds) { /* ... module-local factory ... */ }
+
+const Point = __deka_struct("Point");
+Point.impl("magnitude", function() {
+  const p = this;
+  return Math.sqrt((p.x * p.x) + (p.y * p.y));
+});
+
+const p = Point({ x: 3, y: 4 });
+console.log(p.magnitude());
+```

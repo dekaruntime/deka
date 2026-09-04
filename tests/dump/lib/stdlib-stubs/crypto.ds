@@ -1,0 +1,6 @@
+// Type stub for @deka/crypto. The harness provides a runtime shim; this file
+// gives the WASM project compiler enough type information to typecheck
+// fixtures that import from "crypto" (deka#497).
+export fn uuid_v4() Result<string, string> {
+  return Ok("")
+}

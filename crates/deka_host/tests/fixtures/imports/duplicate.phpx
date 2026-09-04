@@ -1,0 +1,7 @@
+import { result_ok } from 'core/result';
+import { result_ok as result_ok } from 'core/result';
+
+function ok(): int {
+    $value = result_ok(1);
+    return 1;
+}

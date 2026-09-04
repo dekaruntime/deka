@@ -1,0 +1,97 @@
+syntax = "proto3";
+
+package deka.bridge.v1;
+
+message FsOpenRequest {
+  string path = 1;
+  string mode = 2;
+}
+
+message FsReadRequest {
+  uint64 handle = 1;
+  uint64 max_bytes = 2;
+}
+
+message FsWriteRequest {
+  uint64 handle = 1;
+  bytes data = 2;
+}
+
+message FsCloseRequest {
+  uint64 handle = 1;
+}
+
+message FsReadFileRequest {
+  string path = 1;
+}
+
+message FsWriteFileRequest {
+  string path = 1;
+  bytes data = 2;
+}
+
+message FsReadDirRequest {
+  string path = 1;
+  bool with_types = 2;
+}
+
+message FsMkdirsRequest {
+  string path = 1;
+}
+
+message FsDirEntry {
+  string name = 1;
+  bool is_dir = 2;
+  bool is_file = 3;
+}
+
+message FsReadDirResponse {
+  repeated FsDirEntry entries = 1;
+}
+
+message FsRequest {
+  uint32 schema_version = 1;
+  oneof action {
+    FsOpenRequest open = 10;
+    FsReadRequest read = 11;
+    FsWriteRequest write = 12;
+    FsCloseRequest close = 13;
+    FsReadFileRequest read_file = 14;
+    FsWriteFileRequest write_file = 15;
+    FsReadDirRequest read_dir = 16;
+    FsMkdirsRequest mkdirs = 17;
+  }
+}
+
+message FsOpenResponse {
+  uint64 handle = 1;
+}
+
+message FsReadResponse {
+  bytes data = 1;
+  bool eof = 2;
+}
+
+message FsWriteResponse {
+  uint64 written = 1;
+}
+
+message FsUnitResponse {
+  bool ok = 1;
+}
+
+message FsResponse {
+  uint32 schema_version = 1;
+  bool ok = 2;
+  string error = 3;
+  oneof action {
+    FsOpenResponse open = 10;
+    FsReadResponse read = 11;
+    FsWriteResponse write = 12;
+    FsUnitResponse close = 13;
+    FsReadResponse read_file = 14;
+    FsWriteResponse write_file = 15;
+    FsReadDirResponse read_dir = 16;
+    FsUnitResponse mkdirs = 17;
+  }
+}

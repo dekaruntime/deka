@@ -1,0 +1,5 @@
+import { result_ok } from 'core/result';
+
+function ok(): int {
+    return 1;
+}

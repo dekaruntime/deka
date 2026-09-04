@@ -1,0 +1,6 @@
+struct Point {
+    public int $x;
+    public int $y;
+}
+
+$point = Point { $x: 1 };

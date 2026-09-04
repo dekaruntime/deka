@@ -1,0 +1,223 @@
+name: CI
+
+on:
+  # PRs always run: main has branch protection requiring these checks, and a
+  # paths-ignore here would leave docs-only PRs permanently unmergeable.
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/PULL_REQUEST_TEMPLATE.md'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Detect changed files
+    runs-on: [self-hosted, linux, x64]
+    outputs:
+      rust: ${{ steps.detect.outputs.rust }}
+      lockfile: ${{ steps.detect.outputs.lockfile }}
+      utility_css: ${{ steps.detect.outputs.utility_css }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Detect change categories
+        id: detect
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # On pushes to main, HEAD is main — diff against the pre-push head.
+            files="$(git diff --name-only ${{ github.event.before }}..HEAD | sort -u)"
+          else
+            git fetch origin main --quiet
+            files="$(git diff --name-only origin/main...HEAD | sort -u)"
+          fi
+
+          echo "Changed files:"
+          echo "$files"
+
+          rust=false
+          lockfile=false
+          utility_css=false
+
+          if echo "$files" | grep -qE '^(crates/.+\.rs|crates/.+\.js|crates/.+\.ts|crates/.+/build\.rs|assets/.+|scripts/.+|tests/.+|\.github/workflows/(ci|release)\.yml)$'; then
+            rust=true
+          fi
+
+          if echo "$files" | grep -qE '^(crates/.+/Cargo\.toml|Cargo\.lock)$'; then
+            lockfile=true
+          fi
+
+          if echo "$files" | grep -qE '^assets/utility-css/.+$'; then
+            utility_css=true
+          fi
+
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          echo "lockfile=$lockfile" >> "$GITHUB_OUTPUT"
+          echo "utility_css=$utility_css" >> "$GITHUB_OUTPUT"
+
+  utility-css:
+    name: Utility CSS generator
+    needs: [changes]
+    if: needs.changes.outputs.utility_css == 'true'
+    runs-on: [self-hosted, macOS, ARM64]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Regenerate bundle
+        working-directory: assets/utility-css
+        run: bun build.ts
+
+      - name: Check for uncommitted changes
+        run: |
+          if [ -n "$(git status --porcelain assets/utility-css/bundle.js)" ]; then
+            echo "::error::assets/utility-css/bundle.js is out of date. Run 'bun build.ts' in that directory and commit the result."
+            git diff assets/utility-css/bundle.js
+            exit 1
+          fi
+
+      - name: Run utility-css smoke tests
+        working-directory: assets/utility-css
+        run: bun test.ts
+
+  lockfile-check:
+    name: Lockfile consistency
+    needs: [changes]
+    if: needs.changes.outputs.lockfile == 'true' && needs.changes.outputs.rust != 'true'
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.96.0
+
+      - name: Verify lockfile matches workspace manifests
+        run: cargo update --workspace --locked
+
+  rust:
+    name: Rust tests
+    needs: [changes]
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: [self-hosted, macOS, ARM64]
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      RUSTC_WRAPPER: sccache
+      SCCACHE_ENDPOINT: "https://08b93c93f8b7adc43678e9afba31e4ee.r2.cloudflarestorage.com"
+      SCCACHE_REGION: "auto"
+      SCCACHE_BUCKET: "deka-sccache-darwin-arm64"
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Where am I?
+        run: |
+          echo "runner name: $(hostname)"
+          echo "runner os: ${{ runner.os }}"
+          echo "runner arch: ${{ runner.arch }}"
+          echo "uname -a: $(uname -a)"
+          (which cargo && cargo --version) || true
+          (which bun && bun --version) || true
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Setup Bun for browser WASM parity
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Verify sccache can reach R2
+        run: |
+          echo "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
+          echo "SCCACHE_BUCKET=$SCCACHE_BUCKET"
+          sccache --show-stats
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-directories: |
+            target/**/gn_out
+          cache-on-failure: true
+
+      - name: Pre-fetch V8 static lib
+        env:
+          V8_URL: https://github.com/denoland/rusty_v8/releases/download/v150.4.0/librusty_v8_simdutf_release_aarch64-apple-darwin.a.gz
+        run: |
+          mkdir -p target/debug/gn_out/obj
+          curl -fsSL -w "HTTP %{http_code} - %{size_download} bytes downloaded\n" \
+            -o target/debug/gn_out/obj/librusty_v8.a.gz "$V8_URL"
+          ls -lh target/debug/gn_out/obj/librusty_v8.a.gz
+          echo "RUSTY_V8_ARCHIVE=${{ github.workspace }}/target/debug/gn_out/obj/librusty_v8.a.gz" >> "$GITHUB_ENV"
+
+      # Build the release CLI before the workspace test so pm's
+      # real_cli_invocation_recovers_each_atomic_swap_boundary test can find
+      # target/release/cli (deka#521).
+      - name: Build CLI for runtime execution tests
+        run: cargo build --release -p cli
+
+      - name: Build and test browser compiler WASM
+        env:
+          DEKA_SKIP_DIRTY_CHECK: 1
+        run: scripts/test-deka-compiler-wasm.sh
+
+      # Run every workspace crate's tests, not a hand-maintained list. 15
+      # compiler/runtime crates containing ~540 tests were not executed by the
+      # previous per-crate steps (deka#521). --workspace makes the default
+      # opt-out with a required justification; opt-in lists silently drop
+      # crates.
+      #
+      # Runs every target in parallel. --test-threads=1 was masking deka#427,
+      # where a process-global test hook fired inside unrelated tests; parallel
+      # execution is what makes CI able to catch that class again. The cli
+      # crate in particular needs every target, not just --lib: six integration
+      # tests under crates/cli/tests/ were red on main, including two that
+      # caught deka#437 (a shipped Worker whose handlers were referenced but
+      # never defined). deka-fmt's corpus round-trip property test (deka#477)
+      # also only runs if the crate is tested here.
+      - name: Test workspace
+        run: cargo test --locked --workspace
+
+      - name: Run tour + public conformance suite (native)
+        run: ./run.sh --skip-build --locked
+
+      - name: Install dump harness deps + Chromium
+        working-directory: tests/dump
+        run: |
+          bun install
+          bunx playwright install chromium
+
+      # The full dump only runs on release; without this smoke, harness
+      # breakage (bad shim paths, import-transform regressions) ships red.
+      - name: Dump harness smoke (browser + native)
+        env:
+          DEKA_NATIVE: ${{ github.workspace }}/target/release/cli
+          DEKA_WASM: ${{ github.workspace }}/dist/deka-compiler-wasm/deka_compiler.wasm
+        run: bun tests/dump/scripts/smoke.mjs
+
+      - name: Upload browser compiler WASM provenance
+        uses: actions/upload-artifact@v7
+        with:
+          name: deka-compiler-wasm
+          path: dist/deka-compiler-wasm/

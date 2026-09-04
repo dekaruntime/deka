@@ -1,0 +1,59 @@
+name: Published stdlib typeck
+
+# Not a required PR check: json/jwt/http still use v1 `object` and will fail
+# until those packages are 0.2.1'd. The job is the signal (deka#405).
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "42 */12 * * *"
+  push:
+    branches: [main]
+    paths:
+      - "crates/deka_syntax/**"
+      - "crates/deka_emit/**"
+      - "crates/deka_compile/**"
+      - "crates/cli/**"
+      - "scripts/typeck-published-stdlib.sh"
+      - ".github/workflows/stdlib-typeck.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stdlib-typeck-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typeck:
+    name: Typecheck published stdlib
+    runs-on: [self-hosted, macOS, ARM64]
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      RUSTC_WRAPPER: sccache
+      SCCACHE_ENDPOINT: "https://08b93c93f8b7adc43678e9afba31e4ee.r2.cloudflarestorage.com"
+      SCCACHE_REGION: "auto"
+      SCCACHE_BUCKET: "deka-sccache-darwin-arm64"
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.96.0
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Build CLI
+        run: cargo build --release -p cli
+
+      - name: Typecheck published packages
+        run: |
+          chmod +x scripts/typeck-published-stdlib.sh
+          CLI="${{ github.workspace }}/target/release/cli" scripts/typeck-published-stdlib.sh

@@ -1,0 +1,9 @@
+[package]
+name = "platform_browser"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+platform = { path = "../platform" }
+rand = "0.8"

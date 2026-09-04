@@ -1,0 +1,16 @@
+# Global monorepo ignores
+**/.DS_Store
+**/node_modules/
+**/.deka/
+**/.next/
+**/.open-next/
+**/target/
+**/dist/
+linkhash/**/.cache/
+.cache/
+.cache/deka_js/
+tests/testsuite/.run-tmp/
+tests/tour/.run-tmp/
+tests/dump/.cache/
+.php_modules/.cache
+.php_modules/.phpx-cache-*

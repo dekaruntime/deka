@@ -1,0 +1,34 @@
+import { echo } from "io"
+
+// Every value can tell you its Type: a real, frozen value you can pass
+// around and inspect — not just a string.
+struct User {
+  id: number;
+  name: string;
+}
+
+const u = User { id: 1, name: "Deka" }
+
+echo(u.getType().toString())
+echo("hi".getType().toString())
+
+// Inside a match, narrowing means you reflect on the member you actually
+// got — the type answer follows the value.
+fn describe(v: User | number) string {
+  return match (v) {
+    User(user) => user.getType().toString(),
+    number(n) => n.getType().toString(),
+  }
+}
+
+echo(describe(u))
+echo(describe(7))
+
+// The answer is the runtime type, even when the value's declared type is
+// a union — getType looks at the value, not the annotation.
+fn runtime_type(v: User | number) string {
+  return v.getType().toString()
+}
+
+echo(runtime_type(u))
+echo(runtime_type(7))

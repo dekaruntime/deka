@@ -1,0 +1,3 @@
+function f(Result<int> $x): int {
+    return 1;
+}

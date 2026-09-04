@@ -1,0 +1,101 @@
+---
+title: Interfaces
+description: Structural interfaces and component props in DekaScript.
+---
+
+Interfaces are structural: any value with the required methods satisfies an interface. There is no explicit `implements` declaration.
+
+## Defining an interface
+
+```ds
+interface Named {
+  name: string
+  fn displayName() string
+}
+```
+
+## Satisfying an interface
+
+A struct satisfies an interface by having matching methods.
+
+```ds
+struct Person {
+  name: string
+}
+
+fn (p Person) displayName(): string {
+  return p.name
+}
+
+fn printName(n: Named) {
+  console.log(n.displayName())
+}
+
+let p = Person { name: "Charlie" }
+printName(p)  // works
+```
+
+## Interface fields are read-only by default
+
+Fields in an interface grant read access. Mark a field `mut` to allow mutation through the interface.
+
+```ds
+interface Named {
+  name: string
+}
+
+interface MutableNamed {
+  mut name: string
+}
+
+fn rename(n: MutableNamed, newName: string) {
+  n.name = newName
+}
+```
+
+## Optional fields
+
+Use `?` for fields that may be absent.
+
+```ds
+interface CardProps {
+  title: string
+  subtitle?: string
+}
+
+fn Card({ title, subtitle }: CardProps) Component {
+  return <div>
+    <h2>{title}</h2>
+    {subtitle != null ? <p>{subtitle}</p> : null}
+  </div>
+}
+
+<Card title="Hello" />
+<Card title="Hello" subtitle="World" />
+```
+
+## Spread
+
+Spread compatible props into an object or JSX element.
+
+```ds
+fn FancyButton(props: ButtonProps) Component {
+  return <Button {...props} class="fancy" />
+}
+```
+
+## Component props
+
+Components use interface-shaped props. This is the primary use case for interfaces in DekaScript.
+
+```ds
+interface HeroProps {
+  title: string
+}
+
+fn Hero({ title }: HeroProps) Component {
+  return <h1>{title}</h1>
+}
+
+<Hero title="Hello PHPX" />
+```

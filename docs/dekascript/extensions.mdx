@@ -1,0 +1,49 @@
+---
+title: Extension methods on primitives
+description: Module-local receiver methods on string, number, and boolean — statically dispatched, never prototype-based.
+---
+
+Receiver-method syntax is not limited to structs: a module can declare
+extension methods on the primitive types `string`, `number`, and `boolean`.
+
+```ds
+fn (s string) slugify() string {
+  return s.toLowerCase().replaceAll(" ", "-")
+}
+
+const title = "Hello World"
+echo(title.slugify()) // "hello-world"
+```
+
+## Static dispatch, never prototypes
+
+A call like `title.slugify()` is a compile-time rewrite to a free function
+call, `slugify$string(title)`. Primitives are immutable values and cannot be
+branded the way struct instances are, so the compiler never touches
+`String.prototype` or `globalThis` — there is nowhere to hang a method and no
+runtime dispatch table. The emitted code is an ordinary function.
+
+Chaining works because every call is rewritten independently:
+`x.a().b()` becomes `b$string(a$string(x))`.
+
+## Rules
+
+- Extensions are **module-local**: there is no importable `string` name, so a
+  module can only call the extensions it declares itself.
+- Primitive receivers are immutable values, so `fn (s mut string) ...` is a
+  compile error.
+- Calling an extension on the wrong primitive names both types:
+  `n.slugify()` on a `number` fails with
+  `` method `slugify` is declared on `string`, not `number` ``.
+- A user extension shadows a builtin **method** of the same name:
+  declaring `fn (s string) toUpperCase() string` reroutes `s.toUpperCase()`
+  to your implementation. The shadow is total within the module: every
+  call-shaped `s.toUpperCase()` resolves to the extension, including calls
+  written textually before the declaration.
+- Declaring an extension on a builtin **property** is rejected:
+  `fn (s string) length() number` fails with
+  `` cannot declare extension `length` on `string`: `length` is a builtin property ``.
+  `s.length` stays property-shaped, so one name must not silently mean two
+  things.
+- Unused extensions are tree-shaken: an extension that nothing calls is
+  absent from the emitted output.

@@ -1,0 +1,90 @@
+---
+title: Signals
+description: Fine-grained reactivity primitives for the DekaScript client runtime.
+---
+
+The runtime provides a tiny, signal-based reactivity system. It is used by the client runtime to patch DOM nodes directly; components run once and signals drive later updates.
+
+## API
+
+The primitives are exposed on `deka.ui` and also as globals for the current compiler slice:
+
+| Primitive | Namespace | Global alias |
+|-----------|-----------|--------------|
+| `createSignal` | `deka.ui.signal` | `createSignal` |
+| `createEffect` | `deka.ui.effect` | `createEffect` |
+| `createMemo` | `deka.ui.memo` | `createMemo` |
+
+- `createSignal(initial)` returns a `[get, set]` tuple.
+- `createEffect(fn)` runs `fn` and re-runs it whenever a signal read inside `fn` changes. If `fn` returns a cleanup function, that cleanup is called before the next re-run.
+- `createMemo(fn)` returns a getter that caches the value of `fn` and recomputes only when its signal dependencies change.
+
+## Basic usage
+
+```ds
+const pair = createSignal(0)
+const get = pair[0]
+const set = pair[1]
+
+console.log(get()) // 0
+set(5)
+console.log(get()) // 5
+```
+
+## Effects and automatic dependencies
+
+```ds
+const pair = createSignal(0)
+const get = pair[0]
+const set = pair[1]
+
+fn onChange() void {
+  console.log(get())
+}
+
+createEffect(onChange)
+set(1) // prints 1
+set(2) // prints 2
+```
+
+## Memos
+
+```ds
+const pair = createSignal(1)
+const get = pair[0]
+const set = pair[1]
+
+fn double() number {
+  return get() * 2
+}
+
+const memoized = createMemo(double)
+console.log(memoized()) // 2
+console.log(memoized()) // 2, no recomputation
+set(3)
+console.log(memoized()) // 6
+```
+
+## Cleanup
+
+An effect can return a cleanup function. It is run before the effect re-runs.
+
+```ds
+const pair = createSignal(0)
+const get = pair[0]
+const set = pair[1]
+
+fn withCleanup() fn() void {
+  const v = get()
+  return fn() { console.log("cleaning up " + v) }
+}
+
+createEffect(withCleanup)
+set(1) // prints "cleaning up 0" then re-runs
+```
+
+## Runtime notes
+
+- Effects and memos subscribe to every signal read while they execute.
+- A signal may have any number of subscribers.
+- Setting a signal to the same value does not trigger updates (`Object.is` equality).

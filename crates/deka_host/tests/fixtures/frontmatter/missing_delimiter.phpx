@@ -1,0 +1,4 @@
+---
+import { strlen } from 'string';
+
+<div>Hi</div>

@@ -1,0 +1,6 @@
+import Hello from '@user/hello' as wasm;
+
+function use_default(): int {
+    $value = Hello;
+    return 1;
+}

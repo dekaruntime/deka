@@ -1,0 +1,43 @@
+{
+  "lockfileVersion": 1,
+  "packages": {
+    "@deka/bytes": [
+      "@deka/bytes@0.3.1",
+      "deka.gg:@deka/bytes",
+      {
+        "repo": "https://github.com/dekaruntime/bytes.git",
+        "gitRef": "v0.3.1",
+        "source": "deka.gg",
+        "dependencies": [],
+        "moduleGraph": {
+          "algo": "sha256",
+          "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "fsGraph": {
+          "algo": "sha256",
+          "hash": "89fba2fb1e48758110a9f88ad3fbea5fac412fcf54375f56a3c70c087f5ad421"
+        }
+      },
+      ""
+    ],
+    "@deka/io": [
+      "@deka/io@0.1.1",
+      "deka.gg:@deka/io",
+      {
+        "repo": "https://github.com/dekaruntime/io.git",
+        "gitRef": "v0.1.1",
+        "source": "deka.gg",
+        "dependencies": [],
+        "moduleGraph": {
+          "algo": "sha256",
+          "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "fsGraph": {
+          "algo": "sha256",
+          "hash": "81b790e3d47cb1cb0ca5e2d9889618d099ba3f74d6e2be1ce819ff8f4f1e23db"
+        }
+      },
+      ""
+    ]
+  }
+}

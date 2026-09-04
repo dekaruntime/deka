@@ -1,0 +1,3 @@
+import { interface_0__greet } from '@user/hello' as wasm;
+
+interface_0__greet(1);

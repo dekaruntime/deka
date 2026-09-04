@@ -1,0 +1,8 @@
+[package]
+name = "wit-deka"
+version.workspace = true
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+wit-parser = "0.219.2"

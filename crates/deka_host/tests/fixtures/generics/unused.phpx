@@ -1,0 +1,3 @@
+function unused<T>(int $value): int {
+    return $value;
+}

@@ -1,0 +1,5 @@
+import { missing } from 'string';
+
+function ok() {
+    return missing();
+}

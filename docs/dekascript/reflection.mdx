@@ -1,0 +1,167 @@
+---
+title: Reflection — getType() and super declarations
+description: .getType() inspects a value's runtime type; super struct/super enum make a declaration's static descriptor available as Name.type().
+---
+
+Every value answers the question "what are you?" at runtime. Calling
+`.getType()` returns a **first-class `Type` value** — not a string —
+matching Java's `getClass()`, C#'s `GetType()`, Go's `reflect.TypeOf()`,
+and Python's `type()`.
+
+```ds
+const t = "hello".getType()
+echo(t.toString()) // "string"
+```
+
+## The descriptor
+
+`getType()` returns a frozen, interned descriptor:
+
+```ds
+{ kind, name, toString() { return this.name } }
+```
+
+- `kind` is an open set: `"string"`, `"number"`, `"boolean"`, `"bytes"`,
+  `"array"`, `"struct"`, `"newtype"`, `"enum"`, `"option"`, `"object"`,
+  `"function"`, `"none"`, `"unknown"`. Only `"string"`, `"number"`,
+  `"boolean"`, `"bytes"`, `"array"`, `"struct"`, `"newtype"`, `"enum"`,
+  `"object"`, `"function"`, and `"none"` are produced today.
+- `name` is what `toString()` returns. Structs, newtypes, and enums report
+  their own name; arrays report `"Array"`.
+
+Two honest limitations of runtime inspection:
+
+- An array's element type is not knowable at runtime — `[1, 2]` can only
+  report `Array`, never `Array<number>`. Finer static descriptors are
+  deferred (see below).
+- Enum-tagged values report through the enum tag path: `Some(1).getType()`
+  reports the name `"Option"`, matching the static type.
+
+Descriptors are interned: one singleton per `(kind, name)` per module, so
+identity comparison works.
+
+```ds
+echo(string("a".getType() == "b".getType())) // "true"
+```
+
+In this slice only `toString()` is exposed on `Type`. The rest of the
+descriptor API — `name`/`kind` properties, field and case walking,
+construction from library code — is deferred (see below).
+
+## Union receivers: the headline case
+
+A union value is one of its members at runtime, and `.getType()` tells you
+which — no narrowing required:
+
+```ds
+let something: number | string = "hello world"
+echo(something.getType().toString()) // "string"
+something = 42
+echo(something.getType().toString()) // "number"
+```
+
+This is the difference between the declared type and the runtime type:
+the value's static type stays `number | string` while `getType()`
+reports what the value actually is.
+
+## Works on the builtin containers
+
+`.getType()` needs no extra keyword or capability on any receiver,
+including values of the language's generic containers:
+
+```ds
+fn describe(values: Array<number>) string {
+  return values.getType().toString()
+}
+
+echo(describe([1, 2, 3])) // "Array"
+```
+
+User code cannot declare type parameters (deka#561) — generics are
+reserved for the language's own types — so there is no `fn id<T>` form to
+accommodate. You can *use* `Array<T>`, `Option<T>`, `Result<T, E>`, and
+`Promise<T>`; you cannot declare your own.
+
+## How it compiles
+
+`.getType()` is a compile-time rewrite, exactly like extension methods on
+primitives (deka#527): `x.getType()` becomes a call to a module-local
+free function, `__deka_type_of(x)`. There is no prototype mutation and no
+`globalThis` write. Chaining falls out for free — the outer call is an
+ordinary method call on the real descriptor object:
+
+```ds
+echo("hi".getType().toString()) // compiles to `__deka_type_of("hi").toString()`
+```
+
+A user-declared method or extension named `getType` shadows the builtin,
+consistent with the extension shadowing rule.
+
+## Static descriptors: super declarations
+
+`.getType()` answers "what is this value?" — the runtime question. The
+static counterpart, "what is this type?", is asked on the declaration
+itself, and it is opt-in: only declarations marked `super` carry their
+full structural descriptor to runtime.
+
+```ds
+super struct User {
+  id: number;
+  name: string;
+}
+
+const t = User.type()
+echo(t.toString()) // "User"
+```
+
+`super` is cost-controlled: emitting a structural descriptor for every
+declared type would be dead weight, so the author marks the types they
+actually reflect on. It exists for the runtime question — a value whose
+type is not known at compile time (parsed JSON, a union member narrowed
+at runtime). When the type is known statically the compiler walks the
+shape itself; JSON serialization (`.toJSON()`, rfd#43) is a
+compile-time walk over the static type and does not consume these
+descriptors. Composition does not repeat the mark — every
+struct or enum a super declaration references is described too, even
+when written plain — and fields that can never carry runtime type
+information (function types, unsafe-derived types) are rejected at the
+declaration, naming the field.
+
+Recursive types work; the descriptor resolves its own fields lazily:
+
+```ds
+super struct Node {
+  next: Option<Node>;
+}
+
+echo(Node.type().toString()) // "Node"
+```
+
+The same applies to `super enum`, whose descriptor carries its cases.
+
+Descriptors emitted for `Name.type()` are name-keyed module-local
+constants, frozen and deduplicated — the same emission shape as
+extension methods (deka#527) and `getType()` (deka#529). There is no
+prototype mutation and no `globalThis` write, and a super declaration
+nobody reflects on emits nothing.
+
+### Static vs runtime
+
+`Name.type()` and `value.getType()` are deliberately two different
+questions. The static descriptor is built at compile time from the
+declaration; the runtime descriptor is read from the value's brand.
+Both are frozen `Type` values with `toString()`, but they are interned
+independently — identity comparison (`==`) is meaningful within each,
+not across the two.
+
+## Deferred
+
+The following are explicitly out of scope for this slice:
+
+- `.signature()` — the declared type of a value as opposed to its runtime
+  type.
+- Walking descriptor fields/cases for schema validation — the fields are
+  present in the emitted descriptor, but the typechecker's `Type` surface
+  currently exposes only `toString()`.
+- Constructing `Type` values from library code (an open question in
+  rfd#41).

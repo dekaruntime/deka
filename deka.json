@@ -1,0 +1,39 @@
+{
+  "name": "deka-mvp2",
+  "version": "0.0.0",
+  "security": {
+    "allow": {
+      "read": [
+        "./tests",
+        "./ds_modules",
+        "./php_modules",
+        "./crates",
+        "./deka.lock",
+        "./deka.json",
+        "./scripts",
+        "./examples",
+        "./docs",
+        "./target"
+      ],
+      "write": [".cache", "ds_modules/.cache", "php_modules/.cache"],
+      "wasm": ["php_rs.wasm"],
+      "env": [
+        "DEKA_DB_SMOKE",
+        "DB_HOST",
+        "DB_PORT",
+        "DB_NAME",
+        "DB_USER",
+        "DB_PASSWORD",
+        "MYSQL_HOST",
+        "MYSQL_PORT",
+        "MYSQL_DB",
+        "MYSQL_USER",
+        "MYSQL_PASSWORD",
+        "SQLITE_PATH",
+        "DEKA_NET_SMOKE",
+        "NET_HOST",
+        "NET_PORT"
+      ]
+    }
+  }
+}

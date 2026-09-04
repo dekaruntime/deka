@@ -1,0 +1,11 @@
+enum Color {
+    case Red;
+    case Blue;
+}
+
+function to_int($color: Color): int {
+    return match ($color) {
+        Color::Red => 1,
+        Color::Blue => 2,
+    };
+}

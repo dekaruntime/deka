@@ -1,0 +1,10 @@
+enum Color {
+    case Red;
+    case Blue;
+}
+
+function pick(Color $c): int {
+    return match ($c) {
+        Color::Red => 1,
+    };
+}

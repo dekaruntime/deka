@@ -1,0 +1,28 @@
+[package]
+name = "deka_http"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+axum = { workspace = true, features = ["ws"] }
+base64 = "0.22"
+bytes = { workspace = true }
+dashmap = "5.5.3"
+futures-util = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+socket2 = { workspace = true, features = ["all"] }
+tokio = { workspace = true, features = ["full"] }
+tracing = "0.1"
+libc = "0.2"
+engine = { path = "../engine" }
+pool = { path = "../pool" }
+serde_json = { workspace = true }
+redis = { workspace = true }
+chrono = { workspace = true }
+neo4rs = { workspace = true }
+deno_core = { workspace = true }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

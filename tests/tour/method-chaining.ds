@@ -1,0 +1,29 @@
+import { echo } from "io"
+
+// A method that returns the receiver's own type can be called again on the
+// result. Each call is resolved against whatever the previous one returned,
+// so the chain reads left to right in the order the work happens.
+struct Money {
+  cents: number;
+}
+
+fn (m Money) plus(other: Money) Money {
+  return Money { cents: m.cents + other.cents }
+}
+
+fn (m Money) times(n: number) Money {
+  return Money { cents: m.cents * n }
+}
+
+// A method may also end the chain by returning a different type. Once it
+// does, the chain continues against *that* type -- so `format` below could
+// be followed by string methods, but not by `plus`.
+fn (m Money) format() string {
+  return string(m.cents) + "c"
+}
+
+const item = Money { cents: 250 }
+const shipping = Money { cents: 99 }
+
+// Read this as: three of the item, plus shipping, formatted.
+echo(item.times(3).plus(shipping).format())

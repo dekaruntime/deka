@@ -1,0 +1,15 @@
+{
+  "name": "deka-conformance-dump",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dump": "bun scripts/dump-results.mjs",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@dekaruntime/web-ide-kit": "^0.3.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1"
+  }
+}

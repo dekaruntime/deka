@@ -1,0 +1,136 @@
+syntax = "proto3";
+
+package deka.bridge.v1;
+
+message NetConnectRequest {
+  string host = 1;
+  uint32 port = 2;
+  uint64 timeout_ms = 3;
+}
+
+message NetHandleRequest {
+  uint64 handle = 1;
+}
+
+message NetDeadlineRequest {
+  uint64 handle = 1;
+  uint64 millis = 2;
+}
+
+message NetReadRequest {
+  uint64 handle = 1;
+  uint64 max_bytes = 2;
+}
+
+message NetWriteRequest {
+  uint64 handle = 1;
+  bytes data = 2;
+}
+
+message NetTlsUpgradeRequest {
+  uint64 handle = 1;
+  string server_name = 2;
+}
+
+message NetConnectTlsRequest {
+  string host = 1;
+  uint32 port = 2;
+  string server_name = 3;
+  uint64 timeout_ms = 4;
+  // Optional additional trusted certificate (PEM). Allows callers to trust
+  // a self-signed or private-CA certificate without modifying system roots.
+  bytes ca_cert = 5;
+}
+
+message NetListenRequest {
+  string host = 1;
+  uint32 port = 2;
+  uint32 backlog = 3;
+}
+
+message NetListenTlsRequest {
+  string host = 1;
+  uint32 port = 2;
+  uint32 backlog = 3;
+  bytes cert = 4;
+  bytes key = 5;
+}
+
+message NetAcceptRequest {
+  uint64 handle = 1;
+}
+
+message NetRequest {
+  uint32 schema_version = 1;
+  oneof action {
+    NetConnectRequest connect = 10;
+    NetDeadlineRequest set_deadline = 11;
+    NetReadRequest read = 12;
+    NetWriteRequest write = 13;
+    NetTlsUpgradeRequest tls_upgrade = 14;
+    NetHandleRequest close = 15;
+    NetConnectTlsRequest connect_tls = 16;
+    NetListenRequest listen = 17;
+    NetListenTlsRequest listen_tls = 18;
+    NetAcceptRequest accept = 19;
+    NetReadUntilRequest read_until = 20;
+  }
+}
+
+message NetHandleResponse {
+  uint64 handle = 1;
+  bool reused = 2;
+}
+
+message NetListenResponse {
+  uint64 handle = 1;
+}
+
+message NetAcceptResponse {
+  uint64 handle = 1;
+  string peer_addr = 2;
+}
+
+message NetReadResponse {
+  bytes data = 1;
+  bool eof = 2;
+}
+
+message NetReadUntilRequest {
+  uint64 handle = 1;
+  bytes delimiter = 2;
+  uint64 max_bytes = 3;
+}
+
+message NetReadUntilResponse {
+  bytes data = 1;
+  bool found = 2;
+  bool eof = 3;
+}
+
+message NetWriteResponse {
+  uint64 written = 1;
+}
+
+message NetUnitResponse {
+  bool ok = 1;
+}
+
+message NetResponse {
+  uint32 schema_version = 1;
+  bool ok = 2;
+  string error = 3;
+  oneof action {
+    NetHandleResponse connect = 10;
+    NetUnitResponse set_deadline = 11;
+    NetReadResponse read = 12;
+    NetWriteResponse write = 13;
+    NetHandleResponse tls_upgrade = 14;
+    NetUnitResponse close = 15;
+    NetHandleResponse connect_tls = 16;
+    NetListenResponse listen = 17;
+    NetListenResponse listen_tls = 18;
+    NetAcceptResponse accept = 19;
+    NetReadUntilResponse read_until = 20;
+  }
+}

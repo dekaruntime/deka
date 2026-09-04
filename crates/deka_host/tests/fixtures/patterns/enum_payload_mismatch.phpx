@@ -1,0 +1,11 @@
+enum Status {
+    case Running(int $pid);
+    case Done;
+}
+
+function show(Status $s): int {
+    return match ($s) {
+        Status::Running($a, $b) => $a,
+        Status::Done => 0,
+    };
+}

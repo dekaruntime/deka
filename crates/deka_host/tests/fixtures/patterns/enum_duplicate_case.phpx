@@ -1,0 +1,12 @@
+enum Mode {
+    case Fast;
+    case Slow;
+}
+
+function run(Mode $m): int {
+    return match ($m) {
+        Mode::Fast => 1,
+        Mode::Fast => 2,
+        Mode::Slow => 3,
+    };
+}

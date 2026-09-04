@@ -1,0 +1,32 @@
+[package]
+name = "runtime"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+core = { path = "../core" }
+runtime_core = { path = "../runtime_core" }
+platform = { path = "../platform" }
+platform_server = { path = "../platform_server" }
+engine = { path = "../engine" }
+pool = { path = "../pool" }
+transport = { path = "../transport" }
+reqwest = { version = "0.11", features = ["stream"] }
+bytes = { workspace = true }
+deka_http = { path = "../http" }
+stdio = { path = "../stdio" }
+deka_host = { path = "../deka_host", default-features = false, features = ["runtime"] }
+deka_compile = { path = "../deka_compile" }
+deka_ui = { path = "../deka_ui" }
+bundler = { path = "../bundler" }
+compile = { path = "../compile" }
+axum = { workspace = true }
+base64 = "0.21"
+deno_core = { workspace = true }
+notify = { workspace = true }
+num_cpus = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tracing = "0.1"
+flate2 = "1.0"
+tempfile = "3.23.0"

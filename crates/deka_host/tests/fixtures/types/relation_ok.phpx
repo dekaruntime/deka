@@ -1,0 +1,7 @@
+struct Post {
+    $id: int @id @autoIncrement
+}
+
+struct User {
+    $posts: array<Post> @relation("hasMany", "Post", "authorId")
+}

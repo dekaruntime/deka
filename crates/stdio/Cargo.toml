@@ -1,0 +1,15 @@
+[package]
+name = "stdio"
+version.workspace = true
+edition = "2021"
+description = "Terminal output utilities for Deka projects"
+license = "MIT"
+repository = "https://github.com/tananetwork/deka-stdio"
+keywords = ["deka", "cli", "terminal", "logging"]
+categories = ["command-line-interface", "development-tools"]
+authors = ["Tana Network"]
+
+[dependencies]
+
+[features]
+default = []

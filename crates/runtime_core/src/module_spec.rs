@@ -1,0 +1,193 @@
+use std::path::{Path, PathBuf};
+
+pub fn is_bare_module_specifier(spec: &str) -> bool {
+    !spec.is_empty()
+        && !spec.starts_with("./")
+        && !spec.starts_with("../")
+        && !spec.starts_with('/')
+        && !spec.starts_with("http://")
+        && !spec.starts_with("https://")
+        && !spec.starts_with("file://")
+}
+
+pub fn module_spec_aliases(spec: &str) -> Vec<String> {
+    let trimmed = spec.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::with_capacity(2);
+    out.push(trimmed.to_string());
+
+    if let Some(rest) = trimmed.strip_prefix("@deka/") {
+        if !rest.is_empty() {
+            out.push(rest.to_string());
+        }
+        return out;
+    }
+
+    if is_bare_module_specifier(trimmed) && !trimmed.starts_with('@') {
+        out.push(format!("@deka/{}", trimmed));
+    }
+
+    out
+}
+
+pub fn canonical_php_package_spec(spec: &str) -> Option<String> {
+    let trimmed = spec.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.starts_with('@') {
+        return Some(trimmed.to_string());
+    }
+    // Package specs are @scope/name. For convenience, only simple unscoped
+    // tokens map to @deka/<name>; nested import paths (e.g. component/router)
+    // are import-time aliases, not package names.
+    if is_bare_module_specifier(trimmed) && !trimmed.contains('/') {
+        return Some(format!("@deka/{}", trimmed));
+    }
+    None
+}
+
+/// Whether `name` is a package identity that can safely be used as a module
+/// directory or a local-link key.
+pub fn is_valid_package_name(name: &str) -> bool {
+    if !name.starts_with('@') {
+        return false;
+    }
+
+    let mut parts = name.split('/');
+    let Some(scope) = parts.next() else {
+        return false;
+    };
+    let Some(package) = parts.next() else {
+        return false;
+    };
+    if parts.next().is_some() || scope.len() <= 1 || package.is_empty() {
+        return false;
+    }
+
+    scope[1..]
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+        && package
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+}
+
+/// DekaScript source files for an import path (`foo` or `foo.ds`).
+///
+/// Resolution algorithm (deka#241; keep every resolver on this list):
+///
+/// 1. Relative (`./foo`, `../bar`) is joined to the importing file's directory.
+/// 2. `@/foo` is joined to the project root (parent of `ds_modules`).
+/// 3. Bare / `@deka/` specs are joined to `ds_modules` (plus the `@deka/` alias).
+/// 4. Then:
+///    - `foo.ds` → that file
+///    - extensionless `foo` → `foo.ds`, then `foo/index.ds`
+///    - any other extension (including `.phpx`) → no DekaScript source
+///
+/// Check-time (`validate_module_resolution`) and run-time (bundler, ESM
+/// loader, `deka build`, WASM project) must use this list so they cannot
+/// disagree.
+pub fn ds_source_candidates(base: &Path) -> Vec<PathBuf> {
+    match base.extension().and_then(|ext| ext.to_str()) {
+        Some("ds") | Some("dsx") => vec![base.to_path_buf()],
+        Some(_) => Vec::new(),
+        None => vec![
+            base.with_extension("ds"),
+            base.with_extension("dsx"),
+            base.join("index.ds"),
+            base.join("index.dsx"),
+        ],
+    }
+}
+
+/// First existing file from [`ds_source_candidates`].
+pub fn resolve_ds_source_file(base: &Path) -> Option<PathBuf> {
+    ds_source_candidates(base)
+        .into_iter()
+        .find(|path| path.is_file())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        canonical_php_package_spec, ds_source_candidates, is_valid_package_name,
+        module_spec_aliases,
+    };
+    use std::path::Path;
+
+    #[test]
+    fn bare_spec_includes_deka_alias() {
+        assert_eq!(module_spec_aliases("json"), vec!["json", "@deka/json"]);
+    }
+
+    #[test]
+    fn deka_scope_includes_bare_alias() {
+        assert_eq!(
+            module_spec_aliases("@deka/json"),
+            vec!["@deka/json", "json"]
+        );
+    }
+
+    #[test]
+    fn scoped_non_deka_has_no_alias() {
+        assert_eq!(module_spec_aliases("@sami/tool"), vec!["@sami/tool"]);
+    }
+
+    #[test]
+    fn canonicalizes_bare_packages_to_deka_scope() {
+        assert_eq!(
+            canonical_php_package_spec("json"),
+            Some("@deka/json".to_string())
+        );
+    }
+
+    #[test]
+    fn does_not_map_nested_import_paths_to_package_specs() {
+        assert_eq!(canonical_php_package_spec("component/router"), None);
+    }
+
+    #[test]
+    fn package_names_are_scoped_and_path_safe() {
+        assert!(is_valid_package_name("@deka/crypto"));
+        assert!(is_valid_package_name("@sami/my-package_2"));
+        assert!(!is_valid_package_name("crypto"));
+        assert!(!is_valid_package_name("@deka/../escape"));
+        assert!(!is_valid_package_name("@deka/crypto/extra"));
+    }
+
+    #[test]
+    fn ds_candidates_are_file_then_index() {
+        let base = Path::new("src/foo");
+        // .dsx joined the list in 516ede7af (RFD 24 phase 2) and this
+        // assertion was not updated, so runtime_core has been red on main
+        // since. Order matters: file before index, .ds before .dsx.
+        assert_eq!(
+            ds_source_candidates(base),
+            vec![
+                Path::new("src/foo.ds").to_path_buf(),
+                Path::new("src/foo.dsx").to_path_buf(),
+                Path::new("src/foo/index.ds").to_path_buf(),
+                Path::new("src/foo/index.dsx").to_path_buf(),
+            ]
+        );
+    }
+
+    #[test]
+    fn ds_candidates_keep_explicit_ds() {
+        let base = Path::new("src/foo.ds");
+        assert_eq!(
+            ds_source_candidates(base),
+            vec![Path::new("src/foo.ds").to_path_buf()]
+        );
+    }
+
+    #[test]
+    fn ds_candidates_reject_phpx() {
+        assert!(ds_source_candidates(Path::new("src/foo.phpx")).is_empty());
+        assert!(ds_source_candidates(Path::new("src/foo.php")).is_empty());
+    }
+}

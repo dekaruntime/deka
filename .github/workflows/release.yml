@@ -1,0 +1,713 @@
+name: Release
+
+on:
+  push:
+    branches-ignore:
+      - '**'
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+env:
+  SCCACHE_ENDPOINT: "https://08b93c93f8b7adc43678e9afba31e4ee.r2.cloudflarestorage.com"
+  SCCACHE_REGION: "auto"
+  R2_ENDPOINT: "https://08b93c93f8b7adc43678e9afba31e4ee.r2.cloudflarestorage.com"
+  R2_BUCKET_RELEASES: "deka-releases"
+  R2_BUCKET_WASM: "deka-wasm"
+
+jobs:
+  test:
+    name: Test (${{ matrix.platform }})
+    strategy:
+      fail-fast: true
+      matrix:
+        platform: [linux-x64, darwin-x64, darwin-arm64]
+        include:
+          - platform: linux-x64
+            runner: [self-hosted, linux, x64]
+            sccache_bucket: deka-sccache-linux-x64
+          - platform: darwin-x64
+            runner: [self-hosted, macos, x64]
+            sccache_bucket: deka-sccache-darwin-x64
+          - platform: darwin-arm64
+            runner: [self-hosted, macos, arm64]
+            sccache_bucket: deka-sccache-darwin-arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      SCCACHE_BUCKET: "${{ matrix.sccache_bucket }}"
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Where am I
+        uses: ./.github/actions/where-am-i
+
+      - name: Tag matches workspace version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          TREE_VERSION="$(scripts/runtime-version.sh)"
+          if [ "$TREE_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::git tag ${GITHUB_REF_NAME} does not match workspace version ${TREE_VERSION}."
+            echo "Bump with scripts/bump-version.sh and merge that PR before tagging."
+            echo "This is how v0.26.1 shipped a 0.26.0 binary and v0.28.0 shipped 0.27.0."
+            exit 1
+          fi
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Verify sccache can reach R2
+        run: |
+          command -v aws >/dev/null 2>&1 || pip install --break-system-packages awscli
+          echo "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
+          echo "SCCACHE_BUCKET=$SCCACHE_BUCKET"
+          sccache --show-stats
+          aws s3 ls "s3://${SCCACHE_BUCKET}/" --endpoint-url="${SCCACHE_ENDPOINT}"
+
+      - name: Run utility-css checks
+        run: |
+          cd assets/utility-css
+          bun build.ts
+          if [ -n "$(git status --porcelain bundle.js)" ]; then
+            echo "::error::assets/utility-css/bundle.js is out of date."
+            exit 1
+          fi
+          bun test.ts
+
+      - name: Build tested crates
+        env:
+          RUSTC_WRAPPER: "sccache"
+        run: cargo build -p deka_http -p pool -p engine -p bundler
+
+      - name: Run Rust tests
+        env:
+          RUSTC_WRAPPER: "sccache"
+        run: |
+          cargo test -p deka_http
+          cargo test -p pool
+          cargo test -p engine
+          cargo test -p bundler
+
+      - name: Build and test browser compiler WASM
+        if: matrix.platform == 'darwin-arm64'
+        env:
+          RUSTC_WRAPPER: "sccache"
+          DEKA_SKIP_DIRTY_CHECK: 1
+        run: scripts/test-deka-compiler-wasm.sh
+
+  build-wasm:
+    name: Build browser compiler + diagnostics WASM
+    needs: [test]
+    runs-on: [self-hosted, macos, arm64]
+    env:
+      SCCACHE_BUCKET: "deka-sccache-darwin-arm64"
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Where am I
+        uses: ./.github/actions/where-am-i
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Verify sccache can reach R2
+        run: |
+          command -v aws >/dev/null 2>&1 || pip install --break-system-packages awscli
+          echo "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
+          echo "SCCACHE_BUCKET=$SCCACHE_BUCKET"
+          sccache --show-stats
+          aws s3 ls "s3://${SCCACHE_BUCKET}/" --endpoint-url="${SCCACHE_ENDPOINT}"
+
+      - name: Build WASM artifacts
+        env:
+          RUSTC_WRAPPER: "sccache"
+          DEKA_SKIP_DIRTY_CHECK: "1"
+        run: scripts/build-deka-compiler-wasm.sh dist/deka-compiler-wasm
+
+      - name: Upload WASM artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: deka-wasm
+          path: dist/deka-compiler-wasm/*
+          retention-days: 1
+
+  build-cli-linux-x64:
+    name: Build CLI (linux-x64)
+    needs: [test]
+    runs-on: [self-hosted, linux, x64]
+    env:
+      SCCACHE_BUCKET: "deka-sccache-linux-x64"
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Where am I
+        uses: ./.github/actions/where-am-i
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.96.0
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Verify sccache can reach R2
+        run: |
+          command -v aws >/dev/null 2>&1 || pip install --break-system-packages awscli
+          echo "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
+          echo "SCCACHE_BUCKET=$SCCACHE_BUCKET"
+          sccache --show-stats
+          aws s3 ls "s3://${SCCACHE_BUCKET}/" --endpoint-url="${SCCACHE_ENDPOINT}"
+
+      - name: Build CLI
+        env:
+          RUSTC_WRAPPER: "sccache"
+        run: cargo build --release -p cli
+
+      - name: Prepare binary
+        run: |
+          mkdir -p dist
+          cp target/release/cli dist/deka-linux-x64
+          chmod +x dist/deka-linux-x64
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: deka-cli-linux-x64
+          path: dist/deka-linux-x64
+          retention-days: 1
+
+  build-cli-darwin-x64:
+    name: Build CLI (darwin-x64)
+    needs: [test]
+    runs-on: [self-hosted, macos, x64]
+    env:
+      SCCACHE_BUCKET: "deka-sccache-darwin-x64"
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Where am I
+        uses: ./.github/actions/where-am-i
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.96.0
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Verify sccache can reach R2
+        run: |
+          command -v aws >/dev/null 2>&1 || pip install --break-system-packages awscli
+          echo "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
+          echo "SCCACHE_BUCKET=$SCCACHE_BUCKET"
+          sccache --show-stats
+          aws s3 ls "s3://${SCCACHE_BUCKET}/" --endpoint-url="${SCCACHE_ENDPOINT}"
+
+      - name: Build CLI
+        env:
+          RUSTC_WRAPPER: "sccache"
+        run: cargo build --release -p cli
+
+      - name: Prepare binary
+        run: |
+          mkdir -p dist
+          cp target/release/cli dist/deka-darwin-x64
+          chmod +x dist/deka-darwin-x64
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: deka-cli-darwin-x64
+          path: dist/deka-darwin-x64
+          retention-days: 1
+
+  build-cli-darwin-arm64:
+    name: Build CLI (darwin-arm64)
+    needs: [test]
+    runs-on: [self-hosted, macos, arm64]
+    env:
+      SCCACHE_BUCKET: "deka-sccache-darwin-arm64"
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Where am I
+        uses: ./.github/actions/where-am-i
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.96.0
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Verify sccache can reach R2
+        run: |
+          command -v aws >/dev/null 2>&1 || pip install --break-system-packages awscli
+          echo "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
+          echo "SCCACHE_BUCKET=$SCCACHE_BUCKET"
+          sccache --show-stats
+          aws s3 ls "s3://${SCCACHE_BUCKET}/" --endpoint-url="${SCCACHE_ENDPOINT}"
+
+      - name: Build CLI
+        env:
+          RUSTC_WRAPPER: "sccache"
+        run: cargo build --release -p cli
+
+      - name: Prepare binary
+        run: |
+          mkdir -p dist
+          cp target/release/cli dist/deka-darwin-arm64
+          chmod +x dist/deka-darwin-arm64
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: deka-cli-darwin-arm64
+          path: dist/deka-darwin-arm64
+          retention-days: 1
+
+  dump-conformance:
+    name: Dump Hats + pack conformance
+    needs: [build-wasm, build-cli-darwin-arm64]
+    runs-on: [self-hosted, macos, arm64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Where am I
+        uses: ./.github/actions/where-am-i
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Download WASM + darwin-arm64 CLI
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+          pattern: deka-*
+
+      - name: Install dump deps and Chromium
+        working-directory: tests/dump
+        run: |
+          bun install
+          bunx playwright install chromium
+
+      - name: Dump native + browser
+        env:
+          DEKA_NATIVE: ${{ github.workspace }}/artifacts/deka-cli-darwin-arm64/deka-darwin-arm64
+          DEKA_WASM: ${{ github.workspace }}/artifacts/deka-wasm/deka_compiler.wasm
+        run: |
+          chmod +x "$DEKA_NATIVE"
+          bun tests/dump/scripts/dump-results.mjs
+
+      - name: Pack conformance tree + dump
+        run: |
+          chmod +x scripts/pack-conformance.sh
+          scripts/pack-conformance.sh
+
+      - name: Upload conformance pack
+        uses: actions/upload-artifact@v7
+        with:
+          name: deka-conformance
+          path: dist/conformance
+          retention-days: 1
+
+  publish:
+    name: Publish to R2
+    needs: [build-wasm, build-cli-linux-x64, build-cli-darwin-x64, build-cli-darwin-arm64, dump-conformance]
+    runs-on: [self-hosted, linux, x64]
+    permissions:
+      contents: write
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Where am I
+        uses: ./.github/actions/where-am-i
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+          pattern: deka-*
+
+      - name: Install AWS CLI
+        run: |
+          command -v aws >/dev/null 2>&1 || pip install --break-system-packages awscli
+
+      - name: Prepare release layout
+        id: prepare
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          TAG="${GITHUB_REF_NAME}"
+          COMMIT="${GITHUB_SHA}"
+          PUBLISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          TREE_VERSION="$(scripts/runtime-version.sh)"
+          if [ "$TREE_VERSION" != "$VERSION" ]; then
+            echo "::error::git tag ${TAG} does not match workspace version ${TREE_VERSION}."
+            exit 1
+          fi
+
+          mkdir -p "release/${VERSION}" release/wasm-latest
+
+          # CLI binaries
+          for platform in linux-x64 darwin-x64 darwin-arm64; do
+            src="artifacts/deka-cli-${platform}/deka-${platform}"
+            dst="release/${VERSION}/deka-${platform}"
+            cp "${src}" "${dst}"
+          done
+
+          # WASM artifacts
+          cp artifacts/deka-wasm/deka_compiler.wasm "release/${VERSION}/"
+          cp artifacts/deka-wasm/deka_diagnostics.wasm "release/${VERSION}/"
+
+          mkdir -p "release/${VERSION}/conformance"
+          cp -R artifacts/deka-conformance/. "release/${VERSION}/conformance/"
+
+          # Compute sha256s and sizes
+          sha256() { sha256sum "$1" | awk '{print $1}'; }
+
+          COMPILER_SHA256="$(sha256 "release/${VERSION}/deka_compiler.wasm")"
+          COMPILER_SIZE="$(stat -c%s "release/${VERSION}/deka_compiler.wasm")"
+          DIAGNOSTICS_SHA256="$(sha256 "release/${VERSION}/deka_diagnostics.wasm")"
+          DIAGNOSTICS_SIZE="$(stat -c%s "release/${VERSION}/deka_diagnostics.wasm")"
+          CARGO_LOCK_SHA256="$(sha256sum Cargo.lock | awk '{print $1}')"
+
+          LINUX_X64_SHA256="$(sha256 "release/${VERSION}/deka-linux-x64")"
+          DARWIN_X64_SHA256="$(sha256 "release/${VERSION}/deka-darwin-x64")"
+          DARWIN_ARM64_SHA256="$(sha256 "release/${VERSION}/deka-darwin-arm64")"
+
+          # Website-compatible compiler manifest
+          jq -n \
+            --arg version "${VERSION}" \
+            --arg commit "${COMMIT}" \
+            --arg cargo_lock "${CARGO_LOCK_SHA256}" \
+            --arg sha256 "${COMPILER_SHA256}" \
+            --argjson bytes "${COMPILER_SIZE}" \
+            '{
+              schemaVersion: 1,
+              compiler: {
+                name: "deka-browser-compiler",
+                version: $version,
+                sourceCommit: $commit,
+                abiVersion: 2
+              },
+              producer: {
+                schemaVersion: 1,
+                target: "wasm32-unknown-unknown",
+                cargoLockSha256: $cargo_lock
+              },
+              artifact: {
+                file: "deka_compiler.wasm",
+                sha256: $sha256,
+                bytes: $bytes
+              }
+            }' > "release/${VERSION}/deka-compiler-artifact.json"
+
+          # Website-compatible diagnostics manifest
+          jq -n \
+            --arg commit "${COMMIT}" \
+            --arg cargo_lock "${CARGO_LOCK_SHA256}" \
+            --arg sha256 "${DIAGNOSTICS_SHA256}" \
+            --argjson bytes "${DIAGNOSTICS_SIZE}" \
+            '{
+              schemaVersion: 1,
+              diagnostics: {
+                name: "deka_diagnostics",
+                abiVersion: 1,
+                sourceCommit: $commit
+              },
+              producer: {
+                schemaVersion: 1,
+                target: "wasm32-unknown-unknown",
+                cargoLockSha256: $cargo_lock
+              },
+              artifact: {
+                file: "deka_diagnostics.wasm",
+                sha256: $sha256,
+                bytes: $bytes
+              }
+            }' > "release/${VERSION}/deka-diagnostics-artifact.json"
+
+          # WASM metadata sidecars consumed by the website sync job
+          jq -n \
+            --arg artifact "deka_compiler.wasm" \
+            --arg sha256 "${COMPILER_SHA256}" \
+            --arg source_commit "${COMMIT}" \
+            --arg target "wasm32-unknown-unknown" \
+            --arg cargo_lock "${CARGO_LOCK_SHA256}" \
+            --arg name "deka-browser-compiler" \
+            --arg version "${VERSION}" \
+            --argjson abi_version 2 \
+            '{
+              schema_version: 1,
+              artifact: $artifact,
+              sha256: $sha256,
+              source_commit: $source_commit,
+              target: $target,
+              cargo_lock_sha256: $cargo_lock,
+              compiler: { name: $name, version: $version, abi_version: $abi_version }
+            }' > "release/${VERSION}/deka_compiler.wasm.metadata.json"
+
+          jq -n \
+            --arg artifact "deka_diagnostics.wasm" \
+            --arg sha256 "${DIAGNOSTICS_SHA256}" \
+            --arg source_commit "${COMMIT}" \
+            --arg target "wasm32-unknown-unknown" \
+            --arg cargo_lock "${CARGO_LOCK_SHA256}" \
+            --arg name "deka_diagnostics" \
+            --argjson abi_version 1 \
+            '{
+              schema_version: 1,
+              artifact: $artifact,
+              sha256: $sha256,
+              source_commit: $source_commit,
+              target: $target,
+              cargo_lock_sha256: $cargo_lock,
+              adapter: { name: $name, abi_version: $abi_version }
+            }' > "release/${VERSION}/deka_diagnostics.wasm.metadata.json"
+
+          # Release manifest consumed by the website sync job
+          jq -n \
+            --arg version "${VERSION}" \
+            --arg tag "${TAG}" \
+            --arg commit "${COMMIT}" \
+            --arg published_at "${PUBLISHED_AT}" \
+            --arg linux_x64_sha "${LINUX_X64_SHA256}" \
+            --arg darwin_x64_sha "${DARWIN_X64_SHA256}" \
+            --arg darwin_arm64_sha "${DARWIN_ARM64_SHA256}" \
+            --arg compiler_sha "${COMPILER_SHA256}" \
+            --arg diagnostics_sha "${DIAGNOSTICS_SHA256}" \
+            '{
+              version: $version,
+              tag: $tag,
+              commit: $commit,
+              published_at: $published_at,
+              binaries: {
+                "linux-x64": { name: "deka-linux-x64", sha256: $linux_x64_sha },
+                "darwin-x64": { name: "deka-darwin-x64", sha256: $darwin_x64_sha },
+                "darwin-arm64": { name: "deka-darwin-arm64", sha256: $darwin_arm64_sha }
+              },
+              wasm: {
+                compiler: "deka_compiler.wasm",
+                compiler_sha256: $compiler_sha,
+                diagnostics: "deka_diagnostics.wasm",
+                diagnostics_sha256: $diagnostics_sha
+              }
+            }' > "release/${VERSION}/release.json"
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "compiler_sha256=${COMPILER_SHA256}" >> "$GITHUB_OUTPUT"
+          echo "diagnostics_sha256=${DIAGNOSTICS_SHA256}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload versioned release to R2
+        run: |
+          VERSION="${{ steps.prepare.outputs.version }}"
+          aws s3 sync "release/${VERSION}/" "s3://${R2_BUCKET_RELEASES}/${VERSION}/" --endpoint-url="${R2_ENDPOINT}"
+
+      - name: Upload versioned WASM to R2
+        run: |
+          VERSION="${{ steps.prepare.outputs.version }}"
+          aws s3 sync "release/${VERSION}/" "s3://${R2_BUCKET_WASM}/v${VERSION}/" --endpoint-url="${R2_ENDPOINT}"
+
+      - name: Promote latest release manifest
+        run: |
+          VERSION="${{ steps.prepare.outputs.version }}"
+          aws s3 cp "release/${VERSION}/release.json" "s3://${R2_BUCKET_RELEASES}/latest.json" --endpoint-url="${R2_ENDPOINT}"
+
+      - name: Promote latest WASM artifacts
+        run: |
+          VERSION="${{ steps.prepare.outputs.version }}"
+          aws s3 cp "release/${VERSION}/deka-compiler-artifact.json" "s3://${R2_BUCKET_WASM}/latest/deka-compiler-artifact.json" --endpoint-url="${R2_ENDPOINT}"
+          aws s3 cp "release/${VERSION}/deka-diagnostics-artifact.json" "s3://${R2_BUCKET_WASM}/latest/deka-diagnostics-artifact.json" --endpoint-url="${R2_ENDPOINT}"
+          aws s3 cp "release/${VERSION}/deka_compiler.wasm" "s3://${R2_BUCKET_WASM}/latest/deka_compiler.wasm" --endpoint-url="${R2_ENDPOINT}"
+          aws s3 cp "release/${VERSION}/deka_diagnostics.wasm" "s3://${R2_BUCKET_WASM}/latest/deka_diagnostics.wasm" --endpoint-url="${R2_ENDPOINT}"
+          aws s3 sync "release/${VERSION}/conformance/" "s3://${R2_BUCKET_WASM}/latest/conformance/" --endpoint-url="${R2_ENDPOINT}"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.prepare.outputs.version }}"
+          TMPDIR="$(mktemp -d)"
+          curl -fsSL -o "${TMPDIR}/gh.tar.gz" "https://github.com/cli/cli/releases/download/v2.98.0/gh_2.98.0_linux_amd64.tar.gz"
+          tar -xzf "${TMPDIR}/gh.tar.gz" -C "${TMPDIR}"
+          GH_BIN="${TMPDIR}/gh_2.98.0_linux_amd64/bin/gh"
+
+          # The release may already exist if the workflow is retried or if a
+          # draft release was created ahead of the tag push. Make this step
+          # idempotent so downstream triggers still run.
+          # The conformance pack is a directory, and a release asset must be a
+          # file -- uploading the glob failed with "is a directory" once the
+          # pack moved into the release tree. Tar it, then upload files only.
+          if [ -d "release/${VERSION}/conformance" ]; then
+            tar -czf "release/${VERSION}/conformance.tar.gz" \
+              -C "release/${VERSION}" conformance
+            rm -rf "release/${VERSION}/conformance"
+          fi
+
+          ASSETS=()
+          for f in release/${VERSION}/*; do
+            [ -f "$f" ] && ASSETS+=("$f")
+          done
+
+          if "$GH_BIN" release view "${GITHUB_REF_NAME}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release ${GITHUB_REF_NAME} already exists. Uploading/overwriting assets."
+            "$GH_BIN" release upload "${GITHUB_REF_NAME}" "${ASSETS[@]}" \
+              --repo "${{ github.repository }}" --clobber
+          else
+            "$GH_BIN" release create "${GITHUB_REF_NAME}" \
+              --repo "${{ github.repository }}" \
+              --title "deka ${VERSION}" \
+              --notes "deka ${VERSION} release binaries and WASM artifacts." \
+              "${ASSETS[@]}"
+          fi
+
+      - name: Summary
+        run: |
+          echo "Published deka ${{ github.ref_name }}"
+          echo "  release manifest: https://releases.deka.gg/latest.json"
+          echo "  compiler manifest: https://wasm.deka.gg/latest/deka-compiler-artifact.json"
+          echo "  diagnostics manifest: https://wasm.deka.gg/latest/deka-diagnostics-artifact.json"
+          echo "  conformance pack: https://wasm.deka.gg/v${{ steps.prepare.outputs.version }}/conformance/manifest.json"
+          echo "  downstream deploys triggered: website sync, testsuite deploy"
+
+  # Downstream consumers are notified from a SEPARATE JOB that needs `publish`,
+  # not from steps inside it.
+  #
+  # A step guarded by if: success() is only as good as its position: anything
+  # added after it has already had the triggers fire. As a job with
+  # needs: [publish], the whole release must be green before anything
+  # downstream hears about it -- and a draft blog post is not something to
+  # generate for a release that did not finish.
+  notify:
+    name: Notify downstream
+    needs: [publish]
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - name: Resolve version
+        id: v
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger website compiler sync
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_WEBSITE_SYNC_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "DISPATCH_WEBSITE_SYNC_TOKEN not set; skipping cross-repo sync trigger."
+            echo "The website's hourly sync fallback will pick up this release."
+            exit 0
+          fi
+          curl -sSL --fail-with-body -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/dekaruntime/website/actions/workflows/sync-deka-compiler.yml/dispatches \
+            -d '{"ref":"main"}'
+
+      - name: Trigger testsuite deploy
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_TESTSUITE_DEPLOY_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "DISPATCH_TESTSUITE_DEPLOY_TOKEN not set; skipping cross-repo testsuite deploy trigger."
+            echo "The testsuite will be redeployed on the next push to main or via manual dispatch."
+            exit 0
+          fi
+          curl -sSL --fail-with-body -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/dekaruntime/testsuite/actions/workflows/deploy.yml/dispatches \
+            -d '{"ref":"main"}'
+
+      # The release-note pipeline. draftwriter listens for `runtime-published`
+      # and opens a post PR on the website. Nothing fired this event, so the
+      # workflow had run 3 times ever -- all by hand -- and 0.35, 0.36, 0.37
+      # and 0.38 were never written at all.
+      #
+      # Minor and major only. Patch releases do not get their own post; their
+      # content belongs in the minor's.
+      - name: Trigger release-note draft
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.CASCADE_DISPATCH_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          patch="${TAG##*.}"
+          if [ "$patch" != "0" ]; then
+            echo "$TAG is a patch release; release notes are written per minor."
+            exit 0
+          fi
+          if [ -z "$GH_TOKEN" ]; then
+            echo "CASCADE_DISPATCH_TOKEN not set; skipping release-note trigger."
+            echo "Run draftwriter's draft.yml manually with tag=$TAG."
+            exit 0
+          fi
+          curl -sSL --fail-with-body -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/dekaruntime/draftwriter/dispatches \
+            -d "{\"event_type\":\"runtime-published\",\"client_payload\":{\"tag\":\"$TAG\"}}"
+
+      # headless bundles the compiler wasm so release-note code samples can be
+      # validated against the compiler for the version being announced. It also
+      # polls releases.deka.gg hourly, so this is a latency optimisation rather
+      # than a correctness requirement -- and the poll additionally covers the
+      # case where a wasm upload finishes after this job does.
+      - name: Trigger headless compiler sync
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.CASCADE_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "CASCADE_DISPATCH_TOKEN not set; skipping cross-repo headless sync trigger."
+            echo "The headless hourly sync fallback will pick up this release."
+            exit 0
+          fi
+          curl -sSL --fail-with-body -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/dekaruntime/headless/actions/workflows/sync-wasm.yml/dispatches \
+            -d '{"ref":"main"}'

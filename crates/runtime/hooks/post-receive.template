@@ -1,0 +1,46 @@
+#!/bin/sh
+# post-receive hook template for deka git-per-shop bare repos.
+#
+# Installed by the shop provisioner at store/repos/{shop_id}.git/hooks/post-receive.
+# When a commit lands, asks the running deka platform to invalidate its
+# bundle cache and evict the tenant's isolate(s) so the next request
+# cold-starts on the new code.
+#
+# Placeholders the provisioner must substitute before copying:
+#   __SHOP_ID__        — the shop identifier (also the subdomain)
+#   __PLATFORM_URL__   — typically http://localhost:8530
+#
+# For previews (non-main branches) we key the rebuild by short sha so
+# the isolate pool can retain main vs preview bundles side by side.
+
+set -eu
+
+SHOP_ID="__SHOP_ID__"
+PLATFORM_URL="__PLATFORM_URL__"
+
+# Read `<old> <new> <ref>` tuples from stdin (standard post-receive payload).
+while read -r OLD NEW REF; do
+  case "$REF" in
+    refs/heads/main)
+      # Main branch — production rebuild. Fire-and-forget so the push
+      # completes quickly; the platform logs timing separately.
+      curl -s -X POST \
+        -o /dev/null \
+        "${PLATFORM_URL}/__admin/rebuild?shop_id=${SHOP_ID}" \
+        >/dev/null 2>&1 &
+      ;;
+    refs/heads/*)
+      # Non-main branch — preview build keyed by short sha.
+      SHORT=$(printf "%.7s" "$NEW")
+      curl -s -X POST \
+        -o /dev/null \
+        "${PLATFORM_URL}/__admin/rebuild?shop_id=${SHOP_ID}&ref=${SHORT}" \
+        >/dev/null 2>&1 &
+      ;;
+    *)
+      # tags and other refs: no rebuild needed.
+      ;;
+  esac
+done
+
+exit 0

@@ -1,0 +1,7 @@
+import ResultDefault, { result_ok as ok } from 'core/result';
+
+function use_default(): int {
+    $value = ResultDefault;
+    $result = ok(1);
+    return 1;
+}

@@ -1,0 +1,84 @@
+---
+title: State stores
+description: Zustand-style state stores for shared reactive state in DekaScript.
+---
+
+`State` provides a small Zustand-style store primitive for shared reactive state. It is built on top of the signal system, so components and effects automatically subscribe to the store and re-run when it changes.
+
+## API
+
+`State` is exposed on `deka.ui.State` and also as a global for the current compiler slice.
+
+| Primitive | Namespace | Global alias |
+|-----------|-----------|--------------|
+| `State.create` | `deka.ui.State.create` | `State.create` |
+
+`State.create(initialState, actions)` returns a hook function:
+
+- `useStore()` returns the current state.
+- `useStore.actionName(...args)` dispatches an action.
+
+Actions are plain functions that receive the current state and any arguments they were called with, and return the next state.
+
+## Basic usage
+
+```ds
+fn increment(s: object) object {
+  return { count: s.count + 1 };
+}
+
+const useCounter = State.create({ count: 0 }, {
+  increment: increment,
+});
+
+console.log(useCounter().count); // 0
+useCounter.increment();
+console.log(useCounter().count); // 1
+```
+
+## Actions with arguments
+
+```ds
+fn increment(s: object) object {
+  return { count: s.count + 1 };
+}
+
+fn add(s: object, n: number) object {
+  return { count: s.count + n };
+}
+
+const useCounter = State.create({ count: 0 }, {
+  increment: increment,
+  add: add,
+});
+
+useCounter.add(5);
+console.log(useCounter().count); // 5
+```
+
+## Shared state and effects
+
+Stores share a single underlying signal. Multiple effects reading the same store all subscribe to the same value.
+
+```ds
+fn increment(s: object) object {
+  return { count: s.count + 1 };
+}
+
+const useCounter = State.create({ count: 0 }, {
+  increment: increment,
+});
+
+fn logCount() void {
+  console.log("count: " + useCounter().count);
+}
+
+createEffect(logCount);
+useCounter.increment(); // re-runs the effect and prints "count: 1"
+```
+
+## Runtime notes
+
+- A store owns one signal. Every call to `useStore()` reads that signal.
+- Action methods are attached directly to the hook function.
+- Actions must return the next state. Returning the same object reference does not trigger an update because the backing signal uses `Object.is` equality.

@@ -1,0 +1,46 @@
+---
+title: DekaScript compiler-core syntax
+description: The currently implemented DekaScript bindings, collections, and iteration slice.
+---
+
+DekaScript source uses the `.ds` extension and a TypeScript-familiar surface.
+
+## Availability
+
+This page describes only the compiler-core slice supplied by the current
+stacked work. It is validated through the parser and JavaScript emitter. Public
+CLI execution, serving, routing, imports, editor support, Wasm integration, and
+a broader standard-library contract are not established by this slice and are
+not documented as available here.
+
+```ts
+export function initials(parts: Array<string>): string {
+  let output = "";
+  for (const part of parts) {
+    output += part.slice(0, 1);
+  }
+  const first = parts[0];
+  const summary = { first: first, count: parts.length };
+  return `${first}:${output}`;
+}
+```
+
+Supported in this core slice are bare identifier references, `const` and `let`
+bindings, normal and compound assignment, string methods, list and object
+literals, indexed access, property access, `for (const item of items)`, and the
+C-style `for` loop with three optional clauses:
+
+```ts
+for (let i = 0; i < parts.length; i = i + 1) {
+  output += parts[i];
+}
+```
+
+All three clauses are optional, so `for (;;) { ... }` is valid when paired with
+`break`/`continue`.
+
+The following PHP-derived syntax is deliberately rejected in `.ds`: `$` sigils,
+casts, `array()`, `echo`, `foreach`, `.` concatenation, built-ins, classes,
+namespaces, globals, statics, `try`/`throw`, `include`/`require`, `while`, and
+`do-while`. Use plain values, `for` loops, object/list syntax, and explicit
+imports once the module contract lands.

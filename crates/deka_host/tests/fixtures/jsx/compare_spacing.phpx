@@ -1,0 +1,3 @@
+function App($a, $b) {
+    return <div>{ $a<$b ? <span>ok</span> : null }</div>;
+}

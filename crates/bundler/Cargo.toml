@@ -1,0 +1,31 @@
+[package]
+name = "bundler"
+version.workspace = true
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+base64 = "0.22"
+lightningcss = { version = "1.0.0-alpha.68", features = ["bundler"] }
+mime_guess = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha1 = "0.10"
+sha2 = "0.10"
+swc_bundler = "39.0.0"
+swc_common = "18.0.1"
+swc_ecma_ast = "19.0.0"
+swc_ecma_codegen = "21.0.0"
+swc_ecma_loader = "18.0.0"
+swc_ecma_parser = { version = "31.0.0", features = ["typescript"] }
+swc_ecma_transforms_base = "34.0.0"
+swc_ecma_transforms_react = "37.0.0"
+swc_ecma_transforms_typescript = "37.0.0"
+swc_ecma_visit = "19.0.0"
+swc_ecma_minifier = "42.0.0"
+parking_lot = "0.12"
+tokio = { version = "1", features = ["full"] }
+num_cpus = "1.16"
+stdio = { path = "../stdio" }
+runtime_core = { path = "../runtime_core" }
+deka_ui = { path = "../deka_ui" }

@@ -1,0 +1,12 @@
+[package]
+name = "deka-router"
+version.workspace = true
+edition = "2024"
+
+[[bin]]
+name = "deka-router"
+path = "src/main.rs"
+
+[dependencies]
+axum = { workspace = true }
+tokio = { workspace = true, features = ["full"] }

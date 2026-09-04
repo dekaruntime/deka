@@ -1,0 +1,4 @@
+function ok(): int {
+    $value = 1;
+    return $value;
+}
