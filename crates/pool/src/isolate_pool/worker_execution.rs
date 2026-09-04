@@ -80,15 +80,15 @@ impl WorkerThread {
 
                 if (typeof globalThis.Option === 'undefined') {
                     globalThis.Option = Object.freeze({
-                        Some: (value) => Object.freeze({ __enum: "Option", __case: "Some", name: "Some", value }),
-                        None: Object.freeze({ __enum: "Option", __case: "None", name: "None" })
+                        Some: (value) => ({ __enum: "Option", __case: "Some", name: "Some", value }),
+                        None: ({ __enum: "Option", __case: "None", name: "None" })
                     });
                 }
 
                 if (typeof globalThis.Result === 'undefined') {
                     globalThis.Result = Object.freeze({
-                        Ok: (value) => Object.freeze({ __enum: "Result", __case: "Ok", name: "Ok", value }),
-                        Err: (error) => Object.freeze({ __enum: "Result", __case: "Err", name: "Err", error })
+                        Ok: (value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value }),
+                        Err: (error) => ({ __enum: "Result", __case: "Err", name: "Err", error })
                     });
                 }
 

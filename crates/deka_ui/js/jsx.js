@@ -30,8 +30,8 @@ function createComponentNode(tag, props) {
   const { children, ...rest } = input;
   const node = {
     tag,
-    props: Object.freeze(rest),
-    children: Object.freeze(normalizeJsxChildren(children)),
+    props: rest,
+    children: normalizeJsxChildren(children),
   };
   Object.defineProperty(node, "__componentNode", {
     value: true,
@@ -39,7 +39,7 @@ function createComponentNode(tag, props) {
     writable: false,
     configurable: false,
   });
-  return Object.freeze(node);
+  return node;
 }
 
 export function jsx(tag, props) {

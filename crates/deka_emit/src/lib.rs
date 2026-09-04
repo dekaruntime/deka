@@ -662,6 +662,41 @@ mod tests {
         assert!(!out.contains("Some(v["), "got: {}", out);
     }
 
+    #[test]
+    fn emit_prelude_cases_without_ephemeral_freezes() {
+        let out = parse_check_and_emit(
+            "const result = Result.Ok(1);\nconst option = Option.Some(2);\nconst none = Option.None;",
+        );
+        assert!(
+            out.contains("Ok: (value) => ({ __enum: \"Result\""),
+            "Result.Ok should return a plain ephemeral value: {out}"
+        );
+        assert!(
+            out.contains("Err: (error) => ({ __enum: \"Result\""),
+            "Result.Err should return a plain ephemeral value: {out}"
+        );
+        assert!(
+            out.contains("Some: (value) => ({ __enum: \"Option\""),
+            "Option.Some should return a plain ephemeral value: {out}"
+        );
+        assert!(
+            out.contains("None: ({ __enum: \"Option\""),
+            "Option.None should be a plain ephemeral value: {out}"
+        );
+        assert!(
+            !out.contains("Object.freeze({ __enum: \"Result\""),
+            "Result cases must not be frozen: {out}"
+        );
+        assert!(
+            !out.contains("Object.freeze({ __enum: \"Option\""),
+            "Option cases must not be frozen: {out}"
+        );
+        assert!(
+            out.contains("const Result = Object.freeze({") && out.contains("const Option = Object.freeze({"),
+            "shared constructor tables should remain frozen: {out}"
+        );
+    }
+
     // ------------------------------------------------------------------
     // Descriptor const emission (kept for super declarations, PR B)
     // ------------------------------------------------------------------
