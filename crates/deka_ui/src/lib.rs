@@ -9,6 +9,16 @@ pub const FORM: &str = include_str!("../js/form.js");
 pub const SUSPENSE: &str = include_str!("../js/suspense.js");
 pub const ROUTER: &str = include_str!("../js/router.js");
 
+#[cfg(test)]
+mod tests {
+    use super::JSX;
+
+    #[test]
+    fn jsx_factory_does_not_freeze_ephemeral_nodes() {
+        assert!(!JSX.contains("Object.freeze"));
+    }
+}
+
 pub const SPECIFIERS: &[&str] = &[
     "ui/jsx",
     "ui/reactive",
