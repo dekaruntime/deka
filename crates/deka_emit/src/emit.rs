@@ -42,6 +42,7 @@ pub fn emit_js(program: &Program, _source: &str) -> Result<String, String> {
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
+        &HashMap::new(),
         "module.ds",
         None,
     )
@@ -78,6 +79,7 @@ pub fn emit_js_with_imports<'a>(
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
+        &HashMap::new(),
         "module.ds",
         None,
     )
@@ -106,6 +108,7 @@ pub fn emit_js_with_options<'a>(
     type_of_calls: &HashSet<*const Expr<'a>>,
     // `.signature()` call sites lowered to declared-type descriptor literals.
     signature_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::DescriptorTree<'a>>,
+    json_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::JsonCall<'a>>,
     // Builtin `first`/`last` array method call sites, lowered by the
     // typechecker (deka#561): the emitter rewrites them to an
     // Option-producing expression since JS arrays have no `first`/`last`.
@@ -113,9 +116,10 @@ pub fn emit_js_with_options<'a>(
         *const Expr<'a>,
         deka_syntax::typeck::ArrayAccess,
     >,
-    // Builtin `.type()` call sites on `super` declarations, lowered by the
-    // typechecker (rfd#41, deka#561 PR B): the emitter rewrites each call to
-    // the interned `__deka_super_desc$<Name>` const.
+    // Builtin `.type()` call sites inside `super` functions, lowered by the
+    // typechecker to the hidden descriptor parameter or a static tree const
+    // (deka#529, rfd#41). Kept for super declarations (PR B): this is the
+    // feed point PR B re-populates.
     static_type_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::StaticTypeCall<'a>>,
     // Descriptor trees for every `super` declaration visible to the
     // typechecker, keyed by declaration name. The emitter interns one
@@ -148,6 +152,7 @@ pub fn emit_js_with_options<'a>(
     emitter.method_calls = method_calls.clone();
     emitter.type_of_calls = type_of_calls.clone();
     emitter.signature_calls = signature_calls.clone();
+    emitter.json_calls = json_calls.clone();
     emitter.array_first_last_calls = array_first_last_calls.clone();
     emitter.static_type_calls = static_type_calls.clone();
     emitter.super_decl_trees = super_decl_trees.clone();
@@ -482,6 +487,241 @@ fn emit_super_tree(tree: &deka_syntax::typeck::DescriptorTree) -> Result<String,
     Ok(out)
 }
 
+fn json_shape_name(tree: &deka_syntax::typeck::DescriptorTree) -> String {
+    descriptor_tree_name(tree)
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn json_encode(tree: &deka_syntax::typeck::DescriptorTree, value: &str) -> String {
+    use deka_syntax::typeck::DescriptorTree as T;
+    match tree {
+        // Unreachable by construction: JSON walks the type with
+        // `allow_recurse: false`, so the typechecker errors on a cycle
+        // before emission and `json_shape_error` rejects any `Recurse`
+        // that somehow survives. Panic rather than fabricate output --
+        // a wrong serializer is a silent wrong answer, which is worse
+        // than a loud compiler bug.
+        T::Recurse { name } => unreachable!(
+            "JSON emission reached a recursive descriptor node for `{name}`; \
+             the typechecker should have rejected it"
+        ),
+        T::Leaf { .. } => value.to_string(),
+        T::Newtype { .. } => format!("{value}[__p]"),
+        T::Array { elem } => format!("{value}.map((v) => {})", json_encode(elem, "v")),
+        T::Option { inner } => format!(
+            "(() => {{ const __option = {value}; return __option.__case === \"Some\" ? {{ Option: {{ case: \"Some\", values: [{}] }} }} : {{ Option: {{ case: \"None\" }} }}; }})()",
+            json_encode(inner, "__option.value")
+        ),
+        T::Struct { name, fields } => {
+            let entries = fields
+                .iter()
+                .map(|field| {
+                    format!(
+                        "{}: {}",
+                        json_string(field.name),
+                        json_encode(&field.ty, &format!("{value}[{}]", json_string(field.name)))
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{{ {}: {{ {} }} }}", json_string(name), entries)
+        }
+        T::Enum { name, cases } => {
+            let arms = cases
+                .iter()
+                .map(|(case, payload)| {
+                    let body = match payload {
+                        Some(payload) => format!(
+                            "{{ {}: {{ case: {}, values: [{}] }} }}",
+                            json_string(name),
+                            json_string(case),
+                            json_encode(payload, &format!("{value}.value"))
+                        ),
+                        None => format!(
+                            "{{ {}: {{ case: {} }} }}",
+                            json_string(name),
+                            json_string(case)
+                        ),
+                    };
+                    format!("case {}: return {};", json_string(case), body)
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("(() => {{ switch ({value}.__case) {{ {} default: return undefined; }} }})()", arms)
+        }
+        T::Union { members } => {
+            let arms = members
+                .iter()
+                .map(|member| {
+                    format!(
+                        "if ({}) return {};",
+                        json_predicate(member, value),
+                        json_encode(member, value)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("(() => {{ {} return undefined; }})()", arms)
+        }
+        T::Interface { .. } => "undefined".to_string(),
+    }
+}
+
+fn json_predicate(tree: &deka_syntax::typeck::DescriptorTree, value: &str) -> String {
+    use deka_syntax::typeck::DescriptorTree as T;
+    match tree {
+        // Unreachable by construction: JSON walks the type with
+        // `allow_recurse: false`, so the typechecker errors on a cycle
+        // before emission and `json_shape_error` rejects any `Recurse`
+        // that somehow survives. Panic rather than fabricate output --
+        // a wrong serializer is a silent wrong answer, which is worse
+        // than a loud compiler bug.
+        T::Recurse { name } => unreachable!(
+            "JSON emission reached a recursive descriptor node for `{name}`; \
+             the typechecker should have rejected it"
+        ),
+        T::Leaf { kind, .. } => match *kind {
+            "number" | "string" | "boolean" => format!("typeof {value} === {}", json_string(kind)),
+            "bytes" => format!("{value} instanceof Uint8Array"),
+            _ => "true".to_string(),
+        },
+        T::Struct { name, .. } => format!("{value}?.__deka_struct === {}", json_string(name)),
+        T::Enum { name, .. } => format!("{value}?.__enum === {}", json_string(name)),
+        T::Newtype { name, .. } => format!("{value}?.__deka_newtype === {}", json_string(name)),
+        T::Option { .. } => format!("{value}?.__enum === \"Option\""),
+        T::Array { .. } => format!("Array.isArray({value})"),
+        T::Union { .. } => "true".to_string(),
+        T::Interface { .. } => "true".to_string(),
+    }
+}
+
+fn json_decode(tree: &deka_syntax::typeck::DescriptorTree, value: &str) -> String {
+    use deka_syntax::typeck::DescriptorTree as T;
+    let invalid = "undefined";
+    match tree {
+        // Unreachable by construction -- see json_encode.
+        T::Recurse { name } => unreachable!(
+            "JSON emission reached a recursive descriptor node for `{name}`; \
+             the typechecker should have rejected it"
+        ),
+        T::Leaf { kind, .. } => match *kind {
+            "number" | "string" | "boolean" => format!(
+                "typeof {value} === {} ? {value} : {invalid}",
+                json_string(kind)
+            ),
+            "bytes" => format!("{value} instanceof Uint8Array ? {value} : {invalid}"),
+            _ => value.to_string(),
+        },
+        T::Newtype { name, repr } => {
+            let inner = json_decode(repr, value);
+            format!("(() => {{ const x = {inner}; return x === undefined ? undefined : {name}(x); }})()")
+        }
+        T::Array { elem } => format!(
+            "Array.isArray({value}) ? (() => {{ const a = []; for (const x of {value}) {{ const y = {}; if (y === undefined) return undefined; a.push(y); }} return a; }})() : undefined",
+            json_decode(elem, "x")
+        ),
+        T::Option { inner } => format!(
+            "{value} && typeof {value} === \"object\" && {value}.Option && ({value}.Option.case === \"None\" ? Option.None : {value}.Option.case === \"Some\" ? (() => {{ const x = {}; return x === undefined ? undefined : Option.Some(x); }})() : undefined)",
+            json_decode(inner, &format!("{value}.Option.values?.[0]"))
+        ),
+        T::Struct { name, fields } => {
+            let mut checks = vec![format!("{value} && typeof {value} === \"object\" && {value}[{}]", json_string(name))];
+            let mut assignments = Vec::new();
+            for field in fields {
+                let source = format!("{value}[{}][{}]", json_string(name), json_string(field.name));
+                let decoded = json_decode(&field.ty, &source);
+                let local = format!("__{}", field.name);
+                checks.push(format!("(() => {{ const {local} = {decoded}; if ({local} === undefined) return false; return true; }})()"));
+                assignments.push(format!("{}: {}", json_string(field.name), decoded));
+            }
+            format!("({}) ? {}({{ {} }}) : undefined", checks.join(" && "), name, assignments.join(", "))
+        }
+        T::Enum { name, cases } => {
+            let mut arms = Vec::new();
+            for (case, payload) in cases {
+                let body = match payload {
+                    Some(payload) => {
+                        let source = format!("{value}[{}].values?.[0]", json_string(name));
+                        let decoded = json_decode(payload, &source);
+                        format!("(() => {{ const x = {}; return x === undefined ? undefined : {}.{}(x); }})()", decoded, name, case)
+                    }
+                    None => format!("{}.{}", name, case),
+                };
+                arms.push(format!("{} === {} ? {}", format!("{value}[{}].case", json_string(name)), json_string(case), body));
+            }
+            format!("{value} && typeof {value} === \"object\" && {value}[{}] ? {} : undefined", json_string(name), arms.join(" : "))
+        }
+        T::Union { members } => {
+            let mut expression = "undefined".to_string();
+            for member in members.iter().rev() {
+                let decoded = json_decode(member, value);
+                expression = format!(
+                    "(() => {{ const x = {}; return x === undefined ? {} : x; }})()",
+                    decoded, expression
+                );
+            }
+            expression
+        }
+        T::Interface { .. } => invalid.to_string(),
+    }
+}
+
+fn emit_json_functions(
+    calls: &HashMap<*const Expr<'_>, deka_syntax::typeck::JsonCall<'_>>,
+) -> String {
+    let mut functions = HashMap::<
+        String,
+        (
+            deka_syntax::typeck::JsonOperation,
+            deka_syntax::typeck::DescriptorTree<'_>,
+        ),
+    >::new();
+    for call in calls.values() {
+        let name = format!(
+            "{}${}",
+            match call.operation {
+                deka_syntax::typeck::JsonOperation::ToJson => "toJSON",
+                deka_syntax::typeck::JsonOperation::ParseJson => "parseJSON",
+            },
+            json_shape_name(&call.shape)
+        );
+        functions
+            .entry(name)
+            .or_insert((call.operation, call.shape.clone()));
+    }
+    let mut out = String::new();
+    let mut names = functions.keys().cloned().collect::<Vec<_>>();
+    names.sort();
+    for name in names {
+        let (operation, shape) = functions.remove(&name).unwrap();
+        match operation {
+            deka_syntax::typeck::JsonOperation::ToJson => {
+                out.push_str("function ");
+                out.push_str(&name);
+                out.push_str("(v) { return JSON.stringify(");
+                out.push_str(&json_encode(&shape, "v"));
+                out.push_str("); }\n");
+            }
+            deka_syntax::typeck::JsonOperation::ParseJson => {
+                out.push_str("function ");
+                out.push_str(&name);
+                out.push_str("(s) { try { const v = JSON.parse(s); const x = ");
+                out.push_str(&json_decode(&shape, "v"));
+                out.push_str("; return x === undefined ? Err(\"invalid JSON value\") : Ok(x); } catch (_) { return Err(\"invalid JSON\"); } }\n");
+            }
+        }
+    }
+    out
+}
+
 #[derive(Default, Clone)]
 struct StructMeta {
     fields: HashSet<String>,
@@ -528,10 +768,8 @@ struct Emitter<'a> {
     enum_case_patterns: HashMap<*const deka_syntax::Pattern<'a>, &'a str>,
     /// Union member type-patterns and their runtime predicates, lowered by
     /// the typechecker (rfd#42, deka#530).
-    union_type_patterns: HashMap<
-        *const deka_syntax::Pattern<'a>,
-        deka_syntax::typeck::UnionMemberTest<'a>,
-    >,
+    union_type_patterns:
+        HashMap<*const deka_syntax::Pattern<'a>, deka_syntax::typeck::UnionMemberTest<'a>>,
     unwrap_id: usize,
     /// Newtype operator rewrites lowered by the typechecker.
     operator_rewrites: HashMap<*const Expr<'a>, deka_syntax::typeck::OperatorRewrite<'a>>,
@@ -543,6 +781,7 @@ struct Emitter<'a> {
     type_of_calls: HashSet<*const Expr<'a>>,
     /// `.signature()` call sites lowered to static descriptor literals.
     signature_calls: HashMap<*const Expr<'a>, deka_syntax::typeck::DescriptorTree<'a>>,
+    json_calls: HashMap<*const Expr<'a>, deka_syntax::typeck::JsonCall<'a>>,
     /// Builtin `first`/`last` array method call sites lowered by the
     /// typechecker (deka#561): JS arrays have no `first`/`last`, so the
     /// emitter rewrites the call to an Option-producing expression.
@@ -591,6 +830,7 @@ impl<'a> Emitter<'a> {
             method_calls: HashMap::new(),
             type_of_calls: HashSet::new(),
             signature_calls: HashMap::new(),
+            json_calls: HashMap::new(),
             array_first_last_calls: HashMap::new(),
             static_type_calls: HashMap::new(),
             super_decl_trees: std::collections::HashMap::new(),
@@ -975,6 +1215,10 @@ impl<'a> Emitter<'a> {
         // helper directly — no AST scan needed. A call in shaken code still
         // forces the ~4-line helper; harmless bloat, never incorrectness.
         let uses_typeof = !self.type_of_calls.is_empty();
+        let uses_json = !self.json_calls.is_empty();
+        if uses_json {
+            self.uses_prelude_enums = true;
+        }
         // Same guarantee for `array_first_last_calls` (deka#561): the emitted
         // rewrite calls `Some`/`None`, which the enum prelude defines.
         if !self.array_first_last_calls.is_empty() {
@@ -1050,6 +1294,10 @@ impl<'a> Emitter<'a> {
                 super_const_name(name),
                 emit_super_tree(tree)?
             ));
+        }
+
+        if uses_json {
+            self.out.push_str(&emit_json_functions(&self.json_calls));
         }
 
         if self.uses_prelude_enums {
@@ -2106,6 +2354,21 @@ impl<'a> Emitter<'a> {
                     }
                 }
 
+                if let Some(call) = self.json_calls.get(&expr_ptr).cloned() {
+                    let prefix = match call.operation {
+                        deka_syntax::typeck::JsonOperation::ToJson => "toJSON$",
+                        deka_syntax::typeck::JsonOperation::ParseJson => "parseJSON$",
+                    };
+                    self.out.push_str(prefix);
+                    self.out.push_str(&json_shape_name(&call.shape));
+                    self.out.push('(');
+                    if let Expr::FieldAccess { object, .. } = &**callee {
+                        self.emit_expr(object)?;
+                    }
+                    self.out.push(')');
+                    return Ok(());
+                }
+
                 // Builtin `first`/`last`: JS arrays have no such methods, and
                 // the typed `pop`/`shift` builtins are emitted as verbatim JS
                 // passthroughs that return raw values (not Option) — a known
@@ -2741,6 +3004,7 @@ impl<'a> Emitter<'a> {
                     method_calls: HashMap::new(),
                     type_of_calls: HashSet::new(),
                     signature_calls: HashMap::new(),
+                    json_calls: HashMap::new(),
                     array_first_last_calls: HashMap::new(),
                     static_type_calls: HashMap::new(),
                     super_decl_trees: std::collections::HashMap::new(),

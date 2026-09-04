@@ -25,7 +25,7 @@ mod stmt;
 mod types;
 
 pub use descriptor::{
-    DescriptorField, DescriptorTree, StaticTypeCall,
+    DescriptorField, DescriptorTree, JsonCall, JsonOperation, StaticTypeCall,
 };
 pub use types::{ArrayAccess, NewtypeSide, OperatorRewrite, Type, UnionMemberTest, UnwrapKind};
 
@@ -54,6 +54,8 @@ pub struct TypeckResult<'a> {
     /// keyed by declaration name. The emitter interns one frozen const per
     /// referenced declaration (and its recursive-reference group).
     pub super_trees: HashMap<&'a str, descriptor::DescriptorTree<'a>>,
+    /// `.toJSON()` and `.parseJSON<T>()` call sites specialized to a static shape.
+    pub json_calls: HashMap<*const ast::Expr<'a>, descriptor::JsonCall<'a>>,
     /// Builtin `Array.first()`/`Array.last()` call sites, rewritten to an
     /// Option-producing expression during emission (deka#561).
     pub array_first_last_calls: HashMap<*const ast::Expr<'a>, types::ArrayAccess>,
@@ -182,6 +184,7 @@ pub fn check_program_with_imports<'a>(
         signature_calls: checker.signature_calls,
         static_type_calls: checker.static_type_calls,
         super_trees: checker.super_trees,
+        json_calls: checker.json_calls,
         array_first_last_calls: checker.array_first_last_calls,
         unwrap_calls: checker.unwrap_calls,
         operator_rewrites: checker.operator_rewrites,
@@ -378,9 +381,8 @@ pub fn collect_module_exports<'a>(program: &'a Program<'a>, _arena: &'a Bump) ->
     ) -> Type<'a> {
         match ty {
             ast::Type::Named { name, .. } => match *name {
-                "number" | "string" | "boolean" | "never" | "void" | "bytes" | "Component" | "JsError" | "Type" => {
-                    Type::Named { name }
-                }
+                "number" | "string" | "boolean" | "never" | "void" | "bytes" | "Component"
+                | "JsError" | "Type" => Type::Named { name },
                 _ => {
                     if structs.contains_key(name) {
                         Type::Struct { name }
@@ -800,6 +802,7 @@ struct Checker<'a> {
     /// declaration. Declaration-derived, not a lowering pass effect — NOT
     /// cleared by `reset_lowering_state`.
     super_trees: HashMap<&'a str, descriptor::DescriptorTree<'a>>,
+    json_calls: HashMap<*const ast::Expr<'a>, descriptor::JsonCall<'a>>,
     /// Builtin `Array.first()`/`Array.last()` call sites to rewrite to an
     /// Option-producing expression, keyed by call expression pointer.
     /// Lowering collections like this one must also be cleared in
@@ -855,6 +858,7 @@ impl<'a> Checker<'a> {
             signature_calls: HashMap::new(),
             static_type_calls: HashMap::new(),
             super_trees: HashMap::new(),
+            json_calls: HashMap::new(),
             array_first_last_calls: HashMap::new(),
             unwrap_calls: HashMap::new(),
             operator_rewrites: HashMap::new(),
@@ -989,6 +993,7 @@ impl<'a> Checker<'a> {
         self.type_of_calls.clear();
         self.signature_calls.clear();
         self.static_type_calls.clear();
+        self.json_calls.clear();
         self.array_first_last_calls.clear();
         self.unwrap_calls.clear();
         self.operator_rewrites.clear();
@@ -1094,16 +1099,28 @@ impl<'a> Checker<'a> {
         // requires every actual member to match some expected member. These
         // arms sit after Var/Infer (a union never silently absorbs or leaks
         // through them) and before the structural arms below.
-        if let Type::Union { members: expected_members } = expected {
+        if let Type::Union {
+            members: expected_members,
+        } = expected
+        {
             return match actual {
-                Type::Union { members: actual_members } => actual_members
+                Type::Union {
+                    members: actual_members,
+                } => actual_members
                     .iter()
                     .all(|am| expected_members.iter().any(|em| self.is_assignable(em, am))),
-                _ => expected_members.iter().any(|em| self.is_assignable(em, actual)),
+                _ => expected_members
+                    .iter()
+                    .any(|em| self.is_assignable(em, actual)),
             };
         }
-        if let Type::Union { members: actual_members } = actual {
-            return actual_members.iter().all(|am| self.is_assignable(expected, am));
+        if let Type::Union {
+            members: actual_members,
+        } = actual
+        {
+            return actual_members
+                .iter()
+                .all(|am| self.is_assignable(expected, am));
         }
         // `none` is assignable to any Option<T>.
         if matches!(expected, Type::Option { .. }) && matches!(actual, Type::None) {
@@ -1611,7 +1628,8 @@ mod tests {
     #[test]
     fn primitive_extension_call_records_mangled_target() {
         let arena = Bump::new();
-        let source = "fn (s string) slugify() string { return s; } const title: string = \"Hi\".slugify();";
+        let source =
+            "fn (s string) slugify() string { return s; } const title: string = \"Hi\".slugify();";
         let result = parse(source, &arena);
         assert!(result.errors.is_empty(), "{:?}", result.errors);
         let program = result.program.expect("parse produced no program");
@@ -1619,9 +1637,16 @@ mod tests {
         assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
         assert_eq!(typeck.method_calls.len(), 1);
         assert!(
-            typeck.method_calls.values().all(|t| t.mangled == "slugify$string"),
+            typeck
+                .method_calls
+                .values()
+                .all(|t| t.mangled == "slugify$string"),
             "expected slugify$string, got {:?}",
-            typeck.method_calls.values().map(|t| &t.mangled).collect::<Vec<_>>()
+            typeck
+                .method_calls
+                .values()
+                .map(|t| &t.mangled)
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1631,9 +1656,21 @@ mod tests {
             "fn (s string) slugify() string { return s; } const n: number = 42; const bad: string = n.slugify();"
         );
         assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(errors[0].message.contains("slugify"), "{}", errors[0].message);
-        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
-        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("slugify"),
+            "{}",
+            errors[0].message
+        );
+        assert!(
+            errors[0].message.contains("string"),
+            "{}",
+            errors[0].message
+        );
+        assert!(
+            errors[0].message.contains("number"),
+            "{}",
+            errors[0].message
+        );
     }
 
     #[test]
@@ -1643,7 +1680,11 @@ mod tests {
         );
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert!(errors[0].message.contains("wrap"), "{}", errors[0].message);
-        assert!(errors[0].message.contains("1 argument"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("1 argument"),
+            "{}",
+            errors[0].message
+        );
     }
 
     #[test]
@@ -1787,7 +1828,11 @@ mod tests {
         ] {
             let errors = typeck(src);
             assert_eq!(errors.len(), 1, "{src}: {errors:?}");
-            assert!(errors[0].message.contains("`Type` is a builtin type"), "{}", errors[0].message);
+            assert!(
+                errors[0].message.contains("`Type` is a builtin type"),
+                "{}",
+                errors[0].message
+            );
         }
     }
 
@@ -1798,11 +1843,20 @@ mod tests {
         assert!(typeck("const n: number = 1; const t: Type = n.getType();").is_empty());
         assert!(typeck("const b: boolean = true; const t: Type = b.getType();").is_empty());
         assert!(typeck("struct Point { x: number } const p: Point = Point { x: 1 }; const t: Type = p.getType();").is_empty());
-        assert!(typeck("type Cents number; const c: Cents = Cents(5); const t: Type = c.getType();").is_empty());
-        assert!(typeck("enum Color { Red, Green } const c: Color = Color.Red; const t: Type = c.getType();").is_empty());
+        assert!(typeck(
+            "type Cents number; const c: Cents = Cents(5); const t: Type = c.getType();"
+        )
+        .is_empty());
+        assert!(typeck(
+            "enum Color { Red, Green } const c: Color = Color.Red; const t: Type = c.getType();"
+        )
+        .is_empty());
         assert!(typeck("const t: Type = [1, 2].getType();").is_empty());
         assert!(typeck("const t: Type = Some(1).getType();").is_empty());
-        assert!(typeck("const r: Result<number, string> = Ok(1); const t: Type = r.getType();").is_empty());
+        assert!(
+            typeck("const r: Result<number, string> = Ok(1); const t: Type = r.getType();")
+                .is_empty()
+        );
         assert!(typeck("const o = { a: 1 }; const t: Type = o.getType();").is_empty());
     }
 
@@ -1822,12 +1876,17 @@ mod tests {
         let typeck = check_program(&program, source);
         assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
         assert_eq!(typeck.signature_calls.len(), 1);
-        assert!(matches!(typeck.signature_calls.values().next(), Some(DescriptorTree::Union { members }) if members.len() == 2));
+        assert!(
+            matches!(typeck.signature_calls.values().next(), Some(DescriptorTree::Union { members }) if members.len() == 2)
+        );
     }
 
     #[test]
     fn signature_describes_interface_declaration() {
-        assert!(typeck("interface Named { name: string } fn f(v: Named) Type { return v.signature(); }").is_empty());
+        assert!(typeck(
+            "interface Named { name: string } fn f(v: Named) Type { return v.signature(); }"
+        )
+        .is_empty());
     }
 
     #[test]
@@ -1861,27 +1920,47 @@ mod tests {
         let checked = check_program(&program, source);
         assert!(checked.errors.is_empty(), "{:?}", checked.errors);
         // Both call sites are recorded for the emitter, with the right kinds.
-        assert_eq!(checked.array_first_last_calls.len(), 2, "{:?}", checked.array_first_last_calls);
         assert_eq!(
-            checked.array_first_last_calls.values().filter(|k| matches!(k, ArrayAccess::First)).count(),
+            checked.array_first_last_calls.len(),
+            2,
+            "{:?}",
+            checked.array_first_last_calls
+        );
+        assert_eq!(
+            checked
+                .array_first_last_calls
+                .values()
+                .filter(|k| matches!(k, ArrayAccess::First))
+                .count(),
             1
         );
         assert_eq!(
-            checked.array_first_last_calls.values().filter(|k| matches!(k, ArrayAccess::Last)).count(),
+            checked
+                .array_first_last_calls
+                .values()
+                .filter(|k| matches!(k, ArrayAccess::Last))
+                .count(),
             1
         );
         // The result type is Option<number>, not number — matching pop/shift's
         // declared type, but this pair is actually emitted that way (deka#561).
         let errors = typeck("const a: Array<number> = [1];\nconst bad: string = a.first();");
         assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(errors[0].message.contains("Option<number>"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("Option<number>"),
+            "{}",
+            errors[0].message
+        );
     }
 
     #[test]
     fn array_first_last_arity_is_checked() {
         let errors = typeck("const a: Array<number> = [1];\nconst f = a.first(1);");
         assert!(!errors.is_empty());
-        assert!(errors.iter().any(|e| e.message.contains("argument")), "{errors:?}");
+        assert!(
+            errors.iter().any(|e| e.message.contains("argument")),
+            "{errors:?}"
+        );
     }
 
     #[test]
@@ -1901,7 +1980,8 @@ mod tests {
         // A user extension named `getType` keeps the deka#527 rewrite; the
         // builtin `__deka_type_of` rewrite is not recorded.
         let arena = Bump::new();
-        let source = "fn (s string) getType() string { return s; } const u: string = \"x\".getType();";
+        let source =
+            "fn (s string) getType() string { return s; } const u: string = \"x\".getType();";
         let result = parse(source, &arena);
         assert!(result.errors.is_empty(), "{:?}", result.errors);
         let program = result.program.expect("parse produced no program");
@@ -1909,9 +1989,16 @@ mod tests {
         assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
         assert_eq!(typeck.method_calls.len(), 1);
         assert!(
-            typeck.method_calls.values().all(|t| t.mangled == "getType$string"),
+            typeck
+                .method_calls
+                .values()
+                .all(|t| t.mangled == "getType$string"),
             "expected getType$string, got {:?}",
-            typeck.method_calls.values().map(|t| &t.mangled).collect::<Vec<_>>()
+            typeck
+                .method_calls
+                .values()
+                .map(|t| &t.mangled)
+                .collect::<Vec<_>>()
         );
         assert!(typeck.type_of_calls.is_empty());
     }
@@ -1930,14 +2017,19 @@ mod tests {
         // any declared member.
         assert!(typeck(
             "interface Has { fn getType() string } fn f(v: Has) string { return v.getType(); }"
-        ).is_empty());
+        )
+        .is_empty());
     }
 
     #[test]
     fn gettype_with_arguments_fails() {
         let errors = typeck("const t: Type = \"x\".getType(1);");
         assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(errors[0].message.contains("`getType` expects no arguments"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("`getType` expects no arguments"),
+            "{}",
+            errors[0].message
+        );
     }
 
     #[test]
@@ -1951,16 +2043,32 @@ mod tests {
             "fn (s string) repeat(n: number) string { return s; } const r: string = \"x\".repeat(\"three\");"
         );
         assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(errors[0].message.contains("number"), "{}", errors[0].message);
-        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("number"),
+            "{}",
+            errors[0].message
+        );
+        assert!(
+            errors[0].message.contains("string"),
+            "{}",
+            errors[0].message
+        );
     }
 
     #[test]
     fn primitive_extension_mut_receiver_fails() {
         let errors = typeck("fn (s mut string) broken() string { return s; }");
         assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(errors[0].message.contains("mutable receiver"), "{}", errors[0].message);
-        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("mutable receiver"),
+            "{}",
+            errors[0].message
+        );
+        assert!(
+            errors[0].message.contains("string"),
+            "{}",
+            errors[0].message
+        );
     }
 
     #[test]
@@ -1969,16 +2077,23 @@ mod tests {
             "fn (s string) slugify() string { return s; } fn (s string) slugify() string { return s; }"
         );
         assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(errors[0].message.contains("duplicate receiver method"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("duplicate receiver method"),
+            "{}",
+            errors[0].message
+        );
     }
 
     #[test]
     fn primitive_extension_property_read_fails() {
-        let errors = typeck(
-            "fn (s string) slugify() string { return s; } const f = \"x\".slugify;"
-        );
+        let errors =
+            typeck("fn (s string) slugify() string { return s; } const f = \"x\".slugify;");
         assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(errors[0].message.contains("slugify"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("slugify"),
+            "{}",
+            errors[0].message
+        );
     }
 
     #[test]
@@ -1990,7 +2105,8 @@ mod tests {
         // ...while the builtin property `length` is untouched.
         assert!(typeck(
             "fn (s string) slugify() string { return s; } const n: number = \"abc\".length;"
-        ).is_empty());
+        )
+        .is_empty());
     }
 
     #[test]
@@ -1999,9 +2115,21 @@ mod tests {
         // extension of the same name would give one name two silent meanings.
         let errors = typeck("fn (s string) length() number { return 0; }");
         assert_eq!(errors.len(), 1, "{errors:?}");
-        assert!(errors[0].message.contains("builtin property"), "{}", errors[0].message);
-        assert!(errors[0].message.contains("length"), "{}", errors[0].message);
-        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("builtin property"),
+            "{}",
+            errors[0].message
+        );
+        assert!(
+            errors[0].message.contains("length"),
+            "{}",
+            errors[0].message
+        );
+        assert!(
+            errors[0].message.contains("string"),
+            "{}",
+            errors[0].message
+        );
         // Builtin methods stay shadowable.
         assert!(typeck(
             "fn (s string) toUpperCase() string { return s; } const u: string = \"x\".toUpperCase();"
@@ -2473,7 +2601,11 @@ mod tests {
         // be assignable to the expected type.
         let errors = typeck("const x: string | number = 1; const y: string = x;");
         assert_eq!(errors.len(), 1, "{:?}", errors);
-        assert!(errors[0].message.contains("string"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("string"),
+            "{}",
+            errors[0].message
+        );
     }
 
     #[test]
@@ -2489,9 +2621,8 @@ mod tests {
 
     #[test]
     fn union_match_missing_arm_fails() {
-        let errors = typeck(
-            "fn f(v: string | number) string { return match (v) { string(s) => s }; }",
-        );
+        let errors =
+            typeck("fn f(v: string | number) string { return match (v) { string(s) => s }; }");
         assert_eq!(errors.len(), 1, "{:?}", errors);
         assert!(
             errors[0].message.contains("non-exhaustive") && errors[0].message.contains("number"),
@@ -2504,7 +2635,11 @@ mod tests {
     fn union_duplicate_members_fail() {
         let errors = typeck("const v: string | string = \"a\";");
         assert_eq!(errors.len(), 1, "{:?}", errors);
-        assert!(errors[0].message.contains("overlap"), "{}", errors[0].message);
+        assert!(
+            errors[0].message.contains("overlap"),
+            "{}",
+            errors[0].message
+        );
     }
 
     #[test]
@@ -2557,7 +2692,9 @@ mod tests {
             "fn f(v: string | number) string { return match (v) { string => \"a\", number(n) => string(n) }; }",
         );
         assert!(
-            errors.iter().any(|e| e.message.contains("requires a binding")),
+            errors
+                .iter()
+                .any(|e| e.message.contains("requires a binding")),
             "{:?}",
             errors
         );
@@ -2569,7 +2706,9 @@ mod tests {
             "fn f(v: string | number) string { return match (v) { boolean(b) => string(b), string(s) => s, number(n) => string(n) }; }",
         );
         assert!(
-            errors.iter().any(|e| e.message.contains("not a member of union")),
+            errors
+                .iter()
+                .any(|e| e.message.contains("not a member of union")),
             "{:?}",
             errors
         );
@@ -2581,7 +2720,9 @@ mod tests {
         // into match emission yet.
         let errors = typeck("type Meters number\nconst v: Meters | string = \"a\";");
         assert!(
-            errors.iter().any(|e| e.message.contains("decidable runtime predicate")),
+            errors
+                .iter()
+                .any(|e| e.message.contains("decidable runtime predicate")),
             "{:?}",
             errors
         );

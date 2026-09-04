@@ -39,7 +39,9 @@ pub enum DescriptorTree<'a> {
         name: &'a str,
         fields: Vec<DescriptorField<'a>>,
     },
-    Interface { name: &'a str },
+    Interface {
+        name: &'a str,
+    },
     Newtype {
         name: &'a str,
         repr: Box<DescriptorTree<'a>>,
@@ -48,9 +50,15 @@ pub enum DescriptorTree<'a> {
         name: &'a str,
         cases: Vec<(&'a str, Option<DescriptorTree<'a>>)>,
     },
-    Array { elem: Box<DescriptorTree<'a>> },
-    Option { inner: Box<DescriptorTree<'a>> },
-    Union { members: Vec<DescriptorTree<'a>> },
+    Array {
+        elem: Box<DescriptorTree<'a>>,
+    },
+    Option {
+        inner: Box<DescriptorTree<'a>>,
+    },
+    Union {
+        members: Vec<DescriptorTree<'a>>,
+    },
 }
 
 /// One struct field in a descriptor tree.
@@ -89,6 +97,19 @@ pub fn collect_recurse_refs<'a>(tree: &DescriptorTree<'a>, out: &mut Vec<&'a str
         }
         DescriptorTree::Leaf { .. } | DescriptorTree::Interface { .. } => {}
     }
+}
+
+/// A compile-time JSON method call and the static shape it specializes.
+#[derive(Clone, Debug)]
+pub struct JsonCall<'a> {
+    pub operation: JsonOperation,
+    pub shape: DescriptorTree<'a>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JsonOperation {
+    ToJson,
+    ParseJson,
 }
 
 /// A recorded `.type()` call site inside a `super` function. `param` is set
@@ -189,10 +210,7 @@ impl<'a> Checker<'a> {
                     let err = self.descriptor_tree_rec(&args[1], span, seen, allow_recurse)?;
                     Ok(DescriptorTree::Enum {
                         name: "Result",
-                        cases: vec![
-                            ("Ok", Some(ok)),
-                            ("Err", Some(err)),
-                        ],
+                        cases: vec![("Ok", Some(ok)), ("Err", Some(err))],
                     })
                 } else {
                     Err(format!(
@@ -296,7 +314,9 @@ impl<'a> Checker<'a> {
                     Some(ref subst) => super::types::substitute_type(&resolved, subst),
                     None => resolved,
                 };
-                let tree = self.descriptor_tree_rec(&resolved, span, seen, allow_recurse)?;
+                let tree = self
+                    .descriptor_tree_rec(&resolved, span, seen, allow_recurse)
+                    .map_err(|message| format!("field `{}`: {}", field.name, message))?;
                 fields.push(DescriptorField {
                     name: field.name,
                     optional: field.optional,
