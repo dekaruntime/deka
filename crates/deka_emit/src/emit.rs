@@ -771,6 +771,7 @@ struct Emitter<'a> {
     union_type_patterns:
         HashMap<*const deka_syntax::Pattern<'a>, deka_syntax::typeck::UnionMemberTest<'a>>,
     unwrap_id: usize,
+    match_id: usize,
     /// Newtype operator rewrites lowered by the typechecker.
     operator_rewrites: HashMap<*const Expr<'a>, deka_syntax::typeck::OperatorRewrite<'a>>,
     /// Primitive extension call sites lowered by the typechecker to
@@ -826,6 +827,7 @@ impl<'a> Emitter<'a> {
             enum_case_patterns: HashMap::new(),
             union_type_patterns: HashMap::new(),
             unwrap_id: 0,
+            match_id: 0,
             operator_rewrites: HashMap::new(),
             method_calls: HashMap::new(),
             type_of_calls: HashSet::new(),
@@ -1441,6 +1443,16 @@ impl<'a> Emitter<'a> {
     fn emit_stmt(&mut self, stmt: &Stmt<'a>) -> Result<(), String> {
         match stmt {
             Stmt::Const { name, value, .. } => {
+                if let Expr::Match { scrutinee, arms, .. } = value {
+                    let result = self.emit_match_value_statements(scrutinee, arms)?;
+                    write_indent(&mut self.out, 0);
+                    self.out.push_str("const ");
+                    self.out.push_str(name);
+                    self.out.push_str(" = ");
+                    self.out.push_str(&result);
+                    self.out.push(';');
+                    return Ok(());
+                }
                 write_indent(&mut self.out, 0);
                 self.out.push_str("const ");
                 self.out.push_str(name);
@@ -1458,6 +1470,16 @@ impl<'a> Emitter<'a> {
                 self.out.push_str(";");
             }
             Stmt::Let { name, value, .. } => {
+                if let Expr::Match { scrutinee, arms, .. } = value {
+                    let result = self.emit_match_value_statements(scrutinee, arms)?;
+                    write_indent(&mut self.out, 0);
+                    self.out.push_str("let ");
+                    self.out.push_str(name);
+                    self.out.push_str(" = ");
+                    self.out.push_str(&result);
+                    self.out.push(';');
+                    return Ok(());
+                }
                 write_indent(&mut self.out, 0);
                 self.out.push_str("let ");
                 self.out.push_str(name);
@@ -1564,10 +1586,22 @@ impl<'a> Emitter<'a> {
             }
             Stmt::Expr { expr, .. } => {
                 write_indent(&mut self.out, 0);
-                self.emit_expr(expr)?;
-                self.out.push_str(";");
+                if let Expr::Match { scrutinee, arms, .. } = expr {
+                    self.emit_match_statements(scrutinee, arms, None)?;
+                } else {
+                    self.emit_expr(expr)?;
+                    self.out.push_str(";");
+                }
             }
             Stmt::Return { value, .. } => {
+                if let Some(Expr::Match { scrutinee, arms, .. }) = value {
+                    let result = self.emit_match_value_statements(scrutinee, arms)?;
+                    write_indent(&mut self.out, 0);
+                    self.out.push_str("return ");
+                    self.out.push_str(&result);
+                    self.out.push(';');
+                    return Ok(());
+                }
                 write_indent(&mut self.out, 0);
                 self.out.push_str("return");
                 if let Some(value) = value {
@@ -2179,6 +2213,11 @@ impl<'a> Emitter<'a> {
     fn next_unwrap_id(&mut self) -> usize {
         self.unwrap_id += 1;
         self.unwrap_id
+    }
+
+    fn next_match_id(&mut self) -> usize {
+        self.match_id += 1;
+        self.match_id
     }
 
     /// Emit one statement of an `or { … }` block.
@@ -2911,6 +2950,84 @@ impl<'a> Emitter<'a> {
         Ok(())
     }
 
+    /// Emit a match in statement position. A match expression is only
+    /// statement-shaped at its enclosing statement boundary; lowering it
+    /// here avoids allocating a closure for the common case.
+    fn emit_match_statements(
+        &mut self,
+        scrutinee: &Expr<'a>,
+        arms: &[deka_syntax::MatchArm<'a>],
+        result: Option<&str>,
+    ) -> Result<(), String> {
+        let id = self.next_match_id();
+        let scrutinee_var = format!("__deka_match_scrutinee_{id}");
+        write_indent(&mut self.out, 0);
+        self.out.push_str("const ");
+        self.out.push_str(&scrutinee_var);
+        self.out.push_str(" = ");
+        self.emit_expr(scrutinee)?;
+        self.out.push_str(";\n");
+
+        for (i, arm) in arms.iter().enumerate() {
+            let condition = self.match_condition(&arm.pattern, &scrutinee_var);
+            write_indent(&mut self.out, 0);
+            if i > 0 {
+                self.out.push_str("else ");
+            }
+            if condition == "true" {
+                self.out.push_str("{\n");
+                self.emit_pattern_bindings(&arm.pattern, &scrutinee_var, 1)?;
+                write_indent(&mut self.out, 1);
+                if let Some(result) = result {
+                    self.out.push_str(result);
+                    self.out.push_str(" = ");
+                }
+                self.emit_expr(&arm.body)?;
+                self.out.push_str(";\n");
+                write_indent(&mut self.out, 0);
+                self.out.push_str("}\n");
+                continue;
+            }
+            self.out.push_str("if (");
+            self.out.push_str(&condition);
+            self.out.push_str(") {\n");
+            self.emit_pattern_bindings(&arm.pattern, &scrutinee_var, 1)?;
+            write_indent(&mut self.out, 1);
+            if let Some(result) = result {
+                self.out.push_str(result);
+                self.out.push_str(" = ");
+            }
+            self.emit_expr(&arm.body)?;
+            self.out.push_str(";\n");
+            write_indent(&mut self.out, 0);
+            self.out.push_str("}\n");
+        }
+        if arms
+            .last()
+            .map(|arm| self.match_condition(&arm.pattern, &scrutinee_var) != "true")
+            .unwrap_or(true)
+        {
+            write_indent(&mut self.out, 0);
+            self.out
+                .push_str("else { deka.panic(\"non-exhaustive match\"); }\n");
+        }
+        Ok(())
+    }
+
+    fn emit_match_value_statements(
+        &mut self,
+        scrutinee: &Expr<'a>,
+        arms: &[deka_syntax::MatchArm<'a>],
+    ) -> Result<String, String> {
+        let result = format!("__deka_match_result_{}", self.match_id + 1);
+        write_indent(&mut self.out, 0);
+        self.out.push_str("let ");
+        self.out.push_str(&result);
+        self.out.push_str(";\n");
+        self.emit_match_statements(scrutinee, arms, Some(&result))?;
+        Ok(result)
+    }
+
     fn emit_match(
         &mut self,
         scrutinee: &Expr<'a>,
@@ -2927,7 +3044,7 @@ impl<'a> Emitter<'a> {
         }
 
         self.out
-            .push_str("  throw new Error(\"non-exhaustive match\");\n");
+            .push_str("  deka.panic(\"non-exhaustive match\");\n");
         self.out.push_str("})(");
         self.emit_expr(scrutinee)?;
         self.out.push_str(")");
@@ -3000,6 +3117,7 @@ impl<'a> Emitter<'a> {
                     enum_case_patterns: HashMap::new(),
                     union_type_patterns: HashMap::new(),
                     unwrap_id: 0,
+                    match_id: 0,
                     operator_rewrites: HashMap::new(),
                     method_calls: HashMap::new(),
                     type_of_calls: HashSet::new(),
