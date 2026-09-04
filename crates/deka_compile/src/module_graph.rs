@@ -449,9 +449,29 @@ pub fn compile_module_graph_with_options(
         HashMap::with_capacity(modules.len());
     for module in modules.values() {
         let parse_result = deka_syntax::parse(&module.source, &arena);
+        // A module that fails to parse must fail the whole graph here, with
+        // its own diagnostics and its path — not vanish from `programs` and
+        // let every importer bind its imported names to the Infer sentinel,
+        // which surfaces downstream as bare `<infer>` errors that name
+        // neither the module nor the cause (deka#567). This is the gate every
+        // multi-module path (transpile, build, run/serve, check --as-package,
+        // wasm project mode) funnels through.
+        if !parse_result.errors.is_empty() {
+            for d in &parse_result.errors {
+                errors.push(diag(
+                    d.line,
+                    d.column,
+                    format!("{}: {}", module.path.display(), d.message),
+                ));
+            }
+            continue;
+        }
         if let Some(program) = parse_result.program {
             programs.insert(module.path.clone(), program);
         }
+    }
+    if !errors.is_empty() {
+        return Err(errors);
     }
     for (path, program) in programs.iter() {
         exports.insert(
@@ -863,6 +883,51 @@ mod tests {
         aliases.insert((b.clone(), "./a.ds".to_string()), a.clone());
         let result = compile_module_graph(&c, &InMemoryLoader { files, aliases }).expect("direct reexport compiles");
         assert_eq!(result.modules.len(), 3);
+    }
+
+    #[test]
+    fn graph_fails_naming_module_that_fails_to_parse() {
+        // deka#567: a module that fails to parse must fail the whole graph
+        // with its own path-prefixed diagnostic, and the importer must not
+        // emit its downstream `<infer>` cascade — the pre-fix output was
+        // three errors about the importer's own code ("`Ok` is not a case
+        // of type `<infer>`", "unknown identifier `v`", ...) before the one
+        // line that named the real cause.
+        let root = PathBuf::from("/project");
+        let broken = root.join("broken.ds");
+        let main = root.join("main.ds");
+
+        let mut files = HashMap::new();
+        files.insert(
+            broken.clone(),
+            "export fn helper() string { return \"x\" }\nconst = 5".to_string(),
+        );
+        files.insert(
+            main.clone(),
+            "import { helper } from \"./broken.ds\";\nconst r = match (helper()) { Ok(v) => v, Err(e) => \"\" };"
+                .to_string(),
+        );
+
+        let mut aliases = HashMap::new();
+        aliases.insert((main.clone(), "./broken.ds".to_string()), broken.clone());
+
+        let err = compile_module_graph(&main, &InMemoryLoader { files, aliases })
+            .expect_err("graph must fail when an imported module fails to parse");
+        let messages: Vec<String> = err.iter().map(|d| d.message.clone()).collect();
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("broken.ds") && m.contains("expected identifier")),
+            "diagnostics must name the broken module and carry its parse error: {messages:?}"
+        );
+        assert!(
+            !messages.iter().any(|m| m.contains("<infer>")),
+            "downstream <infer> cascade must be suppressed, not reported alongside: {messages:?}"
+        );
+        assert!(
+            !messages.iter().any(|m| m.contains("main.ds")),
+            "no diagnostics may blame the importer for the module's parse failure: {messages:?}"
+        );
     }
 
     #[test]
