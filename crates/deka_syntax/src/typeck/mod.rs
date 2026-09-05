@@ -27,7 +27,9 @@ mod types;
 pub use descriptor::{
     DescriptorField, DescriptorTree, JsonCall, JsonOperation, StaticTypeCall,
 };
-pub use types::{ArrayAccess, NewtypeSide, OperatorRewrite, Type, UnionMemberTest, UnwrapKind};
+pub use types::{
+    ArrayAccess, NewtypeSide, NumberMath, OperatorRewrite, Type, UnionMemberTest, UnwrapKind,
+};
 
 #[derive(Debug)]
 pub struct TypeError {
@@ -59,6 +61,10 @@ pub struct TypeckResult<'a> {
     /// Builtin `Array.first()`/`Array.last()` call sites, rewritten to an
     /// Option-producing expression during emission (deka#561).
     pub array_first_last_calls: HashMap<*const ast::Expr<'a>, types::ArrayAccess>,
+    /// Builtin `Math`-backed `number` method call sites, rewritten to a
+    /// `Math.*` expression during emission — partial functions wrapped so
+    /// `NaN` surfaces as `None` (deka#378 step 2, rfd#40 phase 2).
+    pub number_math_calls: HashMap<*const ast::Expr<'a>, types::NumberMath>,
     /// Map from primitive conversion call expression pointer to how it should
     /// be lowered (`parseNumber(x)`, `unboxNumber(x)`, `toNumber(x)`,
     /// `string(x)`).
@@ -186,6 +192,7 @@ pub fn check_program_with_imports<'a>(
         super_trees: checker.super_trees,
         json_calls: checker.json_calls,
         array_first_last_calls: checker.array_first_last_calls,
+        number_math_calls: checker.number_math_calls,
         unwrap_calls: checker.unwrap_calls,
         operator_rewrites: checker.operator_rewrites,
         jsx_optional_props: checker.jsx_optional_props,
@@ -808,6 +815,11 @@ struct Checker<'a> {
     /// Lowering collections like this one must also be cleared in
     /// `reset_lowering_state` — the inference pass populates them too.
     array_first_last_calls: HashMap<*const ast::Expr<'a>, types::ArrayAccess>,
+    /// Builtin `Math`-backed `number` method call sites to rewrite to a
+    /// `Math.*` expression, keyed by call expression pointer (deka#378
+    /// step 2). Lowering collections like this one must also be cleared in
+    /// `reset_lowering_state` — the inference pass populates them too.
+    number_math_calls: HashMap<*const ast::Expr<'a>, types::NumberMath>,
     /// Primitive conversion call sites to lower, keyed by call expression pointer.
     /// Cleared between passes by `reset_lowering_state`.
     unwrap_calls: HashMap<*const ast::Expr<'a>, types::UnwrapKind>,
@@ -860,6 +872,7 @@ impl<'a> Checker<'a> {
             super_trees: HashMap::new(),
             json_calls: HashMap::new(),
             array_first_last_calls: HashMap::new(),
+            number_math_calls: HashMap::new(),
             unwrap_calls: HashMap::new(),
             operator_rewrites: HashMap::new(),
             jsx_optional_props: HashMap::new(),
@@ -894,7 +907,9 @@ impl<'a> Checker<'a> {
         //            crypto  -> @deka/crypto
         //            Date    -> @deka/time
         //
-        //   remaining: Math      needs prelude methods on `number` (#378 step 2)
+        //   remaining: Math      prelude methods on `number` landed (#378
+        //                        step 2); the registration is deleted in
+        //                        step 5, and `PI` still wants a home
         //              Object    Promise    parseInt    process    undecided
         //              isset     removed by #416
         //
@@ -907,9 +922,10 @@ impl<'a> Checker<'a> {
         // 13 P10 asks for.
         // `isset` is gone with deka#416: it existed only to test presence on an
         // interface `?:` field, which is now an `Option` like everywhere else.
-        // Only `Math` is left, and only because its replacement is not built:
-        // `sqrt`/`floor` want prelude methods on `number` and `PI` wants a
-        // home, per deka#378 step 2.
+        // Only `Math` is left. Its replacement exists as of deka#378 step 2 —
+        // `sqrt`/`floor` and friends are prelude methods on `number` — but
+        // the ambient registration stays until step 5 deletes it, and `PI`
+        // still wants a home.
         //
         // `Object`, `Promise` and `parseInt` are gone. `Promise` stays a
         // *type* -- 63 annotations across the corpora are unaffected, because
@@ -995,6 +1011,7 @@ impl<'a> Checker<'a> {
         self.static_type_calls.clear();
         self.json_calls.clear();
         self.array_first_last_calls.clear();
+        self.number_math_calls.clear();
         self.unwrap_calls.clear();
         self.operator_rewrites.clear();
     }
@@ -1973,6 +1990,81 @@ mod tests {
         let typeck = check_program(&program, source);
         assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
         assert!(typeck.array_first_last_calls.is_empty());
+    }
+
+    #[test]
+    fn number_math_records_calls_with_total_and_partial_kinds() {
+        let arena = Bump::new();
+        let source = "const f: number = (3.7).floor();\nconst m: number = (1).max(2);\nconst s: Option<number> = (4).sqrt();\nconst p: Option<number> = (2).pow(10);";
+        let result = parse(source, &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.expect("parse produced no program");
+        let checked = check_program(&program, source);
+        assert!(checked.errors.is_empty(), "{:?}", checked.errors);
+        assert_eq!(
+            checked.number_math_calls.len(),
+            4,
+            "{:?}",
+            checked.number_math_calls
+        );
+        assert_eq!(
+            checked
+                .number_math_calls
+                .values()
+                .filter(|k| matches!(k, NumberMath::Total))
+                .count(),
+            2
+        );
+        assert_eq!(
+            checked
+                .number_math_calls
+                .values()
+                .filter(|k| matches!(k, NumberMath::Partial))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn number_math_partial_methods_have_option_type() {
+        // The whole point of the wrapper: a partial method cannot hand back
+        // a `number` that is not one, so `sqrt` is `Option<number>` and
+        // assigning it to a plain `number` is rejected (rfd#13, deka#378
+        // step 2).
+        let errors = typeck("const bad: number = (4).sqrt();");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].message.contains("Option<number>"),
+            "{}",
+            errors[0].message
+        );
+        assert!(typeck("const good: number = unwrap((4).sqrt()) or { 0 };").is_empty());
+    }
+
+    #[test]
+    fn number_math_args_are_checked() {
+        // Unlike the ambient `Math` global — typed `Infer`, so anything went
+        // (deka#252) — the replacement checks arity and argument types.
+        let errors = typeck("const bad = (3.7).floor(1);");
+        assert!(!errors.is_empty(), "arity must be checked");
+        let errors = typeck("const bad = (1).max(\"x\");");
+        assert!(!errors.is_empty(), "argument types must be checked");
+    }
+
+    #[test]
+    fn number_math_extension_shadows_builtin() {
+        // A user extension named `floor` keeps the deka#527 rewrite; the
+        // Math-backed builtin is not recorded (deka#378 step 2).
+        let arena = Bump::new();
+        let source =
+            "fn (n number) floor() string { return \"x\"; } const u: string = (3.7).floor();";
+        let result = parse(source, &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.expect("parse produced no program");
+        let typeck = check_program(&program, source);
+        assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
+        assert_eq!(typeck.method_calls.len(), 1);
+        assert!(typeck.number_math_calls.is_empty());
     }
 
     #[test]

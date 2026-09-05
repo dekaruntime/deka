@@ -199,6 +199,29 @@ pub(super) fn primitive_member<'a>(
         ("string", "substring") => {
             PrimitiveMember::BuiltinMethod(fn2(&number_ty, &number_ty, &string_ty))
         }
+        // Math-backed methods on `number` (deka#378 step 2, rfd#40 phase 2).
+        // Total functions return a plain `number`; partial functions — those
+        // where JavaScript answers some inputs with `NaN` (`sqrt(-1)`,
+        // `pow(-2, 0.5)`) — return `Option<number>`, so the emitted wrapper
+        // cannot hand back a number that is not one (rfd#13). The emitter
+        // rewrites every call to a `Math.*` expression (`number_math_calls`);
+        // verbatim passthrough would be a runtime lie since JS numbers have
+        // no such methods.
+        ("number", "max" | "min") => PrimitiveMember::BuiltinMethod(fn1(&number_ty, &number_ty)),
+        ("number", "pow") => PrimitiveMember::BuiltinMethod(fn1(
+            &number_ty,
+            &Type::Option {
+                inner: Box::new(number_ty.clone()),
+            },
+        )),
+        ("number", field) if NUMBER_MATH_TOTAL.contains(&field) => {
+            PrimitiveMember::BuiltinMethod(fn0(number_ty))
+        }
+        ("number", field) if NUMBER_MATH_PARTIAL.contains(&field) => {
+            PrimitiveMember::BuiltinMethod(fn0(Type::Option {
+                inner: Box::new(number_ty),
+            }))
+        }
         ("Array", "length") => PrimitiveMember::Property(number_ty),
         ("Array", "includes") => {
             PrimitiveMember::BuiltinMethod(fn2(elem?, &number_ty, &boolean_ty))
@@ -291,6 +314,35 @@ pub(super) fn primitive_member<'a>(
         _ => return None,
     };
     Some(member)
+}
+
+/// Total `Math` functions exposed as methods on `number`: every input
+/// yields a genuine number (deka#378 step 2, rfd#40 phase 2). `max`/`min`
+/// are handled separately because they take one argument.
+const NUMBER_MATH_TOTAL: &[&str] = &[
+    "abs", "ceil", "floor", "round", "trunc", "sign", "cbrt", "exp", "sin", "cos", "tan", "atan",
+    "sinh", "cosh", "tanh",
+];
+
+/// Partial `Math` functions: some inputs make JavaScript produce `NaN`, so
+/// the method returns `Option<number>` and the emitted wrapper rewrites
+/// `NaN` to `None`. `pow` is handled separately because it takes one
+/// argument.
+const NUMBER_MATH_PARTIAL: &[&str] = &[
+    "sqrt", "log", "log2", "log10", "asin", "acos", "acosh", "atanh",
+];
+
+/// Classify a builtin `Math`-backed method on `number` for the emitter
+/// (deka#378 step 2). Must stay in sync with the `("number", …)` arms of
+/// `primitive_member`.
+pub(super) fn number_math_kind(method: &str) -> Option<super::types::NumberMath> {
+    if NUMBER_MATH_TOTAL.contains(&method) || matches!(method, "max" | "min") {
+        Some(super::types::NumberMath::Total)
+    } else if NUMBER_MATH_PARTIAL.contains(&method) || method == "pow" {
+        Some(super::types::NumberMath::Partial)
+    } else {
+        None
+    }
 }
 
 impl<'a> Checker<'a> {
@@ -2631,6 +2683,19 @@ impl<'a> Checker<'a> {
                 return None;
             }
             Type::Named { name } => {
+                // Builtin Math-backed methods on `number` (deka#378 step 2,
+                // rfd#40 phase 2): record the call site so the emitter
+                // rewrites it to a `Math.*` expression. A declared extension
+                // of the same name shadows the builtin (deka#527), so record
+                // only when none exists.
+                if *name == "number"
+                    && !self.receiver_methods.contains_key(&("number", method_name))
+                {
+                    if let Some(kind) = number_math_kind(method_name) {
+                        self.number_math_calls
+                            .insert(call_expr as *const ast::Expr, kind);
+                    }
+                }
                 // Primitive receiver: a user extension shadows builtin members
                 // of the same name. On a miss, fall through to `check_call` so
                 // builtin property-functions keep working (deka#527).

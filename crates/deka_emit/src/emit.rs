@@ -43,6 +43,7 @@ pub fn emit_js(program: &Program, _source: &str) -> Result<String, String> {
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
+        &HashMap::new(),
         "module.ds",
         None,
     )
@@ -72,6 +73,7 @@ pub fn emit_js_with_imports<'a>(
         operator_rewrites,
         method_calls,
         &HashSet::new(),
+        &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
@@ -116,6 +118,13 @@ pub fn emit_js_with_options<'a>(
         *const Expr<'a>,
         deka_syntax::typeck::ArrayAccess,
     >,
+    // Builtin Math-backed `number` method call sites, lowered by the
+    // typechecker (deka#378 step 2, rfd#40 phase 2): the emitter rewrites
+    // them to `Math.*` expressions since JS numbers have no such methods.
+    number_math_calls: &HashMap<
+        *const Expr<'a>,
+        deka_syntax::typeck::NumberMath,
+    >,
     // Builtin `.type()` call sites inside `super` functions, lowered by the
     // typechecker to the hidden descriptor parameter or a static tree const
     // (deka#529, rfd#41). Kept for super declarations (PR B): this is the
@@ -154,6 +163,7 @@ pub fn emit_js_with_options<'a>(
     emitter.signature_calls = signature_calls.clone();
     emitter.json_calls = json_calls.clone();
     emitter.array_first_last_calls = array_first_last_calls.clone();
+    emitter.number_math_calls = number_math_calls.clone();
     emitter.static_type_calls = static_type_calls.clone();
     emitter.super_decl_trees = super_decl_trees.clone();
     emitter.jsx_optional_props = jsx_optional_props.clone();
@@ -787,6 +797,11 @@ struct Emitter<'a> {
     /// typechecker (deka#561): JS arrays have no `first`/`last`, so the
     /// emitter rewrites the call to an Option-producing expression.
     array_first_last_calls: HashMap<*const Expr<'a>, deka_syntax::typeck::ArrayAccess>,
+    /// Builtin Math-backed `number` method call sites lowered by the
+    /// typechecker (deka#378 step 2, rfd#40 phase 2): JS numbers have no
+    /// such methods, so the emitter rewrites the call to a `Math.*`
+    /// expression, wrapping partial functions so `NaN` surfaces as `None`.
+    number_math_calls: HashMap<*const Expr<'a>, deka_syntax::typeck::NumberMath>,
     /// Builtin `Name.type()` call sites on `super` declarations, lowered by
     /// the typechecker (rfd#41, deka#561 PR B): the emitter rewrites each
     /// call to the interned `__deka_super_desc$<Name>` const.
@@ -834,6 +849,7 @@ impl<'a> Emitter<'a> {
             signature_calls: HashMap::new(),
             json_calls: HashMap::new(),
             array_first_last_calls: HashMap::new(),
+            number_math_calls: HashMap::new(),
             static_type_calls: HashMap::new(),
             super_decl_trees: std::collections::HashMap::new(),
             file_stem: "module".to_string(),
@@ -1224,6 +1240,16 @@ impl<'a> Emitter<'a> {
         // Same guarantee for `array_first_last_calls` (deka#561): the emitted
         // rewrite calls `Some`/`None`, which the enum prelude defines.
         if !self.array_first_last_calls.is_empty() {
+            self.uses_prelude_enums = true;
+        }
+        // And for partial `number_math_calls` (deka#378 step 2): the emitted
+        // Option wrapper calls `Some`/`None`. Total calls emit plain
+        // `Math.*` expressions and need no prelude.
+        if self
+            .number_math_calls
+            .values()
+            .any(|kind| matches!(kind, deka_syntax::typeck::NumberMath::Partial))
+        {
             self.uses_prelude_enums = true;
         }
 
@@ -2429,6 +2455,38 @@ impl<'a> Emitter<'a> {
                     return Ok(());
                 }
 
+                // Builtin Math-backed methods on `number` (deka#378 step 2,
+                // rfd#40 phase 2): JS numbers have no such methods, so
+                // verbatim passthrough would be a runtime lie — rewrite to
+                // `Math.<name>(recv, args)`. The method names in the
+                // typechecker's table are exactly the `Math` member names.
+                // Partial functions answer `None` exactly where JS would
+                // hand back `NaN` — a value of type `number` that is not a
+                // number (rfd#13). `Infinity` is a legitimate IEEE-754
+                // value and passes through as `Some`. The arrow IIFE
+                // evaluates the receiver and arguments exactly once.
+                if let Some(kind) = self.number_math_calls.get(&expr_ptr) {
+                    if let Expr::FieldAccess { object, field, .. } = &**callee {
+                        let partial = matches!(kind, deka_syntax::typeck::NumberMath::Partial);
+                        if partial {
+                            self.out.push_str("((v) => isNaN(v) ? None : Some(v))(");
+                        }
+                        self.out.push_str("Math.");
+                        self.out.push_str(field);
+                        self.out.push('(');
+                        self.emit_expr(object)?;
+                        for arg in args.iter() {
+                            self.out.push_str(", ");
+                            self.emit_expr(arg)?;
+                        }
+                        self.out.push(')');
+                        if partial {
+                            self.out.push(')');
+                        }
+                    }
+                    return Ok(());
+                }
+
                 // Primitive extension call: rewrite `obj.method(args)` to the
                 // module-local free function `method$receiver(obj, args)`.
                 // Primitives cannot be branded with a prototype, so static
@@ -3139,6 +3197,7 @@ impl<'a> Emitter<'a> {
                     signature_calls: HashMap::new(),
                     json_calls: HashMap::new(),
                     array_first_last_calls: HashMap::new(),
+                    number_math_calls: HashMap::new(),
                     static_type_calls: HashMap::new(),
                     super_decl_trees: std::collections::HashMap::new(),
                     file_stem: self.file_stem.clone(),
