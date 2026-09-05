@@ -1,3 +1,0 @@
-export async function load($p: Promise<string>): Promise<string> {
-    return await $p;
-}
