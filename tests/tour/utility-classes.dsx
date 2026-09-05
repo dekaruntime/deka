@@ -5,4 +5,6 @@ fn Card() Component {
 </div>
 }
 
-<Card />
+export fn Page() Component {
+  return <Card />
+}

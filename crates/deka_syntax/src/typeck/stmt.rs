@@ -997,7 +997,11 @@ impl<'a> Checker<'a> {
             } else if !self.is_assignable(&expected, &value_type) {
                 self.error_at_expr(
                     value,
-                    format!("expected type `{expected}`, found type `{value_type}`"),
+                    super::with_union_narrowing_hint(
+                        format!("expected type `{expected}`, found type `{value_type}`"),
+                        &expected,
+                        &value_type,
+                    ),
                 );
             }
             expected
@@ -1325,7 +1329,11 @@ impl<'a> Checker<'a> {
             if !self.is_assignable(&expected, &value_type) {
                 self.error_span(
                     span,
-                    format!("expected return type `{expected}`, found type `{value_type}`"),
+                    super::with_union_narrowing_hint(
+                        format!("expected return type `{expected}`, found type `{value_type}`"),
+                        &expected,
+                        &value_type,
+                    ),
                 );
             }
         } else {

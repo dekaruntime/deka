@@ -28,21 +28,13 @@ pub fn validate_imports(
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
     let lines: Vec<&str> = source.lines().collect();
-    let bounds = frontmatter_bounds(&lines);
-    let scan_end = bounds.map(|(_, end)| end).unwrap_or(lines.len());
 
     let mut import_lines = HashSet::new();
     let mut import_specs = Vec::new();
     let mut saw_code = false;
     let mut in_block_comment = false;
 
-    for (idx, line) in lines.iter().enumerate().take(scan_end) {
-        if let Some((start, end)) = bounds {
-            if idx == start || idx == end {
-                continue;
-            }
-        }
-
+    for (idx, line) in lines.iter().enumerate() {
         let clean = strip_php_tags_inline(line);
         let trimmed = clean.trim();
 
@@ -508,44 +500,6 @@ pub(crate) fn strip_php_tags_inline(line: &str) -> String {
         .replace("<?php", "")
         .replace("<?", "")
         .replace("?>", "")
-}
-
-pub(crate) fn frontmatter_bounds(lines: &[&str]) -> Option<(usize, usize)> {
-    if lines.is_empty() {
-        return None;
-    }
-    let mut i = 0;
-    while i < lines.len() && lines[i].trim().is_empty() {
-        i += 1;
-    }
-    if i >= lines.len() {
-        return None;
-    }
-    let mut first = lines[i];
-    if let Some(stripped) = first.strip_prefix('\u{feff}') {
-        first = stripped;
-    }
-    if first.trim() == "---" {
-        // Explicit frontmatter block: --- ... ---
-        let start = i;
-        i += 1;
-        for idx in i..lines.len() {
-            if lines[idx].trim() == "---" {
-                return Some((start, idx));
-            }
-        }
-        return None;
-    }
-    // No leading frontmatter block. If a '---' separator appears later in the
-    // file, treat it as a script/template divider: everything before it is the
-    // script section and everything after it is the template section. Represent
-    // this as a zero-width frontmatter block at the separator line.
-    for idx in i..lines.len() {
-        if lines[idx].trim() == "---" {
-            return Some((idx, idx));
-        }
-    }
-    None
 }
 
 pub(crate) fn consume_comment_line(trimmed: &str, in_block: &mut bool) -> bool {
