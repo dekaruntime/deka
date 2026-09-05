@@ -12,6 +12,12 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
+const FORM_ACTION: &str = "/api/cart";
+const FORM_METHOD: &str = "post";
+const FORM_ENCTYPE: &str = "application/x-www-form-urlencoded";
+const FIELD_NAME: &str = "sku";
+const FIELD_VALUE: &str = "sku-42";
+
 fn cli_bin() -> &'static str {
     env!("CARGO_BIN_EXE_cli")
 }
@@ -51,20 +57,20 @@ fn init_project(root: &Path) {
 }
 
 fn write_fixture(root: &Path) {
-    fs::write(
-        root.join("app/page.dsx"),
-        r#"import { Form } from "ui/form"
+    let page = format!(
+        r#"import {{ Form }} from "ui/form"
 
-export fn Page() {
-    return <Form action="/api/cart" method="post"><input name="sku" value="sku-42" /><button>Add</button></Form>
-}
-"#,
-    )
-    .expect("write page");
+export fn Page() {{
+    return <Form action="{FORM_ACTION}" method="{FORM_METHOD}"><input name="{FIELD_NAME}" value="{FIELD_VALUE}" /><button>Add</button></Form>
+}}
+"#
+    );
+    fs::write(root.join("app/page.dsx"), page).expect("write page");
 
-    fs::create_dir_all(root.join("api/cart")).expect("create api route directory");
+    let route = root.join(FORM_ACTION.trim_start_matches('/'));
+    fs::create_dir_all(&route).expect("create api route directory");
     fs::write(
-        root.join("api/cart/route.ds"),
+        route.join("route.ds"),
         r#"interface Request { body: string }
 interface Response { status: number, body: string }
 
@@ -76,13 +82,49 @@ export fn POST(request: Request) Response {
     .expect("write cart route");
 }
 
+fn form_attribute(html: &str, name: &str) -> String {
+    let form_start = html.find("<form ").expect("rendered form start");
+    let form_end = html[form_start..]
+        .find('>')
+        .map(|offset| form_start + offset)
+        .expect("rendered form end");
+    let form_tag = &html[form_start..=form_end];
+    let prefix = format!("{name}=\"");
+    let Some(value_start) = form_tag.find(&prefix) else {
+        return String::new();
+    };
+    let value_start = value_start + prefix.len();
+    let value_end = form_tag[value_start..]
+        .find('"')
+        .map(|offset| value_start + offset)
+        .expect("form attribute value end");
+    form_tag[value_start..value_end].to_string()
+}
+
+fn input_attribute(html: &str, name: &str) -> String {
+    let input_start = html.find("<input ").expect("rendered input start");
+    let input_end = html[input_start..]
+        .find('>')
+        .map(|offset| input_start + offset)
+        .expect("rendered input end");
+    let input_tag = &html[input_start..=input_end];
+    let prefix = format!("{name}=\"");
+    let value_start = input_tag.find(&prefix).expect("input attribute");
+    let value_start = value_start + prefix.len();
+    let value_end = input_tag[value_start..]
+        .find('"')
+        .map(|offset| value_start + offset)
+        .expect("input attribute value end");
+    input_tag[value_start..value_end].to_string()
+}
+
 fn wait_ready(client: &Client, port: u16) {
     let deadline = Instant::now() + Duration::from_secs(45);
     while Instant::now() < deadline {
-        if let Ok(response) = client.get(format!("http://127.0.0.1:{port}/")).send()
-            && response.status().as_u16() == 200
-        {
-            return;
+        if let Ok(response) = client.get(format!("http://127.0.0.1:{port}/")).send() {
+            if response.status().as_u16() == 200 {
+                return;
+            }
         }
         std::thread::sleep(Duration::from_millis(150));
     }
@@ -117,19 +159,27 @@ fn form_posts_to_route_and_route_receives_submitted_fields() {
         .expect("GET page")
         .text()
         .expect("read page HTML");
-    assert!(
-        page.contains(r#"<form action="/api/cart" method="post">"#),
-        "Form must render a browser-native form pointing at the route: {page}"
-    );
-    assert!(
-        page.contains(r#"name="sku" value="sku-42""#),
-        "form fields must survive rendering: {page}"
-    );
+    let action = form_attribute(&page, "action");
+    let method = form_attribute(&page, "method");
+    let enctype = form_attribute(&page, "enctype");
+    let field_name = input_attribute(&page, "name");
+    let field_value = input_attribute(&page, "value");
+    let enctype = if enctype.is_empty() {
+        FORM_ENCTYPE.to_string()
+    } else {
+        enctype
+    };
 
     let response = client
-        .post(format!("http://127.0.0.1:{port}/api/cart"))
-        .header("content-type", "application/x-www-form-urlencoded")
-        .body("sku=sku-42")
+        .request(
+            method
+                .to_ascii_uppercase()
+                .parse()
+                .expect("rendered form method"),
+            format!("http://127.0.0.1:{port}{action}"),
+        )
+        .header("content-type", enctype)
+        .form(&[(field_name.as_str(), field_value.as_str())])
         .send()
         .expect("submit rendered form to cart route");
     assert_eq!(response.status().as_u16(), 200);
