@@ -7,12 +7,18 @@ runtime calls against the `deka.ui` namespace.
 
 The compiler emits the following contract, matching RFD 24:
 
-- `deka.ui.jsx(tag, props)` for elements with a single child.
-- `deka.ui.jsxs(tag, props)` for elements with multiple static children.
+- `deka.ui.jsx(tag, props, child)` for elements with a single child — the
+  child is a separate argument, not a field of `props`.
+- `deka.ui.jsxs(tag, props, [children])` for elements with multiple static
+  children.
 - `deka.ui.Fragment` as the tag for `<>...</>` fragments.
 
 HTML tags are passed as lowercase strings. Function components are passed by
-identifier.
+identifier. Elements without children emit `deka.ui.jsx(tag, props)` with no
+third argument. Passing `children` inside `props` instead of as the third
+argument remains supported for host and userland code, but the compiler never
+emits that form (it forces a per-element props copy in the factory; see
+deka#580).
 
 ## Example
 
@@ -38,12 +44,10 @@ export function Page(): Component {
 The `Page` component compiles roughly to:
 
 ```js
-deke.ui.jsxs(deka.ui.Fragment, {
-  "children": [
-    deka.ui.jsx(Greeting, { "name": "DekaScript" }),
-    deka.ui.jsx("p", { "children": "Welcome to the runtime." })
-  ]
-});
+deke.ui.jsxs(deka.ui.Fragment, {}, [
+  deka.ui.jsx(Greeting, { "name": "DekaScript" }),
+  deka.ui.jsx("p", {}, "Welcome to the runtime.")
+]);
 ```
 
 ## Props
@@ -53,7 +57,7 @@ Props use standard JSX attribute syntax. Boolean props without a value default t
 
 ```ts
 <button disabled>Save</button>
-// -> deka.ui.jsx("button", { "disabled": true, "children": "Save" })
+// -> deka.ui.jsx("button", { "disabled": true }, "Save")
 ```
 
 Event handlers are emitted as-is:
@@ -71,4 +75,7 @@ separately.
 
 The host or runtime must provide `deka.ui.jsx`, `deka.ui.jsxs`, and
 `deka.ui.Fragment`. The compiler does not inject an import for these helpers;
-they are referenced as members of the global `deka.ui` namespace.
+they are referenced as members of the global `deka.ui` namespace. The factory
+accepts children either as the third argument (the emitted form) or inside
+`props` (legacy form); in both cases renderers see the same
+`{ tag, props, children }` node with `children` as a flat array.
