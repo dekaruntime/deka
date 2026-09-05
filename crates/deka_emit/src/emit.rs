@@ -1295,7 +1295,7 @@ impl<'a> Emitter<'a> {
                 // instance and compared by value, so cross-module identity
                 // needs no shared object — and no module pays for another
                 // module's helpers.
-                self.out.push_str(r###"function __deka_struct(id,embeds){function f(fields){const o=Object.create(f.prototype);Object.assign(o,fields);Object.defineProperty(o,'__deka_struct',{value:id,enumerable:false,writable:false,configurable:false});return o;}f.id=id;Object.defineProperty(f,'name',{value:id,configurable:true});f.prototype=Object.create(null);f.prototype.constructor=f;f.impl=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){return b.apply(this,x);};}else{for(const k in a)f.prototype[k]=a[k];}return f;};f.implMut=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka_MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return b.apply(this,x);};}else{for(const k in a){const fn=a[k];f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka_MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return fn.apply(this,x);};}}return f;};if(embeds){for(const [embedName,embedFactory] of Object.entries(embeds)){for(const key of Object.keys(embedFactory.prototype)){f.prototype[key]=function(...args){return this[embedName][key](...args);};}}}return f;}"###);
+                self.out.push_str(r###"function __deka_struct(id,embeds){function f(fields){const o=Object.create(f.prototype);Object.assign(o,fields);return o;}f.id=id;Object.defineProperty(f,'name',{value:id,configurable:true});f.prototype=Object.create(null);Object.defineProperty(f.prototype,'__deka_struct',{value:id,enumerable:false,writable:false,configurable:false});f.prototype.constructor=f;f.impl=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){return b.apply(this,x);};}else{for(const k in a)f.prototype[k]=a[k];}return f;};f.implMut=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka_MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return b.apply(this,x);};}else{for(const k in a){const fn=a[k];f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka_MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return fn.apply(this,x);};}}return f;};if(embeds){for(const [embedName,embedFactory] of Object.entries(embeds)){for(const key of Object.keys(embedFactory.prototype)){f.prototype[key]=function(...args){return this[embedName][key](...args);};}}}return f;}"###);
                 self.out.push('\n');
                 self.out.push_str(
                     "class __deka_MutationError extends Error{constructor(m){super(m);this.name='MutationError';}}\n",
@@ -1968,6 +1968,10 @@ impl<'a> Emitter<'a> {
         write_indent(&mut self.out, 0);
         self.out.push_str("const ");
         self.out.push_str(name);
+        self.out.push_str("$values = new WeakMap();\n");
+        write_indent(&mut self.out, 0);
+        self.out.push_str("const ");
+        self.out.push_str(name);
         self.out.push_str("$proto = Object.create(null);\n");
         write_indent(&mut self.out, 0);
         self.out.push_str("Object.defineProperty(");
@@ -1977,6 +1981,12 @@ impl<'a> Emitter<'a> {
         self.out
             .push_str(", enumerable: false, writable: false, configurable: false });\n");
         write_indent(&mut self.out, 0);
+        self.out.push_str("Object.defineProperty(");
+        self.out.push_str(name);
+        self.out.push_str("$proto, __p, { get() { return ");
+        self.out.push_str(name);
+        self.out.push_str("$values.get(this); }, enumerable: false, configurable: false });\n");
+        write_indent(&mut self.out, 0);
         self.out.push_str(name);
         self.out
             .push_str("$proto.toJSON = function () { return this[__p]; };\n");
@@ -1985,7 +1995,9 @@ impl<'a> Emitter<'a> {
         self.out.push_str(name);
         self.out.push_str("(v) { const o = Object.create(");
         self.out.push_str(name);
-        self.out.push_str("$proto); Object.defineProperty(o, __p, { value: v, enumerable: false, writable: false, configurable: false }); return o; }");
+        self.out.push_str("$proto); ");
+        self.out.push_str(name);
+        self.out.push_str("$values.set(o, v); return o; }");
         Ok(())
     }
 
