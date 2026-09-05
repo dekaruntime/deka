@@ -9,6 +9,7 @@
 // dist/server/app as raw, unvalidated bytes via copy_dir_recursive. A
 // project with syntactically invalid source therefore "built" successfully.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -62,6 +63,31 @@ fn run_build(dir: &Path) -> (bool, String) {
         String::from_utf8_lossy(&output.stderr)
     );
     (output.status.success(), combined)
+}
+
+/// Find `<stem>.<10 lowercase hex>.<ext>` in `dir` (content-hashed assets).
+fn find_hashed_asset(dir: &Path, stem: &str, ext: &str) -> Option<std::path::PathBuf> {
+    let prefix = format!("{stem}.");
+    let suffix = format!(".{ext}");
+    fs::read_dir(dir).ok()?.flatten().find_map(|entry| {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.starts_with(&prefix) || !name.ends_with(&suffix) {
+            return None;
+        }
+        let hash = &name[prefix.len()..name.len() - suffix.len()];
+        let is_hash = hash.len() == 10
+            && hash
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        is_hash.then_some(entry.path())
+    })
+}
+
+/// File name of the hashed asset, panicking with context when missing.
+fn hashed_asset_name_in(dir: &Path, stem: &str, ext: &str) -> String {
+    find_hashed_asset(dir, stem, ext)
+        .and_then(|path| path.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| panic!("{stem}.<hash>.{ext} not found in {}", dir.display()))
 }
 
 #[test]
@@ -371,25 +397,17 @@ fn build_emits_island_chunk_without_server_renderer() {
         combined.contains("island Counter"),
         "build should print an island serialization report: {combined}"
     );
-    let chunk = project
-        .path()
-        .join("dist")
-        .join("client")
-        .join("assets")
-        .join("islands-load.js");
-    assert!(chunk.is_file(), "client:load must emit islands-load.js");
-    let js = fs::read_to_string(&chunk).expect("read islands-load.js");
+    let assets = project.path().join("dist").join("client").join("assets");
+    let chunk = find_hashed_asset(&assets, "islands-load", "js")
+        .expect("client:load must emit a hashed islands-load chunk");
+    let js = fs::read_to_string(&chunk).expect("read hashed islands-load chunk");
     assert!(
         !js.contains("renderToString") && !js.contains("ui/server"),
         "island chunk must not include the server renderer: {js}"
     );
     let island_mod = fs::read_to_string(
-        project
-            .path()
-            .join("dist")
-            .join("client")
-            .join("assets")
-            .join("island-load-0.js"),
+        find_hashed_asset(&assets, "island-load-0", "js")
+            .expect("compiled island module must exist under a hashed name"),
     )
     .expect("read compiled island module");
     assert!(
@@ -417,51 +435,32 @@ fn build_emits_island_chunk_without_server_renderer() {
         project.path().join("dist").join("client").join("index.html"),
     )
     .expect("read dist html");
+    let chunk_href = format!("/assets/{}", chunk.file_name().unwrap().to_string_lossy());
     assert!(
-        index.contains("islands-load.js"),
-        "html must load the island chunk: {index}"
+        index.contains(&chunk_href),
+        "html must load the hashed island chunk: {index}"
+    );
+    assert!(
+        !index.contains("/assets/islands-load.js"),
+        "html must not reference the unhashed island chunk: {index}"
     );
     let jsx = fs::read_to_string(
-        project
-            .path()
-            .join("dist")
-            .join("client")
-            .join("assets")
-            .join("ui")
-            .join("jsx.js"),
+        find_hashed_asset(&assets.join("ui"), "jsx", "js").expect("hashed ui/jsx chunk"),
     )
     .expect("read ui/jsx");
     let client = fs::read_to_string(
-        project
-            .path()
-            .join("dist")
-            .join("client")
-            .join("assets")
-            .join("ui")
-            .join("client.js"),
+        find_hashed_asset(&assets.join("ui"), "client", "js").expect("hashed ui/client chunk"),
     )
     .expect("read ui/client");
     let reactive = fs::read_to_string(
-        project
-            .path()
-            .join("dist")
-            .join("client")
-            .join("assets")
-            .join("ui")
-            .join("reactive.js"),
+        find_hashed_asset(&assets.join("ui"), "reactive", "js").expect("hashed ui/reactive chunk"),
     )
     .expect("read ui/reactive");
     let mut payload = jsx.clone();
     payload.push_str(&client);
     payload.push_str(&reactive);
     payload.push_str(&js);
-    let island_mod = project
-        .path()
-        .join("dist")
-        .join("client")
-        .join("assets")
-        .join("island-load-0.js");
-    if island_mod.is_file() {
+    if let Some(island_mod) = find_hashed_asset(&assets, "island-load-0", "js") {
         let mod_js = fs::read_to_string(&island_mod).expect("read island module");
         assert!(
             !mod_js.contains("renderToString") && !mod_js.contains("from \"ui/server\""),
@@ -534,40 +533,34 @@ fn build_emits_per_route_css_into_head() {
     let (success, combined) = run_build(project.path());
     assert!(success, "deka build should succeed with per-route CSS: {combined}");
 
+    let css_dir = project
+        .path()
+        .join("dist")
+        .join("client")
+        .join("assets")
+        .join("css");
     let home = fs::read_to_string(project.path().join("dist").join("client").join("index.html"))
         .expect("read home html");
+    let common_name = hashed_asset_name_in(&css_dir, "common", "css");
     assert!(
-        home.contains("/assets/css/common.css"),
-        "shared classes should hoist to common.css: {home}"
+        home.contains(&format!("/assets/css/{common_name}")),
+        "shared classes should hoist to a hashed common.css: {home}"
     );
     assert!(
-        home.contains("/assets/css/route-root.css"),
-        "home unique classes should be a route stylesheet: {home}"
+        !home.contains("/assets/css/common.css"),
+        "home must not reference the unhashed common.css: {home}"
     );
-    let common = fs::read_to_string(
-        project
-            .path()
-            .join("dist")
-            .join("client")
-            .join("assets")
-            .join("css")
-            .join("common.css"),
-    )
-    .expect("read common.css");
+    let root_name = hashed_asset_name_in(&css_dir, "route-root", "css");
+    assert!(
+        home.contains(&format!("/assets/css/{root_name}")),
+        "home unique classes should be a hashed route stylesheet: {home}"
+    );
+    let common = fs::read_to_string(css_dir.join(&common_name)).expect("read common.css");
     assert!(
         common.contains(".p-4"),
         "shared p-4 must land in common.css: {common}"
     );
-    let root_css = fs::read_to_string(
-        project
-            .path()
-            .join("dist")
-            .join("client")
-            .join("assets")
-            .join("css")
-            .join("route-root.css"),
-    )
-    .expect("read route-root.css");
+    let root_css = fs::read_to_string(css_dir.join(&root_name)).expect("read route-root.css");
     assert!(
         root_css.contains(".text-lg"),
         "home-only class must land in route CSS: {root_css}"
@@ -585,9 +578,10 @@ fn build_emits_per_route_css_into_head() {
             .join("index.html"),
     )
     .expect("read about html");
+    let about_name = hashed_asset_name_in(&css_dir, "route-about", "css");
     assert!(
-        about.contains("/assets/css/route-about.css"),
-        "about unique classes should be a route stylesheet: {about}"
+        about.contains(&format!("/assets/css/{about_name}")),
+        "about unique classes should be a hashed route stylesheet: {about}"
     );
 }
 
@@ -602,25 +596,25 @@ fn build_server_defer_requires_fallback_and_emits_loader() {
     .expect("write defer page");
     let (success, combined) = run_build(project.path());
     assert!(success, "deka build should succeed with server:defer fallback: {combined}");
+    let assets_dir = project.path().join("dist").join("client").join("assets");
+    let defer_name = hashed_asset_name_in(&assets_dir, "islands-defer", "js");
     let index = fs::read_to_string(project.path().join("dist").join("client").join("index.html"))
         .expect("read dist html");
     assert!(
-        index.contains("islands-defer.js"),
-        "server:defer must emit the defer loader: {index}"
+        index.contains(&format!("/assets/{defer_name}")),
+        "server:defer must emit the hashed defer loader: {index}"
+    );
+    assert!(
+        !index.contains("/assets/islands-defer.js"),
+        "dist html must not reference the unhashed defer loader: {index}"
     );
     assert!(
         !index.contains("<strong>42</strong>"),
         "static shell must not include the deferred tree: {index}"
     );
     assert!(
-        project
-            .path()
-            .join("dist")
-            .join("client")
-            .join("assets")
-            .join("islands-defer.js")
-            .is_file(),
-        "islands-defer.js must exist"
+        assets_dir.join(&defer_name).is_file(),
+        "hashed defer loader must exist: {defer_name}"
     );
 }
 
@@ -696,6 +690,116 @@ fn build_trailing_slash_true_does_not_loop_redirects() {
     assert!(
         !redirects.contains("/* /:splat/"),
         "add-slash splat loops on Cloudflare: {redirects}"
+    );
+}
+
+/// Every file name under `dir` (recursively), for content-addressing checks.
+fn all_asset_names(dir: &Path) -> BTreeSet<String> {
+    fn walk(dir: &Path, out: &mut BTreeSet<String>) {
+        let Ok(reader) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in reader.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else {
+                out.insert(entry.file_name().to_string_lossy().into_owned());
+            }
+        }
+    }
+    let mut out = BTreeSet::new();
+    walk(dir, &mut out);
+    out
+}
+
+/// The URL `key` maps to in `<dir>/importmap.json`.
+fn importmap_url(dir: &Path, key: &str) -> String {
+    let raw = fs::read_to_string(dir.join("importmap.json")).expect("read importmap.json");
+    let value: serde_json::Value = serde_json::from_str(&raw).expect("parse importmap.json");
+    value["imports"][key]
+        .as_str()
+        .unwrap_or_default()
+        .to_string()
+}
+
+#[test]
+fn build_island_assets_are_content_addressed() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    fs::write(
+        project.path().join("app").join("page.dsx"),
+        "export fn Counter() {\n    return <button>0</button>;\n}\nexport fn Page() {\n    return <main><Counter client:load count={1} /></main>;\n}\n",
+    )
+    .expect("write island page");
+
+    let (success, combined) = run_build(project.path());
+    assert!(success, "first build should succeed: {combined}");
+    let assets = project.path().join("dist").join("client").join("assets");
+    let first = all_asset_names(&assets);
+
+    let (success, combined) = run_build(project.path());
+    assert!(success, "second build should succeed: {combined}");
+    let second = all_asset_names(&assets);
+    assert_eq!(
+        first, second,
+        "rebuilding without source changes must reproduce identical hashed names"
+    );
+}
+
+#[test]
+fn build_island_change_rotates_hash_and_importmap() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    let page = project.path().join("app").join("page.dsx");
+    fs::write(
+        &page,
+        "export fn Counter() {\n    return <button>0</button>;\n}\nexport fn Page() {\n    return <main><Counter client:load count={1} /></main>;\n}\n",
+    )
+    .expect("write island page");
+
+    let (success, combined) = run_build(project.path());
+    assert!(success, "first build should succeed: {combined}");
+    let assets = project.path().join("dist").join("client").join("assets");
+    let first_url = importmap_url(&assets, "islands/load");
+    assert!(
+        first_url.starts_with("/assets/islands-load.") && first_url.ends_with(".js"),
+        "importmap must map islands/load to a hashed URL: {first_url}"
+    );
+    let index = fs::read_to_string(project.path().join("dist").join("client").join("index.html"))
+        .expect("read dist html");
+    assert!(
+        index.contains(&first_url),
+        "dist html must reference the importmap URL: {index}"
+    );
+
+    fs::write(
+        &page,
+        "export fn Counter() {\n    return <button>1</button>;\n}\nexport fn Page() {\n    return <main><Counter client:load count={1} /></main>;\n}\n",
+    )
+    .expect("change island source");
+
+    let (success, combined) = run_build(project.path());
+    assert!(success, "rebuild after an island change should succeed: {combined}");
+    let second_url = importmap_url(&assets, "islands/load");
+    assert_ne!(
+        first_url, second_url,
+        "changing the island must rotate its content hash"
+    );
+    let first_name = first_url.trim_start_matches("/assets/").to_string();
+    assert!(
+        !assets.join(&first_name).exists(),
+        "stale chunk must be cleaned after the hash rotates: {first_name}"
+    );
+    let index = fs::read_to_string(project.path().join("dist").join("client").join("index.html"))
+        .expect("read dist html");
+    assert!(
+        index.contains(&second_url),
+        "dist html must reference the new hashed URL: {index}"
+    );
+    assert!(
+        !index.contains(&first_url),
+        "dist html must not reference the stale hashed URL: {index}"
     );
 }
 
