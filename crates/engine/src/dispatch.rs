@@ -6,13 +6,10 @@ use crate::RuntimeState;
 use crate::envelope::{RequestEnvelope, ResponseEnvelope};
 use pool::RequestParts;
 use pool::{ExecutionMode, HandlerKey, RequestData};
-use runtime_core::framework::{
-    self, matcher_hits, parse_middleware_matcher, public_file_exists, skip_middleware_path,
-    trailing_slash_redirect_for_request, MIDDLEWARE_NEXT_STATUS,
-};
+use runtime_core::framework::trailing_slash_redirect_for_request;
 use runtime_core::storefront_envelope::StorefrontResponse;
 
-/// Page, API, middleware, and defer entries must not share one isolate.
+/// Page, API, and defer entries must not share one isolate.
 /// The serve RuntimeState key is the generated serve-entry filename; fold
 /// the actual entry path in so a hash collision cannot reuse App().
 fn handler_key_for_entry(base: &HandlerKey, handler_entry: Option<&str>) -> HandlerKey {
@@ -110,21 +107,6 @@ pub async fn execute_request_parts(
         });
     }
 
-    let path = framework::request_path_from_url(&url);
-    if let Some(mw_resp) = run_middleware_if_needed(
-        Arc::clone(&state),
-        project_root.as_deref(),
-        &path,
-        url.clone(),
-        method.clone(),
-        headers.clone(),
-        body.clone(),
-    )
-    .await?
-    {
-        return Ok(mw_resp);
-    }
-
     let handler_entry = api_entry_override(state.handler_entry.clone(), &url);
     let is_head = method.eq_ignore_ascii_case("HEAD");
     let request_parts = RequestParts {
@@ -148,56 +130,6 @@ pub async fn execute_request_parts(
         response.body_base64 = None;
     }
     Ok(response)
-}
-
-async fn run_middleware_if_needed(
-    state: Arc<RuntimeState>,
-    project_root: Option<&Path>,
-    path: &str,
-    url: String,
-    method: String,
-    headers: Vec<(String, String)>,
-    body: Option<String>,
-) -> Result<Option<ResponseEnvelope>, String> {
-    let Some(page_entry) = state.handler_entry.as_ref() else {
-        return Ok(None);
-    };
-    if skip_middleware_path(path) {
-        return Ok(None);
-    }
-    if let Some(root) = project_root {
-        if public_file_exists(root, path) {
-            return Ok(None);
-        }
-        if let Some(src) = std::fs::read_to_string(root.join(framework::MIDDLEWARE_FILE)).ok() {
-            match parse_middleware_matcher(&src) {
-                Some(patterns) if !matcher_hits(&patterns, path) => return Ok(None),
-                _ => {}
-            }
-        }
-    }
-    let mw_entry = Path::new(page_entry).with_file_name("middleware-entry.ds");
-    if !mw_entry.is_file() {
-        return Ok(None);
-    }
-    let request_data = RequestData {
-        handler_code: state.handler_code.clone(),
-        handler_entry: Some(mw_entry.to_string_lossy().into_owned()),
-        request_value: serde_json::Value::Null,
-        request_parts: Some(RequestParts {
-            url,
-            method,
-            headers,
-            body,
-        }),
-        mode: ExecutionMode::Request,
-    };
-    let response = execute_request_data(state, request_data).await?;
-    if response.status == MIDDLEWARE_NEXT_STATUS {
-        Ok(None)
-    } else {
-        Ok(Some(response))
-    }
 }
 
 fn project_root_from_generated_entry(entry: &str) -> Option<PathBuf> {
@@ -283,12 +215,7 @@ mod tests {
             &base,
             Some("/tmp/proj/.cache/dekascript/defer-entry.dsx"),
         );
-        let mw = handler_key_for_entry(
-            &base,
-            Some("/tmp/proj/.cache/dekascript/middleware-entry.ds"),
-        );
         assert_ne!(page.name, defer.name);
-        assert_ne!(page.name, mw.name);
         assert!(page.name.ends_with("::serve-entry.dsx"), "{}", page.name);
         assert!(defer.name.ends_with("::defer-entry.dsx"), "{}", defer.name);
         let none = handler_key_for_entry(&base, None);

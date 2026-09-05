@@ -1597,9 +1597,9 @@ mod tests {
     }
 
     #[test]
-    fn generated_middleware_and_api_entries_compile() {
+    fn generated_api_and_worker_entries_compile() {
         let tmp = std::env::temp_dir().join(format!(
-            "deka_mw_api_compile_{}",
+            "deka_api_compile_{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -1607,19 +1607,6 @@ mod tests {
         ));
         std::fs::create_dir_all(tmp.join("api/boom")).unwrap();
         std::fs::write(tmp.join("deka.json"), "{}\n").unwrap();
-        std::fs::write(
-            tmp.join("middleware.ds"),
-            r#"export const matcher = ["/_deka/defer"]
-interface RequestHeaders { accept: string }
-interface ResponseHeaders { location: string }
-interface Request { url: string, pathname: string, method: string, headers: RequestHeaders }
-interface Response { status: number, body: string, headers: ResponseHeaders }
-export fn middleware(request: Request) Option<Response> {
-    return None
-}
-"#,
-        )
-        .unwrap();
         std::fs::write(
             tmp.join("api/boom/route.ds"),
             r#"interface RequestHeaders { accept: string }
@@ -1631,9 +1618,6 @@ export fn GET(request: Request) Response {
 "#,
         )
         .unwrap();
-        let mw = runtime_core::framework::write_middleware_router_entry(&tmp)
-            .expect("write middleware-entry");
-        compile_or_panic(&mw, &tmp, "middleware-entry");
         let api = runtime_core::framework::write_api_router_entry(&tmp).expect("write api-entry");
         compile_or_panic(&api, &tmp, "api-entry");
         let worker =

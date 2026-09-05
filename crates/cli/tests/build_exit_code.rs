@@ -320,28 +320,6 @@ fn build_rejects_static_kind_when_api_exists() {
 }
 
 #[test]
-fn build_emits_worker_for_middleware() {
-    let project = tempfile::tempdir().expect("create temp project dir");
-    init_project(project.path());
-    fs::write(
-        project.path().join("middleware.ds"),
-        "export const matcher = [\"/dashboard/:path*\"]\ninterface RequestHeaders { accept: string }\ninterface ResponseHeaders { location: string }\ninterface Request { url: string, pathname: string, method: string, headers: RequestHeaders }\ninterface Response { status: number, body: string, headers: ResponseHeaders }\nexport fn middleware(request: Request) Option<Response> {\n    return Some({ status: 302, body: \"\", headers: { location: \"/login\" } })\n}\n",
-    )
-    .expect("write middleware.ds");
-    let (success, combined) = run_build(project.path());
-    assert!(
-        success,
-        "deka build should succeed with middleware.ds: {combined}"
-    );
-    let worker = fs::read_to_string(project.path().join("dist").join("_worker.js"))
-        .expect("read dist/_worker.js");
-    assert!(
-        worker.contains("/login"),
-        "worker must compile middleware redirect: {worker}"
-    );
-}
-
-#[test]
 fn build_desugars_loading_dsx_to_suspense() {
     let project = tempfile::tempdir().expect("create temp project dir");
     init_project(project.path());
@@ -809,7 +787,7 @@ fn build_worker_dispatches_defer_and_copies_headers() {
     );
     assert!(
         worker.contains("ok.css") || worker.contains("/ok.css"),
-        "worker must skip middleware for public files: {worker}"
+        "worker must serve public files ahead of the api router: {worker}"
     );
     assert!(
         worker.contains("for (const key of Object.keys(rawHeaders))")

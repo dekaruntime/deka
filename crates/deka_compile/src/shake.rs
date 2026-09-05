@@ -331,10 +331,10 @@ fn collect_expr_idents(expr: &Expr<'_>, out: &mut HashSet<String>) {
         // imported and used *only* inside `unsafe` was therefore shaken out and
         // the emitted module referenced an undefined symbol.
         //
-        // That is how `deka build` shipped a Cloudflare Worker whose api/ and
-        // middleware handlers were named but never defined (deka#437): the
+        // That is how `deka build` shipped a Cloudflare Worker whose api/
+        // handlers were named but never defined (deka#437): the
         // generated router entry imports them and uses them only inside
-        // `unsafe { runWorker(...) }`.
+        // `unsafe { runApiRouter(...) }`.
         //
         // Over-approximating is the safe direction for dead-code elimination --
         // keeping a name that turns out to be unused costs bytes, dropping one
