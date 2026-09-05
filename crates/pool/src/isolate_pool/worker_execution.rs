@@ -19,7 +19,15 @@ fn bootstrap_source(template: &str) -> String {
             &deka_emit::prelude::pool_prelude(),
         )
         .replace("__DEKA_TO_RESULT__", &deka_emit::prelude::to_result_helper());
-    debug_assert!(
+    // assert!, not debug_assert!: release is what ships, and a marker that
+    // fails to substitute there fails silently. The prelude marker sits inside
+    // a /* */ comment, so an un-replaced one simply vanishes and the isolate
+    // boots with no Result/Option at all — surfacing much later as
+    // `Ok is not defined` on a request. That is precisely the silent
+    // divergence this change exists to remove, so the check has to run in the
+    // build that matters. Two substring scans once per worker bootstrap is
+    // nothing next to creating the isolate.
+    assert!(
         !source.contains("__DEKA_POOL_ENUM_PRELUDE__") && !source.contains("__DEKA_TO_RESULT__"),
         "bootstrap prelude markers must all be injected"
     );
