@@ -144,15 +144,31 @@ fn run_php_install_in_transaction(
         let package_integrity = compute_package_integrity(&staging)
             .map_err(|err| anyhow!("failed to compute package integrity for {}: {}", name, err))?;
 
+        let mut heal_legacy_module_graph = false;
         if let Some(locked) = &locked_pkg {
-            if let Err(err) =
-                verify_locked_integrity(&name, locked, &install_source, &package_integrity)
-            {
-                cleanup_install_staging(&staging);
-                return Err(err);
+            match verify_locked_integrity(&name, locked, &install_source, &package_integrity) {
+                Ok(heal) => heal_legacy_module_graph = heal,
+                Err(err) => {
+                    cleanup_install_staging(&staging);
+                    return Err(err);
+                }
             }
             // The package still needs to contribute its declared dependencies
             // to the flat graph, even when its bytes are already lock-verified.
+        }
+        // deka#611: under --locked the legacy empty moduleGraph constant is
+        // accepted as-is instead of self-healing (and instead of bailing,
+        // which turned "do not mutate my lockfile" into "fail if my
+        // lockfile is old" and rejected every pre-existing lock under the
+        // strictest mode). The constant is the hash of an empty file list —
+        // identical for every legacy package, so it carries no integrity
+        // signal — while fsGraph, the hash that actually gates on package
+        // bytes, is verified unconditionally above. Skip the rewrite and
+        // keep the lock entry byte-for-byte. A non-empty locked
+        // moduleGraph that disagrees still bails inside
+        // verify_locked_integrity.
+        if heal_legacy_module_graph && locked {
+            heal_legacy_module_graph = false;
         }
 
         let dependencies = package_dependencies(&staging, &name)?;
@@ -165,13 +181,24 @@ fn run_php_install_in_transaction(
             .collect::<Result<Vec<_>>>()?;
         // A locked package has already been verified against its immutable
         // release bytes. Preserve its metadata byte-for-byte so a normal
-        // fresh-checkout install does not rewrite the tracked lockfile.
+        // fresh-checkout install does not rewrite the tracked lockfile. The
+        // one exception is a legacy empty moduleGraph hash (deka#611), which
+        // verify_locked_integrity flagged for self-healing above.
         let metadata = if locked_pkg.is_some() {
-            existing_lock
+            let mut metadata = existing_lock
                 .packages
                 .get(&name)
                 .map(|(_, _, metadata, _)| metadata.clone())
-                .expect("locked package must have a lock entry")
+                .expect("locked package must have a lock entry");
+            if heal_legacy_module_graph {
+                if let Value::Object(map) = &mut metadata {
+                    map.insert(
+                        "moduleGraph".to_string(),
+                        json!({ "algo": "sha256", "hash": package_integrity.module_graph }),
+                    );
+                }
+            }
+            metadata
         } else {
             json!({
                 "repo": install_source.repo,
@@ -1014,12 +1041,20 @@ fn metadata_hash(metadata: &Value, key: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
+/// Verifies a locked package against the freshly computed integrity.
+///
+/// Returns `Ok(true)` when the lock entry carried the legacy empty
+/// moduleGraph hash (deka#611) and was accepted for self-healing — the
+/// caller must then rewrite the entry's `moduleGraph` metadata with the
+/// recomputed hash, except under `--locked`, where the caller skips the
+/// rewrite and keeps the lock entry byte-for-byte. Returns `Ok(false)`
+/// when everything matched as-is.
 fn verify_locked_integrity(
     name: &str,
     locked: &LockedPackage,
     installed: &InstalledSource,
     integrity: &deka_host::integrity::PackageIntegrity,
-) -> Result<()> {
+) -> Result<bool> {
     if installed.version != locked.version {
         bail!(
             "integrity verification failed for {}: locked version {} but installed {}",
@@ -1043,7 +1078,16 @@ fn verify_locked_integrity(
             locked.resolved
         );
     }
-    if integrity.module_graph != locked.module_graph {
+    // deka#611: lock entries written while the module-graph walk only saw
+    // the deleted `.phpx` extension all carry the SHA-256 of the empty
+    // input. When the locked hash is exactly that constant and the package
+    // has real sources (so the new walk produces a different hash), the
+    // locked value carries no integrity signal — report the entry for
+    // self-healing instead of failing the install.
+    let heal_legacy_module_graph = locked.module_graph
+        == deka_host::integrity::EMPTY_MODULE_GRAPH_HASH
+        && integrity.module_graph != locked.module_graph;
+    if !heal_legacy_module_graph && integrity.module_graph != locked.module_graph {
         bail!(
             "integrity verification failed for {}: moduleGraph hash mismatch (locked {}, got {})",
             name,
@@ -1059,7 +1103,7 @@ fn verify_locked_integrity(
             integrity.fs_graph
         );
     }
-    Ok(())
+    Ok(heal_legacy_module_graph)
 }
 
 async fn rehash_php_packages(payload: &InstallPayload) -> Result<()> {
@@ -1583,6 +1627,111 @@ mod tests {
         let err =
             verify_locked_integrity("@deka/core", &locked, &installed, &integrity).unwrap_err();
 
+        assert!(
+            err.to_string().contains("moduleGraph hash mismatch"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn locked_integrity_flags_legacy_empty_module_graph_hash_for_healing() {
+        let locked = LockedPackage {
+            version: "0.1.0".to_string(),
+            resolved: "linkhash:@deka/core".to_string(),
+            module_graph: deka_host::integrity::EMPTY_MODULE_GRAPH_HASH.to_string(),
+            fs_graph: "locked-fs".to_string(),
+        };
+        let installed = InstalledSource {
+            version: "0.1.0".to_string(),
+            repo: None,
+            git_ref: None,
+            source: "linkhash",
+            requires_registry_digest: false,
+        };
+        let integrity = PackageIntegrity {
+            module_graph: "recomputed-module".to_string(),
+            fs_graph: "locked-fs".to_string(),
+        };
+
+        let heal =
+            verify_locked_integrity("@deka/core", &locked, &installed, &integrity).expect("verify");
+        assert!(
+            heal,
+            "legacy empty moduleGraph hash must be flagged for self-healing, not rejected"
+        );
+
+        // A package with no source files recomputes the same empty-input
+        // constant; the entry then matches as-is and must not be healed.
+        let empty_integrity = PackageIntegrity {
+            module_graph: deka_host::integrity::EMPTY_MODULE_GRAPH_HASH.to_string(),
+            fs_graph: "locked-fs".to_string(),
+        };
+        let heal = verify_locked_integrity("@deka/core", &locked, &installed, &empty_integrity)
+            .expect("verify");
+        assert!(!heal, "a genuinely empty package must verify without healing");
+    }
+
+    #[test]
+    fn locked_install_accepts_legacy_empty_module_graph_hash_without_mutating_lock() {
+        let tmp = tempfile::tempdir().expect("project");
+        run_php_install_in(vec!["@deka/string".to_string()], true, false, tmp.path())
+            .expect("bundled deka install");
+        let lock_path = tmp.path().join("deka.lock");
+        assert!(lock_path.is_file());
+
+        // Roll the lock entry back to the legacy empty-input moduleGraph
+        // hash every pre-#611 lockfile carries (deka#611), leaving fsGraph
+        // — the hash that gates on package bytes — untouched. This is the
+        // exact lockfile shape the 824 conformance fixtures install with.
+        let mut lock = lock::read_lockfile_at(&lock_path);
+        let (_, _, metadata, _) = lock
+            .packages
+            .get_mut("@deka/string")
+            .expect("lock entry");
+        if let serde_json::Value::Object(map) = metadata {
+            map.insert(
+                "moduleGraph".to_string(),
+                json!({ "algo": "sha256", "hash": deka_host::integrity::EMPTY_MODULE_GRAPH_HASH }),
+            );
+        }
+        lock::write_lockfile_at(&lock_path, &lock).expect("write legacy lock");
+        let lock_before = fs::read_to_string(&lock_path).expect("read legacy lock");
+
+        run_php_install_in(vec!["@deka/string".to_string()], true, true, tmp.path())
+            .expect("--locked install must accept the legacy moduleGraph hash");
+
+        assert_eq!(
+            fs::read_to_string(&lock_path).expect("read lock after --locked install"),
+            lock_before,
+            "--locked install must not mutate deka.lock"
+        );
+        let (_, _, metadata, _) = lock::read_lockfile_at(&lock_path)
+            .packages
+            .get("@deka/string")
+            .expect("lock entry")
+            .clone();
+        assert_eq!(
+            metadata["moduleGraph"]["hash"].as_str(),
+            Some(deka_host::integrity::EMPTY_MODULE_GRAPH_HASH),
+            "--locked install must not self-heal the legacy entry"
+        );
+
+        // A non-empty locked moduleGraph that disagrees with the computed
+        // hash is a genuine mismatch and must stay fatal under --locked.
+        let mut lock = lock::read_lockfile_at(&lock_path);
+        let (_, _, metadata, _) = lock
+            .packages
+            .get_mut("@deka/string")
+            .expect("lock entry");
+        if let serde_json::Value::Object(map) = metadata {
+            map.insert(
+                "moduleGraph".to_string(),
+                json!({ "algo": "sha256", "hash": "0".repeat(64) }),
+            );
+        }
+        lock::write_lockfile_at(&lock_path, &lock).expect("write mismatched lock");
+        let err = run_php_install_in(vec!["@deka/string".to_string()], true, true, tmp.path())
+            .expect_err("non-empty moduleGraph mismatch must fail under --locked");
         assert!(
             err.to_string().contains("moduleGraph hash mismatch"),
             "unexpected error: {err}"
