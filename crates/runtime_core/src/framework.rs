@@ -41,10 +41,10 @@ pub fn route_from_relative_path(kind: FrameworkEntryKind, relative_path: &str) -
     }
 
     let suffixes: &[&str] = match kind {
-        FrameworkEntryKind::Page => &["/page.dsx", "/page.ds", "/page.phpx"],
-        FrameworkEntryKind::Layout => &["/layout.dsx", "/layout.ds", "/layout.phpx"],
+        FrameworkEntryKind::Page => &["/page.dsx", "/page.ds"],
+        FrameworkEntryKind::Layout => &["/layout.dsx", "/layout.ds"],
         FrameworkEntryKind::Loading => &["/loading.dsx", "/loading.ds"],
-        FrameworkEntryKind::Api => &[".ds", ".dsx", ".phpx"],
+        FrameworkEntryKind::Api => &[".ds", ".dsx"],
     };
 
     let route_source = suffixes.iter().find_map(|suffix| {
@@ -210,10 +210,7 @@ fn visit_app_dir(app_root: &Path, dir: &Path, manifest: &mut FrameworkManifest) 
 }
 
 fn is_not_found_file(name: &str) -> bool {
-    matches!(
-        name,
-        "not-found.dsx" | "not-found.ds" | "not-found.phpx"
-    )
+    matches!(name, "not-found.dsx" | "not-found.ds")
 }
 
 pub fn match_path<'a>(manifest: &'a FrameworkManifest, raw_path: &str) -> RouteMatch<'a> {
@@ -927,6 +924,195 @@ fn defer_cache_attr(tag_src: &str) -> Option<String> {
     None
 }
 
+/// Level of a §9.3 `server:defer` structural lint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeferLintLevel {
+    Error,
+    Warning,
+}
+
+/// A §9.3 structural finding from scanning the app/ tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeferLint {
+    pub level: DeferLintLevel,
+    pub file: String,
+    pub message: String,
+}
+
+/// Structural checks over the app/ tree (RFD 24 §9.3 amendment,
+/// dekaruntime/rfd#46):
+/// - ERROR: a `server:defer` island has no `slot="fallback"` child at all.
+///   The spec makes fallback required; absence must fail the build instead
+///   of silently rendering an empty default.
+/// - WARNING: every child of a route's content region is deferred, so the
+///   no-JS render shows only loading indicators.
+pub fn scan_defer_lints(app_dir: &Path) -> Vec<DeferLint> {
+    let mut lints: Vec<DeferLint> = scan_server_defer(app_dir)
+        .into_iter()
+        .filter(|d| !d.has_fallback)
+        .map(|d| DeferLint {
+            level: DeferLintLevel::Error,
+            file: d.file.clone(),
+            message: format!(
+                "server:defer requires a child with slot=\"fallback\" ({})",
+                d.component
+            ),
+        })
+        .collect();
+    if !app_dir.is_dir() {
+        return lints;
+    }
+    let mut stack = vec![app_dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(reader) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in reader.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+                continue;
+            };
+            if ext != "dsx" && ext != "ds" {
+                continue;
+            }
+            let Ok(src) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let file = path.to_string_lossy().into_owned();
+            let stripped = strip_ds_comments(&src);
+            if returned_jsx_children_all_deferred(&stripped) {
+                lints.push(DeferLint {
+                    level: DeferLintLevel::Warning,
+                    file: file.clone(),
+                    message: format!(
+                        "every child of the content region in {file} is deferred; the no-JS render shows only loading indicators"
+                    ),
+                });
+            }
+        }
+    }
+    lints
+}
+
+/// True when a `return <...>` block in `src` has children and every one of
+/// them carries `server:defer`. Text or `{expression}` children count as
+/// real content; whitespace between children is ignored.
+fn returned_jsx_children_all_deferred(src: &str) -> bool {
+    let mut from = 0;
+    let mut saw_all_deferred = false;
+    while let Some(rel) = src[from..].find("return <") {
+        let at = from + rel + "return ".len();
+        from = at + 1;
+        let Some((body_start, body_end)) = jsx_element_body(src, at) else {
+            continue;
+        };
+        if !jsx_children_all_deferred(&src[body_start..body_end]) {
+            return false;
+        }
+        saw_all_deferred = true;
+        from = body_end;
+    }
+    saw_all_deferred
+}
+
+/// Body range `(start, end)` of the JSX element whose `<` is at `start`.
+/// Self-closed elements report an empty range.
+fn jsx_element_body(src: &str, start: usize) -> Option<(usize, usize)> {
+    let bytes = src.as_bytes();
+    if bytes.get(start) != Some(&b'<') || src[start..].starts_with("</") {
+        return None;
+    }
+    let open_end = src[start..].find('>')? + start + 1;
+    if src[start..open_end].trim_end().ends_with("/>") {
+        return Some((open_end, open_end));
+    }
+    let mut depth = 1usize;
+    let mut i = open_end;
+    while i < bytes.len() {
+        let rest = &src[i..];
+        if rest.starts_with("</") {
+            depth -= 1;
+            if depth == 0 {
+                return Some((open_end, i));
+            }
+            i += 2;
+        } else if rest.starts_with('<') {
+            let end = rest.find('>')? + i + 1;
+            if !src[i..end].trim_end().ends_with("/>") {
+                depth += 1;
+            }
+            i = end;
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+/// Index just past the JSX element whose `<` is at `start`.
+fn skip_jsx_element(src: &str, start: usize) -> Option<usize> {
+    jsx_element_body(src, start).and_then(|(body_start, body_end)| {
+        if body_start == body_end {
+            Some(body_start)
+        } else {
+            src[body_end..].find('>').map(|g| body_end + g + 1)
+        }
+    })
+}
+
+/// True when `body` has at least one child element and every direct child
+/// element carries `server:defer` in its opening tag.
+fn jsx_children_all_deferred(body: &str) -> bool {
+    let bytes = body.as_bytes();
+    let mut i = 0;
+    let mut saw_child = false;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'<' if body[i..].starts_with("</") => return saw_child,
+            b'<' => {
+                let Some(grel) = body[i..].find('>') else {
+                    return false;
+                };
+                let open_end = i + grel + 1;
+                let open_tag = &body[i..open_end];
+                if !open_tag.contains("server:defer") {
+                    return false;
+                }
+                saw_child = true;
+                i = if open_tag.trim_end().ends_with("/>") {
+                    open_end
+                } else {
+                    skip_jsx_element(body, i).unwrap_or(open_end)
+                };
+            }
+            b if b.is_ascii_whitespace() => i += 1,
+            _ => return false,
+        }
+    }
+    saw_child
+}
+
+/// §9.3 build diagnostics: ERROR lints fail the build; WARNING lints print
+/// to stderr. Matches the `Err(String)` style of the other scan findings.
+fn enforce_defer_lints(app_dir: &Path) -> Result<(), String> {
+    let mut errors = Vec::new();
+    for lint in scan_defer_lints(app_dir) {
+        match lint.level {
+            DeferLintLevel::Warning => eprintln!("warning: {}", lint.message),
+            DeferLintLevel::Error => errors.push(lint.message),
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("\n"))
+    }
+}
+
 pub fn defer_script_tag(has_defer: bool) -> String {
     if has_defer {
         "<script type=\"module\" src=\"/assets/islands-defer.js\"></script>".to_string()
@@ -1071,6 +1257,7 @@ pub fn write_app_router_entry(project_root: &Path) -> Result<PathBuf, String> {
     let index_html = std::fs::read_to_string(&index_path)
         .map_err(|err| format!("failed to read {}: {err}", index_path.display()))?;
     let islands = scan_client_islands(&app_dir);
+    enforce_defer_lints(&app_dir)?;
     let deferred = scan_server_defer(&app_dir);
     let mut scripts = island_script_tags(&islands);
     scripts.push_str(&defer_script_tag(!deferred.is_empty()));
@@ -1576,6 +1763,15 @@ fn head_html(node: Component) string {{
     }}
 }}
 
+fn title_from_head(headHtml: string) string {{
+    const openAt = unsafe<number> {{ headHtml.indexOf("<title>") }}
+    if (openAt < 0) {{ return "" }}
+    const rest = headHtml.slice(openAt + 7)
+    const closeAt = unsafe<number> {{ rest.indexOf("</title>") }}
+    if (closeAt < 0) {{ return "" }}
+    return rest.slice(0, closeAt)
+}}
+
 async fn stream_html(tree: Component) Promise<string> {{
     const boxed = unsafe {{ deka.ui.renderToStreamHtml(tree) }}
     const prom = match (boxed) {{
@@ -1609,7 +1805,7 @@ async fn respond(tree: Component, status: number, fragment: boolean, staticBuild
             Ok(rendered) => rendered.html,
             Err(_) => "<p>Internal Server Error</p>",
         }}
-        const payload = unsafe {{ JSON.stringify({{ html: appHtml, head: headHtml }}) }}
+        const payload = unsafe {{ JSON.stringify({{ html: appHtml, title: title_from_head(headHtml), head: headHtml }}) }}
         return match (payload) {{
             Ok(json) => {{ status: status, body: json }},
             Err(_) => {{ status: 500, body: "Internal Server Error" }},
@@ -2041,7 +2237,7 @@ mod tests {
     #[test]
     fn derives_root_page_route() {
         assert_eq!(
-            route_from_relative_path(FrameworkEntryKind::Page, "page.phpx"),
+            route_from_relative_path(FrameworkEntryKind::Page, "page.dsx"),
             Some("/".to_string())
         );
     }
@@ -2049,7 +2245,7 @@ mod tests {
     #[test]
     fn derives_nested_page_route() {
         assert_eq!(
-            route_from_relative_path(FrameworkEntryKind::Page, "users/page.phpx"),
+            route_from_relative_path(FrameworkEntryKind::Page, "users/page.dsx"),
             Some("/users".to_string())
         );
     }
@@ -2057,7 +2253,7 @@ mod tests {
     #[test]
     fn derives_layout_scope_route() {
         assert_eq!(
-            route_from_relative_path(FrameworkEntryKind::Layout, "dashboard/layout.phpx"),
+            route_from_relative_path(FrameworkEntryKind::Layout, "dashboard/layout.dsx"),
             Some("/dashboard".to_string())
         );
     }
@@ -2065,7 +2261,7 @@ mod tests {
     #[test]
     fn derives_api_route() {
         assert_eq!(
-            route_from_relative_path(FrameworkEntryKind::Api, "api/packages.phpx"),
+            route_from_relative_path(FrameworkEntryKind::Api, "api/packages.dsx"),
             Some("/api/packages".to_string())
         );
     }
@@ -2073,8 +2269,25 @@ mod tests {
     #[test]
     fn preserves_dynamic_segments() {
         assert_eq!(
-            route_from_relative_path(FrameworkEntryKind::Page, "blog/[slug]/page.phpx"),
+            route_from_relative_path(FrameworkEntryKind::Page, "blog/[slug]/page.dsx"),
             Some("/blog/[slug]".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_phpx_entry_files() {
+        // RFD 24 §12: `.phpx` files are no longer framework entries.
+        assert_eq!(
+            route_from_relative_path(FrameworkEntryKind::Page, "page.phpx"),
+            None
+        );
+        assert_eq!(
+            route_from_relative_path(FrameworkEntryKind::Layout, "dashboard/layout.phpx"),
+            None
+        );
+        assert_eq!(
+            route_from_relative_path(FrameworkEntryKind::Api, "api/packages.phpx"),
+            None
         );
     }
 
@@ -2245,6 +2458,14 @@ mod tests {
         assert!(
             source.contains("head_html(head_root())"),
             "generated entry should merge page head(): {source}"
+        );
+        assert!(
+            source.contains("fn title_from_head(headHtml: string) string"),
+            "generated entry should define title_from_head: {source}"
+        );
+        assert!(
+            source.contains("title: title_from_head(headHtml)"),
+            "fragment payload must include the merged title (RFD 24 §8.4): {source}"
         );
         assert!(
             source.contains("last_segment"),
@@ -2525,6 +2746,142 @@ mod tests {
         assert_eq!(ok[0].component, "Cart");
         assert_eq!(ok[0].cache.as_deref(), Some("60s"));
         assert!(defer_script_tag(true).contains("islands-defer.js"));
+    }
+
+    #[test]
+    fn defer_lints_error_without_fallback_and_pass_with_fallback() {
+        let tmp = std::env::temp_dir().join(format!(
+            "deka_defer_lint_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(tmp.join("app")).unwrap();
+        std::fs::write(
+            tmp.join("app/page.dsx"),
+            "export fn Page() {\n    return <main><h1>Hi</h1></main>;\n}\n",
+        )
+        .unwrap();
+        let lints = scan_defer_lints(&tmp.join("app"));
+        assert!(
+            lints.iter().all(|l| l.level != DeferLintLevel::Error),
+            "static content must not error: {lints:?}"
+        );
+        std::fs::write(
+            tmp.join("app/page.dsx"),
+            "export fn Page() {\n    return <Cart server:defer />;\n}\n",
+        )
+        .unwrap();
+        let lints = scan_defer_lints(&tmp.join("app"));
+        let errors: Vec<_> = lints
+            .iter()
+            .filter(|l| l.level == DeferLintLevel::Error)
+            .collect();
+        assert_eq!(errors.len(), 1, "{lints:?}");
+        assert!(
+            errors[0].message.contains("slot=\"fallback\""),
+            "{}",
+            errors[0].message
+        );
+        assert!(errors[0].message.contains("Cart"), "{}", errors[0].message);
+        // Negative case: a defer WITH fallback must not error.
+        std::fs::write(
+            tmp.join("app/page.dsx"),
+            "export fn Page() {\n    return <Cart server:defer><span slot=\"fallback\">.</span></Cart>;\n}\n",
+        )
+        .unwrap();
+        let lints = scan_defer_lints(&tmp.join("app"));
+        assert!(
+            lints.iter().all(|l| l.level != DeferLintLevel::Error),
+            "defer with fallback must not error: {lints:?}"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn defer_lints_warn_when_every_content_child_is_deferred() {
+        let tmp = std::env::temp_dir().join(format!(
+            "deka_defer_warn_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(tmp.join("app")).unwrap();
+        std::fs::write(
+            tmp.join("app/page.dsx"),
+            "export fn Page() {\n    return <main><A server:defer><i slot=\"fallback\">a</i></A><B server:defer><i slot=\"fallback\">b</i></B></main>;\n}\n",
+        )
+        .unwrap();
+        let lints = scan_defer_lints(&tmp.join("app"));
+        let warnings: Vec<_> = lints
+            .iter()
+            .filter(|l| l.level == DeferLintLevel::Warning)
+            .collect();
+        assert_eq!(warnings.len(), 1, "{lints:?}");
+        assert!(
+            warnings[0].message.contains("every child of the content region"),
+            "{}",
+            warnings[0].message
+        );
+        // Mixed content: no warning.
+        std::fs::write(
+            tmp.join("app/page.dsx"),
+            "export fn Page() {\n    return <main><h1>Hi</h1><A server:defer><i slot=\"fallback\">a</i></A></main>;\n}\n",
+        )
+        .unwrap();
+        let lints = scan_defer_lints(&tmp.join("app"));
+        assert!(
+            lints.iter().all(|l| l.level != DeferLintLevel::Warning),
+            "mixed content must not warn: {lints:?}"
+        );
+        // Empty content region: no warning either.
+        std::fs::write(
+            tmp.join("app/page.dsx"),
+            "export fn Page() {\n    return <main></main>;\n}\n",
+        )
+        .unwrap();
+        let lints = scan_defer_lints(&tmp.join("app"));
+        assert!(
+            lints.iter().all(|l| l.level != DeferLintLevel::Warning),
+            "empty content region must not warn: {lints:?}"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn app_router_entry_fails_build_when_defer_lacks_fallback() {
+        let tmp = std::env::temp_dir().join(format!(
+            "deka_defer_build_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(tmp.join("app")).unwrap();
+        std::fs::write(
+            tmp.join("index.html"),
+            "<!doctype html><html><head><!--deka-head--></head><body><div id=\"app\"><!--deka-app--></div><!--deka-scripts--></body></html>\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.join("app/layout.dsx"),
+            "interface LayoutProps { children: Component }\nexport fn Layout(props: LayoutProps) {\n    return <main>{props.children}</main>;\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.join("app/page.dsx"),
+            "export fn Page() {\n    return <Cart server:defer />;\n}\n",
+        )
+        .unwrap();
+        let err = write_app_router_entry(&tmp)
+            .expect_err("server:defer without fallback must fail the build");
+        assert!(
+            err.contains("slot=\"fallback\""),
+            "error should name the missing fallback: {err}"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
