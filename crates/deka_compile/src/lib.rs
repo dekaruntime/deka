@@ -868,13 +868,17 @@ mod tests {
             "test.ds",
         )
         .expect("compile should succeed");
+        // deka#590 step 2: const literals are no longer frozen at emit; the
+        // checker (deka#591) rejects mutation of a const-bound collection.
+        assert!(result.js.contains("const a = [1, 2, 3];"), "got: {}", result.js);
         assert!(
-            result.js.contains("const a = Object.freeze([1, 2, 3]);"),
+            !result.js.contains("Object.freeze([1, 2, 3])"),
             "got: {}",
             result.js
         );
+        assert!(result.js.contains("const o = {x: 1};"), "got: {}", result.js);
         assert!(
-            result.js.contains("const o = Object.freeze({x: 1});"),
+            !result.js.contains("Object.freeze({x: 1})"),
             "got: {}",
             result.js
         );

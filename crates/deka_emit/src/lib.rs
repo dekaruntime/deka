@@ -285,8 +285,12 @@ mod tests {
     #[test]
     fn emit_array_object_index() {
         let out = parse_and_emit("const a = [1, 2, 3]; const o = { x: 1 }; const v = a[0] + o[\"x\"];");
-        assert!(out.contains("const a = Object.freeze([1, 2, 3]);"), "got: {}", out);
-        assert!(out.contains("const o = Object.freeze({x: 1});"), "got: {}", out);
+        // deka#590 step 2: const literals are no longer frozen at emit; the
+        // checker (deka#591) rejects mutation of a const-bound collection.
+        assert!(out.contains("const a = [1, 2, 3];"), "got: {}", out);
+        assert!(!out.contains("Object.freeze([1, 2, 3])"), "got: {}", out);
+        assert!(out.contains("const o = {x: 1};"), "got: {}", out);
+        assert!(!out.contains("Object.freeze({x: 1})"), "got: {}", out);
         assert!(out.contains("a[0] + o[\"x\"]"), "got: {}", out);
     }
 
