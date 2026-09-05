@@ -547,6 +547,13 @@ fn copy_github_package_files(source: &Path, target: &Path) -> Result<()> {
             continue;
         }
 
+        // macOS AppleDouble entries (._*) ride along in tarballs built on a
+        // Mac; the reader skips them (deka#587) and they must never reach the
+        // install tree.
+        if name_str.starts_with("._") {
+            continue;
+        }
+
         let src_path = entry.path();
         let dst_path = target.join(&name);
         let file_type = entry.file_type()?;
@@ -1238,7 +1245,8 @@ fn manifest_dep_key(
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_project_install_specs, enqueue_package_spec, locked_package,
+        collect_project_install_specs, copy_github_package_files, enqueue_package_spec,
+        locked_package,
         package_dependencies, pause_for_kill_test, php_modules_path_for,
         recover_install_transaction, rehash_php_packages_in, record_root_dependencies,
         reject_vendored_php_modules, run_php_install_in, select_registry_version,
@@ -1249,6 +1257,25 @@ mod tests {
     use deka_host::integrity::{compute_package_integrity, PackageIntegrity};
     use serde_json::json;
     use std::{collections::BTreeMap, fs};
+
+    #[test]
+    fn copy_github_package_files_skips_appledouble_entries() {
+        let src = tempfile::tempdir().expect("src");
+        let dst = tempfile::tempdir().expect("dst");
+        fs::write(src.path().join("mod.ds"), "fn ok() number { return 1 }").expect("real file");
+        fs::write(src.path().join("._mod.ds"), "junk appledouble").expect("appledouble");
+        fs::create_dir(src.path().join("nested")).expect("nested dir");
+        fs::write(src.path().join("nested").join("._other"), "junk").expect("nested junk");
+        fs::write(src.path().join("nested").join("real.ds"), "fn r() number { return 2 }")
+            .expect("nested real");
+
+        copy_github_package_files(src.path(), dst.path()).expect("copy");
+
+        assert!(dst.path().join("mod.ds").exists());
+        assert!(dst.path().join("nested").join("real.ds").exists());
+        assert!(!dst.path().join("._mod.ds").exists());
+        assert!(!dst.path().join("nested").join("._other").exists());
+    }
 
     #[test]
     fn unlocked_add_selects_latest_registry_version() {
