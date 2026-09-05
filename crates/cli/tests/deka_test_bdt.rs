@@ -17,7 +17,6 @@ fn write_project(source: &str) -> tempfile::TempDir {
 }
 
 #[test]
-#[ignore = "blocked on v2 top-level let/const scope and @deka/test library update (see dekaruntime/deka#330)"]
 fn deka_test_runs_ds_tests() {
     let project = write_project(
         r#"
@@ -60,7 +59,6 @@ describe("math", fn() {
 }
 
 #[test]
-#[ignore = "blocked on v2 top-level let/const scope and @deka/test library update (see dekaruntime/deka#330)"]
 fn deka_test_unwraps_ok() {
     let project = write_project(
         r#"
@@ -96,7 +94,6 @@ describe("result", fn() {
 }
 
 #[test]
-#[ignore = "blocked on v2 top-level let/const scope and @deka/test library update (see dekaruntime/deka#330)"]
 fn deka_test_fails_on_assertion() {
     let project = write_project(
         r#"
@@ -131,7 +128,6 @@ describe("math", fn() {
 }
 
 #[test]
-#[ignore = "blocked on v2 top-level let/const scope and @deka/test library update (see dekaruntime/deka#330)"]
 fn deka_test_imports_application_source() {
     let project = tempfile::tempdir().expect("project");
     fs::write(project.path().join("deka.json"), "{}\n").expect("manifest");
@@ -176,7 +172,6 @@ describe("math", fn() {
 }
 
 #[test]
-#[ignore = "blocked on v2 top-level let/const scope and @deka/test library update (see dekaruntime/deka#330)"]
 fn deka_test_name_pattern_filters_cases() {
     let project = write_project(
         r#"
