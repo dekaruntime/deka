@@ -66,6 +66,15 @@ pub fn route_from_relative_path(kind: FrameworkEntryKind, relative_path: &str) -
 pub const DEKA_HEAD_HOLE: &str = "<!--deka-head-->";
 pub const DEKA_APP_HOLE: &str = "<!--deka-app-->";
 pub const DEKA_SCRIPTS_HOLE: &str = "<!--deka-scripts-->";
+/// Generation-time placeholder for the client import map, injected into the
+/// app-router document when it loads client chunks. Browsers reject the `src`
+/// form of this element (the attribute is disallowed on
+/// `<script type="importmap">`), so this is never the delivery mechanism:
+/// `runtime::islands::rewrite_serve_entry_asset_urls` (serve) and the dist-HTML
+/// rewrite in `deka build` swap it for the inline map once the hashed assets
+/// — and therefore the map — exist.
+pub const CLIENT_IMPORTMAP_PLACEHOLDER_TAG: &str =
+    r#"<script type="importmap" src="/assets/importmap.json"></script>"#;
 pub const FRAGMENT_ACCEPT: &str = "text/x-deka-fragment";
 pub const FRAGMENT_ACCEPT_LEGACY: &str = "text/x-phpx-fragment";
 pub const STATIC_ACCEPT: &str = "text/x-deka-static";
@@ -1259,6 +1268,25 @@ pub fn write_app_router_entry(project_root: &Path) -> Result<PathBuf, String> {
     let islands = scan_client_islands(&app_dir);
     enforce_defer_lints(&app_dir)?;
     let deferred = scan_server_defer(&app_dir);
+    // RFD 24 §10.7: a document that loads client chunks resolves bare
+    // specifiers through an inline import map. The map does not exist yet at
+    // generation time — the hashes are assigned when the client assets are
+    // written, after this entry is generated — so bake the placeholder tag and
+    // let `runtime::islands::rewrite_serve_entry_asset_urls` swap in the
+    // inlined JSON once the assets exist. `deka build` inlines the same map
+    // into dist HTML only when the prerendered document lacks one.
+    let index_html = if (!islands.is_empty() || !deferred.is_empty())
+        && !index_html.contains("type=\"importmap\"")
+    {
+        let tag = CLIENT_IMPORTMAP_PLACEHOLDER_TAG;
+        if index_html.contains("</head>") {
+            index_html.replacen("</head>", &format!("  {tag}\n</head>"), 1)
+        } else {
+            format!("{tag}\n{index_html}")
+        }
+    } else {
+        index_html
+    };
     let mut scripts = island_script_tags(&islands);
     scripts.push_str(&defer_script_tag(!deferred.is_empty()));
     if !deferred.is_empty() {

@@ -80,6 +80,10 @@ async fn serve_async(context: &Context) -> Result<(), String> {
     {
         crate::islands::write_island_client_assets_for_project(&root)?;
         crate::css::write_route_css_assets_for_project(&root)?;
+        // The serve-entry was generated inside resolve_handler_path, before
+        // the hashed assets existed; swap its logical /assets URLs for the
+        // hashed names just emitted (mirrors the dist-HTML rewrite in build).
+        crate::islands::rewrite_serve_entry_asset_urls(&root)?;
     }
 
     let handler_path = resolved.path.to_string_lossy().to_string();
@@ -845,6 +849,10 @@ fn start_watch(
                                     let _ = crate::islands::write_island_client_assets_for_project(
                                         root,
                                     );
+                                    // The entry was regenerated above with
+                                    // logical /assets URLs; re-point them at
+                                    // the freshly emitted hashed names.
+                                    let _ = crate::islands::rewrite_serve_entry_asset_urls(root);
                                 }
                                 Err(err) => {
                                     tracing::warn!(
