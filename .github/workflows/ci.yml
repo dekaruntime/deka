@@ -140,6 +140,20 @@ jobs:
       - name: Check workspace
         run: cargo check --locked --workspace --all-targets
 
+  file-size-gate:
+    name: File-size gate
+    needs: [changes]
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      # On pull_request this checkout is the merge result — the only tree
+      # where a file grown a few hundred lines at a time across a stacked PR
+      # series is visible (deka#391).
+      - uses: actions/checkout@v5
+
+      - name: Check crates/**.rs file sizes
+        run: scripts/check-file-size.sh
+
   rust:
     name: Rust tests
     needs: [changes, rust-check]
