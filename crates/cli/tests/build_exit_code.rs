@@ -144,7 +144,11 @@ fn build_exits_zero_on_valid_source() {
     );
 
     let index = fs::read_to_string(
-        project.path().join("dist").join("client").join("index.html"),
+        project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("index.html"),
     )
     .expect("read dist/client/index.html");
     assert!(
@@ -160,7 +164,13 @@ fn build_exits_zero_on_valid_source() {
         "a page with no client:* must not emit a script tag: {index}"
     );
     assert!(
-        project.path().join("dist").join("server").join("app").join("page.dsx").is_file(),
+        project
+            .path()
+            .join("dist")
+            .join("server")
+            .join("app")
+            .join("page.dsx")
+            .is_file(),
         "successful build should copy app/ into dist/server/app: {combined}"
     );
 }
@@ -178,8 +188,14 @@ fn build_merges_head_into_dist_html() {
     let (success, combined) = run_build(project.path());
     assert!(success, "deka build should succeed with head(): {combined}");
 
-    let index = fs::read_to_string(project.path().join("dist").join("client").join("index.html"))
-        .expect("read dist/client/index.html");
+    let index = fs::read_to_string(
+        project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("index.html"),
+    )
+    .expect("read dist/client/index.html");
     assert!(
         index.contains("Head Merge"),
         "dist HTML should include rendered head(): {index}"
@@ -335,7 +351,10 @@ fn build_desugars_loading_dsx_to_suspense() {
     )
     .expect("write loading.dsx");
     let (success, combined) = run_build(project.path());
-    assert!(success, "deka build should succeed with loading.dsx: {combined}");
+    assert!(
+        success,
+        "deka build should succeed with loading.dsx: {combined}"
+    );
     let entry = fs::read_to_string(
         project
             .path()
@@ -392,7 +411,10 @@ fn build_emits_island_chunk_without_server_renderer() {
     )
     .expect("write island page");
     let (success, combined) = run_build(project.path());
-    assert!(success, "deka build should succeed with client:load: {combined}");
+    assert!(
+        success,
+        "deka build should succeed with client:load: {combined}"
+    );
     assert!(
         combined.contains("island Counter"),
         "build should print an island serialization report: {combined}"
@@ -432,7 +454,11 @@ fn build_emits_island_chunk_without_server_renderer() {
         "ui/server.js must not be copied into the client assets"
     );
     let index = fs::read_to_string(
-        project.path().join("dist").join("client").join("index.html"),
+        project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("index.html"),
     )
     .expect("read dist html");
     let chunk_href = format!("/assets/{}", chunk.file_name().unwrap().to_string_lossy());
@@ -485,13 +511,20 @@ fn build_without_islands_emits_no_island_script() {
     let project = tempfile::tempdir().expect("create temp project dir");
     init_project(project.path());
     let (success, combined) = run_build(project.path());
-    assert!(success, "deka build should succeed without islands: {combined}");
+    assert!(
+        success,
+        "deka build should succeed without islands: {combined}"
+    );
     assert!(
         !combined.contains("island "),
         "build report must not list islands when none exist: {combined}"
     );
     let index = fs::read_to_string(
-        project.path().join("dist").join("client").join("index.html"),
+        project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("index.html"),
     )
     .expect("read dist html");
     assert!(
@@ -531,7 +564,10 @@ fn build_emits_per_route_css_into_head() {
     .expect("write about page");
 
     let (success, combined) = run_build(project.path());
-    assert!(success, "deka build should succeed with per-route CSS: {combined}");
+    assert!(
+        success,
+        "deka build should succeed with per-route CSS: {combined}"
+    );
 
     let css_dir = project
         .path()
@@ -539,8 +575,14 @@ fn build_emits_per_route_css_into_head() {
         .join("client")
         .join("assets")
         .join("css");
-    let home = fs::read_to_string(project.path().join("dist").join("client").join("index.html"))
-        .expect("read home html");
+    let home = fs::read_to_string(
+        project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("index.html"),
+    )
+    .expect("read home html");
     let common_name = hashed_asset_name_in(&css_dir, "common", "css");
     assert!(
         home.contains(&format!("/assets/css/{common_name}")),
@@ -586,6 +628,97 @@ fn build_emits_per_route_css_into_head() {
 }
 
 #[test]
+fn build_scopes_component_css_with_the_modules_cid() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    let page_src = "import \"./page.css\"\nexport fn Page() {\n    return <section class=\"greeting\">Home</section>;\n}\n";
+    fs::write(project.path().join("app").join("page.dsx"), page_src).expect("write home page");
+    fs::write(
+        project.path().join("app").join("page.css"),
+        ".greeting { color: rebeccapurple; }\n",
+    )
+    .expect("write component css");
+
+    let (success, combined) = run_build(project.path());
+    assert!(
+        success,
+        "deka build should succeed with component CSS: {combined}"
+    );
+
+    // The compiler stamps the page's host elements with
+    // `data-deka-cid-<hash>` (hash of the module source) and the CSS writer
+    // rewrites the component's selectors to require it (RFD 24 §10.6).
+    let cid = runtime_core::framework::css_scope_hash(page_src);
+    let css_dir = project
+        .path()
+        .join("dist")
+        .join("client")
+        .join("assets")
+        .join("css");
+    let root_name = hashed_asset_name_in(&css_dir, "route-root", "css");
+    let root_css = fs::read_to_string(css_dir.join(&root_name)).expect("read route-root.css");
+    assert!(
+        root_css.contains(&format!(".greeting[data-deka-cid-{cid}]")),
+        "component selector must require the module's scope stamp: {root_css}"
+    );
+
+    // A style-free page emits no scoped CSS (no dead weight).
+    let about_dir = project.path().join("app").join("about");
+    fs::create_dir_all(&about_dir).expect("mkdir about");
+    fs::write(
+        about_dir.join("page.dsx"),
+        "export fn Page() {\n    return <section>About</section>;\n}\n",
+    )
+    .expect("write about page");
+    let (success, combined) = run_build(project.path());
+    assert!(
+        success,
+        "rebuild with a style-free page should succeed: {combined}"
+    );
+    // #604 content-addresses route stylesheets, so a style-free route emits
+    // no route-about.<hash>.css at all; if one exists it must carry no stamp.
+    let css_dir = project
+        .path()
+        .join("dist")
+        .join("client")
+        .join("assets")
+        .join("css");
+    if let Some(about_css_path) = find_hashed_asset(&css_dir, "route-about", "css") {
+        let about_css = fs::read_to_string(&about_css_path).expect("read route-about css");
+        assert!(
+            !about_css.contains("data-deka-cid"),
+            "a style-free page must not emit scoped CSS: {about_css}"
+        );
+    }
+}
+
+#[test]
+fn build_fails_loudly_on_unscopeable_component_css() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    fs::write(
+        project.path().join("app").join("page.dsx"),
+        "import \"./reset.css\"\nexport fn Page() {\n    return <section>Home</section>;\n}\n",
+    )
+    .expect("write home page");
+    fs::write(
+        project.path().join("app").join("reset.css"),
+        "body { margin: 0; }\n",
+    )
+    .expect("write document-level css");
+
+    let (success, combined) = run_build(project.path());
+    assert!(
+        !success,
+        "build must fail when component CSS targets the document: {combined}"
+    );
+    assert!(
+        combined.contains("cannot be scoped"),
+        "the diagnostic must name the scoping violation: {combined}"
+    );
+}
+
+#[test]
 fn build_server_defer_requires_fallback_and_emits_loader() {
     let project = tempfile::tempdir().expect("create temp project dir");
     init_project(project.path());
@@ -595,11 +728,20 @@ fn build_server_defer_requires_fallback_and_emits_loader() {
     )
     .expect("write defer page");
     let (success, combined) = run_build(project.path());
-    assert!(success, "deka build should succeed with server:defer fallback: {combined}");
+    assert!(
+        success,
+        "deka build should succeed with server:defer fallback: {combined}"
+    );
     let assets_dir = project.path().join("dist").join("client").join("assets");
     let defer_name = hashed_asset_name_in(&assets_dir, "islands-defer", "js");
-    let index = fs::read_to_string(project.path().join("dist").join("client").join("index.html"))
-        .expect("read dist html");
+    let index = fs::read_to_string(
+        project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("index.html"),
+    )
+    .expect("read dist html");
     assert!(
         index.contains(&format!("/assets/{defer_name}")),
         "server:defer must emit the hashed defer loader: {index}"
@@ -647,7 +789,10 @@ fn build_worker_dispatches_defer_and_copies_headers() {
     fs::create_dir_all(project.path().join("public")).expect("mkdir public");
     fs::write(project.path().join("public").join("ok.css"), "body{}").expect("write public css");
     let (success, combined) = run_build(project.path());
-    assert!(success, "deka build should succeed with server:defer: {combined}");
+    assert!(
+        success,
+        "deka build should succeed with server:defer: {combined}"
+    );
     let worker = fs::read_to_string(project.path().join("dist").join("_worker.js"))
         .expect("read dist/_worker.js");
     assert!(

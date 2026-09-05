@@ -9,7 +9,7 @@ mod emit;
 pub mod prelude;
 mod util;
 
-pub use emit::{emit_js, emit_js_with_imports, emit_js_with_options};
+pub use emit::{css_scope_hash, emit_js, emit_js_with_imports, emit_js_with_options};
 
 #[cfg(test)]
 mod tests {
@@ -87,8 +87,16 @@ mod tests {
             out
         );
         // The payload is bound to the scrutinee itself.
-        assert!(out.contains("const s = __deka_match_scrutinee_1;"), "got: {}", out);
-        assert!(out.contains("const n = __deka_match_scrutinee_1;"), "got: {}", out);
+        assert!(
+            out.contains("const s = __deka_match_scrutinee_1;"),
+            "got: {}",
+            out
+        );
+        assert!(
+            out.contains("const n = __deka_match_scrutinee_1;"),
+            "got: {}",
+            out
+        );
         // Primitives have no __case tag; emitting one would mean the union
         // lookup was skipped.
         assert!(!out.contains("__case === \"string\""), "got: {}", out);
@@ -107,7 +115,11 @@ mod tests {
         // The struct factory is emitted because the struct is declared in
         // this module; the type-pattern itself reads the tag directly.
         assert!(out.contains("function __deka_struct"), "got: {}", out);
-        assert!(out.contains("const p = __deka_match_scrutinee_1;"), "got: {}", out);
+        assert!(
+            out.contains("const p = __deka_match_scrutinee_1;"),
+            "got: {}",
+            out
+        );
     }
 
     #[test]
@@ -115,15 +127,16 @@ mod tests {
         // deka#551: the prelude's `const deka = globalThis.deka = {...}`
         // write is gone. Struct machinery is module-local, and the brand is
         // a string id compared by value, so nothing needs a shared global.
-        let out = parse_and_emit(
-            "struct Point { x: number; y: number } const p = Point { x: 1, y: 2 };",
+        let out =
+            parse_and_emit("struct Point { x: number; y: number } const p = Point { x: 1, y: 2 };");
+        assert!(
+            out.contains("const Point = __deka_struct(\"Point\")"),
+            "got: {}",
+            out
         );
-        assert!(out.contains("const Point = __deka_struct(\"Point\")"), "got: {}", out);
         assert!(!out.contains("globalThis"), "got: {}", out);
         // A user binding named `deka` must not collide with emitted helpers.
-        let out = parse_and_emit(
-            "struct Point { x: number } const deka = Point { x: 1 };",
-        );
+        let out = parse_and_emit("struct Point { x: number } const deka = Point { x: 1 };");
         assert!(!out.contains("globalThis"), "got: {}", out);
     }
 
@@ -132,7 +145,11 @@ mod tests {
         // deka#551: the newtype payload key is shared through Symbol.for's
         // registry, not a globalThis merge.
         let out = parse_and_emit("type Cents number\nconst c = Cents(500);");
-        assert!(out.contains("const __p = Symbol.for('deka.nt');"), "got: {}", out);
+        assert!(
+            out.contains("const __p = Symbol.for('deka.nt');"),
+            "got: {}",
+            out
+        );
         assert!(!out.contains("globalThis"), "got: {}", out);
     }
 
@@ -183,14 +200,21 @@ mod tests {
 
     #[test]
     fn emit_match_expression() {
-        let out = parse_and_emit(
-            "const o = Some(5); const x = match o { Some(n) => n, None => 0 };",
+        let out =
+            parse_and_emit("const o = Some(5); const x = match o { Some(n) => n, None => 0 };");
+        assert!(
+            out.contains("__case"),
+            "expected case dispatch, got: {}",
+            out
         );
-        assert!(out.contains("__case"), "expected case dispatch, got: {}", out);
         assert!(out.contains("Some"), "got: {}", out);
         assert!(out.contains("None"), "got: {}", out);
         assert!(out.contains("let __deka_match_result_1;"), "got: {}", out);
-        assert!(!out.contains("((__deka_scrutinee) =>"), "match expression still has an IIFE: {}", out);
+        assert!(
+            !out.contains("((__deka_scrutinee) =>"),
+            "match expression still has an IIFE: {}",
+            out
+        );
     }
 
     #[test]
@@ -198,11 +222,31 @@ mod tests {
         let out = parse_and_emit(
             "const o = Some(5); match o { Some(n) => console.log(n), None => console.log(0) };",
         );
-        assert!(out.contains("const __deka_match_scrutinee_1 = o;"), "got: {}", out);
-        assert!(out.contains("if (__deka_match_scrutinee_1.__case === \"Some\")"), "got: {}", out);
-        assert!(!out.contains("=> {"), "match statement still has an IIFE: {}", out);
-        assert!(out.contains("throw new Error(\"non-exhaustive match\")"), "got: {}", out);
-        assert!(!out.contains("((__deka_scrutinee) =>"), "match statement still has an IIFE: {}", out);
+        assert!(
+            out.contains("const __deka_match_scrutinee_1 = o;"),
+            "got: {}",
+            out
+        );
+        assert!(
+            out.contains("if (__deka_match_scrutinee_1.__case === \"Some\")"),
+            "got: {}",
+            out
+        );
+        assert!(
+            !out.contains("=> {"),
+            "match statement still has an IIFE: {}",
+            out
+        );
+        assert!(
+            out.contains("throw new Error(\"non-exhaustive match\")"),
+            "got: {}",
+            out
+        );
+        assert!(
+            !out.contains("((__deka_scrutinee) =>"),
+            "match statement still has an IIFE: {}",
+            out
+        );
     }
 
     #[test]
@@ -217,7 +261,11 @@ mod tests {
         let out = parse_and_emit(
             "struct Point { x: number\n  y: number }\nconst p = Point { x: 1, y: 2 };",
         );
-        assert!(out.contains("Point({"), "expected factory call, got: {}", out);
+        assert!(
+            out.contains("Point({"),
+            "expected factory call, got: {}",
+            out
+        );
         assert!(out.contains("x: 1"), "got: {}", out);
         assert!(out.contains("y: 2"), "got: {}", out);
     }
@@ -248,19 +296,31 @@ mod tests {
     #[test]
     fn emit_import_named() {
         let out = parse_and_emit("import { add } from \"./math.ds\";");
-        assert!(out.contains("import { add } from \"./math.ds\";"), "got: {}", out);
+        assert!(
+            out.contains("import { add } from \"./math.ds\";"),
+            "got: {}",
+            out
+        );
     }
 
     #[test]
     fn emit_import_aliased() {
         let out = parse_and_emit("import { add as plus } from \"./math.ds\";");
-        assert!(out.contains("import { add as plus } from \"./math.ds\";"), "got: {}", out);
+        assert!(
+            out.contains("import { add as plus } from \"./math.ds\";"),
+            "got: {}",
+            out
+        );
     }
 
     #[test]
     fn emit_import_side_effect() {
         let out = parse_and_emit("import \"./side-effects.ds\";");
-        assert!(out.contains("import \"./side-effects.ds\";"), "got: {}", out);
+        assert!(
+            out.contains("import \"./side-effects.ds\";"),
+            "got: {}",
+            out
+        );
     }
 
     #[test]
@@ -313,15 +373,31 @@ mod tests {
     #[test]
     fn emit_unsafe_async_await() {
         let out = parse_and_emit("const r = unsafe { await fetch(url) };");
-        assert!(out.contains("async function"), "expected async wrapper, got: {}", out);
-        assert!(out.contains("await fetch(url)"), "expected raw await, got: {}", out);
+        assert!(
+            out.contains("async function"),
+            "expected async wrapper, got: {}",
+            out
+        );
+        assert!(
+            out.contains("await fetch(url)"),
+            "expected raw await, got: {}",
+            out
+        );
     }
 
     #[test]
     fn emit_unsafe_statement_block() {
         let out = parse_and_emit("const r = unsafe { const x = 1; return x + 2; };");
-        assert!(out.contains("const x = 1;"), "expected raw JS statements, got: {}", out);
-        assert!(out.contains("return x + 2;"), "expected raw JS statements, got: {}", out);
+        assert!(
+            out.contains("const x = 1;"),
+            "expected raw JS statements, got: {}",
+            out
+        );
+        assert!(
+            out.contains("return x + 2;"),
+            "expected raw JS statements, got: {}",
+            out
+        );
     }
 
     /// Collapse runs of whitespace so wrapper-selection assertions do not
@@ -336,24 +412,48 @@ mod tests {
     fn emit_unsafe_ignores_string_punctuation_and_keywords() {
         let out = parse_and_emit("const a = unsafe { \"a;b\" }; const b = unsafe { \"await\" };");
         let flat = squeeze(&out);
-        assert!(flat.contains("return ( \"a;b\" )"), "string semicolon changed shape: {}", out);
-        assert!(flat.contains("return ( \"await\" )"), "string await changed shape: {}", out);
-        assert!(!out.contains("async function"), "string await changed wrapper asyncness: {}", out);
+        assert!(
+            flat.contains("return ( \"a;b\" )"),
+            "string semicolon changed shape: {}",
+            out
+        );
+        assert!(
+            flat.contains("return ( \"await\" )"),
+            "string await changed shape: {}",
+            out
+        );
+        assert!(
+            !out.contains("async function"),
+            "string await changed wrapper asyncness: {}",
+            out
+        );
     }
 
     #[test]
     fn emit_unsafe_ignores_comment_punctuation() {
         let out = parse_and_emit("const r = unsafe { 1 + 1 /* ; await */ };");
         let flat = squeeze(&out);
-        assert!(flat.contains("return ( 1 + 1 /* ; await */ )"), "comment changed expression shape: {}", out);
-        assert!(!out.contains("async function"), "comment await changed wrapper asyncness: {}", out);
+        assert!(
+            flat.contains("return ( 1 + 1 /* ; await */ )"),
+            "comment changed expression shape: {}",
+            out
+        );
+        assert!(
+            !out.contains("async function"),
+            "comment await changed wrapper asyncness: {}",
+            out
+        );
     }
 
     #[test]
     fn emit_unsafe_ignores_regex_punctuation() {
         let out = parse_and_emit("const r = unsafe { /a;b/.test(value) };");
         let flat = squeeze(&out);
-        assert!(flat.contains("return ( /a;b/.test(value) )"), "regex semicolon changed shape: {}", out);
+        assert!(
+            flat.contains("return ( /a;b/.test(value) )"),
+            "regex semicolon changed shape: {}",
+            out
+        );
     }
 
     #[test]
@@ -361,7 +461,11 @@ mod tests {
         let out = parse_and_emit("const r = unsafe { 1\n2 };");
         let flat = squeeze(&out);
         // Statement wrapper: no `return (`, the body is spliced as statements.
-        assert!(flat.contains("function() { 1 2 }"), "ASI statements were treated as an expression: {}", out);
+        assert!(
+            flat.contains("function() { 1 2 }"),
+            "ASI statements were treated as an expression: {}",
+            out
+        );
     }
 
     /// The bug that started deka#423: a body whose last line is a `//` comment
@@ -372,7 +476,11 @@ mod tests {
         let out = parse_and_emit("const r = unsafe { 1 + 1 // trailing\n };");
         let opens = out.matches('{').count();
         let closes = out.matches('}').count();
-        assert_eq!(opens, closes, "unbalanced braces from trailing comment: {}", out);
+        assert_eq!(
+            opens, closes,
+            "unbalanced braces from trailing comment: {}",
+            out
+        );
         assert!(
             out.contains("// trailing\n"),
             "comment must stay on its own line: {}",
@@ -383,10 +491,18 @@ mod tests {
     #[test]
     fn emit_jsx_element() {
         let out = parse_and_emit("const el = <div class=\"box\" />;");
-        assert!(out.contains("import { jsx, jsxs, Fragment } from \"ui/jsx\""), "got: {}", out);
+        assert!(
+            out.contains("import { jsx, jsxs, Fragment } from \"ui/jsx\""),
+            "got: {}",
+            out
+        );
         assert!(out.contains("jsx("), "expected jsx call, got: {}", out);
         assert!(out.contains("\"div\""), "expected tag, got: {}", out);
-        assert!(out.contains("\"class\": \"box\""), "expected class prop, got: {}", out);
+        assert!(
+            out.contains("\"class\": \"box\""),
+            "expected class prop, got: {}",
+            out
+        );
     }
 
     #[test]
@@ -396,7 +512,10 @@ mod tests {
             !out.contains("live(function() { return cond &&"),
             "JSX-producing interpolations must not be live() text bindings: {out}"
         );
-        assert!(out.contains("cond &&"), "conditional jsx child should still emit: {out}");
+        assert!(
+            out.contains("cond &&"),
+            "conditional jsx child should still emit: {out}"
+        );
     }
 
     #[test]
@@ -451,8 +570,55 @@ mod tests {
     }
 
     #[test]
+    fn css_scope_hash_is_stable_and_distinct() {
+        assert_eq!(css_scope_hash("greeting {}"), "e1c9193cd172");
+        assert_eq!(css_scope_hash("greeting {}"), css_scope_hash("greeting {}"));
+        assert_ne!(
+            css_scope_hash("greeting {}"),
+            css_scope_hash("greeting { }")
+        );
+        // 12 hex chars, the Astro cid shape.
+        assert!(css_scope_hash("x").chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(css_scope_hash("x").len(), 12);
+    }
+
+    #[test]
+    fn emit_jsx_stamps_cid_when_module_imports_css() {
+        let source = "import \"./card.css\";\nconst el = <div class=\"box\" />;";
+        let out = parse_and_emit(source);
+        let cid = css_scope_hash(source);
+        assert!(
+            out.contains(&format!("\"data-deka-cid-{cid}\": true")),
+            "component CSS must stamp host elements with the scope id: {out}"
+        );
+        assert!(
+            out.contains("\"data-deka-id\": \"module:_/i0\""),
+            "the hydration id must stay alongside the scope stamp: {out}"
+        );
+    }
+
+    #[test]
+    fn emit_jsx_omits_cid_without_component_css() {
+        let out = parse_and_emit("const el = <div class=\"box\" />;");
+        assert!(
+            !out.contains("data-deka-cid"),
+            "style-free modules must not carry a scope stamp: {out}"
+        );
+    }
+
+    #[test]
+    fn emit_jsx_does_not_stamp_component_tags() {
+        let out = parse_and_emit("import \"./card.css\";\nconst el = <Card />;");
+        assert!(
+            !out.contains("data-deka-cid"),
+            "component tags render host elements themselves; stamping the tag itself is dead weight: {out}"
+        );
+    }
+
+    #[test]
     fn emit_keeps_css_module_specifier_imports() {
-        let out = parse_and_emit("import { styles } from \"./card.module.css\";\nconst x = styles;");
+        let out =
+            parse_and_emit("import { styles } from \"./card.module.css\";\nconst x = styles;");
         assert!(
             out.contains("card.module.css"),
             "CSS module specifier imports must stay in the JS graph: {out}"
@@ -488,34 +654,58 @@ mod tests {
         let out = parse_and_emit("const el = <div class=\"box\" />;");
         assert!(!out.contains("__deka_ui"), "got: {}", out);
         assert!(!out.contains("`<${tag}"), "got: {}", out);
-        assert!(out.contains("\"data-deka-id\""), "expected tagged id, got: {}", out);
+        assert!(
+            out.contains("\"data-deka-id\""),
+            "expected tagged id, got: {}",
+            out
+        );
         assert!(out.contains("i0"), "expected i0 path segment, got: {}", out);
     }
 
     #[test]
     fn emit_template_literal() {
         let out = parse_and_emit("const s = `hello ${x}`;");
-        assert!(out.contains("const s = `hello ${x}`;"), "expected backtick output, got: {}", out);
+        assert!(
+            out.contains("const s = `hello ${x}`;"),
+            "expected backtick output, got: {}",
+            out
+        );
     }
 
     #[test]
     fn emit_fn_expression_literal() {
         let out = parse_and_emit("const double = fn (x: number) number { return x * 2 };");
-        assert!(out.contains("const double = function(x) {"), "expected function expression, got: {}", out);
-        assert!(out.contains("return x * 2;"), "expected return body, got: {}", out);
+        assert!(
+            out.contains("const double = function(x) {"),
+            "expected function expression, got: {}",
+            out
+        );
+        assert!(
+            out.contains("return x * 2;"),
+            "expected return body, got: {}",
+            out
+        );
     }
 
     #[test]
     fn emit_for_loop() {
         let out = parse_and_emit("for (let i = 0; i < 10; i = i + 1) { break; }");
-        assert!(out.contains("for (let i = 0; i < 10; i = i + 1) {"), "expected for header, got: {}", out);
+        assert!(
+            out.contains("for (let i = 0; i < 10; i = i + 1) {"),
+            "expected for header, got: {}",
+            out
+        );
         assert!(out.contains("break;"), "expected break, got: {}", out);
     }
 
     #[test]
     fn emit_async_function() {
         let out = parse_and_emit("async fn value() Promise<number> { return 1 }");
-        assert!(out.contains("async function value()"), "expected async function, got: {}", out);
+        assert!(
+            out.contains("async function value()"),
+            "expected async function, got: {}",
+            out
+        );
         assert!(out.contains("return 1;"), "expected return, got: {}", out);
     }
 
@@ -525,7 +715,11 @@ mod tests {
             "struct Legs {} fn (l Legs) move() string { return \"walk\" } struct Robot { Legs } const r = Robot { Legs: Legs {} }; const m = r.move();",
         );
         assert!(out.contains("const Legs = __deka_struct"), "got: {}", out);
-        assert!(out.contains("const Robot = __deka_struct(\"Robot\", { Legs: Legs })"), "got: {}", out);
+        assert!(
+            out.contains("const Robot = __deka_struct(\"Robot\", { Legs: Legs })"),
+            "got: {}",
+            out
+        );
         assert!(out.contains("Legs.impl(\"move\""), "got: {}", out);
         assert!(out.contains("r.move()"), "got: {}", out);
     }
@@ -577,7 +771,11 @@ mod tests {
         let out = parse_check_and_emit(
             "fn (n number) add_tax(rate: number) number { return n * (1 + rate); } const total = 100.add_tax(0.2);",
         );
-        assert!(out.contains("function add_tax$number(n, rate)"), "got: {}", out);
+        assert!(
+            out.contains("function add_tax$number(n, rate)"),
+            "got: {}",
+            out
+        );
         assert!(out.contains("add_tax$number(100, 0.2)"), "got: {}", out);
     }
 
@@ -586,11 +784,7 @@ mod tests {
         let out = parse_check_and_emit(
             "fn (s string) a() string { return s; } fn (s string) b() string { return s; } const x = \"v\".a().b();",
         );
-        assert!(
-            out.contains("b$string(a$string(\"v\"))"),
-            "got: {}",
-            out
-        );
+        assert!(out.contains("b$string(a$string(\"v\"))"), "got: {}", out);
     }
 
     #[test]
@@ -599,7 +793,11 @@ mod tests {
         let out = parse_check_and_emit(
             "fn (s string) toUpperCase() string { return s; } const u = \"x\".toUpperCase();",
         );
-        assert!(out.contains("function toUpperCase$string(s)"), "got: {}", out);
+        assert!(
+            out.contains("function toUpperCase$string(s)"),
+            "got: {}",
+            out
+        );
         assert!(out.contains("toUpperCase$string(\"x\")"), "got: {}", out);
         // ...while builtin members stay verbatim.
         let out = parse_check_and_emit(
@@ -641,9 +839,7 @@ mod tests {
 
     #[test]
     fn emit_gettype_union_receiver() {
-        let out = parse_check_and_emit(
-            "fn f(v: number | string) Type { return v.getType(); }",
-        );
+        let out = parse_check_and_emit("fn f(v: number | string) Type { return v.getType(); }");
         assert!(out.contains("__deka_type_of(v)"), "got: {}", out);
     }
 
@@ -680,7 +876,11 @@ mod tests {
         let out = parse_check_and_emit(
             "const a: Array<number> = [1, 2, 3];\nlet f = unwrap(a.first()) or { 0 };\nlet l = unwrap(a.last()) or { 0 };",
         );
-        assert!(out.contains("((v) => v.length > 0 ? Some(v[0]) : None)(a)"), "got: {}", out);
+        assert!(
+            out.contains("((v) => v.length > 0 ? Some(v[0]) : None)(a)"),
+            "got: {}",
+            out
+        );
         assert!(
             out.contains("((v) => v.length > 0 ? Some(v[v.length - 1]) : None)(a)"),
             "got: {}",
@@ -752,7 +952,8 @@ mod tests {
 
     #[test]
     fn emit_array_first_last_absent_without_use() {
-        let out = parse_check_and_emit("const a: Array<number> = [1];\nconst n: number = a.length;");
+        let out =
+            parse_check_and_emit("const a: Array<number> = [1];\nconst n: number = a.length;");
         assert!(!out.contains("Some(v["), "got: {}", out);
     }
 
@@ -786,7 +987,8 @@ mod tests {
             "Option cases must not be frozen: {out}"
         );
         assert!(
-            out.contains("const Result = Object.freeze({") && out.contains("const Option = Object.freeze({"),
+            out.contains("const Result = Object.freeze({")
+                && out.contains("const Option = Object.freeze({"),
             "shared constructor tables should remain frozen: {out}"
         );
     }
@@ -908,10 +1110,8 @@ mod tests {
             },
         );
 
-        let mut super_decl_trees: std::collections::HashMap<
-            &str,
-            DescriptorTree,
-        > = std::collections::HashMap::new();
+        let mut super_decl_trees: std::collections::HashMap<&str, DescriptorTree> =
+            std::collections::HashMap::new();
         super_decl_trees.insert("User", user_tree_for_map());
         super_decl_trees.insert("Unused", unused_tree);
         super_decl_trees.insert("Node", node_tree);
@@ -972,7 +1172,11 @@ mod tests {
         // The #550 shape triple survives serialization.
         assert!(out.contains("kind: \"struct\""), "got: {}", out);
         assert!(out.contains("name: \"User\""), "got: {}", out);
-        assert!(out.contains("toString() { return this.name; }"), "got: {}", out);
+        assert!(
+            out.contains("toString() { return this.name; }"),
+            "got: {}",
+            out
+        );
         // The recursive declaration uses the lazy getter form and references
         // its own const inside it.
         assert!(out.contains("get fields()"), "got: {}", out);
@@ -994,11 +1198,19 @@ mod tests {
             "super struct User { id: number; name: string }\nconst t = User.type();",
         );
         // Call site rewrites to the interned const.
-        assert!(out.contains("const t = __deka_super_desc$User;"), "got: {}", out);
+        assert!(
+            out.contains("const t = __deka_super_desc$User;"),
+            "got: {}",
+            out
+        );
         assert!(out.contains("const __deka_super_desc$User"), "got: {}", out);
         assert!(out.contains("kind: \"struct\""), "got: {}", out);
         assert!(out.contains("name: \"User\""), "got: {}", out);
-        assert!(out.contains("{ name: \"id\", optional: false"), "got: {}", out);
+        assert!(
+            out.contains("{ name: \"id\", optional: false"),
+            "got: {}",
+            out
+        );
         // The drift guard: no prototype mutation, no globalThis.
         assert!(!out.contains("globalThis"), "got: {}", out);
     }
@@ -1008,7 +1220,11 @@ mod tests {
         let out = parse_check_and_emit(
             "super enum Status { Active, Archived(number) }\nconst t = Status.type();",
         );
-        assert!(out.contains("const t = __deka_super_desc$Status;"), "got: {}", out);
+        assert!(
+            out.contains("const t = __deka_super_desc$Status;"),
+            "got: {}",
+            out
+        );
         assert!(out.contains("kind: \"enum\""), "got: {}", out);
         assert!(out.contains("name: \"Active\""), "got: {}", out);
         assert!(out.contains("name: \"Archived\""), "got: {}", out);
@@ -1019,9 +1235,8 @@ mod tests {
     fn emit_super_decl_unused_marking_emits_nothing() {
         // The factory is used (so the struct is live) but `.type()` is never
         // called: no descriptor const, no drag.
-        let out = parse_check_and_emit(
-            "super struct User { id: number }\nconst u = User { id: 1 };",
-        );
+        let out =
+            parse_check_and_emit("super struct User { id: number }\nconst u = User { id: 1 };");
         assert!(
             !out.contains("__deka_super_desc$"),
             "unused super marking must emit no descriptor const: {}",
@@ -1038,8 +1253,7 @@ mod tests {
         // their const (harmless bloat, never incorrectness)" guarantee the
         // type_of_calls gate documents. What MUST hold is that the call site
         // itself is gone (no dangling reference) and the const is inert.
-        let source =
-            "super struct User { id: number }\nfn describe() Type { return User.type(); }";
+        let source = "super struct User { id: number }\nfn describe() Type { return User.type(); }";
         let arena = Bump::new();
         let result = parse(source, &arena);
         assert!(result.errors.is_empty(), "{:?}", result.errors);
@@ -1095,10 +1309,16 @@ mod tests {
 
     #[test]
     fn emit_signature_uses_declared_type_and_not_runtime_type() {
-        let out = parse_check_and_emit("fn f(v: number | string) Type { return v.signature(); } const s = f(42);");
+        let out = parse_check_and_emit(
+            "fn f(v: number | string) Type { return v.signature(); } const s = f(42);",
+        );
         assert!(out.contains("kind: \"union\""), "got: {}", out);
         assert!(out.contains("name: \"number | string\""), "got: {}", out);
-        assert!(out.contains("return Object.freeze({ kind: \"union\""), "got: {}", out);
+        assert!(
+            out.contains("return Object.freeze({ kind: \"union\""),
+            "got: {}",
+            out
+        );
         assert!(!out.contains("__deka_type_of"), "got: {}", out);
         assert!(!out.contains("globalThis"), "got: {}", out);
         assert!(!out.contains("prototype"), "got: {}", out);
@@ -1150,9 +1370,7 @@ mod tests {
         // emitted chain tags the envelope through the shared helper.
         let out = parse_and_emit("const r = await bridge fs.read_file(path)");
         assert!(
-            out.contains(
-                "await __deka_host(\"fs\", \"read_file\", [path]).then(__deka_to_result)"
-            ),
+            out.contains("await __deka_host(\"fs\", \"read_file\", [path]).then(__deka_to_result)"),
             "got: {}",
             out
         );
@@ -1170,7 +1388,11 @@ mod tests {
         let out = parse_and_emit(
             "const a = bridge crypto.random_bytes(8)\nconst b = await bridge fs.mkdirs(\"out\")",
         );
-        assert!(out.contains("__deka_to_result(__deka_host("), "got: {}", out);
+        assert!(
+            out.contains("__deka_to_result(__deka_host("),
+            "got: {}",
+            out
+        );
         assert!(out.contains(".then(__deka_to_result)"), "got: {}", out);
         assert!(!out.contains("function("), "got: {}", out);
         assert!(!out.contains("=>"), "got: {}", out);

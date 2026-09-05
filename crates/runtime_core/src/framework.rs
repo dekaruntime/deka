@@ -103,7 +103,8 @@ pub fn fill_document(index_html: &str, head: &str, app: &str, scripts: &str) -> 
 /// True when the project uses the RFD 24 document + `app/page.dsx` shape.
 pub fn is_app_router_project(project_root: &Path) -> bool {
     project_root.join("index.html").is_file()
-        && (project_root.join("app/page.dsx").is_file() || project_root.join("app/page.ds").is_file())
+        && (project_root.join("app/page.dsx").is_file()
+            || project_root.join("app/page.ds").is_file())
 }
 
 pub fn normalize_request_path(raw: &str) -> String {
@@ -155,7 +156,9 @@ pub fn scan_app_dir(app_dir: &Path) -> FrameworkManifest {
         return manifest;
     }
     visit_app_dir(app_dir, app_dir, &mut manifest);
-    manifest.entries.sort_by(|a, b| a.route.cmp(&b.route).then(a.file.cmp(&b.file)));
+    manifest
+        .entries
+        .sort_by(|a, b| a.route.cmp(&b.route).then(a.file.cmp(&b.file)));
     manifest
 }
 
@@ -256,8 +259,16 @@ fn dynamic_rank(route: &str) -> (u8, usize) {
 }
 
 pub fn route_pattern_matches(pattern: &str, path: &str) -> Option<BTreeMap<String, String>> {
-    let pat: Vec<&str> = pattern.trim_matches('/').split('/').filter(|s| !s.is_empty()).collect();
-    let seg: Vec<&str> = path.trim_matches('/').split('/').filter(|s| !s.is_empty()).collect();
+    let pat: Vec<&str> = pattern
+        .trim_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+    let seg: Vec<&str> = path
+        .trim_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
     if pattern == "/" {
         return if path == "/" {
             Some(BTreeMap::new())
@@ -538,10 +549,17 @@ fn island_prop_names(tag_src: &str) -> Vec<String> {
     let mut names = Vec::new();
     for raw in tag_src.split_whitespace() {
         let name = raw.split('=').next().unwrap_or("").trim();
-        if name.is_empty() || name.starts_with('<') || name.starts_with("client:") || name.starts_with("server:") {
+        if name.is_empty()
+            || name.starts_with('<')
+            || name.starts_with("client:")
+            || name.starts_with("server:")
+        {
             continue;
         }
-        if name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+        if name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
             names.push(name.to_string());
         }
     }
@@ -552,7 +570,34 @@ fn island_prop_names(tag_src: &str) -> Vec<String> {
 pub struct RouteStyle {
     pub route: String,
     pub classes: BTreeSet<String>,
-    pub files: Vec<String>,
+    pub files: Vec<ScopedStyleFile>,
+}
+
+/// A component-authored CSS file and the style-scope id of the module that
+/// imports it. The CSS writer rewrites the file's selectors to require
+/// `[data-deka-cid-<cid>]`; the compiler stamps the importing module's host
+/// elements with the same attribute (RFD 24 §10.6). A shared CSS file can
+/// appear once per importing module, each with its own cid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopedStyleFile {
+    pub path: String,
+    pub cid: String,
+}
+
+/// FNV-1a 64-bit over the module source, truncated to 12 hex chars — the
+/// `data-deka-cid-<hash>` component style-scope id from RFD 24 §10.6.
+///
+/// Must stay in sync with `deka_emit::css_scope_hash`: the compiler stamps
+/// elements with this id while the CSS writer rewrites selectors with it, so
+/// both sides must produce the same digest. Both crates pin the same test
+/// vector.
+pub fn css_scope_hash(source: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in source.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{:012x}", hash & 0xffff_ffff_ffff)
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -610,7 +655,11 @@ pub fn collect_route_styles(manifest: &FrameworkManifest) -> Vec<RouteStyle> {
     let mut out = Vec::new();
     for page in pages {
         let mut files = Vec::new();
-        files.extend(layout_chain(&manifest.entries, &page.route).into_iter().map(|e| e.file.clone()));
+        files.extend(
+            layout_chain(&manifest.entries, &page.route)
+                .into_iter()
+                .map(|e| e.file.clone()),
+        );
         files.push(page.file.clone());
         let scanned = scan_style_graph(&files);
         out.push(RouteStyle {
@@ -621,7 +670,11 @@ pub fn collect_route_styles(manifest: &FrameworkManifest) -> Vec<RouteStyle> {
     }
     if let Some(not_found) = &manifest.not_found {
         let mut files = Vec::new();
-        files.extend(layout_chain(&manifest.entries, "/").into_iter().map(|e| e.file.clone()));
+        files.extend(
+            layout_chain(&manifest.entries, "/")
+                .into_iter()
+                .map(|e| e.file.clone()),
+        );
         files.push(not_found.file.clone());
         let scanned = scan_style_graph(&files);
         out.push(RouteStyle {
@@ -642,8 +695,8 @@ pub fn css_plan_from_styles(styles: &[RouteStyle]) -> CssPlan {
         }
         let mut seen = BTreeSet::new();
         for file in &style.files {
-            if seen.insert(file.clone()) {
-                *file_count.entry(file.clone()).or_insert(0) += 1;
+            if seen.insert(file.path.clone()) {
+                *file_count.entry(file.path.clone()).or_insert(0) += 1;
             }
         }
     }
@@ -666,7 +719,7 @@ pub fn css_plan_from_styles(styles: &[RouteStyle]) -> CssPlan {
     let mut routes = BTreeMap::new();
     for style in styles {
         let unique_class = style.classes.iter().any(|c| !common_classes.contains(c));
-        let unique_file = style.files.iter().any(|f| !common_files.contains(f));
+        let unique_file = style.files.iter().any(|f| !common_files.contains(&f.path));
         routes.insert(style.route.clone(), unique_class || unique_file);
     }
     CssPlan {
@@ -677,7 +730,7 @@ pub fn css_plan_from_styles(styles: &[RouteStyle]) -> CssPlan {
     }
 }
 
-fn scan_style_graph(entry_files: &[String]) -> (BTreeSet<String>, Vec<String>) {
+fn scan_style_graph(entry_files: &[String]) -> (BTreeSet<String>, Vec<ScopedStyleFile>) {
     let mut classes = BTreeSet::new();
     let mut css_files = Vec::new();
     let mut seen_css = BTreeSet::new();
@@ -692,10 +745,19 @@ fn scan_style_graph(entry_files: &[String]) -> (BTreeSet<String>, Vec<String>) {
             continue;
         };
         classes.extend(collect_class_literals(&src));
+        // Every CSS file discovered in this module is scoped to it: the
+        // compiler stamps this module's host elements with
+        // `[data-deka-cid-<cid>]`, so the rewritten selectors must carry the
+        // same id (RFD 24 §10.6).
+        let cid = css_scope_hash(&src);
         for css in collect_import_paths(&src, |p| p.to_ascii_lowercase().ends_with(".css")) {
             if let Some(resolved) = resolve_relative(path, &css) {
-                if Path::new(&resolved).is_file() && seen_css.insert(resolved.clone()) {
-                    css_files.push(resolved);
+                let key = format!("{resolved}\u{0}{cid}");
+                if Path::new(&resolved).is_file() && seen_css.insert(key) {
+                    css_files.push(ScopedStyleFile {
+                        path: resolved,
+                        cid: cid.clone(),
+                    });
                 }
             }
         }
@@ -1553,7 +1615,11 @@ fn session_cookie_name(project_root: &Path) -> String {
     };
     match value
         .get("serve")
-        .and_then(|serve| serve.get("sessionCookie").or_else(|| serve.get("session_cookie")))
+        .and_then(|serve| {
+            serve
+                .get("sessionCookie")
+                .or_else(|| serve.get("session_cookie"))
+        })
         .and_then(|v| v.as_str())
     {
         Some(name) => name.to_string(),
@@ -1698,7 +1764,11 @@ fn generate_serve_entry(
     for page in &pages {
         let cond = path_condition(&page.route)?;
         let tree = wrap_layouts(&manifest.entries, &page.route, &alias("Page", &page.route));
-        let head = with_css_links(css_plan, &page.route, head_concat(&manifest.entries, page, false))?;
+        let head = with_css_links(
+            css_plan,
+            &page.route,
+            head_concat(&manifest.entries, page, false),
+        )?;
         branches.push_str(&format!(
             "    if ({cond}) {{\n        return await respond({tree}, 200, fragment, staticBuild, {head})\n    }}\n"
         ));
@@ -1713,8 +1783,15 @@ fn generate_serve_entry(
     } else {
         "/"
     };
-    let not_found_head_inner = if manifest.not_found.as_ref().is_some_and(|e| exports_head(Path::new(&e.file))) {
-        head_expr(&layout_head_aliases(&manifest.entries, "/"), "head_not_found()")
+    let not_found_head_inner = if manifest
+        .not_found
+        .as_ref()
+        .is_some_and(|e| exports_head(Path::new(&e.file)))
+    {
+        head_expr(
+            &layout_head_aliases(&manifest.entries, "/"),
+            "head_not_found()",
+        )
     } else {
         head_expr(&layout_head_aliases(&manifest.entries, "/"), "\"\"")
     };
@@ -1723,7 +1800,8 @@ fn generate_serve_entry(
     let fallback_fn = if manifest.not_found.is_some() {
         String::new()
     } else {
-        "fn FallbackNotFound() {\n    return <section><h1>Not found</h1></section>;\n}\n\n".to_string()
+        "fn FallbackNotFound() {\n    return <section><h1>Not found</h1></section>;\n}\n\n"
+            .to_string()
     };
     let suspense_import = if has_loading {
         "import { Suspense } from \"ui/suspense\"\n"
@@ -2139,7 +2217,11 @@ fn ancestor_routes(route: &str) -> Vec<String> {
     if route == "/" {
         return vec!["/".to_string()];
     }
-    let parts: Vec<&str> = route.trim_matches('/').split('/').filter(|p| !p.is_empty()).collect();
+    let parts: Vec<&str> = route
+        .trim_matches('/')
+        .split('/')
+        .filter(|p| !p.is_empty())
+        .collect();
     let mut out = Vec::new();
     out.push(if route.starts_with('/') {
         route.to_string()
@@ -2434,14 +2516,40 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(tmp.join("blog")).unwrap();
-        std::fs::write(tmp.join("page.dsx"), "export fn Page() { return <p>home</p>; }\n").unwrap();
-        std::fs::write(tmp.join("layout.dsx"), "export fn Layout(props: LayoutProps) { return <main>{props.children}</main>; }\n").unwrap();
-        std::fs::write(tmp.join("not-found.dsx"), "export fn Page() { return <p>404</p>; }\n").unwrap();
-        std::fs::write(tmp.join("blog/page.dsx"), "export fn Page() { return <p>blog</p>; }\n").unwrap();
+        std::fs::write(
+            tmp.join("page.dsx"),
+            "export fn Page() { return <p>home</p>; }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.join("layout.dsx"),
+            "export fn Layout(props: LayoutProps) { return <main>{props.children}</main>; }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.join("not-found.dsx"),
+            "export fn Page() { return <p>404</p>; }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.join("blog/page.dsx"),
+            "export fn Page() { return <p>blog</p>; }\n",
+        )
+        .unwrap();
         let manifest = scan_app_dir(&tmp);
         assert!(manifest.not_found.is_some());
-        assert!(manifest.entries.iter().any(|e| e.route == "/" && e.kind == FrameworkEntryKind::Page));
-        assert!(manifest.entries.iter().any(|e| e.route == "/blog" && e.kind == FrameworkEntryKind::Page));
+        assert!(
+            manifest
+                .entries
+                .iter()
+                .any(|e| e.route == "/" && e.kind == FrameworkEntryKind::Page)
+        );
+        assert!(
+            manifest
+                .entries
+                .iter()
+                .any(|e| e.route == "/blog" && e.kind == FrameworkEntryKind::Page)
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
@@ -2452,7 +2560,10 @@ mod tests {
             page_call("/blog/[slug]", "Page_blog__slug_"),
             "<Page_blog__slug_ slug={last_segment(path)} />"
         );
-        assert_eq!(dynamic_param_names("/blog/[slug]"), vec!["slug".to_string()]);
+        assert_eq!(
+            dynamic_param_names("/blog/[slug]"),
+            vec!["slug".to_string()]
+        );
         assert!(dynamic_param_names("/about").is_empty());
     }
 
@@ -2544,12 +2655,12 @@ mod tests {
         let src = "export const matcher: array<string> = [\"/dashboard/:path*\", \"/admin\"]\nexport fn middleware() { return None }\n";
         assert_eq!(
             parse_middleware_matcher(src),
-            Some(vec![
-                "/dashboard/:path*".to_string(),
-                "/admin".to_string()
-            ])
+            Some(vec!["/dashboard/:path*".to_string(), "/admin".to_string()])
         );
-        assert_eq!(parse_middleware_matcher("export fn middleware() { return None }\n"), None);
+        assert_eq!(
+            parse_middleware_matcher("export fn middleware() { return None }\n"),
+            None
+        );
     }
 
     #[test]
@@ -2558,7 +2669,10 @@ mod tests {
             trailing_slash_redirect("http://localhost/blog/", false),
             Some("/blog".to_string())
         );
-        assert_eq!(trailing_slash_redirect("http://localhost/blog", false), None);
+        assert_eq!(
+            trailing_slash_redirect("http://localhost/blog", false),
+            None
+        );
         assert_eq!(trailing_slash_redirect("http://localhost/", false), None);
         assert_eq!(
             trailing_slash_redirect("http://localhost/blog?x=1", true),
@@ -2663,7 +2777,8 @@ mod tests {
             "blog loading wraps the page, not the blog layout: {tree}"
         );
         assert!(
-            tree.contains("<Layout_root>") && tree.contains("<Suspense fallback={<Loading_root />}"),
+            tree.contains("<Layout_root>")
+                && tree.contains("<Suspense fallback={<Loading_root />}"),
             "root loading wraps the child of the root layout: {tree}"
         );
         assert!(
@@ -2932,6 +3047,98 @@ mod tests {
     }
 
     #[test]
+    fn css_scope_hash_matches_the_emitter() {
+        // Pinned vector shared with deka_emit::css_scope_hash — the compiler
+        // stamps elements with this id and the CSS writer rewrites selectors
+        // with it, so a drift between the two crates breaks every scope.
+        assert_eq!(css_scope_hash("greeting {}"), "e1c9193cd172");
+        assert_eq!(css_scope_hash("greeting {}"), css_scope_hash("greeting {}"));
+        assert_ne!(
+            css_scope_hash("greeting {}"),
+            css_scope_hash("greeting { }")
+        );
+    }
+
+    #[test]
+    fn scan_style_graph_scopes_css_to_the_importing_module() {
+        let tmp = std::env::temp_dir().join(format!(
+            "deka_css_scan_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let card_src =
+            "import \"./card.css\"\nexport fn Card() { return <div class=\"card\">x</div> }\n";
+        let page_src = "import \"./Card.dsx\"\nimport \"./page.css\"\nexport fn Page() { return <main class=\"hero\"><Card /></main> }\n";
+        std::fs::write(tmp.join("Card.dsx"), card_src).unwrap();
+        std::fs::write(tmp.join("page.dsx"), page_src).unwrap();
+        std::fs::write(tmp.join("card.css"), ".card { color: red; }").unwrap();
+        std::fs::write(tmp.join("page.css"), ".hero { color: blue; }").unwrap();
+
+        let (classes, files) =
+            scan_style_graph(&[tmp.join("page.dsx").to_string_lossy().to_string()]);
+        assert!(classes.contains("card"), "classes: {classes:?}");
+        assert!(classes.contains("hero"), "classes: {classes:?}");
+
+        let card_css = files
+            .iter()
+            .find(|f| f.path.ends_with("card.css"))
+            .expect("card.css in the style graph");
+        assert_eq!(
+            card_css.cid,
+            css_scope_hash(card_src),
+            "CSS is scoped to the module that imports it"
+        );
+        let page_css = files
+            .iter()
+            .find(|f| f.path.ends_with("page.css"))
+            .expect("page.css in the style graph");
+        assert_eq!(page_css.cid, css_scope_hash(page_src));
+
+        // Same-named modules with different sources must not share a scope.
+        assert_ne!(card_css.cid, page_css.cid);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn collect_route_styles_buckets_layout_and_page_scopes() {
+        let tmp = std::env::temp_dir().join(format!(
+            "deka_css_routes_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(tmp.join("app/blog")).unwrap();
+        let layout_src =
+            "import \"./layout.css\"\nexport fn Layout() { return <div class=\"shell\">x</div> }\n";
+        let page_src = "import \"./page.css\"\nexport fn Page() { return <article class=\"post\">x</article> }\n";
+        std::fs::write(tmp.join("app/layout.dsx"), layout_src).unwrap();
+        std::fs::write(tmp.join("app/blog/page.dsx"), page_src).unwrap();
+        std::fs::write(tmp.join("app/layout.css"), ".shell { margin: 0; }").unwrap();
+        std::fs::write(tmp.join("app/blog/page.css"), ".post { margin: 0; }").unwrap();
+
+        let manifest = scan_app_dir(&tmp.join("app"));
+        let styles = collect_route_styles(&manifest);
+        let blog = styles
+            .iter()
+            .find(|s| s.route == "/blog")
+            .expect("/blog route styles");
+        let cids: Vec<&str> = blog.files.iter().map(|f| f.cid.as_str()).collect();
+        assert!(
+            cids.contains(&css_scope_hash(layout_src).as_str()),
+            "layout CSS rides the nested layout's own scope: {cids:?}"
+        );
+        assert!(
+            cids.contains(&css_scope_hash(page_src).as_str()),
+            "page CSS rides the page's own scope: {cids:?}"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
     fn css_plan_hoists_shared_classes() {
         let styles = vec![
             RouteStyle {
@@ -2964,7 +3171,10 @@ mod tests {
             files: vec![],
         }];
         let plan = css_plan_from_styles(&styles);
-        assert!(plan.common, "preflight/common.css must exist for a one-page app");
+        assert!(
+            plan.common,
+            "preflight/common.css must exist for a one-page app"
+        );
         assert!(css_links_for_route(&plan, "/").contains("/assets/css/common.css"));
     }
 
@@ -3197,7 +3407,10 @@ mod tests {
             source.contains("import { runMiddleware } from \"ui/router\""),
             "{source}"
         );
-        assert!(source.contains("runMiddleware(request, middleware,"), "{source}");
+        assert!(
+            source.contains("runMiddleware(request, middleware,"),
+            "{source}"
+        );
         assert!(
             !source.contains("opt.__case"),
             "Option lowering belongs in ui/router, not generated text: {source}"

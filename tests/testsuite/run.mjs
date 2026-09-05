@@ -108,7 +108,15 @@ function collectDsFiles(dir, relativeTo) {
     const rel = relative(relativeTo, full).replace(/\\/g, "/");
     if (entry.isDirectory()) {
       results.push(...collectDsFiles(full, relativeTo));
-    } else if (entry.isFile() && (entry.name.endsWith(".ds") || entry.name.endsWith(".dsx"))) {
+    } else if (
+      entry.isFile() &&
+      (entry.name.endsWith(".ds") ||
+        entry.name.endsWith(".dsx") ||
+        entry.name.endsWith(".css"))
+    ) {
+      // .css files are component-authored stylesheets: copied next to the
+      // fixture sources so side-effect `import "./x.css"` resolves (RFD 24
+      // §10.6 attribute scoping).
       results.push(rel);
     }
   }

@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use runtime_core::module_spec::{ds_source_candidates, module_spec_aliases};
 use runtime_core::modules::{
-    existing_modules_dirs, is_modules_dir_name, links_path, read_linked_modules, MODULES_DIR,
+    MODULES_DIR, existing_modules_dirs, is_modules_dir_name, links_path, read_linked_modules,
 };
 
 use super::{ErrorKind, Severity, ValidationError};
@@ -41,10 +41,7 @@ pub fn validate_module_resolution(source: &str, file_path: &str) -> Vec<Validati
         .map(scan_phpx_modules)
         .unwrap_or_default();
 
-    let mut graph = ModuleGraph::new(
-        modules_root.clone(),
-        available_modules.clone(),
-    );
+    let mut graph = ModuleGraph::new(modules_root.clone(), available_modules.clone());
     if !imports.is_empty() {
         graph.ensure_loaded("<entry>", Path::new(file_path), &mut errors);
     }
@@ -165,10 +162,7 @@ struct ModuleGraph {
 }
 
 impl ModuleGraph {
-    fn new(
-        modules_root: Option<PathBuf>,
-        available_modules: HashSet<String>,
-    ) -> Self {
+    fn new(modules_root: Option<PathBuf>, available_modules: HashSet<String>) -> Self {
         Self {
             modules_root,
             available_modules,
@@ -244,6 +238,12 @@ impl ModuleGraph {
         let import_specs = collect_import_specs(&source, file_path.to_string_lossy().as_ref());
         for spec in import_specs {
             if spec.kind == ImportKind::Wasm {
+                continue;
+            }
+            // Side-effect CSS imports (`import "./x.css"`) are not JS modules:
+            // emit drops them and the per-route CSS collector rewrites their
+            // selectors with the component's scope stamp (RFD 24 §10.6).
+            if spec.imported.is_empty() && spec.from.trim().to_ascii_lowercase().ends_with(".css") {
                 continue;
             }
             if spec.from.starts_with('@')
@@ -458,7 +458,10 @@ fn collect_exports(source: &str, _file_path: &str) -> HashSet<String> {
         }
         if trimmed.starts_with("export const ") {
             let rest = trimmed.trim_start_matches("export const ").trim_start();
-            if let Some(name) = rest.split(|ch: char| ch == '=' || ch.is_whitespace()).next() {
+            if let Some(name) = rest
+                .split(|ch: char| ch == '=' || ch.is_whitespace())
+                .next()
+            {
                 if is_ident(name) {
                     exports.insert(name.to_string());
                 }
@@ -466,17 +469,17 @@ fn collect_exports(source: &str, _file_path: &str) -> HashSet<String> {
             continue;
         }
         if trimmed.starts_with("export {") {
-            if let Some(inner) = trimmed.strip_prefix("export {").and_then(|s| s.split_once('}')) {
+            if let Some(inner) = trimmed
+                .strip_prefix("export {")
+                .and_then(|s| s.split_once('}'))
+            {
                 for part in inner.0.split(',') {
                     let token = part.trim();
                     if token.is_empty() {
                         continue;
                     }
                     // Support `original as alias` — exported name is the alias.
-                    let name = token
-                        .split_whitespace()
-                        .last()
-                        .unwrap_or(token);
+                    let name = token.split_whitespace().last().unwrap_or(token);
                     if is_ident(name) {
                         exports.insert(name.to_string());
                     }
@@ -800,10 +803,7 @@ fn resolve_import_target(
         for variant in &spec_variants {
             let base_path = base_dir.join(variant);
             let ds_candidates = ds_source_candidates(&base_path);
-            if ds_candidates.len() == 2
-                && ds_candidates[0].exists()
-                && ds_candidates[1].exists()
-            {
+            if ds_candidates.len() == 2 && ds_candidates[0].exists() && ds_candidates[1].exists() {
                 return Err(module_error(
                     1,
                     1,
@@ -1614,8 +1614,8 @@ fn wasm_error(
 #[cfg(test)]
 mod tests {
     use super::{
-        resolve_modules_root_with_env, validate_module_resolution, validate_package_integrity,
-        validate_target_capabilities, validate_target_capabilities_for, MODULES_DIR,
+        MODULES_DIR, resolve_modules_root_with_env, validate_module_resolution,
+        validate_package_integrity, validate_target_capabilities, validate_target_capabilities_for,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -1799,11 +1799,40 @@ mod tests {
     }
 
     #[test]
+    fn side_effect_css_imports_are_virtual() {
+        // `import "./x.css"` authors component CSS (RFD 24 §10.6): it is not a
+        // JS module — emit drops it and the per-route CSS collector rewrites
+        // its selectors — so validation must not demand it in ds_modules.
+        let root = make_temp_project("css_side_effect");
+        let entry = root.join("main.ds");
+        fs::write(
+            &entry,
+            "import \"./styles.css\"\nimport { foo } from 'does_not_exist'\n",
+        )
+        .expect("write entry");
+
+        let errors = validate_module_resolution(
+            &fs::read_to_string(&entry).expect("read entry"),
+            entry.to_string_lossy().as_ref(),
+        );
+        assert!(
+            errors.iter().all(|err| !err.message.contains("styles.css")),
+            "css import must not be resolved as a module: {:?}",
+            errors
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn resolves_relative_ds_imports_in_same_directory() {
         let root = make_temp_project("relative_ds_import");
         let entry = root.join("main.ds");
-        fs::write(&entry, "import { PI } from \"./constants.ds\"\nconsole.log(PI)\n")
-            .expect("write entry");
+        fs::write(
+            &entry,
+            "import { PI } from \"./constants.ds\"\nconsole.log(PI)\n",
+        )
+        .expect("write entry");
         fs::write(root.join("constants.ds"), "export const PI = 3.14159\n")
             .expect("write constants");
 
@@ -1823,10 +1852,16 @@ mod tests {
         // exports and fail later as bare `<infer>` errors in importers.
         let root = make_temp_project("module_parse_error");
         let entry = root.join("main.ds");
-        fs::write(&entry, "import { helper } from \"./broken.ds\"\nconsole.log(helper())\n")
-            .expect("write entry");
-        fs::write(root.join("broken.ds"), "export fn helper() string { return \"x\" }\nconst = 5\n")
-            .expect("write broken module");
+        fs::write(
+            &entry,
+            "import { helper } from \"./broken.ds\"\nconsole.log(helper())\n",
+        )
+        .expect("write entry");
+        fs::write(
+            root.join("broken.ds"),
+            "export fn helper() string { return \"x\" }\nconst = 5\n",
+        )
+        .expect("write broken module");
 
         let errors = validate_module_resolution(
             &fs::read_to_string(&entry).expect("read entry"),
@@ -1847,10 +1882,8 @@ mod tests {
     fn side_effect_import_does_not_require_named_export() {
         let root = make_temp_project("side_effect_import");
         let entry = root.join("main.ds");
-        fs::write(&entry, "import \"./logger.ds\"\nconsole.log(\"after\")\n")
-            .expect("write entry");
-        fs::write(root.join("logger.ds"), "console.log(\"side effect\")\n")
-            .expect("write logger");
+        fs::write(&entry, "import \"./logger.ds\"\nconsole.log(\"after\")\n").expect("write entry");
+        fs::write(root.join("logger.ds"), "console.log(\"side effect\")\n").expect("write logger");
 
         let errors = validate_module_resolution(
             &fs::read_to_string(&entry).expect("read entry"),
@@ -1877,7 +1910,9 @@ mod tests {
             entry.to_string_lossy().as_ref(),
         );
         assert!(
-            errors.iter().any(|err| err.message.contains("Missing module './constants'")),
+            errors
+                .iter()
+                .any(|err| err.message.contains("Missing module './constants'")),
             "expected missing module when only .phpx exists, got: {:?}",
             errors
         );
@@ -1889,20 +1924,23 @@ mod tests {
     fn reports_missing_relative_ds_module() {
         let root = make_temp_project("missing_relative_ds");
         let entry = root.join("main.ds");
-        fs::write(&entry, "import { PI } from \"./constants.ds\"\n")
-            .expect("write entry");
+        fs::write(&entry, "import { PI } from \"./constants.ds\"\n").expect("write entry");
 
         let errors = validate_module_resolution(
             &fs::read_to_string(&entry).expect("read entry"),
             entry.to_string_lossy().as_ref(),
         );
         assert!(
-            errors.iter().any(|err| err.message.contains("Missing module './constants.ds'")),
+            errors
+                .iter()
+                .any(|err| err.message.contains("Missing module './constants.ds'")),
             "expected missing module error, got: {:?}",
             errors
         );
         assert!(
-            errors.iter().any(|err| err.help_text.contains("Tried .ds extensions")),
+            errors
+                .iter()
+                .any(|err| err.help_text.contains("Tried .ds extensions")),
             "expected .ds help text, got: {:?}",
             errors
         );

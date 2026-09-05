@@ -6673,6 +6673,7 @@ dependencies = [
  "deno_core",
  "engine",
  "flate2",
+ "lightningcss",
  "notify",
  "num_cpus",
  "platform",
