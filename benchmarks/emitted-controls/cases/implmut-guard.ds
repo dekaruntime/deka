@@ -1,0 +1,7 @@
+struct Counter {
+  value: number;
+}
+fn (c mut Counter) inc() void { c.value = c.value + 1 }
+let c = Counter { value: 0 }
+for (let i = 0; i < 2000000; i = i + 1) { c.inc() }
+unsafe { console.log(c.value) }

@@ -1,0 +1,6 @@
+let sink = 0
+const values: Array<number> = [1, 2, 3]
+for (let i = 0; i < 2000000; i = i + 1) {
+  sink = sink + "abcdef".slice(1, 5).length + values.length
+}
+unsafe { console.log(sink) }
