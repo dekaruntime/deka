@@ -158,14 +158,14 @@ fn bundle_iife_strips_exports_and_await() {
     let tmp = make_tmp_dir("iife_exports");
     let entry = tmp.join("entry.js");
     let source = r#"
-export const phpxBuildMode = "subset-ast";
-export const phpxTargetSemantics = "js";
+export const dekaBuildMode = "subset-ast";
+export const dekaTargetSemantics = "js";
 function App(req) { return { status: 200, body: "ok" }; }
-const __phpx_main = async () => {
+const __deka_main = async () => {
 let app = App;
 globalThis.app = app;
 };
-await __phpx_main();
+await __deka_main();
 "#;
     std::fs::write(&entry, source).expect("write entry");
     let provider = Arc::new(SimpleVirtualSource {

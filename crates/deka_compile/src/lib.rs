@@ -486,6 +486,7 @@ pub fn compile_to_js_with_imports_and_options<'a>(
         &typeck_result.signature_calls,
         &typeck_result.json_calls,
         &typeck_result.array_first_last_calls,
+        &typeck_result.number_math_calls,
         &typeck_result.static_type_calls,
         &typeck_result.super_trees,
         &typeck_result.jsx_optional_props,

@@ -54,8 +54,6 @@ pub struct PhpxEsmLoader {
     project_root: PathBuf,
     cache_dir: PathBuf,
     entry_specifier: ModuleSpecifier,
-    entry_is_app_directory: bool,
-    app_directory_path: Option<PathBuf>,
     wrapper_specifier: ModuleSpecifier,
     sources: Rc<RefCell<HashMap<String, ModuleSourceCode>>>,
     /// Pre-compiled module graph for compiler v2. When present, `.ds` files
@@ -69,25 +67,14 @@ impl PhpxEsmLoader {
         std::fs::create_dir_all(&cache_dir).map_err(|err| {
             JsErrorBox::generic(format!("failed to create {}: {}", cache_dir.display(), err))
         })?;
-        let entry_is_app_directory = entry_path.is_dir();
-        let app_directory_path = if entry_is_app_directory {
-            Some(entry_path.clone())
-        } else {
-            None
-        };
-        let entry_module_path = if entry_is_app_directory {
-            app_directory_entry_path(&project_root)
-        } else {
-            entry_path
-        };
-        let entry_specifier = ModuleSpecifier::from_file_path(&entry_module_path)
+        let entry_specifier = ModuleSpecifier::from_file_path(&entry_path)
             .map_err(|_| JsErrorBox::generic("invalid entry module path"))?;
         let wrapper_specifier = ModuleSpecifier::from_file_path(entry_wrapper_path(&project_root))
             .map_err(|_| JsErrorBox::generic("invalid entry wrapper path"))?;
 
-        let v2_modules = if !entry_is_app_directory && entry_module_path.is_file() {
+        let v2_modules = if entry_path.is_file() {
             let loader = deka_compile::module_graph::FsModuleLoader::new(project_root.clone());
-            match deka_compile::module_graph::compile_module_graph(&entry_module_path, &loader) {
+            match deka_compile::module_graph::compile_module_graph(&entry_path, &loader) {
                 Ok(graph) => {
                     // The graph is the only point every entry shape passes
                     // through, and it carries the transitive import set.
@@ -117,8 +104,6 @@ impl PhpxEsmLoader {
             project_root,
             cache_dir,
             entry_specifier,
-            entry_is_app_directory,
-            app_directory_path,
             wrapper_specifier,
             sources: Rc::new(RefCell::new(HashMap::new())),
             v2_modules,
@@ -245,22 +230,6 @@ impl PhpxEsmLoader {
                 None,
             ));
         }
-        if self.entry_is_app_directory && specifier == &self.entry_specifier {
-            let app_root = self
-                .app_directory_path
-                .as_ref()
-                .ok_or_else(|| JsErrorBox::generic("missing app directory path"))?;
-            let app_root_json = serde_json::to_string(&app_root.to_string_lossy().to_string())
-                .map_err(|err| {
-                    JsErrorBox::generic(format!("failed to encode app root: {}", err))
-                })?;
-            return Ok(ModuleSource::new(
-                ModuleType::JavaScript,
-                ModuleSourceCode::String(app_directory_entry_source(&app_root_json).into()),
-                specifier,
-                None,
-            ));
-        }
         let raw_path = specifier
             .to_file_path()
             .map_err(|_| JsErrorBox::generic("Only file:// URLs are supported"))?;
@@ -333,10 +302,6 @@ const __candidate = typeof __dekaMain.default !== \"undefined\"\n\
   : typeof __dekaMain.handler !== \"undefined\"\n\
   ? __dekaMain.handler\n\
   : __dekaMain;\n\
-if (__dekaMain && __dekaMain.phpxBuildMode === \"scaffold\") {\n\
-  throw new Error(\"[phpx-js] subset transpile failed for \" + String(__dekaMain.phpxFile || \"unknown\") +\n\
-    \" (reason: \" + String(__dekaMain.phpxBuildReason || \"unknown\") + \"). Fallback execution is disabled.\");\n\
-}\n\
 if (typeof globalThis.app === \"undefined\" && typeof __candidate !== \"undefined\") {\n\
   if (typeof __candidate === \"function\" && typeof globalThis.__dekaNodeExpressAdapter === \"function\" && (typeof __candidate.handle === \"function\" || typeof __candidate.listen === \"function\")) {\n\
     globalThis.app = globalThis.__dekaNodeExpressAdapter(__candidate);\n\
@@ -424,23 +389,6 @@ pub fn entry_wrapper_path(project_root: &Path) -> PathBuf {
         .join(".cache")
         .join("dekascript")
         .join("__deka_entry.js")
-}
-
-pub fn app_directory_entry_path(project_root: &Path) -> PathBuf {
-    project_root
-        .join(".cache")
-        .join("dekascript")
-        .join("__deka_app_entry.js")
-}
-
-fn app_directory_entry_source(app_root_json: &str) -> String {
-    format!(
-        "import {{ servePhp }} from \"ext:deka_php/php.js\";\n\
-const app = servePhp({});\n\
-export default app;\n",
-        app_root_json
-    )
-    .to_string()
 }
 
 pub fn hash_module_graph(entry_path: &Path) -> Result<u64, String> {
