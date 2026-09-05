@@ -1764,12 +1764,17 @@ fn head_html(node: Component) string {{
 }}
 
 fn title_from_head(headHtml: string) string {{
-    const openAt = unsafe<number> {{ headHtml.indexOf("<title>") }}
-    if (openAt < 0) {{ return "" }}
-    const rest = headHtml.slice(openAt + 7)
-    const closeAt = unsafe<number> {{ rest.indexOf("</title>") }}
-    if (closeAt < 0) {{ return "" }}
-    return rest.slice(0, closeAt)
+    let result = unsafe {{
+        var openAt = headHtml.indexOf("<title>")
+        if (openAt < 0) {{ return "" }}
+        var closeAt = headHtml.indexOf("</title>", openAt + 7)
+        if (closeAt < 0) {{ return "" }}
+        return headHtml.slice(openAt + 7, closeAt)
+    }}
+    return match (result) {{
+        Ok(title) => title,
+        Err(_) => "",
+    }}
 }}
 
 async fn stream_html(tree: Component) Promise<string> {{
