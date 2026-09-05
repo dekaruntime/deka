@@ -89,8 +89,8 @@ pub fn is_valid_package_name(name: &str) -> bool {
 ///    - any other extension (including `.phpx`) → no DekaScript source
 ///
 /// Check-time (`validate_module_resolution`) and run-time (bundler, ESM
-/// loader, `deka build`, WASM project) must use this list so they cannot
-/// disagree.
+/// loader, `deka build`, WASM project, style-graph walker) must use this
+/// list so they cannot disagree.
 pub fn ds_source_candidates(base: &Path) -> Vec<PathBuf> {
     match base.extension().and_then(|ext| ext.to_str()) {
         Some("ds") | Some("dsx") => vec![base.to_path_buf()],
