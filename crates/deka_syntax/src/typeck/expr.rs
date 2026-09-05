@@ -37,6 +37,21 @@ fn primitive_conversion_name(name: &str) -> Option<PrimitiveConversionName> {
     }
 }
 
+fn is_mutating_array_method(name: &str) -> bool {
+    matches!(
+        name,
+        "push"
+            | "pop"
+            | "shift"
+            | "unshift"
+            | "splice"
+            | "sort"
+            | "reverse"
+            | "fill"
+            | "copyWithin"
+    )
+}
+
 /// How completely a set of match arms covers a scrutinee type.
 ///
 /// `All` means an irrefutable pattern was seen. `Cases` records, per
@@ -236,6 +251,27 @@ pub(super) fn primitive_member<'a>(
         ("Array", "reverse" | "sort") => PrimitiveMember::BuiltinMethod(fn0(Type::Array {
             elem: Box::new(elem?.clone()),
         })),
+        ("Array", "splice") => PrimitiveMember::BuiltinMethod(fn2(
+            &number_ty,
+            &number_ty,
+            &Type::Array {
+                elem: Box::new(elem?.clone()),
+            },
+        )),
+        ("Array", "fill") => PrimitiveMember::BuiltinMethod(fn2(
+            elem?,
+            &number_ty,
+            &Type::Array {
+                elem: Box::new(elem?.clone()),
+            },
+        )),
+        ("Array", "copyWithin") => PrimitiveMember::BuiltinMethod(fn2(
+            &number_ty,
+            &number_ty,
+            &Type::Array {
+                elem: Box::new(elem?.clone()),
+            },
+        )),
         ("Array", "filter") => PrimitiveMember::BuiltinMethod(fn1(
             &Type::Function {
                 params: vec![elem?.clone()],
@@ -2249,15 +2285,29 @@ impl<'a> Checker<'a> {
                         }
                     }
                     ast::Expr::IndexAccess { object, .. } => {
-                        self.check_expr(object);
+                        let object_type = self.check_expr(object);
+                        if matches!(object_type, Type::Array { .. } | Type::Object { .. })
+                            && !self.is_mutable_expr(object)
+                        {
+                            self.error_at_expr(
+                                left,
+                                self.immutable_mutation_message(
+                                    object,
+                                    "assign to an indexed element",
+                                ),
+                            );
+                        }
                     }
                     ast::Expr::FieldAccess { object, field, .. } => {
                         let object_type = self.check_expr(object);
                         let field_mutable = self.field_is_mutable(&object_type, field);
                         if !self.is_mutable_expr(object) && !field_mutable {
-                            self.error_span(
-                                left.span(),
-                                format!("cannot assign to field `{field}` of immutable value"),
+                            self.error_at_expr(
+                                left,
+                                self.immutable_field_message(
+                                    object,
+                                    field,
+                                ),
                             );
                         }
                     }
@@ -2612,6 +2662,15 @@ impl<'a> Checker<'a> {
             Type::Struct { name } => *name,
             Type::Newtype { name, .. } => *name,
             Type::Array { .. } => {
+                if is_mutating_array_method(method_name) && !self.is_mutable_expr(object) {
+                    self.error_at_expr(
+                        object,
+                        self.immutable_mutation_message(
+                            object,
+                            &format!("call mutable method `{method_name}`"),
+                        ),
+                    );
+                }
                 // Record `first`/`last` so the emitter rewrites them to an
                 // Option-producing expression. Returning `None` keeps the
                 // existing `check_call` flow (argument arity checking against
@@ -3104,6 +3163,36 @@ impl<'a> Checker<'a> {
                 .any(|scope| scope.contains(*name)),
             ast::Expr::FieldAccess { object, .. } => self.is_mutable_expr(object),
             _ => false,
+        }
+    }
+
+    fn immutable_mutation_message(&self, expr: &ast::Expr<'a>, operation: &str) -> String {
+        let binding = self
+            .immutable_binding_name(expr)
+            .map(|name| format!("const binding `{name}`"))
+            .unwrap_or_else(|| "an immutable receiver".to_string());
+        format!(
+            "cannot {operation} on an immutable receiver ({binding}; use `let` to allow mutation)"
+        )
+    }
+
+    fn immutable_field_message(&self, expr: &ast::Expr<'a>, field: &str) -> String {
+        let binding = self
+            .immutable_binding_name(expr)
+            .map(|name| format!("const binding `{name}`"))
+            .unwrap_or_else(|| "an immutable receiver".to_string());
+        format!(
+            "cannot assign to field `{field}` of immutable value ({binding}; use `let` to allow mutation)"
+        )
+    }
+
+    fn immutable_binding_name(&self, expr: &ast::Expr<'a>) -> Option<&'a str> {
+        match expr {
+            ast::Expr::Identifier { name, .. } => Some(*name),
+            ast::Expr::FieldAccess { object, .. }
+            | ast::Expr::IndexAccess { object, .. }
+            | ast::Expr::Paren { expr: object, .. } => self.immutable_binding_name(object),
+            _ => None,
         }
     }
 
