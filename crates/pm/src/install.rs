@@ -141,6 +141,11 @@ fn run_php_install_in_transaction(
             return Err(err);
         }
 
+        if let Err(err) = reject_source_less_package(&staging, &name) {
+            cleanup_install_staging(&staging);
+            return Err(err);
+        }
+
         let package_integrity = compute_package_integrity(&staging)
             .map_err(|err| anyhow!("failed to compute package integrity for {}: {}", name, err))?;
 
@@ -413,6 +418,41 @@ fn reject_vendored_php_modules(package_root: &Path, package_name: &str) -> Resul
         }
     }
     Ok(())
+}
+
+fn reject_source_less_package(package_root: &Path, package_name: &str) -> Result<()> {
+    if package_has_dekascript_sources(package_root)? {
+        return Ok(());
+    }
+    bail!(
+        "package {} cannot be installed: no .ds/.dsx sources (the package contributes no resolvable modules)",
+        package_name
+    );
+}
+
+fn package_has_dekascript_sources(root: &Path) -> Result<bool> {
+    fn visit(path: &Path) -> std::io::Result<bool> {
+        for entry in fs::read_dir(path)? {
+            let entry = entry?;
+            let path = entry.path();
+            let file_type = entry.file_type()?;
+            if file_type.is_dir() {
+                if visit(&path)? {
+                    return Ok(true);
+                }
+            } else if file_type.is_file()
+                && matches!(
+                    path.extension().and_then(|extension| extension.to_str()),
+                    Some("ds") | Some("dsx")
+                )
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    visit(root).with_context(|| format!("failed to inspect package {}", root.display()))
 }
 
 #[derive(Debug, Clone)]
@@ -1293,7 +1333,8 @@ mod tests {
         locked_package,
         package_dependencies, pause_for_kill_test, php_modules_path_for,
         recover_install_transaction, rehash_php_packages_in, record_root_dependencies,
-        reject_vendored_php_modules, run_php_install_in, select_registry_version,
+        reject_source_less_package, reject_vendored_php_modules, run_php_install_in,
+        select_registry_version,
         verify_locked_integrity, InstallTransaction, InstalledSource, LockedPackage,
         RegistryPackage, MODULES_DIR,
     };
@@ -2006,6 +2047,20 @@ mod tests {
         assert!(err.to_string().contains("contains vendored ds_modules"));
     }
 
+    #[test]
+    fn install_rejects_source_less_package() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        fs::write(
+            tmp.path().join("bridge.phpx"),
+            "export const legacy = true;",
+        )
+        .expect("phpx");
+        let err = reject_source_less_package(tmp.path(), "@deka/core")
+            .expect_err("install must reject a package with no resolvable sources");
+        assert!(err.to_string().contains("@deka/core"));
+        assert!(err.to_string().contains("no .ds/.dsx sources"));
+    }
+
     #[cfg(unix)]
     #[test]
     fn install_rejects_case_variant_and_symlinked_vendor_trees() {
@@ -2054,7 +2109,7 @@ mod tests {
     }
 
     #[test]
-    fn install_preserves_tracked_unscoped_deka_alias_and_canonical_lock_integrity() {
+    fn install_rejects_source_less_registry_package_and_preserves_alias() {
         let tmp = tempfile::tempdir().expect("project");
         let alias = tmp.path().join(format!("{MODULES_DIR}/string"));
         fs::create_dir_all(&alias).expect("tracked unscoped alias");
@@ -2064,38 +2119,19 @@ mod tests {
         )
         .expect("write tracked alias");
 
-        run_php_install_in(vec!["@deka/string".to_string()], true, false, tmp.path())
-            .expect("bundled deka install");
-        assert!(tmp
+        let err = run_php_install_in(vec!["@deka/string".to_string()], true, false, tmp.path())
+            .expect_err("source-less registry package must fail installation");
+        assert!(err.to_string().contains("@deka/string"));
+        assert!(err.to_string().contains("no .ds/.dsx sources"));
+        assert!(!tmp
             .path()
             .join(MODULES_DIR)
             .join("@deka")
             .join("string")
-            .join("index.phpx")
-            .is_file());
-        let lock_path = tmp.path().join("deka.lock");
-        assert!(lock_path.is_file());
-        assert!(lock::read_lockfile_at(&lock_path)
-            .packages
-            .contains_key("@deka/string"));
+            .exists());
         assert_eq!(
             fs::read_to_string(alias.join("index.phpx")).expect("tracked alias survives"),
             "export const compatibility = true;\n"
-        );
-        let lock_before_repeat = fs::read_to_string(&lock_path).expect("read locked install");
-
-        // A second locked install must verify the canonical scoped package
-        // without modifying the compatibility alias or relying on cache state.
-        run_php_install_in(vec!["@deka/string".to_string()], true, false, tmp.path())
-            .expect("repeat bundled deka install");
-        assert_eq!(
-            fs::read_to_string(alias.join("index.phpx")).expect("tracked alias still survives"),
-            "export const compatibility = true;\n"
-        );
-        assert_eq!(
-            fs::read_to_string(&lock_path).expect("read repeated locked install"),
-            lock_before_repeat,
-            "locked install must not rewrite tracked metadata"
         );
     }
 
