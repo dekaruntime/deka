@@ -26,6 +26,7 @@ deno_core = { workspace = true }
 notify = { workspace = true }
 num_cpus = { workspace = true }
 serde_json = { workspace = true }
+sha2 = "0.10"
 tokio = { workspace = true, features = ["full"] }
 tracing = "0.1"
 flate2 = "1.0"

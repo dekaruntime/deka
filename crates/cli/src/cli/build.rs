@@ -314,6 +314,13 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
         }
     }
 
+    // RFD 24 §10.7: dist HTML references the content-hashed asset names and
+    // wires the client import map (assets/importmap.json) when one was emitted.
+    rewrite_dist_html_asset_urls(
+        &dist_client,
+        runtime_core::framework::is_app_router_project(&project_root),
+    )?;
+
     let mut report = format!(
         "built web project {}\n  client: {}\n  server: {}\n  hydration: {}",
         project_root.display(),
@@ -1192,6 +1199,118 @@ fn inject_before_body_close_walk(dir: &Path, tags: &str) -> Result<(), String> {
         }
         fs::write(&path, html.as_bytes())
             .map_err(|err| format!("failed to write {}: {err}", path.display()))?;
+    }
+    Ok(())
+}
+
+/// Rewrite unhashed `/assets/...` URLs in every dist HTML file to the
+/// content-hashed names emitted next to them, and (for app-router projects)
+/// wire the client import map into documents that load hashed chunks.
+fn rewrite_dist_html_asset_urls(dist_client: &Path, app_router: bool) -> Result<(), String> {
+    let assets_dir = dist_client.join("assets");
+    let mut renames: Vec<(String, String)> = Vec::new();
+    collect_hashed_asset_renames(&assets_dir, &assets_dir, &mut renames)?;
+    let importmap_available = app_router && assets_dir.join("importmap.json").is_file();
+    rewrite_html_asset_urls(dist_client, &renames, importmap_available)?;
+    Ok(())
+}
+
+/// Map `/assets/<logical>.js|css` -> `/assets/<logical>.<hash>.js|css` for
+/// every content-hashed file under `root` (recursively), where `dir` is the
+/// directory currently being scanned.
+fn collect_hashed_asset_renames(
+    root: &Path,
+    dir: &Path,
+    out: &mut Vec<(String, String)>,
+) -> Result<(), String> {
+    let Ok(reader) = fs::read_dir(dir) else {
+        return Ok(());
+    };
+    for entry in reader.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_hashed_asset_renames(root, &path, out)?;
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let Some((stem_with_hash, ext)) = name.rsplit_once('.') else {
+            continue;
+        };
+        if ext != "js" && ext != "css" {
+            continue;
+        }
+        let Some((logical_stem, hash)) = stem_with_hash.rsplit_once('.') else {
+            continue;
+        };
+        let is_hash = hash.len() == 10
+            && hash
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        if !is_hash {
+            continue;
+        }
+        let Ok(rel) = path.strip_prefix(root) else {
+            continue;
+        };
+        let rel = rel.to_string_lossy().replace('\\', "/");
+        let mut logical_rel = format!("{logical_stem}.{ext}");
+        if let Some(parent) = Path::new(&rel).parent().and_then(|p| p.to_str()) {
+            if !parent.is_empty() {
+                logical_rel = format!("{parent}/{logical_rel}");
+            }
+        }
+        out.push((
+            format!("/assets/{logical_rel}"),
+            format!("/assets/{rel}"),
+        ));
+    }
+    Ok(())
+}
+
+fn rewrite_html_asset_urls(
+    dir: &Path,
+    renames: &[(String, String)],
+    importmap_available: bool,
+) -> Result<(), String> {
+    let Ok(reader) = fs::read_dir(dir) else {
+        return Ok(());
+    };
+    for entry in reader.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            rewrite_html_asset_urls(&path, renames, importmap_available)?;
+            continue;
+        }
+        if path.extension().and_then(|e| e.to_str()) != Some("html") {
+            continue;
+        }
+        let mut html = fs::read_to_string(&path)
+            .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+        let mut changed = false;
+        for (logical, hashed) in renames {
+            if html.contains(logical.as_str()) {
+                html = html.replace(logical.as_str(), hashed.as_str());
+                changed = true;
+            }
+        }
+        if importmap_available
+            && html.contains("/assets/")
+            && !html.contains("type=\"importmap\"")
+        {
+            let tag = r#"<script type="importmap" src="/assets/importmap.json"></script>"#;
+            html = if html.contains("</head>") {
+                html.replacen("</head>", &format!("  {tag}\n</head>"), 1)
+            } else {
+                format!("{tag}\n{html}")
+            };
+            changed = true;
+        }
+        if changed {
+            fs::write(&path, html.as_bytes())
+                .map_err(|err| format!("failed to write {}: {err}", path.display()))?;
+        }
     }
     Ok(())
 }
