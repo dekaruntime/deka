@@ -286,8 +286,23 @@ fn inject_hmr_client(html: &str) -> String {
     if html.contains(MARKER) {
         return html.to_string();
     }
-    const SCRIPT: &str = r#"<script id="__deka_hmr_client" type="module">var __dekaHydrate=null;import("ui/client").then(function(m){if(m&&typeof m.hydrate==="function"){__dekaHydrate=m.hydrate;}}).catch(function(){});(function(){try{var p=location.protocol==='https:'?'wss':'ws';var ws=new WebSocket(p+'://'+location.host+'/_deka/hmr');function c(s){return document.querySelector(s||'#app');}function e(v){return String(v||'').replace(/\\/g,'\\\\').replace(/"/g,'\\"');}function sf(){var a=document.activeElement;if(!a||!a.closest||!a.closest('#app')){return null;}return{id:a.id||'',name:a.getAttribute('name')||'',deka:a.getAttribute('data-deka-id')||'',start:typeof a.selectionStart==='number'?a.selectionStart:null,end:typeof a.selectionEnd==='number'?a.selectionEnd:null};}function rf(state){if(!state){return;}var el=null;if(state.id){el=document.getElementById(state.id);}if(!el&&state.deka){el=document.querySelector('#app [data-deka-id="'+e(state.deka)+'"]');}if(!el&&state.name){el=document.querySelector('#app [name="'+e(state.name)+'"]');}if(!el||typeof el.focus!=='function'){return;}el.focus();if(state.start!==null&&state.end!==null&&typeof el.setSelectionRange==='function'){try{el.setSelectionRange(state.start,state.end);}catch(_){}}}function fv(){var root=c('#app');if(!root){return [];}var out=[];var fields=root.querySelectorAll('input,textarea,select');for(var i=0;i<fields.length;i++){var f=fields[i];var id=f.id||'';var name=f.getAttribute('name')||'';var deka=f.getAttribute('data-deka-id')||'';if(!id&&!name&&!deka){continue;}var type=(f.getAttribute('type')||'').toLowerCase();var entry={id:id,name:name,deka:deka,type:type};if(type==='checkbox'||type==='radio'){entry.checked=!!f.checked;}else if(f.tagName==='SELECT'){entry.value=f.value;}else{entry.value=f.value;}out.push(entry);}return out;}function fr(list){if(!Array.isArray(list)||list.length===0){return;}for(var i=0;i<list.length;i++){var s=list[i]||{};var el=null;if(s.id){el=document.getElementById(s.id);}if(!el&&s.deka){el=document.querySelector('#app [data-deka-id="'+e(s.deka)+'"]');}if(!el&&s.name){el=document.querySelector('#app [name="'+e(s.name)+'"]');}if(!el){continue;}if((s.type==='checkbox'||s.type==='radio')&&typeof s.checked==='boolean'){el.checked=s.checked;continue;}if(typeof s.value!=='undefined'){el.value=s.value;}}}function nh(h){return String(h||'').replace(/shadowrootmode=/gi,'data-shadowrootmode=');}function ap(selector,html){var n=c(selector||'#app');if(!n){location.reload();return;}var y=window.scrollY||window.pageYOffset||0;var f=sf();var v=fv();var h=nh(html);if(n.matches&&n.matches('[data-deka-island-id],deka-island')&&n.shadowRoot){n.shadowRoot.innerHTML=h;}else{n.innerHTML=h;}if(typeof __dekaHydrate==='function'){__dekaHydrate(n);}window.scrollTo(0,y);fr(v);rf(f);}function sr(){var u=location.pathname+location.search;fetch(u,{headers:{Accept:'text/x-deka-fragment'},credentials:'same-origin'}).then(function(r){if(!r.ok){return null;}return r.json();}).then(function(p){if(p&&typeof p.html==='string'){ap('#app',p.html);if(typeof p.title==='string'&&p.title!==''){document.title=p.title;}if(typeof p.head==='string'&&p.head!==''){document.head.insertAdjacentHTML('beforeend',p.head);}return;}location.reload();}).catch(function(){location.reload();});}function sub(){try{ws.send(JSON.stringify({type:'subscribe',path:location.pathname+location.search}));}catch(_){}}function a(m){if(!m||!Array.isArray(m.ops)||m.ops.length===0){sr();return;}for(var i=0;i<m.ops.length;i++){var op=m.ops[i]||{};if(op.op==='set_html'){ap(op.selector||'#app',op.html||'');continue;}sr();return;}}ws.onopen=function(){sub();};ws.onmessage=function(ev){try{var m=JSON.parse(ev.data||'{}');if(m.type==='patch'){a(m);return;}if(m.type==='reload'){sr();return;}}catch(_){sr();}};window.addEventListener('popstate',function(){sub();});ws.onclose=function(){};}catch(_){}})();</script>"#;
-
+    // The dev HMR client ships as real .js fragments (compile-time
+    // include_str!, zero runtime cost), split by concern: the hydrate import
+    // specifier, the focus/form preservation helpers, and the patch
+    // dispatcher (island comment-marker walker). The specifier stays the
+    // LOGICAL "ui/client" — the document's inline import map resolves it to
+    // the current hashed chunk, so content-hash rotations stay invisible
+    // here. Fragments replace the former single giant literal, on which
+    // three unrelated PRs collided in one night; per-concern files keep
+    // unrelated HMR changes from textually conflicting.
+    const SCRIPT: &str = concat!(
+        r#"<script id="__deka_hmr_client" type="module">"#,
+        include_str!("hmr_client/hydrate.js"),
+        include_str!("hmr_client/helpers.js"),
+        include_str!("hmr_client/patch.js"),
+        include_str!("hmr_client/socket.js"),
+        "</script>"
+    );
     if let Some(idx) = html.rfind("</body>") {
         let mut out = String::with_capacity(html.len() + SCRIPT.len());
         out.push_str(&html[..idx]);
