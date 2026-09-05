@@ -173,7 +173,16 @@ fn should_ignore_file(path: &Path, root: &Path) -> bool {
         Err(_) => return true,
     };
     let rel_str = normalize_rel(rel);
-    rel_str == ".DS_Store"
+    if rel_str == ".DS_Store" {
+        return true;
+    }
+    // macOS AppleDouble sidecar files (`._<name>` siblings) are not source and
+    // are not valid UTF-8; published tarballs may contain them (see
+    // dekaruntime/deka#587), so every integrity walk must skip them by name
+    // pattern rather than trying to hash or parse them.
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("._"))
 }
 
 fn normalize_rel(path: &Path) -> String {
@@ -206,5 +215,35 @@ mod tests {
         fs::write(root.join("mod.phpx"), "import { a } from 'core/bytes'").unwrap();
         let second = compute_module_graph_hash(root).expect("hash");
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn appledouble_entries_are_skipped_by_name_pattern() {
+        let dir = tempdir().expect("tmp");
+        let root = dir.path();
+        fs::write(root.join("mod.phpx"), "import { a } from 'core/result'").unwrap();
+        fs::write(root.join("deka.json"), "{}").unwrap();
+        let nested = root.join("lib");
+        fs::create_dir_all(&nested).expect("nested dir");
+        fs::write(nested.join("util.phpx"), "export const util = true;\n").unwrap();
+        let clean_fs = compute_fs_graph_hash(root).expect("clean fs hash");
+        let clean_module = compute_module_graph_hash(root).expect("clean module hash");
+
+        // Poison the tree the way the published @deka/string tarball was
+        // poisoned (dekaruntime/deka#587): AppleDouble sidecar files that are
+        // not valid UTF-8, at the top level and nested inside a directory.
+        fs::write(root.join("._mod.phpx"), b"\x00\x05\x16\x07\x00\x02\x00\x00")
+            .expect("top-level AppleDouble");
+        fs::write(nested.join("._util.phpx"), b"\x00\x05\x16\x07\x00\x02\x00\x00")
+            .expect("nested AppleDouble");
+
+        // Both hashes must succeed despite the non-UTF-8 bytes ...
+        let poisoned_fs = compute_fs_graph_hash(root).expect("poisoned fs hash");
+        let poisoned_module = compute_module_graph_hash(root).expect("poisoned module hash");
+
+        // ... and must be identical to the clean tree's hashes, proving the
+        // `._*` entries were skipped rather than hashed over.
+        assert_eq!(clean_fs, poisoned_fs);
+        assert_eq!(clean_module, poisoned_module);
     }
 }

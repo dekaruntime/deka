@@ -224,6 +224,9 @@ fn build_request(context: &Context) -> Result<PublishRequest> {
     // tree would be copied by consumers and recreate nested dependency trees.
     // Releases contain source and the dependencies declared by deka.json only.
     reject_publish_tree_php_modules("HEAD")?;
+    // macOS AppleDouble sidecar files (`._<name>`) must never ship: they poison
+    // every consumer's integrity walk (dekaruntime/deka#587).
+    reject_publish_tree_appledouble("HEAD")?;
 
     let peeled_commit = prepare_release_tag(&expected_tag, &version, dry_run)?;
 
@@ -247,6 +250,51 @@ fn build_request(context: &Context) -> Result<PublishRequest> {
 
 fn reject_publish_tree_php_modules(git_ref: &str) -> Result<()> {
     reject_publish_tree_php_modules_at(None, git_ref)
+}
+
+fn reject_publish_tree_appledouble(git_ref: &str) -> Result<()> {
+    reject_publish_tree_appledouble_at(None, git_ref)
+}
+
+/// Reject the publish tree if it contains a macOS AppleDouble sidecar file
+/// (`._<name>` sibling). These are filesystem metadata, not source; a release
+/// that ships them breaks integrity computation for every consumer on every OS
+/// (dekaruntime/deka#587).
+fn reject_publish_tree_appledouble_at(
+    repo: Option<&std::path::Path>,
+    git_ref: &str,
+) -> Result<()> {
+    let mut command = Command::new("git");
+    if let Some(repo) = repo {
+        command.current_dir(repo);
+    }
+    let output = command
+        .args(["ls-tree", "-r", "-z", git_ref])
+        .output()
+        .with_context(|| format!("failed to inspect publish tree {}", git_ref))?;
+    if !output.status.success() {
+        bail!("failed to inspect publish tree {}", git_ref);
+    }
+    if let Some(path) = appledouble_path(&output.stdout) {
+        bail!(
+            "publish rejected: git tree contains `{}`, a macOS AppleDouble (`._*`) file. Remove it from the source tree (it is filesystem metadata, not source) and commit the cleanup before publishing",
+            path
+        );
+    }
+    Ok(())
+}
+
+fn appledouble_path(entries: &[u8]) -> Option<String> {
+    entries.split(|byte| *byte == 0).find_map(|entry| {
+        let tab = entry.iter().position(|byte| *byte == b'\t')?;
+        let path = &entry[tab + 1..];
+        let path = std::str::from_utf8(path).ok()?;
+        if path.split('/').any(|segment| segment.starts_with("._")) {
+            Some(path.to_string())
+        } else {
+            None
+        }
+    })
 }
 
 /// Validate the actual Git artifact, not a working-tree approximation.  Git
@@ -731,9 +779,67 @@ fn prompt_yes_no(prompt: &str, default_yes: bool) -> Option<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::reject_publish_tree_php_modules_at;
+    use super::{reject_publish_tree_appledouble_at, reject_publish_tree_php_modules_at};
     use runtime_core::modules::MODULES_DIR;
     use std::{fs, process::Command};
+
+    #[test]
+    fn publish_artifact_rejects_appledouble_entries() {
+        let temp = tempfile::tempdir().expect("temp repo");
+        let repo = temp.path();
+        for args in [
+            vec!["init"],
+            vec!["config", "user.email", "test@tana.gg"],
+            vec!["config", "user.name", "test"],
+        ] {
+            assert!(Command::new("git")
+                .current_dir(repo)
+                .args(&args)
+                .status()
+                .expect("git")
+                .success());
+        }
+        fs::write(repo.join("index.phpx"), "export const x = 1;").expect("module");
+        fs::write(repo.join("._index.phpx"), b"\x00\x05\x16\x07\x00\x02\x00\x00")
+            .expect("top-level AppleDouble");
+        fs::create_dir_all(repo.join("lib")).expect("lib dir");
+        fs::write(repo.join("lib/._helper.phpx"), b"\x00\x05\x16\x07\x00\x02\x00\x00")
+            .expect("nested AppleDouble");
+        for args in [vec!["add", "."], vec!["commit", "-m", "appledouble"]] {
+            assert!(Command::new("git")
+                .current_dir(repo)
+                .args(&args)
+                .status()
+                .expect("git")
+                .success());
+        }
+
+        // A tree containing AppleDouble entries must be refused, with the
+        // offending file named and the fix pointed at the source tree.
+        let err = reject_publish_tree_appledouble_at(Some(repo), "HEAD").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("publish rejected"), "{msg}");
+        assert!(msg.contains("._index.phpx"), "{msg}");
+        assert!(msg.contains("source tree"), "{msg}");
+
+        // ... and after removing the AppleDouble files, the same ref passes.
+        fs::remove_file(repo.join("._index.phpx")).expect("remove top-level");
+        fs::remove_file(repo.join("lib/._helper.phpx")).expect("remove nested");
+        assert!(Command::new("git")
+            .current_dir(repo)
+            .args(["add", "-A"])
+            .status()
+            .expect("add")
+            .success());
+        assert!(Command::new("git")
+            .current_dir(repo)
+            .args(["commit", "-m", "clean"])
+            .status()
+            .expect("commit")
+            .success());
+        reject_publish_tree_appledouble_at(Some(repo), "HEAD")
+            .expect("clean tree must publish");
+    }
 
     #[test]
     fn publish_artifact_rejects_case_variant_and_symlinked_php_modules() {

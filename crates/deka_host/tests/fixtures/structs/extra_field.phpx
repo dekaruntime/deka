@@ -1,5 +1,0 @@
-struct Point {
-    public int $x;
-}
-
-$point = Point { $x: 1, $y: 2 };

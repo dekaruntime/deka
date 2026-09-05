@@ -14,4 +14,6 @@ fn handleClick() void {
   echo("clicked")
 }
 
-<Button label={"Click me"} onClick={handleClick} />
+export fn Page() Component {
+  return <Button label={"Click me"} onClick={handleClick} />
+}

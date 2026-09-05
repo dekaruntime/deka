@@ -1,5 +1,0 @@
-function ok(): int {
-    return 1;
-}
-
-import { result_ok } from 'core/result';
