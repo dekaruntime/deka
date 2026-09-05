@@ -10,6 +10,13 @@ pub fn is_bare_module_specifier(spec: &str) -> bool {
         && !spec.starts_with("file://")
 }
 
+/// Bare-specifier prefixes that name stdlib module families. Both the project
+/// gate (`is_stdlib_module_spec`) and the browser import map emitted by
+/// `deka build` derive their prefix lists from here so the two cannot drift:
+/// the gate decides which specifiers are stdlib, the map decides where the
+/// browser loads them from.
+pub const STDLIB_SPEC_PREFIXES: &[&str] = &["component/", "deka/", "encoding/", "db/"];
+
 pub fn module_spec_aliases(spec: &str) -> Vec<String> {
     let trimmed = spec.trim();
     if trimmed.is_empty() {
@@ -115,7 +122,7 @@ pub fn resolve_ds_source_file(base: &Path) -> Option<PathBuf> {
 mod tests {
     use super::{
         canonical_php_package_spec, ds_source_candidates, is_valid_package_name,
-        module_spec_aliases,
+        module_spec_aliases, STDLIB_SPEC_PREFIXES,
     };
     use std::path::Path;
 
@@ -189,5 +196,19 @@ mod tests {
     fn ds_candidates_reject_phpx() {
         assert!(ds_source_candidates(Path::new("src/foo.phpx")).is_empty());
         assert!(ds_source_candidates(Path::new("src/foo.php")).is_empty());
+    }
+
+    #[test]
+    fn stdlib_prefixes_carry_deka_alias() {
+        // `deka build`'s browser import map resolves each prefix through the
+        // @deka alias (the layout `deka install` writes); a prefix without an
+        // alias would panic the map emitter, so pin the invariant here.
+        for prefix in STDLIB_SPEC_PREFIXES {
+            let aliases = module_spec_aliases(prefix);
+            assert!(
+                aliases.iter().any(|alias| alias.starts_with("@deka/")),
+                "{prefix} must derive a @deka alias: {aliases:?}"
+            );
+        }
     }
 }

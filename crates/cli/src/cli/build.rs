@@ -206,6 +206,15 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     let modules_dir = project_root.join(MODULES_DIR);
     if modules_dir.is_dir() {
         copy_dir_recursive(&modules_dir, &dist_server.join(MODULES_DIR))?;
+        // The client import map references the @deka scope under /ds_modules/
+        // (see `stdlib_prefix_target`), and dist/client is the static root the
+        // browser fetches from — without this copy every prefix URL 404s in
+        // production. Only the @deka scope is public-by-construction; @user
+        // and legacy unscoped trees stay server-only.
+        let scoped = modules_dir.join("@deka");
+        if scoped.is_dir() {
+            copy_dir_recursive(&scoped, &dist_client.join(MODULES_DIR).join("@deka"))?;
+        }
     }
     for file in ["deka.json", "deka.lock"] {
         let src = project_root.join(file);
@@ -400,19 +409,27 @@ fn emit_import_map_json(meta: &deka_compile::SourceModuleMeta, output_path: &Pat
 }
 
 fn default_import_map() -> BTreeMap<String, String> {
-    BTreeMap::from([
-        ("@/".to_string(), "/".to_string()),
-        (
-            "component/".to_string(),
-            "/ds_modules/component/".to_string(),
-        ),
-        ("deka/".to_string(), "/ds_modules/deka/".to_string()),
-        (
-            "encoding/".to_string(),
-            "/ds_modules/encoding/".to_string(),
-        ),
-        ("db/".to_string(), "/ds_modules/db/".to_string()),
-    ])
+    let mut imports = BTreeMap::from([("@/".to_string(), "/".to_string())]);
+    for prefix in runtime_core::module_spec::STDLIB_SPEC_PREFIXES {
+        imports.insert((*prefix).to_string(), stdlib_prefix_target(prefix));
+    }
+    imports
+}
+
+/// Import-map target for a stdlib prefix. `deka install` writes every stdlib
+/// package under the `@deka` scope (`ds_modules/@deka/<pkg>/`), and the server
+/// resolvers know it — they try the scoped alias for every prefixed specifier.
+/// The browser has only this map, so the prefix target must be the scoped
+/// layout too. Derive it from `module_spec_aliases`, the same helper the
+/// server resolvers use to compute the alias, rather than repeating a second
+/// literal list that can drift away from where packages actually land
+/// (deka#622 finding D).
+fn stdlib_prefix_target(prefix: &str) -> String {
+    let scoped = runtime_core::module_spec::module_spec_aliases(prefix)
+        .into_iter()
+        .find(|alias| alias.starts_with("@deka/"))
+        .expect("bare stdlib prefixes must carry a @deka alias");
+    format!("/{MODULES_DIR}/{scoped}")
 }
 
 fn is_bare_specifier(spec: &str) -> bool {
