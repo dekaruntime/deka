@@ -20,4 +20,6 @@ fn Card(props: CardProps) Component {
 // The caller writes neither Some nor None: a JSX element is a construction
 // site the compiler owns, so it wraps this bare value in Some, and fills an
 // omitted `subtitle` with None.
-<Card title={"Hello"} subtitle={"DekaScript"} />
+export fn Page() Component {
+  return <Card title={"Hello"} subtitle={"DekaScript"} />
+}

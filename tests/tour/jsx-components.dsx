@@ -6,4 +6,6 @@ fn Greeting(props: GreetingProps) Component {
   return <h1>Hello{props.name}</h1>
 }
 
-<Greeting name={"DekaScript"} />
+export fn Page() Component {
+  return <Greeting name={"DekaScript"} />
+}
