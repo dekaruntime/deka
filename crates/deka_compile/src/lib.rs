@@ -197,6 +197,12 @@ pub(crate) fn is_stdlib_module_spec(spec: &str) -> bool {
         || bare.starts_with("ui/")
 }
 
+/// Names that the single-file compiler can otherwise reinterpret as language
+/// prelude bindings when an import signature is unavailable.
+fn is_prelude_binding_name(name: &str) -> bool {
+    matches!(name, "Option" | "Result" | "Some" | "None" | "Ok" | "Err")
+}
+
 /// Build a map of imported module signatures for known stdlib bare specifiers.
 ///
 /// Every imported name is typed as `Type::Infer` so the single-file compiler can
@@ -435,8 +441,8 @@ pub fn compile_to_js_with_imports_and_options<'a>(
         let mut unknown = Vec::new();
         for stmt in program.statements.iter() {
             let deka_syntax::Stmt::Import {
+                specifiers,
                 source: import_source,
-                span,
                 ..
             } = stmt
             else {
@@ -450,11 +456,21 @@ pub fn compile_to_js_with_imports_and_options<'a>(
             {
                 continue;
             }
-            unknown.push(Diagnostic::error(
-                span.start.line,
-                span.start.column,
-                format!("Missing module '{}'", import_source),
-            ));
+            unknown.extend(
+                specifiers
+                    .iter()
+                    .filter(|spec| is_prelude_binding_name(spec.imported))
+                    .map(|spec| {
+                        Diagnostic::error(
+                            spec.span.start.line,
+                            spec.span.start.column,
+                            format!(
+                                "cannot resolve imported name `{}` from `{}`",
+                                spec.imported, import_source
+                            ),
+                        )
+                    }),
+            );
         }
         if !unknown.is_empty() {
             return Err(unknown);
@@ -469,9 +485,10 @@ pub fn compile_to_js_with_imports_and_options<'a>(
 
     // A package import with no resolved signature must not be allowed to fall
     // through to a prelude name (for example `Result` or `Option`). In the
-    // single-file path the import map is the resolver's contract; report the
-    // missing binding at the import site instead of letting canonicalization
-    // reinterpret it as a builtin enum constructor.
+    // single-file path the import map is only an inferred-signature map, not a
+    // complete resolver, so leave ordinary package imports alone. Report only
+    // the missing bindings that canonicalization could reinterpret as prelude
+    // types or enum constructors.
     let unresolved_imports: Vec<Diagnostic> = program
         .statements
         .iter()
@@ -490,21 +507,21 @@ pub fn compile_to_js_with_imports_and_options<'a>(
             {
                 return None;
             }
-            Some(
-                specifiers
-                    .iter()
-                    .map(|spec| {
-                        Diagnostic::error(
-                            spec.span.start.line,
-                            spec.span.start.column,
-                            format!(
-                                "cannot resolve imported name `{}` from `{}`",
-                                spec.imported, source
-                            ),
-                        )
-                    })
-                    .collect::<Vec<_>>(),
-            )
+            let diagnostics = specifiers
+                .iter()
+                .filter(|spec| is_prelude_binding_name(spec.imported))
+                .map(|spec| {
+                    Diagnostic::error(
+                        spec.span.start.line,
+                        spec.span.start.column,
+                        format!(
+                            "cannot resolve imported name `{}` from `{}`",
+                            spec.imported, source
+                        ),
+                    )
+                })
+                .collect::<Vec<_>>();
+            (!diagnostics.is_empty()).then_some(diagnostics)
         })
         .flatten()
         .collect();

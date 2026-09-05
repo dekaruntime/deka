@@ -165,6 +165,20 @@ if (!ioResponse.ok || !ioResponse.output?.code?.includes('import { echo }')) {
   throw new Error(`stdlib io import inside function failed: ${JSON.stringify(ioResponse)}`);
 }
 
+// Resolver-owned package imports must remain available to the browser host.
+// The browser compiler has no filesystem resolver, so only imports that would
+// shadow a language prelude binding may be rejected by the native compiler.
+const packageResponse = compile(
+  `import { Widget } from "@acme/widgets"\nconst answer = 42`,
+  "package-import.ds",
+  { mode: "deka", moduleBase: "/tour/modules" },
+);
+if (!packageResponse.ok || !packageResponse.output?.code?.includes(
+  'import { Widget } from "/tour/modules/@acme/widgets.mjs"',
+)) {
+  throw new Error(`resolver-owned package import failed: ${JSON.stringify(packageResponse)}`);
+}
+
 // .dsx files are DS + JSX and must be accepted by the browser compiler ABI.
 const dsxSource = `const el = <div class="box"><span>hi</span></div>`;
 const dsxResponse = compile(dsxSource, "component.dsx", "deka");

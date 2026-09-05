@@ -181,6 +181,19 @@ mod tests {
     }
 
     #[test]
+    fn leaves_resolver_owned_package_imports_unflagged() {
+        let source = r#"
+            import { Widget } from "@acme/widgets"
+            import { helper } from "@user/helpers"
+        "#;
+        let diagnostics = analyze(source, &AnalysisContext::new("file:///workspace/main.ds"));
+        assert!(
+            diagnostics.is_empty(),
+            "resolver-owned package imports must not be rejected by single-file LSP analysis: {diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn match_enum_missing_case_is_reported() {
         let source = r#"
             enum Color { Red, Green, Blue }
