@@ -704,9 +704,13 @@ impl<'a> Checker<'a> {
             if !self.is_assignable(&expected_type, &value_type) {
                 self.error_span(
                     *field_span,
-                    format!(
-                        "field `{}` expected type `{expected_type}`, found type `{value_type}`",
-                        field_name
+                    super::with_union_narrowing_hint(
+                        format!(
+                            "field `{}` expected type `{expected_type}`, found type `{value_type}`",
+                            field_name
+                        ),
+                        &expected_type,
+                        &value_type,
                     ),
                 );
             }
@@ -1090,9 +1094,13 @@ impl<'a> Checker<'a> {
             {
                 self.error_span(
                     attr.span,
-                    format!(
-                        "prop `{}` expects type `{expected}`, found type `{actual}`",
-                        attr.name
+                    super::with_union_narrowing_hint(
+                        format!(
+                            "prop `{}` expects type `{expected}`, found type `{actual}`",
+                            attr.name
+                        ),
+                        &expected,
+                        &actual,
                     ),
                 );
             }
@@ -1267,8 +1275,12 @@ impl<'a> Checker<'a> {
                 if !self.is_assignable(&expected_ty, &actual) {
                     self.error_span(
                         span,
-                        format!(
-                            "enum case `{case_name}` expected payload type `{expected_ty}`, found type `{actual}`"
+                        super::with_union_narrowing_hint(
+                            format!(
+                                "enum case `{case_name}` expected payload type `{expected_ty}`, found type `{actual}`"
+                            ),
+                            &expected_ty,
+                            &actual,
                         ),
                     );
                 }
@@ -1441,7 +1453,11 @@ impl<'a> Checker<'a> {
                     if !self.is_assignable(expected, &arm_type) {
                         self.error_at_expr(
                             &arm.body,
-                            format!("match arm has type `{arm_type}`, expected type `{expected}`"),
+                            super::with_union_narrowing_hint(
+                                format!("match arm has type `{arm_type}`, expected type `{expected}`"),
+                                expected,
+                                &arm_type,
+                            ),
                         );
                     }
                 }
@@ -2118,9 +2134,13 @@ impl<'a> Checker<'a> {
                             {
                                 self.error_span(
                                     *span,
-                                    format!(
-                                        "pipe expected argument type `{}`, found type `{left_type}`",
-                                        params[0]
+                                    super::with_union_narrowing_hint(
+                                        format!(
+                                            "pipe expected argument type `{}`, found type `{left_type}`",
+                                            params[0]
+                                        ),
+                                        &params[0],
+                                        &left_type,
                                     ),
                                 );
                             }
@@ -2169,8 +2189,12 @@ impl<'a> Checker<'a> {
                                 if !self.is_assignable(expected, &arg_type) {
                                     self.error_at_expr(
                                         arg,
-                                        format!(
-                                            "expected argument type `{expected}`, found type `{arg_type}`"
+                                        super::with_union_narrowing_hint(
+                                            format!(
+                                                "expected argument type `{expected}`, found type `{arg_type}`"
+                                            ),
+                                            expected,
+                                            &arg_type,
                                         ),
                                     );
                                 }
@@ -2188,9 +2212,13 @@ impl<'a> Checker<'a> {
                                 {
                                     self.error_span(
                                         left.span(),
-                                        format!(
-                                            "pipe expected argument type `{}`, found type `{left_type}`",
-                                            substituted_params[0]
+                                        super::with_union_narrowing_hint(
+                                            format!(
+                                                "pipe expected argument type `{}`, found type `{left_type}`",
+                                                substituted_params[0]
+                                            ),
+                                            &substituted_params[0],
+                                            &left_type,
                                         ),
                                     );
                                 }
@@ -2275,7 +2303,11 @@ impl<'a> Checker<'a> {
                 {
                     self.error_span(
                         span,
-                        format!("cannot assign type `{right_type}` to `{left_type}`"),
+                        super::with_union_narrowing_hint(
+                            format!("cannot assign type `{right_type}` to `{left_type}`"),
+                            &left_type,
+                            &right_type,
+                        ),
                     );
                 }
                 right_type
@@ -2597,7 +2629,11 @@ impl<'a> Checker<'a> {
                     if !self.is_assignable(expected, &arg_type) {
                         self.error_at_expr(
                             arg,
-                            format!("expected argument type `{expected}`, found type `{arg_type}`"),
+                            super::with_union_narrowing_hint(
+                                format!("expected argument type `{expected}`, found type `{arg_type}`"),
+                                expected,
+                                &arg_type,
+                            ),
                         );
                     }
                 }
@@ -3058,7 +3094,11 @@ impl<'a> Checker<'a> {
                 if !self.is_assignable(expected, &arg_type) {
                     self.error_at_expr(
                         arg,
-                        format!("expected argument type `{expected}`, found type `{arg_type}`"),
+                        super::with_union_narrowing_hint(
+                            format!("expected argument type `{expected}`, found type `{arg_type}`"),
+                            expected,
+                            &arg_type,
+                        ),
                     );
                 }
             }
@@ -3357,8 +3397,12 @@ impl<'a> Checker<'a> {
                         if !self.is_assignable(expected, &arg_type) {
                             self.error_at_expr(
                                 arg,
-                                format!(
-                                    "expected argument type `{expected}`, found type `{arg_type}`"
+                                super::with_union_narrowing_hint(
+                                    format!(
+                                        "expected argument type `{expected}`, found type `{arg_type}`"
+                                    ),
+                                    expected,
+                                    &arg_type,
                                 ),
                             );
                         }
@@ -3399,8 +3443,12 @@ impl<'a> Checker<'a> {
                         if !self.is_assignable(expected, &arg_type) {
                             self.error_at_expr(
                                 arg,
-                                format!(
-                                    "expected argument type `{expected}`, found type `{arg_type}`"
+                                super::with_union_narrowing_hint(
+                                    format!(
+                                        "expected argument type `{expected}`, found type `{arg_type}`"
+                                    ),
+                                    expected,
+                                    &arg_type,
                                 ),
                             );
                         }
