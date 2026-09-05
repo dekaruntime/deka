@@ -598,6 +598,25 @@ mod tests {
     }
 
     #[test]
+    fn module_base_allows_unresolved_package_imports() {
+        let response: Value = serde_json::from_str(&compile_request(
+            r#"import { Widget } from "@acme/widgets"; const answer = 42;"#,
+            "lesson.ds",
+            r#"{"mode":"deka","moduleBase":"/tour/modules"}"#,
+        ))
+        .expect("response JSON");
+
+        assert_eq!(response["ok"], true, "{response}");
+        let code = response["output"]["code"]
+            .as_str()
+            .expect("compiled code should be present");
+        assert!(
+            code.contains(r#"import { Widget } from "/tour/modules/@acme/widgets.mjs";"#),
+            "expected package import to remain available to the resolver-free WASM host, got:\n{code}"
+        );
+    }
+
+    #[test]
     fn rejects_phpx_mode_and_filename_without_fallback() {
         let filename_response: Value = serde_json::from_str(&compile_request(
             "function greeting($name: string): string { return $name; }",

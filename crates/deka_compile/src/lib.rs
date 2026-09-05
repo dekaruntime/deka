@@ -197,6 +197,12 @@ pub(crate) fn is_stdlib_module_spec(spec: &str) -> bool {
         || bare.starts_with("ui/")
 }
 
+/// Names that the single-file compiler can otherwise reinterpret as language
+/// prelude bindings when an import signature is unavailable.
+fn is_prelude_binding_name(name: &str) -> bool {
+    matches!(name, "Option" | "Result" | "Some" | "None" | "Ok" | "Err")
+}
+
 /// Build a map of imported module signatures for known stdlib bare specifiers.
 ///
 /// Every imported name is typed as `Type::Infer` so the single-file compiler can
@@ -435,8 +441,8 @@ pub fn compile_to_js_with_imports_and_options<'a>(
         let mut unknown = Vec::new();
         for stmt in program.statements.iter() {
             let deka_syntax::Stmt::Import {
+                specifiers,
                 source: import_source,
-                span,
                 ..
             } = stmt
             else {
@@ -450,11 +456,21 @@ pub fn compile_to_js_with_imports_and_options<'a>(
             {
                 continue;
             }
-            unknown.push(Diagnostic::error(
-                span.start.line,
-                span.start.column,
-                format!("Missing module '{}'", import_source),
-            ));
+            unknown.extend(
+                specifiers
+                    .iter()
+                    .filter(|spec| is_prelude_binding_name(spec.imported))
+                    .map(|spec| {
+                        Diagnostic::error(
+                            spec.span.start.line,
+                            spec.span.start.column,
+                            format!(
+                                "cannot resolve imported name `{}` from `{}`",
+                                spec.imported, import_source
+                            ),
+                        )
+                    }),
+            );
         }
         if !unknown.is_empty() {
             return Err(unknown);
@@ -465,6 +481,52 @@ pub fn compile_to_js_with_imports_and_options<'a>(
         if let Some(diagnostic) = client_ui_server_error(source) {
             return Err(vec![diagnostic]);
         }
+    }
+
+    // A package import with no resolved signature must not be allowed to fall
+    // through to a prelude name (for example `Result` or `Option`). In the
+    // single-file path the import map is only an inferred-signature map, not a
+    // complete resolver, so leave ordinary package imports alone. Report only
+    // the missing bindings that canonicalization could reinterpret as prelude
+    // types or enum constructors.
+    let unresolved_imports: Vec<Diagnostic> = program
+        .statements
+        .iter()
+        .filter_map(|stmt| {
+            let deka_syntax::Stmt::Import {
+                specifiers, source, ..
+            } = stmt
+            else {
+                return None;
+            };
+            if imports.contains_key(source)
+                || source.starts_with('.')
+                || source.starts_with('/')
+                || source.starts_with("@/")
+                || !source.contains('/')
+            {
+                return None;
+            }
+            let diagnostics = specifiers
+                .iter()
+                .filter(|spec| is_prelude_binding_name(spec.imported))
+                .map(|spec| {
+                    Diagnostic::error(
+                        spec.span.start.line,
+                        spec.span.start.column,
+                        format!(
+                            "cannot resolve imported name `{}` from `{}`",
+                            spec.imported, source
+                        ),
+                    )
+                })
+                .collect::<Vec<_>>();
+            (!diagnostics.is_empty()).then_some(diagnostics)
+        })
+        .flatten()
+        .collect();
+    if !unresolved_imports.is_empty() {
+        return Err(unresolved_imports);
     }
 
     resolve_imported_enum_constructors(&mut program, arena, imports);
@@ -673,6 +735,20 @@ mod tests {
             result.js
         );
         assert!(result.js.contains("add(1, 2)"), "got: {}", result.js);
+    }
+
+    #[test]
+    fn unresolved_package_import_is_reported_at_import_site() {
+        let err = compile_to_js(
+            "import { Result } from \"@deka/core/result\";\nlet r = Result.Ok(1);",
+            "app/page.ds",
+        )
+        .expect_err("unresolved package import must fail");
+        assert_eq!(err.len(), 1, "got: {:?}", err);
+        assert_eq!(err[0].line, 1);
+        assert!(err[0].message.contains("imported name `Result`"));
+        assert!(err[0].message.contains("@deka/core/result"));
+        assert!(!err[0].message.contains("is_ok"));
     }
 
     #[test]
