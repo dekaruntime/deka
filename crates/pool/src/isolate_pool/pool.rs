@@ -32,6 +32,14 @@ impl IsolatePool {
         config: PoolConfig,
         extensions_provider: Arc<dyn Fn() -> Vec<Extension> + Send + Sync>,
     ) -> Self {
+        Self::new_with_security_policy(config, extensions_provider, resolved_security_policy())
+    }
+
+    fn new_with_security_policy(
+        config: PoolConfig,
+        extensions_provider: Arc<dyn Fn() -> Vec<Extension> + Send + Sync>,
+        security_policy: SecurityPolicy,
+    ) -> Self {
         let metrics = Arc::new(PoolMetrics::default());
         let introspect_profiling = Arc::new(AtomicBool::new(config.introspect_profiling));
         let secrets_cache = Arc::new(SecretsCache::from_env());
@@ -52,6 +60,7 @@ impl IsolatePool {
             let worker_metrics = Arc::clone(&metrics);
             let ext_provider = Arc::clone(&extensions_provider);
             let worker_secrets_cache = Arc::clone(&secrets_cache);
+            let worker_security_policy = security_policy.clone();
             let load = Arc::new(WorkerLoad::default());
             let worker_load = Arc::clone(&load);
             let profiling = Arc::clone(&introspect_profiling);
@@ -72,6 +81,7 @@ impl IsolatePool {
                     ext_provider,
                     profiling,
                     worker_secrets_cache,
+                    worker_security_policy,
                 );
                 worker.run(rx, ctrl_rx);
             });
@@ -412,6 +422,21 @@ impl IsolatePool {
     }
 }
 
+fn resolved_security_policy() -> SecurityPolicy {
+    let Ok(raw) = std::env::var("DEKA_SECURITY_POLICY") else {
+        return SecurityPolicy::default();
+    };
+    let Ok(document) = serde_json::from_str(&raw) else {
+        return SecurityPolicy::default();
+    };
+    let parsed = runtime_core::security_policy::parse_deka_security_policy(&document);
+    if parsed.has_errors() {
+        SecurityPolicy::default()
+    } else {
+        parsed.policy
+    }
+}
+
 impl Drop for IsolatePool {
     fn drop(&mut self) {
         // Dropping a JoinHandle detaches its thread. That allowed test pools
@@ -445,5 +470,72 @@ impl Drop for IsolatePool {
         for thread in threads {
             let _ = thread.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+
+    fn config() -> PoolConfig {
+        PoolConfig {
+            num_workers: 1,
+            max_isolates_per_worker: 1,
+            enable_metrics: false,
+            enable_code_cache: false,
+            ..PoolConfig::default()
+        }
+    }
+
+    fn request(code: &str) -> RequestData {
+        RequestData {
+            handler_code: code.to_string(),
+            handler_entry: None,
+            request_value: serde_json::Value::Null,
+            request_parts: None,
+            mode: ExecutionMode::Request,
+        }
+    }
+
+    #[tokio::test]
+    async fn execution_path_blocks_default_dynamic_and_runs_explicitly_allowed_dynamic() {
+        let code = r#"
+globalThis.app = function() {
+  return { status: 200, headers: {}, body: String(eval("1 + 1")) };
+};
+"#;
+
+        let blocked = IsolatePool::new_with_security_policy(
+            config(),
+            Arc::new(Vec::new),
+            SecurityPolicy::default(),
+        );
+        let response = blocked
+            .execute(HandlerKey::new("blocked_dynamic"), request(code))
+            .await
+            .unwrap();
+        assert!(!response.success);
+        assert!(
+            response.error.unwrap().contains("runtime.dynamic.eval"),
+            "blocked response must identify the prohibited operation"
+        );
+        drop(blocked);
+
+        let mut policy = SecurityPolicy::default();
+        policy.allow.dynamic = true;
+        let allowed = IsolatePool::new_with_security_policy(config(), Arc::new(Vec::new), policy);
+        let response = allowed
+            .execute(HandlerKey::new("allowed_dynamic"), request(code))
+            .await
+            .unwrap();
+        assert!(response.success, "{:?}", response.error);
+        assert_eq!(
+            response
+                .result
+                .as_ref()
+                .and_then(|result| result.get("body"))
+                .and_then(|body| body.as_str()),
+            Some("2")
+        );
     }
 }

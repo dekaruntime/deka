@@ -1,12 +1,14 @@
 pub mod error_analysis;
 pub mod error_formatter;
 pub mod handler_validator;
+pub mod security_validator;
 
 pub use error_analysis::analyze_runtime_error;
 pub use handler_validator::{
     PoolOptions, PoolWorkers, ServeOptions, extract_pool_options, extract_serve_options,
     validate_handler,
 };
+pub use security_validator::validate_security_policy;
 
 pub fn format_runtime_syntax_error(
     error_msg: &str,

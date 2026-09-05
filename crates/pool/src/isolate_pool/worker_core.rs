@@ -94,6 +94,7 @@ pub(super) struct WorkerThread {
     pub(super) request_history: VecDeque<RequestTrace>,
     pub(super) deka_args: serde_json::Value,
     pub(super) secrets_cache: Arc<SecretsCache>,
+    pub(super) security_policy: SecurityPolicy,
 }
 
 pub(super) enum ExecutionOutcome {
@@ -112,6 +113,7 @@ impl WorkerThread {
         extensions_provider: Arc<dyn Fn() -> Vec<Extension> + Send + Sync>,
         introspect_profiling: Arc<AtomicBool>,
         secrets_cache: Arc<SecretsCache>,
+        security_policy: SecurityPolicy,
     ) -> Self {
         let deka_args = std::env::var("DEKA_ARGS").unwrap_or_else(|_| "[]".to_string());
         let deka_args = serde_json::from_str(&deka_args).unwrap_or_else(|_| serde_json::json!([]));
@@ -130,6 +132,7 @@ impl WorkerThread {
             request_history: VecDeque::new(),
             deka_args,
             secrets_cache,
+            security_policy,
         }
     }
 
@@ -311,6 +314,21 @@ impl WorkerThread {
             self.config.enable_metrics || self.introspect_profiling.load(Ordering::Relaxed);
 
         let queue_wait_ms = request.enqueued_at.elapsed().as_millis() as u64;
+
+        if let Err(error) = validation::validate_security_policy(
+            &request.request_data.handler_code,
+            &request.handler_key.name,
+            &self.security_policy,
+        ) {
+            return IsolateResponse {
+                success: false,
+                error: Some(error),
+                result: None,
+                warm_time_us: 0,
+                total_time_us: start.elapsed().as_micros() as u64,
+                cache_hit: false,
+            };
+        }
 
         if self.config.queue_timeout_ms > 0 {
             let queued_for = Duration::from_millis(queue_wait_ms);

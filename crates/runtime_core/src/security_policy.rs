@@ -61,6 +61,38 @@ impl Default for SecurityPolicy {
     }
 }
 
+impl SecurityPolicy {
+    /// Dynamic code execution requires an explicit allow; deny wins.
+    pub fn allows_dynamic(&self) -> bool {
+        self.allow.dynamic && !self.deny.dynamic
+    }
+
+    /// Apply the manifest's allow-minus-deny rules to one environment name.
+    pub fn allows_env(&self, name: &str) -> bool {
+        rule_list_contains(&self.allow.env, name) && !rule_list_contains(&self.deny.env, name)
+    }
+
+    pub fn allows_any_env(&self) -> bool {
+        match &self.allow.env {
+            RuleList::None => false,
+            RuleList::All => !matches!(self.deny.env, RuleList::All),
+            RuleList::List(names) => names.iter().any(|name| self.allows_env(name)),
+        }
+    }
+
+    pub fn allows_unrestricted_env(&self) -> bool {
+        matches!(self.allow.env, RuleList::All) && matches!(self.deny.env, RuleList::None)
+    }
+}
+
+fn rule_list_contains(rules: &RuleList, value: &str) -> bool {
+    match rules {
+        RuleList::None => false,
+        RuleList::All => true,
+        RuleList::List(items) => items.iter().any(|item| item == value),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PolicyDiagnosticLevel {
     Warning,
@@ -761,6 +793,33 @@ mod tests {
                 .any(|d| d.level == PolicyDiagnosticLevel::Error
                     && d.code == "SECURITY_POLICY_INVALID_PROMPT")
         );
+    }
+
+    #[test]
+    fn effective_dynamic_permission_is_allow_minus_deny() {
+        let mut policy = super::SecurityPolicy::default();
+        assert!(!policy.allows_dynamic());
+        policy.allow.dynamic = true;
+        assert!(policy.allows_dynamic());
+        policy.deny.dynamic = true;
+        assert!(!policy.allows_dynamic());
+    }
+
+    #[test]
+    fn effective_env_permission_is_allow_minus_deny() {
+        let mut policy = super::SecurityPolicy::default();
+        policy.allow.env = RuleList::List(vec!["PUBLIC".to_string(), "DENIED".to_string()]);
+        policy.deny.env = RuleList::List(vec!["DENIED".to_string()]);
+
+        assert!(policy.allows_env("PUBLIC"));
+        assert!(!policy.allows_env("DENIED"));
+        assert!(!policy.allows_env("MISSING"));
+        assert!(policy.allows_any_env());
+        assert!(!policy.allows_unrestricted_env());
+
+        policy.allow.env = RuleList::All;
+        policy.deny.env = RuleList::None;
+        assert!(policy.allows_unrestricted_env());
     }
 
     #[test]
