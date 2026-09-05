@@ -36,7 +36,6 @@ mod db_pg;
 mod fs_bridge;
 mod fs_ops;
 mod net;
-mod phpx_types;
 mod security;
 mod wit;
 
@@ -49,7 +48,6 @@ fn core_err(msg: impl Into<String>) -> deno_core::error::CoreError {
 deno_core::extension!(
     php_core,
     ops = [
-        phpx_types::op_php_parse_phpx_types,
         fs_ops::op_php_read_file_sync,
         fs_ops::op_php_write_file_sync,
         fs_ops::op_php_mkdirs,

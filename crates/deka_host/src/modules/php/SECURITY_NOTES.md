@@ -72,8 +72,8 @@ if (!globalThis.process.cwd) {
 }
 ```
 
-`globalThis.process.chdir` is not assigned anywhere in `php.js`,
-`deka_php/php.js`, or any extension JS in `crates/`.
+`globalThis.process.chdir` is not assigned anywhere in `php.js`
+or any other extension JS in `crates/`.
 
 ### 4. Env-var mutation cannot steer cwd
 

@@ -1,5 +1,0 @@
-import { strlen } from 'string';
-
-function ok(): int {
-    return strlen("hi");
-}

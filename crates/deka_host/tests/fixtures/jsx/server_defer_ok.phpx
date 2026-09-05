@@ -1,7 +1,0 @@
-function DeferredCard($props: object) {
-  return <section>Deferred</section>
-}
-
-<div>
-  <DeferredCard server:defer={true} />
-</div>
