@@ -4,6 +4,7 @@
 import { Fragment, isComponentNode } from "./jsx.js";
 import { isLive } from "./reactive.js";
 import { Suspense } from "./suspense.js";
+import { formatIslandStart, formatIslandEnd } from "./island-marker.js";
 
 function escapeHtml(text) {
   return String(text)
@@ -50,23 +51,6 @@ function utf8Bytes(str) {
     }
   }
   return out;
-}
-
-function base64Encode(str) {
-  const bytes = utf8Bytes(str);
-  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  let output = "";
-  for (let i = 0; i < bytes.length; i += 3) {
-    const a = bytes[i];
-    const b = i + 1 < bytes.length ? bytes[i + 1] : 0;
-    const c = i + 2 < bytes.length ? bytes[i + 2] : 0;
-    const triple = (a << 16) | (b << 8) | c;
-    output += alphabet[(triple >> 18) & 63];
-    output += alphabet[(triple >> 12) & 63];
-    output += i + 1 < bytes.length ? alphabet[(triple >> 6) & 63] : "=";
-    output += i + 2 < bytes.length ? alphabet[triple & 63] : "=";
-  }
-  return output;
 }
 
 function liveText(value) {
@@ -427,10 +411,9 @@ function fallbackNodes(children) {
 }
 
 function wrapDeferred(name, directive, props, cache, id, html) {
-  const cachePart = cache ? ` cache:${base64Encode(String(cache))}` : "";
   const enc = encryptPropsSync(name, jsonSafe(props) ?? {}, deferRequest);
-  const encPart = enc ? ` enc:${enc}` : "";
-  return `<!--deka-island start:${base64Encode(name)} directive:${base64Encode(directive)} id:${base64Encode(id)}${encPart}${cachePart}--><span data-deka-defer="${escapeHtml(id)}">${html}</span><!--deka-island end:${base64Encode(name)}-->`;
+  const start = formatIslandStart({ name, directive, id, enc, cache });
+  return `<!--${start}--><span data-deka-defer="${escapeHtml(id)}">${html}</span><!--${formatIslandEnd(name)}-->`;
 }
 
 function renderAttributes(props) {
@@ -542,7 +525,8 @@ function renderNode(node, ctx) {
     if (directives.length === 0) return html;
     const islandName = tag.name || "Anonymous";
     const directive = directives[0];
-    return `<!--deka-island start:${base64Encode(islandName)} directive:${base64Encode(directive)} props:${base64Encode(serializeIslandProps(rest))}-->${html}<!--deka-island end:${base64Encode(islandName)}-->`;
+    const start = formatIslandStart({ name: islandName, directive, propsJson: serializeIslandProps(rest) });
+    return `<!--${start}-->${html}<!--${formatIslandEnd(islandName)}-->`;
   }
 
   if (typeof tag === "string") {
@@ -620,7 +604,8 @@ async function renderNodeAsync(node) {
     if (directives.length === 0) return html;
     const islandName = tag.name || "Anonymous";
     const directive = directives[0];
-    return `<!--deka-island start:${base64Encode(islandName)} directive:${base64Encode(directive)} props:${base64Encode(serializeIslandProps(rest))}-->${html}<!--deka-island end:${base64Encode(islandName)}-->`;
+    const start = formatIslandStart({ name: islandName, directive, propsJson: serializeIslandProps(rest) });
+    return `<!--${start}-->${html}<!--${formatIslandEnd(islandName)}-->`;
   }
 
   if (typeof tag === "string") {

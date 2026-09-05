@@ -5,6 +5,7 @@ pub const JSX: &str = include_str!("../js/jsx.js");
 pub const REACTIVE: &str = include_str!("../js/reactive.js");
 pub const CLIENT: &str = include_str!("../js/client.js");
 pub const SERVER: &str = include_str!("../js/server.js");
+pub const ISLAND_MARKER: &str = include_str!("../js/island-marker.js");
 pub const FORM: &str = include_str!("../js/form.js");
 pub const SUSPENSE: &str = include_str!("../js/suspense.js");
 pub const ROUTER: &str = include_str!("../js/router.js");
@@ -24,6 +25,7 @@ pub const SPECIFIERS: &[&str] = &[
     "ui/reactive",
     "ui/client",
     "ui/server",
+    "ui/island-marker",
     "ui/form",
     "ui/suspense",
     "ui/router",
@@ -35,6 +37,7 @@ pub fn source_for(specifier: &str) -> Option<&'static str> {
         "ui/reactive" => Some(REACTIVE),
         "ui/client" => Some(CLIENT),
         "ui/server" => Some(SERVER),
+        "ui/island-marker" => Some(ISLAND_MARKER),
         "ui/form" => Some(FORM),
         "ui/suspense" => Some(SUSPENSE),
         "ui/router" => Some(ROUTER),
@@ -48,6 +51,7 @@ pub fn file_name_for(specifier: &str) -> Option<&'static str> {
         "ui/reactive" => Some("reactive.js"),
         "ui/client" => Some("client.js"),
         "ui/server" => Some("server.js"),
+        "ui/island-marker" => Some("island-marker.js"),
         "ui/form" => Some("form.js"),
         "ui/suspense" => Some("suspense.js"),
         "ui/router" => Some("router.js"),
