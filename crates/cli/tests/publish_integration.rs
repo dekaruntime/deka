@@ -205,6 +205,55 @@ fn publish_command_rejects_artifact_with_vendored_php_modules() {
 }
 
 #[test]
+fn publish_command_rejects_artifact_with_appledouble_files() {
+    let package = tempfile::tempdir().expect("create package source tree");
+    let root = package.path();
+    git(root, &["init"]);
+    git(root, &["config", "user.email", "test@tana.gg"]);
+    git(
+        root,
+        &["config", "user.name", "Deka publish integration test"],
+    );
+
+    fs::write(
+        root.join("deka.json"),
+        r#"{"name":"@tana/publish-fixture","version":"1.0.0","repository":"tana/publish-fixture","security":{"allow":{}}}"#,
+    )
+    .expect("write package manifest");
+    fs::write(root.join("index.phpx"), "export const released = true;\n")
+        .expect("write package source");
+    // macOS AppleDouble sidecar committed into the tree (dekaruntime/deka#587).
+    fs::write(root.join("._index.phpx"), b"\x00\x05\x16\x07\x00\x02\x00\x00")
+        .expect("write AppleDouble sidecar");
+
+    git(root, &["add", "."]);
+    git(root, &["commit", "-m", "package fixture"]);
+
+    let output = Command::new(cli_bin())
+        .current_dir(root)
+        .args([
+            "publish",
+            "--dry-run",
+            "--yes",
+            "--token",
+            "test-token",
+            "--registry-url",
+            "http://127.0.0.1:9",
+        ])
+        .output()
+        .expect("run deka publish");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stderr.contains("publish rejected") && stderr.contains("._index.phpx"),
+        "deka publish must reject the Git artifact before contacting the registry; \\
+         status: {}\\nstderr: {}",
+        output.status,
+        stderr,
+    );
+}
+
+#[test]
 fn publish_preserves_qualified_repo_pushes_annotated_tag_and_uses_peeled_commit() {
     let (_temp, source, remote) = package_repo("1.2.3");
     let (registry_url, requests, worker) = registry_server();
