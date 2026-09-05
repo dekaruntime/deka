@@ -1066,18 +1066,45 @@ mod tests {
     use super::*;
     use std::process::Command;
     #[cfg(unix)]
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    #[cfg(unix)]
     use std::sync::atomic::{AtomicBool, Ordering};
     #[cfg(unix)]
     use std::sync::Arc;
 
+    fn private_tempdir() -> tempfile::TempDir {
+        let temp = tempfile::Builder::new()
+            .prefix(".deka-transpile-test-")
+            .tempdir_in(".")
+            .expect("private tempdir");
+        #[cfg(unix)]
+        fs::set_permissions(
+            temp.path(),
+            fs::Permissions::from_mode(0o700),
+        )
+        .expect("private tempdir permissions");
+        temp
+    }
+
+    fn mkdir(path: &Path) {
+        #[cfg(unix)]
+        {
+            let mut builder = fs::DirBuilder::new();
+            builder.recursive(true).mode(0o700);
+            builder.create(path).expect("mkdir");
+        }
+        #[cfg(not(unix))]
+        fs::create_dir_all(path).expect("mkdir");
+    }
+
     fn write(path: &Path, source: &str) {
-        fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        mkdir(path.parent().expect("parent"));
         fs::write(path, source).expect("write fixture");
     }
 
     #[test]
     fn file_output_is_adjacent_and_executes_when_node_is_available() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = private_tempdir();
         let input = temp.path().join("answer.ds");
         write(&input, "export const answer = 42;\n");
         transpile_file(&input, None, TranspileMode::Preserve, false, false)
@@ -1107,7 +1134,7 @@ mod tests {
 
     #[test]
     fn preserve_mirrors_tree_and_rewrites_relative_ds_imports() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = private_tempdir();
         let root = temp.path().join("src");
         write(
             &root.join("nested/math.ds"),
@@ -1130,7 +1157,7 @@ mod tests {
 
     #[test]
     fn bundle_requires_explicit_file_for_directory_and_treeshakes() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = private_tempdir();
         let root = temp.path().join("src");
         write(
             &root.join("dep.ds"),
@@ -1155,7 +1182,7 @@ mod tests {
 
     #[test]
     fn bundle_drops_unused_export_without_minify() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = private_tempdir();
         let root = temp.path().join("src");
         write(
             &root.join("lib.ds"),
@@ -1178,7 +1205,7 @@ mod tests {
 
     #[test]
     fn client_bundle_rejects_ui_server() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = private_tempdir();
         let input = temp.path().join("island.dsx");
         write(
             &input,
@@ -1200,7 +1227,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_input_flags_and_unowned_output_collision() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = private_tempdir();
         let txt = temp.path().join("bad.txt");
         write(&txt, "nope\n");
         assert!(
@@ -1225,7 +1252,7 @@ mod tests {
 
     #[test]
     fn directory_collision_preflight_leaves_all_declared_outputs_untouched() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = private_tempdir();
         let root = temp.path().join("src");
         write(&root.join("main.ds"), "export const main = 1;\n");
         write(&root.join("nested/math.ds"), "export const math = 2;\n");
@@ -1255,13 +1282,13 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn rejects_symlinked_output_parent_without_writing_outside_root() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = private_tempdir();
         let root = temp.path().join("src");
         let output = temp.path().join("generated");
         let outside = temp.path().join("outside");
         write(&root.join("nested/math.ds"), "export const math = 2;\n");
-        fs::create_dir_all(&outside).expect("outside");
-        fs::create_dir_all(&output).expect("output");
+        mkdir(&outside);
+        mkdir(&output);
         std::os::unix::fs::symlink(&outside, output.join("nested")).expect("symlink");
 
         assert!(transpile_directory(
@@ -1337,15 +1364,15 @@ mod tests {
         target_index: usize,
         preserve_existing_output: bool,
     ) {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = private_tempdir();
         let root = temp.path().join("src");
         let output = temp.path().join("generated");
         let outside = temp.path().join("outside");
         let moved = outside.join("moved-nested");
         write(&root.join("first.ds"), "export const first = 1;\n");
         write(&root.join("nested/math.ds"), "export const math = 2;\n");
-        fs::create_dir_all(&outside).expect("outside");
-        fs::create_dir_all(output.join("nested")).expect("output parent");
+        mkdir(&outside);
+        mkdir(&output.join("nested"));
         let original = format!("{GENERATED_MARKER}export const old = true;\n");
         if preserve_existing_output {
             write(&output.join("first.js"), &original);
