@@ -195,16 +195,6 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
         });
     }
 
-    // Convention: if an app/ folder exists, default to PHP app routing mode.
-    let app_dir = abs_path.join("app");
-    if app_dir.is_dir() {
-        return Ok(ResolvedHandler {
-            path: abs_path,
-            mode: serve_config.mode.clone().unwrap_or(ServeMode::Php),
-            config: serve_config,
-        });
-    }
-
     // Directory: search for index files in priority order
     let index_files = ["index.ds", "index.html"];
 
@@ -379,29 +369,31 @@ mod tests {
         let dir = temp_dir("deka_engine_app_over_entry");
         let app_dir = dir.join("app");
         fs::create_dir_all(&app_dir).expect("mkdir app");
-        fs::write(app_dir.join("page.phpx"), "<?php echo 'ok';").expect("write page");
-        fs::write(dir.join("main.phpx"), "<?php echo 'main';").expect("write configured");
-        fs::write(dir.join("serve.json"), r#"{"entry":"main.phpx"}"#).expect("write config");
+        fs::write(app_dir.join("page.ds"), "export function page() { return 'ok'; }")
+            .expect("write page");
+        fs::write(dir.join("main.ds"), "export function main() { return 'main'; }")
+            .expect("write configured");
+        fs::write(dir.join("serve.json"), r#"{"entry":"main.ds"}"#).expect("write config");
 
         let resolved = resolve_handler_path(dir.to_str().expect("path")).expect("resolve");
         let resolved_canon = resolved.path.canonicalize().expect("resolved canonicalize");
         let configured_canon = dir
-            .join("main.phpx")
+            .join("main.ds")
             .canonicalize()
             .expect("configured canonicalize");
         assert_eq!(resolved_canon, configured_canon);
     }
 
     #[test]
-    fn app_directory_defaults_to_php_mode() {
-        let dir = temp_dir("deka_engine_app_router");
+    fn directory_without_index_or_app_router_falls_back_to_static() {
+        let dir = temp_dir("deka_engine_static_fallback");
         let app_dir = dir.join("app");
         fs::create_dir_all(&app_dir).expect("mkdir app");
-        fs::write(app_dir.join("page.phpx"), "<?php echo 'ok';").expect("write page");
+        fs::write(app_dir.join("notes.txt"), "not a route").expect("write app file");
 
         let resolved = resolve_handler_path(dir.to_str().expect("path")).expect("resolve");
         assert!(resolved.path.is_dir());
-        assert!(matches!(resolved.mode, ServeMode::Php));
+        assert!(matches!(resolved.mode, ServeMode::Static));
     }
 }
 

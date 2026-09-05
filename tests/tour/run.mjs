@@ -27,6 +27,11 @@ const PACKAGE_DEKA_JSON = {
 
 const NL = String.fromCharCode(10);
 
+// RFD 24 §16: a .dsx lesson is app/page.dsx — the website harness imports the
+// Page export, so every .dsx lesson must export one. A trailing bare JSX
+// expression is a discarded statement, not a page.
+const DSX_PAGE_EXPORT = /\bexport\s+(?:fn|function)\s+Page\b/;
+
 // A cache hit restores ds_modules/ and deka.lock but not the manifest, so the
 // fixture ended up with packages installed and never declared -- exactly the
 // shape the project gate rejects (deka#403, deka#430). Derive the dependency
@@ -281,6 +286,11 @@ function main() {
       } catch {}
 
       const reasons = [];
+      if (sourcePath.endsWith(".dsx") && !DSX_PAGE_EXPORT.test(readFileSync(sourcePath, "utf-8"))) {
+        reasons.push(
+          "expected .dsx lesson to `export fn Page` (RFD 24 §16): a .dsx lesson is app/page.dsx and the harness imports the Page export"
+        );
+      }
       if (compiled.ok !== lesson.expectCompile) {
         reasons.push(
           lesson.expectCompile

@@ -34,7 +34,9 @@ Attach methods with Go-style receiver syntax. The receiver name is scoped inside
 
 ```ds
 fn (p Point) magnitude(): number {
-  return Math.sqrt((p.x * p.x) + (p.y * p.y))
+  const d = ((p.x * p.x) + (p.y * p.y)).sqrt()
+  const v = unwrap(d) or { 0 }
+  return v
 }
 
 const p = Point { x: 3, y: 4 }
@@ -106,7 +108,12 @@ function __deka_struct(id, embeds) { /* ... module-local factory ... */ }
 const Point = __deka_struct("Point");
 Point.impl("magnitude", function() {
   const p = this;
-  return Math.sqrt((p.x * p.x) + (p.y * p.y));
+  let v;
+  {
+    const u = ((w) => isNaN(w) ? None : Some(w))(Math.sqrt((p.x * p.x) + (p.y * p.y)));
+    if (u.__case === "Some") { v = u.value; } else { v = 0; }
+  }
+  return v;
 });
 
 const p = Point({ x: 3, y: 4 });

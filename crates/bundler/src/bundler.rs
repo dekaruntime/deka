@@ -19,7 +19,6 @@ use swc_ecma_transforms_base::resolver;
 
 use swc_ecma_transforms_typescript::strip;
 
-pub use crate::cached::bundle_browser_assets_cached;
 use crate::css_bundler::{self, CssAsset};
 
 const CLIENT_SERVER_IMPORT_ERROR: &str = "client bundle cannot import ui/server";

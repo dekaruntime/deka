@@ -37,6 +37,21 @@ fn primitive_conversion_name(name: &str) -> Option<PrimitiveConversionName> {
     }
 }
 
+fn is_mutating_array_method(name: &str) -> bool {
+    matches!(
+        name,
+        "push"
+            | "pop"
+            | "shift"
+            | "unshift"
+            | "splice"
+            | "sort"
+            | "reverse"
+            | "fill"
+            | "copyWithin"
+    )
+}
+
 /// How completely a set of match arms covers a scrutinee type.
 ///
 /// `All` means an irrefutable pattern was seen. `Cases` records, per
@@ -121,6 +136,7 @@ impl<'a> Coverage<'a> {
 /// (`length`) or a builtin method that JavaScript provides (`toUpperCase`).
 /// User extensions shadow builtins only for call-shaped access; property-
 /// shaped reads keep resolving to the builtin entry (deka#527).
+#[derive(Debug)]
 pub(super) enum PrimitiveMember<'a> {
     Property(Type<'a>),
     BuiltinMethod(Type<'a>),
@@ -199,6 +215,29 @@ pub(super) fn primitive_member<'a>(
         ("string", "substring") => {
             PrimitiveMember::BuiltinMethod(fn2(&number_ty, &number_ty, &string_ty))
         }
+        // Math-backed methods on `number` (deka#378 step 2, rfd#40 phase 2).
+        // Total functions return a plain `number`; partial functions — those
+        // where JavaScript answers some inputs with `NaN` (`sqrt(-1)`,
+        // `pow(-2, 0.5)`) — return `Option<number>`, so the emitted wrapper
+        // cannot hand back a number that is not one (rfd#13). The emitter
+        // rewrites every call to a `Math.*` expression (`number_math_calls`);
+        // verbatim passthrough would be a runtime lie since JS numbers have
+        // no such methods.
+        ("number", "max" | "min") => PrimitiveMember::BuiltinMethod(fn1(&number_ty, &number_ty)),
+        ("number", "pow") => PrimitiveMember::BuiltinMethod(fn1(
+            &number_ty,
+            &Type::Option {
+                inner: Box::new(number_ty.clone()),
+            },
+        )),
+        ("number", field) if NUMBER_MATH_TOTAL.contains(&field) => {
+            PrimitiveMember::BuiltinMethod(fn0(number_ty))
+        }
+        ("number", field) if NUMBER_MATH_PARTIAL.contains(&field) => {
+            PrimitiveMember::BuiltinMethod(fn0(Type::Option {
+                inner: Box::new(number_ty),
+            }))
+        }
         ("Array", "length") => PrimitiveMember::Property(number_ty),
         ("Array", "includes") => {
             PrimitiveMember::BuiltinMethod(fn2(elem?, &number_ty, &boolean_ty))
@@ -236,6 +275,27 @@ pub(super) fn primitive_member<'a>(
         ("Array", "reverse" | "sort") => PrimitiveMember::BuiltinMethod(fn0(Type::Array {
             elem: Box::new(elem?.clone()),
         })),
+        ("Array", "splice") => PrimitiveMember::BuiltinMethod(fn2(
+            &number_ty,
+            &number_ty,
+            &Type::Array {
+                elem: Box::new(elem?.clone()),
+            },
+        )),
+        ("Array", "fill") => PrimitiveMember::BuiltinMethod(fn2(
+            elem?,
+            &number_ty,
+            &Type::Array {
+                elem: Box::new(elem?.clone()),
+            },
+        )),
+        ("Array", "copyWithin") => PrimitiveMember::BuiltinMethod(fn2(
+            &number_ty,
+            &number_ty,
+            &Type::Array {
+                elem: Box::new(elem?.clone()),
+            },
+        )),
         ("Array", "filter") => PrimitiveMember::BuiltinMethod(fn1(
             &Type::Function {
                 params: vec![elem?.clone()],
@@ -291,6 +351,42 @@ pub(super) fn primitive_member<'a>(
         _ => return None,
     };
     Some(member)
+}
+
+/// Total `Math` functions exposed as methods on `number`: every input —
+/// including the non-finite ones (`Infinity`, `NaN`) — yields a genuine
+/// number (deka#378 step 2, rfd#40 phase 2). `sin`/`cos`/`tan` are NOT
+/// total: `Math.sin(Infinity)` and friends answer `NaN` (deka#594 review),
+/// so they live in `NUMBER_MATH_PARTIAL`. `max`/`min` are handled
+/// separately because they take one argument.
+pub(super) const NUMBER_MATH_TOTAL: &[&str] = &[
+    "abs", "ceil", "floor", "round", "trunc", "sign", "cbrt", "exp", "atan", "sinh", "cosh",
+    "tanh",
+];
+
+/// Partial `Math` functions: some inputs make JavaScript produce `NaN`, so
+/// the method returns `Option<number>` and the emitted wrapper rewrites
+/// `NaN` to `None`. `sin`/`cos`/`tan` are partial because the non-finite
+/// inputs (`Math.sin(Infinity)` → `NaN`) are ordinary reachable `number`s
+/// in DekaScript (`1.0/0.0`); classifying them as total would type a NaN
+/// result as `number` — the exact "type that claims something false" defect
+/// rfd#13 exists to close. `pow` is handled separately because it takes one
+/// argument.
+pub(super) const NUMBER_MATH_PARTIAL: &[&str] = &[
+    "sqrt", "log", "log2", "log10", "asin", "acos", "acosh", "atanh", "sin", "cos", "tan",
+];
+
+/// Classify a builtin `Math`-backed method on `number` for the emitter
+/// (deka#378 step 2). Must stay in sync with the `("number", …)` arms of
+/// `primitive_member`.
+pub(super) fn number_math_kind(method: &str) -> Option<super::types::NumberMath> {
+    if NUMBER_MATH_TOTAL.contains(&method) || matches!(method, "max" | "min") {
+        Some(super::types::NumberMath::Total)
+    } else if NUMBER_MATH_PARTIAL.contains(&method) || method == "pow" {
+        Some(super::types::NumberMath::Partial)
+    } else {
+        None
+    }
 }
 
 impl<'a> Checker<'a> {
@@ -704,9 +800,13 @@ impl<'a> Checker<'a> {
             if !self.is_assignable(&expected_type, &value_type) {
                 self.error_span(
                     *field_span,
-                    format!(
-                        "field `{}` expected type `{expected_type}`, found type `{value_type}`",
-                        field_name
+                    super::with_union_narrowing_hint(
+                        format!(
+                            "field `{}` expected type `{expected_type}`, found type `{value_type}`",
+                            field_name
+                        ),
+                        &expected_type,
+                        &value_type,
                     ),
                 );
             }
@@ -1090,9 +1190,13 @@ impl<'a> Checker<'a> {
             {
                 self.error_span(
                     attr.span,
-                    format!(
-                        "prop `{}` expects type `{expected}`, found type `{actual}`",
-                        attr.name
+                    super::with_union_narrowing_hint(
+                        format!(
+                            "prop `{}` expects type `{expected}`, found type `{actual}`",
+                            attr.name
+                        ),
+                        &expected,
+                        &actual,
                     ),
                 );
             }
@@ -1267,8 +1371,12 @@ impl<'a> Checker<'a> {
                 if !self.is_assignable(&expected_ty, &actual) {
                     self.error_span(
                         span,
-                        format!(
-                            "enum case `{case_name}` expected payload type `{expected_ty}`, found type `{actual}`"
+                        super::with_union_narrowing_hint(
+                            format!(
+                                "enum case `{case_name}` expected payload type `{expected_ty}`, found type `{actual}`"
+                            ),
+                            &expected_ty,
+                            &actual,
                         ),
                     );
                 }
@@ -1441,7 +1549,11 @@ impl<'a> Checker<'a> {
                     if !self.is_assignable(expected, &arm_type) {
                         self.error_at_expr(
                             &arm.body,
-                            format!("match arm has type `{arm_type}`, expected type `{expected}`"),
+                            super::with_union_narrowing_hint(
+                                format!("match arm has type `{arm_type}`, expected type `{expected}`"),
+                                expected,
+                                &arm_type,
+                            ),
                         );
                     }
                 }
@@ -2118,9 +2230,13 @@ impl<'a> Checker<'a> {
                             {
                                 self.error_span(
                                     *span,
-                                    format!(
-                                        "pipe expected argument type `{}`, found type `{left_type}`",
-                                        params[0]
+                                    super::with_union_narrowing_hint(
+                                        format!(
+                                            "pipe expected argument type `{}`, found type `{left_type}`",
+                                            params[0]
+                                        ),
+                                        &params[0],
+                                        &left_type,
                                     ),
                                 );
                             }
@@ -2169,8 +2285,12 @@ impl<'a> Checker<'a> {
                                 if !self.is_assignable(expected, &arg_type) {
                                     self.error_at_expr(
                                         arg,
-                                        format!(
-                                            "expected argument type `{expected}`, found type `{arg_type}`"
+                                        super::with_union_narrowing_hint(
+                                            format!(
+                                                "expected argument type `{expected}`, found type `{arg_type}`"
+                                            ),
+                                            expected,
+                                            &arg_type,
                                         ),
                                     );
                                 }
@@ -2188,9 +2308,13 @@ impl<'a> Checker<'a> {
                                 {
                                     self.error_span(
                                         left.span(),
-                                        format!(
-                                            "pipe expected argument type `{}`, found type `{left_type}`",
-                                            substituted_params[0]
+                                        super::with_union_narrowing_hint(
+                                            format!(
+                                                "pipe expected argument type `{}`, found type `{left_type}`",
+                                                substituted_params[0]
+                                            ),
+                                            &substituted_params[0],
+                                            &left_type,
                                         ),
                                     );
                                 }
@@ -2249,15 +2373,29 @@ impl<'a> Checker<'a> {
                         }
                     }
                     ast::Expr::IndexAccess { object, .. } => {
-                        self.check_expr(object);
+                        let object_type = self.check_expr(object);
+                        if matches!(object_type, Type::Array { .. } | Type::Object { .. })
+                            && !self.is_mutable_expr(object)
+                        {
+                            self.error_at_expr(
+                                left,
+                                self.immutable_mutation_message(
+                                    object,
+                                    "assign to an indexed element",
+                                ),
+                            );
+                        }
                     }
                     ast::Expr::FieldAccess { object, field, .. } => {
                         let object_type = self.check_expr(object);
                         let field_mutable = self.field_is_mutable(&object_type, field);
                         if !self.is_mutable_expr(object) && !field_mutable {
-                            self.error_span(
-                                left.span(),
-                                format!("cannot assign to field `{field}` of immutable value"),
+                            self.error_at_expr(
+                                left,
+                                self.immutable_field_message(
+                                    object,
+                                    field,
+                                ),
                             );
                         }
                     }
@@ -2275,7 +2413,11 @@ impl<'a> Checker<'a> {
                 {
                     self.error_span(
                         span,
-                        format!("cannot assign type `{right_type}` to `{left_type}`"),
+                        super::with_union_narrowing_hint(
+                            format!("cannot assign type `{right_type}` to `{left_type}`"),
+                            &left_type,
+                            &right_type,
+                        ),
                     );
                 }
                 right_type
@@ -2597,7 +2739,11 @@ impl<'a> Checker<'a> {
                     if !self.is_assignable(expected, &arg_type) {
                         self.error_at_expr(
                             arg,
-                            format!("expected argument type `{expected}`, found type `{arg_type}`"),
+                            super::with_union_narrowing_hint(
+                                format!("expected argument type `{expected}`, found type `{arg_type}`"),
+                                expected,
+                                &arg_type,
+                            ),
                         );
                     }
                 }
@@ -2612,6 +2758,15 @@ impl<'a> Checker<'a> {
             Type::Struct { name } => *name,
             Type::Newtype { name, .. } => *name,
             Type::Array { .. } => {
+                if is_mutating_array_method(method_name) && !self.is_mutable_expr(object) {
+                    self.error_at_expr(
+                        object,
+                        self.immutable_mutation_message(
+                            object,
+                            &format!("call mutable method `{method_name}`"),
+                        ),
+                    );
+                }
                 // Record `first`/`last` so the emitter rewrites them to an
                 // Option-producing expression. Returning `None` keeps the
                 // existing `check_call` flow (argument arity checking against
@@ -2631,6 +2786,19 @@ impl<'a> Checker<'a> {
                 return None;
             }
             Type::Named { name } => {
+                // Builtin Math-backed methods on `number` (deka#378 step 2,
+                // rfd#40 phase 2): record the call site so the emitter
+                // rewrites it to a `Math.*` expression. A declared extension
+                // of the same name shadows the builtin (deka#527), so record
+                // only when none exists.
+                if *name == "number"
+                    && !self.receiver_methods.contains_key(&("number", method_name))
+                {
+                    if let Some(kind) = number_math_kind(method_name) {
+                        self.number_math_calls
+                            .insert(call_expr as *const ast::Expr, kind);
+                    }
+                }
                 // Primitive receiver: a user extension shadows builtin members
                 // of the same name. On a miss, fall through to `check_call` so
                 // builtin property-functions keep working (deka#527).
@@ -3058,7 +3226,11 @@ impl<'a> Checker<'a> {
                 if !self.is_assignable(expected, &arg_type) {
                     self.error_at_expr(
                         arg,
-                        format!("expected argument type `{expected}`, found type `{arg_type}`"),
+                        super::with_union_narrowing_hint(
+                            format!("expected argument type `{expected}`, found type `{arg_type}`"),
+                            expected,
+                            &arg_type,
+                        ),
                     );
                 }
             }
@@ -3104,6 +3276,36 @@ impl<'a> Checker<'a> {
                 .any(|scope| scope.contains(*name)),
             ast::Expr::FieldAccess { object, .. } => self.is_mutable_expr(object),
             _ => false,
+        }
+    }
+
+    fn immutable_mutation_message(&self, expr: &ast::Expr<'a>, operation: &str) -> String {
+        let binding = self
+            .immutable_binding_name(expr)
+            .map(|name| format!("const binding `{name}`"))
+            .unwrap_or_else(|| "an immutable receiver".to_string());
+        format!(
+            "cannot {operation} on an immutable receiver ({binding}; use `let` to allow mutation)"
+        )
+    }
+
+    fn immutable_field_message(&self, expr: &ast::Expr<'a>, field: &str) -> String {
+        let binding = self
+            .immutable_binding_name(expr)
+            .map(|name| format!("const binding `{name}`"))
+            .unwrap_or_else(|| "an immutable receiver".to_string());
+        format!(
+            "cannot assign to field `{field}` of immutable value ({binding}; use `let` to allow mutation)"
+        )
+    }
+
+    fn immutable_binding_name(&self, expr: &ast::Expr<'a>) -> Option<&'a str> {
+        match expr {
+            ast::Expr::Identifier { name, .. } => Some(*name),
+            ast::Expr::FieldAccess { object, .. }
+            | ast::Expr::IndexAccess { object, .. }
+            | ast::Expr::Paren { expr: object, .. } => self.immutable_binding_name(object),
+            _ => None,
         }
     }
 
@@ -3357,8 +3559,12 @@ impl<'a> Checker<'a> {
                         if !self.is_assignable(expected, &arg_type) {
                             self.error_at_expr(
                                 arg,
-                                format!(
-                                    "expected argument type `{expected}`, found type `{arg_type}`"
+                                super::with_union_narrowing_hint(
+                                    format!(
+                                        "expected argument type `{expected}`, found type `{arg_type}`"
+                                    ),
+                                    expected,
+                                    &arg_type,
                                 ),
                             );
                         }
@@ -3399,8 +3605,12 @@ impl<'a> Checker<'a> {
                         if !self.is_assignable(expected, &arg_type) {
                             self.error_at_expr(
                                 arg,
-                                format!(
-                                    "expected argument type `{expected}`, found type `{arg_type}`"
+                                super::with_union_narrowing_hint(
+                                    format!(
+                                        "expected argument type `{expected}`, found type `{arg_type}`"
+                                    ),
+                                    expected,
+                                    &arg_type,
                                 ),
                             );
                         }

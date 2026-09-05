@@ -27,11 +27,28 @@ mod types;
 pub use descriptor::{
     DescriptorField, DescriptorTree, JsonCall, JsonOperation, StaticTypeCall,
 };
-pub use types::{ArrayAccess, NewtypeSide, OperatorRewrite, Type, UnionMemberTest, UnwrapKind};
+pub use types::{
+    ArrayAccess, NewtypeSide, NumberMath, OperatorRewrite, Type, UnionMemberTest, UnwrapKind,
+};
 
 #[derive(Debug)]
 pub struct TypeError {
     pub message: String,
+}
+
+/// Add the actionable next step when a value's union type is used where one
+/// concrete type is required. Keep this at the diagnostic boundary rather
+/// than in `is_assignable`, whose recursive calls also check union members.
+pub(super) fn with_union_narrowing_hint<'a>(
+    message: String,
+    expected: &Type<'a>,
+    actual: &Type<'a>,
+) -> String {
+    if matches!(actual, Type::Union { .. }) && !matches!(expected, Type::Union { .. }) {
+        format!("{message}; narrow it with a match before use")
+    } else {
+        message
+    }
 }
 
 pub struct TypeckResult<'a> {
@@ -59,6 +76,10 @@ pub struct TypeckResult<'a> {
     /// Builtin `Array.first()`/`Array.last()` call sites, rewritten to an
     /// Option-producing expression during emission (deka#561).
     pub array_first_last_calls: HashMap<*const ast::Expr<'a>, types::ArrayAccess>,
+    /// Builtin `Math`-backed `number` method call sites, rewritten to a
+    /// `Math.*` expression during emission — partial functions wrapped so
+    /// `NaN` surfaces as `None` (deka#378 step 2, rfd#40 phase 2).
+    pub number_math_calls: HashMap<*const ast::Expr<'a>, types::NumberMath>,
     /// Map from primitive conversion call expression pointer to how it should
     /// be lowered (`parseNumber(x)`, `unboxNumber(x)`, `toNumber(x)`,
     /// `string(x)`).
@@ -186,6 +207,7 @@ pub fn check_program_with_imports<'a>(
         super_trees: checker.super_trees,
         json_calls: checker.json_calls,
         array_first_last_calls: checker.array_first_last_calls,
+        number_math_calls: checker.number_math_calls,
         unwrap_calls: checker.unwrap_calls,
         operator_rewrites: checker.operator_rewrites,
         jsx_optional_props: checker.jsx_optional_props,
@@ -808,6 +830,11 @@ struct Checker<'a> {
     /// Lowering collections like this one must also be cleared in
     /// `reset_lowering_state` — the inference pass populates them too.
     array_first_last_calls: HashMap<*const ast::Expr<'a>, types::ArrayAccess>,
+    /// Builtin `Math`-backed `number` method call sites to rewrite to a
+    /// `Math.*` expression, keyed by call expression pointer (deka#378
+    /// step 2). Lowering collections like this one must also be cleared in
+    /// `reset_lowering_state` — the inference pass populates them too.
+    number_math_calls: HashMap<*const ast::Expr<'a>, types::NumberMath>,
     /// Primitive conversion call sites to lower, keyed by call expression pointer.
     /// Cleared between passes by `reset_lowering_state`.
     unwrap_calls: HashMap<*const ast::Expr<'a>, types::UnwrapKind>,
@@ -860,6 +887,7 @@ impl<'a> Checker<'a> {
             super_trees: HashMap::new(),
             json_calls: HashMap::new(),
             array_first_last_calls: HashMap::new(),
+            number_math_calls: HashMap::new(),
             unwrap_calls: HashMap::new(),
             operator_rewrites: HashMap::new(),
             jsx_optional_props: HashMap::new(),
@@ -894,7 +922,9 @@ impl<'a> Checker<'a> {
         //            crypto  -> @deka/crypto
         //            Date    -> @deka/time
         //
-        //   remaining: Math      needs prelude methods on `number` (#378 step 2)
+        //   remaining: Math      prelude methods on `number` landed (#378
+        //                        step 2); the registration is deleted in
+        //                        step 5, and `PI` still wants a home
         //              Object    Promise    parseInt    process    undecided
         //              isset     removed by #416
         //
@@ -907,9 +937,10 @@ impl<'a> Checker<'a> {
         // 13 P10 asks for.
         // `isset` is gone with deka#416: it existed only to test presence on an
         // interface `?:` field, which is now an `Option` like everywhere else.
-        // Only `Math` is left, and only because its replacement is not built:
-        // `sqrt`/`floor` want prelude methods on `number` and `PI` wants a
-        // home, per deka#378 step 2.
+        // Only `Math` is left. Its replacement exists as of deka#378 step 2 —
+        // `sqrt`/`floor` and friends are prelude methods on `number` — but
+        // the ambient registration stays until step 5 deletes it, and `PI`
+        // still wants a home.
         //
         // `Object`, `Promise` and `parseInt` are gone. `Promise` stays a
         // *type* -- 63 annotations across the corpora are unaffected, because
@@ -995,6 +1026,7 @@ impl<'a> Checker<'a> {
         self.static_type_calls.clear();
         self.json_calls.clear();
         self.array_first_last_calls.clear();
+        self.number_math_calls.clear();
         self.unwrap_calls.clear();
         self.operator_rewrites.clear();
     }
@@ -1054,7 +1086,15 @@ impl<'a> Checker<'a> {
             return;
         }
         if !ty.is_error() && !Self::is_number(ty) {
-            self.error_span(span, format!("expected type `number`, found type `{ty}`"));
+            let expected = Type::Named { name: "number" };
+            self.error_span(
+                span,
+                with_union_narrowing_hint(
+                    format!("expected type `number`, found type `{ty}`"),
+                    &expected,
+                    ty,
+                ),
+            );
         }
     }
 
@@ -1063,7 +1103,15 @@ impl<'a> Checker<'a> {
             return;
         }
         if !ty.is_error() && !Self::is_boolean(ty) {
-            self.error_span(span, format!("expected type `boolean`, found type `{ty}`"));
+            let expected = Type::Named { name: "boolean" };
+            self.error_span(
+                span,
+                with_union_narrowing_hint(
+                    format!("expected type `boolean`, found type `{ty}`"),
+                    &expected,
+                    ty,
+                ),
+            );
         }
     }
 
@@ -1976,6 +2024,156 @@ mod tests {
     }
 
     #[test]
+    fn number_math_records_calls_with_total_and_partial_kinds() {
+        let arena = Bump::new();
+        let source = "const f: number = (3.7).floor();\nconst m: number = (1).max(2);\nconst s: Option<number> = (4).sqrt();\nconst p: Option<number> = (2).pow(10);";
+        let result = parse(source, &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.expect("parse produced no program");
+        let checked = check_program(&program, source);
+        assert!(checked.errors.is_empty(), "{:?}", checked.errors);
+        assert_eq!(
+            checked.number_math_calls.len(),
+            4,
+            "{:?}",
+            checked.number_math_calls
+        );
+        assert_eq!(
+            checked
+                .number_math_calls
+                .values()
+                .filter(|k| matches!(k, NumberMath::Total))
+                .count(),
+            2
+        );
+        assert_eq!(
+            checked
+                .number_math_calls
+                .values()
+                .filter(|k| matches!(k, NumberMath::Partial))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn number_math_partial_methods_have_option_type() {
+        // The whole point of the wrapper: a partial method cannot hand back
+        // a `number` that is not one, so `sqrt` is `Option<number>` and
+        // assigning it to a plain `number` is rejected (rfd#13, deka#378
+        // step 2).
+        let errors = typeck("const bad: number = (4).sqrt();");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].message.contains("Option<number>"),
+            "{}",
+            errors[0].message
+        );
+        assert!(typeck("const good: number = unwrap((4).sqrt()) or { 0 };").is_empty());
+    }
+
+    #[test]
+    fn number_math_lists_are_disjoint_exhaustive_and_in_sync() {
+        // Three artefacts describe the Math-backed method surface on
+        // `number`: NUMBER_MATH_TOTAL, NUMBER_MATH_PARTIAL, and the
+        // ("number", …) arms of primitive_member. A doc-comment was the only
+        // thing keeping them in step — sin/cos/tan landed on the wrong side
+        // of the total/partial split because nothing checked (deka#594
+        // review). This test is the sync.
+        let total = expr::NUMBER_MATH_TOTAL;
+        let partial = expr::NUMBER_MATH_PARTIAL;
+
+        // Disjoint: a method on both lists is typed two ways at once.
+        for name in total {
+            assert!(!partial.contains(name), "{name} is in BOTH lists");
+        }
+
+        // The classifier must agree with the list membership.
+        for name in total {
+            assert_eq!(
+                expr::number_math_kind(name),
+                Some(NumberMath::Total),
+                "{name}: TOTAL list, classifier disagrees"
+            );
+        }
+        for name in partial {
+            assert_eq!(
+                expr::number_math_kind(name),
+                Some(NumberMath::Partial),
+                "{name}: PARTIAL list, classifier disagrees"
+            );
+        }
+
+        // The ("number", …) arms must return what the list promises: plain
+        // `number` for total, `Option<number>` for partial. (The member
+        // type is a zero-arg function whose return type carries the
+        // promise.)
+        for name in total {
+            match expr::primitive_member("number", name, None) {
+                Some(expr::PrimitiveMember::BuiltinMethod(Type::Function { ret, .. })) => assert!(
+                    matches!(*ret, Type::Named { name: "number" }),
+                    "{name}: total arm must return plain number, got {ret:?}"
+                ),
+                other => panic!("{name}: primitive_member arm missing or wrong: {other:?}"),
+            }
+        }
+        for name in partial {
+            let ret = match expr::primitive_member("number", name, None) {
+                Some(expr::PrimitiveMember::BuiltinMethod(Type::Function { ret, .. })) => ret,
+                other => panic!("{name}: primitive_member arm missing or wrong: {other:?}"),
+            };
+            match *ret {
+                Type::Option { ref inner } => assert!(
+                    matches!(**inner, Type::Named { name: "number" }),
+                    "{name}: partial arm must return Option<number>"
+                ),
+                ref other => panic!("{name}: partial arm must return Option<number>, got {other:?}"),
+            }
+        }
+
+        // Exhaustive over the exposed surface: TOTAL ∪ PARTIAL ∪
+        // {max, min, pow} is exactly this list. Adding a Math method means
+        // extending this list AND both tables AND the classifier together.
+        let mut surface: Vec<&str> = total.iter().chain(partial.iter()).copied().collect();
+        surface.extend(["max", "min", "pow"]);
+        surface.sort_unstable();
+        assert_eq!(
+            surface,
+            [
+                "abs", "acos", "acosh", "asin", "atan", "atanh", "cbrt", "ceil", "cos", "cosh",
+                "exp", "floor", "log", "log10", "log2", "max", "min", "pow", "round", "sign",
+                "sin", "sinh", "sqrt", "tan", "tanh", "trunc",
+            ]
+        );
+    }
+
+    #[test]
+    fn number_math_args_are_checked() {
+        // Unlike the ambient `Math` global — typed `Infer`, so anything went
+        // (deka#252) — the replacement checks arity and argument types.
+        let errors = typeck("const bad = (3.7).floor(1);");
+        assert!(!errors.is_empty(), "arity must be checked");
+        let errors = typeck("const bad = (1).max(\"x\");");
+        assert!(!errors.is_empty(), "argument types must be checked");
+    }
+
+    #[test]
+    fn number_math_extension_shadows_builtin() {
+        // A user extension named `floor` keeps the deka#527 rewrite; the
+        // Math-backed builtin is not recorded (deka#378 step 2).
+        let arena = Bump::new();
+        let source =
+            "fn (n number) floor() string { return \"x\"; } const u: string = (3.7).floor();";
+        let result = parse(source, &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.expect("parse produced no program");
+        let typeck = check_program(&program, source);
+        assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
+        assert_eq!(typeck.method_calls.len(), 1);
+        assert!(typeck.number_math_calls.is_empty());
+    }
+
+    #[test]
     fn gettype_user_extension_shadows_builtin() {
         // A user extension named `getType` keeps the deka#527 rewrite; the
         // builtin `__deka_type_of` rewrite is not recorded.
@@ -2606,6 +2804,37 @@ mod tests {
             "{}",
             errors[0].message
         );
+    }
+
+    #[test]
+    fn union_return_diagnostic_teaches_narrowing() {
+        let errors = typeck("fn f(v: string | number) string { return v; }");
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert_eq!(
+            errors[0].message,
+            "expected return type `string`, found type `number | string`; narrow it with a match before use"
+        );
+    }
+
+    #[test]
+    fn union_argument_diagnostic_teaches_narrowing() {
+        let errors = typeck(
+            "fn takes(v: string) string { return v; } fn f(v: string | number) string { return takes(v); }",
+        );
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert_eq!(
+            errors[0].message,
+            "expected argument type `string`, found type `number | string`; narrow it with a match before use"
+        );
+    }
+
+    #[test]
+    fn union_to_union_diagnostic_has_no_narrowing_hint() {
+        let errors = typeck(
+            "const x: string | number = 1; const y: string | boolean = x;",
+        );
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert!(!errors[0].message.contains("narrow it with a match"));
     }
 
     #[test]
