@@ -2985,9 +2985,21 @@ impl<'a> Emitter<'a> {
     }
 
     fn emit_unsafe(&mut self, source: &str) -> Result<(), String> {
+        // deka#622 finding F: splice the shared Result constructors from
+        // `crate::prelude` (deka#582) instead of transcribing an unbranded
+        // `{ __case }` literal. The generated match tests `__case` today, but
+        // anything that keys on the `__enum` brand (union member `Result(r)`,
+        // `.getType()`, exhaustiveness) must see the exact shape
+        // `Result.Ok`/`Result.Err` produce — same as `__deka_to_result`.
         let trimmed = source.trim();
         if trimmed.is_empty() {
-            self.out.push_str("(function() { try { return { __case: \"Ok\", value: undefined }; } catch (err) { return { __case: \"Err\", error: err instanceof Error ? err : new Error(String(err)) }; } })()");
+            self.out.push_str("(function() { try { return (");
+            self.out.push_str(crate::prelude::RESULT_OK);
+            self.out
+                .push_str(")(undefined); } catch (err) { return (");
+            self.out.push_str(crate::prelude::RESULT_ERR);
+            self.out
+                .push_str(")(err instanceof Error ? err : new Error(String(err))); } })()");
             return Ok(());
         }
 
@@ -3018,10 +3030,14 @@ impl<'a> Emitter<'a> {
 
         self.out.push('(');
         self.out.push_str(fn_kw);
-        self.out
-            .push_str("() { try { return { __case: \"Ok\", value: ");
+        self.out.push_str("() { try { return (");
+        self.out.push_str(crate::prelude::RESULT_OK);
+        self.out.push_str(")(");
         self.out.push_str(&awaited);
-        self.out.push_str(" }; } catch (err) { return { __case: \"Err\", error: err instanceof Error ? err : new Error(String(err)) }; } })()");
+        self.out.push_str("); } catch (err) { return (");
+        self.out.push_str(crate::prelude::RESULT_ERR);
+        self.out
+            .push_str(")(err instanceof Error ? err : new Error(String(err))); } })()");
 
         Ok(())
     }
