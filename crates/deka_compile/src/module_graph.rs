@@ -354,6 +354,14 @@ pub fn compile_module_graph_with_options(
             if is_compiler_ui_spec(&import.path) {
                 continue;
             }
+            // Side-effect CSS imports (`import "./x.css"`) are not JS modules:
+            // emit drops them and the per-route CSS collector rewrites their
+            // selectors with the component's scope stamp (RFD 24 §10.6).
+            // Treat them as virtual so component modules can author CSS.
+            if import.specs.is_empty() && import.path.trim().to_ascii_lowercase().ends_with(".css")
+            {
+                continue;
+            }
             // With a module base configured (browser/WASM hosts), known stdlib
             // bare specifiers are normally served by the host as `<base>/<spec>.mjs`
             // and left virtual. If the loader can resolve the specifier (e.g. a
@@ -486,10 +494,15 @@ pub fn compile_module_graph_with_options(
     for _ in 0..modules.len() {
         let mut changed = false;
         for module in modules.values() {
-            let Some(program) = programs.get(&module.path) else { continue };
+            let Some(program) = programs.get(&module.path) else {
+                continue;
+            };
             let mut imports_by_local: HashMap<&str, (&str, &PathBuf)> = HashMap::new();
             for stmt in program.statements.iter() {
-                if let deka_syntax::Stmt::Import { specifiers, source, .. } = stmt {
+                if let deka_syntax::Stmt::Import {
+                    specifiers, source, ..
+                } = stmt
+                {
                     if let Some(dep) = module.dependencies.get(*source) {
                         for spec in specifiers.iter() {
                             imports_by_local.insert(spec.local, (spec.imported, dep));
@@ -497,26 +510,45 @@ pub fn compile_module_graph_with_options(
                     }
                 }
             }
-            let export_specs: Vec<(&str, &str, Option<&str>)> = program.statements.iter()
+            let export_specs: Vec<(&str, &str, Option<&str>)> = program
+                .statements
+                .iter()
                 .filter_map(|stmt| match stmt {
-                    deka_syntax::Stmt::Export { decl: deka_syntax::ExportDecl::NamedGroup { names, source }, .. } =>
-                        Some(names.iter().map(move |n| (n.name, n.alias.unwrap_or(n.name), *source)).collect::<Vec<_>>()),
+                    deka_syntax::Stmt::Export {
+                        decl: deka_syntax::ExportDecl::NamedGroup { names, source },
+                        ..
+                    } => Some(
+                        names
+                            .iter()
+                            .map(move |n| (n.name, n.alias.unwrap_or(n.name), *source))
+                            .collect::<Vec<_>>(),
+                    ),
                     _ => None,
                 })
-                .flatten().collect();
+                .flatten()
+                .collect();
             for (local, external, explicit_source) in export_specs {
                 let (imported, dep) = if let Some(source) = explicit_source {
-                    let Some(dep) = module.dependencies.get(source) else { continue };
+                    let Some(dep) = module.dependencies.get(source) else {
+                        continue;
+                    };
                     (local, dep)
                 } else {
-                    let Some((imported, dep)) = imports_by_local.get(local).copied() else { continue };
+                    let Some((imported, dep)) = imports_by_local.get(local).copied() else {
+                        continue;
+                    };
                     (imported, dep)
                 };
-                let Some(dep_exports) = exports.get(dep).cloned() else { continue };
-                changed |= copy_export(&mut exports, &module.path, &dep_exports, imported, external);
+                let Some(dep_exports) = exports.get(dep).cloned() else {
+                    continue;
+                };
+                changed |=
+                    copy_export(&mut exports, &module.path, &dep_exports, imported, external);
             }
         }
-        if !changed { break; }
+        if !changed {
+            break;
+        }
     }
 
     // Reject imports of names the dependency does not export. The typechecker
@@ -673,7 +705,9 @@ fn copy_export<'a>(
     imported: &'a str,
     external: &'a str,
 ) -> bool {
-    let Some(dest) = exports.get_mut(target) else { return false };
+    let Some(dest) = exports.get_mut(target) else {
+        return false;
+    };
     let mut changed = false;
     if let Some(value) = source.values.get(imported) {
         changed |= dest.values.insert(external, value.clone()) != Some(value.clone());
@@ -692,7 +726,10 @@ fn copy_export<'a>(
     }
     for ((receiver, method), info) in &source.receiver_methods {
         if *receiver == imported {
-            changed |= dest.receiver_methods.insert((external, *method), info.clone()).is_none();
+            changed |= dest
+                .receiver_methods
+                .insert((external, *method), info.clone())
+                .is_none();
         }
     }
     changed
@@ -858,13 +895,24 @@ mod tests {
         let b = root.join("b.ds");
         let c = root.join("c.ds");
         let mut files = HashMap::new();
-        files.insert(a.clone(), "export fn validate(json: string) string { return json; }".to_string());
-        files.insert(b.clone(), "import { validate } from \"./a.ds\"; export { validate };".to_string());
-        files.insert(c.clone(), "import { validate } from \"./b.ds\"; const result: string = validate(\"{}\");".to_string());
+        files.insert(
+            a.clone(),
+            "export fn validate(json: string) string { return json; }".to_string(),
+        );
+        files.insert(
+            b.clone(),
+            "import { validate } from \"./a.ds\"; export { validate };".to_string(),
+        );
+        files.insert(
+            c.clone(),
+            "import { validate } from \"./b.ds\"; const result: string = validate(\"{}\");"
+                .to_string(),
+        );
         let mut aliases = HashMap::new();
         aliases.insert((c.clone(), "./b.ds".to_string()), b.clone());
         aliases.insert((b.clone(), "./a.ds".to_string()), a.clone());
-        let result = compile_module_graph(&c, &InMemoryLoader { files, aliases }).expect("barrel compiles");
+        let result =
+            compile_module_graph(&c, &InMemoryLoader { files, aliases }).expect("barrel compiles");
         assert_eq!(result.modules.len(), 3);
     }
 
@@ -875,13 +923,24 @@ mod tests {
         let b = root.join("b.ds");
         let c = root.join("c.ds");
         let mut files = HashMap::new();
-        files.insert(a.clone(), "export fn validate(json: string) string { return json; }".to_string());
-        files.insert(b.clone(), "export { validate } from \"./a.ds\";".to_string());
-        files.insert(c.clone(), "import { validate } from \"./b.ds\"; const result: string = validate(\"{}\");".to_string());
+        files.insert(
+            a.clone(),
+            "export fn validate(json: string) string { return json; }".to_string(),
+        );
+        files.insert(
+            b.clone(),
+            "export { validate } from \"./a.ds\";".to_string(),
+        );
+        files.insert(
+            c.clone(),
+            "import { validate } from \"./b.ds\"; const result: string = validate(\"{}\");"
+                .to_string(),
+        );
         let mut aliases = HashMap::new();
         aliases.insert((c.clone(), "./b.ds".to_string()), b.clone());
         aliases.insert((b.clone(), "./a.ds".to_string()), a.clone());
-        let result = compile_module_graph(&c, &InMemoryLoader { files, aliases }).expect("direct reexport compiles");
+        let result = compile_module_graph(&c, &InMemoryLoader { files, aliases })
+            .expect("direct reexport compiles");
         assert_eq!(result.modules.len(), 3);
     }
 
@@ -1060,11 +1119,31 @@ mod tests {
         assert_eq!(result.modules.len(), 2);
         let person_js = &result.modules[&person];
         let main_js = &result.modules[&main];
-        assert!(person_js.contains("const Person = __deka_struct(\"Person\")"), "got: {}", person_js);
-        assert!(person_js.contains("Person.impl(\"greet\""), "got: {}", person_js);
-        assert!(person_js.contains("export { Person };"), "got: {}", person_js);
-        assert!(main_js.contains("import { Person } from \"./person.ds\";"), "got: {}", main_js);
-        assert!(main_js.contains("Person({ name: \"Deka\" })"), "got: {}", main_js);
+        assert!(
+            person_js.contains("const Person = __deka_struct(\"Person\")"),
+            "got: {}",
+            person_js
+        );
+        assert!(
+            person_js.contains("Person.impl(\"greet\""),
+            "got: {}",
+            person_js
+        );
+        assert!(
+            person_js.contains("export { Person };"),
+            "got: {}",
+            person_js
+        );
+        assert!(
+            main_js.contains("import { Person } from \"./person.ds\";"),
+            "got: {}",
+            main_js
+        );
+        assert!(
+            main_js.contains("Person({ name: \"Deka\" })"),
+            "got: {}",
+            main_js
+        );
         assert!(main_js.contains("p.greet()"), "got: {}", main_js);
     }
 
@@ -1104,7 +1183,11 @@ mod tests {
             main_js
         );
         assert!(main_js.contains("Color.Red"), "got: {}", main_js);
-        assert!(main_js.contains("__deka_match_scrutinee_"), "got: {}", main_js);
+        assert!(
+            main_js.contains("__deka_match_scrutinee_"),
+            "got: {}",
+            main_js
+        );
     }
 
     #[test]
@@ -1209,6 +1292,33 @@ mod tests {
     }
 
     #[test]
+    fn graph_treats_side_effect_css_imports_as_virtual() {
+        // `import "./x.css"` authors component CSS: emit drops it and the
+        // per-route CSS collector rewrites its selectors (RFD 24 §10.6), so
+        // resolution must not demand a loadable JS module for it.
+        let root = PathBuf::from("/project");
+        let main = root.join("page.dsx");
+
+        let mut files = HashMap::new();
+        files.insert(
+            main.clone(),
+            "import \"./page.css\";\nconst x: number = 1;".to_string(),
+        );
+
+        let loader = InMemoryLoader {
+            files,
+            aliases: HashMap::new(),
+        };
+        let result = compile_module_graph(&main, &loader).expect("compile graph");
+        assert_eq!(result.modules.len(), 1);
+        assert!(
+            !result.modules[&main].contains("page.css"),
+            "css imports must not reach the JS output: {}",
+            result.modules[&main]
+        );
+    }
+
+    #[test]
     fn client_graph_rejects_ui_server() {
         let root = PathBuf::from("/project");
         let main = root.join("main.dsx");
@@ -1273,7 +1383,12 @@ mod tests {
         assert_eq!(result.modules.len(), 3);
         let robot_js = &result.modules[&robot];
         let main_js = &result.modules[&main];
-        assert!(robot_js.contains("Robot = __deka_struct(\"Robot\"") && robot_js.contains("{ Legs: Legs }"), "got: {}", robot_js);
+        assert!(
+            robot_js.contains("Robot = __deka_struct(\"Robot\"")
+                && robot_js.contains("{ Legs: Legs }"),
+            "got: {}",
+            robot_js
+        );
         assert!(main_js.contains("Robot({ Legs: Legs({"), "got: {}", main_js);
         assert!(main_js.contains("r.move()"), "got: {}", main_js);
     }

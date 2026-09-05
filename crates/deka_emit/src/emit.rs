@@ -96,7 +96,7 @@ pub fn emit_js_with_imports<'a>(
 /// ESM files instead of string-rewriting compiled output.
 pub fn emit_js_with_options<'a>(
     program: &'a Program<'a>,
-    _source: &str,
+    source: &str,
     imports: &HashMap<&str, &deka_syntax::ModuleExports<'a>>,
     module_base: Option<String>,
     unwrap_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::UnwrapKind>,
@@ -135,10 +135,7 @@ pub fn emit_js_with_options<'a>(
     // typechecker, keyed by declaration name. The emitter interns one
     // frozen const per declaration referenced (directly or through a
     // recursive group) by `static_type_calls`.
-    super_decl_trees: &std::collections::HashMap<
-        &'a str,
-        deka_syntax::typeck::DescriptorTree<'a>,
-    >,
+    super_decl_trees: &std::collections::HashMap<&'a str, deka_syntax::typeck::DescriptorTree<'a>>,
     jsx_optional_props: &HashMap<
         *const deka_syntax::JsxElement<'a>,
         deka_syntax::typeck::JsxOptionalProps<'a>,
@@ -171,6 +168,13 @@ pub fn emit_js_with_options<'a>(
     emitter.enum_case_patterns = enum_case_patterns.clone();
     emitter.union_type_patterns = union_type_patterns.clone();
     emitter.live_names = live_names.cloned();
+    if module_imports_side_effect_css(program) {
+        // Component CSS is scoped by stamping every host element in this
+        // module with `data-deka-cid-<hash>` and rewriting the module's own
+        // CSS selectors to require it (RFD 24 §10.6). Modules without
+        // component CSS stay unmarked.
+        emitter.css_scope = Some(css_scope_hash(source));
+    }
     emitter.emit()
 }
 
@@ -183,6 +187,32 @@ fn file_stem_from_path(path: &str) -> String {
         .to_string()
 }
 
+/// FNV-1a 64-bit over the module source, truncated to 12 hex chars. This is
+/// the component style-scope id (`data-deka-cid-<hash>`) from RFD 24 §10.6:
+/// stable across builds for unchanged source, distinct per component module.
+///
+/// Must stay in sync with `runtime_core::framework::css_scope_hash` — the
+/// per-route CSS writer rewrites selectors with this id, so both sides must
+/// produce the same digest. Both crates pin the same test vector.
+pub fn css_scope_hash(source: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in source.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{:012x}", hash & 0xffff_ffff_ffff)
+}
+
+fn module_imports_side_effect_css(program: &deka_syntax::Program) -> bool {
+    program.statements.iter().any(|stmt| {
+        matches!(
+            stmt,
+            deka_syntax::Stmt::Import { specifiers, source, .. }
+                if specifiers.is_empty() && source_is_css(source)
+        )
+    })
+}
+
 /// The display name of a descriptor tree node: the name scalars, structs,
 /// newtypes and enums carry, `Array<…>`/`Option<…>` for the collection
 /// nodes, and `… | …` for unions. Kept for super declarations (PR B).
@@ -191,9 +221,10 @@ fn descriptor_tree_name(tree: &deka_syntax::typeck::DescriptorTree) -> String {
     match tree {
         T::Leaf { name, .. } => name.clone(),
         T::Recurse { name } => name.to_string(),
-        T::Struct { name, .. } | T::Interface { name } | T::Newtype { name, .. } | T::Enum { name, .. } => {
-            name.to_string()
-        }
+        T::Struct { name, .. }
+        | T::Interface { name }
+        | T::Newtype { name, .. }
+        | T::Enum { name, .. } => name.to_string(),
         T::Array { elem } => format!("Array<{}>", descriptor_tree_name(elem)),
         T::Option { inner } => format!("Option<{}>", descriptor_tree_name(inner)),
         T::Union { members } => members
@@ -384,10 +415,7 @@ fn collect_recurse_refs<'a>(
 /// lazy getters — but deterministic output is nicer to read and diff).
 fn collect_super_group<'a>(
     name: &'a str,
-    decl_trees: &std::collections::HashMap<
-        &'a str,
-        deka_syntax::typeck::DescriptorTree<'a>,
-    >,
+    decl_trees: &std::collections::HashMap<&'a str, deka_syntax::typeck::DescriptorTree<'a>>,
     emitted: &mut HashSet<&'a str>,
     group: &mut Vec<&'a str>,
 ) {
@@ -811,15 +839,17 @@ struct Emitter<'a> {
     /// Descriptor trees for every `super` declaration visible to the
     /// typechecker, keyed by declaration name. Read by `emit_prelude` to
     /// intern one frozen const per referenced declaration.
-    super_decl_trees: std::collections::HashMap<
-        &'a str,
-        deka_syntax::typeck::DescriptorTree<'a>,
-    >,
+    super_decl_trees: std::collections::HashMap<&'a str, deka_syntax::typeck::DescriptorTree<'a>>,
     file_stem: String,
     fn_scope: String,
     jsx_path: Vec<usize>,
     jsx_siblings: Vec<usize>,
     jsx_roots: usize,
+    /// Style-scope id for this module (`data-deka-cid-<hash>`), present only
+    /// when the module authors component CSS (side-effect `.css` import).
+    /// None for style-free modules so their markup carries no dead weight
+    /// (RFD 24 §10.6).
+    css_scope: Option<String>,
     /// When set, only these top-level names are emitted (graph shaking).
     live_names: Option<HashSet<String>>,
     needs_live: bool,
@@ -859,6 +889,7 @@ impl<'a> Emitter<'a> {
             jsx_path: Vec::new(),
             jsx_siblings: Vec::new(),
             jsx_roots: 0,
+            css_scope: None,
             live_names: None,
             needs_live: false,
         };
@@ -1460,7 +1491,10 @@ impl<'a> Emitter<'a> {
     fn emit_stmt(&mut self, stmt: &Stmt<'a>) -> Result<(), String> {
         match stmt {
             Stmt::Const { name, value, .. } => {
-                if let Expr::Match { scrutinee, arms, .. } = value {
+                if let Expr::Match {
+                    scrutinee, arms, ..
+                } = value
+                {
                     let result = self.emit_match_value_statements(scrutinee, arms)?;
                     write_indent(&mut self.out, 0);
                     self.out.push_str("const ");
@@ -1483,7 +1517,10 @@ impl<'a> Emitter<'a> {
                 self.out.push_str(";");
             }
             Stmt::Let { name, value, .. } => {
-                if let Expr::Match { scrutinee, arms, .. } = value {
+                if let Expr::Match {
+                    scrutinee, arms, ..
+                } = value
+                {
                     let result = self.emit_match_value_statements(scrutinee, arms)?;
                     write_indent(&mut self.out, 0);
                     self.out.push_str("let ");
@@ -1599,7 +1636,10 @@ impl<'a> Emitter<'a> {
             }
             Stmt::Expr { expr, .. } => {
                 write_indent(&mut self.out, 0);
-                if let Expr::Match { scrutinee, arms, .. } = expr {
+                if let Expr::Match {
+                    scrutinee, arms, ..
+                } = expr
+                {
                     self.emit_match_statements(scrutinee, arms, None)?;
                 } else {
                     self.emit_expr(expr)?;
@@ -1607,7 +1647,10 @@ impl<'a> Emitter<'a> {
                 }
             }
             Stmt::Return { value, .. } => {
-                if let Some(Expr::Match { scrutinee, arms, .. }) = value {
+                if let Some(Expr::Match {
+                    scrutinee, arms, ..
+                }) = value
+                {
                     let result = self.emit_match_value_statements(scrutinee, arms)?;
                     write_indent(&mut self.out, 0);
                     self.out.push_str("return ");
@@ -3197,6 +3240,7 @@ impl<'a> Emitter<'a> {
                     jsx_path: Vec::new(),
                     jsx_siblings: Vec::new(),
                     jsx_roots: 0,
+                    css_scope: self.css_scope.clone(),
                     live_names: None,
                     needs_live: false,
                 };
@@ -3358,6 +3402,12 @@ impl<'a> Emitter<'a> {
                 "\"data-deka-id\": {}",
                 json_string(&self.current_deka_id())
             ));
+            if let Some(cid) = &self.css_scope {
+                // Bare attribute (value `true` renders valueless, Astro's
+                // `data-astro-cid-*` shape). Component tags are not stamped:
+                // the stamp belongs to the host elements a component renders.
+                props.push(format!("\"data-deka-cid-{cid}\": true"));
+            }
         }
         for attr in element.attributes.iter() {
             if attr.name.is_empty() {
