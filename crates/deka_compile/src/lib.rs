@@ -625,12 +625,12 @@ mod tests {
         )
         .expect("compile should succeed");
         assert!(
-            result.js.contains("__deka_scrutinee?.__deka_struct === \"Point\""),
+            result.js.contains("__deka_match_scrutinee_1?.__deka_struct === \"Point\""),
             "got: {}",
             result.js
         );
         assert!(
-            result.js.contains("typeof __deka_scrutinee === \"string\""),
+            result.js.contains("typeof __deka_match_scrutinee_1 === \"string\""),
             "got: {}",
             result.js
         );

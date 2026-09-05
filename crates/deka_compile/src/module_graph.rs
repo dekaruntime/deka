@@ -1104,7 +1104,7 @@ mod tests {
             main_js
         );
         assert!(main_js.contains("Color.Red"), "got: {}", main_js);
-        assert!(main_js.contains("__deka_scrutinee"), "got: {}", main_js);
+        assert!(main_js.contains("__deka_match_scrutinee_"), "got: {}", main_js);
     }
 
     #[test]

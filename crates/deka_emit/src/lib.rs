@@ -75,18 +75,18 @@ mod tests {
             "fn f(v: string | number) string { return match (v) { string(s) => s, number(n) => string(n) }; }",
         );
         assert!(
-            out.contains("typeof __deka_scrutinee === \"string\""),
+            out.contains("typeof __deka_match_scrutinee_1 === \"string\""),
             "expected typeof predicate, got: {}",
             out
         );
         assert!(
-            out.contains("typeof __deka_scrutinee === \"number\""),
+            out.contains("typeof __deka_match_scrutinee_1 === \"number\""),
             "expected typeof predicate, got: {}",
             out
         );
         // The payload is bound to the scrutinee itself.
-        assert!(out.contains("const s = __deka_scrutinee;"), "got: {}", out);
-        assert!(out.contains("const n = __deka_scrutinee;"), "got: {}", out);
+        assert!(out.contains("const s = __deka_match_scrutinee_1;"), "got: {}", out);
+        assert!(out.contains("const n = __deka_match_scrutinee_1;"), "got: {}", out);
         // Primitives have no __case tag; emitting one would mean the union
         // lookup was skipped.
         assert!(!out.contains("__case === \"string\""), "got: {}", out);
@@ -98,14 +98,14 @@ mod tests {
             "struct Point { x: number; y: number }\nfn f(v: Point | string) number { return match (v) { Point(p) => p.x, string(s) => s.length }; }",
         );
         assert!(
-            out.contains("__deka_scrutinee?.__deka_struct === \"Point\""),
+            out.contains("__deka_match_scrutinee_1?.__deka_struct === \"Point\""),
             "expected brand-tag predicate, got: {}",
             out
         );
         // The struct factory is emitted because the struct is declared in
         // this module; the type-pattern itself reads the tag directly.
         assert!(out.contains("function __deka_struct"), "got: {}", out);
-        assert!(out.contains("const p = __deka_scrutinee;"), "got: {}", out);
+        assert!(out.contains("const p = __deka_match_scrutinee_1;"), "got: {}", out);
     }
 
     #[test]
@@ -149,12 +149,12 @@ mod tests {
             "fn f(v: boolean | bytes) number { return match (v) { boolean(b) => 1, bytes(raw) => 2 }; }",
         );
         assert!(
-            out.contains("typeof __deka_scrutinee === \"boolean\""),
+            out.contains("typeof __deka_match_scrutinee_1 === \"boolean\""),
             "got: {}",
             out
         );
         assert!(
-            out.contains("__deka_scrutinee instanceof Uint8Array"),
+            out.contains("__deka_match_scrutinee_1 instanceof Uint8Array"),
             "got: {}",
             out
         );
@@ -187,6 +187,20 @@ mod tests {
         assert!(out.contains("__case"), "expected case dispatch, got: {}", out);
         assert!(out.contains("Some"), "got: {}", out);
         assert!(out.contains("None"), "got: {}", out);
+        assert!(out.contains("let __deka_match_result_1;"), "got: {}", out);
+        assert!(!out.contains("((__deka_scrutinee) =>"), "match expression still has an IIFE: {}", out);
+    }
+
+    #[test]
+    fn emit_match_statement_without_iife() {
+        let out = parse_and_emit(
+            "const o = Some(5); match o { Some(n) => console.log(n), None => console.log(0) };",
+        );
+        assert!(out.contains("const __deka_match_scrutinee_1 = o;"), "got: {}", out);
+        assert!(out.contains("if (__deka_match_scrutinee_1.__case === \"Some\")"), "got: {}", out);
+        assert!(!out.contains("=> {"), "match statement still has an IIFE: {}", out);
+        assert!(out.contains("throw new Error(\"non-exhaustive match\")"), "got: {}", out);
+        assert!(!out.contains("((__deka_scrutinee) =>"), "match statement still has an IIFE: {}", out);
     }
 
     #[test]
