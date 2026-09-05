@@ -131,6 +131,100 @@ fn write_importmap_entries(
         .map_err(|err| format!("failed to write {}: {err}", path.display()))
 }
 
+/// Map `/assets/<logical>.js|css` -> `/assets/<logical>.<hash>.js|css` for
+/// every content-hashed file under `root` (recursively), where `dir` is the
+/// directory currently being scanned. This is the single source of truth for
+/// the logical->hashed URL rewrite shared by `deka build` (dist HTML) and
+/// `deka serve` (serve-entry.dsx).
+pub fn collect_hashed_asset_renames(
+    root: &Path,
+    dir: &Path,
+    out: &mut Vec<(String, String)>,
+) -> Result<(), String> {
+    let Ok(reader) = fs::read_dir(dir) else {
+        return Ok(());
+    };
+    for entry in reader.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_hashed_asset_renames(root, &path, out)?;
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let Some((stem_with_hash, ext)) = name.rsplit_once('.') else {
+            continue;
+        };
+        if ext != "js" && ext != "css" {
+            continue;
+        }
+        let Some((logical_stem, hash)) = stem_with_hash.rsplit_once('.') else {
+            continue;
+        };
+        let is_hash = hash.len() == ASSET_HASH_LEN
+            && hash
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        if !is_hash {
+            continue;
+        }
+        let Ok(rel) = path.strip_prefix(root) else {
+            continue;
+        };
+        let rel = rel.to_string_lossy().replace('\\', "/");
+        let mut logical_rel = format!("{logical_stem}.{ext}");
+        if let Some(parent) = Path::new(&rel).parent().and_then(|p| p.to_str()) {
+            if !parent.is_empty() {
+                logical_rel = format!("{parent}/{logical_rel}");
+            }
+        }
+        out.push((format!("/assets/{logical_rel}"), format!("/assets/{rel}")));
+    }
+    Ok(())
+}
+
+/// Rewrite the unhashed `/assets/...` logical URLs baked into the generated
+/// app-router entry (`.cache/dekascript/serve-entry.dsx`) to the
+/// content-hashed names emitted under `.cache/dekascript/assets`.
+///
+/// `deka serve` generates the entry before the client assets exist
+/// (`engine::config::resolve_handler_path` runs ahead of the serve-startup
+/// asset write), so the entry is born with unhashed names and this pass runs
+/// immediately after the asset writers — the serve-side mirror of the
+/// dist-HTML rewrite in `deka build` (crates/cli/src/cli/build.rs). Both
+/// modes derive renames from the emitted files via
+/// `collect_hashed_asset_renames`, so identical source resolves to identical
+/// URLs in dev and prod. Idempotent: hashed URLs never match the logical
+/// patterns.
+pub fn rewrite_serve_entry_asset_urls(project_root: &Path) -> Result<(), String> {
+    let cache_dir = project_root.join(".cache").join("dekascript");
+    let entry = cache_dir.join("serve-entry.dsx");
+    if !entry.is_file() {
+        return Ok(());
+    }
+    let assets_dir = cache_dir.join("assets");
+    let mut renames: Vec<(String, String)> = Vec::new();
+    collect_hashed_asset_renames(&assets_dir, &assets_dir, &mut renames)?;
+    if renames.is_empty() {
+        return Ok(());
+    }
+    let mut source = fs::read_to_string(&entry)
+        .map_err(|err| format!("failed to read {}: {err}", entry.display()))?;
+    let mut changed = false;
+    for (logical, hashed) in &renames {
+        if source.contains(logical.as_str()) {
+            source = source.replace(logical.as_str(), hashed.as_str());
+            changed = true;
+        }
+    }
+    if changed {
+        fs::write(&entry, source.as_bytes())
+            .map_err(|err| format!("failed to write {}: {err}", entry.display()))?;
+    }
+    Ok(())
+}
+
 /// Hashed file names of the shared `ui/*` runtime chunks.
 struct UiChunkNames {
     jsx: String,
@@ -163,10 +257,19 @@ impl UiChunkNames {
 fn write_ui_chunks(ui_dir: &Path) -> Result<UiChunkNames, String> {
     fs::create_dir_all(ui_dir)
         .map_err(|err| format!("failed to create {}: {err}", ui_dir.display()))?;
+    // The vendored client chunk imports its siblings by unhashed relative
+    // paths ("./jsx.js"); only hashed names exist on disk, so rewrite the
+    // imports to the hashed sibling names before hashing the chunk itself —
+    // otherwise the emitted graph 404s the moment it loads in a browser.
+    let jsx = hashed_asset_name("jsx", "js", deka_ui::JSX.as_bytes());
+    let reactive = hashed_asset_name("reactive", "js", deka_ui::REACTIVE.as_bytes());
+    let client_src = deka_ui::CLIENT
+        .replace("./jsx.js", &format!("./{jsx}"))
+        .replace("./reactive.js", &format!("./{reactive}"));
     let names = UiChunkNames {
-        jsx: hashed_asset_name("jsx", "js", deka_ui::JSX.as_bytes()),
-        reactive: hashed_asset_name("reactive", "js", deka_ui::REACTIVE.as_bytes()),
-        client: hashed_asset_name("client", "js", deka_ui::CLIENT.as_bytes()),
+        jsx,
+        reactive,
+        client: hashed_asset_name("client", "js", client_src.as_bytes()),
         server_stub: hashed_asset_name(
             "server-stub",
             "js",
@@ -182,12 +285,12 @@ fn write_ui_chunks(ui_dir: &Path) -> Result<UiChunkNames, String> {
     .into_iter()
     .collect();
     for (name, source) in [
-        (&names.jsx, deka_ui::JSX),
-        (&names.reactive, deka_ui::REACTIVE),
-        (&names.client, deka_ui::CLIENT),
+        (&names.jsx, deka_ui::JSX.to_string()),
+        (&names.reactive, deka_ui::REACTIVE.to_string()),
+        (&names.client, client_src),
         (
             &names.server_stub,
-            "export function renderToString() { throw new Error(\"ui/server is not available in the browser\"); }\n",
+            "export function renderToString() { throw new Error(\"ui/server is not available in the browser\"); }\n".to_string(),
         ),
     ] {
         fs::write(ui_dir.join(name), source.as_bytes())

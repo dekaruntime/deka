@@ -1072,6 +1072,22 @@ pub fn write_app_router_entry(project_root: &Path) -> Result<PathBuf, String> {
         .map_err(|err| format!("failed to read {}: {err}", index_path.display()))?;
     let islands = scan_client_islands(&app_dir);
     let deferred = scan_server_defer(&app_dir);
+    // RFD 24 §10.7: a document that loads client chunks resolves bare
+    // specifiers through assets/importmap.json. That URL is not content
+    // hashed, so the tag is baked at generation time; `deka build` adds the
+    // same tag to dist HTML only when the prerendered document lacks one.
+    let index_html = if (!islands.is_empty() || !deferred.is_empty())
+        && !index_html.contains("type=\"importmap\"")
+    {
+        let tag = r#"<script type="importmap" src="/assets/importmap.json"></script>"#;
+        if index_html.contains("</head>") {
+            index_html.replacen("</head>", &format!("  {tag}\n</head>"), 1)
+        } else {
+            format!("{tag}\n{index_html}")
+        }
+    } else {
+        index_html
+    };
     let mut scripts = island_script_tags(&islands);
     scripts.push_str(&defer_script_tag(!deferred.is_empty()));
     if !deferred.is_empty() {
