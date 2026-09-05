@@ -36,6 +36,21 @@ pub struct TypeError {
     pub message: String,
 }
 
+/// Add the actionable next step when a value's union type is used where one
+/// concrete type is required. Keep this at the diagnostic boundary rather
+/// than in `is_assignable`, whose recursive calls also check union members.
+pub(super) fn with_union_narrowing_hint<'a>(
+    message: String,
+    expected: &Type<'a>,
+    actual: &Type<'a>,
+) -> String {
+    if matches!(actual, Type::Union { .. }) && !matches!(expected, Type::Union { .. }) {
+        format!("{message}; narrow it with a match before use")
+    } else {
+        message
+    }
+}
+
 pub struct TypeckResult<'a> {
     pub program: &'a Program<'a>,
     pub errors: Vec<Diagnostic>,
@@ -1071,7 +1086,15 @@ impl<'a> Checker<'a> {
             return;
         }
         if !ty.is_error() && !Self::is_number(ty) {
-            self.error_span(span, format!("expected type `number`, found type `{ty}`"));
+            let expected = Type::Named { name: "number" };
+            self.error_span(
+                span,
+                with_union_narrowing_hint(
+                    format!("expected type `number`, found type `{ty}`"),
+                    &expected,
+                    ty,
+                ),
+            );
         }
     }
 
@@ -1080,7 +1103,15 @@ impl<'a> Checker<'a> {
             return;
         }
         if !ty.is_error() && !Self::is_boolean(ty) {
-            self.error_span(span, format!("expected type `boolean`, found type `{ty}`"));
+            let expected = Type::Named { name: "boolean" };
+            self.error_span(
+                span,
+                with_union_narrowing_hint(
+                    format!("expected type `boolean`, found type `{ty}`"),
+                    &expected,
+                    ty,
+                ),
+            );
         }
     }
 
@@ -2773,6 +2804,37 @@ mod tests {
             "{}",
             errors[0].message
         );
+    }
+
+    #[test]
+    fn union_return_diagnostic_teaches_narrowing() {
+        let errors = typeck("fn f(v: string | number) string { return v; }");
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert_eq!(
+            errors[0].message,
+            "expected return type `string`, found type `number | string`; narrow it with a match before use"
+        );
+    }
+
+    #[test]
+    fn union_argument_diagnostic_teaches_narrowing() {
+        let errors = typeck(
+            "fn takes(v: string) string { return v; } fn f(v: string | number) string { return takes(v); }",
+        );
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert_eq!(
+            errors[0].message,
+            "expected argument type `string`, found type `number | string`; narrow it with a match before use"
+        );
+    }
+
+    #[test]
+    fn union_to_union_diagnostic_has_no_narrowing_hint() {
+        let errors = typeck(
+            "const x: string | number = 1; const y: string | boolean = x;",
+        );
+        assert_eq!(errors.len(), 1, "{:?}", errors);
+        assert!(!errors[0].message.contains("narrow it with a match"));
     }
 
     #[test]
