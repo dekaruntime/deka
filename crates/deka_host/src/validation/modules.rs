@@ -12,8 +12,7 @@ use runtime_core::modules::{
 
 use super::{ErrorKind, Severity, ValidationError};
 use crate::validation::imports::{
-    ImportKind, ImportSpec, consume_comment_line, frontmatter_bounds, is_ident, parse_import_line,
-    strip_php_tags_inline,
+    ImportKind, ImportSpec, consume_comment_line, is_ident, parse_import_line, strip_php_tags_inline,
 };
 
 #[derive(Debug, Clone)]
@@ -284,10 +283,7 @@ impl ModuleGraph {
             }
         }
 
-        let mut exports = collect_exports(&source, file_path.to_string_lossy().as_ref());
-        if is_template_module(&source) {
-            exports.insert("Component".to_string());
-        }
+        let exports = collect_exports(&source, file_path.to_string_lossy().as_ref());
 
         if let Some(node) = self.nodes.get_mut(module_id) {
             node.imports = imports;
@@ -403,16 +399,9 @@ fn has_top_level_await(source: &str) -> bool {
 
 pub(crate) fn collect_import_specs(source: &str, file_path: &str) -> Vec<ImportSpec> {
     let lines: Vec<&str> = source.lines().collect();
-    let bounds = frontmatter_bounds(&lines);
-    let scan_end = bounds.map(|(_, end)| end).unwrap_or(lines.len());
     let mut in_block_comment = false;
     let mut specs = Vec::new();
-    for (idx, line) in lines.iter().enumerate().take(scan_end) {
-        if let Some((start, end)) = bounds {
-            if idx == start || idx == end {
-                continue;
-            }
-        }
+    for (idx, line) in lines.iter().enumerate() {
         let clean = strip_php_tags_inline(line);
         let trimmed = clean.trim();
         if trimmed.is_empty() {
@@ -432,16 +421,9 @@ pub(crate) fn collect_import_specs(source: &str, file_path: &str) -> Vec<ImportS
 
 fn collect_exports(source: &str, _file_path: &str) -> HashSet<String> {
     let lines: Vec<&str> = source.lines().collect();
-    let bounds = frontmatter_bounds(&lines);
-    let scan_end = bounds.map(|(_, end)| end).unwrap_or(lines.len());
     let mut in_block_comment = false;
     let mut exports = HashSet::new();
-    for (idx, line) in lines.iter().enumerate().take(scan_end) {
-        if let Some((start, end)) = bounds {
-            if idx == start || idx == end {
-                continue;
-            }
-        }
+    for line in lines.iter() {
         let clean = strip_php_tags_inline(line);
         let trimmed = clean.trim();
         if trimmed.is_empty() {
@@ -515,18 +497,6 @@ fn export_name_after_keyword(line: &str, keyword: &str) -> Option<String> {
     } else {
         None
     }
-}
-
-fn is_template_module(source: &str) -> bool {
-    let lines: Vec<&str> = source.lines().collect();
-    let bounds = frontmatter_bounds(&lines);
-    let Some((_, end)) = bounds else {
-        return false;
-    };
-    lines
-        .iter()
-        .skip(end + 1)
-        .any(|line| !line.trim().is_empty())
 }
 
 pub(crate) fn resolve_modules_root(file_path: &str) -> Option<PathBuf> {
@@ -1185,7 +1155,7 @@ fn validate_wasm_manifest(
         .get("stubs")
         .and_then(|v| v.as_str())
         .map(|s| target.root_path.join(s))
-        .unwrap_or_else(|| target.root_path.join("module.d.phpx"));
+        .unwrap_or_else(|| target.root_path.join("module.d.ds"));
     if !stub_path.exists() {
         errors.push(wasm_error(
             spec.line,

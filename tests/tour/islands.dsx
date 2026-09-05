@@ -14,3 +14,7 @@ match (result) {
   Ok(r) => echo(r.html),
   Err(e) => echo(e.message),
 }
+
+export fn Page() Component {
+  return <Counter client={"load"} start={5} />
+}

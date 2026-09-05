@@ -1,6 +1,0 @@
----
-export function Header() {
-    return <div>Hi</div>;
-}
----
-<div>Hi</div>

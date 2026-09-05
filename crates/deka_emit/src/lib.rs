@@ -46,6 +46,7 @@ mod tests {
             &typeck.signature_calls,
             &typeck.json_calls,
             &typeck.array_first_last_calls,
+            &typeck.number_math_calls,
             &typeck.static_type_calls,
             &typeck.super_trees,
             &typeck.jsx_optional_props,
@@ -697,6 +698,54 @@ mod tests {
         );
     }
 
+    // ------------------------------------------------------------------
+    // Math-backed `number` methods (deka#378 step 2, rfd#40 phase 2)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn emit_number_math_total_rewrite() {
+        // JS numbers have no `floor`/`max`; verbatim passthrough would be a
+        // runtime lie, so the call rewrites to a plain `Math.*` expression.
+        let out = parse_check_and_emit("const f: number = (3.7).floor();\nconst m: number = (1).max(2);");
+        assert!(out.contains("Math.floor((3.7))"), "got: {}", out);
+        assert!(out.contains("Math.max((1), 2)"), "got: {}", out);
+        // Total calls produce no `Option`, so the enum prelude is not forced.
+        assert!(!out.contains("const Some = Option.Some;"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_number_math_partial_wraps_nan_as_none() {
+        // The honest-values contract (rfd#13): where JS would hand back
+        // `NaN`, the emitted wrapper answers `None`.
+        let out = parse_check_and_emit(
+            "const s: Option<number> = (4).sqrt();\nconst p: Option<number> = (2).pow(10);",
+        );
+        assert!(
+            out.contains("((v) => isNaN(v) ? None : Some(v))(Math.sqrt((4)))"),
+            "got: {}",
+            out
+        );
+        assert!(
+            out.contains("((v) => isNaN(v) ? None : Some(v))(Math.pow((2), 10))"),
+            "got: {}",
+            out
+        );
+        // The wrapper needs `Some`/`None`, so the enum prelude is forced.
+        assert!(out.contains("const Some = Option.Some;"), "got: {}", out);
+        assert!(out.contains("const None = Option.None;"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_number_math_extension_shadows_builtin() {
+        // A user extension named `floor` keeps the deka#527 free-function
+        // rewrite; the Math-backed builtin must not fire (deka#378 step 2).
+        let out = parse_check_and_emit(
+            "fn (n number) floor() string { return \"x\"; }\nconst u: string = (3.7).floor();",
+        );
+        assert!(out.contains("floor$number((3.7))"), "got: {}", out);
+        assert!(!out.contains("Math.floor"), "got: {}", out);
+    }
+
     #[test]
     fn emit_array_first_last_absent_without_use() {
         let out = parse_check_and_emit("const a: Array<number> = [1];\nconst n: number = a.length;");
@@ -858,6 +907,7 @@ mod tests {
             &std::collections::HashMap::new(),
             &std::collections::HashMap::new(),
             &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
             &static_type_calls,
             &super_decl_trees,
             &std::collections::HashMap::new(),
@@ -973,6 +1023,7 @@ mod tests {
             &typeck.signature_calls,
             &typeck.json_calls,
             &typeck.array_first_last_calls,
+            &typeck.number_math_calls,
             &typeck.static_type_calls,
             &typeck.super_trees,
             &typeck.jsx_optional_props,
@@ -1032,6 +1083,7 @@ mod tests {
             &typeck.unwrap_calls, &typeck.operator_rewrites, &typeck.method_calls,
             &typeck.type_of_calls, &typeck.signature_calls, &typeck.json_calls,
             &typeck.array_first_last_calls,
+            &typeck.number_math_calls,
             &typeck.static_type_calls, &typeck.super_trees,
             &typeck.jsx_optional_props, &typeck.enum_case_patterns,
             &typeck.union_type_patterns, "module.ds", Some(&live)).expect("emit failed");
