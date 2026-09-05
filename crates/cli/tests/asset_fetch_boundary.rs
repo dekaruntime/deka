@@ -460,3 +460,127 @@ fn dist_asset_references_exist_on_disk() {
         "inline import map must agree with assets/importmap.json"
     );
 }
+
+// ---------------------------------------------------------------------------
+// deka#622 finding D: import-map prefix skew.
+//
+// The browser import map's stdlib prefixes must point at the layout
+// `deka install` actually writes — `ds_modules/@deka/<pkg>/`, the same
+// scoped alias the server resolvers derive from `module_spec_aliases`.
+// deka#604 inlined the map into the document, so a stale prefix is a real
+// 404 rather than a theoretical one.
+// ---------------------------------------------------------------------------
+
+/// A `serve.entry` web project with hydration enabled and one scoped package
+/// installed per stdlib prefix — exactly the tree `deka install` writes
+/// (crates/cli/tests/project_gate_boundary.rs lays it out the same way, in
+/// lieu of a registry to install from).
+fn write_importmap_prefix_fixture(dir: &Path) {
+    fs::create_dir_all(dir.join("app")).expect("mkdir app");
+    fs::create_dir_all(dir.join("public")).expect("mkdir public");
+    fs::write(
+        dir.join("deka.json"),
+        concat!(
+            r#"{"name":"prefix-boundary","type":"serve","#,
+            r#""dependencies":{"@deka/component":"*","@deka/db":"*","@deka/deka":"*","@deka/encoding":"*"},"#,
+            r#""serve":{"entry":"app/main.dsx"}}"#
+        ),
+    )
+    .expect("write deka.json");
+    fs::write(
+        dir.join("deka.lock"),
+        r#"{"lockfileVersion":1,"packages":{}}"#,
+    )
+    .expect("write deka.lock");
+    fs::write(
+        dir.join("index.html"),
+        "<!doctype html>\n<html><head><title>prefix</title></head><body><div id=\"app\"></div></body></html>\n",
+    )
+    .expect("write index.html");
+    // Hydration enables the client compile whose entry keeps the bare
+    // `encoding/json` import for the browser to resolve through the map.
+    fs::write(
+        dir.join("app").join("main.dsx"),
+        concat!(
+            "import { shout } from \"encoding/json\"\n\n",
+            "fn Hydration() {\n    return <span>hydrate</span>\n}\n\n",
+            "export fn App() {\n    const label = shout(\"hi\")\n",
+            "    return <div><Hydration/><p>{label}</p></div>\n}\n",
+        ),
+    )
+    .expect("write entry");
+    for package in ["component", "db", "deka", "encoding"] {
+        let module_dir = dir.join("ds_modules").join("@deka").join(package);
+        fs::create_dir_all(&module_dir).expect("module dir");
+        // The entry imports "encoding/json", which resolves to
+        // @deka/encoding/json — the subpath, not the package index.
+        let (source, export) = if package == "encoding" {
+            (module_dir.join("json.ds"), "shout")
+        } else {
+            (module_dir.join("index.ds"), "stub")
+        };
+        fs::write(
+            source,
+            format!("export fn {export}(value: string) string {{\n    return value\n}}\n"),
+        )
+        .expect("module source");
+    }
+}
+
+/// Every `/ds_modules/` prefix URL in every emitted import map must resolve
+/// to a path that exists under dist/client — the static root the browser
+/// fetches from. This fails on the pre-fix map twice over: the prefixes
+/// point at the unscoped layout (`/ds_modules/encoding/`) while installs
+/// land under `@deka/`, and dist/client never received the module tree at
+/// all. Reachability, not string equality, so the next layout drift fails
+/// here instead of 404ing in a browser.
+#[test]
+fn dist_importmap_stdlib_prefixes_match_installed_packages() {
+    let project = tempfile::tempdir().expect("tempdir");
+    write_importmap_prefix_fixture(project.path());
+    let output = Command::new(cli_bin())
+        .arg("build")
+        .current_dir(project.path())
+        .output()
+        .expect("run deka build");
+    assert!(
+        output.status.success(),
+        "deka build failed: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let dist_client = project.path().join("dist").join("client");
+    // Both copies the build emits: the assets-side original and the
+    // document-root copy the HTML references as /importmap.json.
+    for map_path in [
+        dist_client.join("assets").join("importmap.json"),
+        dist_client.join("importmap.json"),
+    ] {
+        let map: serde_json::Value =
+            serde_json::from_slice(&fs::read(&map_path).expect("read importmap"))
+                .expect("importmap must parse");
+        let imports = map
+            .get("imports")
+            .and_then(|v| v.as_object())
+            .expect("importmap must have an imports object");
+        let prefixes: Vec<&str> = imports
+            .values()
+            .filter_map(|url| url.as_str())
+            .filter(|url| url.starts_with("/ds_modules/"))
+            .collect();
+        assert!(
+            !prefixes.is_empty(),
+            "{} must carry /ds_modules/ stdlib prefixes: {imports:?}",
+            map_path.display()
+        );
+        for url in prefixes {
+            let path = dist_client.join(url.trim_start_matches('/'));
+            assert!(
+                path.exists(),
+                "import map prefix {url} (in {}) must resolve to a path that exists under dist/client: {}",
+                map_path.display(),
+                path.display()
+            );
+        }
+    }
+}

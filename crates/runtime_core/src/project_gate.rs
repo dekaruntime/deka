@@ -16,7 +16,9 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use crate::module_spec::{ds_source_candidates, is_bare_module_specifier, module_spec_aliases};
+use crate::module_spec::{
+    ds_source_candidates, is_bare_module_specifier, module_spec_aliases, STDLIB_SPEC_PREFIXES,
+};
 use crate::modules::resolve_modules_dir;
 
 /// How strict to be, stated by the caller rather than inferred from ambient state.
@@ -60,10 +62,9 @@ pub fn is_stdlib_module_spec(spec: &str) -> bool {
 
     // Any `@deka/*` specifier is stdlib by construction — the scope is ours.
     spec.starts_with("@deka/")
-        || spec.starts_with("component/")
-        || spec.starts_with("deka/")
-        || spec.starts_with("encoding/")
-        || spec.starts_with("db/")
+        || STDLIB_SPEC_PREFIXES
+            .iter()
+            .any(|prefix| spec.starts_with(prefix))
         || matches!(
             spec,
             "json"
