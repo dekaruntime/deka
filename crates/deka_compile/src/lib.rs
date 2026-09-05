@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use bumpalo::Bump;
-use deka_emit::emit_js_with_options;
+use deka_emit::emit_js_module_with_options;
 use deka_syntax::typeck::Type;
 use deka_syntax::{
     check_program_with_imports, parse, resolve_imported_enum_constructors, Diagnostic, Expr,
@@ -344,6 +344,10 @@ pub fn parse_source_module_meta(source: &str) -> SourceModuleMeta {
 pub struct CompileResult {
     pub js: String,
     pub diagnostics: Vec<Diagnostic>,
+    /// This module's demand for shared runtime helpers (see
+    /// [`CompileOptions::detached_prelude`]). Always populated; only
+    /// meaningful when the prelude was detached.
+    pub demand: deka_emit::prelude::PreludeDemand,
 }
 
 /// Options controlling compiler emission and module resolution.
@@ -363,6 +367,14 @@ pub struct CompileOptions {
     pub used_exports: Option<HashSet<String>>,
     /// When true, an import of `ui/server` is a compile error.
     pub client: bool,
+    /// When true (module-graph compilation), the shared runtime prelude
+    /// (`__deka_struct`, `__deka_type_of`, enum bindings, …) is NOT inlined
+    /// into the emitted JS. The module graph unions every module's
+    /// [`CompileResult::demand`] and synthesizes the prelude once per
+    /// program (deka#595); bundlers prepend it to the single output scope.
+    /// Single-module compilation leaves this false: the module stays
+    /// self-contained.
+    pub detached_prelude: bool,
 }
 
 /// Compile a DekaScript source to JavaScript using the v2 pipeline.
@@ -536,7 +548,7 @@ pub fn compile_to_js_with_imports_and_options<'a>(
         return Err(typeck_result.errors);
     }
 
-    let js = emit_js_with_options(
+    let emitted = emit_js_module_with_options(
         &program,
         source,
         imports,
@@ -556,12 +568,14 @@ pub fn compile_to_js_with_imports_and_options<'a>(
         &typeck_result.union_type_patterns,
         file_path,
         options.used_exports.as_ref(),
+        options.detached_prelude,
     )
     .map_err(|message| vec![Diagnostic::error(0, 0, message)])?;
 
     Ok(CompileResult {
-        js,
+        js: emitted.js,
         diagnostics: typeck_result.warnings,
+        demand: emitted.demand,
     })
 }
 
@@ -632,6 +646,35 @@ mod tests {
         let result = compile_to_js("const x: Option<number> = None;", "test.ds")
             .expect("compile should succeed");
         assert!(result.js.contains("const x"));
+    }
+
+    /// deka#595: `__deka_type_of` brand branches are gated by the type kinds
+    /// this module can actually produce values of — unreachable branches are
+    /// dead weight.
+    #[test]
+    fn compile_type_of_branches_gated_by_type_kinds() {
+        let none = compile_to_js("const t = \"x\".getType().toString();", "test.ds")
+            .expect("compile should succeed");
+        assert!(
+            none.js.contains("function __deka_type_of"),
+            "got:\n{}",
+            none.js
+        );
+        assert!(!none.js.contains("v.__deka_struct"), "got:\n{}", none.js);
+        assert!(!none.js.contains("v.__enum"), "got:\n{}", none.js);
+        assert!(!none.js.contains("v.__deka_newtype"), "got:\n{}", none.js);
+
+        let with_struct = compile_to_js(
+            "struct Point { x: number }\nconst p = Point { x: 1 };\nconst t = p.getType().toString();",
+            "test.ds",
+        )
+        .expect("compile should succeed");
+        assert!(
+            with_struct.js.contains("v.__deka_struct"),
+            "got:\n{}",
+            with_struct.js
+        );
+        assert!(!with_struct.js.contains("v.__enum"), "got:\n{}", with_struct.js);
     }
 
     #[test]

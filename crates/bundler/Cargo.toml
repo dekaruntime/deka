@@ -29,3 +29,6 @@ num_cpus = "1.16"
 stdio = { path = "../stdio" }
 runtime_core = { path = "../runtime_core" }
 deka_ui = { path = "../deka_ui" }
+
+[dev-dependencies]
+deka_compile = { path = "../deka_compile" }

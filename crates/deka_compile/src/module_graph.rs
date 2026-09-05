@@ -282,8 +282,22 @@ struct GraphModule {
 pub struct ModuleGraphResult {
     /// Absolute path of the entry module.
     pub entry: PathBuf,
-    /// Map from absolute module path to emitted JavaScript.
+    /// Map from absolute module path to emitted JavaScript. The shared
+    /// runtime prelude is NOT inlined (see [`Self::prelude`]); module bodies
+    /// reference its helpers as free identifiers.
     pub modules: HashMap<PathBuf, String>,
+    /// The shared runtime prelude synthesized ONCE for the whole program
+    /// from the union of every module's demand (deka#595): a helper appears
+    /// iff some call site in the program needs it, and each decomposable
+    /// member (`impl` / `implMut` / embeds, `__deka_type_of` branches)
+    /// appears iff some module asked for it. Bundle consumers prepend this
+    /// to the single output scope.
+    pub prelude: String,
+    /// Per-module shared prelude, synthesized from each module's own demand.
+    /// Hosts that serve modules as separate files (separate scopes) prepend
+    /// the module's own prelude to its body — see
+    /// [`Self::self_contained_modules`].
+    pub module_preludes: HashMap<PathBuf, String>,
     /// Every import specifier written anywhere in the graph, as written.
     ///
     /// Callers that gate on dependencies need the transitive set, not the
@@ -291,6 +305,21 @@ pub struct ModuleGraphResult {
     /// stdlib package the project does not declare.  gated on
     /// entry-only imports and missed exactly that (deka#430).
     pub imports: BTreeSet<String>,
+}
+
+impl ModuleGraphResult {
+    /// Self-contained per-module JS (own prelude + body) for hosts that serve
+    /// modules as separate files and cannot share the program prelude.
+    pub fn self_contained_modules(&self) -> HashMap<PathBuf, String> {
+        self.modules
+            .iter()
+            .map(|(path, js)| {
+                let mut full = self.module_preludes.get(path).cloned().unwrap_or_default();
+                full.push_str(js);
+                (path.clone(), full)
+            })
+            .collect()
+    }
 }
 
 /// Compile every reachable `.ds` module from `entry` and return the emitted
@@ -641,8 +670,13 @@ pub fn compile_module_graph_with_options(
     // ------------------------------------------------------------------
     // Emit each kept module.  We compile in dependency order so imported
     // structs, enums, and receiver methods are known to the typechecker.
+    // The shared runtime prelude is detached from every module: each module
+    // records its demand, and the program prelude below is synthesized once
+    // from their union (deka#595).
     // ------------------------------------------------------------------
     let mut emitted: HashMap<PathBuf, String> = HashMap::with_capacity(plan.keep.len());
+    let mut demands: HashMap<PathBuf, deka_emit::prelude::PreludeDemand> =
+        HashMap::with_capacity(plan.keep.len());
     for path in order {
         if !plan.keep.contains(&path) {
             continue;
@@ -663,6 +697,7 @@ pub fn compile_module_graph_with_options(
             used_exports: plan.live.get(&path).cloned().flatten(),
             client: options.client,
             module_base: options.module_base.clone(),
+            detached_prelude: true,
             ..Default::default()
         };
         match compile_to_js_with_imports_and_options(
@@ -673,6 +708,7 @@ pub fn compile_module_graph_with_options(
             compile_options,
         ) {
             Ok(result) => {
+                demands.insert(path.clone(), result.demand);
                 emitted.insert(path, result.js);
             }
             Err(diagnostics) => {
@@ -691,9 +727,23 @@ pub fn compile_module_graph_with_options(
         return Err(errors);
     }
 
+    // Synthesize the shared runtime prelude once for the whole program from
+    // the union of per-module demand: each helper iff some call site needs
+    // it, each member iff some module asked for it (deka#595). Per-module
+    // preludes serve hosts that keep modules in separate scopes.
+    let mut program_demand = deka_emit::prelude::PreludeDemand::default();
+    let mut module_preludes: HashMap<PathBuf, String> = HashMap::with_capacity(demands.len());
+    for (path, demand) in &demands {
+        program_demand.union(demand);
+        module_preludes.insert(path.clone(), deka_emit::prelude::shared_prelude(demand));
+    }
+    let prelude = deka_emit::prelude::shared_prelude(&program_demand);
+
     Ok(ModuleGraphResult {
         entry,
         modules: emitted,
+        prelude,
+        module_preludes,
         imports: all_imports,
     })
 }
@@ -1145,6 +1195,127 @@ mod tests {
             main_js
         );
         assert!(main_js.contains("p.greet()"), "got: {}", main_js);
+    }
+
+    /// deka#595: the graph synthesizes the shared prelude ONCE for the whole
+    /// program, from the union of per-module demand at member granularity.
+    /// Module bodies are emitted without it (bundle consumers prepend the
+    /// program prelude); separate-file hosts use `self_contained_modules`.
+    #[test]
+    fn graph_prelude_synthesized_once_from_union_demand() {
+        let root = PathBuf::from("/project");
+        let point = root.join("point.ds");
+        let size = root.join("size.ds");
+        let main = root.join("main.ds");
+
+        let mut files = HashMap::new();
+        files.insert(
+            point.clone(),
+            "struct Point { x: number }\nexport { Point }".to_string(),
+        );
+        files.insert(
+            size.clone(),
+            "struct Size { w: number }\nexport { Size }".to_string(),
+        );
+        files.insert(
+            main.clone(),
+            "import { Point } from \"./point.ds\";\nimport { Size } from \"./size.ds\";\nconst p = Point { x: 1 };\nconst s = Size { w: 2 };\nconst t = p.x + s.w;".to_string(),
+        );
+
+        let mut aliases = HashMap::new();
+        aliases.insert((main.clone(), "./point.ds".to_string()), point.clone());
+        aliases.insert((main.clone(), "./size.ds".to_string()), size.clone());
+
+        let loader = InMemoryLoader { files, aliases };
+        let result = compile_module_graph(&main, &loader).expect("compile graph");
+
+        // One program prelude: one factory helper for both modules' structs,
+        // and no impl/implMut/embeds machinery — nobody declared any.
+        assert_eq!(
+            result.prelude.matches("function __deka_struct").count(),
+            1,
+            "program prelude must contain exactly one factory helper:\n{}",
+            result.prelude
+        );
+        assert!(
+            !result.prelude.contains("implMut"),
+            "program prelude has implMut:\n{}",
+            result.prelude
+        );
+        assert!(
+            !result.prelude.contains("f.impl="),
+            "program prelude has impl:\n{}",
+            result.prelude
+        );
+        assert!(
+            !result.prelude.contains("Object.entries(embeds)"),
+            "program prelude has the embeds loop:\n{}",
+            result.prelude
+        );
+        // Neither module body carries its own copy.
+        for path in [&point, &size, &main] {
+            assert!(
+                !result.modules[path].contains("function __deka_struct"),
+                "{} still inlines the helper:\n{}",
+                path.display(),
+                result.modules[path]
+            );
+        }
+        // Separate-file hosts get self-contained modules again.
+        let self_contained = result.self_contained_modules();
+        assert!(
+            self_contained[&point].contains("function __deka_struct"),
+            "self-contained point module lost the helper:\n{}",
+            self_contained[&point]
+        );
+        assert!(
+            self_contained[&main].contains("const p = Point({ x: 1 })"),
+            "self-contained main module lost its body:\n{}",
+            self_contained[&main]
+        );
+    }
+
+    /// deka#595 member granularity across the union: a mutable method in one
+    /// module forces `implMut` + `MutationError` into the program prelude for
+    /// everyone, exactly once.
+    #[test]
+    fn graph_prelude_union_includes_demanded_members() {
+        let root = PathBuf::from("/project");
+        let counter = root.join("counter.ds");
+        let main = root.join("main.ds");
+
+        let mut files = HashMap::new();
+        files.insert(
+            counter.clone(),
+            "struct Counter { n: number }\nfn (c mut Counter) bump() number { return c.n; }\nexport { Counter }".to_string(),
+        );
+        files.insert(
+            main.clone(),
+            "import { Counter } from \"./counter.ds\";\nlet c = Counter { n: 1 };\nc.bump();".to_string(),
+        );
+
+        let mut aliases = HashMap::new();
+        aliases.insert((main.clone(), "./counter.ds".to_string()), counter.clone());
+
+        let loader = InMemoryLoader { files, aliases };
+        let result = compile_module_graph(&main, &loader).expect("compile graph");
+
+        assert_eq!(
+            result.prelude.matches("function __deka_struct").count(),
+            1,
+            "got:\n{}",
+            result.prelude
+        );
+        assert!(
+            result.prelude.contains("f.implMut="),
+            "unioned demand lost implMut:\n{}",
+            result.prelude
+        );
+        assert!(
+            result.prelude.contains("MutationError"),
+            "implMut without its MutationError class:\n{}",
+            result.prelude
+        );
     }
 
     #[test]

@@ -150,6 +150,81 @@ pub fn emit_js_with_options<'a>(
     file_path: &str,
     live_names: Option<&HashSet<String>>,
 ) -> Result<String, String> {
+    Ok(emit_js_module_with_options(
+        program,
+        source,
+        imports,
+        module_base,
+        unwrap_calls,
+        operator_rewrites,
+        method_calls,
+        type_of_calls,
+        signature_calls,
+        json_calls,
+        array_builtin_calls,
+        number_math_calls,
+        static_type_calls,
+        super_decl_trees,
+        jsx_optional_props,
+        enum_case_patterns,
+        union_type_patterns,
+        file_path,
+        live_names,
+        false,
+    )?
+    .js)
+}
+
+/// The emitted module plus its demand for shared runtime helpers.
+///
+/// `js` always contains the module body. When `detached` is false (the
+/// default for single-module compilation) it also inlines the shared prelude
+/// synthesized from [`PreludeDemand`], exactly as before. When `detached` is
+/// true (module-graph emission) the shared prelude is left out of `js`; the
+/// caller unions every module's `demand` and synthesizes the program prelude
+/// once (deka#595).
+#[derive(Debug)]
+pub struct ModuleEmit {
+    pub js: String,
+    pub demand: crate::prelude::PreludeDemand,
+}
+
+/// Like [`emit_js_with_options`], with control over prelude placement.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_js_module_with_options<'a>(
+    program: &'a Program<'a>,
+    source: &str,
+    imports: &HashMap<&str, &deka_syntax::ModuleExports<'a>>,
+    module_base: Option<String>,
+    unwrap_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::UnwrapKind>,
+    operator_rewrites: &HashMap<*const Expr<'a>, deka_syntax::typeck::OperatorRewrite<'a>>,
+    method_calls: &HashMap<*const Expr<'a>, deka_syntax::MethodTarget<'a>>,
+    type_of_calls: &HashSet<*const Expr<'a>>,
+    signature_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::DescriptorTree<'a>>,
+    json_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::JsonCall<'a>>,
+    array_builtin_calls: &HashMap<
+        *const Expr<'a>,
+        deka_syntax::typeck::ArrayAccess,
+    >,
+    number_math_calls: &HashMap<
+        *const Expr<'a>,
+        deka_syntax::typeck::NumberMath,
+    >,
+    static_type_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::StaticTypeCall<'a>>,
+    super_decl_trees: &std::collections::HashMap<&'a str, deka_syntax::typeck::DescriptorTree<'a>>,
+    jsx_optional_props: &HashMap<
+        *const deka_syntax::JsxElement<'a>,
+        deka_syntax::typeck::JsxOptionalProps<'a>,
+    >,
+    enum_case_patterns: &HashMap<*const deka_syntax::Pattern<'a>, &'a str>,
+    union_type_patterns: &HashMap<
+        *const deka_syntax::Pattern<'a>,
+        deka_syntax::typeck::UnionMemberTest<'a>,
+    >,
+    file_path: &str,
+    live_names: Option<&HashSet<String>>,
+    detached: bool,
+) -> Result<ModuleEmit, String> {
     let mut emitter = Emitter::new(program);
     emitter.module_base = module_base;
     emitter.file_stem = file_stem_from_path(file_path);
@@ -168,6 +243,7 @@ pub fn emit_js_with_options<'a>(
     emitter.enum_case_patterns = enum_case_patterns.clone();
     emitter.union_type_patterns = union_type_patterns.clone();
     emitter.live_names = live_names.cloned();
+    emitter.detached = detached;
     if module_imports_side_effect_css(program) {
         // Component CSS is scoped by stamping every host element in this
         // module with `data-deka-cid-<hash>` and rewriting the module's own
@@ -175,7 +251,11 @@ pub fn emit_js_with_options<'a>(
         // component CSS stay unmarked.
         emitter.css_scope = Some(css_scope_hash(source));
     }
-    emitter.emit()
+    let js = emitter.emit()?;
+    Ok(ModuleEmit {
+        js,
+        demand: emitter.demand,
+    })
 }
 
 fn file_stem_from_path(path: &str) -> String {
@@ -853,6 +933,15 @@ struct Emitter<'a> {
     /// When set, only these top-level names are emitted (graph shaking).
     live_names: Option<HashSet<String>>,
     needs_live: bool,
+    /// When true (module-graph emission), the shared runtime prelude is NOT
+    /// inlined into this module's output. The module graph synthesizes it
+    /// once per program from the union of per-module [`Self::demand`]
+    /// (deka#595); module bodies then reference the helpers as free
+    /// identifiers resolved by the single program prelude.
+    detached: bool,
+    /// This module's demand for shared runtime helpers, computed during
+    /// `emit_prelude` from the same scans that gate emission.
+    demand: crate::prelude::PreludeDemand,
 }
 
 impl<'a> Emitter<'a> {
@@ -892,6 +981,8 @@ impl<'a> Emitter<'a> {
             css_scope: None,
             live_names: None,
             needs_live: false,
+            detached: false,
+            demand: crate::prelude::PreludeDemand::default(),
         };
         emitter.prepass();
         emitter.needs_live = emitter.scan_needs_live();
@@ -1286,39 +1377,18 @@ impl<'a> Emitter<'a> {
             self.uses_prelude_enums = true;
         }
 
-        if self.uses_struct || self.uses_newtype {
-            if self.uses_struct {
-                // Module-local factory, emitted in the same shape as
-                // deka#527's extensions and deka#529's descriptors: a mangled
-                // free function, no `globalThis` write, no cross-module merge
-                // (deka#551). The struct brand is a string id stored on the
-                // instance and compared by value, so cross-module identity
-                // needs no shared object — and no module pays for another
-                // module's helpers.
-                self.out.push_str(r###"function __deka_struct(id,embeds){function f(fields){const o=Object.create(f.prototype);Object.assign(o,fields);return o;}f.id=id;Object.defineProperty(f,'name',{value:id,configurable:true});f.prototype=Object.create(null);Object.defineProperty(f.prototype,'__deka_struct',{value:id,enumerable:false,writable:false,configurable:false});f.prototype.constructor=f;f.impl=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){return b.apply(this,x);};}else{for(const k in a)f.prototype[k]=a[k];}return f;};f.implMut=(a,b)=>{if(typeof a==='string'){const k=a;f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka_MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return b.apply(this,x);};}else{for(const k in a){const fn=a[k];f.prototype[k]=function(...x){if(Object.isFrozen(this))throw new __deka_MutationError(`cannot call mutable method '${k}' on immutable ${id}`);return fn.apply(this,x);};}}return f;};if(embeds){for(const [embedName,embedFactory] of Object.entries(embeds)){for(const key of Object.keys(embedFactory.prototype)){f.prototype[key]=function(...args){return this[embedName][key](...args);};}}}return f;}"###);
-                self.out.push('\n');
-                self.out.push_str(
-                    "class __deka_MutationError extends Error{constructor(m){super(m);this.name='MutationError';}}\n",
-                );
-            }
-            if self.uses_newtype {
-                // The payload key is shared across modules through
-                // Symbol.for's registry — not through a globalThis merge.
-                self.out.push_str("const __p = Symbol.for('deka.nt');\n");
-            }
-        }
+        // Record this module's demand for the shared helpers at member
+        // granularity; the module graph unions these sets across the whole
+        // program and synthesizes the prelude once (deka#595).
+        self.demand = self.prelude_demand(uses_typeof);
 
-        // Builtin `.getType()` support (rfd#41, deka#529): a module-local
-        // free function, emitted exactly the way deka#527 emits primitive
-        // extensions — tree-shakable, no struct factory, no globalThis.
-        // Tags are read directly (`v?.__deka_struct` / `v?.__enum` /
-        // `v?.__deka_newtype`), so `.getType()` alone must not force the
-        // struct factory (deka#551). Descriptors are interned per (kind,
-        // name) and frozen, so `==` on them is identity.
-        if uses_typeof {
-            self.out.push_str("const __deka_type_cache = new Map();\n");
-            self.out.push_str(r###"function __deka_type_of(v){const mk=(k,n)=>{const key=k+":"+n;let t=__deka_type_cache.get(key);if(!t){t=Object.freeze({kind:k,name:n,toString(){return this.name;}});__deka_type_cache.set(key,t);}return t;};if(v===null||v===undefined)return mk("none","none");if(v instanceof Uint8Array)return mk("bytes","bytes");const ty=typeof v;if(ty==="string"||ty==="number"||ty==="boolean"||ty==="function")return mk(ty,ty);if(Array.isArray(v))return mk("array","Array");const nt=v.__deka_newtype;if(nt)return mk("newtype",nt);const st=v.__deka_struct;if(st)return mk("struct",st);const en=v.__enum;if(en)return mk("enum",en);return mk("object","object");}"###);
-            self.out.push('\n');
+        if !self.detached {
+            // Module-local synthesis goes through the same single builder the
+            // program-level prelude uses — one construction site, one spelling
+            // (deka#582, deka#622). The module graph instead detaches this and
+            // prepends the unioned program prelude to the bundle.
+            let shared = crate::prelude::shared_prelude(&self.demand);
+            self.out.push_str(&shared);
         }
 
         // Static descriptor consts for `super` declarations (rfd#41,
@@ -1361,13 +1431,59 @@ impl<'a> Emitter<'a> {
             self.out.push_str(&emit_json_functions(&self.json_calls));
         }
 
-        if self.uses_prelude_enums {
-            // One definition, shared with the isolate pool bootstrap and
-            // the `__deka_to_result` bridge helper (deka#582).
-            self.out.push_str(&crate::prelude::module_prelude());
-        }
-
         Ok(())
+    }
+
+    /// This module's demand for the shared runtime helpers, at member
+    /// granularity. The scans mirror exactly what will be emitted: receiver
+    /// methods gate `impl`/`implMut` the same way `emit_method_registrations`
+    /// decides which `.impl(`/`.implMut(` calls exist, and embeds are
+    /// demanded by any live struct whose factory is constructed with an
+    /// embeds map.
+    fn prelude_demand(&self, uses_typeof: bool) -> crate::prelude::PreludeDemand {
+        let mut demand = crate::prelude::PreludeDemand::default();
+        if self.uses_struct {
+            let mut parts = crate::prelude::StructDemand::default();
+            for struct_name in &self.struct_order {
+                if !self.is_live(struct_name) {
+                    continue;
+                }
+                let methods =
+                    self.collect_methods_for_struct(struct_name, &mut HashSet::new());
+                for method in &methods {
+                    if method.receiver_mutable {
+                        parts.impl_mut = true;
+                    } else {
+                        parts.impl_methods = true;
+                    }
+                }
+                if let Some(meta) = self.structs.get(struct_name) {
+                    if !meta.embeds.is_empty() {
+                        parts.embeds = true;
+                    }
+                }
+            }
+            demand.structs = Some(parts);
+        }
+        demand.newtype = self.uses_newtype;
+        demand.type_of = uses_typeof;
+        demand.enums = self.uses_prelude_enums;
+        // Brand-tag branches of `__deka_type_of` are gated by what the
+        // program can produce, not by what this module imports: values cross
+        // module boundaries without their type binding (function returns), so
+        // only declarations are a sound approximation of "tag can exist".
+        demand.declares_structs = !self.struct_order.is_empty();
+        demand.declares_enums = self
+            .program
+            .statements
+            .iter()
+            .any(|stmt| matches!(stmt, Stmt::Enum { .. }));
+        demand.declares_newtypes = self
+            .program
+            .statements
+            .iter()
+            .any(|stmt| matches!(stmt, Stmt::Newtype { .. }));
+        demand
     }
 
     fn enter_jsx_node(&mut self) -> usize {
@@ -3271,6 +3387,8 @@ impl<'a> Emitter<'a> {
                     css_scope: self.css_scope.clone(),
                     live_names: None,
                     needs_live: false,
+                    detached: false,
+                    demand: crate::prelude::PreludeDemand::default(),
                 };
                 tmp.emit_expr(expr).expect("literal emission");
                 literal = tmp.out;

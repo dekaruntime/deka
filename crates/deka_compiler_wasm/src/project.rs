@@ -155,13 +155,16 @@ impl ProjectState {
         match compile_module_graph_with_options(&entry, &loader, options) {
             Ok(result) => {
                 // The graph contains the entry and all reachable modules. Return
-                // the emitted JS for the requested entry file.
+                // the emitted JS for the requested entry file, self-contained:
+                // the wasm host serves modules as separate files, so the entry
+                // carries its own prelude rather than the shared program-level
+                // one (deka#595).
                 let entry_canon = std::fs::canonicalize(&entry).unwrap_or_else(|_| entry.clone());
-                result
-                    .modules
+                let modules = result.self_contained_modules();
+                modules
                     .get(&entry_canon)
                     .cloned()
-                    .or_else(|| result.modules.get(&entry).cloned())
+                    .or_else(|| modules.get(&entry).cloned())
                     .ok_or_else(|| {
                         internal_diagnostic(
                             path,

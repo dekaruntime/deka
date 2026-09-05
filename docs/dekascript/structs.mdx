@@ -98,7 +98,7 @@ If two embedded structs both define the same field or method, direct access is a
 
 ## Runtime representation
 
-At runtime, a struct is a factory created by `__deka_struct("Point")` — a module-local helper the compiler emits into every module that needs it (deka#551). Nothing is written to `globalThis`, and no state is shared between modules: instances carry a hidden `__deka_struct` tag holding the struct's name, so pattern matching can identify them by value across module boundaries.
+At runtime, a struct is a factory created by `__deka_struct("Point")` — a lexical helper the compiler synthesizes once per program from whole-graph demand (deka#595): a bundled program carries exactly one copy, shaped by what the program actually uses (`impl`/`implMut`/the embeds loop appear only when some module needs them), while modules served as separate files each carry their own copy since they do not share scope. Nothing is written to `globalThis`, and no state is shared between modules: instances carry a hidden `__deka_struct` tag holding the struct's name, so pattern matching can identify them by value across module boundaries.
 
 ## JS output example
 

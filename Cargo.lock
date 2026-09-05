@@ -693,6 +693,7 @@ version = "0.41.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "deka_compile",
  "deka_ui",
  "lightningcss",
  "mime_guess",

@@ -56,6 +56,7 @@ export const version = 1;
             minify: false,
             iife: false,
             client: false,
+            prelude: None,
         },
         provider,
     )
@@ -120,6 +121,7 @@ fn bundle_minified_output_is_valid_js() {
             minify: true,
             iife: false,
             client: false,
+            prelude: None,
         },
         provider,
     )
