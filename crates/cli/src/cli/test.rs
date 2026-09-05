@@ -148,6 +148,8 @@ struct VendorGuard {
     created_modules: bool,
     lock_path: PathBuf,
     lock_backup: Option<Vec<u8>>,
+    manifest_path: PathBuf,
+    manifest_backup: Option<Vec<u8>>,
     restored: bool,
 }
 
@@ -163,6 +165,16 @@ impl VendorGuard {
             }
             None => {
                 let _ = fs::remove_file(&self.lock_path);
+            }
+        }
+        // The vendored package is only resolvable while the run lasts; the
+        // manifest must return to its pre-run state too (deka#600).
+        match &self.manifest_backup {
+            Some(backup) => {
+                let _ = fs::write(&self.manifest_path, backup);
+            }
+            None => {
+                let _ = fs::remove_file(&self.manifest_path);
             }
         }
         if self.created_pkg {
@@ -215,6 +227,17 @@ fn vendor_test_lib(cwd: &Path) -> Result<VendorGuard, String> {
         &integrity.fs_graph,
     )?;
 
+    // The runtime project gate rejects imports of packages not declared in
+    // deka.json (deka#403), so vendoring must declare @deka/test for the
+    // duration of the run and restore the manifest afterwards.
+    let manifest_path = cwd.join("deka.json");
+    let manifest_backup = if manifest_path.exists() {
+        Some(fs::read(&manifest_path).map_err(|err| format!("failed to read deka.json: {err}"))?)
+    } else {
+        None
+    };
+    declare_test_dependency(&manifest_path)?;
+
     Ok(VendorGuard {
         pkg,
         scope,
@@ -224,8 +247,33 @@ fn vendor_test_lib(cwd: &Path) -> Result<VendorGuard, String> {
         created_modules,
         lock_path,
         lock_backup,
+        manifest_path,
+        manifest_backup,
         restored: false,
     })
+}
+
+fn declare_test_dependency(manifest_path: &Path) -> Result<(), String> {
+    let raw = if manifest_path.exists() {
+        fs::read_to_string(manifest_path).map_err(|err| format!("failed to read deka.json: {err}"))?
+    } else {
+        String::from("{}")
+    };
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|err| format!("failed to parse deka.json: {err}"))?;
+    manifest
+        .as_object_mut()
+        .ok_or_else(|| "deka.json must be a JSON object".to_string())?
+        .entry("dependencies")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or_else(|| "deka.json `dependencies` must be a JSON object".to_string())?
+        .insert(TEST_PACKAGE.to_string(), serde_json::json!("0.1.0"));
+    fs::write(
+        manifest_path,
+        serde_json::to_string_pretty(&manifest).map_err(|err| format!("failed to serialize deka.json: {err}"))?,
+    )
+    .map_err(|err| format!("failed to write deka.json: {err}"))
 }
 
 fn write_lock_entry(
