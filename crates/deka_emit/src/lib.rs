@@ -174,10 +174,7 @@ mod tests {
         let out = parse_and_emit("type Cents number\nconst c = Cents(500);");
         assert!(out.contains("Cents$values = new WeakMap()"), "got: {out}");
         assert!(out.contains("Cents$values.set(o, v)"), "got: {out}");
-        assert!(
-            !out.contains("Object.defineProperty(o, __p"),
-            "newtype construction must not define the payload per instance: {out}"
-        );
+        assert!(!out.contains("Object.defineProperty(o, __p"), "got: {out}");
     }
 
     #[test]
