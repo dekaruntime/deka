@@ -50,6 +50,7 @@ pub fn write_defer_client_assets(assets_dir: &std::path::Path) -> Result<(), Str
 }
 
 pub use islands::collect_hashed_asset_renames;
+pub use islands::inline_importmap_tag;
 
 pub fn rewrite_serve_entry_asset_urls(project_root: &std::path::Path) -> Result<(), String> {
     islands::rewrite_serve_entry_asset_urls(project_root)

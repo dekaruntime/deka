@@ -315,7 +315,7 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     }
 
     // RFD 24 §10.7: dist HTML references the content-hashed asset names and
-    // wires the client import map (assets/importmap.json) when one was emitted.
+    // inlines the client import map (assets/importmap.json) when one was emitted.
     rewrite_dist_html_asset_urls(
         &dist_client,
         runtime_core::framework::is_app_router_project(&project_root),
@@ -1208,19 +1208,26 @@ fn inject_before_body_close_walk(dir: &Path, tags: &str) -> Result<(), String> {
 /// wire the client import map into documents that load hashed chunks.
 /// Renames come from the shared collector in `runtime::islands` — the same
 /// source the serve-entry rewrite uses, so dev and prod agree by construction.
+/// The map is inlined: browsers reject the `src` form of the element, so
+/// `assets/importmap.json` stays on disk as the tooling/test copy and the
+/// document carries the JSON body.
 fn rewrite_dist_html_asset_urls(dist_client: &Path, app_router: bool) -> Result<(), String> {
     let assets_dir = dist_client.join("assets");
     let mut renames: Vec<(String, String)> = Vec::new();
     runtime::collect_hashed_asset_renames(&assets_dir, &assets_dir, &mut renames)?;
-    let importmap_available = app_router && assets_dir.join("importmap.json").is_file();
-    rewrite_html_asset_urls(dist_client, &renames, importmap_available)?;
+    let importmap_tag = if app_router && assets_dir.join("importmap.json").is_file() {
+        runtime::inline_importmap_tag(&assets_dir)?
+    } else {
+        None
+    };
+    rewrite_html_asset_urls(dist_client, &renames, importmap_tag.as_deref())?;
     Ok(())
 }
 
 fn rewrite_html_asset_urls(
     dir: &Path,
     renames: &[(String, String)],
-    importmap_available: bool,
+    importmap_tag: Option<&str>,
 ) -> Result<(), String> {
     let Ok(reader) = fs::read_dir(dir) else {
         return Ok(());
@@ -1228,7 +1235,7 @@ fn rewrite_html_asset_urls(
     for entry in reader.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            rewrite_html_asset_urls(&path, renames, importmap_available)?;
+            rewrite_html_asset_urls(&path, renames, importmap_tag)?;
             continue;
         }
         if path.extension().and_then(|e| e.to_str()) != Some("html") {
@@ -1243,17 +1250,23 @@ fn rewrite_html_asset_urls(
                 changed = true;
             }
         }
-        if importmap_available
-            && html.contains("/assets/")
-            && !html.contains("type=\"importmap\"")
-        {
-            let tag = r#"<script type="importmap" src="/assets/importmap.json"></script>"#;
-            html = if html.contains("</head>") {
-                html.replacen("</head>", &format!("  {tag}\n</head>"), 1)
-            } else {
-                format!("{tag}\n{html}")
-            };
-            changed = true;
+        if let Some(tag) = importmap_tag {
+            // A prerendered app-router document carries the generation-time
+            // placeholder (a `src` reference browsers reject); swap it for the
+            // inline map rather than treating it as an existing import map.
+            let placeholder = runtime_core::framework::CLIENT_IMPORTMAP_PLACEHOLDER_TAG;
+            if html.contains(placeholder) {
+                html = html.replace(placeholder, tag);
+                changed = true;
+            }
+            if html.contains("/assets/") && !html.contains("type=\"importmap\"") {
+                html = if html.contains("</head>") {
+                    html.replacen("</head>", &format!("  {tag}\n</head>"), 1)
+                } else {
+                    format!("{tag}\n{html}")
+                };
+                changed = true;
+            }
         }
         if changed {
             fs::write(&path, html.as_bytes())

@@ -24,6 +24,31 @@ pub const ASSET_HASH_LEN: usize = 10;
 /// Import map file written into the assets dir next to the hashed chunks.
 pub const CLIENT_IMPORTMAP_FILE: &str = "importmap.json";
 
+/// Read `<assets_dir>/importmap.json` and build the inline import-map tag for
+/// it, or `None` when no map has been written. Browsers reject the `src` form
+/// of this element (the attribute is disallowed on `<script type="importmap">`),
+/// so the JSON body must be inlined into the document; the on-disk file stays
+/// as the machine-readable copy for tooling and tests.
+pub fn inline_importmap_tag(assets_dir: &Path) -> Result<Option<String>, String> {
+    let path = assets_dir.join(CLIENT_IMPORTMAP_FILE);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&path)
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    let value: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|err| format!("failed to parse {}: {err}", path.display()))?;
+    if value.get("imports").and_then(|v| v.as_object()).is_none() {
+        return Err(format!("{} has no \"imports\" object", path.display()));
+    }
+    // Compact, and `<` escaped so the embedded JSON can never terminate the
+    // script element early (escapes are valid JSON).
+    let json = serde_json::to_string(&value)
+        .map_err(|err| format!("failed to serialize {}: {err}", path.display()))?
+        .replace('<', "\\u003c");
+    Ok(Some(format!("<script type=\"importmap\">{json}</script>")))
+}
+
 /// Logical specifiers owned by the client-asset import map. Entries under
 /// these keys are dropped before each rewrite so removed islands/defer
 /// loaders do not leave stale URLs behind; foreign keys are preserved.
@@ -197,6 +222,11 @@ pub fn collect_hashed_asset_renames(
 /// `collect_hashed_asset_renames`, so identical source resolves to identical
 /// URLs in dev and prod. Idempotent: hashed URLs never match the logical
 /// patterns.
+///
+/// The entry also carries the generation-time placeholder import-map tag
+/// (`framework::CLIENT_IMPORTMAP_PLACEHOLDER_TAG`); this pass swaps it for
+/// the inline map built from the freshly written `importmap.json`, so the
+/// served document always carries the current hashes.
 pub fn rewrite_serve_entry_asset_urls(project_root: &Path) -> Result<(), String> {
     let cache_dir = project_root.join(".cache").join("dekascript");
     let entry = cache_dir.join("serve-entry.dsx");
@@ -206,12 +236,33 @@ pub fn rewrite_serve_entry_asset_urls(project_root: &Path) -> Result<(), String>
     let assets_dir = cache_dir.join("assets");
     let mut renames: Vec<(String, String)> = Vec::new();
     collect_hashed_asset_renames(&assets_dir, &assets_dir, &mut renames)?;
-    if renames.is_empty() {
+    if renames.is_empty() && !assets_dir.join(CLIENT_IMPORTMAP_FILE).is_file() {
         return Ok(());
     }
     let mut source = fs::read_to_string(&entry)
         .map_err(|err| format!("failed to read {}: {err}", entry.display()))?;
     let mut changed = false;
+    // External import maps are disallowed, so the placeholder (a `src`
+    // reference) is replaced with the JSON body inline. The entry embeds the
+    // document as JSON string literals (framework::json_str), so the tag
+    // appears quote-escaped; swap that form, plus the plain form for
+    // robustness.
+    if let Some(tag) = inline_importmap_tag(&assets_dir)? {
+        let placeholder = runtime_core::framework::CLIENT_IMPORTMAP_PLACEHOLDER_TAG;
+        // JSON-escape the tag bodies (without the surrounding literal quotes)
+        // the way framework::json_str embeds the document.
+        let escaped_placeholder = placeholder.replace('"', "\\\"");
+        let escaped_tag = tag.replace('"', "\\\"");
+        for (from, to) in [
+            (placeholder, tag.as_str()),
+            (escaped_placeholder.as_str(), escaped_tag.as_str()),
+        ] {
+            if source.contains(from) {
+                source = source.replace(from, to);
+                changed = true;
+            }
+        }
+    }
     for (logical, hashed) in &renames {
         if source.contains(logical.as_str()) {
             source = source.replace(logical.as_str(), hashed.as_str());
@@ -648,5 +699,94 @@ mod tests {
         let entry_name = entry_url.trim_start_matches("/assets/");
         assert!(first.join(entry_name).is_file(), "importmap url must exist: {entry_url}");
         assert!(entry_name.contains('.'), "importmap url must be hashed: {entry_url}");
+    }
+
+    #[test]
+    fn importmap_tag_is_inlined_without_src() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // No map on disk -> no tag.
+        assert!(inline_importmap_tag(tmp.path())
+            .expect("read missing map")
+            .is_none());
+
+        write_importmap_entries(
+            tmp.path(),
+            &BTreeMap::from([("ui/client".to_string(), "/assets/ui/client.a1b2c3d4e5.js".to_string())]),
+        )
+        .expect("write importmap");
+        let tag = inline_importmap_tag(tmp.path())
+            .expect("build tag")
+            .expect("tag for existing map");
+        assert!(tag.starts_with(r#"<script type="importmap">"#), "{tag}");
+        assert!(tag.ends_with("</script>"), "{tag}");
+        assert!(
+            !tag.contains("src="),
+            "browsers reject the src form of <script type=\"importmap\">: {tag}"
+        );
+        let body = tag
+            .strip_prefix(r#"<script type="importmap">"#)
+            .and_then(|rest| rest.strip_suffix("</script>"))
+            .expect("tag body");
+        let map: serde_json::Value = serde_json::from_str(body).expect("inline body parses as JSON");
+        let imports = map["imports"].as_object().expect("imports object");
+        assert_eq!(
+            imports["ui/client"].as_str().expect("ui/client url"),
+            "/assets/ui/client.a1b2c3d4e5.js"
+        );
+    }
+
+    #[test]
+    fn rewrite_swaps_placeholder_for_inline_map() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let cache = tmp.path().join(".cache").join("dekascript");
+        let assets = cache.join("assets");
+        fs::create_dir_all(&assets).expect("mkdir assets");
+        let island_src = assets.join("..").join("counter.dsx");
+        fs::write(&island_src, "export fn Counter() {\n    return <button>0</button>;\n}\n")
+            .expect("write island");
+        let island = ClientIsland {
+            component: "Counter".to_string(),
+            directive: "load".to_string(),
+            file: island_src.to_string_lossy().into_owned(),
+            props: vec![],
+        };
+        write_island_client_assets(&assets, &[island]).expect("write assets");
+
+        // The entry as generated: the document is embedded as JSON string
+        // literals (framework::json_str), so the placeholder appears
+        // quote-escaped, and the island script still has its logical URL.
+        let entry = cache.join("serve-entry.dsx");
+        let placeholder = runtime_core::framework::CLIENT_IMPORTMAP_PLACEHOLDER_TAG;
+        let doc = format!(
+            "<head>{placeholder}</head><script type=\"module\" src=\"/assets/islands-load.js\"></script>"
+        );
+        let doc_literal = serde_json::to_string(&doc).expect("encode doc literal");
+        fs::write(&entry, format!("const doc_head = {doc_literal};\n")).expect("write entry");
+
+        rewrite_serve_entry_asset_urls(tmp.path()).expect("rewrite");
+        let served = fs::read_to_string(&entry).expect("read rewritten entry");
+        assert!(
+            !served.contains(placeholder) && !served.contains(r#"<script type=\"importmap\" src=\"#),
+            "placeholder src-reference must be swapped out: {served}"
+        );
+        // Unescape the JSON literal and assert on the document itself.
+        let served_doc = served.replace("\\\"", "\"");
+        assert!(
+            !served_doc.contains(r#"<script type="importmap" src="#),
+            "no external import map may survive: {served_doc}"
+        );
+        let tag_start = served_doc
+            .find(r#"<script type="importmap">"#)
+            .expect("inline tag present");
+        let body = &served_doc[tag_start + r#"<script type="importmap">"#.len()..];
+        let body = &body[..body.find("</script>").expect("tag closes")];
+        let map: serde_json::Value = serde_json::from_str(body).expect("inline body parses");
+        let imports = map["imports"].as_object().expect("imports object");
+        let ui_client = imports["ui/client"].as_str().expect("ui/client mapped");
+        assert!(ui_client.starts_with("/assets/ui/client."), "hashed: {ui_client}");
+        assert!(
+            !served_doc.contains("/assets/islands-load.js"),
+            "logical URL rewritten: {served_doc}"
+        );
     }
 }

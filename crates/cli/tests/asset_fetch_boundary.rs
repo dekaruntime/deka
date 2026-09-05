@@ -7,9 +7,10 @@
 //! fetching, over real HTTP against `deka serve`, every reference found in:
 //!
 //! 1. the served route HTML — every `<script src>` and `<link href>` under
-//!    `/assets/` (router.rs output ↔ islands.rs/css.rs writers),
+//!    `/assets/` plus every URL in the inline import map (router.rs output ↔
+//!    islands.rs/css.rs writers),
 //! 2. `assets/importmap.json` — every URL it maps a specifier to
-//!    (importmap ↔ writers),
+//!    (importmap ↔ writers; the on-disk copy the inline tag is built from),
 //! 3. the served/emitted JS chunks themselves — every relative import target
 //!    (`./ui/jsx.<hash>.js`, `./island-load-0.<hash>.js`, ...) resolved
 //!    against the importing chunk's URL (chunks ↔ writers).
@@ -140,8 +141,8 @@ fn wait_ready(port: u16, serve: &Serve) {
 }
 
 /// Every `/assets/...` URL appearing as a double-quoted string in `text`
-/// (covers `<script src="/assets/...">`, `<link href="/assets/...">`, and
-/// `<script type="importmap" src="/assets/importmap.json">`).
+/// (covers `<script src="/assets/...">`, `<link href="/assets/...">`, and the
+/// URLs inside an inline `<script type="importmap">{...}</script>` body).
 fn quoted_asset_urls(text: &str) -> BTreeSet<String> {
     text.split('"')
         .filter_map(|seg| {
@@ -175,6 +176,33 @@ fn importmap_urls(body: &[u8]) -> BTreeSet<String> {
         .filter(|url| url.starts_with("/assets/"))
         .map(str::to_string)
         .collect()
+}
+
+/// Extract the inline import map from a served or built document. Browsers
+/// reject `<script type="importmap" src=...>` — the attribute is disallowed on
+/// the element — so the document must carry the JSON inline. Asserts the tag
+/// exists, has no `src` attribute anywhere, and that its text content parses
+/// as JSON with a non-empty `imports` object. Returns the imports map.
+fn inline_importmap(html: &str, context: &str) -> serde_json::Map<String, serde_json::Value> {
+    assert!(
+        !html.contains(r#"<script type="importmap" src="#),
+        "document must not reference the import map by URL (browsers reject the src form)\n{context}"
+    );
+    let open = r#"<script type="importmap">"#;
+    let start = html
+        .find(open)
+        .unwrap_or_else(|| panic!("document must carry an inline import map\n{context}"));
+    let body = &html[start + open.len()..];
+    let end = body
+        .find("</script>")
+        .expect("inline import map tag must close");
+    let map: serde_json::Value =
+        serde_json::from_str(&body[..end]).expect("inline import map body must parse as JSON");
+    map.get("imports")
+        .and_then(|imports| imports.as_object())
+        .filter(|imports| !imports.is_empty())
+        .expect("inline import map must have a non-empty imports object")
+        .clone()
 }
 
 /// Fetch-closure over live HTTP: start from a document's references, then
@@ -286,9 +314,26 @@ fn serve_asset_references_all_resolve() {
         .expect("read / html");
 
     assert_no_unhashed_refs(&html, &context);
+    let imports = inline_importmap(&html, &context);
+    // The dev HMR client (crates/http/src/router.rs) imports the LOGICAL
+    // specifier "ui/client"; that specifier must be a key in this map,
+    // mapped to the hashed chunk, or the dev client's dynamic import fails
+    // silently and islands stop re-hydrating (deka#596 follow-up).
+    let ui_client = imports["ui/client"]
+        .as_str()
+        .expect("ui/client must be a key in the inline import map");
     assert!(
-        html.contains("type=\"importmap\"") && html.contains("/assets/importmap.json"),
-        "served document must wire the client import map: {html}\n{context}"
+        ui_client.starts_with("/assets/ui/client.") && ui_client.ends_with(".js"),
+        "ui/client must map to its hashed chunk: {ui_client}"
+    );
+    let res = http
+        .get(format!("{base}{ui_client}"))
+        .send()
+        .unwrap_or_else(|err| panic!("GET {ui_client} failed: {err}\n{context}"));
+    assert_eq!(
+        res.status().as_u16(),
+        200,
+        "the ui/client chunk the dev client resolves to must be served: {ui_client}\n{context}"
     );
     for stem in ["islands-load", "css/common", "css/route-root"] {
         assert!(
@@ -350,6 +395,15 @@ fn serve_and_build_resolve_identical_asset_urls() {
     let dist_html = fs::read_to_string(dist_client.join("index.html")).expect("read dist html");
     let disk_refs = collect_disk_refs(&dist_client, &dist_html);
 
+    // The map the browser consults (inline, not the on-disk copy) must be
+    // identical in dev and prod.
+    let live_imports = inline_importmap(&served_html, &live_context);
+    let dist_imports = inline_importmap(&dist_html, "dist index.html");
+    assert_eq!(
+        live_imports, dist_imports,
+        "dev (serve) and prod (build) must inline the same import map.\n{live_context}"
+    );
+
     assert_eq!(
         live_refs, disk_refs,
         "dev (serve) and prod (build) must resolve the same source to the same /assets URLs.\nlive: {live_refs:?}\ndist:  {disk_refs:?}\n{live_context}"
@@ -392,4 +446,17 @@ fn dist_asset_references_exist_on_disk() {
             path.display()
         );
     }
+    // The map inlined into the document is what the browser consults; it must
+    // agree with the on-disk copy and carry no `src` reference.
+    let index_html = fs::read_to_string(dist_client.join("index.html")).expect("read dist html");
+    let inline = inline_importmap(&index_html, "dist index.html");
+    let disk: serde_json::Value = serde_json::from_slice(&importmap).expect("parse importmap.json");
+    let disk_imports = disk
+        .get("imports")
+        .and_then(|v| v.as_object())
+        .expect("importmap.json must have an imports object");
+    assert_eq!(
+        &inline, disk_imports,
+        "inline import map must agree with assets/importmap.json"
+    );
 }
