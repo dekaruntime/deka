@@ -1,5 +1,0 @@
-import { foo } from 'missing/mod';
-
-function f(): int {
-    return null;
-}

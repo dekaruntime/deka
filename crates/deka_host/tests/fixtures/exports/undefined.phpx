@@ -1,5 +1,0 @@
-export function greet(): string {
-    return "hi";
-}
-
-export { missing };
