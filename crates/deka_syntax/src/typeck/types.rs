@@ -160,6 +160,25 @@ pub enum ArrayAccess {
     Last,
 }
 
+/// Whether a builtin `Math`-backed method on `number` is total or partial
+/// (deka#378 step 2, rfd#40 phase 2). JS numbers have no such methods, so
+/// the emitter rewrites calls to `Math.*` expressions; the checker records
+/// each call site, parallel to `array_first_last_calls`.
+///
+/// A partial method is one where JavaScript answers some inputs with `NaN`
+/// (`Math.sqrt(-1)`, `Math.log(-1)`, `Math.pow(-2, 0.5)`). `NaN` is a value
+/// of type `number` that is not a number — the exact lie rfd#13 calls the
+/// worst class of bug — so the rewrite returns `Option<number>` and yields
+/// `None` exactly where JS would produce `NaN`. `Infinity` is a legitimate
+/// IEEE-754 value and passes through as `Some`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NumberMath {
+    /// Total: `Math.<name>` answers every input with a genuine number.
+    Total,
+    /// Partial: wrap the result, `None` exactly where JS produces `NaN`.
+    Partial,
+}
+
 /// The runtime predicate a union member type-pattern compiles to (rfd#42,
 /// deka#530). Computed by the checker and handed to the emitter through
 /// `TypeckResult::union_type_patterns`, parallel to `enum_case_patterns`,

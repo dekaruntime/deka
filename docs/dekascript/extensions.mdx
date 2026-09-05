@@ -47,3 +47,44 @@ Chaining works because every call is rewritten independently:
   things.
 - Unused extensions are tree-shaken: an extension that nothing calls is
   absent from the emitted output.
+
+## Built-in Math methods on `number`
+
+`number` carries a built-in family of `Math`-backed methods. The total
+functions — every input yields a genuine number — return a plain `number`:
+
+```ds
+const a = (3.7).floor() // 3
+const b = (-4.5).abs()  // 4.5
+const c = (2).max(7)    // 7
+```
+
+Total: `abs`, `ceil`, `floor`, `round`, `trunc`, `sign`, `cbrt`, `exp`,
+`atan`, `sinh`, `cosh`, `tanh`, and the binary `max` / `min` (the receiver
+is one operand, the argument the other).
+
+The partial functions — those where JavaScript answers some inputs with
+`NaN` — return `Option<number>` instead, because `NaN` is a `number` that
+is not one. The result is `None` exactly where JS would produce `NaN`:
+
+```ds
+match ((-1).sqrt()) {
+  Some(n) => echo(string(n)),
+  None => echo("not a real number"),
+}
+```
+
+Partial: `sqrt`, `log`, `log2`, `log10`, `asin`, `acos`, `acosh`, `atanh`,
+`sin`, `cos`, `tan`, `pow`. (`sin`/`cos`/`tan` are partial for the
+non-finite inputs: `(1.0/0.0).sin()` is `NaN` in JavaScript, and `Infinity`
+is an ordinary reachable `number`.)
+
+`Infinity` is a legitimate IEEE-754 value, not a missing result, so it
+passes through as `Some`: `(10).pow(400)` is `Some(Infinity)` and
+`(0).log()` is `Some(-Infinity)`.
+
+Like extension methods, these are compile-time rewrites (to `Math.*`
+calls), never prototype methods — and a user extension of the same name
+shadows the builtin within its module. `Math.PI` is a constant, not a
+method on a number, so it has no home here yet; it stays on the ambient
+`Math` global until a later step of the ambient-globals removal.

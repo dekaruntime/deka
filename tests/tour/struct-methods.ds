@@ -5,7 +5,9 @@ struct Point {
 }
 
 fn (p Point) magnitude() number {
-  return Math.sqrt((p.x * p.x) + (p.y * p.y))
+  const d = ((p.x * p.x) + (p.y * p.y)).sqrt()
+  const v = unwrap(d) or { 0 }
+  return v
 }
 
 const p = Point { x: 3, y: 4 }
