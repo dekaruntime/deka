@@ -71,6 +71,7 @@ deno_core::extension!(
         net::op_php_net_proto_encode,
         net::op_php_net_proto_decode,
         fs_bridge::op_php_fs_call_proto,
+        fs_bridge::op_php_fs_call_proto_async,
         fs_bridge::op_php_fs_proto_encode,
         fs_bridge::op_php_fs_proto_decode,
         bridge_metrics::op_php_bridge_proto_stats,

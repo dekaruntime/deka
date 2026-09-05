@@ -720,6 +720,7 @@ const __bridge = __dekaHostBindings && __dekaHostBindings.bridge;
 const __bridge_async = __dekaHostBindings && __dekaHostBindings.bridgeAsync;
 const __deka_wasm_call = __dekaHostBindings && __dekaHostBindings.wasmCall;
 const __deka_wasm_call_async = __dekaHostBindings && __dekaHostBindings.wasmCallAsync;
+const __deka_to_result = __dekaHostBindings && __dekaHostBindings.toResult;
 ";
 
 fn prepend_host_bindings(code: ModuleSourceCode) -> ModuleSourceCode {

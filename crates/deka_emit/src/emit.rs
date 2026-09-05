@@ -2895,8 +2895,18 @@ impl<'a> Emitter<'a> {
     }
 
     fn emit_bridge(&mut self, kind: &str, action: &str, args: &[Expr<'a>]) -> Result<(), String> {
-        self.out
-            .push_str("(function() { const __deka_r = __deka_host(");
+        // deka#578: the catalog decides sync vs async (rfd#27 decision 2) —
+        // the bridge does not. Sync ops (`bridge crypto.random_bytes(n)`)
+        // dispatch to a plain value; async ops (`await bridge
+        // fs.read_file(path)`) dispatch to a Promise that the source-level
+        // `await` resolves. The host-side `__deka_host` returns the matching
+        // shape; `__deka_to_result` (injected with the other host bindings)
+        // tags the envelope exactly like the prelude's Result constructors.
+        let is_async = deka_syntax::bridge_op_is_async(kind, action);
+        if !is_async {
+            self.out.push_str("__deka_to_result(");
+        }
+        self.out.push_str("__deka_host(");
         self.out.push_str(&json_string(kind));
         self.out.push_str(", ");
         self.out.push_str(&json_string(action));
@@ -2907,7 +2917,12 @@ impl<'a> Emitter<'a> {
             }
             self.emit_expr(arg)?;
         }
-        self.out.push_str("]); if (__deka_r && __deka_r.ok) { return { __case: \"Ok\", value: __deka_r.value }; } else { return { __case: \"Err\", error: (__deka_r && __deka_r.error) ? __deka_r.error : \"host bridge failed\" }; } })()");
+        self.out.push_str("])");
+        if is_async {
+            self.out.push_str(".then(__deka_to_result)");
+        } else {
+            self.out.push(')');
+        }
         Ok(())
     }
 

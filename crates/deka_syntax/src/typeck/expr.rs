@@ -482,15 +482,26 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            ast::Expr::Bridge { args, .. } => {
+            ast::Expr::Bridge { kind, action, args, .. } => {
                 // Host bridge calls are validated by the runtime catalog. The
-                // result shape is always Result<T, Error>.
+                // result shape is always Result<T, E>; async ops (deka#578)
+                // resolve through a Promise, so `await bridge fs.read_file(p)`
+                // typechecks as rfd#27 describes while sync ops such as
+                // `bridge crypto.random_bytes(n)` stay plain Results.
                 for arg in args.iter() {
                     self.check_expr(arg);
                 }
-                Type::Generic {
+                let result = Type::Generic {
                     base: "Result",
                     args: vec![Type::Infer, Type::Infer],
+                };
+                if crate::bridge::bridge_op_is_async(kind, action) {
+                    Type::Generic {
+                        base: "Promise",
+                        args: vec![result],
+                    }
+                } else {
+                    result
                 }
             }
             ast::Expr::Ternary {
