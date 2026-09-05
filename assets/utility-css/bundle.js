@@ -40,9 +40,9 @@
   // index.ts
   var exports_utility_css = {};
   __export(exports_utility_css, {
-    collectClasses: () => collectClasses,
+    injectUtilityCss: () => injectUtilityCss,
     generateUtilityCss: () => generateUtilityCss,
-    injectUtilityCss: () => injectUtilityCss
+    collectClasses: () => collectClasses
   });
   var MARKER = "__deka_utility_css";
   function injectUtilityCss(html, registryJson, options = {}) {
