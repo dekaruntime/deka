@@ -132,7 +132,7 @@ fi
 export DEKA_NATIVE
 
 # --------------------------------------------------------------------- run ---
-mkdir -p .cache
+mkdir -m 0755 -p .cache tests/tour/.run-tmp
 REPORT="$REPO_ROOT/.cache/report.txt"
 : > "$REPORT"
 

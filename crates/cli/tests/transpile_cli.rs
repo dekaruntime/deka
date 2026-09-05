@@ -1,13 +1,26 @@
 use std::fs;
 use std::process::Command;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 fn cli_bin() -> &'static str {
     env!("CARGO_BIN_EXE_cli")
 }
 
+fn private_tempdir() -> tempfile::TempDir {
+    let temp = tempfile::Builder::new()
+        .prefix(".deka-transpile-cli-test-")
+        .tempdir_in(".")
+        .expect("private tempdir");
+    #[cfg(unix)]
+    fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o700))
+        .expect("private tempdir permissions");
+    temp
+}
+
 #[test]
 fn transpile_command_emits_adjacent_v8_input() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = private_tempdir();
     let source = temp.path().join("answer.ds");
     fs::write(&source, "export const answer = 42;\n").expect("source fixture");
 

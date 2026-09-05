@@ -2,7 +2,7 @@
 // Compile every tests/tour lesson with the local CLI. Match by id in
 // manifest.json, never by display name. See deka#292.
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, cpSync, copyFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, cpSync, copyFileSync, chmodSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -106,7 +106,8 @@ function installIo(cliPath, tmpDir) {
     };
   }
 
-  mkdirSync(cacheDir, { recursive: true });
+  mkdirSync(cacheDir, { recursive: true, mode: 0o755 });
+  chmodSync(cacheDir, 0o755);
   for (const name of ["ds_modules", "php_modules"]) {
     const dir = join(tmpDir, name);
     if (existsSync(dir)) {
@@ -174,6 +175,34 @@ function compileLesson(cliBinary, projectDir, sourcePath, outPath) {
   };
 }
 
+function secureOutputTopologyError(directory) {
+  let current = resolve(directory);
+  const effectiveUid = typeof process.geteuid === "function" ? process.geteuid() : null;
+  while (true) {
+    const metadata = statSync(current);
+    const mode = metadata.mode & 0o7777;
+    const untrustedOwner = effectiveUid !== null && metadata.uid !== 0 && metadata.uid !== effectiveUid;
+    if (untrustedOwner || (mode & 0o022) !== 0) {
+      const ownerFix = untrustedOwner ? ` and owned by uid ${effectiveUid} or root` : "";
+      return `environment unfit to run: secure output topology rejects ${current} (uid ${metadata.uid}, mode ${mode.toString(8)}); fix it with chmod 0755 ${current}${ownerFix} (all ancestors must be private to the effective user or root)`;
+    }
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return null;
+}
+
+function probeScratchDir() {
+  mkdirSync(scratchDir, { recursive: true, mode: 0o755 });
+  chmodSync(scratchDir, 0o755);
+  const error = secureOutputTopologyError(scratchDir);
+  if (error) {
+    console.error(error);
+    process.exit(2);
+  }
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
@@ -224,9 +253,10 @@ function main() {
     process.exit(1);
   }
 
-  mkdirSync(scratchDir, { recursive: true });
+  probeScratchDir();
   const projectDir = join(scratchDir, "project");
-  mkdirSync(projectDir, { recursive: true });
+  mkdirSync(projectDir, { recursive: true, mode: 0o755 });
+  chmodSync(projectDir, 0o755);
   const installed = installIo(cliBinary, projectDir);
   if (!installed.ok) {
     console.error(`error: could not install io: ${installed.error ?? installed.stderr}`);
