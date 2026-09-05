@@ -8,6 +8,32 @@ fn wrap_with_host_bindings(body: &str) -> String {
     )
 }
 
+/// Assemble the bootstrap script, injecting the shared enum prelude and the
+/// `__deka_to_result` helper from `deka_emit::prelude` (deka#582). The pool
+/// must never carry its own transcription of the `Result`/`Option`
+/// constructors — the emitter's definition is the only one.
+fn bootstrap_source(template: &str) -> String {
+    let source = template
+        .replace(
+            "/*__DEKA_POOL_ENUM_PRELUDE__*/",
+            &deka_emit::prelude::pool_prelude(),
+        )
+        .replace("__DEKA_TO_RESULT__", &deka_emit::prelude::to_result_helper());
+    // assert!, not debug_assert!: release is what ships, and a marker that
+    // fails to substitute there fails silently. The prelude marker sits inside
+    // a /* */ comment, so an un-replaced one simply vanishes and the isolate
+    // boots with no Result/Option at all — surfacing much later as
+    // `Ok is not defined` on a request. That is precisely the silent
+    // divergence this change exists to remove, so the check has to run in the
+    // build that matters. Two substring scans once per worker bootstrap is
+    // nothing next to creating the isolate.
+    assert!(
+        !source.contains("__DEKA_POOL_ENUM_PRELUDE__") && !source.contains("__DEKA_TO_RESULT__"),
+        "bootstrap prelude markers must all be injected"
+    );
+    source
+}
+
 impl WorkerThread {
     /// Execute a request in the warm isolate
     pub(super) async fn execute_in_isolate(
@@ -78,19 +104,9 @@ impl WorkerThread {
                     };
                 }
 
-                if (typeof globalThis.Option === 'undefined') {
-                    globalThis.Option = Object.freeze({
-                        Some: (value) => ({ __enum: "Option", __case: "Some", name: "Some", value }),
-                        None: ({ __enum: "Option", __case: "None", name: "None" })
-                    });
-                }
-
-                if (typeof globalThis.Result === 'undefined') {
-                    globalThis.Result = Object.freeze({
-                        Ok: (value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value }),
-                        Err: (error) => ({ __enum: "Result", __case: "Err", name: "Err", error })
-                    });
-                }
+                // Enum prelude is injected below from deka_emit::prelude
+                // (deka#582) — one definition, no pool-side transcription.
+                /*__DEKA_POOL_ENUM_PRELUDE__*/
 
                 // Signal-based reactivity primitives (deka#142)
                 if (typeof globalThis.deka === 'undefined') {
@@ -762,12 +778,11 @@ impl WorkerThread {
                     };
 
                     // DS bridge Result tagging (deka#578): one shared helper
-                    // instead of a per-call IIFE, and the literal carries
-                    // __enum/name exactly like the prelude's Result
-                    // constructors so .getType() and __enum readers agree.
-                    const __deka_to_result = (r) => (r && r.ok)
-                        ? ({ __enum: "Result", __case: "Ok", name: "Ok", value: r.value })
-                        : ({ __enum: "Result", __case: "Err", name: "Err", error: (r && r.error) ? r.error : "host bridge failed" });
+                    // instead of a per-call IIFE. The expression is injected
+                    // from deka_emit::prelude (deka#582) so the envelope
+                    // carries __enum/name exactly like the prelude's Result
+                    // constructors — same definition, no transcription.
+                    const __deka_to_result = __DEKA_TO_RESULT__;
 
                     const __bridge = (kind, action, payload) => {
                         try {
@@ -1142,7 +1157,7 @@ impl WorkerThread {
 
             if let Err(err) = isolate.runtime.execute_script(
                 "bootstrap.js",
-                ModuleCodeString::from(BOOTSTRAP.to_string()),
+                ModuleCodeString::from(bootstrap_source(BOOTSTRAP)),
             ) {
                 isolate.active_requests = 0;
                 isolate.state = IsolateState::Idle;
