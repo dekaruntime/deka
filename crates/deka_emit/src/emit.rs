@@ -3296,6 +3296,12 @@ impl<'a> Emitter<'a> {
         let plan = plan.as_ref();
 
         let mut props = Vec::new();
+        // A spread attribute can carry a `children` key of its own. When the
+        // element also has explicit children, keep emitting the legacy
+        // children-in-props form so the runtime strips the merged key --
+        // emitting a third argument too would leave the spread's `children`
+        // inside props where renderers would see it as an attribute.
+        let mut has_spread = false;
         if !is_component {
             props.push(format!(
                 "\"data-deka-id\": {}",
@@ -3305,6 +3311,7 @@ impl<'a> Emitter<'a> {
         for attr in element.attributes.iter() {
             if attr.name.is_empty() {
                 if let Some(value) = &attr.value {
+                    has_spread = true;
                     let mut buf = String::new();
                     std::mem::swap(&mut self.out, &mut buf);
                     self.emit_expr(value)?;
@@ -3353,14 +3360,19 @@ impl<'a> Emitter<'a> {
             child_values.push(self.emit_jsx_child(child)?);
         }
 
-        if !child_values.is_empty() {
+        // Children go in a separate argument, not inside props: the factory
+        // then skips the per-element rest-object copy and children-array
+        // normalization in the common case (deka#580). The legacy
+        // children-in-props form still works when userland passes it, and is
+        // kept here when a spread attribute is present (see has_spread above).
+        let legacy_children_in_props = has_spread && !child_values.is_empty();
+        if legacy_children_in_props {
             if child_values.len() == 1 {
                 props.push(format!("\"children\": {}", child_values[0]));
             } else {
                 props.push(format!("\"children\": [{}]", child_values.join(", ")));
             }
         }
-
         let fn_name = if child_values.len() > 1 {
             "jsxs"
         } else {
@@ -3371,7 +3383,18 @@ impl<'a> Emitter<'a> {
         self.out.push_str(&tag_expr);
         self.out.push_str(", {");
         self.out.push_str(&props.join(", "));
-        self.out.push_str("})");
+        self.out.push('}');
+        if !legacy_children_in_props {
+            if child_values.len() == 1 {
+                self.out.push_str(", ");
+                self.out.push_str(&child_values[0]);
+            } else if !child_values.is_empty() {
+                self.out.push_str(", [");
+                self.out.push_str(&child_values.join(", "));
+                self.out.push(']');
+            }
+        }
+        self.out.push(')');
         self.exit_jsx_node();
         Ok(())
     }
@@ -3405,17 +3428,16 @@ impl<'a> Emitter<'a> {
         self.out.push_str(fn_name);
         self.out.push('(');
         self.out.push_str("Fragment, {");
-        if !child_values.is_empty() {
-            if child_values.len() == 1 {
-                self.out.push_str("\"children\": ");
-                self.out.push_str(&child_values[0]);
-            } else {
-                self.out.push_str("\"children\": [");
-                self.out.push_str(&child_values.join(", "));
-                self.out.push(']');
-            }
+        self.out.push('}');
+        if child_values.len() == 1 {
+            self.out.push_str(", ");
+            self.out.push_str(&child_values[0]);
+        } else if !child_values.is_empty() {
+            self.out.push_str(", [");
+            self.out.push_str(&child_values.join(", "));
+            self.out.push(']');
         }
-        self.out.push_str("})");
+        self.out.push(')');
         self.exit_jsx_node();
         Ok(())
     }

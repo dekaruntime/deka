@@ -25,25 +25,46 @@ export function normalizeJsxChildren(children) {
   return [children];
 }
 
-function createComponentNode(tag, props) {
-  const input = props ?? {};
-  const { children, ...rest } = input;
-  const node = {
-    tag,
-    props: rest,
-    children: normalizeJsxChildren(children),
-  };
-  Object.defineProperty(node, "__componentNode", {
-    value: true,
-    enumerable: false,
-    writable: false,
-    configurable: false,
-  });
-  return node;
+// The `__componentNode` marker is an enumerable literal field, not a hidden
+// defineProperty: hidden properties force every node into dictionary mode,
+// which measured ~12us/render slower on a 49-node grid (deka#580). Nothing
+// serializes or spreads whole nodes, so enumerability is safe (jsonSafe maps
+// nodes to undefined by reading this flag).
+function createComponentNode(tag, props, children) {
+  if (children === undefined) {
+    // Legacy form: children carried inside props (userland jsx() calls such
+    // as ui/jsx consumers, or spread attributes). Strip them so props and
+    // children stay separate for the renderers.
+    const input = props ?? {};
+    if (Object.hasOwn(input, "children")) {
+      const { children: nested, ...rest } = input;
+      children = normalizeJsxChildren(nested);
+      props = rest;
+    } else {
+      children = [];
+      props = input;
+    }
+  } else if (Array.isArray(children)) {
+    // Compiler-emitted arrays are flat and hole-free unless a conditional or
+    // spread child produced null/boolean/nested values; only then copy.
+    let needsNormalize = false;
+    for (const child of children) {
+      if (child == null || child === true || child === false || Array.isArray(child)) {
+        needsNormalize = true;
+        break;
+      }
+    }
+    if (needsNormalize) children = normalizeJsxChildren(children);
+  } else if (children === true || children === false || children == null) {
+    children = [];
+  } else {
+    children = [children];
+  }
+  return { tag, props, children, __componentNode: true };
 }
 
-export function jsx(tag, props) {
-  return createComponentNode(tag, props);
+export function jsx(tag, props, children) {
+  return createComponentNode(tag, props, children);
 }
 
 export const jsxs = jsx;

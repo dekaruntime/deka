@@ -397,7 +397,14 @@ mod tests {
     fn emit_jsx_with_children() {
         let out = parse_and_emit("const el = <p>hello {name}</p>;");
         assert!(out.contains("jsxs("), "expected jsxs call, got: {}", out);
-        assert!(out.contains("\"children\": ["), "expected children array, got: {}", out);
+        assert!(
+            out.contains("}, ["),
+            "children must be a separate argument, not a props field: {out}"
+        );
+        assert!(
+            !out.contains("\"children\":"),
+            "children must not be emitted inside the props object: {out}"
+        );
         assert!(
             out.contains("import { live } from \"ui/reactive\""),
             "non-literal interpolations must import live: {out}"
@@ -405,6 +412,25 @@ mod tests {
         assert!(
             out.contains("live(function() { return name; })"),
             "non-literal interpolations must wrap live(): {out}"
+        );
+    }
+
+    #[test]
+    fn emit_jsx_single_child_is_a_scalar_argument() {
+        let out = parse_and_emit("const el = <p>hi</p>;");
+        assert!(out.contains("jsx("), "expected jsx call, got: {}", out);
+        assert!(
+            out.contains("}, \"hi\")"),
+            "a single child must be passed as the third argument: {out}"
+        );
+    }
+
+    #[test]
+    fn emit_jsx_element_without_children() {
+        let out = parse_and_emit("const el = <div class=\"box\" />;");
+        assert!(
+            out.contains("jsx(\"div\", {\"data-deka-id\": \"module:_/i0\", \"class\": \"box\"})"),
+            "childless elements must emit a two-argument call: {out}"
         );
     }
 
