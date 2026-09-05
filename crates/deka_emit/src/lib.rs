@@ -6,6 +6,7 @@
 //! so instance method calls work without a separate lowering pass.
 
 mod emit;
+pub mod prelude;
 mod util;
 
 pub use emit::{emit_js, emit_js_with_imports, emit_js_with_options};

@@ -5845,6 +5845,7 @@ dependencies = [
  "core_affinity",
  "deka-validation",
  "deka_compile",
+ "deka_emit",
  "deka_ui",
  "deno_core",
  "deno_error",

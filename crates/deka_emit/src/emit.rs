@@ -1303,20 +1303,9 @@ impl<'a> Emitter<'a> {
         }
 
         if self.uses_prelude_enums {
-            self.out.push_str("const Result = Object.freeze({\n");
-            self.out.push_str("  Ok: (value) => ({ __enum: \"Result\", __case: \"Ok\", name: \"Ok\", value }),\n");
-            self.out.push_str("  Err: (error) => ({ __enum: \"Result\", __case: \"Err\", name: \"Err\", error })\n");
-            self.out.push_str("});\n");
-            self.out.push_str("const Option = Object.freeze({\n");
-            self.out.push_str("  Some: (value) => ({ __enum: \"Option\", __case: \"Some\", name: \"Some\", value }),\n");
-            self.out.push_str(
-                "  None: ({ __enum: \"Option\", __case: \"None\", name: \"None\" })\n",
-            );
-            self.out.push_str("});\n");
-            self.out.push_str("const Ok = Result.Ok;\n");
-            self.out.push_str("const Err = Result.Err;\n");
-            self.out.push_str("const Some = Option.Some;\n");
-            self.out.push_str("const None = Option.None;\n");
+            // One definition, shared with the isolate pool bootstrap and
+            // the `__deka_to_result` bridge helper (deka#582).
+            self.out.push_str(&crate::prelude::module_prelude());
         }
 
         Ok(())
