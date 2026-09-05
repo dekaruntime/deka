@@ -27,3 +27,11 @@ echo(show("pow(-2, 0.5)", (-2).pow(0.5)))
 // as Some rather than collapsing to None.
 echo(show("pow(10, 400)", (10).pow(400)))
 echo(show("log(0)", (0).log()))
+
+// sin/cos/tan on a NON-FINITE receiver: Math.sin(Infinity) is NaN, and
+// Infinity is an ordinary reachable number (1.0/0.0) — the case that
+// separates the total/partial split from a plausible-looking one (deka#594
+// review). These must be None, not Some(NaN) and not a typed `number`.
+echo(show("sin(inf)", (1.0/0.0).sin()))
+echo(show("cos(inf)", (1.0/0.0).cos()))
+echo(show("tan(inf)", (1.0/0.0).tan()))

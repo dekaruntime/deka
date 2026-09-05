@@ -10,3 +10,6 @@ acos(-2)=none
 pow(-2, 0.5)=none
 pow(10, 400)=Infinity
 log(0)=-Infinity
+sin(inf)=none
+cos(inf)=none
+tan(inf)=none

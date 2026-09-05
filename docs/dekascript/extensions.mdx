@@ -60,8 +60,8 @@ const c = (2).max(7)    // 7
 ```
 
 Total: `abs`, `ceil`, `floor`, `round`, `trunc`, `sign`, `cbrt`, `exp`,
-`sin`, `cos`, `tan`, `atan`, `sinh`, `cosh`, `tanh`, and the binary
-`max` / `min` (the receiver is one operand, the argument the other).
+`atan`, `sinh`, `cosh`, `tanh`, and the binary `max` / `min` (the receiver
+is one operand, the argument the other).
 
 The partial functions — those where JavaScript answers some inputs with
 `NaN` — return `Option<number>` instead, because `NaN` is a `number` that
@@ -75,7 +75,9 @@ match ((-1).sqrt()) {
 ```
 
 Partial: `sqrt`, `log`, `log2`, `log10`, `asin`, `acos`, `acosh`, `atanh`,
-`pow`.
+`sin`, `cos`, `tan`, `pow`. (`sin`/`cos`/`tan` are partial for the
+non-finite inputs: `(1.0/0.0).sin()` is `NaN` in JavaScript, and `Infinity`
+is an ordinary reachable `number`.)
 
 `Infinity` is a legitimate IEEE-754 value, not a missing result, so it
 passes through as `Some`: `(10).pow(400)` is `Some(Infinity)` and

@@ -121,6 +121,7 @@ impl<'a> Coverage<'a> {
 /// (`length`) or a builtin method that JavaScript provides (`toUpperCase`).
 /// User extensions shadow builtins only for call-shaped access; property-
 /// shaped reads keep resolving to the builtin entry (deka#527).
+#[derive(Debug)]
 pub(super) enum PrimitiveMember<'a> {
     Property(Type<'a>),
     BuiltinMethod(Type<'a>),
@@ -316,20 +317,27 @@ pub(super) fn primitive_member<'a>(
     Some(member)
 }
 
-/// Total `Math` functions exposed as methods on `number`: every input
-/// yields a genuine number (deka#378 step 2, rfd#40 phase 2). `max`/`min`
-/// are handled separately because they take one argument.
-const NUMBER_MATH_TOTAL: &[&str] = &[
-    "abs", "ceil", "floor", "round", "trunc", "sign", "cbrt", "exp", "sin", "cos", "tan", "atan",
-    "sinh", "cosh", "tanh",
+/// Total `Math` functions exposed as methods on `number`: every input —
+/// including the non-finite ones (`Infinity`, `NaN`) — yields a genuine
+/// number (deka#378 step 2, rfd#40 phase 2). `sin`/`cos`/`tan` are NOT
+/// total: `Math.sin(Infinity)` and friends answer `NaN` (deka#594 review),
+/// so they live in `NUMBER_MATH_PARTIAL`. `max`/`min` are handled
+/// separately because they take one argument.
+pub(super) const NUMBER_MATH_TOTAL: &[&str] = &[
+    "abs", "ceil", "floor", "round", "trunc", "sign", "cbrt", "exp", "atan", "sinh", "cosh",
+    "tanh",
 ];
 
 /// Partial `Math` functions: some inputs make JavaScript produce `NaN`, so
 /// the method returns `Option<number>` and the emitted wrapper rewrites
-/// `NaN` to `None`. `pow` is handled separately because it takes one
+/// `NaN` to `None`. `sin`/`cos`/`tan` are partial because the non-finite
+/// inputs (`Math.sin(Infinity)` → `NaN`) are ordinary reachable `number`s
+/// in DekaScript (`1.0/0.0`); classifying them as total would type a NaN
+/// result as `number` — the exact "type that claims something false" defect
+/// rfd#13 exists to close. `pow` is handled separately because it takes one
 /// argument.
-const NUMBER_MATH_PARTIAL: &[&str] = &[
-    "sqrt", "log", "log2", "log10", "asin", "acos", "acosh", "atanh",
+pub(super) const NUMBER_MATH_PARTIAL: &[&str] = &[
+    "sqrt", "log", "log2", "log10", "asin", "acos", "acosh", "atanh", "sin", "cos", "tan",
 ];
 
 /// Classify a builtin `Math`-backed method on `number` for the emitter

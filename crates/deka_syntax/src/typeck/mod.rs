@@ -2042,6 +2042,81 @@ mod tests {
     }
 
     #[test]
+    fn number_math_lists_are_disjoint_exhaustive_and_in_sync() {
+        // Three artefacts describe the Math-backed method surface on
+        // `number`: NUMBER_MATH_TOTAL, NUMBER_MATH_PARTIAL, and the
+        // ("number", …) arms of primitive_member. A doc-comment was the only
+        // thing keeping them in step — sin/cos/tan landed on the wrong side
+        // of the total/partial split because nothing checked (deka#594
+        // review). This test is the sync.
+        let total = expr::NUMBER_MATH_TOTAL;
+        let partial = expr::NUMBER_MATH_PARTIAL;
+
+        // Disjoint: a method on both lists is typed two ways at once.
+        for name in total {
+            assert!(!partial.contains(name), "{name} is in BOTH lists");
+        }
+
+        // The classifier must agree with the list membership.
+        for name in total {
+            assert_eq!(
+                expr::number_math_kind(name),
+                Some(NumberMath::Total),
+                "{name}: TOTAL list, classifier disagrees"
+            );
+        }
+        for name in partial {
+            assert_eq!(
+                expr::number_math_kind(name),
+                Some(NumberMath::Partial),
+                "{name}: PARTIAL list, classifier disagrees"
+            );
+        }
+
+        // The ("number", …) arms must return what the list promises: plain
+        // `number` for total, `Option<number>` for partial. (The member
+        // type is a zero-arg function whose return type carries the
+        // promise.)
+        for name in total {
+            match expr::primitive_member("number", name, None) {
+                Some(expr::PrimitiveMember::BuiltinMethod(Type::Function { ret, .. })) => assert!(
+                    matches!(*ret, Type::Named { name: "number" }),
+                    "{name}: total arm must return plain number, got {ret:?}"
+                ),
+                other => panic!("{name}: primitive_member arm missing or wrong: {other:?}"),
+            }
+        }
+        for name in partial {
+            let ret = match expr::primitive_member("number", name, None) {
+                Some(expr::PrimitiveMember::BuiltinMethod(Type::Function { ret, .. })) => ret,
+                other => panic!("{name}: primitive_member arm missing or wrong: {other:?}"),
+            };
+            match *ret {
+                Type::Option { ref inner } => assert!(
+                    matches!(**inner, Type::Named { name: "number" }),
+                    "{name}: partial arm must return Option<number>"
+                ),
+                ref other => panic!("{name}: partial arm must return Option<number>, got {other:?}"),
+            }
+        }
+
+        // Exhaustive over the exposed surface: TOTAL ∪ PARTIAL ∪
+        // {max, min, pow} is exactly this list. Adding a Math method means
+        // extending this list AND both tables AND the classifier together.
+        let mut surface: Vec<&str> = total.iter().chain(partial.iter()).copied().collect();
+        surface.extend(["max", "min", "pow"]);
+        surface.sort_unstable();
+        assert_eq!(
+            surface,
+            [
+                "abs", "acos", "acosh", "asin", "atan", "atanh", "cbrt", "ceil", "cos", "cosh",
+                "exp", "floor", "log", "log10", "log2", "max", "min", "pow", "round", "sign",
+                "sin", "sinh", "sqrt", "tan", "tanh", "trunc",
+            ]
+        );
+    }
+
+    #[test]
     fn number_math_args_are_checked() {
         // Unlike the ambient `Math` global — typed `Infer`, so anything went
         // (deka#252) — the replacement checks arity and argument types.
