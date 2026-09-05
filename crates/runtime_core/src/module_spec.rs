@@ -83,6 +83,46 @@ pub fn is_valid_package_name(name: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
 }
 
+/// Source extensions DekaScript resolution recognizes, in search order.
+///
+/// `ds_source_candidates`, the missing-import help scanner, module-graph
+/// ids, and the integrity walker all derive from this list so they cannot
+/// disagree on what a module file is (deka#622 finding G). `.phpx` is not
+/// on it: that layer was deleted in #601.
+pub const DS_SOURCE_EXTENSIONS: &[&str] = &["ds", "dsx"];
+
+pub fn is_ds_source_extension(ext: &str) -> bool {
+    DS_SOURCE_EXTENSIONS.iter().any(|known| *known == ext)
+}
+
+pub fn is_ds_source_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(is_ds_source_extension)
+}
+
+/// Graph / help-text id for a path relative to `ds_modules`.
+///
+/// Strips `/index.{ext}` then `.{ext}` for each [`DS_SOURCE_EXTENSIONS`]
+/// entry so `core/index.ds` and `core.ds` both become `core`. Leftover
+/// `.phpx` is not a source extension and is left as-is.
+pub fn ds_module_id_from_rel(rel: &str) -> String {
+    let normalized = rel.replace('\\', "/");
+    for ext in DS_SOURCE_EXTENSIONS {
+        let index_suffix = format!("/index.{ext}");
+        if let Some(stripped) = normalized.strip_suffix(&index_suffix) {
+            return stripped.to_string();
+        }
+    }
+    for ext in DS_SOURCE_EXTENSIONS {
+        let suffix = format!(".{ext}");
+        if let Some(stripped) = normalized.strip_suffix(&suffix) {
+            return stripped.to_string();
+        }
+    }
+    normalized
+}
+
 /// DekaScript source files for an import path (`foo` or `foo.ds`).
 ///
 /// Resolution algorithm (deka#241; keep every resolver on this list):
@@ -97,17 +137,22 @@ pub fn is_valid_package_name(name: &str) -> bool {
 ///
 /// Check-time (`validate_module_resolution`) and run-time (bundler, ESM
 /// loader, `deka build`, WASM project, style-graph walker) must use this
-/// list so they cannot disagree.
+/// list so they cannot disagree. The candidate files are derived from
+/// [`DS_SOURCE_EXTENSIONS`].
 pub fn ds_source_candidates(base: &Path) -> Vec<PathBuf> {
     match base.extension().and_then(|ext| ext.to_str()) {
-        Some("ds") | Some("dsx") => vec![base.to_path_buf()],
+        Some(ext) if is_ds_source_extension(ext) => vec![base.to_path_buf()],
         Some(_) => Vec::new(),
-        None => vec![
-            base.with_extension("ds"),
-            base.with_extension("dsx"),
-            base.join("index.ds"),
-            base.join("index.dsx"),
-        ],
+        None => {
+            let mut out = Vec::with_capacity(DS_SOURCE_EXTENSIONS.len() * 2);
+            for ext in DS_SOURCE_EXTENSIONS {
+                out.push(base.with_extension(*ext));
+            }
+            for ext in DS_SOURCE_EXTENSIONS {
+                out.push(base.join(format!("index.{ext}")));
+            }
+            out
+        }
     }
 }
 

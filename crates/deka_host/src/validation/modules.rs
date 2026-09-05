@@ -5,7 +5,9 @@ use crate::integrity::compute_package_integrity;
 use bumpalo::Bump;
 use serde_json::Value;
 
-use runtime_core::module_spec::{ds_source_candidates, module_spec_aliases};
+use runtime_core::module_spec::{
+    ds_module_id_from_rel, ds_source_candidates, is_ds_source_path, module_spec_aliases,
+};
 use runtime_core::modules::{
     MODULES_DIR, existing_modules_dirs, is_modules_dir_name, links_path, read_linked_modules,
 };
@@ -38,7 +40,7 @@ pub fn validate_module_resolution(source: &str, file_path: &str) -> Vec<Validati
     let imports = collect_import_specs(source, file_path);
     let available_modules = modules_root
         .as_deref()
-        .map(scan_phpx_modules)
+        .map(scan_ds_modules)
         .unwrap_or_default();
 
     let mut graph = ModuleGraph::new(modules_root.clone(), available_modules.clone());
@@ -570,7 +572,7 @@ fn resolve_modules_root_with_env(
     None
 }
 
-fn scan_phpx_modules(modules_root: &Path) -> HashSet<String> {
+fn scan_ds_modules(modules_root: &Path) -> HashSet<String> {
     let mut modules = HashSet::new();
     let mut stack = vec![modules_root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -589,10 +591,13 @@ fn scan_phpx_modules(modules_root: &Path) -> HashSet<String> {
                 stack.push(path);
                 continue;
             }
-            if path.extension().and_then(|ext| ext.to_str()) == Some("phpx") {
+            // Installed packages are `.ds` / `.dsx` (deka#601 deleted `.phpx`).
+            // Scanning the old extension left `available_modules` empty, so
+            // missing-import help never listed what was actually on disk.
+            if is_ds_source_path(&path) {
                 if let Ok(rel) = path.strip_prefix(modules_root) {
                     let rel = rel.to_string_lossy().replace('\\', "/");
-                    modules.insert(module_id_from_rel(&rel));
+                    modules.insert(ds_module_id_from_rel(&rel));
                 }
             }
         }
@@ -834,7 +839,7 @@ fn resolve_import_target(
                 for project_root in &base_dirs {
                     if let Ok(rel) = candidate.strip_prefix(project_root) {
                         let rel = rel.to_string_lossy().replace('\\', "/");
-                        let module_id = format!("@/{}", module_id_from_rel(&rel));
+                        let module_id = format!("@/{}", ds_module_id_from_rel(&rel));
                         return Ok(ResolvedImportTarget {
                             module_id,
                             file_path: candidate,
@@ -845,7 +850,7 @@ fn resolve_import_target(
             } else if let Some(root) = modules_root {
                 if let Ok(rel) = candidate.strip_prefix(root) {
                     let rel = rel.to_string_lossy().replace('\\', "/");
-                    let module_id = module_id_from_rel(&rel);
+                    let module_id = ds_module_id_from_rel(&rel);
                     let integrity_target = package_integrity_target(raw, root, &candidate, &rel);
                     return Ok(ResolvedImportTarget {
                         module_id,
@@ -905,7 +910,7 @@ fn package_integrity_target(
     candidate: &Path,
     rel: &str,
 ) -> Option<PackageIntegrityTarget> {
-    let rel_module_id = module_id_from_rel(rel);
+    let rel_module_id = ds_module_id_from_rel(rel);
     let name =
         package_name_from_import(raw).or_else(|| deka_stdlib_package_from_rel(&rel_module_id))?;
     let package_root = package_root_for_module(&name, modules_root, candidate, &rel_module_id)?;
@@ -1194,14 +1199,6 @@ fn validate_wasm_manifest(
             "Regenerate stubs or update the import to match exported names.",
         ));
     }
-}
-
-fn module_id_from_rel(rel: &str) -> String {
-    let normalized = rel.replace('\\', "/");
-    if normalized.ends_with("/index.phpx") {
-        return normalized.replace("/index.phpx", "");
-    }
-    normalized.trim_end_matches(".phpx").to_string()
 }
 
 fn is_valid_user_module(raw: &str) -> bool {
@@ -1793,6 +1790,81 @@ mod tests {
                 || err.help_text.contains("Available modules:")),
             "expected actionable help text, got: {:?}",
             errors
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// deka#622 finding G: missing-import help must list the packages that
+    /// are actually on disk.
+    ///
+    /// `scan_phpx_modules` / `module_id_from_rel` still thought in `.phpx`
+    /// after #601 deleted that layer, so a real `ds_modules/@deka/*/index.ds`
+    /// tree listed as empty (or as ugly `index.ds` ids). Resolution itself
+    /// uses `ds_source_candidates` and still loaded the file; the help
+    /// scanner was a second spelling of "what is a module file?".
+    ///
+    /// Falsification: if the scanner still only indexed `.phpx`, this help
+    /// text would be the empty-list fallback ("Ensure the module exists in
+    /// ds_modules") or would name leftover `.phpx` instead of `alpha` /
+    /// `beta` / `@deka/core`. If ids kept the source suffix, help would
+    /// contain `.ds`. Existing `reports_missing_module_with_actionable_message`
+    /// uses a `.phpx` entry and an empty `ds_modules`, so it cannot catch
+    /// either failure.
+    #[test]
+    fn missing_import_help_lists_installed_ds_modules() {
+        let root = make_temp_project("scan_ds_modules");
+        let modules = root.join(MODULES_DIR);
+        fs::write(
+            modules.join("alpha.ds"),
+            "export fn alpha() int { return 1 }\n",
+        )
+        .expect("write alpha.ds");
+        fs::create_dir_all(modules.join("beta")).expect("mkdir beta");
+        fs::write(
+            modules.join("beta/index.dsx"),
+            "export fn beta() int { return 2 }\n",
+        )
+        .expect("write beta/index.dsx");
+        fs::create_dir_all(modules.join("@deka/core")).expect("mkdir @deka/core");
+        fs::write(
+            modules.join("@deka/core/index.ds"),
+            "export fn core() int { return 3 }\n",
+        )
+        .expect("write @deka/core/index.ds");
+        fs::write(
+            modules.join("gamma.phpx"),
+            "export fn gamma() int { return 4 }\n",
+        )
+        .expect("write leftover .phpx");
+        fs::write(modules.join("delta.ts"), "export const x = 1\n").expect("write delta.ts");
+
+        let entry = root.join("main.ds");
+        fs::write(&entry, "import { foo } from 'does_not_exist'\n").expect("write entry");
+        let errors = validate_module_resolution(
+            &fs::read_to_string(&entry).expect("read entry"),
+            entry.to_string_lossy().as_ref(),
+        );
+        let help = errors
+            .iter()
+            .find(|err| err.message.contains("Missing module 'does_not_exist'"))
+            .map(|err| err.help_text.as_str())
+            .unwrap_or("");
+        assert!(
+            help.contains("Available modules:"),
+            "missing-import help should list scanned .ds/.dsx modules, got: {errors:?}"
+        );
+        assert!(
+            help.contains("alpha") && help.contains("beta") && help.contains("@deka/core"),
+            "help should name the installed modules, got: {help:?}"
+        );
+        assert!(
+            !help.contains("gamma")
+                && !help.contains(".phpx")
+                && !help.contains(".ds")
+                && !help.contains(".dsx")
+                && !help.contains("delta"),
+            "help must not list leftover .phpx, keep source extensions, or include non-DekaScript files, got: {help:?}"
         );
 
         let _ = fs::remove_dir_all(root);
