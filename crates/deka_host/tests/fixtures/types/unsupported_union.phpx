@@ -1,3 +1,0 @@
-function f(int|string $x): int {
-    return 1;
-}
