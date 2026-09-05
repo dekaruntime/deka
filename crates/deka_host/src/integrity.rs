@@ -5,6 +5,15 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+/// SHA-256 of the empty input. Every `moduleGraph.hash` written before
+/// deka#611 was fixed carries this value: the old walk only collected
+/// `.phpx` files, a layer that has since been deleted (PR #601), so the
+/// hash was always computed over an empty file set. Lock readers use this
+/// constant to recognize legacy entries and self-heal them instead of
+/// rejecting every pre-fix lockfile.
+pub const EMPTY_MODULE_GRAPH_HASH: &str =
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
 #[derive(Debug, Clone)]
 pub struct PackageIntegrity {
     pub fs_graph: String,
@@ -54,7 +63,7 @@ fn compute_fs_graph_hash(root: &Path) -> Result<String, String> {
 
 fn compute_module_graph_hash(root: &Path) -> Result<String, String> {
     let mut files = Vec::new();
-    collect_phpx_files(root, root, &mut files)?;
+    collect_source_files(root, root, &mut files)?;
     files.sort();
 
     let mut hasher = Sha256::new();
@@ -123,7 +132,7 @@ fn collect_files(root: &Path, current: &Path, out: &mut Vec<PathBuf>) -> Result<
     Ok(())
 }
 
-fn collect_phpx_files(root: &Path, current: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+fn collect_source_files(root: &Path, current: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     for entry in fs::read_dir(current)
         .map_err(|err| format!("failed to read {}: {}", current.display(), err))?
     {
@@ -136,12 +145,20 @@ fn collect_phpx_files(root: &Path, current: &Path, out: &mut Vec<PathBuf>) -> Re
             if should_ignore_dir(&path, root) {
                 continue;
             }
-            collect_phpx_files(root, &path, out)?;
+            collect_source_files(root, &path, out)?;
         } else if file_type.is_file() {
             if should_ignore_file(&path, root) {
                 continue;
             }
-            if path.extension().and_then(|ext| ext.to_str()) == Some("phpx") {
+            // The module graph lives in DekaScript sources: `.ds` modules and
+            // `.dsx` component modules. The old walk only collected `.phpx`
+            // files, which hashed an empty set once the PHPX layer was
+            // deleted (deka#611).
+            if path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext == "ds" || ext == "dsx")
+            {
                 out.push(path);
             }
         }
@@ -191,7 +208,9 @@ fn normalize_rel(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_fs_graph_hash, compute_module_graph_hash};
+    use super::{
+        compute_fs_graph_hash, compute_module_graph_hash, EMPTY_MODULE_GRAPH_HASH,
+    };
     use std::fs;
     use tempfile::tempdir;
 
@@ -199,9 +218,9 @@ mod tests {
     fn fs_graph_hash_changes_on_file_edit() {
         let dir = tempdir().expect("tmp");
         let root = dir.path();
-        fs::write(root.join("mod.phpx"), "import { a } from 'core/result'").unwrap();
+        fs::write(root.join("mod.ds"), "import { a } from 'core/result'").unwrap();
         let first = compute_fs_graph_hash(root).expect("hash");
-        fs::write(root.join("mod.phpx"), "import { b } from 'core/result'").unwrap();
+        fs::write(root.join("mod.ds"), "import { b } from 'core/result'").unwrap();
         let second = compute_fs_graph_hash(root).expect("hash");
         assert_ne!(first, second);
     }
@@ -210,31 +229,84 @@ mod tests {
     fn module_graph_hash_changes_on_import_edit() {
         let dir = tempdir().expect("tmp");
         let root = dir.path();
-        fs::write(root.join("mod.phpx"), "import { a } from 'core/result'").unwrap();
+        fs::write(root.join("mod.ds"), "import { a } from 'core/result'").unwrap();
         let first = compute_module_graph_hash(root).expect("hash");
-        fs::write(root.join("mod.phpx"), "import { a } from 'core/bytes'").unwrap();
+        fs::write(root.join("mod.ds"), "import { a } from 'core/bytes'").unwrap();
         let second = compute_module_graph_hash(root).expect("hash");
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn different_module_graphs_produce_different_hashes() {
+        let dir_a = tempdir().expect("tmp");
+        let root_a = dir_a.path();
+        fs::write(
+            root_a.join("main.ds"),
+            "import { helper } from './helper.ds'\nconsole.log(helper())\n",
+        )
+        .unwrap();
+        fs::write(root_a.join("helper.ds"), "export fn helper() int { return 1 }\n").unwrap();
+
+        let dir_b = tempdir().expect("tmp");
+        let root_b = dir_b.path();
+        fs::write(
+            root_b.join("main.ds"),
+            "import { other } from './other.ds'\nconsole.log(other())\n",
+        )
+        .unwrap();
+        fs::write(root_b.join("other.ds"), "export fn other() int { return 2 }\n").unwrap();
+
+        let hash_a = compute_module_graph_hash(root_a).expect("hash a");
+        let hash_b = compute_module_graph_hash(root_b).expect("hash b");
+        assert_ne!(
+            hash_a, hash_b,
+            "packages with different module graphs must not share an integrity hash"
+        );
+    }
+
+    #[test]
+    fn non_empty_package_never_produces_empty_input_hash() {
+        let dir = tempdir().expect("tmp");
+        let root = dir.path();
+        fs::write(
+            root.join("main.ds"),
+            "import { helper } from './helper.ds'\nconsole.log(helper())\n",
+        )
+        .unwrap();
+        fs::write(root.join("helper.ds"), "export fn helper() int { return 1 }\n").unwrap();
+
+        let hash = compute_module_graph_hash(root).expect("hash");
+        assert_ne!(
+            hash, EMPTY_MODULE_GRAPH_HASH,
+            "a package with .ds sources must not hash to the empty-input constant"
+        );
+
+        // A package with only non-source files (deka.json) still hashes the
+        // empty set — that is the one legitimate empty-input case.
+        let empty_dir = tempdir().expect("tmp");
+        fs::write(empty_dir.path().join("deka.json"), "{}").unwrap();
+        let empty_hash = compute_module_graph_hash(empty_dir.path()).expect("empty hash");
+        assert_eq!(empty_hash, EMPTY_MODULE_GRAPH_HASH);
     }
 
     #[test]
     fn appledouble_entries_are_skipped_by_name_pattern() {
         let dir = tempdir().expect("tmp");
         let root = dir.path();
-        fs::write(root.join("mod.phpx"), "import { a } from 'core/result'").unwrap();
+        fs::write(root.join("mod.ds"), "import { a } from 'core/result'").unwrap();
         fs::write(root.join("deka.json"), "{}").unwrap();
         let nested = root.join("lib");
         fs::create_dir_all(&nested).expect("nested dir");
-        fs::write(nested.join("util.phpx"), "export const util = true;\n").unwrap();
+        fs::write(nested.join("util.ds"), "export const util = true;\n").unwrap();
         let clean_fs = compute_fs_graph_hash(root).expect("clean fs hash");
         let clean_module = compute_module_graph_hash(root).expect("clean module hash");
 
         // Poison the tree the way the published @deka/string tarball was
         // poisoned (dekaruntime/deka#587): AppleDouble sidecar files that are
         // not valid UTF-8, at the top level and nested inside a directory.
-        fs::write(root.join("._mod.phpx"), b"\x00\x05\x16\x07\x00\x02\x00\x00")
+        fs::write(root.join("._mod.ds"), b"\x00\x05\x16\x07\x00\x02\x00\x00")
             .expect("top-level AppleDouble");
-        fs::write(nested.join("._util.phpx"), b"\x00\x05\x16\x07\x00\x02\x00\x00")
+        fs::write(nested.join("._util.ds"), b"\x00\x05\x16\x07\x00\x02\x00\x00")
             .expect("nested AppleDouble");
 
         // Both hashes must succeed despite the non-UTF-8 bytes ...

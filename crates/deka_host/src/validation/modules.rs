@@ -1381,6 +1381,7 @@ fn validate_package_integrity(
 
     let mut cache: HashMap<String, (String, String)> = HashMap::new();
     let mut errors = Vec::new();
+    let mut legacy_heals: Vec<(String, String)> = Vec::new();
     for (name, package_root) in package_roots {
         let entry = match packages_json.get(name) {
             Some(value) => value,
@@ -1458,6 +1459,22 @@ fn validate_package_integrity(
         if expected_module_graph != Some(module_hash.as_str())
             || expected_fs_graph != Some(fs_hash.as_str())
         {
+            // deka#611: entries locked while the module-graph walk only saw
+            // the deleted `.phpx` extension carry the SHA-256 of the empty
+            // input. When the locked hash is exactly that constant, the
+            // recomputed walk differs (the package actually has sources), and
+            // the fsGraph still matches, the locked value carries no
+            // integrity signal — rewrite the entry with the recomputed hash
+            // instead of reporting a mismatch. Old lockfiles heal on the
+            // next validation instead of being rejected en masse.
+            let legacy_empty_module_graph = expected_module_graph
+                .is_some_and(|expected| expected == crate::integrity::EMPTY_MODULE_GRAPH_HASH)
+                && module_hash != crate::integrity::EMPTY_MODULE_GRAPH_HASH
+                && expected_fs_graph == Some(fs_hash.as_str());
+            if legacy_empty_module_graph {
+                legacy_heals.push((name.clone(), module_hash.clone()));
+                continue;
+            }
             errors.push(module_error(
                 1,
                 1,
@@ -1471,7 +1488,70 @@ fn validate_package_integrity(
         }
     }
 
+    if !legacy_heals.is_empty() {
+        let mut healed_lock = lock_json.clone();
+        let mut candidates: Vec<String> = Vec::new();
+        for (name, module_hash) in &legacy_heals {
+            if heal_module_graph_hash_in_lock(&mut healed_lock, name, module_hash) {
+                candidates.push(name.clone());
+            }
+        }
+        let persisted = !candidates.is_empty()
+            && serde_json::to_string_pretty(&healed_lock)
+                .ok()
+                .and_then(|serialized| std::fs::write(&lock_path, serialized).ok())
+                .is_some();
+        if !persisted {
+            // The heal could not be persisted (malformed entry or an
+            // unwritable lockfile) — fall back to reporting the mismatch.
+            for (name, _) in legacy_heals {
+                errors.push(module_error(
+                    1,
+                    1,
+                    name.len().max(1),
+                    format!(
+                        "Package '{}' failed integrity check (lockfile mismatch).",
+                        name
+                    ),
+                    "Reinstall the package to restore the expected content.",
+                ));
+            }
+        }
+    }
+
     errors
+}
+
+/// Rewrite the `moduleGraph.hash` of one package entry inside a parsed
+/// deka.lock, in whichever shape the lockfile stores its packages.
+fn heal_module_graph_hash_in_lock(
+    lock_json: &mut Value,
+    name: &str,
+    module_hash: &str,
+) -> bool {
+    let packages = if lock_json.get("packages").is_some() {
+        match lock_json.get_mut("packages") {
+            Some(packages) => packages,
+            None => return false,
+        }
+    } else {
+        match lock_json.pointer_mut("/php/packages") {
+            Some(packages) => packages,
+            None => return false,
+        }
+    };
+    let Some(entry) = packages.get_mut(name) else {
+        return false;
+    };
+    let Some(hash) = entry
+        .get_mut(2)
+        .and_then(|metadata| metadata.get_mut("moduleGraph"))
+        .and_then(|module_graph| module_graph.get_mut("hash"))
+    else {
+        return false;
+    };
+    *hash = Value::String(module_hash.to_string());
+    true
 }
 
 fn package_name_from_module_id(module_id: &str) -> Option<String> {
@@ -1995,6 +2075,69 @@ import { now_ms } from '@deka/time'
         let package_roots = HashMap::from([("@deka/core".to_string(), package_root)]);
         let errors = validate_package_integrity(&root.join(MODULES_DIR), &package_roots);
         assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn package_integrity_self_heals_legacy_empty_module_graph_hash() {
+        let root = make_temp_project("legacy_empty_integrity");
+        let package_root = root.join(MODULES_DIR).join("@deka").join("core");
+        fs::create_dir_all(&package_root).expect("mkdir package");
+        fs::write(
+            package_root.join("index.ds"),
+            "import { helper } from './helper.ds'\nconsole.log(helper())\n",
+        )
+        .expect("write package");
+        fs::write(
+            package_root.join("helper.ds"),
+            "export fn helper() int { return 1 }\n",
+        )
+        .expect("write helper");
+        let integrity =
+            crate::integrity::compute_package_integrity(&package_root).expect("integrity");
+        assert_ne!(
+            integrity.module_graph,
+            crate::integrity::EMPTY_MODULE_GRAPH_HASH,
+            "fixture package must have a non-empty module graph"
+        );
+        fs::write(
+            root.join("deka.lock"),
+            serde_json::json!({
+                "lockfileVersion": 1,
+                "packages": {
+                    "@deka/core": [
+                        "0.1.0",
+                        "linkhash:@deka/core",
+                        {
+                            "moduleGraph": { "hash": crate::integrity::EMPTY_MODULE_GRAPH_HASH },
+                            "fsGraph": { "hash": integrity.fs_graph }
+                        },
+                        ""
+                    ]
+                }
+            })
+            .to_string(),
+        )
+        .expect("write lock");
+
+        let package_roots = HashMap::from([("@deka/core".to_string(), package_root)]);
+        let errors = validate_package_integrity(&root.join(MODULES_DIR), &package_roots);
+        assert!(
+            errors.is_empty(),
+            "legacy empty moduleGraph hash must self-heal instead of erroring, got: {:?}",
+            errors
+        );
+
+        let healed: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(root.join("deka.lock")).expect("read healed lock"),
+        )
+        .expect("parse healed lock");
+        assert_eq!(
+            healed["packages"]["@deka/core"][2]["moduleGraph"]["hash"],
+            serde_json::json!(integrity.module_graph),
+            "lock entry must be rewritten with the recomputed module graph hash"
+        );
 
         let _ = fs::remove_dir_all(root);
     }
