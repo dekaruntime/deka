@@ -73,9 +73,10 @@ pub struct TypeckResult<'a> {
     pub super_trees: HashMap<&'a str, descriptor::DescriptorTree<'a>>,
     /// `.toJSON()` and `.parseJSON<T>()` call sites specialized to a static shape.
     pub json_calls: HashMap<*const ast::Expr<'a>, descriptor::JsonCall<'a>>,
-    /// Builtin `Array.first()`/`Array.last()` call sites, rewritten to an
-    /// Option-producing expression during emission (deka#561).
-    pub array_first_last_calls: HashMap<*const ast::Expr<'a>, types::ArrayAccess>,
+    /// Builtin `Array.first()`/`Array.last()`/`Array.pop()`/`Array.shift()`
+    /// call sites, rewritten to an Option-producing expression during
+    /// emission (deka#561, deka#566).
+    pub array_builtin_calls: HashMap<*const ast::Expr<'a>, types::ArrayAccess>,
     /// Builtin `Math`-backed `number` method call sites, rewritten to a
     /// `Math.*` expression during emission — partial functions wrapped so
     /// `NaN` surfaces as `None` (deka#378 step 2, rfd#40 phase 2).
@@ -206,7 +207,7 @@ pub fn check_program_with_imports<'a>(
         static_type_calls: checker.static_type_calls,
         super_trees: checker.super_trees,
         json_calls: checker.json_calls,
-        array_first_last_calls: checker.array_first_last_calls,
+        array_builtin_calls: checker.array_builtin_calls,
         number_math_calls: checker.number_math_calls,
         unwrap_calls: checker.unwrap_calls,
         operator_rewrites: checker.operator_rewrites,
@@ -825,11 +826,12 @@ struct Checker<'a> {
     /// cleared by `reset_lowering_state`.
     super_trees: HashMap<&'a str, descriptor::DescriptorTree<'a>>,
     json_calls: HashMap<*const ast::Expr<'a>, descriptor::JsonCall<'a>>,
-    /// Builtin `Array.first()`/`Array.last()` call sites to rewrite to an
-    /// Option-producing expression, keyed by call expression pointer.
-    /// Lowering collections like this one must also be cleared in
-    /// `reset_lowering_state` — the inference pass populates them too.
-    array_first_last_calls: HashMap<*const ast::Expr<'a>, types::ArrayAccess>,
+    /// Builtin `Array.first()`/`Array.last()`/`Array.pop()`/`Array.shift()`
+    /// call sites to rewrite to an Option-producing expression, keyed by call
+    /// expression pointer. Lowering collections like this one must also be
+    /// cleared in `reset_lowering_state` — the inference pass populates them
+    /// too.
+    array_builtin_calls: HashMap<*const ast::Expr<'a>, types::ArrayAccess>,
     /// Builtin `Math`-backed `number` method call sites to rewrite to a
     /// `Math.*` expression, keyed by call expression pointer (deka#378
     /// step 2). Lowering collections like this one must also be cleared in
@@ -892,7 +894,7 @@ impl<'a> Checker<'a> {
             static_type_calls: HashMap::new(),
             super_trees: HashMap::new(),
             json_calls: HashMap::new(),
-            array_first_last_calls: HashMap::new(),
+            array_builtin_calls: HashMap::new(),
             number_math_calls: HashMap::new(),
             unwrap_calls: HashMap::new(),
             operator_rewrites: HashMap::new(),
@@ -1032,7 +1034,7 @@ impl<'a> Checker<'a> {
         self.signature_calls.clear();
         self.static_type_calls.clear();
         self.json_calls.clear();
-        self.array_first_last_calls.clear();
+        self.array_builtin_calls.clear();
         self.number_math_calls.clear();
         self.unwrap_calls.clear();
         self.operator_rewrites.clear();
@@ -1982,14 +1984,14 @@ mod tests {
         assert!(checked.errors.is_empty(), "{:?}", checked.errors);
         // Both call sites are recorded for the emitter, with the right kinds.
         assert_eq!(
-            checked.array_first_last_calls.len(),
+            checked.array_builtin_calls.len(),
             2,
             "{:?}",
-            checked.array_first_last_calls
+            checked.array_builtin_calls
         );
         assert_eq!(
             checked
-                .array_first_last_calls
+                .array_builtin_calls
                 .values()
                 .filter(|k| matches!(k, ArrayAccess::First))
                 .count(),
@@ -1997,15 +1999,74 @@ mod tests {
         );
         assert_eq!(
             checked
-                .array_first_last_calls
+                .array_builtin_calls
                 .values()
                 .filter(|k| matches!(k, ArrayAccess::Last))
                 .count(),
             1
         );
-        // The result type is Option<number>, not number — matching pop/shift's
-        // declared type, but this pair is actually emitted that way (deka#561).
+        // The result type is Option<number>, not number — the same type
+        // pop/shift declare, and all four builtins are now actually emitted
+        // that way (deka#561, deka#566).
         let errors = typeck("const a: Array<number> = [1];\nconst bad: string = a.first();");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].message.contains("Option<number>"),
+            "{}",
+            errors[0].message
+        );
+    }
+
+    #[test]
+    fn array_pop_shift_reject_immutable_receiver() {
+        // deka#566: const array literals are frozen at emit, so a runtime
+        // pop/shift threw `TypeError: Cannot delete property`. The rejection
+        // is a compile error naming the immutability, not a runtime throw.
+        for method in ["pop", "shift"] {
+            let errors = typeck(&format!(
+                "const a: Array<number> = [1, 2, 3];\nconst p = a.{method}();"
+            ));
+            assert_eq!(errors.len(), 1, "{errors:?}");
+            assert!(
+                errors[0].message.contains("immutable receiver"),
+                "{}",
+                errors[0].message
+            );
+            assert!(
+                errors[0].message.contains(method),
+                "diagnostic should name the method: {}",
+                errors[0].message
+            );
+        }
+    }
+
+    #[test]
+    fn array_pop_shift_mutable_receiver_records_rewrite() {
+        // Mutable receivers typecheck clean and record the call for the
+        // emitter's Option-construction rewrite, pop and shift separately.
+        let arena = Bump::new();
+        let source = "let a: Array<number> = [1, 2, 3];\nconst p = a.pop();\nconst s = a.shift();";
+        let result = parse(source, &arena);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let program = result.program.expect("parse produced no program");
+        let checked = check_program(&program, source);
+        assert!(checked.errors.is_empty(), "{:?}", checked.errors);
+        assert_eq!(checked.array_builtin_calls.len(), 2, "{:?}", checked.array_builtin_calls);
+        assert_eq!(
+            checked.array_builtin_calls.values().filter(|k| matches!(k, ArrayAccess::Pop)).count(),
+            1
+        );
+        assert_eq!(
+            checked.array_builtin_calls.values().filter(|k| matches!(k, ArrayAccess::Shift)).count(),
+            1
+        );
+    }
+
+    #[test]
+    fn array_pop_result_is_option_not_raw_element() {
+        // The declared type must be the runtime type: unwrap(a.pop()) narrows
+        // to the element, assigning the raw pop result to string is rejected.
+        let errors = typeck("let a: Array<number> = [1];\nconst bad: string = a.pop();");
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert!(
             errors[0].message.contains("Option<number>"),
@@ -2033,7 +2094,7 @@ mod tests {
         let program = result.program.expect("parse produced no program");
         let typeck = check_program(&program, source);
         assert!(typeck.errors.is_empty(), "{:?}", typeck.errors);
-        assert!(typeck.array_first_last_calls.is_empty());
+        assert!(typeck.array_builtin_calls.is_empty());
     }
 
     #[test]

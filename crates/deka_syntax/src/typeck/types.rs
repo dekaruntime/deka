@@ -150,14 +150,20 @@ pub enum NewtypeSide {
     Right,
 }
 
-/// Which end of the array a builtin `first`/`last` call reads (deka#561).
-/// JS has no `Array.prototype.first`/`last`, so the emitter rewrites these
-/// calls to an Option-producing expression; the checker records each call
-/// site, parallel to `type_of_calls`.
+/// Which array builtin a recorded call site rewrites to (deka#561,
+/// deka#566). JS has no `Array.prototype.first`/`last`, and `pop`/`shift`
+/// return raw values rather than the `Option<T>` the type system declares,
+/// so the emitter rewrites all four to an Option-producing expression:
+/// a real `Some`/`None` construction at the site, not a trust-that-JS-
+/// lines-up passthrough. `pop`/`shift` additionally mutate, which is why
+/// the checker rejects immutable receivers before emission (const arrays
+/// are frozen at creation — a runtime pop would throw).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ArrayAccess {
     First,
     Last,
+    Pop,
+    Shift,
 }
 
 /// Whether a builtin `Math`-backed method on `number` is total or partial

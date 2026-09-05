@@ -111,10 +111,11 @@ pub fn emit_js_with_options<'a>(
     // `.signature()` call sites lowered to declared-type descriptor literals.
     signature_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::DescriptorTree<'a>>,
     json_calls: &HashMap<*const Expr<'a>, deka_syntax::typeck::JsonCall<'a>>,
-    // Builtin `first`/`last` array method call sites, lowered by the
-    // typechecker (deka#561): the emitter rewrites them to an
-    // Option-producing expression since JS arrays have no `first`/`last`.
-    array_first_last_calls: &HashMap<
+    // Builtin `first`/`last`/`pop`/`shift` array method call sites, lowered
+    // by the typechecker (deka#561, deka#566): the emitter rewrites them to
+    // an Option-producing expression since JS has no `first`/`last` and its
+    // `pop`/`shift` return raw values, not the declared Option<T>.
+    array_builtin_calls: &HashMap<
         *const Expr<'a>,
         deka_syntax::typeck::ArrayAccess,
     >,
@@ -162,7 +163,7 @@ pub fn emit_js_with_options<'a>(
     emitter.type_of_calls = type_of_calls.clone();
     emitter.signature_calls = signature_calls.clone();
     emitter.json_calls = json_calls.clone();
-    emitter.array_first_last_calls = array_first_last_calls.clone();
+    emitter.array_builtin_calls = array_builtin_calls.clone();
     emitter.number_math_calls = number_math_calls.clone();
     emitter.static_type_calls = static_type_calls.clone();
     emitter.super_decl_trees = super_decl_trees.clone();
@@ -793,10 +794,11 @@ struct Emitter<'a> {
     /// `.signature()` call sites lowered to static descriptor literals.
     signature_calls: HashMap<*const Expr<'a>, deka_syntax::typeck::DescriptorTree<'a>>,
     json_calls: HashMap<*const Expr<'a>, deka_syntax::typeck::JsonCall<'a>>,
-    /// Builtin `first`/`last` array method call sites lowered by the
-    /// typechecker (deka#561): JS arrays have no `first`/`last`, so the
-    /// emitter rewrites the call to an Option-producing expression.
-    array_first_last_calls: HashMap<*const Expr<'a>, deka_syntax::typeck::ArrayAccess>,
+    /// Builtin `first`/`last`/`pop`/`shift` array method call sites lowered by
+    /// the typechecker (deka#561, deka#566): the emitter rewrites the call
+    /// to an Option-producing expression, since JS has no `first`/`last` and
+    /// its `pop`/`shift` return raw values rather than the declared Option.
+    array_builtin_calls: HashMap<*const Expr<'a>, deka_syntax::typeck::ArrayAccess>,
     /// Builtin Math-backed `number` method call sites lowered by the
     /// typechecker (deka#378 step 2, rfd#40 phase 2): JS numbers have no
     /// such methods, so the emitter rewrites the call to a `Math.*`
@@ -848,7 +850,7 @@ impl<'a> Emitter<'a> {
             type_of_calls: HashSet::new(),
             signature_calls: HashMap::new(),
             json_calls: HashMap::new(),
-            array_first_last_calls: HashMap::new(),
+            array_builtin_calls: HashMap::new(),
             number_math_calls: HashMap::new(),
             static_type_calls: HashMap::new(),
             super_decl_trees: std::collections::HashMap::new(),
@@ -1237,9 +1239,9 @@ impl<'a> Emitter<'a> {
         if uses_json {
             self.uses_prelude_enums = true;
         }
-        // Same guarantee for `array_first_last_calls` (deka#561): the emitted
+        // Same guarantee for `array_builtin_calls` (deka#561): the emitted
         // rewrite calls `Some`/`None`, which the enum prelude defines.
-        if !self.array_first_last_calls.is_empty() {
+        if !self.array_builtin_calls.is_empty() {
             self.uses_prelude_enums = true;
         }
         // And for partial `number_math_calls` (deka#378 step 2): the emitted
@@ -2419,20 +2421,25 @@ impl<'a> Emitter<'a> {
                     return Ok(());
                 }
 
-                // Builtin `first`/`last`: JS arrays have no such methods, and
-                // the typed `pop`/`shift` builtins are emitted as verbatim JS
-                // passthroughs that return raw values (not Option) — a known
-                // runtime lie this deliberately avoids (deka#561). The arrow
-                // IIFE evaluates the receiver once, is expression-position
-                // safe, and works on frozen arrays.
-                if let Some(kind) = self.array_first_last_calls.get(&expr_ptr) {
-                    let index = match kind {
-                        deka_syntax::typeck::ArrayAccess::First => "0",
-                        deka_syntax::typeck::ArrayAccess::Last => "v.length - 1",
+                // Builtin `first`/`last`/`pop`/`shift`: emit a real Option
+                // construction at the site — `Some`/`None` from the prelude —
+                // never a raw JS passthrough. A bare `v.pop()` returns the raw
+                // element with no `__case` tag, so unwrap read a present value
+                // as absent, and threw `TypeError: Cannot delete property` on
+                // frozen (const) arrays (deka#566). The arrow IIFE evaluates
+                // the receiver once, is expression-position safe, and the
+                // length guard turns empty-array pop/shift into `None`
+                // instead of `Some(undefined)`.
+                if let Some(kind) = self.array_builtin_calls.get(&expr_ptr) {
+                    let produce = match kind {
+                        deka_syntax::typeck::ArrayAccess::First => "Some(v[0])",
+                        deka_syntax::typeck::ArrayAccess::Last => "Some(v[v.length - 1])",
+                        deka_syntax::typeck::ArrayAccess::Pop => "Some(v.pop())",
+                        deka_syntax::typeck::ArrayAccess::Shift => "Some(v.shift())",
                     };
-                    self.out.push_str("((v) => v.length > 0 ? Some(v[");
-                    self.out.push_str(index);
-                    self.out.push_str("]) : None)(");
+                    self.out.push_str("((v) => v.length > 0 ? ");
+                    self.out.push_str(produce);
+                    self.out.push_str(" : None)(");
                     if let Expr::FieldAccess { object, .. } = &**callee {
                         self.emit_expr(object)?;
                     }
@@ -3181,7 +3188,7 @@ impl<'a> Emitter<'a> {
                     type_of_calls: HashSet::new(),
                     signature_calls: HashMap::new(),
                     json_calls: HashMap::new(),
-                    array_first_last_calls: HashMap::new(),
+                    array_builtin_calls: HashMap::new(),
                     number_math_calls: HashMap::new(),
                     static_type_calls: HashMap::new(),
                     super_decl_trees: std::collections::HashMap::new(),

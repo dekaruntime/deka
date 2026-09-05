@@ -1,7 +1,8 @@
 import { echo } from "io"
 
 // first()/last() return Option<T> — and the emitted code really builds
-// an Option, unlike pop/shift's raw passthrough (deka#561).
+// an Option (deka#561). pop()/shift() are emitted the same way since
+// deka#566.
 const nums: Array<number> = [3, 4, 5]
 
 let f = unwrap(nums.first()) or { -1 }
@@ -16,7 +17,7 @@ let nf = unwrap(empty.first()) or { "none" }
 echo(nf)
 
 // first()/last() only read, so they work on frozen const arrays —
-// where pop() throws "Cannot delete property".
+// where calling pop() is a compile error instead (deka#566).
 const frozen: Array<number> = [7, 8, 9]
 let ff = unwrap(frozen.first()) or { -1 }
 let fl = unwrap(frozen.last()) or { -1 }
