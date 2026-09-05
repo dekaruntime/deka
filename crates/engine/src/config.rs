@@ -27,7 +27,7 @@ pub struct ServeConfig {
     pub mode: Option<ServeMode>,
     pub entry: Option<String>,
     pub directory_listing: Option<bool>,
-    /// `"static"` or `"worker"`. Omitted → Worker iff `api/` or `middleware.ds` exist.
+    /// `"static"` or `"worker"`. Omitted → Worker iff `api/` routes or `server:defer` islands exist.
     pub kind: Option<ServeKind>,
     /// Canonical trailing slash. Default: no trailing slash except `/`.
     #[serde(default, alias = "trailing_slash")]

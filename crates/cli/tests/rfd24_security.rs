@@ -89,22 +89,6 @@ fn write_security_fixture(dir: &Path, trailing_slash: bool) {
     )
     .expect("write admin page");
     fs::write(
-        dir.join("middleware.ds"),
-        r#"export const matcher = ["/_deka/defer"]
-interface RequestHeaders { accept: string }
-interface ResponseHeaders { location: string }
-interface Request { url: string, pathname: string, method: string, headers: RequestHeaders }
-interface Response { status: number, body: string, headers: ResponseHeaders }
-export fn middleware(request: Request) Option<Response> {
-    if (request.headers.accept != "text/x-deka-session") {
-        return Some({ status: 401, body: "gated", headers: { location: "" } })
-    }
-    return None
-}
-"#,
-    )
-    .expect("write middleware");
-    fs::write(
         dir.join("api/boom/route.ds"),
         r#"interface RequestHeaders { accept: string }
 interface Request { url: string, pathname: string, method: string, headers: RequestHeaders }
@@ -251,22 +235,7 @@ fn rfd24_security_claims_on_http() {
         open.status()
     );
 
-    // 4. middleware must run on POST /_deka/defer and short-circuit.
-    let gated = http
-        .post(format!("{base}/_deka/defer"))
-        .header("content-type", "application/json")
-        .body(r#"{"islands":[]}"#)
-        .send()
-        .expect("defer without session");
-    assert_eq!(
-        gated.status().as_u16(),
-        401,
-        "middleware must reject unauthenticated defer, body: {:?}\nserve.log:\n{}",
-        gated.text().ok(),
-        serve.log()
-    );
-
-    // 5. Throwing handler must not leak the exception message.
+    // 3. Throwing handler must not leak the exception message.
     let boom = http
         .get(format!("{base}/api/boom"))
         .send()

@@ -32,7 +32,7 @@ pub fn analyze_runtime_error(error_msg: &str, source_code: &str) -> String {
     if error_msg.contains("unknown deka module") {
         return format!(
             "{}\n\nHint: Available deka modules:\n\
-            - deka/router - HTTP routing and middleware\n\
+            - deka/router - HTTP routing\n\
             - deka/postgres - PostgreSQL database access\n\
             - deka/docker - Docker container management\n\
             - deka/t4 - File storage (S3-compatible)\n\n\

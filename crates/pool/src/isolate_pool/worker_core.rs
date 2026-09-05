@@ -378,7 +378,7 @@ impl WorkerThread {
         } else {
             Self::hash_source(&request.request_data.handler_code)
         };
-        // Distinct generated entries (serve / api / middleware / defer) must
+        // Distinct generated entries (serve / api / defer) must
         // never share a warm isolate even if their module-graph hashes collide.
         let source_hash = if let Some(entry) = request.request_data.handler_entry.as_ref() {
             use std::hash::{Hash, Hasher};
