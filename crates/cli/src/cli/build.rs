@@ -117,7 +117,7 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     // (see copy_dir_recursive below) -- so a project with a syntactically
     // invalid non-entry file, or an invalid entry file with no hydration
     // component, would "build" successfully. Validate everything up front.
-    validate_app_dir_sources(&app_dir)?;
+    validate_app_dir_sources(&project_root, &app_dir)?;
 
     let dist_root = project_root.join("dist");
     let dist_client = dist_root.join("client");
@@ -664,20 +664,46 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
 }
 
 /// Recursively finds every `.ds` file under `app_dir` and compiles it with
-/// the same v2 compiler call `deka check` uses, discarding the emitted JS. This is validation only -- dist/server/app still receives
-/// the original source bytes via `copy_dir_recursive`, unchanged. The point
-/// is solely to make `deka build` fail closed (non-zero exit, no dist/
-/// output written) on any source under app/ that the compiler itself would
-/// reject, matching what `deka check` already reports for that same file.
-fn validate_app_dir_sources(app_dir: &Path) -> Result<(), String> {
+/// the v2 compiler, discarding the emitted JS. Import-free files compile
+/// standalone (the same call `deka check` uses for a single file); files
+/// that import other modules compile through the module graph, exactly as
+/// `deka serve --dev` and the prerender compile them. This is validation
+/// only -- dist/server/app still receives the original source bytes via
+/// `copy_dir_recursive`, unchanged. The point is solely to make
+/// `deka build` fail closed (non-zero exit, no dist/ output written) on
+/// any source under app/ that the compiler itself would reject.
+///
+/// A file that imports other modules is validated through the module graph
+/// instead of standalone: standalone compilation reports every cross-module
+/// import as an unknown identifier, so a page importing a shared module
+/// would fail the build even though `deka serve --dev` (which compiles the
+/// same file through the graph) serves it fine. Dev and prod must agree on
+/// what compiles — RFD 24 §11.2.
+fn validate_app_dir_sources(project_root: &Path, app_dir: &Path) -> Result<(), String> {
     for path in collect_deka_source_files(app_dir)? {
         let input = path
             .to_str()
             .ok_or_else(|| format!("invalid utf-8 path: {}", path.display()))?;
         let source = fs::read_to_string(&path)
             .map_err(|err| format!("failed to read {}: {}", path.display(), err))?;
-        compile_js_or_report(&source, input)
-            .map_err(|err| format!("{}: {}", path.display(), err))?;
+        if deka_compile::parse_source_module_meta(&source)
+            .imports
+            .is_empty()
+        {
+            compile_js_or_report(&source, input)
+                .map_err(|err| format!("{}: {}", path.display(), err))?;
+        } else {
+            let loader =
+                deka_compile::module_graph::FsModuleLoader::new(project_root.to_path_buf());
+            deka_compile::module_graph::compile_module_graph(&path, &loader)
+                .map_err(|diagnostics| {
+                    format!(
+                        "{}: {}",
+                        path.display(),
+                        deka_compile::format_diagnostics(&diagnostics)
+                    )
+                })?;
+        }
     }
     Ok(())
 }

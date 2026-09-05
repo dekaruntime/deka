@@ -3332,6 +3332,18 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Returns true if the named interface declares any `mut` field. Such
+    /// interfaces grant mutation through their parameters, so an immutable
+    /// value must not be passed as one (deka#590).
+    fn interface_has_mut_fields(&self, name: &str) -> bool {
+        self.interfaces.get(name).map_or(false, |info| {
+            info.members.iter().any(|m| match m {
+                ast::InterfaceMember::Field { mutable, .. } => *mutable,
+                _ => false,
+            })
+        })
+    }
+
     fn check_call(
         &mut self,
         expr: &ast::Expr<'a>,
@@ -3613,6 +3625,27 @@ impl<'a> Checker<'a> {
                                     &arg_type,
                                 ),
                             );
+                        }
+                        // A mut field on an interface is the type-level grant to
+                        // mutate through it. Mutating a value the caller
+                        // cannot mutate was previously caught by the
+                        // Object.freeze on const literals at emit (deka#590);
+                        // with the freeze gone the call site is the guard:
+                        // passing an immutable receiver to an interface with
+                        // mut fields would let mutation through it succeed
+                        // silently. Generalises #591's immutable-receiver
+                        // rule from builtins to interface parameters.
+                        if let Type::Interface { name: iface_name } = expected {
+                            if self.interface_has_mut_fields(iface_name)
+                                && !self.is_mutable_expr(arg)
+                            {
+                                self.error_at_expr(
+                                    arg,
+                                    format!(
+                                        "cannot pass an immutable value as interface `{iface_name}` with mutable fields (bind it with `let` to allow mutation)"
+                                    ),
+                                );
+                            }
                         }
                     }
                 }

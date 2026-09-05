@@ -1472,16 +1472,12 @@ impl<'a> Emitter<'a> {
                 self.out.push_str("const ");
                 self.out.push_str(name);
                 self.out.push_str(" = ");
-                // Const bindings in DekaScript are immutable. Freeze array and
-                // object literals at creation so mutations throw at runtime.
-                let needs_freeze = matches!(value, Expr::Array { .. } | Expr::Object { .. });
-                if needs_freeze {
-                    self.out.push_str("Object.freeze(");
-                }
+                // Const value immutability is carried by the checker, not the
+                // runtime: typeck rejects index assignment and mutating
+                // builtins on a const-bound array/object (deka#590, step 1 in
+                // deka#591), so no Object.freeze is needed here. Freezing
+                // moved arrays off the fast element path (3-8.7x slower).
                 self.emit_expr(value)?;
-                if needs_freeze {
-                    self.out.push_str(")");
-                }
                 self.out.push_str(";");
             }
             Stmt::Let { name, value, .. } => {
