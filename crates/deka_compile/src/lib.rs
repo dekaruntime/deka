@@ -467,6 +467,51 @@ pub fn compile_to_js_with_imports_and_options<'a>(
         }
     }
 
+    // A package import with no resolved signature must not be allowed to fall
+    // through to a prelude name (for example `Result` or `Option`). In the
+    // single-file path the import map is the resolver's contract; report the
+    // missing binding at the import site instead of letting canonicalization
+    // reinterpret it as a builtin enum constructor.
+    let unresolved_imports: Vec<Diagnostic> = program
+        .statements
+        .iter()
+        .filter_map(|stmt| {
+            let deka_syntax::Stmt::Import {
+                specifiers, source, ..
+            } = stmt
+            else {
+                return None;
+            };
+            if imports.contains_key(source)
+                || source.starts_with('.')
+                || source.starts_with('/')
+                || source.starts_with("@/")
+                || !source.contains('/')
+            {
+                return None;
+            }
+            Some(
+                specifiers
+                    .iter()
+                    .map(|spec| {
+                        Diagnostic::error(
+                            spec.span.start.line,
+                            spec.span.start.column,
+                            format!(
+                                "cannot resolve imported name `{}` from `{}`",
+                                spec.imported, source
+                            ),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .flatten()
+        .collect();
+    if !unresolved_imports.is_empty() {
+        return Err(unresolved_imports);
+    }
+
     resolve_imported_enum_constructors(&mut program, arena, imports);
 
     let typeck_result = check_program_with_imports(&program, source, imports);
@@ -673,6 +718,20 @@ mod tests {
             result.js
         );
         assert!(result.js.contains("add(1, 2)"), "got: {}", result.js);
+    }
+
+    #[test]
+    fn unresolved_package_import_is_reported_at_import_site() {
+        let err = compile_to_js(
+            "import { Result } from \"@deka/core/result\";\nlet r = Result.Ok(1);",
+            "app/page.ds",
+        )
+        .expect_err("unresolved package import must fail");
+        assert_eq!(err.len(), 1, "got: {:?}", err);
+        assert_eq!(err[0].line, 1);
+        assert!(err[0].message.contains("imported name `Result`"));
+        assert!(err[0].message.contains("@deka/core/result"));
+        assert!(!err[0].message.contains("is_ok"));
     }
 
     #[test]
