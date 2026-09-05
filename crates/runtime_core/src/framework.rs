@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::module_spec::ds_source_candidates;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FrameworkEntryKind {
     Page,
@@ -750,23 +752,29 @@ fn scan_style_graph(entry_files: &[String]) -> (BTreeSet<String>, Vec<ScopedStyl
         // `[data-deka-cid-<cid>]`, so the rewritten selectors must carry the
         // same id (RFD 24 §10.6).
         let cid = css_scope_hash(&src);
-        for css in collect_import_paths(&src, |p| p.to_ascii_lowercase().ends_with(".css")) {
-            if let Some(resolved) = resolve_relative(path, &css) {
-                let key = format!("{resolved}\u{0}{cid}");
-                if Path::new(&resolved).is_file() && seen_css.insert(key) {
-                    css_files.push(ScopedStyleFile {
-                        path: resolved,
-                        cid: cid.clone(),
-                    });
+        for spec in collect_import_paths(&src, |p| p.starts_with("./") || p.starts_with("../")) {
+            let Some(base) = resolve_relative(path, &spec) else {
+                continue;
+            };
+            // Shared resolver (deka#241 / #622). Do not filter on `.ds`/`.dsx`
+            // before this call: extensionless `./Card` is a real specifier.
+            let candidates = ds_source_candidates(&base);
+            if candidates.is_empty() {
+                // `.css` is not DekaScript source; candidates is empty by design.
+                if spec.to_ascii_lowercase().ends_with(".css") && base.is_file() {
+                    let resolved = base.to_string_lossy().into_owned();
+                    let key = format!("{resolved}\u{0}{cid}");
+                    if seen_css.insert(key) {
+                        css_files.push(ScopedStyleFile {
+                            path: resolved,
+                            cid: cid.clone(),
+                        });
+                    }
                 }
+                continue;
             }
-        }
-        for ds in collect_import_paths(&src, |p| {
-            let lower = p.to_ascii_lowercase();
-            lower.ends_with(".ds") || lower.ends_with(".dsx")
-        }) {
-            if let Some(resolved) = resolve_relative(path, &ds) {
-                stack.push(resolved);
+            if let Some(resolved) = candidates.into_iter().find(|p| p.is_file()) {
+                stack.push(resolved.to_string_lossy().into_owned());
             }
         }
     }
@@ -861,13 +869,11 @@ fn quoted_prefix(s: &str) -> Option<&str> {
     Some(&rest[..end])
 }
 
-fn resolve_relative(from_file: &Path, spec: &str) -> Option<String> {
+fn resolve_relative(from_file: &Path, spec: &str) -> Option<PathBuf> {
     if !(spec.starts_with("./") || spec.starts_with("../")) {
         return None;
     }
-    let parent = from_file.parent()?;
-    let resolved = parent.join(spec);
-    Some(resolved.to_string_lossy().into_owned())
+    Some(from_file.parent()?.join(spec))
 }
 
 pub fn island_script_tags(islands: &[ClientIsland]) -> String {
