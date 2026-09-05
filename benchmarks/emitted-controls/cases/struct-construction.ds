@@ -1,0 +1,10 @@
+struct Point {
+  x: number;
+  y: number;
+}
+let sink = 0
+for (let i = 0; i < 2000000; i = i + 1) {
+  const p = Point { x: 1, y: 2 }
+  sink = sink + p.y
+}
+unsafe { console.log(sink) }
