@@ -138,6 +138,7 @@ const MODULE_SHIMS: Record<string, string> = {
   'reactive.mjs': uiModuleSource('reactive.js'),
   'suspense.mjs': uiModuleSource('suspense.js'),
   'server.mjs': uiModuleSource('server.js'),
+  'island-marker.mjs': uiModuleSource('island-marker.js'),
 }
 
 async function evaluateInFreshPage(

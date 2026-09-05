@@ -1010,6 +1010,7 @@ fn write_ui_modules_for_worker(project_root: &Path) -> Result<(), String> {
         ("server.js", deka_ui::SERVER),
         ("suspense.js", deka_ui::SUSPENSE),
         ("client.js", deka_ui::CLIENT),
+        ("island-marker.js", deka_ui::ISLAND_MARKER),
         ("form.js", deka_ui::FORM),
         ("router.js", deka_ui::ROUTER),
     ] {

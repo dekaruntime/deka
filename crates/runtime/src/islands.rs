@@ -280,6 +280,7 @@ pub fn rewrite_serve_entry_asset_urls(project_root: &Path) -> Result<(), String>
 struct UiChunkNames {
     jsx: String,
     reactive: String,
+    island_marker: String,
     client: String,
     server_stub: String,
 }
@@ -314,12 +315,15 @@ fn write_ui_chunks(ui_dir: &Path) -> Result<UiChunkNames, String> {
     // otherwise the emitted graph 404s the moment it loads in a browser.
     let jsx = hashed_asset_name("jsx", "js", deka_ui::JSX.as_bytes());
     let reactive = hashed_asset_name("reactive", "js", deka_ui::REACTIVE.as_bytes());
+    let island_marker = hashed_asset_name("island-marker", "js", deka_ui::ISLAND_MARKER.as_bytes());
     let client_src = deka_ui::CLIENT
         .replace("./jsx.js", &format!("./{jsx}"))
-        .replace("./reactive.js", &format!("./{reactive}"));
+        .replace("./reactive.js", &format!("./{reactive}"))
+        .replace("./island-marker.js", &format!("./{island_marker}"));
     let names = UiChunkNames {
         jsx,
         reactive,
+        island_marker,
         client: hashed_asset_name("client", "js", client_src.as_bytes()),
         server_stub: hashed_asset_name(
             "server-stub",
@@ -330,6 +334,7 @@ fn write_ui_chunks(ui_dir: &Path) -> Result<UiChunkNames, String> {
     let keep: BTreeSet<String> = [
         names.jsx.clone(),
         names.reactive.clone(),
+        names.island_marker.clone(),
         names.client.clone(),
         names.server_stub.clone(),
     ]
@@ -338,6 +343,7 @@ fn write_ui_chunks(ui_dir: &Path) -> Result<UiChunkNames, String> {
     for (name, source) in [
         (&names.jsx, deka_ui::JSX.to_string()),
         (&names.reactive, deka_ui::REACTIVE.to_string()),
+        (&names.island_marker, deka_ui::ISLAND_MARKER.to_string()),
         (&names.client, client_src),
         (
             &names.server_stub,
@@ -347,7 +353,11 @@ fn write_ui_chunks(ui_dir: &Path) -> Result<UiChunkNames, String> {
         fs::write(ui_dir.join(name), source.as_bytes())
             .map_err(|err| format!("failed to write {}: {err}", ui_dir.join(name).display()))?;
     }
-    clean_stale_hashed_assets(ui_dir, &["jsx.", "reactive.", "client.", "server-stub."], &keep)?;
+    clean_stale_hashed_assets(
+        ui_dir,
+        &["jsx.", "reactive.", "island-marker.", "client.", "server-stub."],
+        &keep,
+    )?;
     Ok(names)
 }
 
@@ -633,6 +643,7 @@ mod tests {
         let ui = UiChunkNames {
             jsx: "jsx.a1b2c3d4e5.js".to_string(),
             reactive: "reactive.a1b2c3d4e5.js".to_string(),
+            island_marker: "island-marker.a1b2c3d4e5.js".to_string(),
             client: "client.a1b2c3d4e5.js".to_string(),
             server_stub: "server-stub.a1b2c3d4e5.js".to_string(),
         };
@@ -642,6 +653,40 @@ mod tests {
         );
         assert!(js.contains("from \"./ui/jsx.a1b2c3d4e5.js\""), "{js}");
         assert!(js.contains("from \"./ui/server-stub.a1b2c3d4e5.js\""), "{js}");
+    }
+
+    // The client chunk 404s the moment it loads if any relative sibling
+    // import misses the hashed graph. Derive the import list from the source
+    // so a newly added sibling fails here until it is wired into the graph.
+    #[test]
+    fn ui_chunks_rewrite_every_client_sibling_import() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let names = write_ui_chunks(tmp.path()).expect("write ui chunks");
+        let client_src = fs::read_to_string(tmp.path().join(&names.client)).expect("read client");
+        let written: BTreeSet<String> = fs::read_dir(tmp.path())
+            .expect("read ui dir")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        let mut checked = 0usize;
+        for (index, _) in deka_ui::CLIENT.match_indices("from \"./") {
+            let rest = &deka_ui::CLIENT[index + "from \"./".len()..];
+            let relative = rest.split('"').next().expect("quoted relative import");
+            checked += 1;
+            assert!(
+                !client_src.contains(&format!("./{relative}")),
+                "client chunk still imports unhashed ./{relative}"
+            );
+            let hashed = written
+                .iter()
+                .find(|name| name.starts_with(relative.trim_end_matches(".js")))
+                .unwrap_or_else(|| panic!("no hashed chunk written for ./{relative}"));
+            assert!(
+                client_src.contains(&format!("./{hashed}")),
+                "client chunk does not reference sibling {hashed}"
+            );
+        }
+        assert!(checked >= 3, "expected client.js sibling imports, found {checked}");
     }
 
     #[test]

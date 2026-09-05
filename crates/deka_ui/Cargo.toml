@@ -7,3 +7,7 @@ license = "MIT"
 
 [lib]
 path = "src/lib.rs"
+
+[dev-dependencies]
+deno_core = { workspace = true }
+tokio = { workspace = true }

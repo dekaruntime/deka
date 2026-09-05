@@ -434,7 +434,10 @@ fn collect_deka_nodes(container_html: &str) -> HashMap<String, String> {
 }
 
 fn collect_islands(container_html: &str) -> HashMap<String, String> {
-    // Islands ship as HTML comment markers (see crates/deka_ui/js/server.js):
+    // Islands ship as HTML comment markers. The grammar is defined once in
+    // crates/deka_ui/js/island-marker.js (producer and consumer both derive
+    // from it); this scanner only matches the literal `deka-island start:` /
+    // `deka-island end:` prefixes, so keep ISLAND_MARKER_TAG stable there:
     //   <!--deka-island start:<b64 name> directive:<b64> [props:<b64>] [id:<b64>] ...-->
     //   ...island body...
     //   <!--deka-island end:<b64 name>-->
