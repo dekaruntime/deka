@@ -1,6 +1,6 @@
 use core::{CommandSpec, Context, FlagSpec, Registry};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::compile_helper::compile_or_report;
 
@@ -19,6 +19,11 @@ pub fn register(registry: &mut Registry) {
         name: "--as-package",
         aliases: &[],
         description: "typecheck a package working tree the way an installed consumer would resolve it",
+    });
+    registry.add_flag(FlagSpec {
+        name: "--single-file",
+        aliases: &[],
+        description: "typecheck only the requested file without project imports",
     });
 }
 
@@ -60,7 +65,23 @@ fn run(context: &Context) -> Result<(), String> {
 
     let source = fs::read_to_string(path)
         .map_err(|err| format!("failed to read {}: {}", path.display(), err))?;
-    let report = compile_or_report(&source, input)?;
+    let single_file = context
+        .args
+        .flags
+        .get("--single-file")
+        .copied()
+        .unwrap_or(false);
+    let report = if single_file {
+        compile_or_report(&source, input)?
+    } else if let Some(project_root) = find_project_root(&context.env.cwd, path) {
+        check_project_file(path, &project_root, &context.env.cwd)?;
+        crate::compile_helper::CompileReport {
+            js: String::new(),
+            warnings: Vec::new(),
+        }
+    } else {
+        compile_or_report(&source, input)?
+    };
 
     // Warnings never gate `deka check` -- a program with only warnings is a
     // successful check (deka#59). They're printed with the same colored,
@@ -72,6 +93,41 @@ fn run(context: &Context) -> Result<(), String> {
     }
 
     stdio::success(&format!("checked {}", path.display()));
+    Ok(())
+}
+
+/// Find the nearest project context for a check target. A project check uses
+/// the module graph so imports resolve exactly as they do for build and serve;
+/// files outside a project retain the historical standalone behavior.
+fn find_project_root(cwd: &Path, input: &Path) -> Option<PathBuf> {
+    let absolute_input = if input.is_absolute() {
+        input.to_path_buf()
+    } else {
+        cwd.join(input)
+    };
+    let start = if absolute_input.is_dir() {
+        absolute_input
+    } else {
+        absolute_input.parent()?.to_path_buf()
+    };
+
+    for dir in start.ancestors() {
+        if dir.join("deka.json").is_file() || dir.join("deka.lock").is_file() {
+            return Some(dir.to_path_buf());
+        }
+    }
+    None
+}
+
+fn check_project_file(path: &Path, project_root: &Path, cwd: &Path) -> Result<(), String> {
+    let absolute_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    };
+    let loader = deka_compile::module_graph::FsModuleLoader::new(project_root.to_path_buf());
+    deka_compile::module_graph::compile_module_graph(&absolute_path, &loader)
+        .map_err(|diagnostics| deka_compile::format_diagnostics(&diagnostics))?;
     Ok(())
 }
 
