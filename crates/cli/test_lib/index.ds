@@ -5,7 +5,7 @@ let afterEachHooks = []
 let beforeAllHooks = []
 let afterAllHooks = []
 let currentFailures = []
-let abortedFlag = [false]
+let abortedFlag: Array<boolean> = [false]
 
 export fn describe(name: string, body: fn() void) {
   suiteNames.push(name)
@@ -58,7 +58,7 @@ export fn fail(message: string) void {
   abortedFlag[0] = true
 }
 
-export fn toBe<T>(received: T, expected: T) T {
+export fn toBe(received: number, expected: number) number {
   if (abortedFlag[0]) {
     return received
   }
@@ -68,7 +68,7 @@ export fn toBe<T>(received: T, expected: T) T {
   return received
 }
 
-export fn toEqual<T>(received: T, expected: T) T {
+export fn toEqual(received: number, expected: number) number {
   if (abortedFlag[0]) {
     return received
   }
@@ -78,39 +78,39 @@ export fn toEqual<T>(received: T, expected: T) T {
   return received
 }
 
-export fn toBeOk<T, E>(received: Result<T, E>) T {
-  if (!abortedFlag[0] && !enum_is(received, "Result", "Ok")) {
-    fail("expected Ok, got " + fmt(received))
+export fn toBeOk(received: Result<number, string>) number {
+  if (!abortedFlag[0] && !isResultCase(received, "Ok")) {
+    fail("expected Ok, got " + render(received))
   }
-  return match (unsafe { received.value }) {
+  return match (unsafe<number> { received.value }) {
     Ok(v) => v,
-    Err(e) => v,
+    Err(e) => 0,
   }
 }
 
-export fn toBeErr<T, E>(received: Result<T, E>) E {
-  if (!abortedFlag[0] && !enum_is(received, "Result", "Err")) {
-    fail("expected Err, got " + fmt(received))
+export fn toBeErr(received: Result<number, string>) string {
+  if (!abortedFlag[0] && !isResultCase(received, "Err")) {
+    fail("expected Err, got " + render(received))
   }
-  return match (unsafe { received.error }) {
+  return match (unsafe<string> { received.error }) {
     Ok(v) => v,
-    Err(e) => v,
+    Err(e) => "",
   }
 }
 
-export fn toBeSome<T>(received: Option<T>) T {
-  if (!abortedFlag[0] && !enum_is(received, "Option", "Some")) {
-    fail("expected Some, got " + fmt(received))
+export fn toBeSome(received: Option<number>) number {
+  if (!abortedFlag[0] && !isOptionCase(received, "Some")) {
+    fail("expected Some, got " + renderOption(received))
   }
-  return match (unsafe { received.value }) {
+  return match (unsafe<number> { received.value }) {
     Ok(v) => v,
-    Err(e) => v,
+    Err(e) => 0,
   }
 }
 
-export fn toBeNone<T>(received: Option<T>) Option<T> {
-  if (!abortedFlag[0] && !enum_is(received, "Option", "None")) {
-    fail("expected None, got " + fmt(received))
+export fn toBeNone(received: Option<number>) Option<number> {
+  if (!abortedFlag[0] && !isOptionCase(received, "None")) {
+    fail("expected None, got " + renderOption(received))
   }
   return received
 }
@@ -134,17 +134,17 @@ export fn run(pattern: string) void {
     runHooks(t.afterEach)
     if (currentFailures.length > 0) {
       failed = failed + 1
-      console.log("[fail] " + t.fullName)
+      logLine("[fail] " + t.fullName)
       for (const message of currentFailures) {
-        console.log(message)
+        logLine(message)
       }
     } else {
       passed = passed + 1
-      console.log("[pass] " + t.fullName)
+      logLine("[pass] " + t.fullName)
     }
   }
   const total = passed + failed
-  console.log("[test] total=" + total + " passed=" + passed + " failed=" + failed)
+  logLine("[test] total=" + fmt(total) + " passed=" + fmt(passed) + " failed=" + fmt(failed))
 }
 
 fn currentSuite() string {
@@ -170,7 +170,7 @@ fn fullName(name: string) string {
   return suite + " > " + name
 }
 
-fn snapshot(hooks: array<fn() void>) array<fn() void> {
+fn snapshot(hooks: Array<fn() void>) Array<fn() void> {
   let copy = []
   for (const hook of hooks) {
     copy.push(hook)
@@ -189,7 +189,7 @@ fn nameMatches(full: string, pattern: string) boolean {
   return hit
 }
 
-fn runHooks(hooks: array<fn() void>) void {
+fn runHooks(hooks: Array<fn() void>) void {
   for (const hook of hooks) {
     callTest(hook)
   }
@@ -205,15 +205,23 @@ fn clear_failures() void {
   }
 }
 
-fn enum_is<T>(value: T, enumName: string, caseName: string) boolean {
-  const hit = match (unsafe { value && value.__enum === enumName && value.__case === caseName }) {
+fn isResultCase(value: Result<number, string>, caseName: string) boolean {
+  const hit = match (unsafe<boolean> { value.__enum === "Result" && value.__case === caseName }) {
     Ok(v) => v,
     Err(e) => false,
   }
   return hit
 }
 
-fn fmt<T>(value: T) string {
+fn isOptionCase(value: Option<number>, caseName: string) boolean {
+  const hit = match (unsafe<boolean> { value.__enum === "Option" && value.__case === caseName }) {
+    Ok(v) => v,
+    Err(e) => false,
+  }
+  return hit
+}
+
+fn fmt(value: number) string {
   const r = match (unsafe<string> { JSON.stringify(value) }) {
     Ok(v) => v,
     Err(e) => "",
@@ -224,7 +232,29 @@ fn fmt<T>(value: T) string {
   return r
 }
 
-fn deepEqual<T>(a: T, b: T) boolean {
+fn render(value: Result<number, string>) string {
+  const r = match (unsafe<string> { JSON.stringify(value) }) {
+    Ok(v) => v,
+    Err(e) => "",
+  }
+  if (r == "") {
+    return "?"
+  }
+  return r
+}
+
+fn renderOption(value: Option<number>) string {
+  const r = match (unsafe<string> { JSON.stringify(value) }) {
+    Ok(v) => v,
+    Err(e) => "",
+  }
+  if (r == "") {
+    return "?"
+  }
+  return r
+}
+
+fn deepEqual(a: number, b: number) boolean {
   if (a == b) {
     return true
   }
@@ -240,4 +270,11 @@ fn deepEqual<T>(a: T, b: T) boolean {
     return false
   }
   return left == right
+}
+
+fn logLine(message: string) void {
+  match (unsafe { console.log(message) }) {
+    Ok(v) => v,
+    Err(e) => e,
+  }
 }
