@@ -3009,7 +3009,7 @@ impl<'a> Emitter<'a> {
         {
             write_indent(&mut self.out, 0);
             self.out
-                .push_str("else { deka.panic(\"non-exhaustive match\"); }\n");
+                .push_str("else { throw new Error(\"non-exhaustive match\"); }\n");
         }
         Ok(())
     }
@@ -3044,7 +3044,7 @@ impl<'a> Emitter<'a> {
         }
 
         self.out
-            .push_str("  deka.panic(\"non-exhaustive match\");\n");
+            .push_str("  throw new Error(\"non-exhaustive match\");\n");
         self.out.push_str("})(");
         self.emit_expr(scrutinee)?;
         self.out.push_str(")");

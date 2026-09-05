@@ -199,7 +199,7 @@ mod tests {
         assert!(out.contains("const __deka_match_scrutinee_1 = o;"), "got: {}", out);
         assert!(out.contains("if (__deka_match_scrutinee_1.__case === \"Some\")"), "got: {}", out);
         assert!(!out.contains("=> {"), "match statement still has an IIFE: {}", out);
-        assert!(out.contains("deka.panic(\"non-exhaustive match\")"), "got: {}", out);
+        assert!(out.contains("throw new Error(\"non-exhaustive match\")"), "got: {}", out);
         assert!(!out.contains("((__deka_scrutinee) =>"), "match statement still has an IIFE: {}", out);
     }
 
