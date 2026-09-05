@@ -11,6 +11,7 @@ use super::Checker;
 impl<'a> Checker<'a> {
     pub(super) fn check_program(&mut self) {
         self.collect_declarations();
+        self.collect_module_value_bindings();
         self.collect_function_signatures();
         self.collect_receiver_methods();
         self.check_embedded_method_ambiguity();
@@ -449,10 +450,45 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// Seed module-scope `const`/`let` bindings into the top-level scope so
+    /// function bodies — checked before the top-level statement walk
+    /// (deka#600) — can resolve them. The seed type is the declared
+    /// annotation or `Type::Infer`; `check_binding` refines it when the
+    /// declaration is checked in source order. Seeding stays silent so
+    /// duplicate-declaration and annotation diagnostics are reported exactly
+    /// once, by `check_binding`. Each seeded name stays in
+    /// `pending_module_bindings` until then: module-level statements keep
+    /// rejecting forward references, while function bodies may capture.
+    fn collect_module_value_bindings(&mut self) {
+        let prev_infer_only = self.infer_only;
+        self.infer_only = true;
+        for stmt in self.program.statements {
+            let (name, ty, mutable) = match stmt {
+                ast::Stmt::Const { name, ty, .. } => (*name, ty.as_ref(), false),
+                ast::Stmt::Let { name, ty, .. } => (*name, ty.as_ref(), true),
+                ast::Stmt::Export {
+                    decl: ast::ExportDecl::Const { name, ty, .. },
+                    ..
+                } => (*name, ty.as_ref(), false),
+                _ => continue,
+            };
+            let seed = ty
+                .map(|annot| self.resolve_ast_type(annot))
+                .unwrap_or(Type::Infer);
+            self.scopes[0].insert(name, seed);
+            if mutable {
+                self.mutables[0].insert(name);
+            }
+            self.pending_module_bindings.insert(name);
+        }
+        self.infer_only = prev_infer_only;
+    }
+
     /// Run the silent inference pass used to seed cross-module function
     /// signatures for `collect_module_exports`.
     pub(crate) fn infer_all_function_signatures(&mut self) {
         self.collect_declarations();
+        self.collect_module_value_bindings();
         self.collect_function_signatures();
         self.collect_receiver_methods();
         self.check_embedded_method_ambiguity();
@@ -976,6 +1012,11 @@ impl<'a> Checker<'a> {
             self.declare_mutable_var(name, final_type);
         } else {
             self.declare_var(name, final_type);
+        }
+        // A declaration at module scope activates its seed for module-level
+        // lookups; nested declarations never touch module pending state.
+        if self.scopes.len() == 1 {
+            self.pending_module_bindings.remove(name);
         }
     }
 

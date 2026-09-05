@@ -851,6 +851,12 @@ struct Checker<'a> {
     /// Bindings that were introduced with `let` and may be reassigned.
     /// Each entry mirrors the corresponding scope in `scopes`.
     mutables: Vec<HashSet<&'a str>>,
+    /// Module-scope value bindings (`const`/`let`) seeded by
+    /// `collect_module_value_bindings` before function bodies are checked
+    /// (deka#600), not yet re-declared by `check_binding` in source order.
+    /// A pending seed is visible inside function bodies but not to
+    /// module-level statements, which keep rejecting forward references.
+    pending_module_bindings: HashSet<&'a str>,
     /// Type parameter scopes. Each generic binding introduces a new scope.
     type_scopes: Vec<HashMap<&'a str, Type<'a>>>,
     /// Are we currently inside a function body?
@@ -895,6 +901,7 @@ impl<'a> Checker<'a> {
             union_type_patterns: HashMap::new(),
             scopes: vec![HashMap::new()],
             mutables: vec![HashSet::new()],
+            pending_module_bindings: HashSet::new(),
             type_scopes: Vec::new(),
             in_function: false,
             in_async_function: false,
@@ -1045,8 +1052,14 @@ impl<'a> Checker<'a> {
     }
 
     fn lookup_var(&self, name: &'a str) -> Option<Type<'a>> {
-        for scope in self.scopes.iter().rev() {
+        for (depth, scope) in self.scopes.iter().enumerate().rev() {
             if let Some(ty) = scope.get(name) {
+                // A pending module seed (deka#600) is visible only inside
+                // function bodies; module-level statements keep rejecting
+                // forward references until the declaration is checked.
+                if depth == 0 && !self.in_function && self.pending_module_bindings.contains(name) {
+                    return None;
+                }
                 return Some(ty.clone());
             }
         }
