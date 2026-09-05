@@ -7,14 +7,21 @@
 //!   isolate pool bootstrap (`crates/pool/src/isolate_pool/worker_execution.rs`).
 //! - [`to_result_helper`] — the `__deka_to_result` expression (deka#578)
 //!   that tags host-bridge envelopes with the same shapes.
+//! - [`RESULT_OK`]/[`RESULT_ERR`] (crate-internal) — spliced directly into
+//!   the emitter's `unsafe { }` Ok/Err arms (deka#622 finding F) so those
+//!   values carry the exact branded shape `Result.Ok`/`Result.Err` produce.
 //!
 //! Freezing rules follow rfd#13 principles 1 and 8: the namespace objects
 //! (`Result`, `Option`) are shared and long-lived, so they stay frozen;
 //! ephemeral `Ok(v)`/`Some(v)` values carry data, not guarantees, and are
 //! never frozen.
 
-const RESULT_OK: &str = r#"(value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value })"#;
-const RESULT_ERR: &str = r#"(error) => ({ __enum: "Result", __case: "Err", name: "Err", error })"#;
+/// Shared `Result` constructors (deka#582). `pub(crate)` because
+/// `emit_unsafe` splices these expressions into its Ok/Err arms (deka#622
+/// finding F); the values it produces must be the same branded shape
+/// `Result.Ok`/`Result.Err` produce, never a second transcription.
+pub(crate) const RESULT_OK: &str = r#"(value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value })"#;
+pub(crate) const RESULT_ERR: &str = r#"(error) => ({ __enum: "Result", __case: "Err", name: "Err", error })"#;
 const OPTION_SOME: &str = r#"(value) => ({ __enum: "Option", __case: "Some", name: "Some", value })"#;
 const OPTION_NONE: &str = r#"({ __enum: "Option", __case: "None", name: "None" })"#;
 

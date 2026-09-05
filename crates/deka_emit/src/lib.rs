@@ -370,6 +370,42 @@ mod tests {
         assert!(out.contains("JSON.parse('{}')"), "got: {}", out);
     }
 
+    /// deka#622 finding F: the Ok/Err values `unsafe { }` produces must BE the
+    /// shared prelude constructors (deka#582), spliced — not a second,
+    /// unbranded transcription that happens to share `__case`/`value`/`error`
+    /// keys. The `__case: "Ok"` assertion above passes for either spelling;
+    /// if a consumer ever tightens to also require the `__enum` brand or
+    /// `name`, an unbranded literal silently stops matching (wrong answer,
+    /// not a crash). These assertions fail in that scenario: they require the
+    /// exact constructor expressions to appear in the output and the bare
+    /// `{ __case }` literals not to. The module prelude is gated behind
+    /// `uses_prelude_enums`, which `unsafe { }` never sets, so a hit here can
+    /// only come from the `emit_unsafe` splice itself.
+    #[test]
+    fn emit_unsafe_splices_shared_result_constructors() {
+        let out = parse_and_emit("const r = unsafe { JSON.parse('{}') };");
+        assert!(
+            out.contains(crate::prelude::RESULT_OK),
+            "Ok arm must splice the shared constructor, got: {}",
+            out
+        );
+        assert!(
+            out.contains(crate::prelude::RESULT_ERR),
+            "Err arm must splice the shared constructor, got: {}",
+            out
+        );
+        assert!(
+            !out.contains("{ __case: \"Ok\", value:"),
+            "unsafe must not transcribe its own Ok literal, got: {}",
+            out
+        );
+        assert!(
+            !out.contains("{ __case: \"Err\", error:"),
+            "unsafe must not transcribe its own Err literal, got: {}",
+            out
+        );
+    }
+
     #[test]
     fn emit_unsafe_async_await() {
         let out = parse_and_emit("const r = unsafe { await fetch(url) };");
