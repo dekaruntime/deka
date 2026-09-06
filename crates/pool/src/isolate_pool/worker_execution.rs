@@ -9,16 +9,15 @@ fn wrap_with_host_bindings(body: &str) -> String {
 }
 
 /// Assemble the bootstrap script, injecting the shared enum prelude and the
-/// `__deka_to_result` helper from `deka_emit::prelude` (deka#582). The pool
-/// must never carry its own transcription of the `Result`/`Option`
-/// constructors — the emitter's definition is the only one.
+/// `__deka_to_result` helper (deka#582). Shapes must match dsc's emitted
+/// `Result`/`Option` constructors (see `crate::prelude`).
 fn bootstrap_source(template: &str) -> String {
     let source = template
         .replace(
             "/*__DEKA_POOL_ENUM_PRELUDE__*/",
-            &deka_emit::prelude::pool_prelude(),
+            &crate::prelude::pool_prelude(),
         )
-        .replace("__DEKA_TO_RESULT__", &deka_emit::prelude::to_result_helper());
+        .replace("__DEKA_TO_RESULT__", &crate::prelude::to_result_helper());
     // assert!, not debug_assert!: release is what ships, and a marker that
     // fails to substitute there fails silently. The prelude marker sits inside
     // a /* */ comment, so an un-replaced one simply vanishes and the isolate
@@ -104,8 +103,7 @@ impl WorkerThread {
                     };
                 }
 
-                // Enum prelude is injected below from deka_emit::prelude
-                // (deka#582) — one definition, no pool-side transcription.
+                // Enum prelude is injected below from crate::prelude (deka#582).
                 /*__DEKA_POOL_ENUM_PRELUDE__*/
 
                 // Signal-based reactivity primitives (deka#142)
@@ -779,9 +777,8 @@ impl WorkerThread {
 
                     // DS bridge Result tagging (deka#578): one shared helper
                     // instead of a per-call IIFE. The expression is injected
-                    // from deka_emit::prelude (deka#582) so the envelope
-                    // carries __enum/name exactly like the prelude's Result
-                    // constructors — same definition, no transcription.
+                    // from crate::prelude (deka#582) so the envelope carries
+                    // __enum/name exactly like the prelude's Result constructors.
                     const __deka_to_result = __DEKA_TO_RESULT__;
 
                     const __bridge = (kind, action, payload) => {
