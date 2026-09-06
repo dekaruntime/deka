@@ -33,12 +33,9 @@ pub fn transpile_bundle(project_root: &Path, entry: &Path) -> Result<String, Str
 
 fn run_transpile(entry: &Path, cwd: Option<&Path>, prefix: &[&str]) -> Result<String, String> {
     let dsc = dsc_bin()?;
-    let tmp = tempfile::Builder::new()
-        .prefix("deka-build-")
-        .suffix(".js")
-        .tempfile()
-        .map_err(|err| format!("failed to create build temp file: {err}"))?;
-    let out = tmp.path();
+    // dsc refuses to overwrite a file it did not generate.
+    let tmp = tempfile::tempdir().map_err(|err| format!("failed to create build temp dir: {err}"))?;
+    let out = tmp.path().join("out.js");
     let entry_str = entry
         .to_str()
         .ok_or_else(|| "path is not UTF-8".to_string())?;
