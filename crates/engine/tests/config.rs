@@ -21,6 +21,7 @@ fn file_input_routes_to_correct_handler() {
         resolved.path.canonicalize().unwrap(),
         file.canonicalize().unwrap()
     );
+    assert!(matches!(resolved.mode, engine::config::ServeMode::Php));
 }
 
 #[test]
@@ -33,6 +34,7 @@ fn directory_with_serve_entry_routes_to_correct_handler() {
         resolved.path.canonicalize().unwrap(),
         dir.join("main.js").canonicalize().unwrap()
     );
+    assert!(matches!(resolved.mode, engine::config::ServeMode::Php));
 }
 
 #[test]
@@ -70,6 +72,24 @@ fn index_ds_routes_to_dekascript_handler() {
     assert_eq!(
         resolved.path.canonicalize().unwrap(),
         dir.join("index.ds").canonicalize().unwrap()
+    );
+    assert!(matches!(resolved.mode, engine::config::ServeMode::Php));
+}
+
+#[test]
+fn index_js_routes_to_worker_handler() {
+    let dir = temp_dir("engine_test_index_js");
+    fs::write(
+        dir.join("index.js"),
+        "export default { async fetch(request) { return new Response(\"ok\"); } }\n",
+    )
+    .unwrap();
+    fs::write(dir.join("index.html"), "<p>static</p>").unwrap();
+
+    let resolved = resolve_handler_path(dir.to_str().unwrap()).unwrap();
+    assert_eq!(
+        resolved.path.canonicalize().unwrap(),
+        dir.join("index.js").canonicalize().unwrap()
     );
     assert!(matches!(resolved.mode, engine::config::ServeMode::Php));
 }

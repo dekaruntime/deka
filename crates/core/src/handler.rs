@@ -224,6 +224,10 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
     }
 
     let index_files = [
+        "index.ds",
+        "index.dsx",
+        "index.js",
+        "index.mjs",
         "index.php",
         "index.phpx",
         "index.html",
@@ -259,8 +263,9 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
 
 fn detect_mode(path: &Path) -> ServeMode {
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-        match ext {
-            "php" | "phpx" => ServeMode::Php,
+        match ext.to_ascii_lowercase().as_str() {
+            "php" | "phpx" | "ds" | "dsx" => ServeMode::Php,
+            "js" | "mjs" | "cjs" => ServeMode::Js,
             "html" | "htm" => ServeMode::Static,
             _ => ServeMode::Static,
         }
@@ -342,5 +347,23 @@ mod tests {
         let resolved = resolve_handler_path(dir.to_str().expect("path")).expect("resolve");
         assert!(resolved.path.is_dir());
         assert!(matches!(resolved.mode, ServeMode::Php));
+    }
+
+    #[test]
+    fn javascript_file_is_js_mode() {
+        let dir = temp_dir("deka_handler_js_worker");
+        let file = dir.join("handler.js");
+        fs::write(
+            &file,
+            "export default { async fetch() { return new Response(\"ok\"); } }\n",
+        )
+        .expect("write js");
+
+        let resolved = resolve_handler_path(file.to_str().expect("path")).expect("resolve");
+        assert_eq!(
+            resolved.path.canonicalize().expect("resolved"),
+            file.canonicalize().expect("file")
+        );
+        assert!(matches!(resolved.mode, ServeMode::Js));
     }
 }

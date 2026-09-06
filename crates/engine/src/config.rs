@@ -195,8 +195,8 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
         });
     }
 
-    // Directory: search for index files in priority order
-    let index_files = ["index.ds", "index.html"];
+    // JS is a WinterTC worker; HTML stays static.
+    let index_files = ["index.ds", "index.dsx", "index.js", "index.mjs", "index.cjs", "index.html"];
 
     for index_file in &index_files {
         let index_path = abs_path.join(index_file);
@@ -223,8 +223,8 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
 
 fn detect_mode(path: &std::path::Path) -> ServeMode {
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-        match ext {
-            "ds" | "dsx" => ServeMode::Php,
+        match ext.to_ascii_lowercase().as_str() {
+            "ds" | "dsx" | "js" | "mjs" | "cjs" => ServeMode::Php,
             "html" | "htm" => ServeMode::Static,
             _ => ServeMode::Static,
         }
