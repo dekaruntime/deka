@@ -2,12 +2,9 @@
 // no dist/ output) when the web project's source under app/ does not
 // compile -- matching what `deka check` already reports for that file.
 //
-// Root cause (see runtime/crates/cli/src/cli/build.rs): the web-project
-// build path only ever compiled `serve.entry`, and only when the entry
-// used a hydration component; every other .ds file under app/, including
-// the entry itself in the common non-hydration case, was copied into
-// dist/server/app as raw, unvalidated bytes via copy_dir_recursive. A
-// project with syntactically invalid source therefore "built" successfully.
+// `deka build` prefers default dsc emit (`dsc --outdir`), falling back to
+// per-tree `dsc transpile <dir> --out`, then copies host static files.
+// Raw app/ .ds is not the server product.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -163,15 +160,131 @@ fn build_exits_zero_on_valid_source() {
         !index.contains("<script"),
         "a page with no client:* must not emit a script tag: {index}"
     );
+    let dist_app = project.path().join("dist").join("app");
+    assert!(
+        dist_app.join("page.js").is_file(),
+        "successful build should emit compiled app/ via dsc into dist/app: {combined}"
+    );
+    assert!(
+        dist_app.join("layout.js").is_file() && dist_app.join("not-found.js").is_file(),
+        "successful build should emit the rest of app/ as .js: {combined}"
+    );
+    assert!(
+        !dist_app.join("page.dsx").exists()
+            && !dist_app.join("layout.dsx").exists()
+            && !dist_app.join("not-found.dsx").exists()
+            && !project
+                .path()
+                .join("dist")
+                .join("server")
+                .join("app")
+                .join("page.dsx")
+                .exists(),
+        "must not copy raw app/ .ds/.dsx as the server product: {combined}"
+    );
+    assert!(
+        project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("style.css")
+            .is_file(),
+        "after emit, public/ must copy into dist/client: {combined}"
+    );
+    // Host extras from the init scaffold (copied into dist/server/).
     assert!(
         project
             .path()
             .join("dist")
             .join("server")
-            .join("app")
-            .join("page.dsx")
+            .join("deka.json")
             .is_file(),
-        "successful build should copy app/ into dist/server/app: {combined}"
+        "build should copy scaffold deka.json into dist/server: {combined}"
+    );
+    assert!(
+        project
+            .path()
+            .join("dist")
+            .join("server")
+            .join("deka.lock")
+            .is_file(),
+        "build should copy scaffold deka.lock into dist/server: {combined}"
+    );
+}
+
+#[test]
+fn build_emits_src_one_to_one() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    let src = project.path().join("src");
+    fs::create_dir_all(src.join("nested")).expect("mkdir src/nested");
+    fs::write(src.join("util.ds"), "export const n = 1;\n").expect("write src/util.ds");
+    fs::write(src.join("notes.txt"), "keep me\n").expect("write src/notes.txt");
+    fs::write(src.join("nested").join("readme.md"), "verbatim\n")
+        .expect("write src/nested/readme.md");
+
+    let (success, combined) = run_build(project.path());
+    assert!(
+        success,
+        "deka build should succeed with a no-magic src/ tree: {combined}"
+    );
+
+    let dist_src = project.path().join("dist").join("src");
+    let util_js = fs::read_to_string(dist_src.join("util.js")).expect("read dist/src/util.js");
+    assert!(
+        util_js.contains("export const n") || util_js.contains("n = 1"),
+        "src/ .ds must compile via dsc into dist/src: {util_js}"
+    );
+    assert!(
+        !dist_src.join("util.ds").exists(),
+        "src/ .ds must not be copied raw into dist/src"
+    );
+    assert_eq!(
+        fs::read_to_string(dist_src.join("notes.txt")).expect("read notes"),
+        "keep me\n"
+    );
+    assert_eq!(
+        fs::read_to_string(dist_src.join("nested").join("readme.md")).expect("read readme"),
+        "verbatim\n"
+    );
+}
+
+#[test]
+fn build_missing_dsc_is_hard_error() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+
+    let output = Command::new(cli_bin())
+        .arg("build")
+        .current_dir(project.path())
+        .env("DEKA_NO_DSC", "1")
+        .env_remove("DEKA_DSC")
+        .output()
+        .expect("run deka build");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !output.status.success(),
+        "missing dsc must fail the build: {combined}"
+    );
+    assert!(
+        combined.contains("dsc is required"),
+        "error should say dsc is required: {combined}"
+    );
+    assert!(
+        combined.contains("DEKA_DSC"),
+        "error should mention DEKA_DSC: {combined}"
+    );
+    assert!(
+        combined.contains("https://deka.gg/install") || combined.contains("install"),
+        "error should include install guidance: {combined}"
+    );
+    assert!(
+        !project.path().join("dist").exists(),
+        "missing dsc must not write dist/"
     );
 }
 
@@ -889,8 +1002,14 @@ fn build_island_change_rotates_hash_and_importmap() {
         first_url.starts_with("/assets/islands-load.") && first_url.ends_with(".js"),
         "importmap must map islands/load to a hashed URL: {first_url}"
     );
-    let index = fs::read_to_string(project.path().join("dist").join("client").join("index.html"))
-        .expect("read dist html");
+    let index = fs::read_to_string(
+        project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("index.html"),
+    )
+    .expect("read dist html");
     assert!(
         index.contains(&first_url),
         "dist html must reference the importmap URL: {index}"
@@ -903,7 +1022,10 @@ fn build_island_change_rotates_hash_and_importmap() {
     .expect("change island source");
 
     let (success, combined) = run_build(project.path());
-    assert!(success, "rebuild after an island change should succeed: {combined}");
+    assert!(
+        success,
+        "rebuild after an island change should succeed: {combined}"
+    );
     let second_url = importmap_url(&assets, "islands/load");
     assert_ne!(
         first_url, second_url,
@@ -914,8 +1036,14 @@ fn build_island_change_rotates_hash_and_importmap() {
         !assets.join(&first_name).exists(),
         "stale chunk must be cleaned after the hash rotates: {first_name}"
     );
-    let index = fs::read_to_string(project.path().join("dist").join("client").join("index.html"))
-        .expect("read dist html");
+    let index = fs::read_to_string(
+        project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("index.html"),
+    )
+    .expect("read dist html");
     assert!(
         index.contains(&second_url),
         "dist html must reference the new hashed URL: {index}"
