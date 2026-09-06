@@ -99,20 +99,16 @@ impl PhpxEsmLoader {
     }
 
     fn load_ds_source(&self, path: &Path) -> Result<ModuleSourceCode, JsErrorBox> {
-        let Some(v2_modules) = &self.v2_modules else {
-            return Err(JsErrorBox::generic(format!(
-                "{DEKA_VALIDATION_ERROR_MARKER}no dsc graph for {}",
-                path.display()
-            )));
-        };
-        let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        match v2_modules.get(&key) {
-            Some(js) => Ok(ModuleSourceCode::String(js.clone().into())),
-            None => Err(JsErrorBox::generic(format!(
-                "{DEKA_VALIDATION_ERROR_MARKER}dsc did not emit {}",
-                path.display()
-            ))),
+        if let Some(v2_modules) = &self.v2_modules {
+            if let Some(js) = crate::dsc_compile::lookup_js(v2_modules, path) {
+                return Ok(ModuleSourceCode::String(js.clone().into()));
+            }
         }
+        // Linked packages sit outside the consumer project, so the entry
+        // graph dump does not include them. Compile that tree through dsc;
+        // do not fall back to in-process deka_compile.
+        let js = crate::dsc_compile::compile_file(path).map_err(JsErrorBox::generic)?;
+        Ok(ModuleSourceCode::String(js.into()))
     }
 
     fn resolve_phpx_module_spec(&self, specifier: &str) -> Option<PathBuf> {
