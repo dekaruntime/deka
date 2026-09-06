@@ -204,7 +204,7 @@ async function scenarioWasmIo(wasmPath) {
       commands,
       ok: false,
       skipped: true,
-      skipReason: "no wasm artifact (set DEKA_WASM or build scripts/test-deka-compiler-wasm.sh)",
+      skipReason: "no wasm artifact (set DEKA_WASM from dsc-wasm.deka.gg)",
       stdout: "",
       stderr: "",
       error: undefined,

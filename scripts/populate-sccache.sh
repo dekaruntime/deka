@@ -74,9 +74,6 @@ cargo test -p bundler
 echo "=== Building CLI ==="
 cargo build --release -p cli
 
-echo "=== Building browser WASM ==="
-"$SCRIPT_DIR/build-deka-compiler-wasm.sh" "$RUNTIME_DIR/dist/deka-compiler-wasm"
-
 echo "=== Final sccache stats ==="
 sccache --show-stats
 

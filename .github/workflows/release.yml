@@ -105,21 +105,10 @@ jobs:
           cargo test -p engine
           cargo test -p bundler
 
-      - name: Build and test browser compiler WASM
-        if: matrix.platform == 'darwin-arm64'
-        env:
-          RUSTC_WRAPPER: "sccache"
-          DEKA_SKIP_DIRTY_CHECK: 1
-        run: scripts/test-deka-compiler-wasm.sh
-
-  build-wasm:
-    name: Build browser compiler + diagnostics WASM
+  fetch-dsc-wasm:
+    name: Fetch published dsc WASM
     needs: [test]
-    runs-on: [self-hosted, macos, arm64]
-    env:
-      SCCACHE_BUCKET: "deka-sccache-darwin-arm64"
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    runs-on: [self-hosted, linux, x64]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -127,27 +116,11 @@ jobs:
       - name: Where am I
         uses: ./.github/actions/where-am-i
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.96.0
-        with:
-          targets: wasm32-unknown-unknown
-
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
-
-      - name: Verify sccache can reach R2
+      - name: Download dsc browser artifacts
         run: |
-          command -v aws >/dev/null 2>&1 || pip install --break-system-packages awscli
-          echo "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
-          echo "SCCACHE_BUCKET=$SCCACHE_BUCKET"
-          sccache --show-stats
-          aws s3 ls "s3://${SCCACHE_BUCKET}/" --endpoint-url="${SCCACHE_ENDPOINT}"
-
-      - name: Build WASM artifacts
-        env:
-          RUSTC_WRAPPER: "sccache"
-          DEKA_SKIP_DIRTY_CHECK: "1"
-        run: scripts/build-deka-compiler-wasm.sh dist/deka-compiler-wasm
+          mkdir -p dist/deka-compiler-wasm
+          scripts/ci-install-dsc.sh "${{ github.workspace }}/.ci/dsc" \
+            --wasm dist/deka-compiler-wasm
 
       - name: Upload WASM artifacts
         uses: actions/upload-artifact@v7
@@ -299,7 +272,7 @@ jobs:
 
   dump-conformance:
     name: Dump Hats + pack conformance
-    needs: [build-wasm, build-cli-darwin-arm64]
+    needs: [fetch-dsc-wasm, build-cli-darwin-arm64]
     runs-on: [self-hosted, macos, arm64]
     steps:
       - name: Checkout
@@ -327,9 +300,11 @@ jobs:
 
       - name: Dump native + browser
         env:
+          DEKA_DSC: ${{ github.workspace }}/.ci/dsc
           DEKA_NATIVE: ${{ github.workspace }}/artifacts/deka-cli-darwin-arm64/deka-darwin-arm64
           DEKA_WASM: ${{ github.workspace }}/artifacts/deka-wasm/deka_compiler.wasm
         run: |
+          scripts/ci-install-dsc.sh "$DEKA_DSC"
           chmod +x "$DEKA_NATIVE"
           bun tests/dump/scripts/dump-results.mjs
 
@@ -347,7 +322,7 @@ jobs:
 
   publish:
     name: Publish to R2
-    needs: [build-wasm, build-cli-linux-x64, build-cli-darwin-x64, build-cli-darwin-arm64, dump-conformance]
+    needs: [fetch-dsc-wasm, build-cli-linux-x64, build-cli-darwin-x64, build-cli-darwin-arm64, dump-conformance]
     runs-on: [self-hosted, linux, x64]
     permissions:
       contents: write

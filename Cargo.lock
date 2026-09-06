@@ -1564,20 +1564,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "deka_compiler_wasm"
-version = "0.42.2"
-dependencies = [
- "bumpalo",
- "deka-fmt",
- "deka-validation",
- "deka_compile",
- "deka_syntax",
- "runtime_core",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "deka_emit"
 version = "0.42.2"
 dependencies = [
@@ -1687,15 +1673,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tower-lsp",
-]
-
-[[package]]
-name = "dekascript_lsp_wasm"
-version = "0.42.2"
-dependencies = [
- "dekascript_lsp",
- "serde",
- "serde_json",
 ]
 
 [[package]]
