@@ -52,7 +52,6 @@ pub fn register(registry: &mut Registry) {
 }
 
 pub fn cmd(context: &Context) {
-    crate::dsc::exec_if_present();
     if context.args.flags.get("--help").copied().unwrap_or(false)
         || context.args.flags.get("-H").copied().unwrap_or(false)
         || context.args.flags.get("help").copied().unwrap_or(false)

@@ -28,7 +28,6 @@ pub fn register(registry: &mut Registry) {
 }
 
 pub fn cmd(context: &Context) {
-    crate::dsc::exec_if_present();
     if let Err(err) = run(context) {
         stdio::error("check", &err);
         std::process::exit(1);

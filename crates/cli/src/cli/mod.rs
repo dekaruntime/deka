@@ -399,6 +399,9 @@ pub fn execute(registry: &Registry) {
         };
 
         if cmd.commands.len() == 1 {
+            if matches!(cmd_name.as_str(), "check" | "fmt" | "transpile" | "lsp") {
+                crate::dsc::exec_if_present();
+            }
             (command.handler)(&context);
             return;
         }
