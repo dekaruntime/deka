@@ -76,6 +76,14 @@ impl PhpxEsmLoader {
             if let Some(modules) = crate::dsc_compile::compile_graph(&project_root, &entry_path)
                 .map_err(JsErrorBox::generic)?
             {
+                let imports: Vec<String> = modules
+                    .keys()
+                    .filter_map(|path| std::fs::read_to_string(path).ok())
+                    .flat_map(|source| parse_module_imports(&source))
+                    .collect();
+                ensure_project_layout(&project_root, &imports)
+                    .map_err(JsErrorBox::generic)?;
+                enforce_dynamic_policy(&modules)?;
                 Some(modules)
             } else {
                 let loader = deka_compile::module_graph::FsModuleLoader::new(project_root.clone());

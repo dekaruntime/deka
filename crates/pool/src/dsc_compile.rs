@@ -2,11 +2,18 @@
 //!
 //! Returns `Ok(None)` when no dsc binary is configured so callers can fall
 //! back to in-process `deka_compile`. Needs dsc >= 0.5.0 (`--self-contained`).
+//!
+//! dsc 0.5.1 preserve-mode rewrites relative `.ds` imports to `.js`. The
+//! isolate loader resolves `.ds` paths from memory, so those rewrites ENOENT.
+//! Restore them here until a dsc that keeps specifiers under `--self-contained`
+//! is the published latest.
 
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use runtime_core::DEKA_VALIDATION_ERROR_MARKER;
 
 pub fn compile_graph(
     project_root: &Path,
@@ -42,7 +49,7 @@ pub fn compile_graph(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
-            "dsc transpile failed (need dsc >= 0.5.0 for --self-contained):\n{stderr}"
+            "{DEKA_VALIDATION_ERROR_MARKER}dsc transpile failed (need dsc >= 0.5.0 for --self-contained):\n{stderr}"
         ));
     }
 
@@ -85,8 +92,69 @@ fn collect_js(
         };
         let js = fs::read_to_string(&path)
             .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+        let js = restore_isolate_specifiers(js, &source);
         let key = fs::canonicalize(&source).unwrap_or(source);
         modules.insert(key, js);
     }
     Ok(())
+}
+
+/// dsc preserve-mode writes `from "./foo.js"`. Isolate resolve looks for
+/// `foo.ds` / `foo.dsx`. Put the original specifier back when that source
+/// sits next to the module we just compiled.
+fn restore_isolate_specifiers(mut js: String, source_file: &Path) -> String {
+    let Some(dir) = source_file.parent() else {
+        return js;
+    };
+    for quote in ['\'', '"'] {
+        let needle = format!("from {quote}");
+        let mut cursor = 0;
+        while let Some(found) = js[cursor..].find(&needle) {
+            let start = cursor + found + needle.len();
+            let Some(rel_end) = js[start..].find(quote) else {
+                break;
+            };
+            let end = start + rel_end;
+            let specifier = js[start..end].to_string();
+            if !(specifier.starts_with("./") || specifier.starts_with("../"))
+                || !specifier.ends_with(".js")
+            {
+                cursor = end + 1;
+                continue;
+            }
+            let peer = dir.join(&specifier);
+            let ds = peer.with_extension("ds");
+            let dsx = peer.with_extension("dsx");
+            let new_ext = if ds.is_file() {
+                "ds"
+            } else if dsx.is_file() {
+                "dsx"
+            } else {
+                cursor = end + 1;
+                continue;
+            };
+            js.replace_range(end - 2..end, new_ext);
+            cursor = end - 2 + new_ext.len();
+        }
+    }
+    js
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restores_js_imports_to_ds_when_source_exists() {
+        let tmp = std::env::temp_dir().join(format!("dsc-restore-{}", std::process::id()));
+        fs::create_dir_all(&tmp).unwrap();
+        fs::write(tmp.join("math.ds"), "export const n = 1\n").unwrap();
+        let main = tmp.join("main.ds");
+        fs::write(&main, "import { n } from \"./math.ds\"\n").unwrap();
+        let js = "import { n } from \"./math.js\";\n".to_string();
+        let out = restore_isolate_specifiers(js, &main);
+        let _ = fs::remove_dir_all(&tmp);
+        assert!(out.contains("./math.ds"), "{out}");
+        assert!(!out.contains("./math.js"), "{out}");
+    }
 }
