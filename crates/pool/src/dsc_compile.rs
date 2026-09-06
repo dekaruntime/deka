@@ -1,7 +1,8 @@
 //! Compile a DekaScript graph by exec'ing `dsc` (rfd#38).
 //!
-//! Returns `Ok(None)` when no dsc binary is configured so callers can fall
-//! back to in-process `deka_compile`. Needs dsc >= 0.5.0 (`--self-contained`).
+//! Isolate compile does not fall back to in-process `deka_compile`. Needs
+//! dsc >= 0.5.0 (`--self-contained`). Set `DEKA_DSC`, ship `dsc` next to
+//! `deka`, or put it on `PATH`.
 //!
 //! dsc 0.5.1 preserve-mode rewrites relative `.ds` imports to `.js`. The
 //! isolate loader resolves `.ds` paths from memory, so those rewrites ENOENT.
@@ -18,10 +19,12 @@ use runtime_core::DEKA_VALIDATION_ERROR_MARKER;
 pub fn compile_graph(
     project_root: &Path,
     entry: &Path,
-) -> Result<Option<HashMap<PathBuf, String>>, String> {
-    let Some(dsc) = runtime_core::dsc::find_dsc()? else {
-        return Ok(None);
-    };
+) -> Result<HashMap<PathBuf, String>, String> {
+    let dsc = runtime_core::dsc::find_dsc()?.ok_or_else(|| {
+        format!(
+            "{DEKA_VALIDATION_ERROR_MARKER}dsc is required to compile DekaScript in the isolate. Set DEKA_DSC, install dsc next to deka, or put dsc on PATH."
+        )
+    })?;
     let out = project_root.join(".cache").join("dsc-modules");
     if out.exists() {
         let _ = fs::remove_dir_all(&out);
@@ -61,7 +64,41 @@ pub fn compile_graph(
     if modules.is_empty() {
         return Err("dsc transpile wrote no modules".to_string());
     }
-    Ok(Some(modules))
+    Ok(modules)
+}
+
+/// JS for `source` from a graph dump, trying canonical and macOS `/var`
+/// vs `/private/var` aliases so dump keys match isolate loads.
+pub fn lookup_js<'a>(
+    modules: &'a HashMap<PathBuf, String>,
+    source: &Path,
+) -> Option<&'a String> {
+    let key = fs::canonicalize(source).unwrap_or_else(|_| source.to_path_buf());
+    if let Some(js) = modules.get(&key).or_else(|| modules.get(source)) {
+        return Some(js);
+    }
+    let text = key.to_string_lossy();
+    if let Some(rest) = text.strip_prefix("/private") {
+        modules.get(Path::new(rest))
+    } else {
+        modules.get(&PathBuf::from(format!("/private{text}")))
+    }
+}
+
+/// Compile one `.ds` that was not in the consumer graph (linked packages
+/// live outside the project root, so `--self-contained` on the consumer
+/// does not dump them).
+pub fn compile_file(source: &Path) -> Result<String, String> {
+    let root = source.parent().unwrap_or(source);
+    let modules = compile_graph(root, source)?;
+    lookup_js(&modules, source)
+        .cloned()
+        .ok_or_else(|| {
+            format!(
+                "{DEKA_VALIDATION_ERROR_MARKER}dsc did not emit {}",
+                source.display()
+            )
+        })
 }
 
 fn collect_js(
@@ -169,5 +206,21 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
         assert!(out.contains("./math.ds"), "{out}");
         assert!(!out.contains("./math.js"), "{out}");
+    }
+
+    #[test]
+    fn lookup_js_matches_macos_private_var_alias() {
+        let mut modules = HashMap::new();
+        modules.insert(
+            PathBuf::from("/var/folders/x/pkg/index.ds"),
+            "export const n = 1".to_string(),
+        );
+        // Path is not on disk, so canonicalize leaves /private/var/... and
+        // the /private prefix strip hits the map key.
+        let hit = lookup_js(
+            &modules,
+            Path::new("/private/var/folders/x/pkg/index.ds"),
+        );
+        assert_eq!(hit.map(String::as_str), Some("export const n = 1"));
     }
 }
