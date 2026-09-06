@@ -1536,17 +1536,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "deka_emit"
-version = "0.42.2"
-dependencies = [
- "bumpalo",
- "deka_syntax",
- "insta",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "deka_host"
 version = "0.42.2"
 dependencies = [

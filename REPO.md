@@ -21,10 +21,10 @@ Downstream repos you will touch regularly:
 cargo build --release -p cli
 
 # Check the main crates
-cargo check -p deka_emit -p deka_host -p php-rs -p runtime
+cargo check -p deka_host -p php-rs -p runtime
 
 # Run the main Rust tests
-cargo test -p deka_emit -p deka_host -p php-rs -p runtime
+cargo test -p deka_host -p php-rs -p runtime
 ```
 
 ## Repository layout
@@ -33,8 +33,8 @@ cargo test -p deka_emit -p deka_host -p php-rs -p runtime
 Cargo.toml              # workspace root
 crates/
   cli/                  # native CLI (`deka run`, `deka build`, `deka transpile`)
-  deka_emit/            # JS emitter leftover (language emit is dsc)
   deka_lsp/             # native LSP
+
 
   deka-validation/      # error formatting / diagnostics
   deka_host/          # parser + validation (shared PHPX/DS parser)
@@ -53,7 +53,7 @@ assets/                 # shared CSS bundle
 |---|---|
 | Parser / syntax | `crates/deka_host/src/parser/`, `crates/php-rs/src/parser/` |
 | Typechecker | `crates/php-rs/src/phpx/typeck/check/` |
-| JS emission | dsc (`deka_emit` leftover until it is deleted) |
+| JS emission | dsc |
 | Formatter | dsc (`dsc fmt`) |
 | Validation / diagnostics | `crates/deka_host/src/validation/`, `crates/deka-validation/` |
 | Native execution | `crates/runtime/src/`, `crates/cli/src/` |
@@ -108,7 +108,7 @@ deka fmt path/to/file.ds
 1. **Make the change** in the relevant crate(s).
 2. **Run Rust tests:**
    ```bash
-   cargo test -p deka_emit -p deka_host -p php-rs -p runtime
+   cargo test -p deka_host -p php-rs -p runtime
    cargo test -p cli --lib -- --test-threads=1
    ```
 3. **Run the in-tree language suite**, then WASM parity if you touched emit:
@@ -142,7 +142,7 @@ gh workflow run "Deploy deka test suite" --repo dekaruntime/testsuite --ref main
 
 ```bash
 # Fast compile check of the whole language stack
-cargo check -p deka_emit -p deka_host -p php-rs -p runtime -p cli
+cargo check -p deka_host -p php-rs -p runtime -p cli
 
 # Full Rust test stack (excluding WASM browser build)
 cargo build -p deka_http -p pool -p engine -p php-rs -p bundler

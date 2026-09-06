@@ -27,7 +27,6 @@ members = [
     "crates/deka-router",
     "crates/deka-validation",
     "crates/deka_syntax",
-    "crates/deka_emit",
     "crates/deka_ui",
 ]
 

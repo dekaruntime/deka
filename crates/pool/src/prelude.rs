@@ -3,8 +3,7 @@
 //! dsc owns the compiler-side prelude (`module_prelude`, emit helpers). The
 //! pool still has to install the same branded shapes on `globalThis` so host
 //! bridges and user code agree. These strings are the host copy of that ABI
-//! and must stay byte-identical to dsc's `deka_emit::prelude::{pool_prelude,
-//! to_result_helper}`.
+//! and must stay byte-identical to dsc's pool prelude / to_result helper.
 
 const RESULT_OK: &str =
     r#"(value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value })"#;

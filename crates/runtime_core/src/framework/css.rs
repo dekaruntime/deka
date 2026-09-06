@@ -3,8 +3,8 @@
 //! per-route stylesheets (RFD 24 §10.6).
 //!
 //! This lives in `runtime_core`, not `runtime::css`, because
-//! [`css_scope_hash`] is pinned against `deka_emit::css_scope_hash` and
-//! `deka_emit` cannot depend on the `runtime` crate.
+//! [`css_scope_hash`] is pinned against dsc's compiler stamp and the
+//! emitter cannot depend on the `runtime` crate.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -35,10 +35,9 @@ pub struct ScopedStyleFile {
 /// FNV-1a 64-bit over the module source, truncated to 12 hex chars — the
 /// `data-deka-cid-<hash>` component style-scope id from RFD 24 §10.6.
 ///
-/// Must stay in sync with `deka_emit::css_scope_hash`: the compiler stamps
+/// Must stay in sync with dsc's `css_scope_hash`: the compiler stamps
 /// elements with this id while the CSS writer rewrites selectors with it, so
-/// both sides must produce the same digest. Both crates pin the same test
-/// vector.
+/// both sides must produce the same digest.
 pub fn css_scope_hash(source: &str) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in source.as_bytes() {
@@ -264,9 +263,9 @@ mod tests {
 
     #[test]
     fn css_scope_hash_matches_the_emitter() {
-        // Pinned vector shared with deka_emit::css_scope_hash — the compiler
+        // Pinned vector shared with dsc's css_scope_hash — the compiler
         // stamps elements with this id and the CSS writer rewrites selectors
-        // with it, so a drift between the two crates breaks every scope.
+        // with it, so a drift breaks every scope.
         assert_eq!(css_scope_hash("greeting {}"), "e1c9193cd172");
         assert_eq!(css_scope_hash("greeting {}"), css_scope_hash("greeting {}"));
         assert_ne!(
