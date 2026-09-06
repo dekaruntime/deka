@@ -58,7 +58,7 @@ fn build_deka_handler_bundle_in_project(
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
-    let js = fs::read_to_string(out)
+    let js = fs::read_to_string(&out)
         .map_err(|err| format!("failed to read {}: {err}", out.display()))?;
     Ok(format!("{tenant_root_injection}{js}"))
 }
