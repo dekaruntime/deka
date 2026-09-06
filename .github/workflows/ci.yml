@@ -69,7 +69,7 @@ jobs:
     name: Utility CSS generator
     needs: [changes]
     if: needs.changes.outputs.utility_css == 'true'
-    runs-on: [self-hosted, macOS]
+    runs-on: [self-hosted, macOS, ARM64]
     steps:
       - uses: actions/checkout@v5
 
@@ -158,7 +158,7 @@ jobs:
     name: Rust tests
     needs: [changes, rust-check]
     if: needs.changes.outputs.rust == 'true'
-    runs-on: [self-hosted, macOS]
+    runs-on: [self-hosted, macOS, ARM64]
     env:
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: 0
