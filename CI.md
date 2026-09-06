@@ -48,10 +48,11 @@ The heavy job — `Rust tests` — runs on bugsy. If you are debugging a Rust te
 failure, bugsy is the machine you want.
 
 That job installs the published **dsc** compiler from
-`https://dsc-wasm.deka.gg` (`scripts/ci-install-dsc.sh`) and runs tour,
-conformance, and dump smoke with `DEKA_DSC` set. `cargo test` does not get
-that env var, so in-process compiler crates still run until they leave this
-repo. Browser compiler wasm is no longer built in PR CI.
+`https://dsc-wasm.deka.gg` (`scripts/ci-install-dsc.sh`) and runs
+`deka check` / `fmt` / `transpile` with `DEKA_DSC` set. Tour, conformance,
+and `deka run` still use in-process `deka_compile` until isolate compile
+through dsc is solid. Do not put `dsc` next to `target/release/cli` in CI:
+the isolate loader will pick it up as a sibling and fail module fixtures.
 
 ## Where the logs really are
 

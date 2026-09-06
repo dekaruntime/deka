@@ -3,9 +3,9 @@
 // ui/jsx.mjs shim — so harness breakage (bad shim paths, import-transform
 // regressions, playwright wiring) fails on the PR instead of at release time.
 //
-// Env: DEKA_NATIVE is this tree's CLI; DEKA_WASM is the dsc browser compiler
-// (CI fetches both from the published dsc release). HATS_FILTER overrides
-// the default fixture selection.
+// Env: DEKA_NATIVE and DEKA_WASM must point at artifacts built from the same
+// commit (the CI rust job builds both). HATS_FILTER overrides the default
+// fixture selection.
 
 import { loadAndRunAllTests } from '../lib/build-tests.ts'
 
