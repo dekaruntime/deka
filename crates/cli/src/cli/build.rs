@@ -111,7 +111,6 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     // not created on a failed compile), then promote trees and copy host
     // static files (public/ → dist/client, prerender/worker/_redirects/…).
     build_dsc::require_dsc()?;
-
     let staging =
         tempfile::tempdir().map_err(|err| format!("failed to create build staging dir: {err}"))?;
     let staging_root = staging.path();
@@ -126,16 +125,16 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
             // Default emit already copies src/ non-.ds verbatim. Only fill
             // leftovers dsc left out (skip when the dest file already exists).
             if emitted_src {
-                copy_non_ds_tree(&src_dir, &staging_root.join("src"), true)?;
+                build_dsc::copy_non_ds_tree(&src_dir, &staging_root.join("src"), true)?;
             }
         }
         build_dsc::ProjectEmit::NeedsTranspileFallback => {
-            emit_source_tree(&app_dir, &staging_root.join("app"), &project_root)?;
+            build_dsc::emit_source_tree(&app_dir, &staging_root.join("app"), &project_root)?;
             if emitted_src {
-                emit_source_tree(&src_dir, &staging_root.join("src"), &project_root)?;
+                build_dsc::emit_source_tree(&src_dir, &staging_root.join("src"), &project_root)?;
             }
             if emitted_api {
-                emit_source_tree(&api_dir, &staging_root.join("api"), &project_root)?;
+                build_dsc::emit_source_tree(&api_dir, &staging_root.join("api"), &project_root)?;
             }
         }
     }
@@ -722,100 +721,6 @@ fn replace_dir(src: &Path, dst: &Path) -> Result<(), String> {
         return Ok(());
     }
     copy_dir_recursive(src, dst)
-}
-
-/// 1:1 tree emit used by the transpile fallback: `dsc transpile <dir> --out
-/// <out>` for `.ds` / `.dsx`, then copy every other file verbatim. No routing.
-fn emit_source_tree(src_dir: &Path, dest_dir: &Path, project_root: &Path) -> Result<(), String> {
-    if !src_dir.is_dir() {
-        return Ok(());
-    }
-    let sources = collect_deka_source_files(src_dir)?;
-    if !sources.is_empty() {
-        if let Err(err) = build_dsc::transpile_dir(src_dir, dest_dir, Some(project_root)) {
-            for path in &sources {
-                if let Err(check_err) = build_dsc::check_path(path) {
-                    let check_err = check_err.trim();
-                    if check_err.is_empty() {
-                        return Err(format!("{}: {err}", path.display()));
-                    }
-                    return Err(format!("{}: {check_err}", path.display()));
-                }
-            }
-            return Err(err);
-        }
-    }
-    // Transpile does not copy non-.ds files; always fill them in.
-    copy_non_ds_tree(src_dir, dest_dir, false)
-}
-
-/// Copy non-`.ds`/`.dsx` files under `src` into `dst`. When `skip_existing` is
-/// set, leave files dsc (or a prior step) already wrote alone.
-fn copy_non_ds_tree(src: &Path, dst: &Path, skip_existing: bool) -> Result<(), String> {
-    if !src.is_dir() {
-        return Ok(());
-    }
-    let entries =
-        fs::read_dir(src).map_err(|err| format!("failed to read {}: {}", src.display(), err))?;
-    for entry in entries {
-        let entry = entry.map_err(|err| format!("read_dir entry error: {}", err))?;
-        let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
-        let file_type = entry
-            .file_type()
-            .map_err(|err| format!("file_type error for {}: {}", src_path.display(), err))?;
-        if file_type.is_dir() {
-            copy_non_ds_tree(&src_path, &dst_path, skip_existing)?;
-        } else if file_type.is_file() {
-            if is_deka_source_path(&src_path) {
-                continue;
-            }
-            if skip_existing && dst_path.is_file() {
-                continue;
-            }
-            if let Some(parent) = dst_path.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|err| format!("failed to create {}: {}", parent.display(), err))?;
-            }
-            fs::copy(&src_path, &dst_path).map_err(|err| {
-                format!(
-                    "failed to copy {} -> {}: {}",
-                    src_path.display(),
-                    dst_path.display(),
-                    err
-                )
-            })?;
-        }
-    }
-    Ok(())
-}
-
-fn collect_deka_source_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
-    let mut files = Vec::new();
-    if !dir.is_dir() {
-        return Ok(files);
-    }
-
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(current) = stack.pop() {
-        let entries = fs::read_dir(&current)
-            .map_err(|err| format!("failed to read {}: {}", current.display(), err))?;
-        for entry in entries {
-            let entry = entry.map_err(|err| format!("read_dir entry error: {}", err))?;
-            let path = entry.path();
-            let file_type = entry
-                .file_type()
-                .map_err(|err| format!("file_type error for {}: {}", path.display(), err))?;
-            if file_type.is_dir() {
-                stack.push(path);
-            } else if file_type.is_file() && is_deka_source_path(&path) {
-                files.push(path);
-            }
-        }
-    }
-
-    files.sort();
-    Ok(files)
 }
 
 fn inject_web_bootstrap_tags(
