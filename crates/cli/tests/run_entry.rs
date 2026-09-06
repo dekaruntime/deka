@@ -113,15 +113,18 @@ fn run_prefers_dist_js_over_src_main_ds() {
     let stub = write_dsc_stub(project.path());
 
     let (code, text) = run_in(project.path(), &["run"], Some(&stub));
-    assert_ne!(code, 0, "stub dsc should fail closed: {text}");
     let args = read_dsc_args(project.path());
     assert!(
-        args.contains("dist/src/main.js"),
-        "expected dist JS preference; dsc args={args:?} output={text}"
+        text.contains("from-dist") || args.contains("dist/src/main.js"),
+        "expected dist JS to run (or be the compile input); dsc args={args:?} output={text}"
     );
     assert!(
         !args.contains("src/main.ds"),
-        "must not fall back to src/main.ds when dist exists; dsc args={args:?}"
+        "must not compile src/main.ds when dist JS exists; dsc args={args:?}"
+    );
+    assert_eq!(
+        code, 0,
+        "preferred dist JS should run without dsc: {text}"
     );
 }
 

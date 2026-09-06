@@ -65,9 +65,7 @@ async fn serve_async(context: &Context) -> Result<(), String> {
         let _ = platform.env().set(key, value);
     };
     set_dev_flag_with(dev_mode, &env_get, &mut env_set);
-    if dev_mode {
-        ensure_dev_compiler_cache(&context.handler.input)?;
-    }
+    crate::dev::prepare(dev_mode, &context.handler.input)?;
     let resolved = runtime_config::resolve_handler_path(&context.handler.input)
         .map_err(|err| format!("Failed to resolve handler path: {}", err))?;
 
@@ -737,11 +735,7 @@ async fn serve_listeners(
     ensure_http_port_available(port)?;
     let listeners = server_pool_workers.max(1);
 
-    let listen_url = format!("http://localhost:{}", port);
-    if state.dev_mode {
-        print_dev_banner(&listen_url);
-    }
-    stdio_log::log("listen", &listen_url);
+    crate::dev::announce_listen(state.dev_mode, port);
     transport::serve(
         state,
         transport::ListenConfig::Http(HttpOptions {
@@ -751,29 +745,6 @@ async fn serve_listeners(
         }),
     )
     .await?;
-    Ok(())
-}
-
-/// ASCII brand banner plus URL/cwd. Printed once at listen time in `--dev`
-/// / `deka` — not on HMR reloads (those only log `[hmr]`).
-pub fn print_dev_banner(url: &str) {
-    let cwd = std::env::current_dir()
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|_| ".".to_string());
-    stdio_log::raw(&stdio_log::ascii("deka"));
-    stdio_log::raw("");
-    stdio_log::raw(&format!("  {url}"));
-    stdio_log::raw(&format!("  {cwd}"));
-    stdio_log::raw("");
-}
-
-fn ensure_dev_compiler_cache(handler_input: &str) -> Result<(), String> {
-    let root = project_root_from_handler(handler_input)
-        .or_else(|| std::env::current_dir().ok())
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let cache = runtime_core::framework::compiler_cache_dir(&root);
-    std::fs::create_dir_all(&cache)
-        .map_err(|err| format!("failed to create {}: {err}", cache.display()))?;
     Ok(())
 }
 
@@ -933,19 +904,12 @@ fn should_ignore_watch_path(path: &FsPath) -> bool {
     }
 
     // Generated/transient paths that should not trigger HMR loops.
-    // Match `.cache` as a path segment so parent notify events like
-    // `.../ds_modules/.cache` (no trailing slash) are ignored too.
-    if normalized.split('/').any(|seg| seg == ".cache") {
+    if normalized.split('/').any(|seg| {
+        matches!(seg, ".cache" | "node_modules" | "target" | ".git")
+    }) || normalized.ends_with("/ds_modules")
+        || normalized.ends_with("/php_modules")
+    {
         return true;
-    }
-    // Parent-dir noise when creating `ds_modules/.cache/dev`.
-    if normalized.ends_with("/ds_modules") || normalized.ends_with("/php_modules") {
-        return true;
-    }
-    for needle in ["/node_modules/", "/target/", "/.git/"] {
-        if normalized.contains(needle) {
-            return true;
-        }
     }
 
     false
@@ -956,7 +920,6 @@ mod tests {
     use super::build_static_handler_code;
     use super::ensure_http_port_available;
     use super::flag_or_env_truthy_with;
-    use super::print_dev_banner;
     use super::serve_async;
     use core::{Args, EnvContext, HandlerContext};
     use runtime_core::env::is_truthy;
@@ -1039,25 +1002,6 @@ mod tests {
         let err = ensure_http_port_available(port).expect_err("port should be rejected");
         assert!(err.contains("already in use"), "unexpected error: {}", err);
     }
-
-    #[test]
-    fn print_dev_banner_includes_ascii_url_and_cwd() {
-        let url = "http://localhost:9999";
-        let cwd = std::env::current_dir()
-            .expect("cwd")
-            .display()
-            .to_string();
-        let art = stdio::ascii("deka");
-        assert!(art.contains('░') || art.contains('█') || art.len() > 4);
-        let line_url = format!("  {url}");
-        let line_cwd = format!("  {cwd}");
-        assert!(line_url.contains("http://localhost:9999"));
-        assert!(!line_cwd.trim().is_empty());
-        print_dev_banner(url);
-    }
-
-
-
 
     /// Blocker 1 regression: __dekaStat/__dekaReadFile/__dekaReadDir must NOT
     /// contain Deno.* fallback branches.  If a tenant can shadow globalThis.fs
