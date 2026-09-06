@@ -29,10 +29,10 @@ pub fn compile_graph(
     fs::create_dir_all(&out)
         .map_err(|err| format!("failed to create {}: {err}", out.display()))?;
 
-    let input = if entry.starts_with(project_root) {
-        project_root
+    let entry = if entry.is_absolute() {
+        entry.to_path_buf()
     } else {
-        entry.parent().unwrap_or(project_root)
+        project_root.join(entry)
     };
 
     let output = Command::new(&dsc)
@@ -41,8 +41,9 @@ pub fn compile_graph(
         .args([
             "transpile",
             "--self-contained",
-            "--preserve",
-            input.to_str().ok_or_else(|| "project path is not UTF-8".to_string())?,
+            entry
+                .to_str()
+                .ok_or_else(|| "entry path is not UTF-8".to_string())?,
             "--out",
             out.to_str().ok_or_else(|| "cache path is not UTF-8".to_string())?,
         ])
@@ -56,7 +57,7 @@ pub fn compile_graph(
     }
 
     let mut modules = HashMap::new();
-    collect_js(&out, input, &mut modules)?;
+    collect_js(&out, project_root, &mut modules)?;
     if modules.is_empty() {
         return Err("dsc transpile wrote no modules".to_string());
     }
