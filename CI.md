@@ -41,6 +41,7 @@ Which job lands where is decided by `runs-on` labels in the workflow:
 | Detect changed files | `[self-hosted, linux, x64]` | thinkpad |
 | **Rust tests** | `[self-hosted, macOS, ARM64]` | **bugsy** |
 | Lockfile consistency | `[self-hosted, linux, x64]` | thinkpad |
+| File-size gate | `[self-hosted, linux, x64]` | thinkpad |
 | Utility CSS generator | `[self-hosted, macOS, ARM64]` | bugsy |
 
 The heavy job — `Rust tests` — runs on bugsy. If you are debugging a Rust test

@@ -1,0 +1,58 @@
+//! RFD 24 app-router framework support, split by job:
+//!
+//! - `manifest` — filesystem → route entries (no compiler deps)
+//! - `routes` — route data → slugs, segments, layout chains, matching (no
+//!   compiler deps)
+//! - `source` — `.ds`/`.dsx` text → exports, imports, directives (shared
+//!   scanning helpers)
+//! - `islands` / `defer` — client-island and `server:defer` scanning +
+//!   §9.3 lints
+//! - `css` — manifest + sources → scoped style plan
+//! - `document` — the `index.html` hole contract
+//! - `codegen` — manifest → generated entry source (string templating until
+//!   deka#391 phase (b) builds a `Program` and calls `emit_js`)
+//!
+//! Trailing-slash redirect policy lives in `engine::dispatch`, its only
+//! caller; everything previously public here keeps its
+//! `runtime_core::framework::*` path via these re-exports.
+
+use std::path::Path;
+
+mod codegen;
+mod css;
+mod defer;
+mod document;
+mod islands;
+mod manifest;
+mod routes;
+mod source;
+
+pub use codegen::{
+    write_api_router_entry, write_app_router_entry, write_defer_router_entry,
+    write_worker_router_entry,
+};
+pub use css::{
+    CssPlan, RouteStyle, ScopedStyleFile, collect_class_literals, collect_route_styles,
+    css_links_for_route, css_plan_from_styles, css_scope_hash,
+};
+pub use defer::{
+    DeferLint, DeferLintLevel, DeferredIsland, defer_script_tag, scan_defer_lints,
+    scan_server_defer,
+};
+pub use document::{
+    CLIENT_IMPORTMAP_PLACEHOLDER_TAG, DEKA_APP_HOLE, DEKA_HEAD_HOLE, DEKA_SCRIPTS_HOLE,
+    FRAGMENT_ACCEPT, FRAGMENT_ACCEPT_LEGACY, STATIC_ACCEPT, fill_document,
+};
+pub use islands::{ClientIsland, island_script_tags, scan_client_islands};
+pub use manifest::{
+    FrameworkEntry, FrameworkEntryKind, FrameworkManifest, collect_public_rel_paths,
+    exported_http_methods, is_app_router_project, scan_api_dir, scan_app_dir,
+};
+pub use routes::{
+    RouteMatch, cloudflare_redirects, layout_chain, match_path, normalize_request_path,
+    route_css_slug, route_from_relative_path, route_pattern_matches, static_page_routes,
+};
+pub fn project_needs_worker(project_root: &Path) -> bool {
+    !scan_api_dir(&project_root.join("api")).is_empty()
+        || !scan_server_defer(&project_root.join("app")).is_empty()
+}

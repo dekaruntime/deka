@@ -6,7 +6,6 @@ use crate::RuntimeState;
 use crate::envelope::{RequestEnvelope, ResponseEnvelope};
 use pool::RequestParts;
 use pool::{ExecutionMode, HandlerKey, RequestData};
-use runtime_core::framework::trailing_slash_redirect_for_request;
 use runtime_core::storefront_envelope::StorefrontResponse;
 
 /// Page, API, and defer entries must not share one isolate.
@@ -199,26 +198,153 @@ pub async fn execute_request_value(
     execute_request_data(state, request_data).await
 }
 
+fn request_path_from_url(url: &str) -> String {
+    let without_query = url.split('?').next().unwrap_or(url);
+    let path = if let Some(idx) = without_query.find("://") {
+        let rest = &without_query[idx + 3..];
+        rest.find('/').map(|i| &rest[i..]).unwrap_or("/")
+    } else if without_query.starts_with('/') {
+        without_query
+    } else {
+        "/"
+    };
+    collapse_leading_slashes(path)
+}
+
+fn collapse_leading_slashes(path: &str) -> String {
+    if path.is_empty() {
+        return "/".to_string();
+    }
+    let trailing = path.len() > 1 && path.ends_with('/');
+    let trimmed = path.trim_start_matches('/');
+    if trimmed.is_empty() {
+        return "/".to_string();
+    }
+    let mut out = format!("/{trimmed}");
+    if trailing && !out.ends_with('/') {
+        out.push('/');
+    }
+    out
+}
+
+/// If the request path is not in canonical trailing-slash form, return the
+/// Location value (path + query) to 301 to. Default is no trailing slash
+/// except `/`.
+fn trailing_slash_redirect_for_request(
+    method: &str,
+    url: &str,
+    want_trailing: bool,
+) -> Option<String> {
+    if !method.eq_ignore_ascii_case("GET") && !method.eq_ignore_ascii_case("HEAD") {
+        return None;
+    }
+    let path = request_path_from_url(url);
+    if path == "/api"
+        || path.starts_with("/api/")
+        || path == "/_deka/defer"
+        || path.starts_with("/_deka/")
+    {
+        return None;
+    }
+    trailing_slash_redirect(url, want_trailing)
+}
+
+fn trailing_slash_redirect(url: &str, want_trailing: bool) -> Option<String> {
+    let path = request_path_from_url(url);
+    let query = url.split_once('?').map(|(_, q)| q);
+    if path == "/" {
+        return None;
+    }
+    let has_slash = path.ends_with('/');
+    let dest = if want_trailing && !has_slash {
+        format!("{path}/")
+    } else if !want_trailing && has_slash {
+        let trimmed = path.trim_end_matches('/');
+        if trimmed.is_empty() {
+            "/".to_string()
+        } else {
+            trimmed.to_string()
+        }
+    } else {
+        return None;
+    };
+    Some(match query {
+        Some(q) => format!("{dest}?{q}"),
+        None => dest,
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::handler_key_for_entry;
+    use super::{
+        handler_key_for_entry, trailing_slash_redirect, trailing_slash_redirect_for_request,
+    };
     use pool::HandlerKey;
 
     #[test]
     fn handler_key_includes_entry_filename() {
         let base = HandlerKey::new("serve-entry.dsx");
-        let page = handler_key_for_entry(
-            &base,
-            Some("/tmp/proj/.cache/dekascript/serve-entry.dsx"),
-        );
-        let defer = handler_key_for_entry(
-            &base,
-            Some("/tmp/proj/.cache/dekascript/defer-entry.dsx"),
-        );
+        let page =
+            handler_key_for_entry(&base, Some("/tmp/proj/.cache/dekascript/serve-entry.dsx"));
+        let defer =
+            handler_key_for_entry(&base, Some("/tmp/proj/.cache/dekascript/defer-entry.dsx"));
         assert_ne!(page.name, defer.name);
         assert!(page.name.ends_with("::serve-entry.dsx"), "{}", page.name);
         assert!(defer.name.ends_with("::defer-entry.dsx"), "{}", defer.name);
         let none = handler_key_for_entry(&base, None);
         assert_eq!(none.name, "serve-entry.dsx");
+    }
+
+    #[test]
+    fn trailing_slash_redirect_canonicalizes() {
+        // (url, want_trailing) -> expected Location
+        let cases: &[(&str, bool, Option<&str>)] = &[
+            ("http://localhost/blog/", false, Some("/blog")),
+            ("http://localhost/blog", false, None),
+            ("http://localhost/", false, None),
+            ("http://localhost/blog?x=1", true, Some("/blog/?x=1")),
+        ];
+        for (url, want_trailing, expected) in cases {
+            assert_eq!(
+                trailing_slash_redirect(url, *want_trailing).as_deref(),
+                *expected,
+                "trailing_slash_redirect({url:?}, {want_trailing})"
+            );
+        }
+    }
+
+    #[test]
+    fn trailing_slash_redirect_skips_post_and_api() {
+        assert_eq!(
+            trailing_slash_redirect_for_request("POST", "http://localhost/_deka/defer", true),
+            None
+        );
+        assert_eq!(
+            trailing_slash_redirect_for_request("POST", "http://localhost/api/hello/", false),
+            None
+        );
+        assert_eq!(
+            trailing_slash_redirect_for_request("GET", "http://localhost/blog/", false),
+            Some("/blog".to_string())
+        );
+        assert_eq!(
+            trailing_slash_redirect_for_request("HEAD", "http://localhost/blog/", false),
+            Some("/blog".to_string())
+        );
+    }
+
+    #[test]
+    fn trailing_slash_redirect_does_not_open_redirect() {
+        assert_eq!(
+            trailing_slash_redirect("//evil.com/foo/", false),
+            Some("/evil.com/foo".to_string())
+        );
+        assert_eq!(
+            trailing_slash_redirect("http://localhost//evil.com/foo/", false),
+            Some("/evil.com/foo".to_string())
+        );
+        let dest = trailing_slash_redirect("//evil.com/foo", true).unwrap();
+        assert!(dest.starts_with('/'));
+        assert!(!dest.starts_with("//"));
     }
 }
