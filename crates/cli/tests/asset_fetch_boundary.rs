@@ -550,8 +550,13 @@ fn dist_importmap_stdlib_prefixes_match_installed_packages() {
         String::from_utf8_lossy(&output.stderr)
     );
     let dist_client = project.path().join("dist").join("client");
+    // deka#624: this is the web-bootstrap (`serve.entry`) path, not app-router.
+    // The document must carry the map inline — browsers reject `src=` on
+    // `<script type="importmap">`.
+    let index_html = fs::read_to_string(dist_client.join("index.html")).expect("read dist html");
+    let inline = inline_importmap(&index_html, "web-bootstrap dist index.html");
     // Both copies the build emits: the assets-side original and the
-    // document-root copy the HTML references as /importmap.json.
+    // document-root copy kept for tooling. HTML must not reference either by URL.
     for map_path in [
         dist_client.join("assets").join("importmap.json"),
         dist_client.join("importmap.json"),
@@ -583,4 +588,16 @@ fn dist_importmap_stdlib_prefixes_match_installed_packages() {
             );
         }
     }
+    let disk: serde_json::Value = serde_json::from_slice(
+        &fs::read(dist_client.join("assets").join("importmap.json")).expect("read assets map"),
+    )
+    .expect("parse assets map");
+    let disk_imports = disk
+        .get("imports")
+        .and_then(|v| v.as_object())
+        .expect("assets importmap must have imports");
+    assert_eq!(
+        &inline, disk_imports,
+        "inlined web-bootstrap import map must agree with assets/importmap.json"
+    );
 }
