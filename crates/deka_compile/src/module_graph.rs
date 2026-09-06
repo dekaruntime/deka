@@ -293,10 +293,13 @@ pub struct ModuleGraphResult {
     /// appears iff some module asked for it. Bundle consumers prepend this
     /// to the single output scope.
     pub prelude: String,
-    /// Per-module shared prelude, synthesized from each module's own demand.
-    /// Hosts that serve modules as separate files (separate scopes) prepend
-    /// the module's own prelude to its body — see
-    /// [`Self::self_contained_modules`].
+    /// Per-module shared prelude, synthesized from each module's own demand
+    /// with the program-level `declares_*` bits overlaid — a consuming
+    /// module's `__deka_type_of` must brand-check kinds it never declares,
+    /// because values cross module boundaries without their type binding
+    /// being imported (function returns). Hosts that serve modules as
+    /// separate files (separate scopes) prepend the module's prelude to its
+    /// body — see [`Self::self_contained_modules`].
     pub module_preludes: HashMap<PathBuf, String>,
     /// Every import specifier written anywhere in the graph, as written.
     ///
@@ -732,10 +735,21 @@ pub fn compile_module_graph_with_options(
     // it, each member iff some module asked for it (deka#595). Per-module
     // preludes serve hosts that keep modules in separate scopes.
     let mut program_demand = deka_emit::prelude::PreludeDemand::default();
+    for demand in demands.values() {
+        program_demand.union(demand);
+    }
     let mut module_preludes: HashMap<PathBuf, String> = HashMap::with_capacity(demands.len());
     for (path, demand) in &demands {
-        program_demand.union(demand);
-        module_preludes.insert(path.clone(), deka_emit::prelude::shared_prelude(demand));
+        // The `__deka_type_of` brand branches must reflect the whole program,
+        // not the module's own declarations: values cross module boundaries
+        // without their type binding being imported (function returns), so a
+        // consuming module's prelude needs the struct/enum/newtype check even
+        // when it declares nothing itself. Overlay the program-level bits.
+        let mut module_demand = demand.clone();
+        module_demand.declares_structs = program_demand.declares_structs;
+        module_demand.declares_enums = program_demand.declares_enums;
+        module_demand.declares_newtypes = program_demand.declares_newtypes;
+        module_preludes.insert(path.clone(), deka_emit::prelude::shared_prelude(&module_demand));
     }
     let prelude = deka_emit::prelude::shared_prelude(&program_demand);
 
@@ -964,6 +978,86 @@ mod tests {
         let result =
             compile_module_graph(&c, &InMemoryLoader { files, aliases }).expect("barrel compiles");
         assert_eq!(result.modules.len(), 3);
+    }
+
+    /// Regression for the testsuite fixture `cross-module-struct-identity-001`:
+    /// a module that calls `.getType()` on a value RETURNED from another
+    /// module declares no struct itself, but its per-module prelude must
+    /// still carry the struct brand branch of `__deka_type_of` — values cross
+    /// module boundaries without their type binding being imported, so the
+    /// program-level `declares_*` bits are overlaid onto every module prelude
+    /// (deka#595). Without the overlay the consumer's `__deka_type_of` falls
+    /// through to "object" and cross-module reflection silently lies.
+    #[test]
+    fn module_prelude_brand_branches_follow_program_declarations() {
+        let root = PathBuf::from("/project");
+        let types = root.join("types.ds");
+        let factory = root.join("factory.ds");
+        let main = root.join("main.ds");
+        let mut files = HashMap::new();
+        files.insert(
+            types.clone(),
+            "struct Person { name: string }\nexport { Person }".to_string(),
+        );
+        files.insert(
+            factory.clone(),
+            "import { Person } from \"./types.ds\";\nfn make_person(name: string) Person { return Person { name: name }; }\nexport { make_person }".to_string(),
+        );
+        files.insert(
+            main.clone(),
+            "import { Person } from \"./types.ds\";\nimport { make_person } from \"./factory.ds\";\nconst p: Person = make_person(\"Deka\");\nconst t = p.getType().toString();".to_string(),
+        );
+        let mut aliases = HashMap::new();
+        aliases.insert((factory.clone(), "./types.ds".to_string()), types.clone());
+        aliases.insert((main.clone(), "./factory.ds".to_string()), factory.clone());
+        aliases.insert((main.clone(), "./types.ds".to_string()), types.clone());
+        let result = compile_module_graph(&main, &InMemoryLoader { files, aliases })
+            .expect("compile graph");
+
+        // The call site must rewrite through the typechecker's type_of_calls
+        // set — an unannotated binding does not record it, so this assertion
+        // pins the fixture's exact shape (annotated import) against drift.
+        assert!(
+            result.modules[&main].contains("__deka_type_of(p)"),
+            "getType() call site was not rewritten:\n{}",
+            result.modules[&main]
+        );
+        // The consuming module declares no struct, yet its own prelude must
+        // brand-check structs: make_person's return value crosses the
+        // boundary with only the brand to identify it.
+        let main_prelude = &result.module_preludes[&main];
+        assert!(
+            main_prelude.contains("v.__deka_struct"),
+            "consuming module's prelude is missing the struct brand branch:\n{main_prelude}"
+        );
+        // Sanity: main's prelude carries `__deka_type_of` at all (it has the
+        // call site) and the program prelude agrees.
+        assert!(main_prelude.contains("function __deka_type_of"));
+        assert!(result.prelude.contains("v.__deka_struct"));
+
+        // A program that declares no structs anywhere keeps the branch out of
+        // every module prelude — the overlay must not become unconditional.
+        let math = root.join("math.ds");
+        let app = root.join("app.ds");
+        let mut files = HashMap::new();
+        files.insert(
+            math.clone(),
+            "export fn double(n: number) number { return n + n; }".to_string(),
+        );
+        files.insert(
+            app.clone(),
+            "import { double } from \"./math.ds\";\nconst t = double(2).getType().toString();"
+                .to_string(),
+        );
+        let mut aliases = HashMap::new();
+        aliases.insert((app.clone(), "./math.ds".to_string()), math.clone());
+        let result = compile_module_graph(&app, &InMemoryLoader { files, aliases })
+            .expect("compile graph");
+        assert!(
+            !result.module_preludes[&app].contains("v.__deka_struct"),
+            "struct-free program emitted the struct brand branch:\n{}",
+            result.module_preludes[&app]
+        );
     }
 
     #[test]

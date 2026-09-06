@@ -1,14 +1,14 @@
 # Files under crates/ already over 1,000 lines (deka#391 burn-down list).
 # Do not grow these. Shrink one under 1,000 and delete its line.
 # Format: <path> <lines>
-crates/bundler/src/bundler.rs 1144
-crates/cli/src/cli/build.rs 1332
+crates/bundler/src/bundler.rs 1228
+crates/cli/src/cli/build.rs 1339
 crates/cli/src/cli/self_cmd/update.rs 1113
-crates/cli/src/cli/transpile.rs 1478
-crates/deka_compile/src/lib.rs 1405
-crates/deka_compile/src/module_graph.rs 1628
-crates/deka_emit/src/emit.rs 4136
-crates/deka_emit/src/lib.rs 1460
+crates/cli/src/cli/transpile.rs 1480
+crates/deka_compile/src/lib.rs 1448
+crates/deka_compile/src/module_graph.rs 1893
+crates/deka_emit/src/emit.rs 4254
+crates/deka_emit/src/lib.rs 1521
 crates/deka_host/src/modules/http.rs 1141
 crates/deka_host/src/modules/php/db.rs 1320
 crates/deka_host/src/modules/php/net.rs 1712

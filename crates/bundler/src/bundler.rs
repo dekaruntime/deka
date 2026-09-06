@@ -1223,4 +1223,6 @@ fn to_camel_case(input: &str) -> String {
 }
 
 #[cfg(test)]
+mod prelude_tests;
+#[cfg(test)]
 mod tests;
