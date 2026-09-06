@@ -142,6 +142,108 @@ fn path_utf8(path: &Path) -> Result<&str, String> {
     path.to_str().ok_or_else(|| "path is not UTF-8".to_string())
 }
 
+fn is_deka_source_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("ds") | Some("dsx")
+    )
+}
+
+/// 1:1 tree emit: `dsc transpile <dir> --out <out>` for `.ds` / `.dsx`, then
+/// copy every other file verbatim. No routing.
+pub fn emit_source_tree(
+    src_dir: &Path,
+    dest_dir: &Path,
+    project_root: &Path,
+) -> Result<(), String> {
+    if !src_dir.is_dir() {
+        return Ok(());
+    }
+    let sources = collect_deka_source_files(src_dir)?;
+    if !sources.is_empty() {
+        if let Err(err) = transpile_dir(src_dir, dest_dir, Some(project_root)) {
+            for path in &sources {
+                if let Err(check_err) = check_path(path) {
+                    let check_err = check_err.trim();
+                    if check_err.is_empty() {
+                        return Err(format!("{}: {err}", path.display()));
+                    }
+                    return Err(format!("{}: {check_err}", path.display()));
+                }
+            }
+            return Err(err);
+        }
+    }
+    copy_non_ds_tree(src_dir, dest_dir, false)
+}
+
+/// Copy non-`.ds`/`.dsx` files under `src` into `dst`. When `skip_existing` is
+/// set, leave files dsc (or a prior step) already wrote alone.
+pub fn copy_non_ds_tree(src: &Path, dst: &Path, skip_existing: bool) -> Result<(), String> {
+    if !src.is_dir() {
+        return Ok(());
+    }
+    let entries =
+        fs::read_dir(src).map_err(|err| format!("failed to read {}: {}", src.display(), err))?;
+    for entry in entries {
+        let entry = entry.map_err(|err| format!("read_dir entry error: {}", err))?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        let file_type = entry
+            .file_type()
+            .map_err(|err| format!("file_type error for {}: {}", src_path.display(), err))?;
+        if file_type.is_dir() {
+            copy_non_ds_tree(&src_path, &dst_path, skip_existing)?;
+        } else if file_type.is_file() {
+            if is_deka_source_path(&src_path) {
+                continue;
+            }
+            if skip_existing && dst_path.is_file() {
+                continue;
+            }
+            if let Some(parent) = dst_path.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|err| format!("failed to create {}: {}", parent.display(), err))?;
+            }
+            fs::copy(&src_path, &dst_path).map_err(|err| {
+                format!(
+                    "failed to copy {} -> {}: {}",
+                    src_path.display(),
+                    dst_path.display(),
+                    err
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn collect_deka_source_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut files = Vec::new();
+    if !dir.is_dir() {
+        return Ok(files);
+    }
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let entries = fs::read_dir(&current)
+            .map_err(|err| format!("failed to read {}: {}", current.display(), err))?;
+        for entry in entries {
+            let entry = entry.map_err(|err| format!("read_dir entry error: {}", err))?;
+            let path = entry.path();
+            let file_type = entry
+                .file_type()
+                .map_err(|err| format!("file_type error for {}: {}", path.display(), err))?;
+            if file_type.is_dir() {
+                stack.push(path);
+            } else if file_type.is_file() && is_deka_source_path(&path) {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
 fn run_transpile(entry: &Path, cwd: Option<&Path>, prefix: &[&str]) -> Result<String, String> {
     let dsc = dsc_bin()?;
     // dsc refuses to overwrite a file it did not generate.
