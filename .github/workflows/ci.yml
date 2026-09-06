@@ -303,6 +303,8 @@ jobs:
           rm -rf "$tmp"
 
       - name: Run tour + public conformance suite (native)
+        env:
+          DEKA_DSC: ${{ github.workspace }}/.ci/dsc
         run: ./run.sh --skip-build --locked
 
       - name: Install dump harness deps + Chromium
