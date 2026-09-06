@@ -17,7 +17,8 @@ fn bootstrap_source(template: &str) -> String {
             "/*__DEKA_POOL_ENUM_PRELUDE__*/",
             &crate::prelude::pool_prelude(),
         )
-        .replace("__DEKA_TO_RESULT__", &crate::prelude::to_result_helper());
+        .replace("__DEKA_TO_RESULT__", &crate::prelude::to_result_helper())
+        .replace("/*__DEKA_WINTERTC__*/", include_str!("../wintertc.js"));
     // assert!, not debug_assert!: release is what ships, and a marker that
     // fails to substitute there fails silently. The prelude marker sits inside
     // a /* */ comment, so an un-replaced one simply vanishes and the isolate
@@ -27,7 +28,9 @@ fn bootstrap_source(template: &str) -> String {
     // build that matters. Two substring scans once per worker bootstrap is
     // nothing next to creating the isolate.
     assert!(
-        !source.contains("__DEKA_POOL_ENUM_PRELUDE__") && !source.contains("__DEKA_TO_RESULT__"),
+        !source.contains("__DEKA_POOL_ENUM_PRELUDE__")
+            && !source.contains("__DEKA_TO_RESULT__")
+            && !source.contains("__DEKA_WINTERTC__"),
         "bootstrap prelude markers must all be injected"
     );
     source
@@ -967,186 +970,7 @@ impl WorkerThread {
                     };
                 }
 
-                if (typeof globalThis.__dekaExecuteRequest !== 'function') {
-                    globalThis.__dekaExecuteRequest = async function() {
-                        function base64Encode(bytes) {
-                            if (typeof btoa === "function") {
-                                let binary = "";
-                                for (let i = 0; i < bytes.length; i += 1) {
-                                    binary += String.fromCharCode(bytes[i]);
-                                }
-                                return btoa(binary);
-                            }
-                            const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-                            let output = "";
-                            for (let i = 0; i < bytes.length; i += 3) {
-                                const a = bytes[i];
-                                const b = i + 1 < bytes.length ? bytes[i + 1] : 0;
-                                const c = i + 2 < bytes.length ? bytes[i + 2] : 0;
-                                const triple = (a << 16) | (b << 8) | c;
-                                output += alphabet[(triple >> 18) & 63];
-                                output += alphabet[(triple >> 12) & 63];
-                                output += i + 1 < bytes.length ? alphabet[(triple >> 6) & 63] : "=";
-                                output += i + 2 < bytes.length ? alphabet[triple & 63] : "=";
-                            }
-                            return output;
-                        }
-
-                        const requestData = globalThis.__requestData || {};
-                        requestData.__body = requestData.body ?? "";
-                        requestData.params = requestData.params || {};
-                        if (typeof requestData.json !== "function") {
-                            requestData.json = async function() {
-                                const body = this.__body || "";
-                                if (!body) return null;
-                                return JSON.parse(body);
-                            };
-                        }
-                        if (typeof requestData.text !== "function") {
-                            requestData.text = async function() {
-                                return this.__body || "";
-                            };
-                        }
-                        const context = globalThis.__requestContext || requestData.context || null;
-                        const handler = globalThis.app;
-
-                        if (!handler) {
-                            throw new Error('Handler did not define "app" variable');
-                        }
-
-                        const wsEvent = requestData.__dekaWsEvent;
-                        if (wsEvent) {
-                            const wsHandler = handler.websocket || globalThis.__dekaWebsocket;
-                            if (wsHandler) {
-                                const ws = globalThis.__dekaWsCreate
-                                    ? globalThis.__dekaWsCreate(requestData.__dekaWsId, requestData.__dekaWsData)
-                                    : null;
-                                if (wsEvent === "message" && requestData.__dekaWsBinary && Array.isArray(requestData.__dekaWsMessage)) {
-                                    requestData.__dekaWsMessage = new Uint8Array(requestData.__dekaWsMessage);
-                                }
-
-                                if (wsEvent === "open" && typeof wsHandler.open === "function") {
-                                    wsHandler.open(ws);
-                                } else if (wsEvent === "message" && typeof wsHandler.message === "function") {
-                                    wsHandler.message(ws, requestData.__dekaWsMessage);
-                                } else if (wsEvent === "close" && typeof wsHandler.close === "function") {
-                                    wsHandler.close(ws, requestData.__dekaWsCode, requestData.__dekaWsReason);
-                                } else if (wsEvent === "drain" && typeof wsHandler.drain === "function") {
-                                    wsHandler.drain(ws);
-                                }
-                            }
-
-                            return { status: 204, headers: {}, body: "" };
-                        }
-
-                        let response;
-                        if (typeof handler.fetch === "function") {
-                            response = await handler.fetch(requestData, context);
-                        } else if (typeof handler === "function") {
-                            response = await handler(requestData, context);
-                        } else {
-                            throw new Error('Handler is not callable');
-                        }
-
-                        const normalized = globalThis.__dekaResponse || (globalThis.__dekaResponse = {
-                            status: 200,
-                            headers: {},
-                            body: "",
-                            body_base64: undefined,
-                            upgrade: undefined,
-                        });
-                        normalized.status = 200;
-                        normalized.body = "";
-                        normalized.body_base64 = undefined;
-                        normalized.upgrade = undefined;
-                        const headerTarget = normalized.headers;
-                        for (const key in headerTarget) {
-                            delete headerTarget[key];
-                        }
-
-                        const applyHeaders = (headers) => {
-                            if (!headers) return;
-                            if (typeof headers.forEach === "function") {
-                                headers.forEach((value, key) => {
-                                    headerTarget[key] = String(value);
-                                });
-                                return;
-                            }
-                            for (const key in headers) {
-                                headerTarget[key] = String(headers[key]);
-                            }
-                        };
-
-                        if (response && typeof response.text === "function") {
-                            if (typeof response.status === "number") {
-                                normalized.status = response.status;
-                            }
-                            applyHeaders(response.headers);
-                            if (response.upgrade) {
-                                normalized.upgrade = response.upgrade;
-                            }
-                            const bodyValue = response.body;
-                            if (bodyValue instanceof Uint8Array) {
-                                normalized.body_base64 = base64Encode(bodyValue);
-                            } else if (bodyValue instanceof ArrayBuffer) {
-                                normalized.body_base64 = base64Encode(new Uint8Array(bodyValue));
-                            } else {
-                                const contentType = String(headerTarget["content-type"] || headerTarget["Content-Type"] || "").toLowerCase();
-                                const isTextLike = contentType.startsWith("text/")
-                                    || contentType.includes("json")
-                                    || contentType.includes("javascript")
-                                    || contentType.includes("xml")
-                                    || contentType.includes("svg")
-                                    || contentType.includes("x-www-form-urlencoded");
-                                if (!isTextLike && typeof response.arrayBuffer === "function") {
-                                    const bytes = new Uint8Array(await response.arrayBuffer());
-                                    normalized.body_base64 = base64Encode(bytes);
-                                } else {
-                                    normalized.body = await response.text();
-                                }
-                            }
-                        } else if (response && typeof response === "object") {
-                            if (typeof response.status === "number") {
-                                normalized.status = response.status;
-                            }
-                            applyHeaders(response.headers);
-                            if (typeof response.body_base64 === "string") {
-                                normalized.body_base64 = response.body_base64;
-                            }
-                            if (response.body != null) {
-                                if (response.body instanceof Uint8Array) {
-                                    normalized.body_base64 = base64Encode(response.body);
-                                } else if (response.body instanceof ArrayBuffer) {
-                                    normalized.body_base64 = base64Encode(new Uint8Array(response.body));
-                                } else if (typeof response.body === "string") {
-                                    normalized.body = response.body;
-                                } else {
-                                    const bodyObj = response.body;
-                                    if (bodyObj && typeof bodyObj === "object") {
-                                        const keys = Object.keys(bodyObj);
-                                        if (keys.length > 0 && keys.every((k) => /^\d+$/.test(k))) {
-                                            const bytes = keys
-                                                .sort((a, b) => Number(a) - Number(b))
-                                                .map((k) => Number(bodyObj[k]) || 0);
-                                            normalized.body_base64 = base64Encode(new Uint8Array(bytes));
-                                        } else {
-                                            normalized.body = JSON.stringify(bodyObj);
-                                        }
-                                    } else {
-                                        normalized.body = JSON.stringify(response.body);
-                                    }
-                                }
-                            }
-                            if (response.upgrade) {
-                                normalized.upgrade = response.upgrade;
-                            }
-                        } else if (response != null) {
-                            normalized.body = String(response);
-                        }
-
-                        return normalized;
-                    };
-                }
+                /*__DEKA_WINTERTC__*/
 
                 // The deka/router module is already loaded as an extension
                 // and exposes itself as globalThis.__dekaRouter automatically
@@ -1178,7 +1002,7 @@ impl WorkerThread {
             isolate.state = IsolateState::Idle;
             return (
                 ExecutionOutcome::Err(
-                    "JavaScript/TypeScript handlers are not supported in reboot MVP. Use .php/.phpx handlers or serve JS/TS files as static assets.".to_string(),
+                    "TypeScript handlers are not supported; emit JavaScript (export default { fetch }) or serve .ds via dsc.".to_string(),
                 ),
                 ExecutionProfile::empty(),
             );
@@ -1358,7 +1182,7 @@ impl WorkerThread {
                     .replace("export default ", "const __dekaDefault = ");
 
                 let wrapped = wrap_with_host_bindings(&format!(
-                    "{}\nif (typeof globalThis.app === 'undefined') {{ if (typeof __dekaDefault !== 'undefined') {{ if (typeof __dekaDefault === 'function' && typeof globalThis.__dekaNodeExpressAdapter === 'function' && (typeof __dekaDefault.handle === 'function' || typeof __dekaDefault.listen === 'function')) {{ globalThis.app = globalThis.__dekaNodeExpressAdapter(__dekaDefault); }} else if (__dekaDefault && typeof __dekaDefault === 'object' && !__dekaDefault.__dekaServer && (typeof __dekaDefault.fetch === 'function' || typeof __dekaDefault.routes === 'object')) {{ globalThis.app = globalThis.__deka.serve(__dekaDefault); }} else {{ globalThis.app = __dekaDefault; }} }} else if (typeof app !== 'undefined') {{ if (typeof app === 'function' && typeof globalThis.__dekaNodeExpressAdapter === 'function' && (typeof app.handle === 'function' || typeof app.listen === 'function')) {{ globalThis.app = globalThis.__dekaNodeExpressAdapter(app); }} else {{ globalThis.app = app; }} }} }}",
+                    "{}\nif (typeof globalThis.app === 'undefined') {{ if (typeof __dekaDefault !== 'undefined') {{ if (typeof __dekaDefault === 'function' && typeof globalThis.__dekaNodeExpressAdapter === 'function' && (typeof __dekaDefault.handle === 'function' || typeof __dekaDefault.listen === 'function')) {{ globalThis.app = globalThis.__dekaNodeExpressAdapter(__dekaDefault); }} else if (__dekaDefault && typeof __dekaDefault === 'object' && typeof __dekaDefault.fetch === 'function') {{ globalThis.app = __dekaDefault; }} else if (__dekaDefault && typeof __dekaDefault === 'object' && !__dekaDefault.__dekaServer && typeof __dekaDefault.routes === 'object' && globalThis.__deka && typeof globalThis.__deka.serve === 'function') {{ globalThis.app = globalThis.__deka.serve(__dekaDefault); }} else {{ globalThis.app = __dekaDefault; }} }} else if (typeof app !== 'undefined') {{ if (typeof app === 'function' && typeof globalThis.__dekaNodeExpressAdapter === 'function' && (typeof app.handle === 'function' || typeof app.listen === 'function')) {{ globalThis.app = globalThis.__dekaNodeExpressAdapter(app); }} else {{ globalThis.app = app; }} }} }}",
                     handler_code
                 ));
 
