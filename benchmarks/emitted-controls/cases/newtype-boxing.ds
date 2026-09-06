@@ -1,0 +1,7 @@
+type Cents number
+let sink = 0
+for (let i = 0; i < 2000000; i = i + 1) {
+  const c = Cents(i)
+  sink = sink + unboxNumber(c)
+}
+unsafe { console.log(sink) }
