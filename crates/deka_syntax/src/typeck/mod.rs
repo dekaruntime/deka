@@ -1514,6 +1514,61 @@ mod tests {
     }
 
     #[test]
+    fn array_map_solves_callback_return_type() {
+        // deka#467: `map` is (T -> U) -> Array<U>; U solves from the
+        // callback's return type, so downstream uses see the real element.
+        assert!(typeck(
+            "const a = [1, 2, 3].map(fn(x: number) string { return \"s\" });\nconst s: string = a[0];"
+        )
+        .is_empty());
+        let errors = typeck(
+            "const a = [1, 2, 3].map(fn(x: number) string { return \"s\" });\nconst n: number = a[0];",
+        );
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].message.contains("string"),
+            "{}",
+            errors[0].message
+        );
+    }
+
+    #[test]
+    fn array_map_rejects_wrong_element_callback() {
+        let errors = typeck("const a = [1, 2, 3].map(fn(x: string) string { return x });");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].message.contains("expected argument type"),
+            "{}",
+            errors[0].message
+        );
+    }
+
+    #[test]
+    fn array_reduce_solves_accumulator_type() {
+        // deka#467: `reduce` is ((A, T) -> A) -> A; A solves from the
+        // callback, so the result is the accumulator type, not a wildcard.
+        assert!(typeck(
+            "const sum = [1, 2, 3].reduce(fn(acc: number, x: number) number { return acc + x });\nconst n: number = sum;"
+        )
+        .is_empty());
+        let errors = typeck(
+            "const sum = [1, 2, 3].reduce(fn(acc: number, x: number) number { return acc + x });\nconst s: string = sum;",
+        );
+        assert_eq!(errors.len(), 1, "{errors:?}");
+    }
+
+    #[test]
+    fn array_map_unknown_callback_stays_unconstrained() {
+        // A callback whose type is unknown cannot solve U. The result stays
+        // `Array<Var>` — unconstrained, exactly as before `map` gained a type
+        // parameter (deka#468 semantics).
+        assert!(typeck(
+            "const a = [1, 2, 3];\nconst cbs = [];\nconst d = a.map(cbs[0]);\nconst s: string = d[0];"
+        )
+        .is_empty());
+    }
+
+    #[test]
     fn const_number_passes() {
         assert!(typeck("const x: number = 42;").is_empty());
     }
