@@ -2,6 +2,31 @@
 // both files under the 1,000-line file-size gate (deka#391).
 use super::tests::{make_tmp_dir, SimpleVirtualSource};
 use super::*;
+use std::process::Command;
+
+fn dsc_transpile_bundle(project_root: &Path, entry: &Path) -> String {
+    let dsc = runtime_core::dsc::find_dsc()
+        .expect("find dsc")
+        .expect("dsc required (set DEKA_DSC); language compile is dsc");
+    let out = project_root.join("bundle.out.js");
+    let output = Command::new(&dsc)
+        .current_dir(project_root)
+        .args([
+            "transpile",
+            entry.to_str().expect("utf-8 entry"),
+            "--bundle",
+            "--out",
+            out.to_str().expect("utf-8 out"),
+        ])
+        .output()
+        .expect("exec dsc");
+    assert!(
+        output.status.success(),
+        "dsc transpile --bundle failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::read_to_string(&out).expect("read bundle")
+}
 
 
 /// deka#595 bundle-size regression fixture: the issue's own two-module
@@ -32,38 +57,7 @@ fn bundle_synthesizes_struct_prelude_once_per_program() {
     )
     .expect("write main.ds");
 
-    let loader = deka_compile::module_graph::FsModuleLoader::new(tmp.clone());
-    let graph = deka_compile::module_graph::compile_module_graph(&entry, &loader)
-        .expect("graph compiles");
-
-    struct GraphProvider {
-        modules: std::collections::HashMap<std::path::PathBuf, String>,
-    }
-    impl VirtualSource for GraphProvider {
-        fn load_virtual(&self, path: &Path) -> Result<Option<String>, String> {
-            let canon = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-            Ok(self
-                .modules
-                .get(&canon)
-                .or_else(|| self.modules.get(path))
-                .cloned())
-        }
-    }
-    let provider = Arc::new(GraphProvider {
-        modules: graph.modules.clone(),
-    });
-    let bundle = bundle_virtual_entry(
-        &entry,
-        BundleOptions {
-            project_root: tmp.clone(),
-            minify: false,
-            iife: false,
-            client: false,
-            prelude: Some(graph.prelude.clone()),
-        },
-        provider,
-    )
-    .expect("bundle succeeds");
+    let bundle = dsc_transpile_bundle(&tmp, &entry);
 
     eprintln!(
         "deka#595 two-module bundle: bytes={} lines={} __deka_struct_defs={} implMut={}",
@@ -167,11 +161,7 @@ fn bundle_struct_helper_keeps_only_demanded_members() {
     )
     .expect("write main.ds");
 
-    let loader = deka_compile::module_graph::FsModuleLoader::new(tmp.clone());
-    let graph = deka_compile::module_graph::compile_module_graph(&entry, &loader)
-        .expect("graph compiles");
-
-    let prelude = graph.prelude.clone();
+    let prelude = dsc_transpile_bundle(&tmp, &entry);
     assert_eq!(
         prelude.matches("function __deka_struct").count(),
         1,
