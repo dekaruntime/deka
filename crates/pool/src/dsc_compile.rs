@@ -1,7 +1,8 @@
 //! Compile a DekaScript graph by exec'ing `dsc` (rfd#38).
 //!
-//! Returns `Ok(None)` when no dsc binary is configured so callers can fall
-//! back to in-process `deka_compile`. Needs dsc >= 0.5.0 (`--self-contained`).
+//! Isolate compile does not fall back to in-process `deka_compile`. Needs
+//! dsc >= 0.5.0 (`--self-contained`). Set `DEKA_DSC`, ship `dsc` next to
+//! `deka`, or put it on `PATH`.
 //!
 //! dsc 0.5.1 preserve-mode rewrites relative `.ds` imports to `.js`. The
 //! isolate loader resolves `.ds` paths from memory, so those rewrites ENOENT.
@@ -18,10 +19,12 @@ use runtime_core::DEKA_VALIDATION_ERROR_MARKER;
 pub fn compile_graph(
     project_root: &Path,
     entry: &Path,
-) -> Result<Option<HashMap<PathBuf, String>>, String> {
-    let Some(dsc) = runtime_core::dsc::find_dsc()? else {
-        return Ok(None);
-    };
+) -> Result<HashMap<PathBuf, String>, String> {
+    let dsc = runtime_core::dsc::find_dsc()?.ok_or_else(|| {
+        format!(
+            "{DEKA_VALIDATION_ERROR_MARKER}dsc is required to compile DekaScript in the isolate. Set DEKA_DSC, install dsc next to deka, or put dsc on PATH."
+        )
+    })?;
     let out = project_root.join(".cache").join("dsc-modules");
     if out.exists() {
         let _ = fs::remove_dir_all(&out);
@@ -61,7 +64,7 @@ pub fn compile_graph(
     if modules.is_empty() {
         return Err("dsc transpile wrote no modules".to_string());
     }
-    Ok(Some(modules))
+    Ok(modules)
 }
 
 fn collect_js(

@@ -25,24 +25,6 @@ use runtime_core::{
 };
 use runtime_core::modules::{read_linked_modules, MODULES_DIR};
 
-/// Compile a single `.ds` source file to JavaScript using compiler v2.
-fn compile_ds_source_to_js(source: &str, input: &str) -> Result<String, JsErrorBox> {
-    match deka_compile::compile_to_js(source, input) {
-        Ok(result) => Ok(result.js),
-        Err(diagnostics) => {
-            let message = diagnostics
-                .iter()
-                .map(|d| d.message.clone())
-                .collect::<Vec<_>>()
-                .join("\n");
-            Err(JsErrorBox::generic(format!(
-                "{}{}",
-                DEKA_VALIDATION_ERROR_MARKER, message
-            )))
-        }
-    }
-}
-
 /// Parse module imports from a `.ds` source using the v2 parser.
 fn parse_module_imports(source: &str) -> Vec<String> {
     let meta = deka_compile::parse_source_module_meta(source);
@@ -73,46 +55,17 @@ impl PhpxEsmLoader {
             .map_err(|_| JsErrorBox::generic("invalid entry wrapper path"))?;
 
         let v2_modules = if entry_path.is_file() {
-            if let Some(modules) = crate::dsc_compile::compile_graph(&project_root, &entry_path)
-                .map_err(JsErrorBox::generic)?
-            {
-                let imports: Vec<String> = modules
-                    .keys()
-                    .filter_map(|path| std::fs::read_to_string(path).ok())
-                    .flat_map(|source| parse_module_imports(&source))
-                    .collect();
-                ensure_project_layout(&project_root, &imports)
-                    .map_err(JsErrorBox::generic)?;
-                enforce_dynamic_policy(&modules)?;
-                Some(modules)
-            } else {
-                let loader = deka_compile::module_graph::FsModuleLoader::new(project_root.clone());
-                match deka_compile::module_graph::compile_module_graph(&entry_path, &loader) {
-                    Ok(graph) => {
-                        // The graph is the only point every entry shape passes
-                        // through, and it carries the transitive import set.
-                        let imports: Vec<String> = graph.imports.iter().cloned().collect();
-                        ensure_project_layout(&project_root, &imports)
-                            .map_err(JsErrorBox::generic)?;
-                        enforce_dynamic_policy(&graph.modules)?;
-                        // Modules are served as separate files (separate scopes),
-                        // so each carries its own prelude rather than the shared
-                        // program-level one (deka#595).
-                        Some(graph.self_contained_modules())
-                    }
-                    Err(diagnostics) => {
-                        let message = diagnostics
-                            .iter()
-                            .map(|d| format!("{}:{}: {}", d.line, d.column, d.message))
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        return Err(JsErrorBox::generic(format!(
-                            "{}{}",
-                            DEKA_VALIDATION_ERROR_MARKER, message
-                        )));
-                    }
-                }
-            }
+            let modules = crate::dsc_compile::compile_graph(&project_root, &entry_path)
+                .map_err(JsErrorBox::generic)?;
+            let imports: Vec<String> = modules
+                .keys()
+                .filter_map(|path| std::fs::read_to_string(path).ok())
+                .flat_map(|source| parse_module_imports(&source))
+                .collect();
+            ensure_project_layout(&project_root, &imports)
+                .map_err(JsErrorBox::generic)?;
+            enforce_dynamic_policy(&modules)?;
+            Some(modules)
         } else {
             None
         };
@@ -146,33 +99,20 @@ impl PhpxEsmLoader {
     }
 
     fn load_ds_source(&self, path: &Path) -> Result<ModuleSourceCode, JsErrorBox> {
-        if let Some(v2_modules) = &self.v2_modules {
-            let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-            if let Some(js) = v2_modules.get(&key) {
-                return Ok(ModuleSourceCode::String(js.clone().into()));
-            }
+        let Some(v2_modules) = &self.v2_modules else {
+            return Err(JsErrorBox::generic(format!(
+                "{DEKA_VALIDATION_ERROR_MARKER}no dsc graph for {}",
+                path.display()
+            )));
+        };
+        let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        match v2_modules.get(&key) {
+            Some(js) => Ok(ModuleSourceCode::String(js.clone().into())),
+            None => Err(JsErrorBox::generic(format!(
+                "{DEKA_VALIDATION_ERROR_MARKER}dsc did not emit {}",
+                path.display()
+            ))),
         }
-
-        let input = path
-            .to_str()
-            .ok_or_else(|| JsErrorBox::generic(format!("invalid path: {}", path.display())))?;
-        let source = std::fs::read_to_string(path).map_err(|err| {
-            JsErrorBox::generic(format!("Failed to read {}: {}", path.display(), err))
-        })?;
-        let imports = parse_module_imports(&source);
-        // Validate the source before checking project layout so syntax/type
-        // errors surface immediately instead of being blocked by a missing
-        // deka.lock or php_modules/ directory (dekaruntime/deka#117).
-        let js = compile_ds_source_to_js(&source, input)?;
-        ensure_project_layout(&self.project_root, &imports).map_err(|err| JsErrorBox::generic(err))?;
-
-        let cache_path = self.cache_path_for(path);
-        if let Some(parent) = cache_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = std::fs::write(&cache_path, &js);
-
-        Ok(ModuleSourceCode::String(js.into()))
     }
 
     fn resolve_phpx_module_spec(&self, specifier: &str) -> Option<PathBuf> {
