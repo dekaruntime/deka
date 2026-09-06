@@ -9,9 +9,6 @@ on:
   push:
     branches: [main]
     paths:
-      - "crates/deka_syntax/**"
-      - "crates/deka_emit/**"
-      - "crates/deka_compile/**"
       - "crates/cli/**"
       - "scripts/typeck-published-stdlib.sh"
       - ".github/workflows/stdlib-typeck.yml"

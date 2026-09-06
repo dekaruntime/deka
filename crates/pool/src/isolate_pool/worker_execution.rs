@@ -896,7 +896,7 @@ impl WorkerThread {
                             // handed back to the caller; DS emit chains
                             // `.then(__deka_to_result)` and the source-level
                             // `await` resolves it. Keep the flag in sync with
-                            // the compiler-side catalog (deka_syntax bridge.rs).
+                            // the compiler-side catalog in dsc.
                             if (k === 'fs' && typeof ops.op_php_fs_call_proto_async === 'function') {
                                 const request = ops.op_php_fs_proto_encode(routeAction, payload);
                                 return Promise.resolve(ops.op_php_fs_call_proto_async(request))

@@ -1,10 +1,8 @@
 //! Entry-source generation: manifest + document → generated `.ds`/`.dsx`
 //! entry modules under `.cache/dekascript/`.
 //!
-//! Generation is still string templating; deka#391 phase (b) replaces it
-//! with `deka_syntax` `Program` construction passed to `deka_emit::emit_js`,
-//! plus a typecheck gate before emission. Until then, every interpolated
-//! value goes through `json_str` so escaping is centralized.
+//! Generation is still string templating. Every interpolated value goes
+//! through `json_str` so escaping is centralized.
 
 use std::path::Path;
 
