@@ -39,12 +39,10 @@ fn build_deka_handler_bundle_in_project(
     let dsc = runtime_core::dsc::find_dsc()?.ok_or_else(|| {
         "dsc is required to bundle DekaScript handlers. Set DEKA_DSC, install dsc next to deka, or put dsc on PATH.".to_string()
     })?;
-    let tmp = tempfile::Builder::new()
-        .prefix("deka-handler-")
-        .suffix(".js")
-        .tempfile()
-        .map_err(|err| format!("failed to create bundle temp file: {err}"))?;
-    let out = tmp.path();
+    // dsc refuses to overwrite a file it did not generate. tempfile()
+    // creates an empty file, which trips that gate.
+    let tmp = tempfile::tempdir().map_err(|err| format!("failed to create bundle temp dir: {err}"))?;
+    let out = tmp.path().join("bundle.js");
     let entry = input_path
         .to_str()
         .ok_or_else(|| "handler path is not UTF-8".to_string())?;
