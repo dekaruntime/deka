@@ -170,31 +170,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Configure sccache
-        run: |
-          # Bucket is architecture-specific; derive it from the host rather than
-          # restating it per job (see scripts/populate-sccache.sh, deka#655).
-          case "$(uname -s)-$(uname -m)" in
-            Darwin-arm64)  BUCKET=deka-sccache-darwin-arm64 ;;
-            Darwin-x86_64) BUCKET=deka-sccache-darwin-x64 ;;
-            Linux-x86_64)  BUCKET=deka-sccache-linux-x64 ;;
-            *) echo "unsupported sccache host: $(uname -sm)" >&2; exit 1 ;;
-          esac
-          # The rust-toolchain action reinstalls rustup, which wipes
-          # cargo-installed binaries out of ~/.cargo/bin - sccache included.
-          # Setting RUSTC_WRAPPER to a binary that is not there makes every
-          # cargo invocation die with ENOENT before it compiles anything, which
-          # reads as a code failure and is not one. Only enable the wrapper if
-          # the binary actually exists; a cold build is worse than a cached one
-          # and far better than a false red.
-          if command -v sccache >/dev/null 2>&1; then
-            echo "SCCACHE_BUCKET=$BUCKET" >> "$GITHUB_ENV"
-            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
-            echo "sccache enabled, bucket: $BUCKET"
-          else
-            echo "::warning::sccache not found on PATH - building without a compiler cache. Reinstall it on this runner (cargo install sccache --locked); see deka#656."
-          fi
-
       - name: Where am I?
         run: |
           echo "runner name: $(hostname)"
@@ -222,6 +197,31 @@ jobs:
           echo "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
           echo "SCCACHE_BUCKET=$SCCACHE_BUCKET"
           sccache --show-stats
+
+      - name: Configure sccache
+        run: |
+          # Bucket is architecture-specific; derive it from the host rather than
+          # restating it per job (see scripts/populate-sccache.sh, deka#655).
+          case "$(uname -s)-$(uname -m)" in
+            Darwin-arm64)  BUCKET=deka-sccache-darwin-arm64 ;;
+            Darwin-x86_64) BUCKET=deka-sccache-darwin-x64 ;;
+            Linux-x86_64)  BUCKET=deka-sccache-linux-x64 ;;
+            *) echo "unsupported sccache host: $(uname -sm)" >&2; exit 1 ;;
+          esac
+          # The rust-toolchain action reinstalls rustup, which wipes
+          # cargo-installed binaries out of ~/.cargo/bin - sccache included.
+          # Setting RUSTC_WRAPPER to a binary that is not there makes every
+          # cargo invocation die with ENOENT before it compiles anything, which
+          # reads as a code failure and is not one. Only enable the wrapper if
+          # the binary actually exists; a cold build is worse than a cached one
+          # and far better than a false red.
+          if command -v sccache >/dev/null 2>&1; then
+            echo "SCCACHE_BUCKET=$BUCKET" >> "$GITHUB_ENV"
+            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+            echo "sccache enabled, bucket: $BUCKET"
+          else
+            echo "::warning::sccache not found on PATH - building without a compiler cache. Reinstall it on this runner (cargo install sccache --locked); see deka#656."
+          fi
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
