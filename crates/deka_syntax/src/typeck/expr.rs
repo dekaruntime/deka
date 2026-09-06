@@ -308,16 +308,17 @@ pub(super) fn primitive_member<'a>(
             },
         )),
         // `map` is generic in a second parameter U that `elem` cannot
-        // supply: (T -> U) -> Array<U>. U is unconstrained, not unresolved
-        // (deka#467, deka#468).
+        // supply: (T -> U) -> Array<U>. U is a real type parameter, solved
+        // from the callback at the call site by the same substitution
+        // machinery generic functions use (deka#467).
         ("Array", "map") => PrimitiveMember::BuiltinMethod(Type::Function {
             params: vec![Type::Function {
                 params: vec![elem?.clone()],
-                ret: Box::new(Type::Var),
+                ret: Box::new(Type::Param { name: "U" }),
                 optional: 0,
             }],
             ret: Box::new(Type::Array {
-                elem: Box::new(Type::Var),
+                elem: Box::new(Type::Param { name: "U" }),
             }),
             optional: 0,
         }),
@@ -340,13 +341,14 @@ pub(super) fn primitive_member<'a>(
             &Type::None,
         )),
         // `reduce` is generic in the accumulator A: ((A, T) -> A) -> A.
+        // A is solved from the callback at the call site (deka#467).
         ("Array", "reduce") => PrimitiveMember::BuiltinMethod(Type::Function {
             params: vec![Type::Function {
-                params: vec![Type::Var, elem?.clone()],
-                ret: Box::new(Type::Var),
+                params: vec![Type::Param { name: "A" }, elem?.clone()],
+                ret: Box::new(Type::Param { name: "A" }),
                 optional: 0,
             }],
-            ret: Box::new(Type::Var),
+            ret: Box::new(Type::Param { name: "A" }),
             optional: 0,
         }),
         _ => return None,
@@ -3544,9 +3546,13 @@ impl<'a> Checker<'a> {
                     HashMap::new()
                 };
 
-                let substituted_params: Vec<Type<'a>> =
-                    params.iter().map(|p| substitute_type(p, &subst)).collect();
-                let substituted_ret = substitute_type(&ret, &subst);
+                // Parameters inference left unsolved name no type the call
+                // could pin: they are unconstrained (`Var`), not unresolved.
+                let substituted_params: Vec<Type<'a>> = params
+                    .iter()
+                    .map(|p| unsolved_params_to_var(&substitute_type(p, &subst), &subst))
+                    .collect();
+                let substituted_ret = unsolved_params_to_var(&substitute_type(&ret, &subst), &subst);
 
                 let hole_positions: Vec<usize> = args
                     .iter()
@@ -3847,6 +3853,44 @@ fn contains_param(ty: &Type<'_>) -> bool {
     }
 }
 
+/// A type parameter the call site left unsolved names no type at all: it is
+/// unconstrained, not unresolved, and takes the `Var` marker (deka#468).
+/// Applied after call-site substitution, so `map` on a callback of unknown
+/// type yields `Array<Var>` — the type it declared before it gained a type
+/// parameter (deka#467) — while a callback of known type solves the
+/// parameter to a real type.
+fn unsolved_params_to_var<'a>(ty: &Type<'a>, subst: &HashMap<&'a str, Type<'a>>) -> Type<'a> {
+    match ty {
+        Type::Param { name } if !subst.contains_key(name) => Type::Var,
+        Type::Option { inner } => Type::Option {
+            inner: Box::new(unsolved_params_to_var(inner, subst)),
+        },
+        Type::Array { elem } => Type::Array {
+            elem: Box::new(unsolved_params_to_var(elem, subst)),
+        },
+        Type::Function {
+            params,
+            ret,
+            optional,
+        } => Type::Function {
+            params: params
+                .iter()
+                .map(|p| unsolved_params_to_var(p, subst))
+                .collect(),
+            ret: Box::new(unsolved_params_to_var(ret, subst)),
+            optional: *optional,
+        },
+        Type::Generic { base, args } => Type::Generic {
+            base,
+            args: args
+                .iter()
+                .map(|a| unsolved_params_to_var(a, subst))
+                .collect(),
+        },
+        _ => ty.clone(),
+    }
+}
+
 /// Replace type parameters according to `subst`.
 /// Structurally match a declared type against an actual one, binding any
 /// declared type parameter it encounters. Used to infer `Box<number>` from
@@ -3865,6 +3909,28 @@ fn infer_type_args<'a>(
             infer_type_args(d, a, params, out)
         }
         (Type::Array { elem: d }, Type::Array { elem: a }) => infer_type_args(d, a, params, out),
+        // Function-typed parameters carry type parameters too: `map`'s
+        // `(T -> U) -> Array<U>` solves U from the callback's return type
+        // (deka#467). Positional binding is a heuristic (parameters are
+        // contravariant), but it agrees with the function-subtyping check on
+        // the argument that follows.
+        (
+            Type::Function {
+                params: dp,
+                ret: dr,
+                ..
+            },
+            Type::Function {
+                params: ap,
+                ret: ar,
+                ..
+            },
+        ) if dp.len() == ap.len() => {
+            for (d, a) in dp.iter().zip(ap.iter()) {
+                infer_type_args(d, a, params, out);
+            }
+            infer_type_args(dr, ar, params, out);
+        }
         (Type::Generic { base: db, args: da }, Type::Generic { base: ab, args: aa })
             if db == ab && da.len() == aa.len() =>
         {
