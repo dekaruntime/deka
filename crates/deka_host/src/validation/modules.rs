@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::integrity::compute_package_integrity;
-use bumpalo::Bump;
 use serde_json::Value;
 
 use runtime_core::module_spec::{
@@ -210,31 +209,8 @@ impl ModuleGraph {
             }
         };
 
-        // A module that does not parse is broken infrastructure, not a missing
-        // export: without this check its exports were still text-visible, the
-        // gate passed it, and the compile downstream surfaced the failure as
-        // bare `<infer>` errors in importers (deka#567). Parse for real and
-        // name the module plus its own first diagnostic.
-        let parse_arena = bumpalo::Bump::new();
-        let parse_result = deka_syntax::parse(&source, &parse_arena);
-        if let Some(first) = parse_result.errors.first() {
-            errors.push(module_error(
-                first.line.max(1),
-                first.column.max(1),
-                1,
-                format!(
-                    "Module '{}' failed to parse: {} ({}:{}): {}",
-                    module_id,
-                    file_path.display(),
-                    first.line,
-                    first.column,
-                    first.message
-                ),
-                "Fix the parse error in the module; its exports are unusable until it parses.",
-            ));
-            self.nodes.remove(module_id);
-            return;
-        }
+        // Parse errors are dsc's job (rfd#38). This gate still walks imports
+        // and text-visible exports; a broken module fails at `dsc check`.
 
         let mut imports = Vec::new();
         let import_specs = collect_import_specs(&source, file_path.to_string_lossy().as_ref());
@@ -290,7 +266,7 @@ impl ModuleGraph {
         if let Some(node) = self.nodes.get_mut(module_id) {
             node.imports = imports;
             node.exports = exports;
-            node.has_top_level_await = has_top_level_await(&source);
+            node.has_top_level_await = runtime_core::ds_tla::has_top_level_await(&source);
         }
     }
 
@@ -388,15 +364,6 @@ impl ModuleGraph {
         stack.pop();
         visited.insert(module_id.to_string());
     }
-}
-
-fn has_top_level_await(source: &str) -> bool {
-    let arena = Bump::new();
-    let result = deka_syntax::parse(source, &arena);
-    result
-        .program
-        .map(|program| program.has_top_level_await)
-        .unwrap_or(false)
 }
 
 pub(crate) fn collect_import_specs(source: &str, file_path: &str) -> Vec<ImportSpec> {
@@ -1913,39 +1880,6 @@ mod tests {
             entry.to_string_lossy().as_ref(),
         );
         assert!(errors.is_empty(), "expected no errors, got: {:?}", errors);
-
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn reports_module_that_fails_to_parse_by_name_and_cause() {
-        // deka#567: a module whose source does not parse must surface its
-        // own diagnostic and name, not sail through the gate on text-visible
-        // exports and fail later as bare `<infer>` errors in importers.
-        let root = make_temp_project("module_parse_error");
-        let entry = root.join("main.ds");
-        fs::write(
-            &entry,
-            "import { helper } from \"./broken.ds\"\nconsole.log(helper())\n",
-        )
-        .expect("write entry");
-        fs::write(
-            root.join("broken.ds"),
-            "export fn helper() string { return \"x\" }\nconst = 5\n",
-        )
-        .expect("write broken module");
-
-        let errors = validate_module_resolution(
-            &fs::read_to_string(&entry).expect("read entry"),
-            entry.to_string_lossy().as_ref(),
-        );
-        assert!(
-            errors.iter().any(|err| err.message.contains("broken.ds")
-                && err.message.contains("failed to parse")
-                && err.message.contains("expected identifier")),
-            "expected the parse error naming the module, got: {:?}",
-            errors
-        );
 
         let _ = fs::remove_dir_all(root);
     }

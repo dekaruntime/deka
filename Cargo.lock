@@ -1558,7 +1558,6 @@ dependencies = [
  "bytes",
  "chrono",
  "deka-validation",
- "deka_syntax",
  "deno_core",
  "futures-util",
  "getrandom 0.2.17",
