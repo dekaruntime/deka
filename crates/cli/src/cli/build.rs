@@ -1,4 +1,4 @@
-use bundler::{BuildOptions, VirtualSource, bundle_virtual_entry};
+use bundler::{bundle_virtual_entry, BuildOptions, VirtualSource};
 use core::{CommandSpec, Context, ParamSpec, Registry};
 use runtime_core::modules::MODULES_DIR;
 
@@ -73,11 +73,7 @@ fn run_single_file_build(context: &Context, input: &str) -> Result<(), String> {
     let input_path = PathBuf::from(input);
     let output_path = resolve_output_path(output_arg(context), &input_path)?;
     if bundle_enabled(context) {
-        build_single_file_bundle_to_path(
-            &input_path,
-            &output_path,
-            minify_enabled(context),
-        )?;
+        build_single_file_bundle_to_path(&input_path, &output_path, minify_enabled(context))?;
     } else {
         build_single_file_to_path(&input_path, &output_path)?;
     }
@@ -110,23 +106,66 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     let bundle = bundle_enabled(context);
     let minify = minify_enabled(context);
 
-    // `build` must fail closed: every .ds source under app/ has to compile
-    // before we write anything to dist/. Historically this function only
-    // ever compiled `entry_path` (and only when hydration was enabled) and
-    // otherwise copied app/ into dist/server/app as raw, unvalidated bytes
-    // (see copy_dir_recursive below) -- so a project with a syntactically
-    // invalid non-entry file, or an invalid entry file with no hydration
-    // component, would "build" successfully. Validate everything up front.
-    validate_app_dir_sources(&project_root, &app_dir)?;
+    // dsc is required. There is no in-process compiler, and raw app/ .ds is
+    // not the server product. Prefer default emit into staging (so dist/ is
+    // not created on a failed compile), then promote trees and copy host
+    // static files (public/ → dist/client, prerender/worker/_redirects/…).
+    build_dsc::require_dsc()?;
+    let staging =
+        tempfile::tempdir().map_err(|err| format!("failed to create build staging dir: {err}"))?;
+    let staging_root = staging.path();
+
+    let src_dir = project_root.join("src");
+    let api_dir = project_root.join("api");
+    let emitted_src = src_dir.is_dir();
+    let emitted_api = api_dir.is_dir();
+
+    match build_dsc::emit_project(&project_root, staging_root)? {
+        build_dsc::ProjectEmit::Default => {
+            // Default emit already copies src/ non-.ds verbatim. Only fill
+            // leftovers dsc left out (skip when the dest file already exists).
+            if emitted_src {
+                build_dsc::copy_non_ds_tree(&src_dir, &staging_root.join("src"), true)?;
+            }
+        }
+        build_dsc::ProjectEmit::NeedsTranspileFallback => {
+            build_dsc::emit_source_tree(&app_dir, &staging_root.join("app"), &project_root)?;
+            if emitted_src {
+                build_dsc::emit_source_tree(&src_dir, &staging_root.join("src"), &project_root)?;
+            }
+            if emitted_api {
+                build_dsc::emit_source_tree(&api_dir, &staging_root.join("api"), &project_root)?;
+            }
+        }
+    }
 
     let dist_root = project_root.join("dist");
     let dist_client = dist_root.join("client");
     let dist_server = dist_root.join("server");
+    let dist_app = dist_root.join("app");
 
     fs::create_dir_all(&dist_client)
         .map_err(|err| format!("failed to create {}: {}", dist_client.display(), err))?;
     fs::create_dir_all(&dist_server)
         .map_err(|err| format!("failed to create {}: {}", dist_server.display(), err))?;
+
+    replace_dir(&staging_root.join("app"), &dist_app)?;
+    if emitted_src {
+        replace_dir(&staging_root.join("src"), &dist_root.join("src"))?;
+    }
+    if emitted_api {
+        replace_dir(&staging_root.join("api"), &dist_root.join("api"))?;
+        let stale_api = dist_server.join("api");
+        if stale_api.exists() {
+            fs::remove_dir_all(&stale_api)
+                .map_err(|err| format!("failed to remove {}: {err}", stale_api.display()))?;
+        }
+    }
+    let stale_app = dist_server.join("app");
+    if stale_app.exists() {
+        fs::remove_dir_all(&stale_app)
+            .map_err(|err| format!("failed to remove {}: {err}", stale_app.display()))?;
+    }
 
     copy_dir_recursive(&public_dir, &dist_client)?;
 
@@ -201,8 +240,6 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
             .map_err(|err| format!("failed to write {}: {}", client_index.display(), err))?;
     }
 
-    copy_dir_recursive(&app_dir, &dist_server.join("app"))?;
-
     let modules_dir = project_root.join(MODULES_DIR);
     if modules_dir.is_dir() {
         copy_dir_recursive(&modules_dir, &dist_server.join(MODULES_DIR))?;
@@ -229,11 +266,6 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
                 )
             })?;
         }
-    }
-
-    let api_dir = project_root.join("api");
-    if api_dir.is_dir() {
-        copy_dir_recursive(&api_dir, &dist_server.join("api"))?;
     }
 
     let want_trailing = read_trailing_slash(&project_root);
@@ -282,7 +314,10 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
         {
             runtime::write_island_client_assets(&dist_client.join("assets"), &islands)?;
             runtime::write_island_client_assets(
-                &project_root.join(".cache").join("dekascript").join("assets"),
+                &project_root
+                    .join(".cache")
+                    .join("dekascript")
+                    .join("assets"),
                 &islands,
             )?;
         }
@@ -293,7 +328,10 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
         {
             runtime::write_defer_client_assets(&dist_client.join("assets"))?;
             runtime::write_defer_client_assets(
-                &project_root.join(".cache").join("dekascript").join("assets"),
+                &project_root
+                    .join(".cache")
+                    .join("dekascript")
+                    .join("assets"),
             )?;
         }
         inject_defer_script(&dist_client)?;
@@ -302,12 +340,18 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     let styles = runtime_core::framework::collect_route_styles(
         &runtime_core::framework::scan_app_dir(&app_dir),
     );
-    if styles.iter().any(|style| !style.classes.is_empty() || !style.files.is_empty()) {
+    if styles
+        .iter()
+        .any(|style| !style.classes.is_empty() || !style.files.is_empty())
+    {
         #[cfg(feature = "native")]
         {
             runtime::write_route_css_assets(&dist_client.join("assets"), &styles)?;
             runtime::write_route_css_assets(
-                &project_root.join(".cache").join("dekascript").join("assets"),
+                &project_root
+                    .join(".cache")
+                    .join("dekascript")
+                    .join("assets"),
                 &styles,
             )?;
         }
@@ -320,9 +364,10 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     rewrite_dist_html_asset_urls(&dist_client)?;
 
     let mut report = format!(
-        "built web project {}\n  client: {}\n  server: {}\n  hydration: {}",
+        "built web project {}\n  client: {}\n  app: {}\n  server: {}\n  hydration: {}",
         project_root.display(),
         dist_client.display(),
+        dist_app.display(),
         dist_server.display(),
         if hydration_enabled || !islands.is_empty() {
             "enabled"
@@ -546,9 +591,7 @@ fn ensure_web_project_layout(project_root: &Path) -> Result<(), String> {
     }
 
     if project_root.join("public").join("index.html").is_file() {
-        return Err(
-            "public/index.html collides with the root index.html document".to_string(),
-        );
+        return Err("public/index.html collides with the root index.html document".to_string());
     }
 
     if !project_root.join("index.html").is_file() {
@@ -669,55 +712,15 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Recursively finds every `.ds` file under `app_dir` and compiles it with
-/// the v2 compiler, discarding the emitted JS. Import-free files compile
-/// standalone (the same call `deka check` uses for a single file); files
-/// that import other modules compile through the module graph, exactly as
-/// `deka serve --dev` and the prerender compile them. This is validation
-/// only -- dist/server/app still receives the original source bytes via
-/// `copy_dir_recursive`, unchanged. The point is solely to make
-/// `deka build` fail closed (non-zero exit, no dist/ output written) on
-/// any source under app/ that the compiler itself would reject.
-///
-/// A file that imports other modules is validated through the module graph
-/// instead of standalone: standalone compilation reports every cross-module
-/// import as an unknown identifier, so a page importing a shared module
-/// would fail the build even though `deka serve --dev` (which compiles the
-/// same file through the graph) serves it fine. Dev and prod must agree on
-/// what compiles — RFD 24 §11.2.
-fn validate_app_dir_sources(_project_root: &Path, app_dir: &Path) -> Result<(), String> {
-    for path in collect_deka_source_files(app_dir)? {
-        build_dsc::check_path(&path).map_err(|err| format!("{}: {err}", path.display()))?;
+fn replace_dir(src: &Path, dst: &Path) -> Result<(), String> {
+    if dst.exists() {
+        fs::remove_dir_all(dst)
+            .map_err(|err| format!("failed to remove {}: {err}", dst.display()))?;
     }
-    Ok(())
-}
-
-fn collect_deka_source_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
-    let mut files = Vec::new();
-    if !dir.is_dir() {
-        return Ok(files);
+    if !src.is_dir() {
+        return Ok(());
     }
-
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(current) = stack.pop() {
-        let entries = fs::read_dir(&current)
-            .map_err(|err| format!("failed to read {}: {}", current.display(), err))?;
-        for entry in entries {
-            let entry = entry.map_err(|err| format!("read_dir entry error: {}", err))?;
-            let path = entry.path();
-            let file_type = entry
-                .file_type()
-                .map_err(|err| format!("file_type error for {}: {}", path.display(), err))?;
-            if file_type.is_dir() {
-                stack.push(path);
-            } else if file_type.is_file() && is_deka_source_path(&path) {
-                files.push(path);
-            }
-        }
-    }
-
-    files.sort();
-    Ok(files)
+    copy_dir_recursive(src, dst)
 }
 
 fn inject_web_bootstrap_tags(
@@ -799,10 +802,7 @@ struct JsBuildOutput {
     project_root: PathBuf,
 }
 
-fn build_single_file_to_path(
-    input_path: &Path,
-    output_path: &Path,
-) -> Result<(), String> {
+fn build_single_file_to_path(input_path: &Path, output_path: &Path) -> Result<(), String> {
     let output = build_single_file_to_string(input_path)?;
     let js = output.js;
 
@@ -857,9 +857,7 @@ fn build_single_file_bundle_to_path(
     Ok(())
 }
 
-fn build_single_file_to_string(
-    input_path: &Path,
-) -> Result<JsBuildOutput, String> {
+fn build_single_file_to_string(input_path: &Path) -> Result<JsBuildOutput, String> {
     let source = fs::read_to_string(input_path)
         .map_err(|err| format!("failed to read {}: {}", input_path.display(), err))?;
     let import_paths = runtime_core::ds_imports::paths(&source);
@@ -987,7 +985,8 @@ fn write_cloudflare_worker(project_root: &Path, dist_root: &Path) -> Result<(), 
     ensure_project_layout(project_root, None, &graph_imports)?;
     let bundled = build_dsc::transpile_bundle(project_root, &entry)?;
     let mut defer_bundle = String::new();
-    let has_defer = !runtime_core::framework::scan_server_defer(&project_root.join("app")).is_empty();
+    let has_defer =
+        !runtime_core::framework::scan_server_defer(&project_root.join("app")).is_empty();
     if has_defer {
         let defer_entry = runtime_core::framework::write_defer_router_entry(project_root)?;
         let raw = build_dsc::transpile_bundle(project_root, &defer_entry)?;
@@ -1088,10 +1087,13 @@ export default {{
 }
 
 fn retarget_app_export(js: &str, name: &str) -> String {
-    js.replace("export async function App", &format!("async function {name}"))
-        .replace("export function App", &format!("function {name}"))
-        .replace("export { App }", &format!("var {name} = App"))
-        .replace("export { App as App }", &format!("var {name} = App"))
+    js.replace(
+        "export async function App",
+        &format!("async function {name}"),
+    )
+    .replace("export function App", &format!("function {name}"))
+    .replace("export { App }", &format!("var {name} = App"))
+    .replace("export { App as App }", &format!("var {name} = App"))
 }
 
 fn inject_defer_script(dist_client: &Path) -> Result<(), String> {
@@ -1241,4 +1243,3 @@ fn is_deka_source_path(path: &Path) -> bool {
         Some("ds") | Some("dsx")
     )
 }
-

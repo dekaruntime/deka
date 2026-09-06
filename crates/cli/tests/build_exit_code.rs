@@ -2,12 +2,9 @@
 // no dist/ output) when the web project's source under app/ does not
 // compile -- matching what `deka check` already reports for that file.
 //
-// Root cause (see runtime/crates/cli/src/cli/build.rs): the web-project
-// build path only ever compiled `serve.entry`, and only when the entry
-// used a hydration component; every other .ds file under app/, including
-// the entry itself in the common non-hydration case, was copied into
-// dist/server/app as raw, unvalidated bytes via copy_dir_recursive. A
-// project with syntactically invalid source therefore "built" successfully.
+// `deka build` prefers default dsc emit (`dsc --outdir`), falling back to
+// per-tree `dsc transpile <dir> --out`, then copies host static files.
+// Raw app/ .ds is not the server product.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -163,15 +160,53 @@ fn build_exits_zero_on_valid_source() {
         !index.contains("<script"),
         "a page with no client:* must not emit a script tag: {index}"
     );
+    let dist_app = project.path().join("dist").join("app");
+    assert!(
+        dist_app.join("page.js").is_file()
+            && dist_app.join("layout.js").is_file()
+            && dist_app.join("not-found.js").is_file(),
+        "successful build should emit app/ as .js via dsc into dist/app: {combined}"
+    );
+    assert!(
+        !dist_app.join("page.dsx").exists()
+            && !dist_app.join("layout.dsx").exists()
+            && !dist_app.join("not-found.dsx").exists()
+            && !project
+                .path()
+                .join("dist")
+                .join("server")
+                .join("app")
+                .join("page.dsx")
+                .exists(),
+        "must not copy raw app/ .ds/.dsx as the server product: {combined}"
+    );
+    assert!(
+        project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("style.css")
+            .is_file(),
+        "after emit, public/ must copy into dist/client: {combined}"
+    );
+    // Host extras from the init scaffold (copied into dist/server/).
     assert!(
         project
             .path()
             .join("dist")
             .join("server")
-            .join("app")
-            .join("page.dsx")
+            .join("deka.json")
             .is_file(),
-        "successful build should copy app/ into dist/server/app: {combined}"
+        "build should copy scaffold deka.json into dist/server: {combined}"
+    );
+    assert!(
+        project
+            .path()
+            .join("dist")
+            .join("server")
+            .join("deka.lock")
+            .is_file(),
+        "build should copy scaffold deka.lock into dist/server: {combined}"
     );
 }
 
@@ -889,8 +924,14 @@ fn build_island_change_rotates_hash_and_importmap() {
         first_url.starts_with("/assets/islands-load.") && first_url.ends_with(".js"),
         "importmap must map islands/load to a hashed URL: {first_url}"
     );
-    let index = fs::read_to_string(project.path().join("dist").join("client").join("index.html"))
-        .expect("read dist html");
+    let index = fs::read_to_string(
+        project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("index.html"),
+    )
+    .expect("read dist html");
     assert!(
         index.contains(&first_url),
         "dist html must reference the importmap URL: {index}"
@@ -903,7 +944,10 @@ fn build_island_change_rotates_hash_and_importmap() {
     .expect("change island source");
 
     let (success, combined) = run_build(project.path());
-    assert!(success, "rebuild after an island change should succeed: {combined}");
+    assert!(
+        success,
+        "rebuild after an island change should succeed: {combined}"
+    );
     let second_url = importmap_url(&assets, "islands/load");
     assert_ne!(
         first_url, second_url,
@@ -914,8 +958,14 @@ fn build_island_change_rotates_hash_and_importmap() {
         !assets.join(&first_name).exists(),
         "stale chunk must be cleaned after the hash rotates: {first_name}"
     );
-    let index = fs::read_to_string(project.path().join("dist").join("client").join("index.html"))
-        .expect("read dist html");
+    let index = fs::read_to_string(
+        project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("index.html"),
+    )
+    .expect("read dist html");
     assert!(
         index.contains(&second_url),
         "dist html must reference the new hashed URL: {index}"
