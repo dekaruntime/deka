@@ -19,6 +19,7 @@ pub fn register(registry: &mut Registry) {
 }
 
 pub fn cmd(_context: &Context) {
+    crate::dsc::exec_if_present();
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
