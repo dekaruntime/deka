@@ -27,10 +27,49 @@ pub fn register(registry: &mut Registry) {
 }
 
 pub fn cmd(context: &Context) {
-    if let Some(exit_code) = try_run_deka_script(context) {
-        std::process::exit(exit_code);
+    if !cli_arg_is_source_file(context) {
+        if let Some(exit_code) = try_run_deka_script(context) {
+            std::process::exit(exit_code);
+        }
     }
-    runtime::run(context);
+    match prepare_run_context(context) {
+        Ok(prepared) => runtime::run(&prepared),
+        Err(err) => {
+            stdio::error("run", &err);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cli_arg_is_source_file(context: &Context) -> bool {
+    requested_script_name(context).is_some_and(runtime_core::entry::has_run_source_ext)
+}
+
+fn prepare_run_context(context: &Context) -> Result<Context, String> {
+    let cwd = std::env::current_dir().map_err(|err| format!("failed to get cwd: {err}"))?;
+    let (cli_arg, extra_args) = split_run_positionals(&context.args.positionals);
+    let resolved = runtime_core::entry::resolve_entry(&cwd, cli_arg)?;
+    if resolved.path.is_dir() {
+        return Err(format!(
+            "resolved entry is a directory ({}); deka run executes a .ds/.dsx/.js module, not an HTTP server. Use `deka serve` for app/ and api/ directories.",
+            resolved.path.display()
+        ));
+    }
+    let mut prepared = context.clone();
+    let mut positionals = vec![resolved.path.to_string_lossy().into_owned()];
+    positionals.extend(extra_args.iter().cloned());
+    prepared.args.positionals = positionals;
+    Ok(prepared)
+}
+
+fn split_run_positionals(positionals: &[String]) -> (Option<&str>, &[String]) {
+    match positionals.split_first() {
+        Some((first, rest)) if runtime_core::entry::has_run_source_ext(first) => {
+            (Some(first.as_str()), rest)
+        }
+        Some(_) => (None, positionals),
+        None => (None, &[]),
+    }
 }
 
 fn requested_script_name<'a>(context: &'a Context) -> Option<&'a str> {
@@ -354,5 +393,21 @@ mod tests {
             requested_script_name_from_args(&positionals, &commands),
             Some("build")
         );
+    }
+
+    #[test]
+    fn source_file_positional_is_the_cli_entry() {
+        let positionals = vec!["src/main.ds".to_string(), "--flag".to_string()];
+        let (entry, extra) = split_run_positionals(&positionals);
+        assert_eq!(entry, Some("src/main.ds"));
+        assert_eq!(extra, &["--flag".to_string()]);
+    }
+
+    #[test]
+    fn non_source_positional_is_not_treated_as_entry() {
+        let positionals = vec!["dev".to_string()];
+        let (entry, extra) = split_run_positionals(&positionals);
+        assert_eq!(entry, None);
+        assert_eq!(extra, &["dev".to_string()]);
     }
 }
