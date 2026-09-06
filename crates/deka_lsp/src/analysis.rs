@@ -1,7 +1,7 @@
 //! Transport-neutral DekaScript analysis types.
 //!
 //! Compiler diagnostics come from `dsc lsp`. This crate no longer links
-//! deka_compile.
+//! the in-process compiler.
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -51,7 +51,7 @@ pub struct AnalysisDiagnostic {
 }
 
 /// Compiler diagnostics are produced by `dsc lsp`. This host-side analyze
-/// path is a no-op so deka_lsp does not link deka_compile.
+/// path is a no-op so the LSP crate does not link the in-process compiler.
 pub fn analyze(_source: &str, _context: &AnalysisContext) -> Vec<AnalysisDiagnostic> {
     Vec::new()
 }
