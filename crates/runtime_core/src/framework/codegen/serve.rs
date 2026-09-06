@@ -20,6 +20,7 @@ use super::super::routes::{
 };
 use super::api::write_api_router_entry;
 use super::defer::write_defer_router_entry;
+use super::super::compiler_cache_dir;
 use super::{
     alias, ensure_defer_secret, exports_head, json_str, pathdiff_dsx, session_cookie_name,
 };
@@ -80,7 +81,7 @@ pub fn write_app_router_entry(project_root: &Path) -> Result<PathBuf, String> {
     }
     let styles = collect_route_styles(&manifest);
     let css_plan = css_plan_from_styles(&styles);
-    let cache_dir = project_root.join(".cache").join("dekascript");
+    let cache_dir = compiler_cache_dir(project_root);
     std::fs::create_dir_all(&cache_dir)
         .map_err(|err| format!("failed to create {}: {err}", cache_dir.display()))?;
     let entry = cache_dir.join("serve-entry.dsx");

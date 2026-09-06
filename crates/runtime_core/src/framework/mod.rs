@@ -16,7 +16,10 @@
 //! caller; everything previously public here keeps its
 //! `runtime_core::framework::*` path via these re-exports.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use crate::env::env_truthy_with;
+use crate::modules::MODULES_DIR;
 
 mod codegen;
 mod css;
@@ -31,6 +34,29 @@ pub use codegen::{
     write_api_router_entry, write_app_router_entry, write_defer_router_entry,
     write_worker_router_entry,
 };
+
+/// Serve/dev compiler artifact directory.
+///
+/// When `DEKA_DEV` is set (`deka` / `deka serve --dev`), artifacts go under
+/// `ds_modules/.cache/dev`. Otherwise the legacy `.cache/dekascript` path is
+/// used (also a build staging area). Production `dist/` is unchanged.
+pub fn compiler_cache_dir(project_root: &Path) -> PathBuf {
+    compiler_cache_dir_with(
+        project_root,
+        env_truthy_with("DEKA_DEV", &|key| std::env::var(key).ok()),
+    )
+}
+
+pub fn compiler_cache_dir_with(project_root: &Path, dev_mode: bool) -> PathBuf {
+    if dev_mode {
+        project_root
+            .join(MODULES_DIR)
+            .join(".cache")
+            .join("dev")
+    } else {
+        project_root.join(".cache").join("dekascript")
+    }
+}
 pub use css::{
     CssPlan, RouteStyle, ScopedStyleFile, collect_class_literals, collect_route_styles,
     css_links_for_route, css_plan_from_styles, css_scope_hash,
@@ -55,4 +81,28 @@ pub use routes::{
 pub fn project_needs_worker(project_root: &Path) -> bool {
     !scan_api_dir(&project_root.join("api")).is_empty()
         || !scan_server_defer(&project_root.join("app")).is_empty()
+}
+
+#[cfg(test)]
+mod cache_dir_tests {
+    use super::compiler_cache_dir_with;
+    use std::path::Path;
+
+    #[test]
+    fn compiler_cache_dir_defaults_to_legacy_path() {
+        let root = Path::new("/tmp/proj");
+        assert_eq!(
+            compiler_cache_dir_with(root, false),
+            root.join(".cache").join("dekascript")
+        );
+    }
+
+    #[test]
+    fn compiler_cache_dir_uses_ds_modules_when_dev() {
+        let root = Path::new("/tmp/proj");
+        assert_eq!(
+            compiler_cache_dir_with(root, true),
+            root.join("ds_modules").join(".cache").join("dev")
+        );
+    }
 }

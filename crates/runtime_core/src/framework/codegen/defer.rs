@@ -4,6 +4,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use super::super::compiler_cache_dir;
 use super::super::defer::{DeferredIsland, scan_server_defer};
 use super::{ensure_defer_secret, json_str, pathdiff_dsx, session_cookie_name};
 pub fn write_defer_router_entry(project_root: &Path) -> Result<PathBuf, String> {
@@ -22,7 +23,7 @@ pub fn write_defer_router_entry(project_root: &Path) -> Result<PathBuf, String> 
             "server:defer requires a child with slot=\"fallback\" ({names})"
         ));
     }
-    let cache_dir = project_root.join(".cache").join("dekascript");
+    let cache_dir = compiler_cache_dir(project_root);
     std::fs::create_dir_all(&cache_dir)
         .map_err(|err| format!("failed to create {}: {err}", cache_dir.display()))?;
     let entry = cache_dir.join("defer-entry.dsx");

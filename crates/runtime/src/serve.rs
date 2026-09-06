@@ -65,6 +65,7 @@ async fn serve_async(context: &Context) -> Result<(), String> {
         let _ = platform.env().set(key, value);
     };
     set_dev_flag_with(dev_mode, &env_get, &mut env_set);
+    crate::dev::prepare(dev_mode, &context.handler.input)?;
     let resolved = runtime_config::resolve_handler_path(&context.handler.input)
         .map_err(|err| format!("Failed to resolve handler path: {}", err))?;
 
@@ -734,7 +735,7 @@ async fn serve_listeners(
     ensure_http_port_available(port)?;
     let listeners = server_pool_workers.max(1);
 
-    stdio_log::log("listen", &format!("http://localhost:{}", port));
+    crate::dev::announce_listen(state.dev_mode, port);
     transport::serve(
         state,
         transport::ListenConfig::Http(HttpOptions {
@@ -903,16 +904,12 @@ fn should_ignore_watch_path(path: &FsPath) -> bool {
     }
 
     // Generated/transient paths that should not trigger HMR loops.
-    for needle in [
-        "/.cache/",
-        "/php_modules/.cache/",
-        "/node_modules/.cache/",
-        "/target/",
-        "/.git/",
-    ] {
-        if normalized.contains(needle) {
-            return true;
-        }
+    if normalized.split('/').any(|seg| {
+        matches!(seg, ".cache" | "node_modules" | "target" | ".git")
+    }) || normalized.ends_with("/ds_modules")
+        || normalized.ends_with("/php_modules")
+    {
+        return true;
     }
 
     false
@@ -1005,9 +1002,6 @@ mod tests {
         let err = ensure_http_port_available(port).expect_err("port should be rejected");
         assert!(err.contains("already in use"), "unexpected error: {}", err);
     }
-
-
-
 
     /// Blocker 1 regression: __dekaStat/__dekaReadFile/__dekaReadDir must NOT
     /// contain Deno.* fallback branches.  If a tenant can shadow globalThis.fs

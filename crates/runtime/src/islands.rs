@@ -230,8 +230,8 @@ pub fn collect_hashed_asset_renames(
 }
 
 /// Rewrite the unhashed `/assets/...` logical URLs baked into the generated
-/// app-router entry (`.cache/dekascript/serve-entry.dsx`) to the
-/// content-hashed names emitted under `.cache/dekascript/assets`.
+/// app-router entry (`compiler_cache_dir(...)/serve-entry.dsx`) to the
+/// content-hashed names emitted under that cache's `assets/` directory.
 ///
 /// `deka serve` generates the entry before the client assets exist
 /// (`engine::config::resolve_handler_path` runs ahead of the serve-startup
@@ -248,7 +248,7 @@ pub fn collect_hashed_asset_renames(
 /// the inline map built from the freshly written `importmap.json`, so the
 /// served document always carries the current hashes.
 pub fn rewrite_serve_entry_asset_urls(project_root: &Path) -> Result<(), String> {
-    let cache_dir = project_root.join(".cache").join("dekascript");
+    let cache_dir = runtime_core::framework::compiler_cache_dir(project_root);
     let entry = cache_dir.join("serve-entry.dsx");
     if !entry.is_file() {
         return Ok(());
@@ -468,20 +468,10 @@ pub fn write_island_client_assets_for_project(project_root: &Path) -> Result<(),
     if islands.is_empty() && deferred.is_empty() {
         return Ok(());
     }
-    write_island_client_assets(
-        &project_root
-            .join(".cache")
-            .join("dekascript")
-            .join("assets"),
-        &islands,
-    )?;
+    let assets_dir = runtime_core::framework::compiler_cache_dir(project_root).join("assets");
+    write_island_client_assets(&assets_dir, &islands)?;
     if !deferred.is_empty() {
-        write_defer_client_assets(
-            &project_root
-                .join(".cache")
-                .join("dekascript")
-                .join("assets"),
-        )?;
+        write_defer_client_assets(&assets_dir)?;
     }
     Ok(())
 }

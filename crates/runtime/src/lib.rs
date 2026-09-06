@@ -7,6 +7,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 mod css;
+mod dev;
 mod dsc_transpile;
 mod env;
 mod extensions;
