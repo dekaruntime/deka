@@ -747,3 +747,41 @@ globalThis.app = async function(req) {{
     assert_eq!(parsed["readOk"], true, "body={body}");
     assert_eq!(parsed["text"], "hello deka#578", "body={body}");
 }
+
+#[tokio::test]
+async fn wintertc_fetch_returns_response() {
+    let pool = test_pool();
+    let code = r#"
+globalThis.app = {
+  async fetch(request) {
+    const url = request.url || "";
+    return new Response("Hello World!", {
+      status: 201,
+      headers: { "Content-Type": "text/plain" },
+    });
+  },
+};
+"#;
+    let mut req = test_request(code);
+    req.request_parts = Some(RequestParts {
+        url: "http://localhost/hello".to_string(),
+        method: "GET".to_string(),
+        headers: vec![("accept".to_string(), "text/plain".to_string())],
+        body: None,
+    });
+    let res = pool
+        .execute(HandlerKey::new("wintertc_fetch"), req)
+        .await
+        .expect("pool execution should succeed");
+    assert!(res.success, "execution failed: {:?}", res.error);
+    let result = res.result.expect("should have result");
+    assert_eq!(result.get("status").and_then(|v| v.as_u64()), Some(201));
+    let body = result.get("body").and_then(|v| v.as_str()).expect("body");
+    assert_eq!(body, "Hello World!");
+    let headers = result.get("headers").expect("headers");
+    let content_type = headers
+        .get("content-type")
+        .or_else(|| headers.get("Content-Type"))
+        .and_then(|v| v.as_str());
+    assert_eq!(content_type, Some("text/plain"));
+}

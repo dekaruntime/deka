@@ -386,10 +386,5 @@ pub(super) fn finalize_profile(
 
 pub(super) fn handler_is_unsupported_script(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    lower.ends_with(".ts")
-        || lower.ends_with(".tsx")
-        || lower.ends_with(".js")
-        || lower.ends_with(".jsx")
-        || lower.ends_with(".mjs")
-        || lower.ends_with(".cjs")
+    lower.ends_with(".ts") || lower.ends_with(".tsx")
 }

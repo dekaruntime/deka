@@ -255,7 +255,9 @@ const __candidate = typeof __dekaMain.default !== \"undefined\"\n\
 if (typeof globalThis.app === \"undefined\" && typeof __candidate !== \"undefined\") {\n\
   if (typeof __candidate === \"function\" && typeof globalThis.__dekaNodeExpressAdapter === \"function\" && (typeof __candidate.handle === \"function\" || typeof __candidate.listen === \"function\")) {\n\
     globalThis.app = globalThis.__dekaNodeExpressAdapter(__candidate);\n\
-  } else if (__candidate && typeof __candidate === \"object\" && !__candidate.__dekaServer && (typeof __candidate.fetch === \"function\" || typeof __candidate.routes === \"object\")) {\n\
+  } else if (__candidate && typeof __candidate === \"object\" && typeof __candidate.fetch === \"function\") {\n\
+    globalThis.app = __candidate;\n\
+  } else if (__candidate && typeof __candidate === \"object\" && !__candidate.__dekaServer && typeof __candidate.routes === \"object\" && globalThis.__deka && typeof globalThis.__deka.serve === \"function\") {\n\
     globalThis.app = globalThis.__deka.serve(__candidate);\n\
   } else {\n\
     globalThis.app = __candidate;\n\
@@ -638,7 +640,9 @@ fn append_entry_footer(code: ModuleSourceCode) -> ModuleSourceCode {
   const __candidate = app;\n\
   if (typeof __candidate === \"function\" && typeof globalThis.__dekaNodeExpressAdapter === \"function\" && (typeof __candidate.handle === \"function\" || typeof __candidate.listen === \"function\")) {\n\
     globalThis.app = globalThis.__dekaNodeExpressAdapter(__candidate);\n\
-  } else if (__candidate && typeof __candidate === \"object\" && !__candidate.__dekaServer && (typeof __candidate.fetch === \"function\" || typeof __candidate.routes === \"object\")) {\n\
+  } else if (__candidate && typeof __candidate === \"object\" && typeof __candidate.fetch === \"function\") {\n\
+    globalThis.app = __candidate;\n\
+  } else if (__candidate && typeof __candidate === \"object\" && !__candidate.__dekaServer && typeof __candidate.routes === \"object\" && globalThis.__deka && typeof globalThis.__deka.serve === \"function\") {\n\
     globalThis.app = globalThis.__deka.serve(__candidate);\n\
   } else {\n\
     globalThis.app = __candidate;\n\

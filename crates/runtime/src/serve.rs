@@ -95,11 +95,15 @@ async fn serve_async(context: &Context) -> Result<(), String> {
     }
     if handler_is_unsupported_script(&handler_path) {
         return Err(format!(
-            "Serve mode does not execute JavaScript/TypeScript handlers: {}",
+            "Serve mode does not execute TypeScript handlers (emit JS first): {}",
             handler_path
         ));
     }
-    if matches!(resolved.mode, runtime_config::ServeMode::Php) {
+    let is_js_handler = {
+        let lower = handler_path.to_ascii_lowercase();
+        lower.ends_with(".js") || lower.ends_with(".mjs") || lower.ends_with(".cjs")
+    };
+    if matches!(resolved.mode, runtime_config::ServeMode::Php) && !is_js_handler {
         let mut env_set = |key: &str, value: &str| {
             let _ = platform.env().set(key, value);
             unsafe { std::env::set_var(key, value) };
@@ -350,12 +354,7 @@ fn build_handler_code(
 
 fn handler_is_unsupported_script(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
-    lower.ends_with(".js")
-        || lower.ends_with(".jsx")
-        || lower.ends_with(".ts")
-        || lower.ends_with(".tsx")
-        || lower.ends_with(".mjs")
-        || lower.ends_with(".cjs")
+    lower.ends_with(".ts") || lower.ends_with(".tsx")
 }
 
 fn build_static_handler_code(root: &str, default_file: &str, directory_listing: bool) -> String {
