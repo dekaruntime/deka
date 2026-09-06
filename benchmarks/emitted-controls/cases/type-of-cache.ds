@@ -1,0 +1,5 @@
+let sink = 0
+for (let i = 0; i < 2000000; i = i + 1) {
+  if ("value".getType().toString() === "string") { sink = sink + 1 }
+}
+unsafe { console.log(sink) }
