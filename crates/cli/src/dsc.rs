@@ -33,6 +33,14 @@ pub fn find_dsc() -> Result<Option<PathBuf>, String> {
             }
         }
     }
+    if let Ok(path_var) = env::var("PATH") {
+        for dir in env::split_paths(&path_var) {
+            let candidate = dir.join("dsc");
+            if candidate.is_file() {
+                return Ok(Some(candidate));
+            }
+        }
+    }
     Ok(None)
 }
 
