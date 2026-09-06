@@ -1547,19 +1547,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "deka_compile"
-version = "0.42.2"
-dependencies = [
- "bumpalo",
- "deka_emit",
- "deka_syntax",
- "insta",
- "runtime_core",
- "serde",
- "tempfile",
-]
-
-[[package]]
 name = "deka_emit"
 version = "0.42.2"
 dependencies = [
