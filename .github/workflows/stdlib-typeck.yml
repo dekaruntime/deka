@@ -37,6 +37,20 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Configure sccache
+        run: |
+          # Bucket is architecture-specific; derive it from the host rather than
+          # restating it per job (see scripts/populate-sccache.sh, deka#655).
+          case "$(uname -s)-$(uname -m)" in
+            Darwin-arm64)  BUCKET=deka-sccache-darwin-arm64 ;;
+            Darwin-x86_64) BUCKET=deka-sccache-darwin-x64 ;;
+            Linux-x86_64)  BUCKET=deka-sccache-linux-x64 ;;
+            *) echo "unsupported sccache host: $(uname -sm)" >&2; exit 1 ;;
+          esac
+          echo "SCCACHE_BUCKET=$BUCKET" >> "$GITHUB_ENV"
+          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+          echo "sccache bucket: $BUCKET"
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.96.0
 
