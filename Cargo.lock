@@ -1663,8 +1663,6 @@ name = "dekascript_lsp"
 version = "0.42.2"
 dependencies = [
  "anyhow",
- "deka_compile",
- "deka_syntax",
  "serde",
  "serde_json",
  "tokio",

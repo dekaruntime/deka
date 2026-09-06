@@ -16,5 +16,3 @@ tokio = { workspace = true, optional = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
 anyhow = { version = "1", optional = true }
-deka_compile = { path = "../deka_compile" }
-deka_syntax = { path = "../deka_syntax" }

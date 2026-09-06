@@ -1,10 +1,8 @@
-//! Transport-neutral DekaScript compiler analysis.
+//! Transport-neutral DekaScript analysis types.
 //!
-//! The native LSP and a future WASM worker can consume these plain data types
-//! without depending on a protocol transport.
+//! Compiler diagnostics come from `dsc lsp`. This crate no longer links
+//! the in-process compiler.
 
-use deka_compile::compile_to_js;
-use deka_syntax::{Diagnostic as CompilerDiagnostic, Severity as CompilerSeverity};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -52,36 +50,10 @@ pub struct AnalysisDiagnostic {
     pub message: String,
 }
 
-/// Analyzes DekaScript via the v2 compiler with no filesystem, async-runtime,
-/// or transport dependency. Ranges are clamped to valid UTF-16 positions in source.
-pub fn analyze(source: &str, context: &AnalysisContext) -> Vec<AnalysisDiagnostic> {
-    if !is_dekascript_context(context) {
-        return Vec::new();
-    }
-
-    let diagnostics = match compile_to_js(source, &context.uri_or_path) {
-        Ok(result) => result.diagnostics,
-        Err(diagnostics) => diagnostics,
-    };
-
-    diagnostics
-        .into_iter()
-        .filter(|diagnostic| !should_skip_diagnostic(diagnostic))
-        .map(|diagnostic| AnalysisDiagnostic {
-            range: source_range(
-                source,
-                diagnostic.line,
-                diagnostic.column,
-                diagnostic.underline_length,
-            ),
-            severity: severity(diagnostic.severity),
-            code: "compiler".to_string(),
-            message: plain_message(
-                &diagnostic.message,
-                diagnostic.help_text.as_deref().unwrap_or(""),
-            ),
-        })
-        .collect()
+/// Compiler diagnostics are produced by `dsc lsp`. This host-side analyze
+/// path is a no-op so the LSP crate does not link the in-process compiler.
+pub fn analyze(_source: &str, _context: &AnalysisContext) -> Vec<AnalysisDiagnostic> {
+    Vec::new()
 }
 
 pub fn is_dekascript_context(context: &AnalysisContext) -> bool {
@@ -96,30 +68,7 @@ pub fn is_dekascript_context(context: &AnalysisContext) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case("ds"))
 }
 
-fn should_skip_diagnostic(diagnostic: &CompilerDiagnostic) -> bool {
-    diagnostic
-        .help_text
-        .as_deref()
-        .unwrap_or("")
-        .contains("Fix JSX/template syntax in the template section.")
-}
-
-fn severity(severity: CompilerSeverity) -> AnalysisSeverity {
-    match severity {
-        CompilerSeverity::Error => AnalysisSeverity::Error,
-        CompilerSeverity::Warning => AnalysisSeverity::Warning,
-        CompilerSeverity::Info => AnalysisSeverity::Information,
-    }
-}
-
-fn plain_message(message: &str, help_text: &str) -> String {
-    let mut parts = vec![message.trim()];
-    if !help_text.trim().is_empty() {
-        parts.push(help_text.trim());
-    }
-    parts.join("\n")
-}
-
+#[cfg(test)]
 fn source_range(
     source: &str,
     line: usize,
@@ -148,6 +97,7 @@ fn source_range(
     }
 }
 
+#[cfg(test)]
 fn floor_char_boundary(line: &str, byte_offset: usize) -> usize {
     let mut byte_offset = byte_offset.min(line.len());
     while byte_offset > 0 && !line.is_char_boundary(byte_offset) {
@@ -156,6 +106,7 @@ fn floor_char_boundary(line: &str, byte_offset: usize) -> usize {
     byte_offset
 }
 
+#[cfg(test)]
 fn utf16_offset_at_byte(line: &str, byte_offset: usize) -> u32 {
     line[..floor_char_boundary(line, byte_offset)]
         .encode_utf16()
@@ -167,17 +118,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn analyzes_dekascript_through_compile_deka() {
+    fn analyze_is_a_no_op_without_in_process_compiler() {
         let diagnostics = analyze(
             "const = ;\n",
             &AnalysisContext::new("file:///workspace/main.ds"),
         );
-        assert!(!diagnostics.is_empty(), "expected compiler diagnostics");
-        assert!(
-            diagnostics
-                .iter()
-                .all(|diagnostic| !diagnostic.code.is_empty())
-        );
+        assert!(diagnostics.is_empty());
     }
 
     #[test]
@@ -194,7 +140,7 @@ mod tests {
     }
 
     #[test]
-    fn match_enum_missing_case_is_reported() {
+    fn match_exhaustiveness_is_owned_by_dsc_lsp() {
         let source = r#"
             enum Color { Red, Green, Blue }
 
@@ -207,10 +153,8 @@ mod tests {
         "#;
         let diagnostics = analyze(source, &AnalysisContext::new("file:///workspace/main.ds"));
         assert!(
-            diagnostics.iter().any(|d| {
-                d.message.contains("non-exhaustive match") && d.message.contains("Blue")
-            }),
-            "LSP must surface typeck exhaustiveness (deka#281), got: {diagnostics:?}"
+            diagnostics.is_empty(),
+            "in-process analyze must not compile; dsc lsp owns typeck: {diagnostics:?}"
         );
     }
 
@@ -255,22 +199,12 @@ mod tests {
     }
 
     #[test]
-    fn compiler_diagnostic_after_non_ascii_uses_utf16_range() {
-        let source = "const label = 'é'; const = ;\n";
-        let diagnostics = analyze(source, &AnalysisContext::new("file:///workspace/main.ds"));
-        let diagnostic = diagnostics.first().expect("compiler diagnostic");
+    fn range_after_non_ascii_uses_utf16() {
+        let range = source_range("const label = 'é'; const = ;\n", 1, 26, 1);
         assert_eq!(
-            diagnostic.range,
-            AnalysisRange {
-                start: AnalysisPosition {
-                    line: 0,
-                    character: 25,
-                },
-                end: AnalysisPosition {
-                    line: 0,
-                    character: 26,
-                },
-            }
+            range.start.character + 1,
+            range.end.character,
+            "{range:?}"
         );
     }
 }

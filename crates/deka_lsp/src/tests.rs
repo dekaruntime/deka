@@ -94,15 +94,9 @@ fn target_capability_diagnostics_allow_db_modules_for_server() {
 }
 
 #[test]
-fn analysis_core_returns_structured_diagnostics_for_ds_context() {
+fn analysis_core_is_a_no_op_without_in_process_compiler() {
     let diagnostics = analyze("const = ;\n", &AnalysisContext::new("file:///tmp/main.ds"));
-    assert!(!diagnostics.is_empty());
-    assert!(diagnostics.iter().all(|diagnostic| {
-        (
-            diagnostic.range.start.line,
-            diagnostic.range.start.character,
-        ) <= (diagnostic.range.end.line, diagnostic.range.end.character)
-    }));
+    assert!(diagnostics.is_empty());
 }
 
 #[test]
