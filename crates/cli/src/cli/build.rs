@@ -376,11 +376,11 @@ fn resolve_import_map_path(output_path: &Path) -> PathBuf {
         .join("importmap.json")
 }
 
-fn emit_import_map_json(meta: &deka_compile::SourceModuleMeta, output_path: &Path) -> String {
+fn emit_import_map_json(import_paths: &[String], output_path: &Path) -> String {
     let mut imports = default_import_map();
 
-    for decl in &meta.imports {
-        let spec = decl.path.trim();
+    for spec in import_paths {
+        let spec = spec.trim();
         if !is_bare_specifier(spec) {
             continue;
         }
@@ -795,7 +795,7 @@ fn inject_app_html(index_html: &str, app_html: &str) -> String {
 
 struct JsBuildOutput {
     js: String,
-    meta: deka_compile::SourceModuleMeta,
+    import_paths: Vec<String>,
     project_root: PathBuf,
 }
 
@@ -815,7 +815,7 @@ fn build_single_file_to_path(
         .map_err(|err| format!("failed to write {}: {}", output_path.display(), err))?;
 
     let import_map_path = resolve_import_map_path(output_path);
-    let import_map = emit_import_map_json(&output.meta, output_path);
+    let import_map = emit_import_map_json(&output.import_paths, output_path);
     fs::write(&import_map_path, import_map)
         .map_err(|err| format!("failed to write {}: {}", import_map_path.display(), err))?;
 
@@ -868,7 +868,7 @@ fn build_single_file_to_string(
 ) -> Result<JsBuildOutput, String> {
     let source = fs::read_to_string(input_path)
         .map_err(|err| format!("failed to read {}: {}", input_path.display(), err))?;
-    let meta = deka_compile::parse_source_module_meta(&source);
+    let import_paths = runtime_core::ds_imports::paths(&source);
 
     // Validate the source before checking project layout so that syntax/type
     // errors are surfaced immediately instead of being blocked by a missing
@@ -876,16 +876,11 @@ fn build_single_file_to_string(
     let js = build_dsc::transpile_file(input_path)?;
 
     let project_root = resolve_project_root(input_path)?;
-    let entry_imports: Vec<String> = meta
-        .imports
-        .iter()
-        .map(|decl| decl.path.trim().to_string())
-        .collect();
-    ensure_project_layout(&project_root, None, &entry_imports)?;
+    ensure_project_layout(&project_root, None, &import_paths)?;
 
     Ok(JsBuildOutput {
         js,
-        meta,
+        import_paths,
         project_root,
     })
 }
@@ -994,11 +989,7 @@ fn write_cloudflare_worker(project_root: &Path, dist_root: &Path) -> Result<(), 
     let entry = runtime_core::framework::write_worker_router_entry(project_root)?;
     let entry_source = fs::read_to_string(&entry)
         .map_err(|err| format!("failed to read {}: {err}", entry.display()))?;
-    let graph_imports: Vec<String> = deka_compile::parse_source_module_meta(&entry_source)
-        .imports
-        .iter()
-        .map(|decl| decl.path.trim().to_string())
-        .collect();
+    let graph_imports = runtime_core::ds_imports::paths(&entry_source);
     ensure_project_layout(project_root, None, &graph_imports)?;
     let bundled = build_dsc::transpile_bundle(project_root, &entry)?;
     let mut defer_bundle = String::new();

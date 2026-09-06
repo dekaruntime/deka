@@ -299,8 +299,7 @@ fn build_module(
 fn source_has_imports(input: &Path) -> Result<bool, String> {
     let source = fs::read_to_string(input)
         .map_err(|err| format!("failed to read {}: {err}", input.display()))?;
-    let meta = deka_compile::parse_source_module_meta(&source);
-    Ok(!meta.imports.is_empty())
+    Ok(!runtime_core::ds_imports::paths(&source).is_empty())
 }
 
 fn compile_source_via_module_graph(input: &Path, client: bool) -> Result<String, String> {

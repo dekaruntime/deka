@@ -5826,7 +5826,6 @@ version = "0.42.2"
 dependencies = [
  "core_affinity",
  "deka-validation",
- "deka_compile",
  "deka_emit",
  "deka_ui",
  "deno_core",
@@ -6648,7 +6647,6 @@ dependencies = [
  "bytes",
  "compile",
  "core",
- "deka_compile",
  "deka_host",
  "deka_http",
  "deka_ui",
