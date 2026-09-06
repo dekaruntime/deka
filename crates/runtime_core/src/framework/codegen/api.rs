@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
+use super::super::compiler_cache_dir;
 use super::super::manifest::{FrameworkEntry, exported_http_methods, scan_api_dir};
 use super::super::routes::assert_dynamic_route_supported;
 use super::{alias, json_str, pathdiff_dsx};
@@ -12,7 +13,7 @@ pub fn write_api_router_entry(project_root: &Path) -> Result<PathBuf, String> {
     if api_entries.is_empty() {
         return Err("no api/route.ds modules".to_string());
     }
-    let cache_dir = project_root.join(".cache").join("dekascript");
+    let cache_dir = compiler_cache_dir(project_root);
     std::fs::create_dir_all(&cache_dir)
         .map_err(|err| format!("failed to create {}: {err}", cache_dir.display()))?;
     let entry = cache_dir.join("api-entry.ds");
@@ -23,7 +24,7 @@ pub fn write_api_router_entry(project_root: &Path) -> Result<PathBuf, String> {
 }
 /// API graph compiled into `dist/_worker.js`.
 pub fn write_worker_router_entry(project_root: &Path) -> Result<PathBuf, String> {
-    let cache_dir = project_root.join(".cache").join("dekascript");
+    let cache_dir = compiler_cache_dir(project_root);
     std::fs::create_dir_all(&cache_dir)
         .map_err(|err| format!("failed to create {}: {err}", cache_dir.display()))?;
     let entry = cache_dir.join("worker-entry.ds");

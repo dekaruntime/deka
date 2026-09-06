@@ -43,7 +43,7 @@ pub struct PhpxEsmLoader {
 
 impl PhpxEsmLoader {
     pub fn new(project_root: PathBuf, entry_path: PathBuf) -> Result<Self, JsErrorBox> {
-        let cache_dir = project_root.join(".cache").join("dekascript");
+        let cache_dir = runtime_core::framework::compiler_cache_dir(&project_root);
         std::fs::create_dir_all(&cache_dir).map_err(|err| {
             JsErrorBox::generic(format!("failed to create {}: {}", cache_dir.display(), err))
         })?;
@@ -350,10 +350,7 @@ pub fn resolve_project_root(entry_path: &Path) -> Result<PathBuf, String> {
 }
 
 pub fn entry_wrapper_path(project_root: &Path) -> PathBuf {
-    project_root
-        .join(".cache")
-        .join("dekascript")
-        .join("__deka_entry.js")
+    runtime_core::framework::compiler_cache_dir(project_root).join("__deka_entry.js")
 }
 
 pub fn hash_module_graph(entry_path: &Path) -> Result<u64, String> {

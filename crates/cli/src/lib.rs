@@ -36,6 +36,7 @@ pub fn build_registry() -> Registry {
         cli::run::register(&mut registry);
         cli::platform::register(&mut registry);
         cli::serve::register(&mut registry);
+        cli::dev::register(&mut registry);
         cli::self_cmd::register(&mut registry);
         cli::task::register(&mut registry);
         cli::test::register(&mut registry);

@@ -64,10 +64,7 @@ pub fn write_route_css_assets_for_project(project_root: &Path) -> Result<(), Str
         return Ok(());
     }
     write_route_css_assets(
-        &project_root
-            .join(".cache")
-            .join("dekascript")
-            .join("assets"),
+        &runtime_core::framework::compiler_cache_dir(project_root).join("assets"),
         &styles,
     )
 }

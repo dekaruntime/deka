@@ -1,11 +1,13 @@
 //! Entry-source generation: manifest + document → generated `.ds`/`.dsx`
-//! entry modules under `.cache/dekascript/`.
+//! entry modules under the serve/dev compiler cache
+//! (`.cache/dekascript` or `ds_modules/.cache/dev` when `DEKA_DEV` is set).
 //!
 //! Generation is still string templating. Every interpolated value goes
 //! through `json_str` so escaping is centralized.
 
 use std::path::Path;
 
+use super::compiler_cache_dir;
 use super::routes::ident_slug;
 use super::source::{exports_fn_named, strip_ds_comments};
 
@@ -43,7 +45,7 @@ fn session_cookie_name(project_root: &Path) -> String {
 }
 
 fn ensure_defer_secret(project_root: &Path) -> Result<String, String> {
-    let cache_dir = project_root.join(".cache").join("dekascript");
+    let cache_dir = compiler_cache_dir(project_root);
     std::fs::create_dir_all(&cache_dir)
         .map_err(|err| format!("failed to create {}: {err}", cache_dir.display()))?;
     let path = cache_dir.join("defer.key");
