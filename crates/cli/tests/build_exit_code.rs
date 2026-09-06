@@ -162,11 +162,15 @@ fn build_exits_zero_on_valid_source() {
     );
     let dist_app = project.path().join("dist").join("app");
     assert!(
-        dist_app.join("page.js").is_file(),
-        "successful build should emit compiled app/ via dsc into dist/app: {combined}"
+        dist_app.join("page.js").is_file()
+            && dist_app.join("layout.js").is_file()
+            && dist_app.join("not-found.js").is_file(),
+        "successful build should emit app/ as .js via dsc into dist/app: {combined}"
     );
     assert!(
         !dist_app.join("page.dsx").exists()
+            && !dist_app.join("layout.dsx").exists()
+            && !dist_app.join("not-found.dsx").exists()
             && !project
                 .path()
                 .join("dist")
@@ -174,7 +178,7 @@ fn build_exits_zero_on_valid_source() {
                 .join("app")
                 .join("page.dsx")
                 .exists(),
-        "must not copy raw app/ .ds as the server product: {combined}"
+        "must not copy raw app/ .ds/.dsx as the server product: {combined}"
     );
     assert!(
         project
@@ -184,6 +188,25 @@ fn build_exits_zero_on_valid_source() {
             .join("style.css")
             .is_file(),
         "after emit, public/ must copy into dist/client: {combined}"
+    );
+    // Host extras from the init scaffold (copied into dist/server/).
+    assert!(
+        project
+            .path()
+            .join("dist")
+            .join("server")
+            .join("deka.json")
+            .is_file(),
+        "build should copy scaffold deka.json into dist/server: {combined}"
+    );
+    assert!(
+        project
+            .path()
+            .join("dist")
+            .join("server")
+            .join("deka.lock")
+            .is_file(),
+        "build should copy scaffold deka.lock into dist/server: {combined}"
     );
 }
 
