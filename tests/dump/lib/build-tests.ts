@@ -252,7 +252,7 @@ export interface HatsBuildResults {
   categories: HatsCategoryWithResults[]
 }
 
-const WASM_COMPILER_MANIFEST_URL = 'https://wasm.deka.gg/latest/deka-compiler-artifact.json'
+const WASM_COMPILER_MANIFEST_URL = 'https://dsc-wasm.deka.gg/latest/deka-compiler-artifact.json'
 
 async function runAllTestsOnce(): Promise<HatsBuildResults> {
   setCompilerArtifactPath(WASM_COMPILER_MANIFEST_URL)

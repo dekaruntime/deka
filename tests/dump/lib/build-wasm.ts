@@ -1,4 +1,4 @@
-const MANIFEST_URL = 'https://wasm.deka.gg/latest/deka-compiler-artifact.json'
+const MANIFEST_URL = 'https://dsc-wasm.deka.gg/latest/deka-compiler-artifact.json'
 
 const LOCAL_WASM = typeof process !== 'undefined' ? process.env.DEKA_WASM : undefined
 

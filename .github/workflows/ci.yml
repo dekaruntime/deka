@@ -258,6 +258,15 @@ jobs:
       - name: Build CLI for runtime execution tests
         run: cargo build --release -p cli
 
+      # rfd#38: download published dsc so check/fmt/transpile/lsp exec it.
+      # Do not place it next to target/release/cli — isolate compile
+      # (`deka run`) still uses in-process deka_compile until dsc
+      # --self-contained matches the ESM loader (modules ENOENT on #667).
+      - name: Install published dsc
+        run: |
+          scripts/ci-install-dsc.sh "${{ github.workspace }}/.ci/dsc"
+          "${{ github.workspace }}/.ci/dsc" --version
+
       - name: Build and test browser compiler WASM
         env:
           DEKA_SKIP_DIRTY_CHECK: 1
@@ -279,6 +288,18 @@ jobs:
       # also only runs if the crate is tested here.
       - name: Test workspace
         run: cargo test --locked --workspace
+
+      - name: Exec dsc for check, fmt, transpile
+        env:
+          DEKA_DSC: ${{ github.workspace }}/.ci/dsc
+        run: |
+          tmp=$(mktemp -d)
+          printf 'export const answer = 42\n' > "$tmp/ok.ds"
+          "${{ github.workspace }}/target/release/cli" check "$tmp/ok.ds"
+          "${{ github.workspace }}/target/release/cli" fmt "$tmp/ok.ds"
+          "${{ github.workspace }}/target/release/cli" transpile "$tmp/ok.ds"
+          test -f "$tmp/ok.js"
+          rm -rf "$tmp"
 
       - name: Run tour + public conformance suite (native)
         run: ./run.sh --skip-build --locked
