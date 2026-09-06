@@ -88,11 +88,24 @@ fn init_project(dir: &Path) {
 /// App-router fixture with a client island (hashed JS chunks + importmap)
 /// and shared/unique utility classes on two routes (hashed CSS). Same source
 /// feeds both the serve and the build half so URL sets must match exactly.
+///
+/// The island imports `ui/form` and `ui/suspense` so the rewrite's targets
+/// are in the live HTTP closure — deka#622 finding E. A 404 here is the
+/// original bug (Form / Suspense inside an island never ran).
 fn write_boundary_fixture(dir: &Path) {
     init_project(dir);
     fs::write(
         dir.join("app").join("page.dsx"),
-        "export fn Counter() {\n    return <button class=\"p-4 text-lg\">0</button>;\n}\nexport fn Page() {\n    return <main><Counter client:load count={1} /></main>;\n}\n",
+        concat!(
+            "import { Form } from \"ui/form\"\n",
+            "import { Suspense } from \"ui/suspense\"\n",
+            "export fn Counter() {\n",
+            "    return <Suspense fallback={<span>0</span>}><Form action={\"/\"} method={\"post\"}><button class=\"p-4 text-lg\">0</button></Form></Suspense>;\n",
+            "}\n",
+            "export fn Page() {\n",
+            "    return <main><Counter client:load count={1} /></main>;\n",
+            "}\n",
+        ),
     )
     .expect("write island page");
     let about = dir.join("app").join("about");
@@ -347,6 +360,16 @@ fn serve_asset_references_all_resolve() {
         refs.len() >= 6,
         "expected the full asset closure (islands chunk, island module, ui chunks, css, importmap), got {refs:?}\n{context}"
     );
+    // deka#622 finding E: Form / Suspense inside an island must resolve.
+    // collect_live_refs already 404s a missing URL; these asserts pin that
+    // the island's rewritten imports actually entered the closure.
+    for stem in ["ui/form", "ui/suspense"] {
+        assert!(
+            refs.iter()
+                .any(|url| url.contains(&format!("/{stem}.")) && url.ends_with(".js")),
+            "island import of {stem} must resolve to a hashed chunk: {refs:?}\n{context}"
+        );
+    }
     // The second route contributes its own per-route stylesheet.
     let about = http
         .get(format!("{base}/about"))

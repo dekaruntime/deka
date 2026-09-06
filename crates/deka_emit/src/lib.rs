@@ -141,6 +141,19 @@ mod tests {
     }
 
     #[test]
+    fn emit_struct_brand_is_on_prototype_not_each_instance() {
+        let out = parse_and_emit("struct Point { x: number } const p = Point { x: 1 };");
+        assert!(
+            out.contains("Object.defineProperty(f.prototype,'__deka_struct',{value:id,enumerable:false,writable:false,configurable:false})"),
+            "brand must be installed once on the factory prototype: {out}"
+        );
+        assert!(
+            !out.contains("Object.defineProperty(o,'__deka_struct'"),
+            "struct construction must not define the brand per instance: {out}"
+        );
+    }
+
+    #[test]
     fn emit_newtype_module_has_no_global_write() {
         // deka#551: the newtype payload key is shared through Symbol.for's
         // registry, not a globalThis merge.
@@ -151,6 +164,17 @@ mod tests {
             out
         );
         assert!(!out.contains("globalThis"), "got: {}", out);
+    }
+
+    #[test]
+    fn emit_newtype_payload_is_not_defined_per_instance() {
+        let out = parse_and_emit("type Cents number\nconst c = Cents(500);");
+        assert!(out.contains("Cents$values = new WeakMap()"), "got: {out}");
+        assert!(out.contains("Cents$values.set(o, v)"), "got: {out}");
+        assert!(
+            !out.contains("Object.defineProperty(o, __p"),
+            "newtype construction must not define the payload per instance: {out}"
+        );
     }
 
     #[test]

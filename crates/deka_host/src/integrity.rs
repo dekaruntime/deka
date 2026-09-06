@@ -1,5 +1,6 @@
 use crate::validation::imports::ImportKind;
 use crate::validation::modules::collect_import_specs;
+use runtime_core::module_spec::is_ds_source_path;
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::Read;
@@ -150,15 +151,12 @@ fn collect_source_files(root: &Path, current: &Path, out: &mut Vec<PathBuf>) -> 
             if should_ignore_file(&path, root) {
                 continue;
             }
-            // The module graph lives in DekaScript sources: `.ds` modules and
-            // `.dsx` component modules. The old walk only collected `.phpx`
-            // files, which hashed an empty set once the PHPX layer was
-            // deleted (deka#611).
-            if path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .is_some_and(|ext| ext == "ds" || ext == "dsx")
-            {
+            // The module graph lives in DekaScript sources. The old walk
+            // only collected `.phpx` files, which hashed an empty set once
+            // that layer was deleted (deka#611). The extension list is
+            // `DS_SOURCE_EXTENSIONS` so this walker cannot drift from
+            // `ds_source_candidates` / missing-import help.
+            if is_ds_source_path(&path) {
                 out.push(path);
             }
         }
