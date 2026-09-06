@@ -26,7 +26,7 @@ concurrency:
 jobs:
   typeck:
     name: Typecheck published stdlib
-    runs-on: [self-hosted, macOS]
+    runs-on: [self-hosted, macOS, ARM64]
     env:
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: 0
