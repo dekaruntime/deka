@@ -278,7 +278,14 @@ jobs:
       # caught deka#437 (a shipped Worker whose handlers were referenced but
       # never defined). deka-fmt's corpus round-trip property test (deka#477)
       # also only runs if the crate is tested here.
+      # rfd#38: language compile is dsc. The CLI execs check/fmt/transpile/lsp
+      # when DEKA_DSC is set; without it those tests silently use the
+      # in-process crates we are deleting. Isolate/run.sh/dump already pass
+      # this. Do not place dsc next to target/release/cli — dump pairing
+      # keys off that sibling.
       - name: Test workspace
+        env:
+          DEKA_DSC: ${{ github.workspace }}/.ci/dsc
         run: cargo test --locked --workspace
 
       - name: Exec dsc for check, fmt, transpile

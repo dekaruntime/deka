@@ -48,9 +48,9 @@ The heavy job — `Rust tests` — runs on bugsy. If you are debugging a Rust te
 failure, bugsy is the machine you want.
 
 That job installs the published **dsc** compiler and browser wasm from
-`https://dsc-wasm.deka.gg` (`scripts/ci-install-dsc.sh`). `deka check` /
-`fmt` / `transpile` / `run` (isolate) use `DEKA_DSC`. Dump smoke uses the
-same dsc wasm. This tree no longer builds `deka_compiler_wasm`.
+`https://dsc-wasm.deka.gg` (`scripts/ci-install-dsc.sh`). `cargo test`,
+`deka check` / `fmt` / `transpile` / `run` (isolate) use `DEKA_DSC`. Dump
+smoke uses the same dsc wasm. This tree no longer builds `deka_compiler_wasm`.
 
 ## Where the logs really are
 
