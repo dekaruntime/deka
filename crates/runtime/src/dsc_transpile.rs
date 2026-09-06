@@ -7,12 +7,9 @@ pub fn compile_file(path: &str) -> Result<String, String> {
     let dsc = runtime_core::dsc::find_dsc()?.ok_or_else(|| {
         "dsc is required to compile DekaScript. Set DEKA_DSC, install dsc next to deka, or put dsc on PATH.".to_string()
     })?;
-    let tmp = tempfile::Builder::new()
-        .prefix("deka-dsc-")
-        .suffix(".js")
-        .tempfile()
-        .map_err(|err| format!("failed to create dsc temp file: {err}"))?;
-    let out = tmp.path();
+    // dsc refuses to overwrite a file it did not generate.
+    let tmp = tempfile::tempdir().map_err(|err| format!("failed to create dsc temp dir: {err}"))?;
+    let out = tmp.path().join("out.js");
     let out_str = out
         .to_str()
         .ok_or_else(|| "dsc temp path is not UTF-8".to_string())?;
