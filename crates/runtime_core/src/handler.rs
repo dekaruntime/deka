@@ -55,6 +55,10 @@ pub fn is_deka_entry(path: &str) -> bool {
     lower.ends_with(".ds") || lower.ends_with(".dsx")
 }
 
+pub fn is_js_entry(path: &str) -> bool {
+    path.to_ascii_lowercase().ends_with(".js")
+}
+
 pub fn is_html_entry(path: &str) -> bool {
     path.to_ascii_lowercase().ends_with(".html")
 }
@@ -93,6 +97,10 @@ mod tests {
         assert!(is_deka_entry("page.dsx"));
         assert!(!is_deka_entry("index.DekaScript"));
         assert!(!is_deka_entry("index.html"));
+        assert!(!is_deka_entry("handler.js"));
+        assert!(is_js_entry("handler.js"));
+        assert!(is_js_entry("handler.JS"));
+        assert!(!is_js_entry("handler.ds"));
         assert!(is_html_entry("index.html"));
         assert!(is_html_entry("index.HTML"));
     }
