@@ -13,8 +13,6 @@ native = [
   "dep:tokio",
   "dep:postgres",
   "dep:deka_host",
-  "dep:deka_compile",
-  "dep:deka_syntax",
   "dep:bundler",
   "dep:rusqlite",
   "dep:deka-fmt",
@@ -38,9 +36,6 @@ tokio = { version = "1.35", features = ["rt-multi-thread", "net", "io-util"], op
 postgres = { version = "0.19", optional = true }
 dekascript_lsp = { path = "../deka_lsp", optional = true }
 deka_host = { path = "../deka_host", optional = true, default-features = false, features = ["runtime"] }
-deka_compile = { path = "../deka_compile", optional = true }
-deka_syntax = { path = "../deka_syntax", optional = true }
-bumpalo = "3.12"
 rusqlite = { version = "0.32", optional = true }
 sha2 = "0.10"
 ctrlc = "3"

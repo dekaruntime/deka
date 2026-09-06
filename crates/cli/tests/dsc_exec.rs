@@ -43,7 +43,7 @@ fn missing_dsc_without_fallback_is_an_error() {
 }
 
 #[test]
-fn deka_no_dsc_uses_in_process_compiler() {
+fn deka_no_dsc_does_not_fall_back_in_process() {
     let temp = tempfile::tempdir().unwrap();
     let source = temp.path().join("ok.ds");
     fs::write(&source, "export const answer = 42\n").unwrap();
@@ -53,10 +53,11 @@ fn deka_no_dsc_uses_in_process_compiler() {
         .env_remove("DEKA_DSC")
         .output()
         .expect("run deka");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+        stderr.contains("dsc is required"),
+        "unexpected stderr: {stderr}"
     );
 }
 

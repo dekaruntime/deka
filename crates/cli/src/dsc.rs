@@ -5,8 +5,8 @@
 //! 2. `dsc` next to this `deka` binary.
 //! 3. `dsc` on `PATH`.
 //!
-//! `check` / `fmt` / `transpile` / `lsp` require dsc. `DEKA_NO_DSC=1` forces
-//! the in-process crates until those crates leave this repo.
+//! `check` / `fmt` / `transpile` / `lsp` require dsc. There is no in-process
+//! compiler fallback.
 
 use std::env;
 use std::path::PathBuf;
@@ -18,17 +18,15 @@ pub fn find_dsc() -> Result<Option<PathBuf>, String> {
 
 /// Exec dsc with the same argv tail. Does not return on success.
 ///
-/// `DEKA_NO_DSC=1` skips exec so the in-process handler runs. Otherwise a
-/// missing dsc is a hard error — silent fallback hid the split.
+/// Missing dsc is a hard error. `DEKA_NO_DSC` still hides dsc from lookup
+/// (`find_dsc` returns None) and therefore errors — there is no in-process
+/// compiler left in this binary.
 pub fn exec_if_present() {
-    if env::var_os("DEKA_NO_DSC").is_some() {
-        return;
-    }
     match find_dsc() {
         Ok(None) => {
             stdio::error(
                 "cli",
-                "dsc is required for check, fmt, transpile, and lsp. Install dsc (https://deka.gg/install), set DEKA_DSC, or put dsc next to deka / on PATH. DEKA_NO_DSC=1 uses the in-process compiler until those crates are removed.",
+                "dsc is required for check, fmt, transpile, and lsp. Install dsc (https://deka.gg/install), set DEKA_DSC, or put dsc next to deka / on PATH.",
             );
             std::process::exit(1);
         }
