@@ -36,6 +36,8 @@ pub fn compile_graph(
     };
 
     let output = Command::new(&dsc)
+        .current_dir(project_root)
+        .env("DEKA_MODULE_ROOT", project_root)
         .args([
             "transpile",
             "--self-contained",
