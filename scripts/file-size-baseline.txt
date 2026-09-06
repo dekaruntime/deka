@@ -9,13 +9,6 @@ crates/deka_host/src/modules/php/db.rs 1320
 crates/deka_host/src/modules/php/net.rs 1712
 crates/deka_host/src/modules/php/security.rs 1007
 crates/deka_host/src/validation/modules.rs 2325
-crates/deka_syntax/src/canonicalize.rs 1343
-crates/deka_syntax/src/lexer.rs 1308
-crates/deka_syntax/src/parse/mod.rs 1829
-crates/deka_syntax/src/parse/stmt.rs 1234
-crates/deka_syntax/src/typeck/expr.rs 3947
-crates/deka_syntax/src/typeck/mod.rs 3122
-crates/deka_syntax/src/typeck/stmt.rs 1396
 crates/http/src/websocket.rs 1135
 crates/pm/src/install.rs 2315
 crates/pool/src/isolate_pool/worker_execution.rs 1789
