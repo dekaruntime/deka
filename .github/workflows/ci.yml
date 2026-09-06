@@ -259,9 +259,9 @@ jobs:
         run: cargo build --release -p cli
 
       # rfd#38: download published dsc so check/fmt/transpile/lsp exec it.
-      # Do not place it next to target/release/cli — isolate compile
-      # (`deka run`) still uses in-process deka_compile until dsc
-      # --self-contained matches the ESM loader (modules ENOENT on #667).
+      # Isolate compile (`deka run`) also finds it via DEKA_DSC on the
+      # tour/conformance step. Do not copy it next to target/release/cli:
+      # dump smoke still pairs this tree's wasm with in-process native.
       - name: Install published dsc
         run: |
           scripts/ci-install-dsc.sh "${{ github.workspace }}/.ci/dsc"
@@ -302,6 +302,8 @@ jobs:
           rm -rf "$tmp"
 
       - name: Run tour + public conformance suite (native)
+        env:
+          DEKA_DSC: ${{ github.workspace }}/.ci/dsc
         run: ./run.sh --skip-build --locked
 
       - name: Install dump harness deps + Chromium
