@@ -2,6 +2,7 @@
 
 import { jsx } from "./jsx.js";
 
-export function Form(props) {
-  return jsx("form", props);
+export function Form(props = {}) {
+  const { children, ...attributes } = props;
+  return jsx("form", attributes, children);
 }
