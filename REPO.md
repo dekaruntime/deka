@@ -21,10 +21,10 @@ Downstream repos you will touch regularly:
 cargo build --release -p cli
 
 # Check the main crates
-cargo check -p deka_emit -p deka_host -p php-rs -p deka-fmt -p runtime
+cargo check -p deka_emit -p deka_host -p php-rs -p runtime
 
 # Run the main Rust tests
-cargo test -p deka_emit -p deka_host -p php-rs -p deka-fmt -p runtime
+cargo test -p deka_emit -p deka_host -p php-rs -p runtime
 ```
 
 ## Repository layout
@@ -33,10 +33,9 @@ cargo test -p deka_emit -p deka_host -p php-rs -p deka-fmt -p runtime
 Cargo.toml              # workspace root
 crates/
   cli/                  # native CLI (`deka run`, `deka build`, `deka transpile`)
-  deka_emit/            # JS emitter (DekaScript → JS)
-  deka_compiler_wasm/   # browser compiler WASM target
-  deka-fmt/             # DekaScript formatter
+  deka_emit/            # JS emitter leftover (language emit is dsc)
   deka_lsp/             # native LSP
+
   deka-validation/      # error formatting / diagnostics
   deka_host/          # parser + validation (shared PHPX/DS parser)
   php-rs/               # typechecker (`phpx/typeck/check/`)
@@ -54,8 +53,8 @@ assets/                 # shared CSS bundle
 |---|---|
 | Parser / syntax | `crates/deka_host/src/parser/`, `crates/php-rs/src/parser/` |
 | Typechecker | `crates/php-rs/src/phpx/typeck/check/` |
-| JS emission | `crates/deka_emit/src/emit.rs` |
-| Formatter | `crates/deka-fmt/src/ds.rs`, `crates/deka-fmt/src/js.rs` |
+| JS emission | dsc (`deka_emit` leftover until it is deleted) |
+| Formatter | dsc (`dsc fmt`) |
 | Validation / diagnostics | `crates/deka_host/src/validation/`, `crates/deka-validation/` |
 | Native execution | `crates/runtime/src/`, `crates/cli/src/` |
 | WASM compiler | `crates/deka_compiler_wasm/src/` |
@@ -100,8 +99,8 @@ DEKA_SKIP_DIRTY_CHECK=1 scripts/test-deka-compiler-wasm.sh
 ### Formatter
 
 ```bash
-# Format a .ds file (uses the deka-fmt crate via cargo run)
-cargo run --release -p deka-fmt -- path/to/file.ds
+# Format a .ds file (execs dsc)
+deka fmt path/to/file.ds
 ```
 
 ## End-to-end workflow for a language change
@@ -109,7 +108,7 @@ cargo run --release -p deka-fmt -- path/to/file.ds
 1. **Make the change** in the relevant crate(s).
 2. **Run Rust tests:**
    ```bash
-   cargo test -p deka_emit -p deka_host -p php-rs -p deka-fmt -p runtime
+   cargo test -p deka_emit -p deka_host -p php-rs -p runtime
    cargo test -p cli --lib -- --test-threads=1
    ```
 3. **Run the in-tree language suite**, then WASM parity if you touched emit:
@@ -143,7 +142,7 @@ gh workflow run "Deploy deka test suite" --repo dekaruntime/testsuite --ref main
 
 ```bash
 # Fast compile check of the whole language stack
-cargo check -p deka_emit -p deka_host -p php-rs -p deka-fmt -p runtime -p cli
+cargo check -p deka_emit -p deka_host -p php-rs -p runtime -p cli
 
 # Full Rust test stack (excluding WASM browser build)
 cargo build -p deka_http -p pool -p engine -p php-rs -p bundler
@@ -186,7 +185,7 @@ DEKA_SKIP_DIRTY_CHECK=1 scripts/test-deka-compiler-wasm.sh
 
 ### Formatter changes behave differently in testsuite vs tour
 
-Both sites use `@dekaruntime/web-ide-kit`. The formatter is invoked through that package. If you change `deka-fmt`, you must bump `web-ide-kit`, publish it, and bump the consumer sites for the change to appear online.
+Both sites use `@dekaruntime/web-ide-kit`. Language format lives in dsc; change the formatter there, then bump `web-ide-kit` if the tour/testsuite WASM artifact must pick it up.
 
 ## Standards and conventions
 

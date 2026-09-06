@@ -18,7 +18,6 @@ crates/deka_syntax/src/parse/stmt.rs 1234
 crates/deka_syntax/src/typeck/expr.rs 3947
 crates/deka_syntax/src/typeck/mod.rs 3122
 crates/deka_syntax/src/typeck/stmt.rs 1396
-crates/deka-fmt/src/ds.rs 2138
 crates/http/src/websocket.rs 1135
 crates/pm/src/install.rs 2315
 crates/pool/src/isolate_pool/worker_execution.rs 1789
