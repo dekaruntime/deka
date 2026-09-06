@@ -12,36 +12,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 pub fn find_dsc() -> Result<Option<PathBuf>, String> {
-    if env::var_os("DEKA_NO_DSC").is_some() {
-        return Ok(None);
-    }
-    if let Ok(path) = env::var("DEKA_DSC") {
-        let path = PathBuf::from(path);
-        if path.is_file() {
-            return Ok(Some(path));
-        }
-        return Err(format!(
-            "DEKA_DSC is set to {} but that path is not a file",
-            path.display()
-        ));
-    }
-    if let Ok(exe) = env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let sibling = dir.join("dsc");
-            if sibling.is_file() {
-                return Ok(Some(sibling));
-            }
-        }
-    }
-    if let Ok(path_var) = env::var("PATH") {
-        for dir in env::split_paths(&path_var) {
-            let candidate = dir.join("dsc");
-            if candidate.is_file() {
-                return Ok(Some(candidate));
-            }
-        }
-    }
-    Ok(None)
+    runtime_core::dsc::find_dsc()
 }
 
 /// If dsc is available, exec it with the same argv tail and do not return.
