@@ -73,30 +73,36 @@ impl PhpxEsmLoader {
             .map_err(|_| JsErrorBox::generic("invalid entry wrapper path"))?;
 
         let v2_modules = if entry_path.is_file() {
-            let loader = deka_compile::module_graph::FsModuleLoader::new(project_root.clone());
-            match deka_compile::module_graph::compile_module_graph(&entry_path, &loader) {
-                Ok(graph) => {
-                    // The graph is the only point every entry shape passes
-                    // through, and it carries the transitive import set.
-                    let imports: Vec<String> = graph.imports.iter().cloned().collect();
-                    ensure_project_layout(&project_root, &imports)
-                        .map_err(JsErrorBox::generic)?;
-                    enforce_dynamic_policy(&graph.modules)?;
-                    // Modules are served as separate files (separate scopes),
-                    // so each carries its own prelude rather than the shared
-                    // program-level one (deka#595).
-                    Some(graph.self_contained_modules())
-                }
-                Err(diagnostics) => {
-                    let message = diagnostics
-                        .iter()
-                        .map(|d| format!("{}:{}: {}", d.line, d.column, d.message))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    return Err(JsErrorBox::generic(format!(
-                        "{}{}",
-                        DEKA_VALIDATION_ERROR_MARKER, message
-                    )));
+            if let Some(modules) = crate::dsc_compile::compile_graph(&project_root, &entry_path)
+                .map_err(JsErrorBox::generic)?
+            {
+                Some(modules)
+            } else {
+                let loader = deka_compile::module_graph::FsModuleLoader::new(project_root.clone());
+                match deka_compile::module_graph::compile_module_graph(&entry_path, &loader) {
+                    Ok(graph) => {
+                        // The graph is the only point every entry shape passes
+                        // through, and it carries the transitive import set.
+                        let imports: Vec<String> = graph.imports.iter().cloned().collect();
+                        ensure_project_layout(&project_root, &imports)
+                            .map_err(JsErrorBox::generic)?;
+                        enforce_dynamic_policy(&graph.modules)?;
+                        // Modules are served as separate files (separate scopes),
+                        // so each carries its own prelude rather than the shared
+                        // program-level one (deka#595).
+                        Some(graph.self_contained_modules())
+                    }
+                    Err(diagnostics) => {
+                        let message = diagnostics
+                            .iter()
+                            .map(|d| format!("{}:{}: {}", d.line, d.column, d.message))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        return Err(JsErrorBox::generic(format!(
+                            "{}{}",
+                            DEKA_VALIDATION_ERROR_MARKER, message
+                        )));
+                    }
                 }
             }
         } else {

@@ -1,4 +1,5 @@
 pub mod data_envelope;
+pub mod dsc;
 pub mod env;
 pub mod framework;
 pub mod handler;
