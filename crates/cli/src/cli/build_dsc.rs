@@ -55,5 +55,5 @@ fn run_transpile(entry: &Path, cwd: Option<&Path>, prefix: &[&str]) -> Result<St
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
-    fs::read_to_string(out).map_err(|err| format!("failed to read {}: {err}", out.display()))
+    fs::read_to_string(&out).map_err(|err| format!("failed to read {}: {err}", out.display()))
 }
