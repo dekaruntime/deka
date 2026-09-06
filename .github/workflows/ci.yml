@@ -193,7 +193,7 @@ jobs:
 
       - name: Pre-fetch V8 static lib
         env:
-          V8_URL: https://github.com/denoland/rusty_v8/releases/download/v150.4.0/librusty_v8_simdutf_release_aarch64-apple-darwin.a.gz
+          V8_URL: https://github.com/denoland/rusty_v8/releases/download/v150.4.0/librusty_v8_simdutf_release_x86_64-apple-darwin.a.gz
         run: |
           mkdir -p target/debug/gn_out/obj
           curl -fsSL -w "HTTP %{http_code} - %{size_download} bytes downloaded\n" \
