@@ -103,8 +103,7 @@ impl PhpxEsmLoader {
             }
         }
         // Linked packages sit outside the consumer project, so the entry
-        // graph dump does not include them. Compile that tree through dsc;
-        // do not fall back to in-process deka_compile.
+        // graph dump does not include them. Compile that tree through dsc.
         let js = crate::dsc_compile::compile_file(path).map_err(JsErrorBox::generic)?;
         Ok(ModuleSourceCode::String(js.into()))
     }

@@ -1,6 +1,6 @@
 //! Compile a DekaScript graph by exec'ing `dsc` (rfd#38).
 //!
-//! Isolate compile does not fall back to in-process `deka_compile`. Needs
+//! Isolate compile does not fall back to an in-process compiler. Needs
 //! dsc >= 0.5.0 (`--self-contained`). Set `DEKA_DSC`, ship `dsc` next to
 //! `deka`, or put it on `PATH`.
 //!

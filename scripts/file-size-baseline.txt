@@ -4,8 +4,6 @@
 crates/bundler/src/bundler.rs 1228
 crates/cli/src/cli/build.rs 1339
 crates/cli/src/cli/self_cmd/update.rs 1113
-crates/deka_compile/src/lib.rs 1448
-crates/deka_compile/src/module_graph.rs 1893
 crates/deka_emit/src/emit.rs 4254
 crates/deka_emit/src/lib.rs 1521
 crates/deka_host/src/modules/http.rs 1141
