@@ -52,7 +52,9 @@ impl PhpxEsmLoader {
         let wrapper_specifier = ModuleSpecifier::from_file_path(entry_wrapper_path(&project_root))
             .map_err(|_| JsErrorBox::generic("invalid entry wrapper path"))?;
 
-        let v2_modules = if entry_path.is_file() {
+        // JS/MJS/CJS entries are WinterTC workers: load as-is, do not send
+        // them through dsc (dsc only compiles .ds/.dsx).
+        let v2_modules = if entry_path.is_file() && !is_javascript_entry(&entry_path) {
             let modules = crate::dsc_compile::compile_graph(&project_root, &entry_path)
                 .map_err(JsErrorBox::generic)?;
             let imports: Vec<String> = modules
@@ -317,6 +319,12 @@ impl ModuleLoader for PhpxEsmLoader {
     }
 }
 
+pub fn is_javascript_entry(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| matches!(ext.to_ascii_lowercase().as_str(), "js" | "mjs" | "cjs"))
+}
+
 pub fn resolve_project_root(entry_path: &Path) -> Result<PathBuf, String> {
     let start = if entry_path.is_dir() {
         entry_path.to_path_buf()
@@ -328,6 +336,11 @@ pub fn resolve_project_root(entry_path: &Path) -> Result<PathBuf, String> {
         if dir.join("deka.json").is_file() {
             return Ok(dir.to_path_buf());
         }
+    }
+
+    // Workers-style JS handlers do not need a deka.json (bun/deno/CF).
+    if is_javascript_entry(entry_path) {
+        return Ok(start);
     }
 
     Err(format!(
@@ -662,8 +675,8 @@ fn append_entry_footer(code: ModuleSourceCode) -> ModuleSourceCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        PhpxEsmLoader, resolve_import_path, resolve_phpx_module_spec,
-        resolve_public_source_candidates,
+        PhpxEsmLoader, is_javascript_entry, resolve_import_path, resolve_phpx_module_spec,
+        resolve_project_root, resolve_public_source_candidates,
     };
     use std::fs;
 
@@ -728,5 +741,31 @@ mod tests {
             .expect("loader");
         assert!(loader.wrapper_source().contains("__dekaMain.App"));
         assert!(loader.wrapper_source().contains("ui/router"));
+    }
+
+    #[test]
+    fn javascript_entry_skips_dsc_and_does_not_need_deka_json() {
+        let root = tempfile::tempdir().expect("temp project");
+        let entry = root.path().join("handler.js");
+        fs::write(
+            &entry,
+            "export default { async fetch(request) { return new Response(\"ok\"); } }\n",
+        )
+        .expect("write js handler");
+
+        assert!(is_javascript_entry(&entry));
+        let resolved = resolve_project_root(&entry).expect("js handler has a project root");
+        assert_eq!(resolved, root.path());
+
+        PhpxEsmLoader::new(root.path().to_path_buf(), entry).expect("js loader skips dsc");
+    }
+
+    #[test]
+    fn ds_entry_still_requires_deka_json() {
+        let root = tempfile::tempdir().expect("temp project");
+        let entry = root.path().join("main.ds");
+        fs::write(&entry, "export const app = 1;\n").expect("write ds");
+        let err = resolve_project_root(&entry).expect_err("ds needs deka.json");
+        assert!(err.contains("deka.json"), "{err}");
     }
 }
