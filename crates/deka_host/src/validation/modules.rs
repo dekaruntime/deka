@@ -218,6 +218,12 @@ impl ModuleGraph {
             if spec.kind == ImportKind::Wasm {
                 continue;
             }
+            // DekaScript has no default imports. `import foo from "./bar"` is a
+            // parse error for dsc (deka#567). Do not invent a `default` export
+            // check that hides the compiler diagnostic.
+            if spec.imported == "default" {
+                continue;
+            }
             // Side-effect CSS imports (`import "./x.css"`) are not JS modules:
             // emit drops them and the per-route CSS collector rewrites their
             // selectors with the component's scope stamp (RFD 24 §10.6).
@@ -288,7 +294,8 @@ impl ModuleGraph {
                 };
                 // Side-effect imports (`import "./mod.ds"`) have an empty imported
                 // name. They load the module; they do not require a named export.
-                if edge.imported.is_empty() {
+                // `"default"` is JS-style and is not a DekaScript export.
+                if edge.imported.is_empty() || edge.imported == "default" {
                     continue;
                 }
                 if !target.exports.contains(&edge.imported) {
@@ -1898,6 +1905,35 @@ mod tests {
         assert!(
             errors.is_empty(),
             "side-effect import of a module with no exports should succeed, got: {:?}",
+            errors
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn default_import_is_not_reported_as_missing_export() {
+        // deka#567 / rfd#38: `import foo from "./bar.ds"` is invalid DS.
+        // The host gate must not invent `Missing export 'default'` so dsc
+        // can report the parse diagnostic.
+        let root = make_temp_project("default_import_not_export");
+        let entry = root.join("main.ds");
+        fs::write(
+            &entry,
+            "import foo from \"./bar.ds\"\nconsole.log(foo)\n",
+        )
+        .expect("write entry");
+        fs::write(root.join("bar.ds"), "export const foo = 1\n").expect("write bar");
+
+        let errors = validate_module_resolution(
+            &fs::read_to_string(&entry).expect("read entry"),
+            entry.to_string_lossy().as_ref(),
+        );
+        assert!(
+            errors
+                .iter()
+                .all(|err| !err.message.contains("Missing export 'default'")),
+            "host must not hide the parse error: {:?}",
             errors
         );
 
