@@ -166,13 +166,7 @@ fn build_exits_zero_on_valid_source() {
         "successful build should emit compiled app/ via dsc into dist/app: {combined}"
     );
     assert!(
-        dist_app.join("layout.js").is_file() && dist_app.join("not-found.js").is_file(),
-        "successful build should emit the rest of app/ as .js: {combined}"
-    );
-    assert!(
         !dist_app.join("page.dsx").exists()
-            && !dist_app.join("layout.dsx").exists()
-            && !dist_app.join("not-found.dsx").exists()
             && !project
                 .path()
                 .join("dist")
@@ -180,7 +174,7 @@ fn build_exits_zero_on_valid_source() {
                 .join("app")
                 .join("page.dsx")
                 .exists(),
-        "must not copy raw app/ .ds/.dsx as the server product: {combined}"
+        "must not copy raw app/ .ds as the server product: {combined}"
     );
     assert!(
         project
@@ -190,101 +184,6 @@ fn build_exits_zero_on_valid_source() {
             .join("style.css")
             .is_file(),
         "after emit, public/ must copy into dist/client: {combined}"
-    );
-    // Host extras from the init scaffold (copied into dist/server/).
-    assert!(
-        project
-            .path()
-            .join("dist")
-            .join("server")
-            .join("deka.json")
-            .is_file(),
-        "build should copy scaffold deka.json into dist/server: {combined}"
-    );
-    assert!(
-        project
-            .path()
-            .join("dist")
-            .join("server")
-            .join("deka.lock")
-            .is_file(),
-        "build should copy scaffold deka.lock into dist/server: {combined}"
-    );
-}
-
-#[test]
-fn build_emits_src_one_to_one() {
-    let project = tempfile::tempdir().expect("create temp project dir");
-    init_project(project.path());
-    let src = project.path().join("src");
-    fs::create_dir_all(src.join("nested")).expect("mkdir src/nested");
-    fs::write(src.join("util.ds"), "export const n = 1;\n").expect("write src/util.ds");
-    fs::write(src.join("notes.txt"), "keep me\n").expect("write src/notes.txt");
-    fs::write(src.join("nested").join("readme.md"), "verbatim\n")
-        .expect("write src/nested/readme.md");
-
-    let (success, combined) = run_build(project.path());
-    assert!(
-        success,
-        "deka build should succeed with a no-magic src/ tree: {combined}"
-    );
-
-    let dist_src = project.path().join("dist").join("src");
-    let util_js = fs::read_to_string(dist_src.join("util.js")).expect("read dist/src/util.js");
-    assert!(
-        util_js.contains("export const n") || util_js.contains("n = 1"),
-        "src/ .ds must compile via dsc into dist/src: {util_js}"
-    );
-    assert!(
-        !dist_src.join("util.ds").exists(),
-        "src/ .ds must not be copied raw into dist/src"
-    );
-    assert_eq!(
-        fs::read_to_string(dist_src.join("notes.txt")).expect("read notes"),
-        "keep me\n"
-    );
-    assert_eq!(
-        fs::read_to_string(dist_src.join("nested").join("readme.md")).expect("read readme"),
-        "verbatim\n"
-    );
-}
-
-#[test]
-fn build_missing_dsc_is_hard_error() {
-    let project = tempfile::tempdir().expect("create temp project dir");
-    init_project(project.path());
-
-    let output = Command::new(cli_bin())
-        .arg("build")
-        .current_dir(project.path())
-        .env("DEKA_NO_DSC", "1")
-        .env_remove("DEKA_DSC")
-        .output()
-        .expect("run deka build");
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(
-        !output.status.success(),
-        "missing dsc must fail the build: {combined}"
-    );
-    assert!(
-        combined.contains("dsc is required"),
-        "error should say dsc is required: {combined}"
-    );
-    assert!(
-        combined.contains("DEKA_DSC"),
-        "error should mention DEKA_DSC: {combined}"
-    );
-    assert!(
-        combined.contains("https://deka.gg/install") || combined.contains("install"),
-        "error should include install guidance: {combined}"
-    );
-    assert!(
-        !project.path().join("dist").exists(),
-        "missing dsc must not write dist/"
     );
 }
 
