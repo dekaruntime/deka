@@ -510,9 +510,7 @@ pub fn write_island_client_assets(
             if !seen_files.insert(island.file.clone()) {
                 continue;
             }
-            let source = fs::read_to_string(&island.file)
-                .map_err(|err| format!("failed to read {}: {err}", island.file))?;
-            let mut js = compile_js(&source, &island.file)?;
+            let mut js = crate::dsc_transpile::compile_file(&island.file)?;
             js = rewrite_ui_imports(&js, &ui_names);
             let mod_stem = format!("island-{directive}-{idx}");
             idx += 1;
@@ -598,17 +596,6 @@ pub fn write_island_client_assets(
     )?;
     write_importmap_entries(assets_dir, &importmap_entries)?;
     Ok(())
-}
-
-fn compile_js(source: &str, path: &str) -> Result<String, String> {
-    match deka_compile::compile_to_js(source, path) {
-        Ok(result) => Ok(result.js),
-        Err(diagnostics) => Err(diagnostics
-            .iter()
-            .map(deka_compile::format_diagnostic)
-            .collect::<Vec<_>>()
-            .join("\n")),
-    }
 }
 
 pub fn write_defer_client_assets(assets_dir: &Path) -> Result<(), String> {
