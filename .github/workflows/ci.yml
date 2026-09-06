@@ -259,9 +259,10 @@ jobs:
         run: cargo build --release -p cli
 
       # rfd#38: download published dsc so check/fmt/transpile/lsp exec it.
-      # Do not place it next to target/release/cli — isolate compile
-      # (`deka run`) still uses in-process deka_compile until dsc
-      # --self-contained matches the ESM loader (modules ENOENT on #667).
+      # Do not set DEKA_DSC on run.sh yet: isolate through dsc is 670/670 on
+      # shared language fixtures but native-only http/jwt host tests still
+      # fail (format_request / Ok inference). Do not copy dsc next to the
+      # release CLI; dump smoke pairs this tree's wasm with in-process native.
       - name: Install published dsc
         run: |
           scripts/ci-install-dsc.sh "${{ github.workspace }}/.ci/dsc"
