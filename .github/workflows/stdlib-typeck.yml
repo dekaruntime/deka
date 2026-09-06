@@ -37,6 +37,17 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.96.0
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
       - name: Configure sccache
         run: |
           # Bucket is architecture-specific; derive it from the host rather than
@@ -61,17 +72,6 @@ jobs:
           else
             echo "::warning::sccache not found on PATH - building without a compiler cache. Reinstall it on this runner (cargo install sccache --locked); see deka#656."
           fi
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.96.0
-
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
 
       - name: Build CLI
         run: cargo build --release -p cli
