@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use wasm_cli as wasm_cmd;
 
 pub mod cli;
-pub mod compile_helper;
 pub mod dsc;
 
 pub fn build_registry() -> Registry {

@@ -46,29 +46,21 @@ fn transpile_command_emits_adjacent_v8_input() {
 
 #[test]
 fn transpile_help_describes_output_modes() {
-    // In-process help until the CLI transpile handler is deleted. With
-    // DEKA_DSC set, `deka transpile --help` execs dsc, whose usage omits
-    // the host-side output-ancestor paragraph.
     let output = Command::new(cli_bin())
         .args(["transpile", "--help"])
-        .env("DEKA_NO_DSC", "1")
-        .env_remove("DEKA_DSC")
         .output()
         .expect("run transpile help");
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    for expected in [
-        "--preserve",
-        "--bundle",
-        "--treeshake",
-        "--client",
-        "Examples:",
-        "Output ancestors must be non-symlinked",
-    ] {
+    for expected in ["--preserve", "--bundle", "--treeshake", "--client", "Examples:"] {
         assert!(text.contains(expected), "missing {expected}: {text}");
     }
 }
