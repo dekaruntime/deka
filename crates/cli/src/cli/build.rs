@@ -2,8 +2,8 @@ use bundler::{BuildOptions, VirtualSource, bundle_virtual_entry};
 use core::{CommandSpec, Context, ParamSpec, Registry};
 use runtime_core::modules::MODULES_DIR;
 
-use crate::compile_helper::compile_js_or_report;
-use std::collections::{BTreeMap, HashMap};
+use crate::cli::build_dsc;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -685,31 +685,9 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
 /// would fail the build even though `deka serve --dev` (which compiles the
 /// same file through the graph) serves it fine. Dev and prod must agree on
 /// what compiles — RFD 24 §11.2.
-fn validate_app_dir_sources(project_root: &Path, app_dir: &Path) -> Result<(), String> {
+fn validate_app_dir_sources(_project_root: &Path, app_dir: &Path) -> Result<(), String> {
     for path in collect_deka_source_files(app_dir)? {
-        let input = path
-            .to_str()
-            .ok_or_else(|| format!("invalid utf-8 path: {}", path.display()))?;
-        let source = fs::read_to_string(&path)
-            .map_err(|err| format!("failed to read {}: {}", path.display(), err))?;
-        if deka_compile::parse_source_module_meta(&source)
-            .imports
-            .is_empty()
-        {
-            compile_js_or_report(&source, input)
-                .map_err(|err| format!("{}: {}", path.display(), err))?;
-        } else {
-            let loader =
-                deka_compile::module_graph::FsModuleLoader::new(project_root.to_path_buf());
-            deka_compile::module_graph::compile_module_graph(&path, &loader)
-                .map_err(|diagnostics| {
-                    format!(
-                        "{}: {}",
-                        path.display(),
-                        deka_compile::format_diagnostics(&diagnostics)
-                    )
-                })?;
-        }
+        build_dsc::check_path(&path).map_err(|err| format!("{}: {err}", path.display()))?;
     }
     Ok(())
 }
@@ -888,10 +866,6 @@ fn build_single_file_bundle_to_path(
 fn build_single_file_to_string(
     input_path: &Path,
 ) -> Result<JsBuildOutput, String> {
-    let input = input_path
-        .to_str()
-        .ok_or_else(|| format!("invalid utf-8 path: {}", input_path.display()))?;
-
     let source = fs::read_to_string(input_path)
         .map_err(|err| format!("failed to read {}: {}", input_path.display(), err))?;
     let meta = deka_compile::parse_source_module_meta(&source);
@@ -899,7 +873,7 @@ fn build_single_file_to_string(
     // Validate the source before checking project layout so that syntax/type
     // errors are surfaced immediately instead of being blocked by a missing
     // deka.lock or php_modules/ directory (dekaruntime/deka#117).
-    let js = compile_js_or_report(&source, input)?;
+    let js = build_dsc::transpile_file(input_path)?;
 
     let project_root = resolve_project_root(input_path)?;
     let entry_imports: Vec<String> = meta
@@ -945,7 +919,7 @@ impl VirtualSource for PhpxProvider {
             .ok_or_else(|| format!("invalid utf-8 path: {}", path.display()))?;
         let source =
             fs::read_to_string(path).map_err(|err| format!("failed to read {}: {}", input, err))?;
-        let js = compile_js_or_report(&source, input)?;
+        let js = build_dsc::transpile_file(path)?;
         Ok(Some(js))
     }
 }
@@ -1018,50 +992,20 @@ fn write_ui_modules_for_worker(project_root: &Path) -> Result<(), String> {
 fn write_cloudflare_worker(project_root: &Path, dist_root: &Path) -> Result<(), String> {
     write_ui_modules_for_worker(project_root)?;
     let entry = runtime_core::framework::write_worker_router_entry(project_root)?;
-    let loader = deka_compile::module_graph::FsModuleLoader::new(project_root.to_path_buf());
-    let graph = deka_compile::module_graph::compile_module_graph(&entry, &loader)
-        .map_err(|diagnostics| deka_compile::format_diagnostics(&diagnostics))?;
-    // Transitive: a module the entry never mentions can still import a stdlib
-    // package the project does not declare (deka#430).
-    let graph_imports: Vec<String> = graph.imports.iter().cloned().collect();
+    let entry_source = fs::read_to_string(&entry)
+        .map_err(|err| format!("failed to read {}: {err}", entry.display()))?;
+    let graph_imports: Vec<String> = deka_compile::parse_source_module_meta(&entry_source)
+        .imports
+        .iter()
+        .map(|decl| decl.path.trim().to_string())
+        .collect();
     ensure_project_layout(project_root, None, &graph_imports)?;
-    let graph_prelude = graph.prelude.clone();
-    let provider = Arc::new(GraphJsProvider {
-        modules: graph.modules,
-    });
-    let bundled = bundle_virtual_entry(
-        &entry,
-        BuildOptions {
-            project_root: project_root.to_path_buf(),
-            minify: false,
-            iife: false,
-            client: false,
-            prelude: Some(graph_prelude),
-        },
-        provider,
-    )?;
+    let bundled = build_dsc::transpile_bundle(project_root, &entry)?;
     let mut defer_bundle = String::new();
     let has_defer = !runtime_core::framework::scan_server_defer(&project_root.join("app")).is_empty();
     if has_defer {
         let defer_entry = runtime_core::framework::write_defer_router_entry(project_root)?;
-        let defer_loader = deka_compile::module_graph::FsModuleLoader::new(project_root.to_path_buf());
-        let defer_graph = deka_compile::module_graph::compile_module_graph(&defer_entry, &defer_loader)
-            .map_err(|diagnostics| deka_compile::format_diagnostics(&diagnostics))?;
-        let defer_prelude = defer_graph.prelude.clone();
-        let defer_provider = Arc::new(GraphJsProvider {
-            modules: defer_graph.modules,
-        });
-        let raw = bundle_virtual_entry(
-            &defer_entry,
-            BuildOptions {
-                project_root: project_root.to_path_buf(),
-                minify: false,
-                iife: false,
-                client: false,
-                prelude: Some(defer_prelude),
-            },
-            defer_provider,
-        )?;
+        let raw = build_dsc::transpile_bundle(project_root, &defer_entry)?;
         defer_bundle = retarget_app_export(&raw, "DeferApp");
     }
     let public_files = runtime_core::framework::collect_public_rel_paths(project_root);
@@ -1163,30 +1107,6 @@ fn retarget_app_export(js: &str, name: &str) -> String {
         .replace("export function App", &format!("function {name}"))
         .replace("export { App }", &format!("var {name} = App"))
         .replace("export { App as App }", &format!("var {name} = App"))
-}
-
-struct GraphJsProvider {
-    modules: HashMap<PathBuf, String>,
-}
-
-impl GraphJsProvider {
-    fn resolve_key(&self, path: &Path) -> Option<PathBuf> {
-        if let Ok(canon) = fs::canonicalize(path) {
-            if self.modules.contains_key(&canon) {
-                return Some(canon);
-            }
-        }
-        self.modules.keys().find(|k| *k == path).cloned()
-    }
-}
-
-impl VirtualSource for GraphJsProvider {
-    fn load_virtual(&self, path: &Path) -> Result<Option<String>, String> {
-        let Some(key) = self.resolve_key(path) else {
-            return Ok(None);
-        };
-        Ok(self.modules.get(&key).cloned())
-    }
 }
 
 fn inject_defer_script(dist_client: &Path) -> Result<(), String> {
