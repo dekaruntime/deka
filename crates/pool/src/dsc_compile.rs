@@ -69,13 +69,23 @@ fn collect_js(
     source_root: &Path,
     modules: &mut HashMap<PathBuf, String>,
 ) -> Result<(), String> {
-    let entries = fs::read_dir(out_root)
-        .map_err(|err| format!("failed to read {}: {err}", out_root.display()))?;
+    let source_root = fs::canonicalize(source_root).unwrap_or_else(|_| source_root.to_path_buf());
+    collect_js_inner(out_root, out_root, &source_root, modules)
+}
+
+fn collect_js_inner(
+    out_root: &Path,
+    dir: &Path,
+    source_root: &Path,
+    modules: &mut HashMap<PathBuf, String>,
+) -> Result<(), String> {
+    let entries = fs::read_dir(dir)
+        .map_err(|err| format!("failed to read {}: {err}", dir.display()))?;
     for entry in entries {
-        let entry = entry.map_err(|err| format!("failed to read {}: {err}", out_root.display()))?;
+        let entry = entry.map_err(|err| format!("failed to read {}: {err}", dir.display()))?;
         let path = entry.path();
         if path.is_dir() {
-            collect_js(&path, source_root, modules)?;
+            collect_js_inner(out_root, &path, source_root, modules)?;
             continue;
         }
         if path.extension().and_then(|e| e.to_str()) != Some("js") {
