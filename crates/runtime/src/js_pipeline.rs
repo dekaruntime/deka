@@ -53,6 +53,7 @@ fn build_deka_handler_bundle_in_project(
     let graph = deka_compile::module_graph::compile_module_graph(&entry_path, &loader).map_err(|diagnostics| {
         deka_compile::format_diagnostics(&diagnostics)
     })?;
+    let prelude = graph.prelude.clone();
     let provider: Arc<dyn VirtualSource> = Arc::new(V2BundleProvider::new(entry_path.clone(), graph.modules, tenant_root_injection));
 
     bundle_virtual_entry(
@@ -62,6 +63,7 @@ fn build_deka_handler_bundle_in_project(
             minify: true,
             iife: true,
             client: false,
+            prelude: Some(prelude),
         },
         provider,
     )

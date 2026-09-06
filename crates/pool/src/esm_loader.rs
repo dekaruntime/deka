@@ -82,7 +82,10 @@ impl PhpxEsmLoader {
                     ensure_project_layout(&project_root, &imports)
                         .map_err(JsErrorBox::generic)?;
                     enforce_dynamic_policy(&graph.modules)?;
-                    Some(graph.modules)
+                    // Modules are served as separate files (separate scopes),
+                    // so each carries its own prelude rather than the shared
+                    // program-level one (deka#595).
+                    Some(graph.self_contained_modules())
                 }
                 Err(diagnostics) => {
                     let message = diagnostics

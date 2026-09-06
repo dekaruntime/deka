@@ -861,6 +861,9 @@ fn build_single_file_bundle_to_path(
             minify,
             iife: false,
             client: false,
+            // Single-file compilation inlines the prelude per module; only
+            // module-graph bundles carry a detached program prelude.
+            prelude: None,
         },
         provider,
     )?;
@@ -1022,6 +1025,7 @@ fn write_cloudflare_worker(project_root: &Path, dist_root: &Path) -> Result<(), 
     // package the project does not declare (deka#430).
     let graph_imports: Vec<String> = graph.imports.iter().cloned().collect();
     ensure_project_layout(project_root, None, &graph_imports)?;
+    let graph_prelude = graph.prelude.clone();
     let provider = Arc::new(GraphJsProvider {
         modules: graph.modules,
     });
@@ -1032,6 +1036,7 @@ fn write_cloudflare_worker(project_root: &Path, dist_root: &Path) -> Result<(), 
             minify: false,
             iife: false,
             client: false,
+            prelude: Some(graph_prelude),
         },
         provider,
     )?;
@@ -1042,6 +1047,7 @@ fn write_cloudflare_worker(project_root: &Path, dist_root: &Path) -> Result<(), 
         let defer_loader = deka_compile::module_graph::FsModuleLoader::new(project_root.to_path_buf());
         let defer_graph = deka_compile::module_graph::compile_module_graph(&defer_entry, &defer_loader)
             .map_err(|diagnostics| deka_compile::format_diagnostics(&diagnostics))?;
+        let defer_prelude = defer_graph.prelude.clone();
         let defer_provider = Arc::new(GraphJsProvider {
             modules: defer_graph.modules,
         });
@@ -1052,6 +1058,7 @@ fn write_cloudflare_worker(project_root: &Path, dist_root: &Path) -> Result<(), 
                 minify: false,
                 iife: false,
                 client: false,
+                prelude: Some(defer_prelude),
             },
             defer_provider,
         )?;

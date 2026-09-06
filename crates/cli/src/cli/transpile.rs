@@ -321,9 +321,10 @@ fn compile_source_via_module_graph(input: &Path, client: bool) -> Result<String,
                 .collect::<Vec<_>>()
                 .join("\n")
         })?;
+    let entry = graph.entry.clone();
     graph
-        .modules
-        .get(&graph.entry)
+        .self_contained_modules()
+        .get(&entry)
         .cloned()
         .ok_or_else(|| "module graph did not emit entry module".to_string())
 }
@@ -359,6 +360,7 @@ fn build_bundle(
             minify: treeshake,
             iife: false,
             client,
+            prelude: Some(graph.prelude),
         },
         provider,
     )

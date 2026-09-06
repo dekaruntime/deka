@@ -9,7 +9,10 @@ mod emit;
 pub mod prelude;
 mod util;
 
-pub use emit::{css_scope_hash, emit_js, emit_js_with_imports, emit_js_with_options};
+pub use emit::{
+    ModuleEmit, css_scope_hash, emit_js, emit_js_module_with_options, emit_js_with_imports,
+    emit_js_with_options,
+};
 
 #[cfg(test)]
 mod tests {
@@ -315,6 +318,64 @@ mod tests {
         assert!(out.contains("const Point = __deka_struct"), "got: {}", out);
         assert!(out.contains("Point.impl(\"distance\""), "got: {}", out);
         assert!(out.contains("p1.distance(p2)"), "got: {}", out);
+    }
+
+    /// deka#595, module-local granularity: the `__deka_struct` helper carries
+    /// only the members this module actually uses. A plain struct factory is
+    /// emitted without `impl`, `implMut`, the `MutationError` class, or the
+    /// embeds loop.
+    #[test]
+    fn emit_struct_helper_omits_undemanded_members() {
+        let out = parse_and_emit("struct Point { x: number; y: number }\nconst p = Point { x: 1, y: 2 };\nconst n = p.x;");
+        assert!(out.contains("function __deka_struct"), "got: {}", out);
+        assert!(!out.contains("implMut"), "got: {}", out);
+        assert!(!out.contains("f.impl="), "got: {}", out);
+        assert!(!out.contains("MutationError"), "got: {}", out);
+        assert!(!out.contains("Object.entries(embeds)"), "got: {}", out);
+    }
+
+    /// deka#595, module-local granularity: an immutable receiver method
+    /// forces `impl` but not `implMut` (and therefore no `MutationError`).
+    #[test]
+    fn emit_struct_helper_impl_member_gated_by_method_kind() {
+        let out = parse_and_emit(
+            "struct Counter { n: number }\nfn (c Counter) peek() number { return c.n; }\nconst v = Counter { n: 1 }.peek();",
+        );
+        assert!(out.contains("f.impl="), "got: {}", out);
+        assert!(!out.contains("implMut"), "got: {}", out);
+        assert!(!out.contains("MutationError"), "got: {}", out);
+        // A mutable method flips exactly the other member on.
+        let mut_out = parse_and_emit(
+            "struct Counter { n: number }\nfn (c mut Counter) bump() number { return c.n; }\nlet v = Counter { n: 1 };\nv.bump();",
+        );
+        assert!(mut_out.contains("f.implMut="), "got: {}", mut_out);
+        assert!(mut_out.contains("MutationError"), "got: {}", mut_out);
+        // Both kinds: both members.
+        let both = parse_and_emit(
+            "struct Counter { n: number }\nfn (c Counter) peek() number { return c.n; }\nfn (c mut Counter) bump() number { return c.n; }\nlet v = Counter { n: 1 };\nv.peek();\nv.bump();",
+        );
+        assert!(both.contains("f.impl="), "got: {}", both);
+        assert!(both.contains("f.implMut="), "got: {}", both);
+    }
+
+    /// deka#595, module-local granularity: only a struct actually declared
+    /// with embeds forces the helper's embeds loop.
+    #[test]
+    fn emit_struct_helper_embeds_member_gated_by_declaration() {
+        let with_embed = parse_and_emit(
+            "struct Legs {}\nstruct Robot { Legs }\nconst r = Robot { Legs: Legs {} };",
+        );
+        assert!(
+            with_embed.contains("Object.entries(embeds)"),
+            "got: {}",
+            with_embed
+        );
+        let without = parse_and_emit("struct Box { w: number }\nconst b = Box { w: 1 };");
+        assert!(
+            !without.contains("Object.entries(embeds)"),
+            "got: {}",
+            without
+        );
     }
 
     #[test]

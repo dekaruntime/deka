@@ -37,9 +37,9 @@ fn test_append_named_exports() {
     assert!(lines.is_empty());
 }
 
-struct SimpleVirtualSource {
-    entry: PathBuf,
-    code: String,
+pub(super) struct SimpleVirtualSource {
+    pub(super) entry: PathBuf,
+    pub(super) code: String,
 }
 
 impl VirtualSource for SimpleVirtualSource {
@@ -52,7 +52,7 @@ impl VirtualSource for SimpleVirtualSource {
     }
 }
 
-fn make_tmp_dir(name: &str) -> PathBuf {
+pub(super) fn make_tmp_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("deka_bundler_test_{}", name));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("create test dir");
@@ -75,6 +75,7 @@ fn bundle_produces_valid_js() {
             minify: false,
             iife: false,
             client: false,
+            prelude: None,
         },
         provider,
     )
@@ -111,6 +112,7 @@ fn bundle_allows_parent_relative_ds_import_from_subdirectory() {
             minify: false,
             iife: false,
             client: false,
+            prelude: None,
         },
         provider,
     )
@@ -141,6 +143,7 @@ fn bundle_with_iife_wrapping() {
             minify: false,
             iife: true,
             client: false,
+            prelude: None,
         },
         provider,
     )
@@ -179,6 +182,7 @@ await __deka_main();
             minify: true,
             iife: true,
             client: false,
+            prelude: None,
         },
         provider,
     )
@@ -215,6 +219,7 @@ fn bundle_minified_output_is_valid() {
             minify: true,
             iife: false,
             client: false,
+            prelude: None,
         },
         provider,
     )
@@ -257,6 +262,7 @@ fn bundle_minified_preserves_if_assignment() {
             minify: true,
             iife: false,
             client: false,
+            prelude: None,
         },
         provider,
     )
@@ -298,6 +304,7 @@ fn bundle_minified_preserves_for_of_head() {
             minify: true,
             iife: false,
             client: false,
+            prelude: None,
         },
         provider,
     )
@@ -327,6 +334,7 @@ fn client_bundle_rejects_ui_server_import() {
             minify: false,
             iife: false,
             client: true,
+            prelude: None,
         },
         provider,
     )
@@ -355,6 +363,7 @@ fn client_bundle_allows_ui_jsx() {
             minify: false,
             iife: false,
             client: true,
+            prelude: None,
         },
         provider,
     )
