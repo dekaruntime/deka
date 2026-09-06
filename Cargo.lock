@@ -938,7 +938,6 @@ dependencies = [
  "compile",
  "core",
  "ctrlc",
- "deka-fmt",
  "deka_host",
  "deka_ui",
  "dekascript_lsp",
