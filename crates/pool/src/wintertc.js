@@ -25,9 +25,12 @@ if (typeof globalThis.Headers !== "function") {
       const key = this._key(name);
       const next = String(value);
       this._map[key] = this._map[key] ? this._map[key] + ", " + next : next;
+      this[key] = this._map[key];
     }
     set(name, value) {
-      this._map[this._key(name)] = String(value);
+      const key = this._key(name);
+      this._map[key] = String(value);
+      this[key] = this._map[key];
     }
     get(name) {
       const value = this._map[this._key(name)];
@@ -68,6 +71,18 @@ if (typeof globalThis.Request !== "function") {
           ? init.headers
           : new globalThis.Headers(init.headers || {});
       this._body = init.body == null ? "" : String(init.body);
+      // Deka generated handlers (and CF-style fetch) read these as fields.
+      this.body = this._body;
+      try {
+        const parsed = new URL(this.url, "http://localhost");
+        this.pathname = parsed.pathname || "/";
+        this.path = parsed.pathname + parsed.search || "/";
+      } catch (_err) {
+        this.pathname = "/";
+        this.path = "/";
+      }
+      if (init.pathname) this.pathname = String(init.pathname);
+      if (init.path) this.path = String(init.path);
     }
     async text() {
       return this._body;
@@ -188,6 +203,8 @@ if (typeof globalThis.__dekaExecuteRequest !== "function") {
     if (requestData.__body && method !== "GET" && method !== "HEAD") {
       init.body = requestData.__body;
     }
+    if (requestData.pathname) init.pathname = requestData.pathname;
+    if (requestData.path) init.path = requestData.path;
     const request = new Request(url, init);
 
     const context = globalThis.__requestContext || requestData.context || null;
