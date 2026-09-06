@@ -69,7 +69,7 @@ jobs:
     name: Utility CSS generator
     needs: [changes]
     if: needs.changes.outputs.utility_css == 'true'
-    runs-on: [self-hosted, macOS, X64]
+    runs-on: [self-hosted, macOS]
     steps:
       - uses: actions/checkout@v5
 
@@ -158,7 +158,7 @@ jobs:
     name: Rust tests
     needs: [changes, rust-check]
     if: needs.changes.outputs.rust == 'true'
-    runs-on: [self-hosted, macOS, X64]
+    runs-on: [self-hosted, macOS]
     env:
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: 0
@@ -232,8 +232,20 @@ jobs:
 
       - name: Pre-fetch V8 static lib
         env:
-          V8_URL: https://github.com/denoland/rusty_v8/releases/download/v150.4.0/librusty_v8_simdutf_release_x86_64-apple-darwin.a.gz
+          V8_RELEASE: v150.4.0
         run: |
+          # Derive the archive from the host. Hardcoding it per job is how a
+          # job that moved runners silently linked arm64 objects into an
+          # x86_64 build (deka#651, deka#654). Now that these jobs can land on
+          # either macOS machine, restating the architecture anywhere is a bug.
+          case "$(uname -s)-$(uname -m)" in
+            Darwin-arm64)  TRIPLE=aarch64-apple-darwin ;;
+            Darwin-x86_64) TRIPLE=x86_64-apple-darwin ;;
+            Linux-x86_64)  TRIPLE=x86_64-unknown-linux-gnu ;;
+            *) echo "unsupported V8 host: $(uname -sm)" >&2; exit 1 ;;
+          esac
+          V8_URL="https://github.com/denoland/rusty_v8/releases/download/${V8_RELEASE}/librusty_v8_simdutf_release_${TRIPLE}.a.gz"
+          echo "host $(uname -sm) -> $TRIPLE"
           mkdir -p target/debug/gn_out/obj
           curl -fsSL -w "HTTP %{http_code} - %{size_download} bytes downloaded\n" \
             -o target/debug/gn_out/obj/librusty_v8.a.gz "$V8_URL"
