@@ -1502,16 +1502,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "deka-fmt"
-version = "0.42.2"
-dependencies = [
- "bumpalo",
- "deka_syntax",
- "dprint-core",
- "dprint-plugin-typescript",
-]
-
-[[package]]
 name = "deka-router"
 version = "0.42.2"
 dependencies = [
@@ -2738,54 +2728,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "dprint-core"
-version = "0.67.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c1d827947704a9495f705d6aeed270fa21a67f825f22902c28f38dc3af7a9ae"
-dependencies = [
- "anyhow",
- "bumpalo",
- "hashbrown 0.15.5",
- "indexmap",
- "rustc-hash 2.1.3",
- "serde",
- "unicode-width",
-]
-
-[[package]]
-name = "dprint-core-macros"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1675ad2b358481f3cc46202040d64ac7a36c4ade414a696df32e0e45421a6e9f"
-dependencies = [
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "dprint-plugin-typescript"
-version = "0.96.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90733c56ab425fc299c25ad81a5924bfc3c0050f25d865da742a6987b1255927"
-dependencies = [
- "anyhow",
- "capacity_builder",
- "deno_ast",
- "dprint-core",
- "dprint-core-macros",
- "percent-encoding",
- "rustc-hash 2.1.3",
- "serde",
-]
-
-[[package]]
 name = "dprint-swc-ext"
 version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33175ddb7a6d418589cab2966bd14a710b3b1139459d3d5ca9edf783c4833f4c"
 dependencies = [
- "allocator-api2",
- "bumpalo",
  "num-bigint 0.4.8",
  "rustc-hash 2.1.3",
  "swc_atoms",
@@ -3518,8 +3465,6 @@ version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
- "allocator-api2",
- "equivalent",
  "foldhash 0.1.5",
 ]
 
