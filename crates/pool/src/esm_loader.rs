@@ -25,10 +25,8 @@ use runtime_core::{
 };
 use runtime_core::modules::{read_linked_modules, MODULES_DIR};
 
-/// Parse module imports from a `.ds` source using the v2 parser.
 fn parse_module_imports(source: &str) -> Vec<String> {
-    let meta = deka_compile::parse_source_module_meta(source);
-    meta.imports.iter().map(|decl| decl.path.clone()).collect()
+    runtime_core::ds_imports::paths(source)
 }
 
 #[derive(Clone)]

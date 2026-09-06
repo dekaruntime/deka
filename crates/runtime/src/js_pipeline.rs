@@ -5,12 +5,8 @@ use std::process::Command;
 #[cfg(test)]
 use runtime_core::modules::MODULES_DIR;
 
-/// Parse module metadata from a `.ds` source using the v2 parser.
-/// Returns the list of import sources so layout checks stay agnostic
-/// to the metadata representation.
 fn parse_module_imports(source: &str) -> Vec<String> {
-    let meta = deka_compile::parse_source_module_meta(source);
-    meta.imports.iter().map(|decl| decl.path.clone()).collect()
+    runtime_core::ds_imports::paths(source)
 }
 
 pub fn build_deka_handler_bundle(handler_path: &str) -> Result<String, String> {
