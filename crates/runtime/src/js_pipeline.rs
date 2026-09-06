@@ -1,11 +1,6 @@
-#[cfg(test)]
-use std::cell::Cell;
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-
-use bundler::{BundleOptions, VirtualSource, bundle_virtual_entry};
+use std::process::Command;
 
 #[cfg(test)]
 use runtime_core::modules::MODULES_DIR;
@@ -41,92 +36,33 @@ fn build_deka_handler_bundle_in_project(
         .unwrap_or_else(|_| "\"\"".to_string());
     let tenant_root_injection = format!("globalThis.__dekaFsTenantRoot = {};\n", root_json);
 
-    let entry_path = fs::canonicalize(input_path)
-        .map_err(|err| format!("failed to resolve {}: {}", input_path.display(), err))?;
-
-    // Pass the project root explicitly as the module root so the v2 module
-    // graph does not depend on the process-global DEKA_MODULE_ROOT env var.
-    let loader = deka_compile::module_graph::FsModuleLoader::with_module_root(
-        project_root.clone(),
-        project_root.clone(),
-    );
-    let graph = deka_compile::module_graph::compile_module_graph(&entry_path, &loader).map_err(|diagnostics| {
-        deka_compile::format_diagnostics(&diagnostics)
+    let dsc = runtime_core::dsc::find_dsc()?.ok_or_else(|| {
+        "dsc is required to bundle DekaScript handlers. Set DEKA_DSC, install dsc next to deka, or put dsc on PATH.".to_string()
     })?;
-    let prelude = graph.prelude.clone();
-    let provider: Arc<dyn VirtualSource> = Arc::new(V2BundleProvider::new(entry_path.clone(), graph.modules, tenant_root_injection));
-
-    bundle_virtual_entry(
-        &entry_path,
-        BundleOptions {
-            project_root,
-            minify: true,
-            iife: true,
-            client: false,
-            prelude: Some(prelude),
-        },
-        provider,
-    )
-}
-
-
-#[cfg(test)]
-thread_local! {
-    static PANIC_DURING_VIRTUAL_LOAD: Cell<bool> = const { Cell::new(false) };
-}
-
-/// Virtual source provider that serves pre-compiled JS from
-/// the module graph.  The entry module receives the tenant-root injection
-/// that v1 previously added to the entry source.
-struct V2BundleProvider {
-    entry_path: PathBuf,
-    modules: HashMap<PathBuf, String>,
-    tenant_root_injection: String,
-}
-
-impl V2BundleProvider {
-    fn new(
-        entry_path: PathBuf,
-        modules: HashMap<PathBuf, String>,
-        tenant_root_injection: String,
-    ) -> Self {
-        Self {
-            entry_path,
-            modules,
-            tenant_root_injection,
-        }
+    let tmp = tempfile::Builder::new()
+        .prefix("deka-handler-")
+        .suffix(".js")
+        .tempfile()
+        .map_err(|err| format!("failed to create bundle temp file: {err}"))?;
+    let out = tmp.path();
+    let entry = input_path
+        .to_str()
+        .ok_or_else(|| "handler path is not UTF-8".to_string())?;
+    let out_str = out
+        .to_str()
+        .ok_or_else(|| "bundle temp path is not UTF-8".to_string())?;
+    let output = Command::new(&dsc)
+        .current_dir(&project_root)
+        .env("DEKA_MODULE_ROOT", &project_root)
+        .args(["transpile", entry, "--bundle", "--treeshake", "--out", out_str])
+        .output()
+        .map_err(|err| format!("failed to exec {}: {err}", dsc.display()))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
-
-    fn resolve_key(&self, path: &Path) -> Option<PathBuf> {
-        if let Ok(canon) = fs::canonicalize(path) {
-            return Some(canon);
-        }
-        self.modules.keys().find(|k| k == &&path).cloned()
-    }
-}
-
-impl VirtualSource for V2BundleProvider {
-    fn load_virtual(&self, path: &Path) -> Result<Option<String>, String> {
-        #[cfg(test)]
-        if PANIC_DURING_VIRTUAL_LOAD.replace(false) {
-            panic!("test-only panic during virtual module bundling");
-        }
-
-        let key = match self.resolve_key(path) {
-            Some(k) => k,
-            None => return Ok(None),
-        };
-        let Some(js) = self.modules.get(&key) else {
-            return Ok(None);
-        };
-        if key == self.entry_path {
-            return Ok(Some(format!(
-                "{}\n{}",
-                self.tenant_root_injection, js
-            )));
-        }
-        Ok(Some(js.clone()))
-    }
+    let js = fs::read_to_string(out)
+        .map_err(|err| format!("failed to read {}: {err}", out.display()))?;
+    Ok(format!("{tenant_root_injection}{js}"))
 }
 
 pub fn resolve_project_root(input_path: &Path) -> Result<PathBuf, String> {
@@ -178,8 +114,7 @@ pub fn ensure_project_layout(
 #[cfg(test)]
 mod tests {
     use super::{
-        PANIC_DURING_VIRTUAL_LOAD, build_deka_handler_bundle, ensure_project_layout,
-        resolve_project_root, MODULES_DIR,
+        build_deka_handler_bundle, ensure_project_layout, resolve_project_root, MODULES_DIR,
     };
     use deka_host::integrity::compute_package_integrity;
     use std::path::Path;
@@ -351,7 +286,7 @@ mod tests {
     }
 
     #[test]
-    fn bundle_panic_in_one_tenant_does_not_break_the_next_tenant_bundle() {
+    fn bundle_failure_in_one_tenant_does_not_break_the_next_tenant_bundle() {
         let tmp = tempfile::tempdir().expect("tmp");
         let tenant_a_root = tmp.path().join("tenant-a");
         let tenant_b_root = tmp.path().join("tenant-b");
@@ -366,14 +301,9 @@ mod tests {
         let tenant_a_handler = tenant_a_root.join("main.ds");
         std::fs::write(
             &tenant_a_handler,
-            "import { marker } from './dependency.ds'\nexport fn App() string { return marker(); }\n",
+            "export fn App() string { return\n",
         )
         .expect("tenant A handler");
-        std::fs::write(
-            tenant_a_root.join("dependency.ds"),
-            "export fn marker() string { return 'a'; }\n",
-        )
-        .expect("tenant A dependency");
 
         let tenant_b_handler = tenant_b_root.join("main.ds");
         std::fs::write(
@@ -382,17 +312,15 @@ mod tests {
         )
         .expect("tenant B handler");
 
-        PANIC_DURING_VIRTUAL_LOAD.with(|panic_once| panic_once.set(true));
-        let panic = std::panic::catch_unwind(|| {
-            build_deka_handler_bundle(tenant_a_handler.to_str().expect("utf-8 handler"))
-        });
-        assert!(panic.is_err(), "tenant A bundle should panic mid-bundle");
+        let tenant_a =
+            build_deka_handler_bundle(tenant_a_handler.to_str().expect("utf-8 handler"));
+        assert!(tenant_a.is_err(), "tenant A must fail to bundle invalid source");
 
         let tenant_b_bundle =
             build_deka_handler_bundle(tenant_b_handler.to_str().expect("utf-8 handler"));
         assert!(
             tenant_b_bundle.is_ok(),
-            "tenant B must still bundle after tenant A unwinds: {tenant_b_bundle:?}"
+            "tenant B must still bundle after tenant A fails: {tenant_b_bundle:?}"
         );
     }
 }
