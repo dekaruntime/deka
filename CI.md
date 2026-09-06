@@ -49,10 +49,10 @@ failure, bugsy is the machine you want.
 
 That job installs the published **dsc** compiler from
 `https://dsc-wasm.deka.gg` (`scripts/ci-install-dsc.sh`) and runs
-`deka check` / `fmt` / `transpile` with `DEKA_DSC` set. Tour and conformance
-(`deka run`) use the same env so isolate compile goes through dsc. Do not
-put `dsc` next to `target/release/cli` in CI: dump smoke still pairs this
-tree's wasm with in-process native compile.
+`deka check` / `fmt` / `transpile` with `DEKA_DSC` set. Tour and `deka run`
+still use in-process `deka_compile`: isolate through dsc is 670/670 on
+shared language fixtures but native-only http/jwt tests fail until dsc
+typeck matches this tree. Do not put `dsc` next to `target/release/cli`.
 
 ## Where the logs really are
 
