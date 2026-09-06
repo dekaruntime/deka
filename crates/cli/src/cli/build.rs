@@ -315,10 +315,9 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
 
     // RFD 24 §10.7: dist HTML references the content-hashed asset names and
     // inlines the client import map (assets/importmap.json) when one was emitted.
-    rewrite_dist_html_asset_urls(
-        &dist_client,
-        runtime_core::framework::is_app_router_project(&project_root),
-    )?;
+    // Inlining is not app-router-only: the web-bootstrap path used to inject a
+    // `src=` import map browsers reject (deka#624).
+    rewrite_dist_html_asset_urls(&dist_client)?;
 
     let mut report = format!(
         "built web project {}\n  client: {}\n  server: {}\n  hydration: {}",
@@ -748,26 +747,29 @@ fn inject_web_bootstrap_tags(
     hydration_enabled: bool,
     bundle_enabled: bool,
 ) -> String {
-    let import_map_tag = r#"<script type="importmap" src="/importmap.json"></script>"#;
+    // Never inject a `src=` import map. Browsers reject that attribute on
+    // `<script type="importmap">` (deka#624). The dist-HTML rewrite inlines
+    // `assets/importmap.json` when the file exists. Strip both historical
+    // spellings so a missed swap cannot ship the invalid tag.
+    let stale_import_maps = [
+        r#"<script type="importmap" src="/importmap.json"></script>"#,
+        runtime_core::framework::CLIENT_IMPORTMAP_PLACEHOLDER_TAG,
+    ];
     let module_tag = r#"<script type="module" src="/assets/main.js"></script>"#;
 
     let mut out = index_html.to_string();
 
     if !hydration_enabled {
-        out = out.replace(import_map_tag, "");
+        for tag in stale_import_maps {
+            out = out.replace(tag, "");
+        }
         out = out.replace(module_tag, "");
         return out;
     }
 
     if bundle_enabled {
-        out = out.replace(import_map_tag, "");
-    } else if !out.contains(import_map_tag) {
-        if out.contains("</head>") {
-            out = out.replace("</head>", &format!("  {}\n</head>", import_map_tag));
-        } else {
-            out.push('\n');
-            out.push_str(import_map_tag);
-            out.push('\n');
+        for tag in stale_import_maps {
+            out = out.replace(tag, "");
         }
     }
 
@@ -1229,18 +1231,19 @@ fn inject_before_body_close_walk(dir: &Path, tags: &str) -> Result<(), String> {
 }
 
 /// Rewrite unhashed `/assets/...` URLs in every dist HTML file to the
-/// content-hashed names emitted next to them, and (for app-router projects)
-/// wire the client import map into documents that load hashed chunks.
+/// content-hashed names emitted next to them, and wire the client import map
+/// into documents that load hashed chunks.
 /// Renames come from the shared collector in `runtime::islands` — the same
 /// source the serve-entry rewrite uses, so dev and prod agree by construction.
 /// The map is inlined: browsers reject the `src` form of the element, so
 /// `assets/importmap.json` stays on disk as the tooling/test copy and the
-/// document carries the JSON body.
-fn rewrite_dist_html_asset_urls(dist_client: &Path, app_router: bool) -> Result<(), String> {
+/// document carries the JSON body. App-router and web-bootstrap share this
+/// path (deka#624).
+fn rewrite_dist_html_asset_urls(dist_client: &Path) -> Result<(), String> {
     let assets_dir = dist_client.join("assets");
     let mut renames: Vec<(String, String)> = Vec::new();
     runtime::collect_hashed_asset_renames(&assets_dir, &assets_dir, &mut renames)?;
-    let importmap_tag = if app_router && assets_dir.join("importmap.json").is_file() {
+    let importmap_tag = if assets_dir.join("importmap.json").is_file() {
         runtime::inline_importmap_tag(&assets_dir)?
     } else {
         None
