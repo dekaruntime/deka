@@ -258,10 +258,18 @@ jobs:
       - name: Build CLI for runtime execution tests
         run: cargo build --release -p cli
 
-      - name: Build and test browser compiler WASM
-        env:
-          DEKA_SKIP_DIRTY_CHECK: 1
-        run: scripts/test-deka-compiler-wasm.sh
+      # rfd#38: language work belongs to dsc. PR CI downloads the published
+      # compiler instead of rebuilding deka_compiler_wasm from this tree.
+      # Sibling `target/release/dsc` is how isolate compile finds it without
+      # leaking DEKA_DSC into cargo test (those tests still exercise the
+      # in-process fallback until the crates leave).
+      - name: Install published dsc
+        run: |
+          scripts/ci-install-dsc.sh "${{ github.workspace }}/.ci/dsc" \
+            --wasm "${{ github.workspace }}/.ci/wasm"
+          cp "${{ github.workspace }}/.ci/dsc" "${{ github.workspace }}/target/release/dsc"
+          chmod 755 "${{ github.workspace }}/target/release/dsc"
+          "${{ github.workspace }}/.ci/dsc" --version
 
       # Run every workspace crate's tests, not a hand-maintained list. 15
       # compiler/runtime crates containing ~540 tests were not executed by the
@@ -281,6 +289,8 @@ jobs:
         run: cargo test --locked --workspace
 
       - name: Run tour + public conformance suite (native)
+        env:
+          DEKA_DSC: ${{ github.workspace }}/.ci/dsc
         run: ./run.sh --skip-build --locked
 
       - name: Install dump harness deps + Chromium
@@ -291,14 +301,10 @@ jobs:
 
       # The full dump only runs on release; without this smoke, harness
       # breakage (bad shim paths, import-transform regressions) ships red.
+      # Native transpile execs dsc; browser compile uses the matching dsc wasm.
       - name: Dump harness smoke (browser + native)
         env:
+          DEKA_DSC: ${{ github.workspace }}/.ci/dsc
           DEKA_NATIVE: ${{ github.workspace }}/target/release/cli
-          DEKA_WASM: ${{ github.workspace }}/dist/deka-compiler-wasm/deka_compiler.wasm
+          DEKA_WASM: ${{ github.workspace }}/.ci/wasm/deka_compiler.wasm
         run: bun tests/dump/scripts/smoke.mjs
-
-      - name: Upload browser compiler WASM provenance
-        uses: actions/upload-artifact@v7
-        with:
-          name: deka-compiler-wasm
-          path: dist/deka-compiler-wasm/

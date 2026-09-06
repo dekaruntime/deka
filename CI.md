@@ -47,6 +47,12 @@ Which job lands where is decided by `runs-on` labels in the workflow:
 The heavy job — `Rust tests` — runs on bugsy. If you are debugging a Rust test
 failure, bugsy is the machine you want.
 
+That job installs the published **dsc** compiler from
+`https://dsc-wasm.deka.gg` (`scripts/ci-install-dsc.sh`) and runs tour,
+conformance, and dump smoke with `DEKA_DSC` set. `cargo test` does not get
+that env var, so in-process compiler crates still run until they leave this
+repo. Browser compiler wasm is no longer built in PR CI.
+
 ## Where the logs really are
 
 When a job dies without completing, **GitHub never receives its logs**.

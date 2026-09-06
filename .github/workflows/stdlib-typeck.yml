@@ -76,7 +76,15 @@ jobs:
       - name: Build CLI
         run: cargo build --release -p cli
 
+      - name: Install published dsc
+        run: |
+          scripts/ci-install-dsc.sh "${{ github.workspace }}/.ci/dsc"
+          cp "${{ github.workspace }}/.ci/dsc" "${{ github.workspace }}/target/release/dsc"
+          chmod 755 "${{ github.workspace }}/target/release/dsc"
+
       - name: Typecheck published packages
+        env:
+          DEKA_DSC: ${{ github.workspace }}/.ci/dsc
         run: |
           chmod +x scripts/typeck-published-stdlib.sh
           CLI="${{ github.workspace }}/target/release/cli" scripts/typeck-published-stdlib.sh
