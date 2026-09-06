@@ -24,8 +24,6 @@ members = [
     "crates/wasm_cli",
     "crates/pm",
     "crates/deka_lsp",
-    "crates/deka_lsp_wasm",
-    "crates/deka_compiler_wasm",
     "crates/deka-router",
     "crates/deka-validation",
     "crates/deka-fmt",

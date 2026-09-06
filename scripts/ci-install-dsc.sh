@@ -81,7 +81,9 @@ echo "installed dsc v${version} -> $DEST"
 if [[ -n "$WASM_DIR" ]]; then
   mkdir -p "$WASM_DIR"
   wasm_sha=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["wasm"]["compiler_sha256"])' "${tmp}/release.json")
+  diag_sha=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["wasm"]["diagnostics_sha256"])' "${tmp}/release.json")
   curl -fsSL "${BASE}/v${version}/deka_compiler.wasm" -o "${tmp}/deka_compiler.wasm"
+  curl -fsSL "${BASE}/v${version}/deka_diagnostics.wasm" -o "${tmp}/deka_diagnostics.wasm"
   actual=$(sha256_file "${tmp}/deka_compiler.wasm")
   if [[ "$wasm_sha" != "$actual" ]]; then
     echo "fatal: dsc wasm checksum mismatch for v${version}" >&2
@@ -89,6 +91,14 @@ if [[ -n "$WASM_DIR" ]]; then
     echo "  actual   ${actual}" >&2
     exit 1
   fi
+  actual=$(sha256_file "${tmp}/deka_diagnostics.wasm")
+  if [[ "$diag_sha" != "$actual" ]]; then
+    echo "fatal: dsc diagnostics wasm checksum mismatch for v${version}" >&2
+    echo "  expected ${diag_sha}" >&2
+    echo "  actual   ${actual}" >&2
+    exit 1
+  fi
   mv -f "${tmp}/deka_compiler.wasm" "${WASM_DIR}/deka_compiler.wasm"
+  mv -f "${tmp}/deka_diagnostics.wasm" "${WASM_DIR}/deka_diagnostics.wasm"
   echo "installed dsc wasm v${version} -> ${WASM_DIR}/deka_compiler.wasm"
 fi

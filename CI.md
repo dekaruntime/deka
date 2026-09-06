@@ -47,12 +47,10 @@ Which job lands where is decided by `runs-on` labels in the workflow:
 The heavy job — `Rust tests` — runs on bugsy. If you are debugging a Rust test
 failure, bugsy is the machine you want.
 
-That job installs the published **dsc** compiler from
-`https://dsc-wasm.deka.gg` (`scripts/ci-install-dsc.sh`) and runs
-`deka check` / `fmt` / `transpile` with `DEKA_DSC` set. Tour and `deka run`
-still use in-process `deka_compile`: isolate through dsc is 670/670 on
-shared language fixtures but native-only http/jwt tests fail until dsc
-typeck matches this tree. Do not put `dsc` next to `target/release/cli`.
+That job installs the published **dsc** compiler and browser wasm from
+`https://dsc-wasm.deka.gg` (`scripts/ci-install-dsc.sh`). `deka check` /
+`fmt` / `transpile` / `run` (isolate) use `DEKA_DSC`. Dump smoke uses the
+same dsc wasm. This tree no longer builds `deka_compiler_wasm`.
 
 ## Where the logs really are
 
@@ -187,15 +185,12 @@ cargo test -p engine
 cargo test -p deka_js
 cargo test -p bundler
 cargo test --locked -p cli --lib -- --test-threads=1
-scripts/test-deka-compiler-wasm.sh
 cargo build --release -p cli
 ./run.sh --skip-build
 ```
 
-**`TESTING.md`'s crate list is not the same as CI's.** It omits
-`deka_compiler_wasm`, which CI covers via `scripts/test-deka-compiler-wasm.sh`.
-Following the documented process can give a green local run and a red CI — this
-has happened. When verifying a change against CI, use the list above.
+Browser compiler wasm is no longer built in this repo; CI fetches it from
+`dsc-wasm.deka.gg`. When verifying a change against CI, use the list above.
 
 `cargo test -p php-rs` is deliberately absent from CI. `php-rs` has a large
 number of pre-existing failures; do not treat its local red as a regression
