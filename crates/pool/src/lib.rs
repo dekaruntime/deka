@@ -3,6 +3,7 @@
 pub mod dsc_compile;
 pub mod esm_loader;
 pub mod isolate_pool;
+pub mod prelude;
 pub mod secrets_cache;
 pub mod tenant;
 pub mod validation;
