@@ -64,7 +64,10 @@ fn prepare_run_context(context: &Context) -> Result<Context, String> {
 
 fn split_run_positionals(positionals: &[String]) -> (Option<&str>, &[String]) {
     match positionals.split_first() {
-        Some((first, rest)) if runtime_core::entry::has_run_source_ext(first) => {
+        Some((first, rest))
+            if runtime_core::entry::has_run_source_ext(first)
+                || runtime_core::entry::looks_like_file_arg(first) =>
+        {
             (Some(first.as_str()), rest)
         }
         Some(_) => (None, positionals),
@@ -409,5 +412,13 @@ mod tests {
         let (entry, extra) = split_run_positionals(&positionals);
         assert_eq!(entry, None);
         assert_eq!(extra, &["dev".to_string()]);
+    }
+
+    #[test]
+    fn phpx_positional_is_still_the_cli_entry() {
+        let positionals = vec!["legacy.phpx".to_string()];
+        let (entry, extra) = split_run_positionals(&positionals);
+        assert_eq!(entry, Some("legacy.phpx"));
+        assert!(extra.is_empty());
     }
 }

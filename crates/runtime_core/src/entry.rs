@@ -42,12 +42,29 @@ pub fn has_run_source_ext(path: &str) -> bool {
     matches!(ext.to_ascii_lowercase().as_str(), "ds" | "dsx" | "js")
 }
 
+/// True when the token is a file path, not a task/script name like `dev`.
+pub fn looks_like_file_arg(path: &str) -> bool {
+    path.contains('/')
+        || path.contains('\\')
+        || Path::new(path).extension().is_some()
+}
+
 pub fn resolve_entry(project_root: &Path, cli_arg: Option<&str>) -> Result<ResolvedEntry, String> {
     if let Some(arg) = cli_arg {
         if has_run_source_ext(arg) {
             let path = join_project(project_root, arg);
             if path.is_file() {
                 return Ok(finalize(project_root, path, EntryKind::CliArg));
+            }
+            return Err(format!("entry file not found: {}", path.display()));
+        }
+        if looks_like_file_arg(arg) {
+            let path = join_project(project_root, arg);
+            if path.is_file() {
+                return Err(format!(
+                    "Run mode supports .ds/.dsx/.js entrypoints: {}",
+                    path.display()
+                ));
             }
             return Err(format!("entry file not found: {}", path.display()));
         }
@@ -314,6 +331,17 @@ mod tests {
         let err = resolve_entry(root, Some("missing.ds")).unwrap_err();
         assert!(err.contains("entry file not found"), "{err}");
         assert!(err.contains("missing.ds"), "{err}");
+    }
+
+    #[test]
+    fn phpx_cli_file_is_rejected_without_falling_through() {
+        let tmp = project();
+        let root = tmp.path();
+        write(root, "src/main.ds", "");
+        write(root, "legacy.phpx", "print(\"must-not-execute\");\n");
+        let err = resolve_entry(root, Some("legacy.phpx")).unwrap_err();
+        assert!(err.contains("Run mode supports .ds"), "{err}");
+        assert!(err.contains("legacy.phpx"), "{err}");
     }
 
     #[test]
