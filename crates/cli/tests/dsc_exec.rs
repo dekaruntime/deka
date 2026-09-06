@@ -23,6 +23,26 @@ fn missing_deka_dsc_fails_closed() {
 }
 
 #[test]
+fn missing_dsc_without_fallback_is_an_error() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("ok.ds");
+    fs::write(&source, "export const answer = 42\n").unwrap();
+    let output = Command::new(cli_bin())
+        .args(["check", source.to_str().unwrap()])
+        .env_remove("DEKA_DSC")
+        .env_remove("DEKA_NO_DSC")
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .expect("run deka");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("dsc is required"),
+        "unexpected stderr: {stderr}"
+    );
+}
+
+#[test]
 fn deka_no_dsc_uses_in_process_compiler() {
     let temp = tempfile::tempdir().unwrap();
     let source = temp.path().join("ok.ds");
