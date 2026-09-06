@@ -267,12 +267,16 @@ async function runAllTestsOnce(): Promise<HatsBuildResults> {
   const nativeCliPath = await prepareNativeCli(version)
   const nativeAvailable = nativeCliPath !== null
   if (nativeCliPath) {
-    const reported = nativeCliVersion(nativeCliPath)
+    // After rfd#38 the host (deka) and compiler (dsc) have independent
+    // semver. Pair wasm with dsc when DEKA_DSC is set; otherwise the native
+    // CLI still has to match the wasm build.
+    const compilerBin = process.env.DEKA_DSC || nativeCliPath
+    const reported = nativeCliVersion(compilerBin)
     if (reported && reported !== version) {
       throw new Error(
-        `host pairing mismatch: native CLI is ${reported} but wasm ` +
+        `compiler pairing mismatch: ${process.env.DEKA_DSC ? 'dsc' : 'native CLI'} is ${reported} but wasm ` +
           `deka_compiler_metadata() is ${version} (${wasmMeta.source_commit}). ` +
-          `Point DEKA_NATIVE and DEKA_WASM at the same build.`
+          `Point DEKA_DSC/DEKA_WASM at the same dsc release.`
       )
     }
   }
