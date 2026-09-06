@@ -415,6 +415,66 @@ fn rfd24_defer_entitlement_inner(http: &Client, base: &str, serve: &Serve) {
     );
 }
 
+/// deka#637: a defer POST with no session cookie must not decrypt island props.
+///
+/// The cookie value is AES-GCM AAD (`bindDefer` / `session_cookie_name`).
+/// Observed status is 200 with empty fragments — rejection is cryptographic,
+/// not a 401. If that AAD binding were removed, this body would contain
+/// `admin-secret` and the assertion would fail.
+#[test]
+fn rfd24_defer_no_session_cookie_is_rejected() {
+    let serve = spawn_serve(false);
+    let http = client();
+    let base = format!("http://127.0.0.1:{}", serve.port);
+
+    let admin = http
+        .get(format!("{base}/admin"))
+        .header("cookie", "deka_sid=alice; _ga=1")
+        .send()
+        .expect("GET /admin")
+        .text()
+        .expect("admin html");
+    let panel = parse_island(&admin);
+    assert_eq!(panel.name, "AdminPanel");
+    assert!(
+        !panel.enc.is_empty(),
+        "AdminPanel island must carry enc ciphertext"
+    );
+    let island = serde_json::json!({
+        "islands": [{
+            "id": panel.id,
+            "name": panel.name,
+            "enc": panel.enc,
+        }]
+    })
+    .to_string();
+
+    // No Cookie header. reqwest's client has no cookie store, so this is a
+    // bare POST — the case #636's middleware 401 used to cover.
+    let no_cookie = http
+        .post(format!("{base}/_deka/defer"))
+        .header("content-type", "application/json")
+        .header("accept", "text/x-deka-session")
+        .body(island)
+        .send()
+        .expect("unauthenticated defer");
+    let no_cookie_status = no_cookie.status().as_u16();
+    let no_cookie_body = no_cookie.text().expect("unauthenticated body");
+    assert_eq!(
+        no_cookie_status, 200,
+        "absent session cookie is rejected by AAD mismatch (not 401); status {no_cookie_status} body {no_cookie_body}"
+    );
+    assert!(
+        !no_cookie_body.contains("admin-secret"),
+        "a defer request with no session cookie must not decrypt island props: {no_cookie_body}"
+    );
+    assert_eq!(
+        no_cookie_body.trim(),
+        r#"{"fragments":{}}"#,
+        "no-cookie defer must yield empty fragments, got {no_cookie_body}"
+    );
+}
+
 #[test]
 fn rfd24_open_redirect_trailing_slash_true() {
     let serve = spawn_serve(true);
