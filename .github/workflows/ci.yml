@@ -163,7 +163,7 @@ jobs:
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
-      SCCACHE_ENDPOINT: "https://08b93c93f8b7adc43678e9afba31e4ee.r2.cloudflarestorage.com"
+      SCCACHE_ENDPOINT: ${{ vars.R2_ENDPOINT }}
       SCCACHE_REGION: "auto"
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -188,9 +188,11 @@ jobs:
           bun-version: 1.3.14
 
       - name: Run sccache-cache
+        if: ${{ env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' && env.SCCACHE_ENDPOINT != '' }}
         uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Verify sccache can reach R2
+        if: ${{ env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' && env.SCCACHE_ENDPOINT != '' }}
         run: |
           echo "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
           echo "SCCACHE_BUCKET=$SCCACHE_BUCKET"
@@ -198,6 +200,10 @@ jobs:
 
       - name: Configure sccache
         run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] || [ -z "$SCCACHE_ENDPOINT" ]; then
+            echo "::notice::R2 cache is not configured for this run; building without sccache."
+            exit 0
+          fi
           # Bucket is architecture-specific; derive it from the host rather than
           # restating it per job (see scripts/populate-sccache.sh, deka#655).
           case "$(uname -s)-$(uname -m)" in
