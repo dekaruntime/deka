@@ -5,12 +5,12 @@ use deno_core::op2;
 use mysql::prelude::Queryable;
 use mysql::{OptsBuilder, Params as MyParams, Pool as MyPool, Value as MyValue};
 
-
 use prost::Message as ProstMessage;
 use runtime_core::security_policy::{RuleList, SecurityPolicy, parse_deka_security_policy};
 use rusqlite::types::ValueRef as SqliteValueRef;
 use rusqlite::{Connection as SqliteConnection, params_from_iter as sqlite_params_from_iter};
 use serde_json::{Map, Value};
+use std::borrow::Cow;
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::fs::{File as StdFile, OpenOptions};
@@ -87,12 +87,18 @@ deno_core::extension!(
         concurrency::op_php_concurrency_lock_release,
     ],
     esm_entry_point = "ext:php_core/php.js",
-    esm = [dir "src/modules/php", "php.js"],
     state = |state| state.put(net::NetState::new()),
 );
 
 pub fn init() -> deno_core::Extension {
-    php_core::init()
+    let mut extension = php_core::init();
+    // `extension!` file entries are snapshot-only by default. Deka creates
+    // runtimes directly, so the host module must travel with the CLI binary.
+    extension.esm_files = Cow::Owned(vec![deno_core::ExtensionFileSource::new(
+        "ext:php_core/php.js",
+        deno_core::ascii_str_include!("php.js"),
+    )]);
+    extension
 }
 
 /// Same as [`init`], but the net bridge enforces the given policy instead
@@ -101,7 +107,7 @@ pub fn init() -> deno_core::Extension {
 /// than racing on the process-global env var (deka#537); production keeps
 /// calling [`init`] and reading the env per dispatch.
 pub fn init_with_net_policy(policy: SecurityPolicy) -> deno_core::Extension {
-    let mut extension = php_core::init();
+    let mut extension = init();
     let base_state_fn = extension.op_state_fn.take();
     extension.op_state_fn = Some(Box::new(move |state| {
         if let Some(base) = base_state_fn {
@@ -132,6 +138,14 @@ mod tests {
     use prost::Message;
     use std::net::TcpListener;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn php_runtime_module_is_embedded_for_installed_clis() {
+        let extension = init();
+
+        assert_eq!(extension.esm_files.len(), 1);
+        assert!(extension.esm_files[0].is_runtime_loadable());
+    }
 
     fn unique_suffix() -> String {
         let nanos = SystemTime::now()
