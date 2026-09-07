@@ -11,9 +11,6 @@ permissions:
   contents: read
 
 env:
-  SCCACHE_ENDPOINT: "https://08b93c93f8b7adc43678e9afba31e4ee.r2.cloudflarestorage.com"
-  SCCACHE_REGION: "auto"
-  R2_ENDPOINT: "https://08b93c93f8b7adc43678e9afba31e4ee.r2.cloudflarestorage.com"
   R2_BUCKET_RELEASES: "deka-releases"
   R2_BUCKET_WASM: "deka-wasm"
 
@@ -26,22 +23,16 @@ jobs:
         platform: [linux-x64, darwin-x64, darwin-arm64]
         include:
           - platform: linux-x64
-            runner: [self-hosted, linux, x64]
-            sccache_bucket: deka-sccache-linux-x64
+            runner: ubuntu-latest
           - platform: darwin-x64
-            runner: [self-hosted, macos, x64]
-            sccache_bucket: deka-sccache-darwin-x64
+            runner: macos-15-intel
           - platform: darwin-arm64
-            runner: [self-hosted, macos, arm64]
-            sccache_bucket: deka-sccache-darwin-arm64
+            runner: macos-14
     runs-on: ${{ matrix.runner }}
     env:
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
-      SCCACHE_BUCKET: "${{ matrix.sccache_bucket }}"
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -70,16 +61,8 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
-
-      - name: Verify sccache can reach R2
-        run: |
-          command -v aws >/dev/null 2>&1 || pip install --break-system-packages awscli
-          echo "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
-          echo "SCCACHE_BUCKET=$SCCACHE_BUCKET"
-          sccache --show-stats
-          aws s3 ls "s3://${SCCACHE_BUCKET}/" --endpoint-url="${SCCACHE_ENDPOINT}"
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
 
       - name: Run utility-css checks
         run: |
@@ -92,13 +75,9 @@ jobs:
           bun test.ts
 
       - name: Build tested crates
-        env:
-          RUSTC_WRAPPER: "sccache"
         run: cargo build -p deka_http -p pool -p engine -p bundler
 
       - name: Run Rust tests
-        env:
-          RUSTC_WRAPPER: "sccache"
         run: |
           cargo test -p deka_http
           cargo test -p pool
@@ -108,7 +87,7 @@ jobs:
   fetch-dsc-wasm:
     name: Fetch published dsc WASM
     needs: [test]
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -132,11 +111,7 @@ jobs:
   build-cli-linux-x64:
     name: Build CLI (linux-x64)
     needs: [test]
-    runs-on: [self-hosted, linux, x64]
-    env:
-      SCCACHE_BUCKET: "deka-sccache-linux-x64"
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -147,20 +122,10 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.96.0
 
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
-
-      - name: Verify sccache can reach R2
-        run: |
-          command -v aws >/dev/null 2>&1 || pip install --break-system-packages awscli
-          echo "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
-          echo "SCCACHE_BUCKET=$SCCACHE_BUCKET"
-          sccache --show-stats
-          aws s3 ls "s3://${SCCACHE_BUCKET}/" --endpoint-url="${SCCACHE_ENDPOINT}"
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
 
       - name: Build CLI
-        env:
-          RUSTC_WRAPPER: "sccache"
         run: cargo build --release -p cli
 
       - name: Prepare binary
@@ -179,11 +144,7 @@ jobs:
   build-cli-darwin-x64:
     name: Build CLI (darwin-x64)
     needs: [test]
-    runs-on: [self-hosted, macos, x64]
-    env:
-      SCCACHE_BUCKET: "deka-sccache-darwin-x64"
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    runs-on: macos-15-intel
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -194,20 +155,10 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.96.0
 
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
-
-      - name: Verify sccache can reach R2
-        run: |
-          command -v aws >/dev/null 2>&1 || pip install --break-system-packages awscli
-          echo "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
-          echo "SCCACHE_BUCKET=$SCCACHE_BUCKET"
-          sccache --show-stats
-          aws s3 ls "s3://${SCCACHE_BUCKET}/" --endpoint-url="${SCCACHE_ENDPOINT}"
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
 
       - name: Build CLI
-        env:
-          RUSTC_WRAPPER: "sccache"
         run: cargo build --release -p cli
 
       - name: Prepare binary
@@ -226,11 +177,7 @@ jobs:
   build-cli-darwin-arm64:
     name: Build CLI (darwin-arm64)
     needs: [test]
-    runs-on: [self-hosted, macos, arm64]
-    env:
-      SCCACHE_BUCKET: "deka-sccache-darwin-arm64"
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+    runs-on: macos-14
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -241,20 +188,10 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.96.0
 
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
-
-      - name: Verify sccache can reach R2
-        run: |
-          command -v aws >/dev/null 2>&1 || pip install --break-system-packages awscli
-          echo "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
-          echo "SCCACHE_BUCKET=$SCCACHE_BUCKET"
-          sccache --show-stats
-          aws s3 ls "s3://${SCCACHE_BUCKET}/" --endpoint-url="${SCCACHE_ENDPOINT}"
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
 
       - name: Build CLI
-        env:
-          RUSTC_WRAPPER: "sccache"
         run: cargo build --release -p cli
 
       - name: Prepare binary
@@ -273,7 +210,7 @@ jobs:
   dump-conformance:
     name: Dump Hats + pack conformance
     needs: [fetch-dsc-wasm, build-cli-darwin-arm64]
-    runs-on: [self-hosted, macos, arm64]
+    runs-on: macos-14
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -323,10 +260,12 @@ jobs:
   publish:
     name: Publish to R2
     needs: [fetch-dsc-wasm, build-cli-linux-x64, build-cli-darwin-x64, build-cli-darwin-arm64, dump-conformance]
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: write
     env:
+      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: auto
@@ -595,7 +534,7 @@ jobs:
   notify:
     name: Notify downstream
     needs: [publish]
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     steps:
       - name: Resolve version
         id: v
