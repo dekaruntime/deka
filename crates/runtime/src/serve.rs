@@ -76,9 +76,9 @@ async fn serve_async(context: &Context) -> Result<(), String> {
         resolved.path.parent().unwrap_or(&resolved.path)
     };
     runtime_config::load_database_config(config_dir);
-    if let Some(root) = crate::islands::find_app_router_root(FsPath::new(&context.handler.input))
-        .or_else(|| crate::islands::find_app_router_root(&resolved.path))
-    {
+    let app_router_root = crate::islands::find_app_router_root(FsPath::new(&context.handler.input))
+        .or_else(|| crate::islands::find_app_router_root(&resolved.path));
+    if let Some(root) = app_router_root.as_deref() {
         crate::islands::write_island_client_assets_for_project(&root)?;
         crate::css::write_route_css_assets_for_project(&root)?;
         // The serve-entry was generated inside resolve_handler_path, before
@@ -187,6 +187,9 @@ async fn serve_async(context: &Context) -> Result<(), String> {
         engine: Arc::clone(&engine),
         handler_code,
         handler_entry,
+        public_dir: app_router_root
+            .map(|root| root.join("public"))
+            .filter(|path| path.is_dir()),
         handler_key,
         dev_mode,
         perf_mode,

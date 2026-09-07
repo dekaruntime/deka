@@ -65,6 +65,12 @@ pub fn cmd(context: &Context) {
         stdio_error("init", &format!("failed to create app/: {}", err));
         return;
     }
+    for directory in ["api", "src"] {
+        if let Err(err) = std::fs::create_dir_all(target.join(directory)) {
+            stdio_error("init", &format!("failed to create {directory}/: {err}"));
+            return;
+        }
+    }
     if let Err(err) = ensure_file(
         &target.join("index.html"),
         default_index_html().to_string(),
@@ -167,15 +173,15 @@ fn default_deka_lock_json() -> String {
 }
 
 fn default_app_page_dsx() -> &'static str {
-    "export fn Page() {\n    return <section><h1>Deka App</h1><p>Project initialized.</p></section>;\n}\n"
+    "export fn Page() {\n  return <section><h1>Deka App</h1><p>Project initialized.</p></section>\n}\n"
 }
 
 fn default_app_layout_dsx() -> &'static str {
-    "interface LayoutProps { children: Component }\nexport fn Layout(props: LayoutProps) {\n    return <main>{props.children}</main>;\n}\n"
+    "interface LayoutProps {\n  children: Component;\n}\nexport fn Layout(props: LayoutProps) {\n  return <main>{props.children}</main>\n}\n"
 }
 
 fn default_not_found_dsx() -> &'static str {
-    "export fn Page() {\n    return <section><h1>Not found</h1></section>;\n}\n"
+    "export fn Page() {\n  return <section><h1>Not found</h1></section>\n}\n"
 }
 
 fn default_index_html() -> &'static str {
@@ -188,7 +194,10 @@ fn default_public_style_css() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_app_page_dsx, default_deka_json, default_index_html};
+    use super::{
+        default_app_layout_dsx, default_app_page_dsx, default_deka_json, default_index_html,
+        default_not_found_dsx,
+    };
 
     #[test]
     fn default_scaffold_is_the_rfd_document() {
@@ -204,5 +213,11 @@ mod tests {
         assert!(index.contains("<!--deka-app-->"));
         assert!(index.contains("<!--deka-scripts-->"));
         assert!(index.contains("id=\"app\""));
+
+        for template in [page, default_app_layout_dsx(), default_not_found_dsx()] {
+            assert!(!template.contains("    "));
+            assert!(!template.contains("</section>;"));
+            assert!(!template.contains("</main>;"));
+        }
     }
 }
