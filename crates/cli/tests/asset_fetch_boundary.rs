@@ -28,6 +28,7 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use deka_host::integrity::compute_package_integrity;
 use reqwest::blocking::Client;
 use reqwest::redirect;
 use tempfile::TempDir;
@@ -511,11 +512,6 @@ fn write_importmap_prefix_fixture(dir: &Path) {
     )
     .expect("write deka.json");
     fs::write(
-        dir.join("deka.lock"),
-        r#"{"lockfileVersion":1,"packages":{}}"#,
-    )
-    .expect("write deka.lock");
-    fs::write(
         dir.join("index.html"),
         "<!doctype html>\n<html><head><title>prefix</title></head><body><div id=\"app\"></div></body></html>\n",
     )
@@ -532,6 +528,7 @@ fn write_importmap_prefix_fixture(dir: &Path) {
         ),
     )
     .expect("write entry");
+    let mut lock_packages = serde_json::Map::new();
     for package in ["component", "db", "deka", "encoding"] {
         let module_dir = dir.join("ds_modules").join("@deka").join(package);
         fs::create_dir_all(&module_dir).expect("module dir");
@@ -547,7 +544,30 @@ fn write_importmap_prefix_fixture(dir: &Path) {
             format!("export fn {export}(value: string) string {{\n    return value\n}}\n"),
         )
         .expect("module source");
+        let integrity = compute_package_integrity(&module_dir).expect("package integrity");
+        let package_name = format!("@deka/{package}");
+        lock_packages.insert(
+            package_name.clone(),
+            serde_json::json!([
+                format!("{package_name}@0.0.0"),
+                format!("local:{package_name}"),
+                {
+                    "moduleGraph": { "hash": integrity.module_graph },
+                    "fsGraph": { "hash": integrity.fs_graph }
+                },
+                ""
+            ]),
+        );
     }
+    fs::write(
+        dir.join("deka.lock"),
+        serde_json::json!({
+            "lockfileVersion": 1,
+            "packages": lock_packages
+        })
+        .to_string(),
+    )
+    .expect("write deka.lock");
 }
 
 /// Every `/ds_modules/` prefix URL in every emitted import map must resolve
