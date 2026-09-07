@@ -2,6 +2,8 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use deka_host::integrity::compute_package_integrity;
+
 fn cli_bin() -> &'static str {
     env!("CARGO_BIN_EXE_cli")
 }
@@ -17,7 +19,7 @@ const EMPTY_DEKA_LOCK: &str = r#"{"lockfileVersion":1,"packages":{}}"#;
 // so these drive the actual CLI.
 // ---------------------------------------------------------------------------
 
-/// Project with `io` installed under `ds_modules/` but absent from `deka.json`.
+/// Project with `io` installed under `ds_modules/` but absent from deka.lock.
 fn project_with_installed_module(manifest: &str) -> tempfile::TempDir {
     let project = tempfile::tempdir().expect("create project");
     fs::write(project.path().join("deka.json"), manifest).expect("manifest");
@@ -39,47 +41,78 @@ fn project_with_installed_module(manifest: &str) -> tempfile::TempDir {
     project
 }
 
-fn run_entry(project: &Path) -> String {
+fn lock_installed_module(project: &Path) {
+    let module_dir = project.join("ds_modules").join("@deka").join("io");
+    let integrity = compute_package_integrity(&module_dir).expect("package integrity");
+    fs::write(
+        project.join("deka.lock"),
+        serde_json::json!({
+            "lockfileVersion": 1,
+            "packages": {
+                "@deka/io": [
+                    "@deka/io@0.0.0",
+                    "local:@deka/io",
+                    {
+                        "moduleGraph": { "hash": integrity.module_graph },
+                        "fsGraph": { "hash": integrity.fs_graph }
+                    },
+                    ""
+                ]
+            }
+        })
+        .to_string(),
+    )
+    .expect("write package lock entry");
+}
+
+fn run_entry(project: &Path) -> (bool, String) {
     let output = Command::new(cli_bin())
         .args(["run", "main.ds"])
         .current_dir(project)
         .output()
         .expect("run through the CLI");
-    format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+    (
+        output.status.success(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
     )
 }
 
 #[test]
-fn runtime_rejects_an_installed_but_undeclared_stdlib_import() {
+fn runtime_rejects_an_installed_stdlib_import_without_a_lock_entry() {
     let project = project_with_installed_module("{\"name\":\"gate\"}\n");
-    let combined = run_entry(project.path());
+    let (success, combined) = run_entry(project.path());
     assert!(
-        combined.contains("not declared in deka.json"),
-        "installed-but-undeclared import must be rejected: {combined}"
+        !success && combined.contains("has no deka.lock entry"),
+        "installed import without a lock entry must be rejected: {combined}"
     );
 }
 
 #[test]
 fn runtime_accepts_the_same_project_once_the_import_is_declared() {
-    let project =
-        project_with_installed_module("{\"name\":\"gate\",\"dependencies\":{\"@deka/io\":\"*\"}}\n");
-    let combined = run_entry(project.path());
+    let project = project_with_installed_module(
+        "{\"name\":\"gate\",\"dependencies\":{\"@deka/io\":\"*\"}}\n",
+    );
+    lock_installed_module(project.path());
+    let (success, combined) = run_entry(project.path());
     assert!(
-        !combined.contains("not declared in deka.json"),
-        "declaring the dependency must clear the gate: {combined}"
+        success,
+        "declared and locked dependency must execute: {combined}"
     );
 }
 
 #[test]
 fn runtime_rejects_a_project_with_no_lockfile() {
-    let project = project_with_installed_module("{\"name\":\"gate\",\"dependencies\":{\"@deka/io\":\"*\"}}\n");
+    let project = project_with_installed_module(
+        "{\"name\":\"gate\",\"dependencies\":{\"@deka/io\":\"*\"}}\n",
+    );
     fs::remove_file(project.path().join("deka.lock")).expect("remove lockfile");
-    let combined = run_entry(project.path());
+    let (success, combined) = run_entry(project.path());
     assert!(
-        combined.contains("deka.lock"),
+        !success && combined.contains("deka.lock"),
         "a project without a lockfile must be rejected: {combined}"
     );
 }
