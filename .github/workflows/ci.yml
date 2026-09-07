@@ -159,14 +159,15 @@ jobs:
     needs: [changes, rust-check]
     if: needs.changes.outputs.rust == 'true'
     runs-on: [self-hosted, macOS, ARM64]
+    environment: public-ci
     env:
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
       SCCACHE_ENDPOINT: ${{ vars.R2_ENDPOINT }}
       SCCACHE_REGION: "auto"
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_SCCACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SCCACHE_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v5
 
