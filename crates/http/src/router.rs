@@ -43,6 +43,9 @@ async fn handle_request(
     let method = request.method().as_str().to_string();
     let uri = request.uri().to_string();
     let path = request.uri().path().to_string();
+    if let Some(response) = try_public_response(&state, &path) {
+        return response;
+    }
     if let Some(response) = try_asset_response(&state, &path) {
         return response;
     }
@@ -250,24 +253,58 @@ fn try_asset_response(state: &Arc<RuntimeState>, path: &str) -> Option<Response>
     }
     let entry = state.handler_entry.as_ref()?;
     let cache_assets = std::path::Path::new(entry).parent()?.join("assets");
-    let file = cache_assets.join(rel_path);
-    let file = std::fs::canonicalize(&file).ok()?;
-    let root = std::fs::canonicalize(&cache_assets).ok()?;
-    if !file.starts_with(&root) {
-        return None;
-    }
-    let bytes = std::fs::read(&file).ok()?;
-    let ctype = match file.extension().and_then(|e| e.to_str()) {
-        Some("js") => "text/javascript; charset=utf-8",
-        Some("css") => "text/css; charset=utf-8",
-        Some("json") => "application/json",
-        _ => "application/octet-stream",
-    };
+    let (bytes, ctype) = read_static_file(&cache_assets, rel_path)?;
     Response::builder()
         .status(200)
         .header("content-type", ctype)
         .body(axum::body::Body::from(bytes))
         .ok()
+}
+
+/// Serve app-router `public/` files before evaluating a route handler.
+/// The root is set only for an app-router project by `runtime::serve`.
+fn try_public_response(state: &Arc<RuntimeState>, path: &str) -> Option<Response> {
+    let root = state.public_dir.as_ref()?;
+    let rel = path.strip_prefix('/')?;
+    let (bytes, ctype) = read_static_file(root, std::path::Path::new(rel))?;
+    Response::builder()
+        .status(200)
+        .header("content-type", ctype)
+        .body(axum::body::Body::from(bytes))
+        .ok()
+}
+
+fn read_static_file(
+    root: &std::path::Path,
+    rel: &std::path::Path,
+) -> Option<(Vec<u8>, &'static str)> {
+    if rel.as_os_str().is_empty()
+        || rel.is_absolute()
+        || rel
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return None;
+    }
+    let root = std::fs::canonicalize(root).ok()?;
+    let file = std::fs::canonicalize(root.join(rel)).ok()?;
+    if !file.is_file() || !file.starts_with(&root) {
+        return None;
+    }
+    let bytes = std::fs::read(&file).ok()?;
+    let ctype = match file.extension().and_then(|extension| extension.to_str()) {
+        Some("html" | "htm") => "text/html; charset=utf-8",
+        Some("js" | "mjs") => "text/javascript; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("json" | "map") => "application/json",
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("wasm") => "application/wasm",
+        _ => "application/octet-stream",
+    };
+    Some((bytes, ctype))
 }
 
 fn is_html_response(headers: &std::collections::HashMap<String, String>) -> bool {
@@ -318,7 +355,19 @@ fn inject_hmr_client(html: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{handler_failure_body, inject_hmr_client, is_truthy};
+    use super::{handler_failure_body, inject_hmr_client, is_truthy, read_static_file};
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_project_dir() -> std::path::PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("deka_public_asset_{nonce}"));
+        fs::create_dir_all(&path).expect("create temp project");
+        path
+    }
 
     #[test]
     fn injects_before_body_close() {
@@ -344,6 +393,22 @@ mod tests {
         assert!(out.contains("querySelectorAll('input,textarea,select')"));
         assert!(out.contains("data-deka-id"));
         assert!(out.contains("setSelectionRange"));
+    }
+
+    #[test]
+    fn public_files_stay_within_the_public_root() {
+        let project = temp_project_dir();
+        let public = project.join("public");
+        fs::create_dir_all(&public).expect("create public");
+        fs::write(public.join("style.css"), "body { color: orange; }").expect("write css");
+        fs::write(project.join("private.txt"), "private").expect("write private file");
+
+        let (bytes, ctype) =
+            read_static_file(&public, std::path::Path::new("style.css")).expect("read public css");
+        assert_eq!(bytes, b"body { color: orange; }");
+        assert_eq!(ctype, "text/css; charset=utf-8");
+        assert!(read_static_file(&public, std::path::Path::new("../private.txt")).is_none());
+        let _ = fs::remove_dir_all(project);
     }
 
     #[test]

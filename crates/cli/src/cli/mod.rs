@@ -318,15 +318,15 @@ pub fn execute(registry: &Registry) {
     }
 
     let args = &parsed.args;
+    // Help must never resolve a handler or dispatch a command. Besides being
+    // surprising, dispatching makes `deka init --help` create a project.
+    if wants_help(args) {
+        help(registry);
+        return;
+    }
+
     if args.commands.is_empty() {
         if args.flags.is_empty() {
-            help(registry);
-            return;
-        }
-        if args.flags.contains_key("--help")
-            || args.flags.contains_key("-H")
-            || args.flags.contains_key("help")
-        {
             help(registry);
             return;
         }
@@ -418,6 +418,12 @@ pub fn execute(registry: &Registry) {
 
         (subcommand.handler)(&context);
     }
+}
+
+pub(crate) fn wants_help(args: &core::Args) -> bool {
+    args.flags.contains_key("--help")
+        || args.flags.contains_key("-H")
+        || args.flags.contains_key("help")
 }
 
 pub fn format_parse_errors(errors: &[ParseError]) -> String {

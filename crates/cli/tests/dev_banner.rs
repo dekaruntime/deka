@@ -157,6 +157,24 @@ fn deka_dev_prints_banner_serves_http_and_hmr() {
         .expect("GET /");
     assert_eq!(home.status().as_u16(), 200, "GET / should be 200");
 
+    let stylesheet = http
+        .get(format!("http://127.0.0.1:{port}/style.css"))
+        .send()
+        .expect("GET /style.css");
+    assert_eq!(
+        stylesheet.status().as_u16(),
+        200,
+        "public/style.css from a freshly initialized project must be served"
+    );
+    assert!(
+        stylesheet
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with("text/css")),
+        "public CSS must retain its content type"
+    );
+
     let hmr = http
         .get(format!("http://127.0.0.1:{port}/_deka/hmr"))
         .send()

@@ -6,6 +6,7 @@ pub mod engine;
 pub mod envelope;
 pub mod introspect_archive;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use pool::HandlerKey;
@@ -20,6 +21,8 @@ pub struct RuntimeState {
     pub engine: Arc<engine::RuntimeEngine>,
     pub handler_code: String,
     pub handler_entry: Option<String>,
+    /// App-router projects expose this directory at the request root.
+    pub public_dir: Option<PathBuf>,
     pub handler_key: HandlerKey,
     pub dev_mode: bool,
     pub perf_mode: bool,

@@ -26,6 +26,7 @@ fn test_state(handler_code: &str) -> Arc<RuntimeState> {
         engine,
         handler_code: handler_code.to_string(),
         handler_entry: None,
+        public_dir: None,
         handler_key: HandlerKey::new(format!("test_handler_{}", std::process::id())),
         dev_mode: false,
         perf_mode: false,
