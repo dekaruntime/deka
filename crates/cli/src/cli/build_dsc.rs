@@ -74,6 +74,9 @@ pub fn emit_project(project_root: &Path, outdir: &Path) -> Result<ProjectEmit, S
     }
 
     if !output.status.success() {
+        if let Some(message) = named_source_failure(project_root) {
+            return Err(message);
+        }
         return Err(emit_failure_message(&dsc, &combined));
     }
 
@@ -136,6 +139,24 @@ fn emit_failure_message(dsc: &Path, combined: &str) -> String {
         return trimmed.to_string();
     }
     format!("{} emit failed", dsc.display())
+}
+
+/// Project-mode dsc diagnostics currently carry locations but not file names.
+/// Preserve the original error for non-source failures, but identify a source
+/// failure through dsc's per-file check so `deka build` remains actionable.
+fn named_source_failure(project_root: &Path) -> Option<String> {
+    for directory in ["app", "api", "src"] {
+        let Ok(paths) = collect_deka_source_files(&project_root.join(directory)) else {
+            continue;
+        };
+        for path in paths {
+            if let Err(diagnostic) = check_path(&path) {
+                let path = path.strip_prefix(project_root).unwrap_or(&path);
+                return Some(format!("{}: {}", path.display(), diagnostic.trim()));
+            }
+        }
+    }
+    None
 }
 
 fn path_utf8(path: &Path) -> Result<&str, String> {
