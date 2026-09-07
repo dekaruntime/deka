@@ -80,7 +80,7 @@ fn run_for_wasm(args: Vec<String>) -> WasmRunOutput {
 
     let cmd = &parsed.args;
 
-    if cli::wants_help(cmd) {
+    if cli::init_wants_help(cmd) {
         cli::help(&registry);
         let output = stdio::end_capture();
         return WasmRunOutput { code: 0, output };

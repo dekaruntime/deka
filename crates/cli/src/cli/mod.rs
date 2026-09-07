@@ -24,6 +24,8 @@ pub mod db_wasm;
 #[cfg(feature = "native")]
 pub mod deploy;
 #[cfg(feature = "native")]
+pub mod dev;
+#[cfg(feature = "native")]
 pub mod fmt;
 pub mod init;
 #[cfg(feature = "native")]
@@ -48,8 +50,6 @@ pub mod run;
 pub mod self_cmd;
 #[cfg(feature = "native")]
 pub mod serve;
-#[cfg(feature = "native")]
-pub mod dev;
 #[cfg(feature = "native")]
 pub mod task;
 #[cfg(feature = "native")]
@@ -318,9 +318,9 @@ pub fn execute(registry: &Registry) {
     }
 
     let args = &parsed.args;
-    // Help must never resolve a handler or dispatch a command. Besides being
-    // surprising, dispatching makes `deka init --help` create a project.
-    if wants_help(args) {
+    // `init` writes a project, so its help must return before handler dispatch.
+    // Compiler commands delegate their help to dsc for command-specific output.
+    if init_wants_help(args) {
         help(registry);
         return;
     }
@@ -420,10 +420,13 @@ pub fn execute(registry: &Registry) {
     }
 }
 
-pub(crate) fn wants_help(args: &core::Args) -> bool {
-    args.flags.contains_key("--help")
-        || args.flags.contains_key("-H")
-        || args.flags.contains_key("help")
+pub(crate) fn init_wants_help(args: &core::Args) -> bool {
+    args.commands
+        .first()
+        .is_some_and(|command| command == "init")
+        && (args.flags.contains_key("--help")
+            || args.flags.contains_key("-H")
+            || args.flags.contains_key("help"))
 }
 
 pub fn format_parse_errors(errors: &[ParseError]) -> String {
