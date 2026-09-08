@@ -302,15 +302,20 @@ pub fn error(msg: Option<&str>) {
     );
 }
 
-pub fn execute(registry: &Registry) {
+/// Dispatches argv. Returns the process exit code: 0 on success, 2 on any
+/// usage error (unknown argument/flag, missing param value, unknown command),
+/// following the GNU exit-code convention. Command handlers keep owning
+/// runtime failures (they exit 1 themselves).
+pub fn execute(registry: &Registry) -> i32 {
     #[cfg(feature = "native")]
     {
         if runtime::has_embedded_vfs() {
             let args = std::env::args().skip(1).collect::<Vec<_>>();
             if let Err(err) = runtime::run_embedded_vfs(args) {
                 error(Some(err.as_str()));
+                return 1;
             }
-            return;
+            return 0;
         }
     }
 
@@ -318,7 +323,7 @@ pub fn execute(registry: &Registry) {
     if !parsed.errors.is_empty() {
         let message = format_parse_errors(&parsed.errors);
         error(Some(message.as_str()));
-        return;
+        return 2;
     }
 
     let args = &parsed.args;
@@ -326,13 +331,13 @@ pub fn execute(registry: &Registry) {
     // Compiler commands delegate their help to dsc for command-specific output.
     if init_wants_help(args) {
         help(registry);
-        return;
+        return 0;
     }
 
     if args.commands.is_empty() {
         if args.flags.is_empty() {
             help(registry);
-            return;
+            return 0;
         }
         if args.flags.contains_key("--version")
             || args.flags.contains_key("-V")
@@ -340,11 +345,11 @@ pub fn execute(registry: &Registry) {
         {
             let verbose = args.flags.contains_key("--verbose");
             version(verbose);
-            return;
+            return 0;
         }
         if args.flags.contains_key("--update") || args.flags.contains_key("-U") {
             update();
-            return;
+            return 0;
         }
     }
 
@@ -353,11 +358,11 @@ pub fn execute(registry: &Registry) {
         Err(core::ContextError::Parse(errors)) => {
             let message = format_parse_errors(&errors);
             error(Some(message.as_str()));
-            return;
+            return 2;
         }
         Err(core::ContextError::HandlerResolve(message)) => {
             error(Some(message.as_str()));
-            return;
+            return 2;
         }
     };
     let cmd = &context.args;
@@ -394,16 +399,17 @@ pub fn execute(registry: &Registry) {
                 update();
             }
         }
+        return 0;
     } else {
         if cmd.commands.len() > 2 {
             error(None);
-            return;
+            return 2;
         }
 
         let cmd_name = &cmd.commands[0];
         let Some(command) = registry.command_named(cmd_name) else {
             error(None);
-            return;
+            return 2;
         };
 
         if cmd.commands.len() == 1 {
@@ -411,16 +417,17 @@ pub fn execute(registry: &Registry) {
                 crate::dsc::exec_if_present();
             }
             (command.handler)(&context);
-            return;
+            return 0;
         }
 
         let sub_name = &cmd.commands[1];
         let Some(subcommand) = registry.subcommand_named(command, sub_name) else {
             error(None);
-            return;
+            return 2;
         };
 
         (subcommand.handler)(&context);
+        return 0;
     }
 }
 
