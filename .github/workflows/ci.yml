@@ -14,7 +14,7 @@ concurrency:
 jobs:
   changes:
     name: Detect changed files
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     outputs:
       rust: ${{ steps.detect.outputs.rust }}
       lockfile: ${{ steps.detect.outputs.lockfile }}
@@ -58,7 +58,7 @@ jobs:
     name: Utility CSS generator
     needs: [changes]
     if: needs.changes.outputs.utility_css == 'true'
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
 
@@ -87,7 +87,7 @@ jobs:
     name: Lockfile consistency
     needs: [changes]
     if: needs.changes.outputs.lockfile == 'true' && needs.changes.outputs.rust != 'true'
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
@@ -101,7 +101,7 @@ jobs:
     name: Rust typecheck
     needs: [changes]
     if: needs.changes.outputs.rust == 'true'
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
@@ -133,7 +133,7 @@ jobs:
     name: File-size gate
     needs: [changes]
     if: needs.changes.outputs.rust == 'true'
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     steps:
       # On pull_request this checkout is the merge result — the only tree
       # where a file grown a few hundred lines at a time across a stacked PR
@@ -147,7 +147,7 @@ jobs:
     name: Rust tests
     needs: [changes, rust-check]
     if: needs.changes.outputs.rust == 'true'
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: macos-14
     environment: public-ci
     env:
       CARGO_INCREMENTAL: 0
@@ -177,18 +177,7 @@ jobs:
         with:
           bun-version: 1.3.14
 
-      - name: Run sccache-cache
-        if: ${{ env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' && env.SCCACHE_ENDPOINT != '' }}
-        uses: mozilla-actions/sccache-action@v0.0.9
-
-      - name: Verify sccache can reach R2
-        if: ${{ env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' && env.SCCACHE_ENDPOINT != '' }}
-        run: |
-          echo "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
-          echo "SCCACHE_BUCKET=$SCCACHE_BUCKET"
-          sccache --show-stats
-
-      - name: Configure sccache
+      - name: Configure sccache bucket
         run: |
           if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] || [ -z "$SCCACHE_ENDPOINT" ]; then
             echo "::notice::R2 cache is not configured for this run; building without sccache."
@@ -202,6 +191,20 @@ jobs:
             Linux-x86_64)  BUCKET=deka-sccache-linux-x64 ;;
             *) echo "unsupported sccache host: $(uname -sm)" >&2; exit 1 ;;
           esac
+          echo "SCCACHE_BUCKET=$BUCKET" >> "$GITHUB_ENV"
+          echo "sccache bucket: $BUCKET"
+
+      # The action installs the binary. It receives the R2 bucket selected
+      # above, rather than an incomplete cache configuration.
+      - name: Run sccache-cache
+        if: ${{ env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' && env.SCCACHE_ENDPOINT != '' }}
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Enable sccache compiler wrapper
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] || [ -z "$SCCACHE_ENDPOINT" ]; then
+            exit 0
+          fi
           # The rust-toolchain action reinstalls rustup, which wipes
           # cargo-installed binaries out of ~/.cargo/bin - sccache included.
           # Setting RUSTC_WRAPPER to a binary that is not there makes every
@@ -210,9 +213,8 @@ jobs:
           # the binary actually exists; a cold build is worse than a cached one
           # and far better than a false red.
           if command -v sccache >/dev/null 2>&1; then
-            echo "SCCACHE_BUCKET=$BUCKET" >> "$GITHUB_ENV"
             echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
-            echo "sccache enabled, bucket: $BUCKET"
+            echo "sccache enabled, bucket: $SCCACHE_BUCKET"
           else
             echo "::warning::sccache not found on PATH - building without a compiler cache. Reinstall it on this runner (cargo install sccache --locked); see deka#656."
           fi
@@ -316,3 +318,10 @@ jobs:
           DEKA_NATIVE: ${{ github.workspace }}/target/release/cli
           DEKA_WASM: ${{ github.workspace }}/.ci/wasm/deka_compiler.wasm
         run: bun tests/dump/scripts/smoke.mjs
+
+      - name: Report sccache usage
+        if: ${{ always() && env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' && env.SCCACHE_ENDPOINT != '' }}
+        run: |
+          if command -v sccache >/dev/null 2>&1; then
+            sccache --show-stats
+          fi
