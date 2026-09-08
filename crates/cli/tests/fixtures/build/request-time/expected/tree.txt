@@ -1,0 +1,10 @@
+_redirects
+app/layout.js
+app/not-found.js
+app/page.js
+app/user/[id]/page.js
+client/_redirects
+client/index.html
+client/style.css
+server/deka.json
+server/deka.lock
