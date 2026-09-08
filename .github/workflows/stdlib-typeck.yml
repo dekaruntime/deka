@@ -24,13 +24,14 @@ jobs:
   typeck:
     name: Typecheck published stdlib
     runs-on: [self-hosted, macOS, ARM64]
+    environment: public-ci
     env:
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: 0
-      SCCACHE_ENDPOINT: "https://08b93c93f8b7adc43678e9afba31e4ee.r2.cloudflarestorage.com"
+      SCCACHE_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
       SCCACHE_REGION: "auto"
-      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_SCCACHE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SCCACHE_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v5
 
@@ -38,7 +39,14 @@ jobs:
         uses: dtolnay/rust-toolchain@1.96.0
 
       - name: Run sccache-cache
+        if: ${{ env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' && env.SCCACHE_ENDPOINT != '' }}
         uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Verify sccache can reach R2
+        if: ${{ env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' && env.SCCACHE_ENDPOINT != '' }}
+        run: |
+          echo "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
+          sccache --show-stats
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -47,6 +55,10 @@ jobs:
 
       - name: Configure sccache
         run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ] || [ -z "$SCCACHE_ENDPOINT" ]; then
+            echo "::notice::R2 cache is not configured for this run; building without sccache."
+            exit 0
+          fi
           # Bucket is architecture-specific; derive it from the host rather than
           # restating it per job (see scripts/populate-sccache.sh, deka#655).
           case "$(uname -s)-$(uname -m)" in

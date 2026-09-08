@@ -24,13 +24,52 @@ jobs:
       - name: Build CLI
         run: cargo build --release -p cli
 
+      - name: Install published dsc
+        run: scripts/ci-install-dsc.sh "${{ github.workspace }}/.ci/dsc"
+
       - name: Refresh testsuite locks against latest
         env:
           DEKA_NATIVE: ${{ github.workspace }}/target/release/cli
+          DEKA_DSC: ${{ github.workspace }}/.ci/dsc
           DEKA_SECURITY_NO_PROMPT: '1'
         run: |
           bun tests/testsuite/run.mjs --json > /tmp/testsuite-refresh.json
           bun tests/testsuite/adhoc/run.mjs --json > /tmp/adhoc-refresh.json
+
+      - name: Summarize failed refresh fixtures
+        if: failure()
+        run: |
+          for report in /tmp/testsuite-refresh.json /tmp/adhoc-refresh.json; do
+            [ -f "$report" ] || continue
+            echo "::group::$(basename "$report") mismatches"
+            bun -e '
+              const report = await Bun.file(process.argv[1]).json();
+              const failures = report.filter((entry) => !entry.matched);
+              const expectedFailures = process.argv[2]
+                ? new Set((await Bun.file(process.argv[2]).text()).split("\\n").map((line) => line.trim()).filter(Boolean))
+                : new Set();
+              const staleKnown = report
+                .filter((entry) => entry.matched && expectedFailures.has(entry.slug))
+                .map((entry) => entry.slug);
+              console.error(JSON.stringify({
+                observedMismatches: failures.length,
+                staleKnownFailures: staleKnown,
+                fixtures: failures.slice(0, 50).map(({ slug, group, actualStatus, actualStage, error, reasons }) => ({ slug, group, actualStatus, actualStage, error, reasons })),
+              }, null, 2));
+              if (failures.length > 50) console.error(`... ${failures.length - 50} additional mismatches; download the refresh report artifact for the full result.`);
+            ' "$report" "${{ github.workspace }}/tests/testsuite/expected-failures.txt"
+            echo "::endgroup::"
+          done
+
+      - name: Upload failed refresh reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: refresh-conformance-reports
+          path: |
+            /tmp/testsuite-refresh.json
+            /tmp/adhoc-refresh.json
+          if-no-files-found: ignore
 
       - name: Create PR if locks moved
         uses: peter-evans/create-pull-request@v7
