@@ -14,7 +14,7 @@ concurrency:
 jobs:
   changes:
     name: Detect changed files
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     outputs:
       rust: ${{ steps.detect.outputs.rust }}
       lockfile: ${{ steps.detect.outputs.lockfile }}
@@ -58,7 +58,7 @@ jobs:
     name: Utility CSS generator
     needs: [changes]
     if: needs.changes.outputs.utility_css == 'true'
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
 
@@ -87,7 +87,7 @@ jobs:
     name: Lockfile consistency
     needs: [changes]
     if: needs.changes.outputs.lockfile == 'true' && needs.changes.outputs.rust != 'true'
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
@@ -101,7 +101,7 @@ jobs:
     name: Rust typecheck
     needs: [changes]
     if: needs.changes.outputs.rust == 'true'
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
@@ -133,7 +133,7 @@ jobs:
     name: File-size gate
     needs: [changes]
     if: needs.changes.outputs.rust == 'true'
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     steps:
       # On pull_request this checkout is the merge result — the only tree
       # where a file grown a few hundred lines at a time across a stacked PR
@@ -147,7 +147,7 @@ jobs:
     name: Rust tests
     needs: [changes, rust-check]
     if: needs.changes.outputs.rust == 'true'
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: macos-14
     environment: public-ci
     env:
       CARGO_INCREMENTAL: 0
