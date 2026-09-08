@@ -37,6 +37,8 @@ mod fs_bridge;
 mod fs_ops;
 mod net;
 mod security;
+#[cfg(test)]
+mod security_context_tests;
 mod wit;
 
 pub use security::{enforce_net_public, enforce_net_public_with, security_policy_from_env};

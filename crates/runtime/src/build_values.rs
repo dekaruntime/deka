@@ -95,11 +95,14 @@ async fn materialize_build_values_async(
     }
 
     init_env();
-    // Build-phase permissions resolve from the project's policy (deka.json +
-    // CLI overrides + dev defaults), exported exactly the way the serve/run
-    // paths export it. Prompts are always suppressed: a build must not block
-    // on interactive approval.
-    let _env_guard = BuildPhaseEnv::install(project_root, policy_json);
+    // Build-phase permissions travel WITH the execution (RequestData.security
+    // -> per-thread security context in the pool worker), never through the
+    // process env: under `deka dev` the server keeps serving requests on
+    // other threads, which must keep observing the exported policy, not the
+    // build phase's (Codex review of deka#729). Prompts are always
+    // suppressed for the phase — a build must fail, not block, on a denied
+    // capability.
+    let _module_root_guard = BuildModuleRootEnv::install(project_root);
     let mut pool_config = PoolConfig::default();
     pool_config.num_workers = 1;
     pool_config.request_timeout_ms = 30_000;
@@ -129,6 +132,10 @@ async fn materialize_build_values_async(
                     request_value: serde_json::Value::Null,
                     request_parts: None,
                     mode: ExecutionMode::Build,
+                    security: Some(pool::ExecutionSecurity {
+                        policy_json: policy_json.to_string(),
+                        no_prompt: true,
+                    }),
                 },
             )
             .await;
@@ -179,24 +186,25 @@ async fn materialize_build_values_async(
     Ok(materialized)
 }
 
-/// Restores the process env vars the build phase exported, on success or
-/// error alike (cargo runs tests as threads in one process; see deka#537).
-struct BuildPhaseEnv {
-    policy: Option<String>,
-    no_prompt: Option<String>,
+/// The build phase's one remaining process-env export: the module root the
+/// host uses for project-relative hint classification and the stdlib-module
+/// fallback. This stays process-wide deliberately: a `deka dev` refresh
+/// rematerializes the very project the server is running (same root it
+/// already exported), and `deka build` has no concurrent request path. The
+/// security policy and prompt flag are NOT exported here — they travel
+/// per-execution via `RequestData::security` (see deka_host
+/// `security_policy_from_env`). Restores the previous value on drop (cargo
+/// runs tests as threads in one process; see deka#537).
+struct BuildModuleRootEnv {
     module_root: Option<String>,
 }
 
-impl BuildPhaseEnv {
-    fn install(project_root: &Path, policy_json: &str) -> Self {
+impl BuildModuleRootEnv {
+    fn install(project_root: &Path) -> Self {
         let guard = Self {
-            policy: std::env::var("DEKA_SECURITY_POLICY").ok(),
-            no_prompt: std::env::var("DEKA_SECURITY_NO_PROMPT").ok(),
             module_root: std::env::var("DEKA_MODULE_ROOT").ok(),
         };
         unsafe {
-            std::env::set_var("DEKA_SECURITY_POLICY", policy_json);
-            std::env::set_var("DEKA_SECURITY_NO_PROMPT", "1");
             std::env::set_var(
                 "DEKA_MODULE_ROOT",
                 project_root.to_string_lossy().into_owned(),
@@ -206,10 +214,8 @@ impl BuildPhaseEnv {
     }
 }
 
-impl Drop for BuildPhaseEnv {
+impl Drop for BuildModuleRootEnv {
     fn drop(&mut self) {
-        restore_env_var("DEKA_SECURITY_POLICY", self.policy.take());
-        restore_env_var("DEKA_SECURITY_NO_PROMPT", self.no_prompt.take());
         restore_env_var("DEKA_MODULE_ROOT", self.module_root.take());
     }
 }

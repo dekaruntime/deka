@@ -307,6 +307,18 @@ impl WorkerThread {
 
     /// Handle a single request
     async fn process_request(&mut self, request: &WorkerRequest) -> IsolateResponse {
+        // Per-execution security policy (build slots): bridge ops run on this
+        // thread, so installing the context here covers isolate warm-up
+        // (module load) and execution alike. Ordinary requests carry `None`
+        // and keep reading the process-wide env export (deka#725).
+        let _security_context = request.request_data.security.as_ref().map(|security| {
+            runtime_core::security_context::set_security_context(
+                runtime_core::security_context::SecurityContext {
+                    policy_json: Some(security.policy_json.clone()),
+                    no_prompt: security.no_prompt,
+                },
+            )
+        });
         let start = Instant::now();
         self.metrics.total_requests.fetch_add(1, Ordering::Relaxed);
         self.load.queued_requests.fetch_sub(1, Ordering::Relaxed);

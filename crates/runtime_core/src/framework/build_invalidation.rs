@@ -14,8 +14,17 @@ use super::build_manifest::{BuildManifest, FsObservationKind};
 /// Which build slots a set of local filesystem changes invalidates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SlotInvalidation {
-    /// Slot ids that must rematerialize.
+    /// Slot ids that must rematerialize, matched through recorded
+    /// observations (their source files did not change, so their compiler
+    /// ids are still current).
     pub slots: BTreeSet<String>,
+    /// Source files (project-relative spelling, see [`project_relative_path`])
+    /// whose own content changed. A source edit can shift the `build {}`
+    /// block's compiler span, which changes its slot id — the manifest's
+    /// ids for these files are stale, so the caller must replan the file and
+    /// rematerialize every slot it NOW declares, replacing the file's
+    /// manifest slots wholesale (Codex review of deka#729).
+    pub source_files: BTreeSet<String>,
     /// When true the caller must rematerialize every planned slot: the
     /// manifest could not prove the change irrelevant to a slot. Only set by
     /// callers that cannot read a manifest at all; this function's exact
@@ -26,14 +35,16 @@ pub struct SlotInvalidation {
 impl SlotInvalidation {
     /// No slot is affected; the change cannot influence materialized values.
     pub fn is_empty(&self) -> bool {
-        self.slots.is_empty() && !self.coarse
+        self.slots.is_empty() && self.source_files.is_empty() && !self.coarse
     }
 }
 
 /// Compute the slots affected by `changed` local paths.
 ///
 /// Exact rules, per slot:
-/// - the slot's own source file changed (its build body changed);
+/// - the slot's own source file changed → reported in `source_files` for a
+///   wholesale replan (the edit may have shifted the block's span and with it
+///   the slot id, so the manifest id cannot be trusted for this file);
 /// - a `read` observation whose path was edited, deleted, or replaced;
 /// - an `absent` observation whose path now exists (created) or changed;
 /// - a `directory_listing` observation whose directory gained, lost, or
@@ -54,38 +65,54 @@ pub fn affected_slots(
         .map(|path| relativize(&root, &root_lexical, &clean_path(path)))
         .collect();
     let mut slots = BTreeSet::new();
+    let mut source_files = BTreeSet::new();
     for slot in &manifest.slots {
         let slot_file = relativize(
             &root,
             &root_lexical,
             &clean_path(&PathBuf::from(&slot.file)),
         );
-        let affected = changed.iter().any(|path| *path == slot_file)
-            || slot.observations.iter().any(|observation| {
-                let observed = relativize(
-                    &root,
-                    &root_lexical,
-                    &clean_path(&PathBuf::from(&observation.path)),
-                );
-                changed.iter().any(|path| match observation.kind {
-                    FsObservationKind::Read | FsObservationKind::Absent => *path == observed,
-                    FsObservationKind::DirectoryListing => {
-                        *path == observed
-                            || Path::new(path)
-                                .parent()
-                                .map(|parent| parent == Path::new(&observed))
-                                .unwrap_or(false)
-                    }
-                })
-            });
+        if changed.iter().any(|path| *path == slot_file) {
+            source_files.insert(slot_file);
+            continue;
+        }
+        let affected = slot.observations.iter().any(|observation| {
+            let observed = relativize(
+                &root,
+                &root_lexical,
+                &clean_path(&PathBuf::from(&observation.path)),
+            );
+            changed.iter().any(|path| match observation.kind {
+                FsObservationKind::Read | FsObservationKind::Absent => *path == observed,
+                FsObservationKind::DirectoryListing => {
+                    *path == observed
+                        || Path::new(path)
+                            .parent()
+                            .map(|parent| parent == Path::new(&observed))
+                            .unwrap_or(false)
+                }
+            })
+        });
         if affected {
             slots.insert(slot.id.clone());
         }
     }
     SlotInvalidation {
         slots,
+        source_files,
         coarse: false,
     }
+}
+
+/// Project-relative, forward-slash spelling of `path` under `project_root`,
+/// tolerant of the macOS `/tmp` -> `/private/tmp` alias and of paths that no
+/// longer exist (lexical cleaning). This is the one comparison spelling for
+/// source files across manifest slots, fresh compiler plans, and watch
+/// events.
+pub fn project_relative_path(project_root: &Path, path: &Path) -> String {
+    let root = clean_path(project_root);
+    let root_lexical = lexical_clean(project_root);
+    relativize(&root, &root_lexical, &clean_path(path))
 }
 
 /// Canonicalize when the path exists (resolves symlinks, e.g. macOS
@@ -218,7 +245,7 @@ mod tests {
     }
 
     #[test]
-    fn source_file_change_invalidates_even_without_observations() {
+    fn source_file_change_requests_a_wholesale_replan_not_stale_ids() {
         let root = std::env::temp_dir().join(format!(
             "deka-invalidation-test-src-{}",
             std::process::id()
@@ -227,7 +254,14 @@ mod tests {
         let manifest = manifest(vec![slot("s1", "app/page.dsx", Vec::new())]);
         let edit = root.join("app").join("page.dsx");
         let invalidation = affected_slots(&manifest, &root, &[edit]);
-        assert_eq!(invalidation.slots, ["s1"].into_iter().map(str::to_string).collect());
+        // The slot id embeds the compiler span; an edit above the block
+        // shifts it. The caller must replan the file, not refresh a stale id.
+        assert!(invalidation.slots.is_empty(), "{invalidation:?}");
+        assert_eq!(
+            invalidation.source_files,
+            ["app/page.dsx"].into_iter().map(str::to_string).collect()
+        );
+        assert!(!invalidation.coarse);
         // An unrelated data change leaves a pure slot alone.
         let data = root.join("data").join("a.json");
         assert!(affected_slots(&manifest, &root, &[data]).is_empty());

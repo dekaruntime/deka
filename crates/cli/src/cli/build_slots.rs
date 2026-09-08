@@ -87,26 +87,30 @@ pub fn attach_observations(
     }
 }
 
-/// The dev watch callback: rematerialize `slots` (empty = the watcher could
-/// not prove relevance, so every planned slot — a logged coarse rebuild).
+/// The dev watch callback: rematerialize the requested slots; `replan_files`
+/// are source files whose own edit may have shifted their build blocks'
+/// compiler spans — their manifest slots are replaced wholesale with what a
+/// fresh plan declares now. An empty request (see
+/// [`runtime::build_watch::BuildSlotRefreshRequest::is_coarse`]) means the
+/// watcher could not prove relevance: rematerialize everything planned.
 pub fn make_dev_refresh_callback(
     flags: std::collections::HashMap<String, bool>,
     params: std::collections::HashMap<String, String>,
 ) -> runtime::build_watch::BuildSlotRefresh {
-    Arc::new(move |project_root, slots| {
-        refresh_dev_build_slots(&flags, &params, project_root, slots)
+    Arc::new(move |project_root, request| {
+        refresh_dev_build_slots(&flags, &params, project_root, request)
     })
 }
 
 /// Best-effort build-slot materialization for `deka dev` startup and watch
-/// refreshes. `slots` empty means coarse (rematerialize everything). Deviates
-/// from `deka build` only in cache location (dev compiler cache) and in that
-/// a broken project logs a warning instead of failing the serve session.
+/// refreshes. Deviates from `deka build` only in cache location (dev compiler
+/// cache) and in that a broken project logs a warning instead of failing the
+/// serve session.
 pub fn refresh_dev_build_slots(
     flags: &std::collections::HashMap<String, bool>,
     params: &std::collections::HashMap<String, String>,
     project_root: &Path,
-    slots: Vec<String>,
+    request: runtime::build_watch::BuildSlotRefreshRequest,
 ) -> Result<(), String> {
     // Dev artifacts live in the dev compiler cache; the startup path runs
     // before `runtime::serve` installs the dev flag, so install it here.
@@ -121,11 +125,32 @@ pub fn refresh_dev_build_slots(
         project_root,
         &[app_dir.as_path(), src_dir.as_path(), api_dir.as_path()],
     )?;
-    let only: Option<BTreeSet<String>> = if slots.is_empty() {
-        None
-    } else {
-        Some(slots.into_iter().collect())
+    let manifest_path = runtime_core::framework::compiler_cache_dir(project_root)
+        .join("build-manifest.json");
+    let existing_manifest = match std::fs::read_to_string(&manifest_path) {
+        Ok(raw) => Some(
+            serde_json::from_str::<BuildManifest>(&raw)
+                .map_err(|err| format!("invalid build manifest {}: {err}", manifest_path.display()))?,
+        ),
+        Err(_) => None,
     };
+
+    let coarse = request.is_coarse();
+    let replan: BTreeSet<String> = request.replan_files.into_iter().collect();
+    // Slots to rematerialize:
+    // - every slot a replanned file NOW declares (old ids are stale — the
+    //   edit that brought us here may have shifted the block's span);
+    // - observation-matched old ids whose source file was NOT replanned
+    //   (their spans are untouched, so their ids still match the plan).
+    let mut only: BTreeSet<String> = request.slots.into_iter().collect();
+    only.extend(planned.iter().filter(|source| {
+        replan.contains(&runtime_core::framework::project_relative_path(
+            project_root,
+            Path::new(&source.file),
+        ))
+    }).flat_map(|source| source.plan.slots.iter().map(|slot| slot.id.clone())));
+    let only = if coarse { None } else { Some(only) };
+
     let staging = tempfile::tempdir()
         .map_err(|err| format!("failed to create build staging dir: {err}"))?;
     match build_dsc::emit_project(project_root, staging.path())? {
@@ -148,23 +173,31 @@ pub fn refresh_dev_build_slots(
     }
     let materialized =
         materialize_planned_slots(flags, params, project_root, staging.path(), &planned, true, only.as_ref())?;
-    update_dev_manifest(project_root, &planned, &materialized.observations)
+    update_dev_manifest(
+        project_root,
+        &planned,
+        existing_manifest,
+        &replan,
+        &manifest_path,
+        &materialized.observations,
+    )
 }
 
-/// Refresh (or create) the dev build manifest's slot observations after a
-/// rematerialization. The manifest is a cache artifact for dev invalidation;
+/// Refresh (or create) the dev build manifest after a rematerialization,
+/// replacing the manifest slots of replanned files with what the fresh plan
+/// declares. The manifest is a cache artifact for dev invalidation;
 /// routes/artifacts are planned, never rendered, here.
 fn update_dev_manifest(
     project_root: &Path,
     planned: &[PlannedSource],
+    existing_manifest: Option<BuildManifest>,
+    replan: &BTreeSet<String>,
+    manifest_path: &Path,
     observations: &BTreeMap<String, Vec<FsObservation>>,
 ) -> Result<(), String> {
-    let manifest_path = runtime_core::framework::compiler_cache_dir(project_root)
-        .join("build-manifest.json");
-    let mut manifest = match std::fs::read_to_string(&manifest_path) {
-        Ok(raw) => serde_json::from_str::<BuildManifest>(&raw)
-            .map_err(|err| format!("invalid build manifest {}: {err}", manifest_path.display()))?,
-        Err(_) => {
+    let mut manifest = match existing_manifest {
+        Some(manifest) => manifest,
+        None => {
             let app_manifest = runtime_core::framework::scan_app_dir(&project_root.join("app"));
             let api_entries = runtime_core::framework::scan_api_dir(&project_root.join("api"));
             BuildManifest::plan(
@@ -176,10 +209,65 @@ fn update_dev_manifest(
             )?
         }
     };
+    // Replanned files: old ids out (their spans may have shifted), current
+    // plan slots in. Slots of untouched files keep their entries.
+    let dropped_ids: Vec<String> = if replan.is_empty() {
+        Vec::new()
+    } else {
+        let dropped: Vec<String> = manifest
+            .slots
+            .iter()
+            .filter(|slot| {
+                replan.contains(&runtime_core::framework::project_relative_path(
+                    project_root,
+                    Path::new(&slot.file),
+                ))
+            })
+            .map(|slot| slot.id.clone())
+            .collect();
+        manifest.slots.retain(|slot| {
+            !replan.contains(&runtime_core::framework::project_relative_path(
+                project_root,
+                Path::new(&slot.file),
+            ))
+        });
+        for source in planned.iter().filter(|source| {
+            replan.contains(&runtime_core::framework::project_relative_path(
+                project_root,
+                Path::new(&source.file),
+            ))
+        }) {
+            for slot in &source.plan.slots {
+                manifest.slots.push(runtime_core::framework::ManifestSlot {
+                    id: slot.id.clone(),
+                    binding: slot.binding.clone(),
+                    file: slot.file.clone(),
+                    descriptor_digest: runtime_core::framework::sha256_hex(
+                        slot.descriptor.to_string().as_bytes(),
+                    ),
+                    value_module: format!("deka:dev/{}", slot.id),
+                    observations: Vec::new(),
+                });
+            }
+        }
+        manifest.slots.sort_by(|a, b| a.id.cmp(&b.id));
+        dropped
+    };
     attach_observations(&mut manifest, observations);
     manifest
-        .write(&manifest_path)
-        .map_err(|err| format!("failed to update {}: {err}", manifest_path.display()))
+        .write(manifest_path)
+        .map_err(|err| format!("failed to update {}: {err}", manifest_path.display()))?;
+    // Drop the published value modules of replaced slots (after the manifest
+    // and values both landed, so a crash leaves a consistent old pair). A
+    // dropped id that the fresh plan re-declares (same content, shifted-then-
+    // restored span, duplicate watch event) is NOT swept: its module was just
+    // republished.
+    let live: BTreeSet<&str> = manifest.slots.iter().map(|slot| slot.id.as_str()).collect();
+    let published = runtime_core::framework::compiler_cache_dir(project_root).join("build-values");
+    for id in dropped_ids.into_iter().filter(|id| !live.contains(id.as_str())) {
+        let _ = std::fs::remove_file(published.join(format!("{id}.js")));
+    }
+    Ok(())
 }
 
 /// `deka dev` startup: materialize the project's build slots (if any) so the
@@ -197,7 +285,12 @@ pub fn ensure_dev_build_slots(
     if !runtime_core::framework::is_app_router_project(&project_root) {
         return;
     }
-    if let Err(err) = refresh_dev_build_slots(flags, params, &project_root, Vec::new()) {
+    if let Err(err) = refresh_dev_build_slots(
+        flags,
+        params,
+        &project_root,
+        runtime::build_watch::BuildSlotRefreshRequest::coarse(),
+    ) {
         stdio::log("dev", &format!("build-slot materialization skipped: {err}"));
     }
 }

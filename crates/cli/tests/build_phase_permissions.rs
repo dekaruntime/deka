@@ -437,3 +437,121 @@ fn dev_watch_rematerializes_affected_slots_on_local_changes() {
         let _ = serve_child.wait();
     }
 }
+
+/// Codex review of deka#729: slot ids embed the compiler span of the
+/// `build {}` block, so inserting a line ABOVE the block changes the id.
+/// A targeted refresh that filters the fresh plan by the manifest's old ids
+/// would rematerialize nothing and serve stale (or unresolved) values. The
+/// fix replans the changed source file and replaces its manifest slots.
+#[test]
+fn dev_watch_replans_a_source_file_when_the_build_block_span_shifts() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    write_security(
+        project.path(),
+        r#"{"allow": {"read": ["./data"]}, "prompt": false}"#,
+    );
+    write_slug_page(project.path(), slug_page_count_over_len());
+    let data = project.path().join("data");
+    fs::create_dir_all(&data).expect("mkdir data");
+    fs::write(data.join("picked.txt"), "hello").expect("write picked");
+    fs::write(data.join("other.txt"), "other").expect("write other");
+
+    let port = free_port();
+    let log_path = project.path().join("dev.log");
+    let log = fs::File::create(&log_path).expect("dev.log");
+    let child = Command::new(cli_bin())
+        .args(["dev", "--port", &port.to_string(), "--no-prompt"])
+        .current_dir(project.path())
+        .env("DEKA_RATE_LIMIT_DISABLED", "1")
+        .stdout(Stdio::from(log.try_clone().expect("clone log")))
+        .stderr(Stdio::from(log))
+        .spawn()
+        .expect("spawn deka dev");
+    let mut child = KillOnDrop(Some(child));
+    let dev_log = || fs::read_to_string(&log_path).unwrap_or_default();
+    let dev_manifest_path = project
+        .path()
+        .join("ds_modules")
+        .join(".cache")
+        .join("dev")
+        .join("build-manifest.json");
+    let slot_id = || -> Option<String> {
+        let manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&dev_manifest_path).ok()?).ok()?;
+        manifest["slots"][0]["id"].as_str().map(str::to_string)
+    };
+    let marker_served = |marker: &str| {
+        get_body(port, "/posts/anything").is_some_and(|body| body.contains(marker))
+    };
+
+    assert!(
+        wait_until(90, || get_status(port, "/").is_some_and(|status| status == 200)),
+        "deka dev did not become ready:\n{}",
+        dev_log()
+    );
+    assert!(
+        wait_until(30, || marker_served(">2/5<")),
+        "initial materialization must render marker 2/5:\n{}",
+        dev_log()
+    );
+    let id_before = slot_id().expect("manifest slot id before the edit");
+
+    // Insert a blank line ABOVE the build block: the block's span shifts, so
+    // its compiler slot id changes even though the build body is untouched.
+    let page_path = project
+        .path()
+        .join("app")
+        .join("posts")
+        .join("[slug]")
+        .join("page.dsx");
+    let shifted = format!("\n{}", fs::read_to_string(&page_path).expect("read page"));
+    fs::write(&page_path, shifted).expect("write shifted page");
+
+    // The page must keep serving through the span shift: the file is
+    // replanned, its (new-id) slot rematerialized, and its manifest slots
+    // replaced wholesale. The pre-fix behavior left the new id unmaterialized
+    // and the page unresolved.
+    assert!(
+        wait_until(60, || marker_served(">2/5<")),
+        "a line inserted above the build block must replan the file and keep serving 2/5:\n{}",
+        dev_log()
+    );
+    let id_after = slot_id().expect("manifest slot id after the edit");
+    assert_ne!(
+        id_before, id_after,
+        "the fixture edit must actually shift the compiler slot id (regression condition)"
+    );
+
+    // The replaced slot must record fresh observations: editing the picked
+    // file afterwards invalidates it through the NEW id.
+    fs::write(data.join("picked.txt"), "hello!").expect("edit picked");
+    assert!(
+        wait_until(60, || marker_served(">2/6<")),
+        "the replanned slot must observe data/picked.txt and rematerialize to 2/6:\n{}",
+        dev_log()
+    );
+
+    let log_text = dev_log();
+    assert!(
+        log_text.contains("replanning build slots in [app/posts/[slug]/page.dsx]"),
+        "a source-file change must be logged as a wholesale replan:\n{log_text}"
+    );
+    assert!(
+        log_text.contains("invalidating build slots"),
+        "targeted observation invalidation must stay a deliberate, logged decision:\n{log_text}"
+    );
+    assert!(
+        !log_text.contains("coarse build invalidation"),
+        "exact matching must not fall back to a coarse rebuild:\n{log_text}"
+    );
+    assert!(
+        !log_text.contains("failed to rematerialize"),
+        "no rematerialization in this scenario may fail:\n{log_text}"
+    );
+
+    if let Some(mut serve_child) = child.0.take() {
+        let _ = serve_child.kill();
+        let _ = serve_child.wait();
+    }
+}

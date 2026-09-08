@@ -97,6 +97,7 @@ async fn prerender_static_pages_async(
                     request_value: serde_json::Value::Null,
                     request_parts: None,
                     mode: ExecutionMode::StaticRender,
+                    security: None,
                 },
             )
             .await
