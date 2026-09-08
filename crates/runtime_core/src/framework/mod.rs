@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use crate::env::env_truthy_with;
 use crate::modules::MODULES_DIR;
 
+mod build_manifest;
 mod codegen;
 mod css;
 mod defer;
@@ -30,6 +31,11 @@ mod manifest;
 mod routes;
 mod source;
 
+pub use build_manifest::{
+    BuildManifest, BuildPlan, BuildPlanSlot, FsObservation, FsObservationKind, ManifestArtifact,
+    ManifestRoute, ManifestSlot, PlannedSource, RouteMode, SUPPORTED_PLAN_VERSIONS,
+    validate_plans,
+};
 pub use codegen::{
     write_api_router_entry, write_app_router_entry, write_defer_router_entry,
     write_static_render_entry, write_worker_router_entry,
