@@ -38,10 +38,14 @@ The harness (`crates/cli/tests/build_fixture_harness.rs`, driven by
 
 For successful fixtures it additionally asserts, from
 `.cache/dekascript/build-manifest.json`: the manifest parses, its routes
-match the printed table exactly (glyph + path, in order), and its artifact
-list covers exactly the published tree. Then the fixture builds a **second
-time** and requires the dist tree, the full stderr, and the manifest to be
-byte-identical across runs.
+match the printed table exactly (glyph + path, in order), its artifact list
+covers exactly the published tree, **and every artifact digest is recomputed
+from the published bytes** — a manifest with correct paths but wrong digests
+fails, naming the mismatched path. Then the fixture builds twice more: a
+**same-root rerun** (dist tree, full stderr, and the manifest must be
+byte-identical across runs) and a **cross-root build** (the same project
+from a second temporary root must produce RAW, byte-identical dist
+artifacts).
 
 ## Blessing (refreshing expected output)
 
@@ -56,6 +60,12 @@ dsc) and, for successful fixtures, `tree.txt` and the `files/` mirror. It
 refuses to bless when the build's success/failure disagrees with the
 fixture's markers. A fixture with both `stderr.txt` and `stderr.v1.txt`
 must be blessed once per dsc plan generation (CI installs dsc 0.6.0 → v1).
+
+The mirror holds **raw** bytes. Since dsc PR #62 (deka#728) slot ids are
+project-relative, so raw bytes are stable across build roots; the fixtures
+were re-blessed with that dsc. An older dsc whose slot ids hash absolute
+paths will fail the `static-params` byte comparison and the cross-root
+check — that is the contract working, not flakiness.
 
 ## Coverage
 
@@ -82,17 +92,20 @@ Deferred on purpose:
 ## Determinism notes (verified, not assumed)
 
 - Content-hashed asset names are stable across runs when inputs are stable
-  (the second build in every successful fixture would catch rotation).
-- **dsc build-slot ids are hashes of the source file's absolute path**, so
-  the `deka:dev/<id>` import dsc embeds in emitted JS (e.g.
-  `dist/app/posts/[slug]/page.js`) is a function of the tempdir the fixture
-  builds in. Committed bytes could never match across machines; the harness
-  therefore normalizes `deka:dev/<16 hex>` to `deka:dev/<slot>` on both the
-  expected mirror and actual output (an explicit, reviewed rule in
-  `build_fixture_harness.rs`). The slot id is not content and the fixture's
-  relative structure is fixed, so nothing real is masked. Every other byte
-  of every file in `tree.txt` is compared exactly.
-- No volatile file needed exclusion from byte comparison otherwise; the
-  whole `dist/` tree is mirrored in `files/`. If a future fixture needs an
-  exclusion (e.g. timestamps), encode it as an explicit rule in the harness
-  and document it here — never exclude ad hoc.
+  (the rerun and cross-root builds in every successful fixture would catch
+  rotation).
+- **dsc build-slot ids are project-relative since dsc PR #62** (deka#728);
+  previously they hashed the source file's absolute path, which made the
+  `deka:dev/<id>` import embedded in emitted JS a function of the build
+  root. The harness now compares **raw bytes** with no normalization: every
+  successful fixture builds from a second temporary root and the dist trees
+  must match byte-for-byte. If that check ever fails, investigate which
+  bytes embed the root before considering any normalization — and if one is
+  truly unavoidable, narrow it to that specific case with a comment here.
+- The build manifest embeds absolute paths (slot files, route sources), so
+  it is byte-compared only across same-root rebuilds; across roots the
+  artifacts' bytes are the contract, plus per-root manifest verification.
+- No volatile file needed exclusion from byte comparison; the whole `dist/`
+  tree is mirrored in `files/`. If a future fixture needs an exclusion
+  (e.g. timestamps), encode it as an explicit rule in the harness and
+  document it here — never exclude ad hoc.

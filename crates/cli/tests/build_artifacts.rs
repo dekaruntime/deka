@@ -1,9 +1,14 @@
-// deka#720: `deka build` as a deterministic artifact contract. Each fixture
-// runs a real Dsc + Deka build flow in a tempdir and compares expected
-// stderr (route table + diagnostics), the published dist/ tree, and the
-// exact bytes of declared outputs — twice, asserting byte-for-byte
-// determinism. See fixtures/build/README.md for the layout and the
-// DEKA_BLESS=1 refresh workflow.
+// deka#720/#728: `deka build` as a deterministic artifact contract. Each
+// fixture runs a real Dsc + Deka build flow in a tempdir and compares
+// expected stderr (route table + diagnostics), the published dist/ tree,
+// and the exact bytes of declared outputs. Every successful fixture builds
+// three times: fixture comparison, a same-root determinism rerun (tree,
+// route-table order, and build manifest byte-identical), and a cross-root
+// build asserting RAW byte-identical artifacts (dsc slot ids are
+// project-relative since dsc PR #62 — no byte normalization anywhere). The
+// manifest's artifact digests are recomputed from the published bytes.
+// See fixtures/build/README.md for the layout and the DEKA_BLESS=1 refresh
+// workflow.
 //
 // Coverage (deka#720 initial):
 // - static-site: a concrete static page + layout emit the expected HTML;

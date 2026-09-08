@@ -19,10 +19,15 @@
 //!                      in tree.txt (success only)
 //! ```
 //!
-//! A successful fixture builds TWICE: the published tree, the route table
-//! (full normalized stderr), and the build manifest must be byte-identical
-//! across runs. `DEKA_BLESS=1` regenerates the expected files from actual
-//! output — the only way expected bytes may change.
+//! A successful fixture builds THREE times: a same-root rerun (tree, full
+//! normalized stderr, and the build manifest must be byte-identical across
+//! runs) and a build from a SECOND temporary root (the RAW dist bytes must
+//! be byte-identical across roots — dsc slot ids are project-relative since
+//! dsc PR #62, so no byte normalization exists anywhere in this harness;
+//! deka#728 / codex findings 5 and 6). The manifest's artifact digests are
+//! recomputed against the published bytes, not just its path list.
+//! `DEKA_BLESS=1` regenerates the expected files from actual output — the
+//! only way expected bytes may change.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -120,38 +125,10 @@ fn normalize_stderr(project: &Path, project_canonical: &Path, stderr: &str) -> S
     out
 }
 
-/// dsc derives build-slot ids from the source file's ABSOLUTE path, so the
-/// `deka:dev/<id>` import embedded in emitted JS is a function of the
-/// tempdir a fixture builds in — committed bytes can never match across
-/// machines without normalizing it out. Reviewed deka#720 rule (documented
-/// in fixtures/build/README.md): the slot id is not content, and the
-/// fixture's relative structure is fixed, so nothing real is masked.
-fn normalize_slot_ids(bytes: &[u8]) -> Vec<u8> {
-    const PREFIX: &[u8] = b"deka:dev/";
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i..].starts_with(PREFIX) {
-            let id_start = i + PREFIX.len();
-            let id_end = id_start + 16;
-            let is_id = id_end <= bytes.len()
-                && bytes[id_start..id_end]
-                    .iter()
-                    .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
-            if is_id {
-                out.extend_from_slice(PREFIX);
-                out.extend_from_slice(b"<slot>");
-                i = id_end;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    out
-}
-
 /// Walk `dir` into a forward-slash relative-path -> bytes map.
+/// RAW bytes: with project-relative dsc slot ids (dsc PR #62), build output
+/// is byte-identical across project roots, so no normalization belongs here
+/// (deka#728, codex finding 5).
 fn tree_snapshot(dir: &Path) -> BTreeMap<String, Vec<u8>> {
     let mut out = BTreeMap::new();
     let mut stack = vec![dir.to_path_buf()];
@@ -324,9 +301,10 @@ fn manifest_report(project: &Path, stderr: &str, tree: &BTreeMap<String, Vec<u8>
             unified_diff(&expected_rows.join("\n"), &printed.join("\n"))
         ));
     }
-    let artifact_paths: std::collections::BTreeSet<String> = manifest["artifacts"]
+    let artifacts = manifest["artifacts"]
         .as_array()
-        .ok_or("build-manifest.json has no artifacts array")?
+        .ok_or("build-manifest.json has no artifacts array")?;
+    let artifact_paths: std::collections::BTreeSet<String> = artifacts
         .iter()
         .filter_map(|artifact| artifact["path"].as_str().map(str::to_string))
         .collect();
@@ -338,7 +316,34 @@ fn manifest_report(project: &Path, stderr: &str, tree: &BTreeMap<String, Vec<u8>
             tree_paths.difference(&artifact_paths).collect::<Vec<_>>()
         ));
     }
+    // Digests: every declared artifact must hash to the published bytes.
+    // Path coverage alone would pass a manifest whose digests are all wrong
+    // (deka#728, codex finding 6).
+    for artifact in artifacts {
+        let path = artifact["path"]
+            .as_str()
+            .ok_or("artifact has no path")?;
+        let digest = artifact["digest"]
+            .as_str()
+            .ok_or_else(|| format!("artifact `{path}` has no digest"))?;
+        let bytes = tree
+            .get(path)
+            .ok_or_else(|| format!("artifact `{path}` is not in the dist tree"))?;
+        let actual = sha256_hex(bytes);
+        if actual != digest {
+            return Err(format!(
+                "artifact `{path}` digest mismatch: manifest declares {digest}, published bytes hash to {actual}"
+            ));
+        }
+    }
     Ok(())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
 }
 
 struct Fixture {
@@ -424,7 +429,7 @@ fn bless(
         for (rel, bytes) in &tree {
             let dest = mirror.join(rel);
             fs::create_dir_all(dest.parent().expect("parent")).expect("mkdir");
-            fs::write(&dest, normalize_slot_ids(bytes)).expect("write blessed file");
+            fs::write(&dest, bytes).expect("write blessed file");
         }
     }
     eprintln!(
@@ -543,12 +548,12 @@ fn check_published_output(
                 continue;
             }
         };
-        let actual_bytes = normalize_slot_ids(&tree[rel]);
-        if actual_bytes != expected_bytes {
+        let actual_bytes = &tree[rel];
+        if *actual_bytes != expected_bytes {
             let header = format!("[bytes] `{rel}` differs from expected mirror");
             let detail = match (
                 std::str::from_utf8(&expected_bytes),
-                std::str::from_utf8(&actual_bytes),
+                std::str::from_utf8(actual_bytes),
             ) {
                 (Ok(expected), Ok(actual)) => unified_diff(expected, actual),
                 _ => format!(
@@ -567,21 +572,19 @@ fn check_published_output(
         problems.push(format!("[manifest] {err}"));
     }
 
-    // 4. Repeated build: tree, route-table order (full stderr), and the
-    //    manifest must all be byte-identical.
+    // 4. Same-root rerun: tree, route-table order (full stderr), and the
+    //    manifest must all be byte-identical. The manifest embeds absolute
+    //    paths, so byte-identity is only meaningful within one root.
+    let canonical = fs::canonicalize(project).expect("canonicalize project");
     let rerun = run_build(project);
     if !rerun.success {
         problems.push(format!(
             "[rerun] second build failed:\n{}",
-            normalize_stderr(project, &fs::canonicalize(project).expect("canonical"), &rerun.stderr)
+            normalize_stderr(project, &canonical, &rerun.stderr)
         ));
         return;
     }
-    let rerun_stderr = normalize_stderr(
-        project,
-        &fs::canonicalize(project).expect("canonicalize project"),
-        &rerun.stderr,
-    );
+    let rerun_stderr = normalize_stderr(project, &canonical, &rerun.stderr);
     if rerun_stderr != stderr {
         problems.push(format!(
             "[rerun] stderr (route table included) changed between builds\n{}",
@@ -606,5 +609,87 @@ fn check_published_output(
     }
     if project.join(".deka-dist-stage").exists() {
         problems.push("[rerun] staging dir leaked into the project".to_string());
+    }
+
+    // 5. Cross-root determinism (deka#728, codex finding 5): build the SAME
+    //    project from a DIFFERENT temporary root and require RAW,
+    //    byte-identical artifacts — no normalization anywhere. This holds
+    //    because dsc slot ids are project-relative (dsc PR #62). If it ever
+    //    fails, investigate which bytes embed the root before considering
+    //    any normalization.
+    let tmp_b = tempfile::tempdir().expect("create second temp project dir");
+    let project_b = tmp_b.path().join("project");
+    copy_dir(&fixture.root.join("project"), &project_b);
+    let canonical_b = fs::canonicalize(&project_b).expect("canonicalize second project");
+    let cross = run_build(&project_b);
+    if !cross.success {
+        problems.push(format!(
+            "[cross-root] build failed in the second root:\n{}",
+            normalize_stderr(&project_b, &canonical_b, &cross.stderr)
+        ));
+        return;
+    }
+    let cross_stderr = normalize_stderr(&project_b, &canonical_b, &cross.stderr);
+    if cross_stderr != stderr {
+        problems.push(format!(
+            "[cross-root] stderr changed across roots\n{}",
+            unified_diff(stderr, &cross_stderr)
+        ));
+    }
+    let cross_tree = tree_snapshot(&project_b.join("dist"));
+    if cross_tree != tree {
+        let changed: Vec<_> = cross_tree
+            .iter()
+            .filter(|(rel, bytes)| tree.get(*rel) != Some(*bytes))
+            .map(|(rel, _)| rel.clone())
+            .collect();
+        problems.push(format!(
+            "[cross-root] dist/ bytes differ across roots, differing files: {changed:?}"
+        ));
+    }
+}
+
+#[cfg(test)]
+mod digest_verification {
+    use super::*;
+
+    /// A manifest whose artifact digests do not match the published bytes
+    /// must fail verification and name the mismatched path (deka#728, codex
+    /// finding 6). Constructed directly — a real build, then one digest
+    /// tampered on disk — not a mock.
+    #[test]
+    fn tampered_manifest_digest_fails() {
+        let source = fixtures_dir().join("static-site").join("project");
+        let tmp = tempfile::tempdir().expect("create temp project dir");
+        let project = tmp.path().join("project");
+        copy_dir(&source, &project);
+        let run = run_build(&project);
+        assert!(run.success, "fixture build must succeed: {}", run.stderr);
+        let tree = tree_snapshot(&project.join("dist"));
+        manifest_report(&project, &run.stderr, &tree).expect("untampered manifest verifies");
+
+        // Flip every digest character; the result cannot equal the real
+        // digest, so verification must fail on exactly this artifact.
+        let path = manifest_path(&project);
+        let mut manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).expect("read manifest"))
+                .expect("parse manifest");
+        let artifact = &mut manifest["artifacts"][0];
+        let tampered_path = artifact["path"].as_str().expect("artifact path").to_string();
+        let digest = artifact["digest"].as_str().expect("artifact digest");
+        let flipped: String = digest
+            .chars()
+            .map(|c| if c == '0' { '1' } else { '0' })
+            .collect();
+        artifact["digest"] = serde_json::Value::String(flipped);
+        fs::write(&path, serde_json::to_string(&manifest).expect("serialize manifest"))
+            .expect("write tampered manifest");
+
+        let err = manifest_report(&project, &run.stderr, &tree)
+            .expect_err("a tampered digest must fail verification");
+        assert!(
+            err.contains(&tampered_path),
+            "the error must name the mismatched artifact path: {err}"
+        );
     }
 }
