@@ -1,15 +1,12 @@
 use super::*;
 
-/// Reads `DEKA_SECURITY_POLICY` from the process environment.
-///
-/// Split out from the `enforce_*` gates below so callers can pass a
-/// parsed policy in directly. `DEKA_SECURITY_POLICY` is process-global
-/// state and cargo runs tests as threads in one process, so tests that
-/// set the variable raced every reader of it — including tests that only
-/// read it implicitly through `net_call_proto_impl` / `http_call`
-/// (deka#537). A caller-supplied policy removes the shared state instead
-/// of serializing access to it.
+/// Reads the effective security policy for the current call: a per-execution
+/// [`runtime_core::security_context`] wins over `DEKA_SECURITY_POLICY`, so a
+/// build cannot leak its policy to concurrent requests (deka#729; deka#537).
 pub fn security_policy_from_env() -> SecurityPolicy {
+    if let Some(raw) = runtime_core::security_context::context_policy_json() {
+        return security_policy_from_json_str(&raw);
+    }
     let raw = match std::env::var("DEKA_SECURITY_POLICY") {
         Ok(v) => v,
         Err(_) => return SecurityPolicy::default(),
@@ -366,8 +363,11 @@ fn enforce_scope(
 fn security_enforcement_enabled() -> bool {
     true
 }
-
 fn prompt_enabled() -> bool {
+    // Per-execution suppression (build slots) never grants capabilities.
+    if runtime_core::security_context::context_no_prompt() {
+        return false;
+    }
     if std::env::var("DEKA_SECURITY_NO_PROMPT")
         .map(|v| v == "1")
         .unwrap_or(false)

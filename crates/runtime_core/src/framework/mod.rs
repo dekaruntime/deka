@@ -32,11 +32,11 @@ mod manifest;
 mod routes;
 mod source;
 
-pub use build_invalidation::{SlotInvalidation, affected_slots};
+pub use build_invalidation::{SlotInvalidation, affected_slots, project_relative_path};
 pub use build_manifest::{
     BuildManifest, BuildPlan, BuildPlanSlot, FsObservation, FsObservationKind, ManifestArtifact,
     ManifestRoute, ManifestSlot, PlannedSource, RouteMode, SUPPORTED_PLAN_VERSIONS,
-    validate_plans,
+    sha256_hex, validate_plans,
 };
 pub use codegen::{
     write_api_router_entry, write_app_router_entry, write_defer_router_entry,

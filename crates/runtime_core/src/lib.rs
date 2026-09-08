@@ -13,6 +13,7 @@ pub mod project_gate;
 pub mod process;
 pub mod security;
 pub mod seam;
+pub mod security_context;
 pub mod security_policy;
 pub mod storefront_envelope;
 pub mod validation;

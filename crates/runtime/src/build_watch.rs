@@ -13,12 +13,40 @@ use runtime_core::framework::{
     BuildManifest, SlotInvalidation, affected_slots, compiler_cache_dir,
 };
 
-/// Rematerializes the given build slots (by slot id) for `project_root`. An
-/// empty `slots` list with the project's manifest unavailable means the
-/// caller could not prove relevance — implementations must treat it as a
-/// deliberate, logged coarse rebuild of every planned slot.
+/// What one watch event asks the refresh hook to do.
+#[derive(Debug, Clone, Default)]
+pub struct BuildSlotRefreshRequest {
+    /// Observation-matched slot ids whose source files did not change (their
+    /// compiler ids are still current).
+    pub slots: Vec<String>,
+    /// Source files (project-relative spelling) whose own content changed.
+    /// Slot ids embed the compiler span, so an edit above a `build {}` block
+    /// changes its id and the manifest's ids for these files are stale: the
+    /// hook must replan the file and rematerialize every slot it NOW
+    /// declares, replacing the file's manifest slots wholesale (Codex review
+    /// of deka#729).
+    pub replan_files: Vec<String>,
+}
+
+impl BuildSlotRefreshRequest {
+    /// Every planned slot: the watcher could not prove relevance (no build
+    /// manifest). Implementations must treat it as a deliberate, logged
+    /// coarse rebuild.
+    pub fn coarse() -> Self {
+        Self::default()
+    }
+
+    /// Both lists empty: the watcher could not prove relevance (no build
+    /// manifest) — implementations must rematerialize every planned slot as
+    /// a deliberate, logged coarse rebuild.
+    pub fn is_coarse(&self) -> bool {
+        self.slots.is_empty() && self.replan_files.is_empty()
+    }
+}
+
+/// Rematerializes build slots for `project_root` per the request.
 pub type BuildSlotRefresh =
-    Arc<dyn Fn(&Path, Vec<String>) -> Result<(), String> + Send + Sync + 'static>;
+    Arc<dyn Fn(&Path, BuildSlotRefreshRequest) -> Result<(), String> + Send + Sync + 'static>;
 
 fn refresh_hook() -> &'static Mutex<Option<BuildSlotRefresh>> {
     static HOOK: OnceLock<Mutex<Option<BuildSlotRefresh>>> = OnceLock::new();
@@ -89,11 +117,15 @@ pub fn on_watch_event(project_root: &Path, changed: &[String], dev_mode: bool) -
         // silent.
         None => SlotInvalidation {
             slots: Default::default(),
+            source_files: Default::default(),
             coarse: true,
         },
     };
 
-    let slot_list: Vec<String> = invalidation.slots.iter().cloned().collect();
+    let request = BuildSlotRefreshRequest {
+        slots: invalidation.slots.iter().cloned().collect(),
+        replan_files: invalidation.source_files.iter().cloned().collect(),
+    };
     if invalidation.coarse {
         stdio::log(
             "watch",
@@ -102,21 +134,33 @@ pub fn on_watch_event(project_root: &Path, changed: &[String], dev_mode: bool) -
                 changed.join(", ")
             ),
         );
-    } else if slot_list.is_empty() {
+    } else if request.slots.is_empty() && request.replan_files.is_empty() {
         stdio::log(
             "watch",
             &format!("no build slots affected by {}", changed.join(", ")),
         );
         return false;
     } else {
-        stdio::log(
-            "watch",
-            &format!(
-                "invalidating build slots [{}]: observed input changed ({})",
-                slot_list.join(", "),
-                changed.join(", ")
-            ),
-        );
+        if !request.slots.is_empty() {
+            stdio::log(
+                "watch",
+                &format!(
+                    "invalidating build slots [{}]: observed input changed ({})",
+                    request.slots.join(", "),
+                    changed.join(", ")
+                ),
+            );
+        }
+        if !request.replan_files.is_empty() {
+            stdio::log(
+                "watch",
+                &format!(
+                    "replanning build slots in [{}]: source file changed ({})",
+                    request.replan_files.join(", "),
+                    changed.join(", ")
+                ),
+            );
+        }
     }
 
     // The refresh rematerializes build slots via `block_on` on its own
@@ -125,7 +169,7 @@ pub fn on_watch_event(project_root: &Path, changed: &[String], dev_mode: bool) -
     // watch loop can wait; serving happens on other tasks).
     let outcome = std::thread::scope(|scope| {
         scope
-            .spawn(|| hook(project_root, slot_list))
+            .spawn(|| hook(project_root, request))
             .join()
             .map_err(|_| "build slot refresh panicked".to_string())
     });

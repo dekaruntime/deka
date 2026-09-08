@@ -733,14 +733,24 @@ pub(super) fn op_php_fs_call_proto(
 /// blocking pool so the isolate thread yields while the op is in flight.
 /// `op2` treats the `async fn` as an async op, so calling it from JS returns
 /// a Promise.
+///
+/// The blocking-pool thread does not inherit this thread's per-execution
+/// security context (deka#725), so the context is captured here — on the
+/// isolate thread, where the pool worker installed it — and re-installed
+/// around the actual enforcement on the worker thread.
 #[op2]
 #[buffer]
 pub(super) async fn op_php_fs_call_proto_async(
     #[buffer(copy)] request: Vec<u8>,
 ) -> Result<Vec<u8>, deno_core::error::CoreError> {
-    tokio::task::spawn_blocking(move || fs_call_proto_impl(&request))
-        .await
-        .map_err(|e| core_err(format!("fs bridge task failed: {e}")))?
+    let security_context = runtime_core::security_context::current_security_context();
+    tokio::task::spawn_blocking(move || {
+        let _security_context = security_context
+            .map(runtime_core::security_context::set_security_context);
+        fs_call_proto_impl(&request)
+    })
+    .await
+    .map_err(|e| core_err(format!("fs bridge task failed: {e}")))?
 }
 
 #[op2]
