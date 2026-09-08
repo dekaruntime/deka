@@ -32,7 +32,7 @@ mod source;
 
 pub use codegen::{
     write_api_router_entry, write_app_router_entry, write_defer_router_entry,
-    write_worker_router_entry,
+    write_static_render_entry, write_worker_router_entry,
 };
 
 /// Serve/dev compiler artifact directory.
@@ -67,7 +67,7 @@ pub use defer::{
 };
 pub use document::{
     CLIENT_IMPORTMAP_PLACEHOLDER_TAG, DEKA_APP_HOLE, DEKA_HEAD_HOLE, DEKA_SCRIPTS_HOLE,
-    FRAGMENT_ACCEPT, FRAGMENT_ACCEPT_LEGACY, STATIC_ACCEPT, fill_document,
+    FRAGMENT_ACCEPT, FRAGMENT_ACCEPT_LEGACY, fill_document,
 };
 pub use islands::{ClientIsland, island_script_tags, scan_client_islands};
 pub use manifest::{

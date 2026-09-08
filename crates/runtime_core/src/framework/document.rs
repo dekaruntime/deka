@@ -14,7 +14,6 @@ pub const CLIENT_IMPORTMAP_PLACEHOLDER_TAG: &str =
     r#"<script type="importmap" src="/assets/importmap.json"></script>"#;
 pub const FRAGMENT_ACCEPT: &str = "text/x-deka-fragment";
 pub const FRAGMENT_ACCEPT_LEGACY: &str = "text/x-phpx-fragment";
-pub const STATIC_ACCEPT: &str = "text/x-deka-static";
 /// Fill the three document holes. Missing holes are left unchanged.
 pub fn fill_document(index_html: &str, head: &str, app: &str, scripts: &str) -> String {
     // Replace holes in template order, each once. App HTML is escaped by

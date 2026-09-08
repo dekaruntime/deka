@@ -1249,6 +1249,7 @@ impl WorkerThread {
 
         let exec_mode = match request.request_data.mode {
             ExecutionMode::Module => "module",
+            ExecutionMode::StaticRender => "static-render",
             _ => "request",
         };
         if let Err(err) = isolate.runtime.execute_script(
@@ -1424,6 +1425,14 @@ impl WorkerThread {
                     ModuleCodeString::from("undefined".to_string()),
                 )
                 .map_err(|err| err.to_string())
+        } else if request.request_data.mode == ExecutionMode::StaticRender {
+            isolate
+                .runtime
+                .execute_script(
+                    "handler.js",
+                    ModuleCodeString::from("globalThis.__dekaStaticRender()".to_string()),
+                )
+                .map_err(|err| err.to_string())
         } else {
             // Execute the handler fetch using the globals
             const EXEC_CALL: &str = r#"globalThis.__dekaExecuteRequest()"#;
@@ -1467,7 +1476,7 @@ impl WorkerThread {
 
         if matches!(
             request.request_data.mode,
-            ExecutionMode::Request | ExecutionMode::Module
+            ExecutionMode::Request | ExecutionMode::StaticRender | ExecutionMode::Module
         ) {
             // Run event loop to complete async operations
             {

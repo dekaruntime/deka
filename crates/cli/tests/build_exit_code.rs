@@ -246,7 +246,7 @@ fn build_merges_head_into_dist_html() {
 }
 
 #[test]
-fn build_passes_slug_params_in_generated_entry() {
+fn dynamic_routes_remain_in_the_request_router() {
     let project = tempfile::tempdir().expect("create temp project dir");
     init_project(project.path());
     let slug_dir = project.path().join("app").join("blog").join("[slug]");
@@ -263,17 +263,13 @@ fn build_passes_slug_params_in_generated_entry() {
         "deka build should succeed with a [slug] page: {combined}"
     );
 
-    let entry = fs::read_to_string(
-        project
-            .path()
-            .join(".cache")
-            .join("dekascript")
-            .join("serve-entry.dsx"),
-    )
+    let entry = runtime_core::framework::write_app_router_entry(project.path())
+        .expect("generate request router");
+    let entry = fs::read_to_string(entry)
     .expect("read generated serve-entry");
     assert!(
         entry.contains("slug={last_segment(path)}") || entry.contains("slug: last_segment(path)"),
-        "generated matcher should pass [slug] into Page: {entry}"
+        "request router should pass [slug] into Page: {entry}"
     );
 }
 
@@ -373,44 +369,16 @@ fn build_desugars_loading_dsx_to_suspense() {
             .path()
             .join(".cache")
             .join("dekascript")
-            .join("serve-entry.dsx"),
+            .join("static-root-entry.dsx"),
     )
-    .expect("read generated serve-entry");
+    .expect("read generated static entry");
     assert!(
         entry.contains("import { Suspense } from \"ui/suspense\""),
-        "serve-entry should import Suspense: {entry}"
+        "static entry should import Suspense: {entry}"
     );
     assert!(
         entry.contains("<Suspense fallback={<Loading_root />}"),
         "loading.dsx should wrap the child segment as a ComponentNode: {entry}"
-    );
-}
-
-#[test]
-fn build_serve_entry_uses_render_to_stream_for_documents() {
-    let project = tempfile::tempdir().expect("create temp project dir");
-    init_project(project.path());
-    let (success, combined) = run_build(project.path());
-    assert!(success, "deka build should succeed: {combined}");
-    let entry = fs::read_to_string(
-        project
-            .path()
-            .join(".cache")
-            .join("dekascript")
-            .join("serve-entry.dsx"),
-    )
-    .expect("read generated serve-entry");
-    assert!(
-        entry.contains("renderToStreamHtml"),
-        "documents should stream via renderToStreamHtml: {entry}"
-    );
-    assert!(
-        entry.contains("renderToStringAsync") && entry.contains("staticBuild"),
-        "dist/ prerender should use renderToStringAsync via staticBuild: {entry}"
-    );
-    assert!(
-        entry.contains("async fn App"),
-        "App must be async so stream chunks can flush: {entry}"
     );
 }
 
