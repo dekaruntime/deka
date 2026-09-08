@@ -3,6 +3,7 @@ use core::{CommandSpec, Context, ParamSpec, Registry};
 use runtime_core::modules::MODULES_DIR;
 
 use crate::cli::build_dsc;
+use crate::cli::build_publish;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -95,6 +96,7 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
         .unwrap_or(std::env::current_dir().map_err(|err| err.to_string())?);
 
     let project_root = resolve_project_root(&root_hint)?;
+    build_publish::recover_interrupted_publish(&project_root);
     ensure_web_project_layout(&project_root)?;
 
     let app_dir = project_root.join("app");
@@ -142,13 +144,37 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     // Dsc emits build-only entries separately from the runtime graph. Execute
     // and validate all of them before promoting staged output; the runtime
     // graph then imports only the materialized `deka:dev/<slot>` literals.
-    let build_slots = build_dsc::collect_build_plans(
+    let planned = build_dsc::collect_build_plans(
         &project_root,
         &[app_dir.as_path(), src_dir.as_path(), api_dir.as_path()],
     )?;
+
+    // Plan the route manifest BEFORE any build entry executes or any route
+    // renders: it is the pre-execution validation boundary (plan version,
+    // slot shape, route disposition, output collisions). Non-app-router
+    // projects do not use the manifest.
+    #[cfg(feature = "native")]
+    let mut manifest = if runtime_core::framework::is_app_router_project(&project_root) {
+        let app_manifest = runtime_core::framework::scan_app_dir(&app_dir);
+        let api_entries = runtime_core::framework::scan_api_dir(&api_dir);
+        Some(runtime_core::framework::BuildManifest::plan(
+            &project_root,
+            &planned,
+            build_dsc::dsc_identity(),
+            &app_manifest,
+            &api_entries,
+        )?)
+    } else {
+        None
+    };
+
+    let build_slots: Vec<build_dsc::BuildPlanSlot> = planned
+        .iter()
+        .flat_map(|source| source.plan.slots.clone())
+        .collect();
     let build_entries = build_dsc::stage_build_entries(&project_root, staging_root, build_slots)?;
     #[cfg(feature = "native")]
-    runtime::materialize_build_values(
+    let values = runtime::materialize_build_values(
         &project_root,
         build_entries
             .iter()
@@ -162,7 +188,22 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     )?;
     build_dsc::remove_staged_build_entries(&build_entries)?;
 
-    let dist_root = project_root.join("dist");
+    // StaticParams routes become concrete instances from the materialized
+    // values (post-execution, pre-render).
+    #[cfg(feature = "native")]
+    if let Some(manifest) = manifest.as_mut() {
+        manifest.expand_static_params(&values)?;
+    }
+    #[cfg(feature = "native")]
+    let render_tasks: Vec<runtime::StaticRenderTask> = manifest
+        .as_ref()
+        .map(build_publish::render_tasks)
+        .unwrap_or_default();
+
+    // Everything below writes into a staged tree that atomically replaces
+    // dist/ only after every step succeeds (deka#719).
+    let staged = build_publish::stage_dist(&project_root)?;
+    let dist_root = staged.root.join("dist");
     let dist_client = dist_root.join("client");
     let dist_server = dist_root.join("server");
     let dist_app = dist_root.join("app");
@@ -195,7 +236,7 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     let client_index = dist_client.join("index.html");
     if runtime_core::framework::is_app_router_project(&project_root) {
         #[cfg(feature = "native")]
-        runtime::prerender_static_pages(&project_root, &dist_client)?;
+        runtime::prerender_static_pages(&project_root, &dist_client, &render_tasks)?;
         #[cfg(not(feature = "native"))]
         {
             let index_src = project_root.join("index.html");
@@ -360,6 +401,13 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
         inject_defer_script(&dist_client)?;
     }
 
+    // server:defer provenance for deka#718's ◐ classification (not consumed
+    // yet); recorded before the manifest is written.
+    #[cfg(feature = "native")]
+    if let Some(manifest) = manifest.as_mut() {
+        build_publish::apply_deferred(manifest, &deferred, &project_root);
+    }
+
     let styles = runtime_core::framework::collect_route_styles(
         &runtime_core::framework::scan_app_dir(&app_dir),
     );
@@ -385,6 +433,19 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     // Inlining is not app-router-only: the web-bootstrap path used to inject a
     // `src=` import map browsers reject (deka#624).
     rewrite_dist_html_asset_urls(&dist_client)?;
+
+    // The staged tree is complete: hash its artifacts into the manifest,
+    // persist it, atomically replace dist/, then print the route table.
+    #[cfg(feature = "native")]
+    build_publish::finalize(&project_root, &staged, manifest.as_mut())?;
+    #[cfg(not(feature = "native"))]
+    build_publish::publish(&project_root, &staged)?;
+
+    // publish renamed the staged tree into place; report the real dist paths.
+    let dist_root = project_root.join("dist");
+    let dist_client = dist_root.join("client");
+    let dist_app = dist_root.join("app");
+    let dist_server = dist_root.join("server");
 
     let mut report = format!(
         "built web project {}\n  client: {}\n  app: {}\n  server: {}\n  hydration: {}",
