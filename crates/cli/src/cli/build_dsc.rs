@@ -11,29 +11,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use serde::Deserialize;
+pub use runtime_core::framework::{BuildPlan, BuildPlanSlot, PlannedSource};
 
 const MISSING_DSC: &str = "dsc is required for deka build. Install dsc (https://deka.gg/install), set DEKA_DSC, or put dsc next to deka / on PATH.";
-const BUILD_PLAN_VERSION: u32 = 1;
-
-/// Compiler-owned, build-only contract. Its descriptor is intentionally
-/// opaque here: Deka validates returned values against it but does not infer
-/// DekaScript types independently.
-#[derive(Debug, Deserialize)]
-pub struct BuildPlan {
-    pub version: u32,
-    pub slots: Vec<BuildPlanSlot>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct BuildPlanSlot {
-    pub id: String,
-    pub binding: String,
-    pub file: String,
-    pub span: serde_json::Value,
-    pub descriptor: serde_json::Value,
-    pub entry: String,
-}
 
 /// A compiler-generated entry written beside the staged JS module it imports.
 #[derive(Debug)]
@@ -81,8 +61,9 @@ pub fn transpile_bundle(project_root: &Path, entry: &Path) -> Result<String, Str
 }
 
 /// Ask the released compiler for a build plan. A plan is data, never an
-/// instruction to execute arbitrary code: Deka validates its version and
-/// shape before it writes or evaluates an entry.
+/// instruction to execute arbitrary code: the build manifest validates its
+/// version and shape (single spelling, owned by `runtime_core`) before any
+/// build entry executes.
 pub fn build_plan(project_root: &Path, input: &Path) -> Result<BuildPlan, String> {
     let dsc = dsc_bin()?;
     let input = path_utf8(input)?;
@@ -102,41 +83,45 @@ pub fn build_plan(project_root: &Path, input: &Path) -> Result<BuildPlan, String
             ),
         ));
     }
-    let plan: BuildPlan = serde_json::from_slice(&output.stdout)
-        .map_err(|err| format!("dsc emitted an invalid build plan: {err}"))?;
-    if plan.version != BUILD_PLAN_VERSION {
-        return Err(format!(
-            "unsupported dsc build plan version {}; deka requires version {BUILD_PLAN_VERSION}",
-            plan.version
-        ));
-    }
-    for slot in &plan.slots {
-        if slot.id.is_empty() || slot.binding.is_empty() || slot.entry.is_empty() {
-            return Err(
-                "dsc emitted a build plan slot with a missing id, binding, or entry".to_string(),
-            );
-        }
-    }
-    Ok(plan)
+    serde_json::from_slice(&output.stdout)
+        .map_err(|err| format!("dsc emitted an invalid build plan: {err}"))
 }
 
-/// Collect every build slot declared in the project source trees. Dsc does
-/// the language analysis; this host only aggregates its versioned artifacts.
+/// Collect one compiler plan per source file in the project source trees.
+/// Dsc does the language analysis; this host only aggregates its versioned
+/// artifacts. Plan validation (version, slot shape, duplicate ids) is owned
+/// by the build manifest.
 pub fn collect_build_plans(
     project_root: &Path,
     source_roots: &[&Path],
-) -> Result<Vec<BuildPlanSlot>, String> {
-    let mut slots = Vec::new();
+) -> Result<Vec<PlannedSource>, String> {
+    let mut planned = Vec::new();
     for source_root in source_roots {
         for source in collect_deka_source_files(source_root)? {
-            slots.extend(build_plan(project_root, &source)?.slots);
+            let plan = build_plan(project_root, &source)?;
+            planned.push(PlannedSource {
+                file: source.to_string_lossy().into_owned(),
+                plan,
+            });
         }
     }
-    slots.sort_by(|left, right| left.id.cmp(&right.id));
-    if slots.windows(2).any(|pair| pair[0].id == pair[1].id) {
-        return Err("dsc emitted duplicate build slot identifiers".to_string());
+    Ok(planned)
+}
+
+/// `dsc --version` output (first line) when the binary reports one; None
+/// otherwise. Recorded as compiler provenance in the build manifest.
+pub fn dsc_identity() -> Option<String> {
+    let dsc = dsc_bin().ok()?;
+    let output = Command::new(&dsc).arg("--version").output().ok()?;
+    if !output.status.success() {
+        return None;
     }
-    Ok(slots)
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
 }
 
 /// Place a generated entry next to its staged peer module. Relative imports

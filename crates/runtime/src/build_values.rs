@@ -1,5 +1,6 @@
 //! Host execution and materialization for compiler-planned `build {}` values.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -22,10 +23,12 @@ pub struct BuildEntry {
 
 /// Execute every generated build entry and atomically replace the project's
 /// virtual build-value modules only when every entry validates successfully.
+/// Returns the validated `Ok(value)` JSON per slot id (input to the build
+/// manifest's staticParams expansion).
 pub fn materialize_build_values(
     project_root: &Path,
     entries: Vec<BuildEntry>,
-) -> Result<(), String> {
+) -> Result<BTreeMap<String, serde_json::Value>, String> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -36,7 +39,7 @@ pub fn materialize_build_values(
 async fn materialize_build_values_async(
     project_root: &Path,
     entries: Vec<BuildEntry>,
-) -> Result<(), String> {
+) -> Result<BTreeMap<String, serde_json::Value>, String> {
     let cache_dir = compiler_cache_dir(project_root);
     std::fs::create_dir_all(&cache_dir)
         .map_err(|err| format!("failed to create {}: {err}", cache_dir.display()))?;
@@ -47,7 +50,7 @@ async fn materialize_build_values_async(
 
     if entries.is_empty() {
         replace_build_value_dir(&cache_dir, staging.path())?;
-        return Ok(());
+        return Ok(BTreeMap::new());
     }
 
     init_env();
@@ -67,6 +70,7 @@ async fn materialize_build_values_async(
         extensions_provider,
     );
     let module_root = project_root.to_string_lossy().into_owned();
+    let mut values: BTreeMap<String, serde_json::Value> = BTreeMap::new();
 
     for entry in entries {
         validate_slot_id(&entry.id)?;
@@ -103,12 +107,14 @@ async fn materialize_build_values_async(
         let value = unwrap_result(&result, &entry.binding)?;
         validate_value(&entry.descriptor, value, "value")
             .map_err(|err| format!("build `{}` returned {err}", entry.binding))?;
+        values.insert(entry.id.clone(), value.clone());
         let module = build_value_module(&entry.descriptor, value)?;
         std::fs::write(staging.path().join(format!("{}.js", entry.id)), module)
             .map_err(|err| format!("failed to materialize build `{}`: {err}", entry.binding))?;
     }
 
-    replace_build_value_dir(&cache_dir, staging.path())
+    replace_build_value_dir(&cache_dir, staging.path())?;
+    Ok(values)
 }
 
 fn replace_build_value_dir(cache_dir: &Path, staged: &Path) -> Result<(), String> {
