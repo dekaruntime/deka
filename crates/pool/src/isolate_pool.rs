@@ -45,7 +45,9 @@ pub use config::{PoolConfig, SchedulerStrategy};
 
 mod request;
 use request::*;
-pub use request::{ExecutionMode, HandlerKey, IsolateResponse, RequestData, RequestParts};
+pub use request::{
+    ExecutionMode, ExecutionSecurity, HandlerKey, IsolateResponse, RequestData, RequestParts,
+};
 
 mod metrics;
 use metrics::*;

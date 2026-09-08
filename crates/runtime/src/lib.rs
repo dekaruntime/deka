@@ -17,8 +17,10 @@ mod js_pipeline;
 mod platform;
 mod prerender;
 mod run;
-mod security;
+pub mod security;
 mod serve;
+
+pub mod build_watch;
 
 pub fn run(context: &Context) {
     run::run(context);
@@ -41,11 +43,13 @@ pub use prerender::StaticRenderTask;
 pub fn materialize_build_values(
     project_root: &std::path::Path,
     entries: Vec<build_values::BuildEntry>,
-) -> Result<std::collections::BTreeMap<String, serde_json::Value>, String> {
-    build_values::materialize_build_values(project_root, entries)
+    policy_json: &str,
+    only: Option<&std::collections::BTreeSet<String>>,
+) -> Result<build_values::MaterializedBuild, String> {
+    build_values::materialize_build_values(project_root, entries, policy_json, only)
 }
 
-pub use build_values::BuildEntry;
+pub use build_values::{BuildEntry, MaterializedBuild};
 
 pub fn write_island_client_assets(
     assets_dir: &std::path::Path,

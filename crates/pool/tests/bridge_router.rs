@@ -71,6 +71,7 @@ fn test_request(handler_code: &str) -> RequestData {
         request_value: serde_json::Value::Null,
         request_parts: None,
         mode: ExecutionMode::Request,
+        security: None,
     }
 }
 
@@ -87,6 +88,7 @@ fn tenant_request(handler_code: &str, shop_id: &str) -> RequestData {
             body: None,
         }),
         mode: ExecutionMode::Request,
+        security: None,
     }
 }
 

@@ -634,6 +634,7 @@ async fn handle_platform_request(
         request_value: serde_json::Value::Null,
         request_parts: Some(request_parts),
         mode: ExecutionMode::Request,
+        security: None,
     };
 
     match state.engine.execute(handler_key, request_data).await {

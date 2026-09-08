@@ -14,8 +14,21 @@ impl HandlerKey {
     }
 }
 
+/// Per-execution security overrides (deka#725). When set, bridge enforcement
+/// on the executing thread resolves the policy from here instead of the
+/// process-wide `DEKA_SECURITY_POLICY` / `DEKA_SECURITY_NO_PROMPT` env vars.
+/// Build-slot execution uses this so a `deka dev` rematerialization cannot
+/// widen (or narrow) the policy observed by concurrently served requests.
+#[derive(Clone, Debug)]
+pub struct ExecutionSecurity {
+    /// Resolved policy JSON (the `DEKA_SECURITY_POLICY` payload).
+    pub policy_json: String,
+    /// Suppress interactive approval prompts for this execution.
+    pub no_prompt: bool,
+}
+
 /// Data needed to execute a request
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct RequestData {
     pub handler_code: String,
     pub handler_entry: Option<String>,
@@ -25,6 +38,7 @@ pub struct RequestData {
     pub request_value: serde_json::Value,
     pub request_parts: Option<RequestParts>,
     pub mode: ExecutionMode,
+    pub security: Option<ExecutionSecurity>,
 }
 
 #[derive(Clone)]
@@ -49,8 +63,9 @@ impl RequestParts {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum ExecutionMode {
+    #[default]
     Request,
     /// Executes a generated static-render entry without request globals.
     StaticRender,
