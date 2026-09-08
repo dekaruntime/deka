@@ -5,8 +5,8 @@ use crate::env::init_env;
 use crate::extensions::extensions_for_mode;
 use crate::security::resolve_security_policy;
 use core::Context;
-use engine::{config as runtime_config, set_engine, RuntimeEngine};
 use deka_host::validation::{format_validation_error, modules::validate_module_resolution};
+use engine::{config as runtime_config, set_engine, RuntimeEngine};
 use platform::Platform;
 use platform_server::ServerPlatform;
 use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData, RequestParts};
@@ -146,6 +146,7 @@ async fn run_async(context: &Context) -> Result<(), String> {
             RequestData {
                 handler_code,
                 handler_entry: Some(normalized.clone()),
+                module_root: None,
                 request_value,
                 request_parts: Some(RequestParts {
                     url: "http://localhost/run".to_string(),

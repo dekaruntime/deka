@@ -114,6 +114,24 @@ impl PhpxEsmLoader {
         resolve_phpx_module_spec(&self.project_root, specifier)
     }
 
+    /// Build values are compiler-addressed virtual modules. The Deka host
+    /// writes them only after a successful build phase, under the project
+    /// cache rather than beside user sources or in the published output.
+    fn resolve_build_value_module(&self, specifier: &str) -> Option<PathBuf> {
+        let id = specifier.strip_prefix("deka:dev/")?;
+        if id.is_empty()
+            || !id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        {
+            return None;
+        }
+        let path = runtime_core::framework::compiler_cache_dir(&self.project_root)
+            .join("build-values")
+            .join(format!("{id}.js"));
+        path.is_file().then_some(path)
+    }
+
     /// Write compiler-provided `ui/*` modules into the cache so relative
     /// imports between them (`./jsx.js`) resolve as real files.
     fn materialize_ui_module(&self, specifier: &str) -> Option<PathBuf> {
@@ -141,6 +159,10 @@ impl PhpxEsmLoader {
 
     fn resolve_path(&self, specifier: &str, referrer: &str) -> Result<ModuleSpecifier, JsErrorBox> {
         if is_bare_specifier(specifier) {
+            if let Some(path) = self.resolve_build_value_module(specifier) {
+                return ModuleSpecifier::from_file_path(path)
+                    .map_err(|_| JsErrorBox::generic("invalid build value module path"));
+            }
             if let Some(path) = self.materialize_ui_module(specifier) {
                 return ModuleSpecifier::from_file_path(path)
                     .map_err(|_| JsErrorBox::generic("invalid ui module path"));
@@ -149,10 +171,18 @@ impl PhpxEsmLoader {
                 return ModuleSpecifier::from_file_path(path)
                     .map_err(|_| JsErrorBox::generic("invalid module path"));
             }
-            return Err(JsErrorBox::generic(format!(
-                "unable to resolve module '{}'; check php_modules",
-                specifier
-            )));
+            let message = if specifier.starts_with("deka:dev/") {
+                format!(
+                    "build value '{}' has not been materialized; run deka build",
+                    specifier
+                )
+            } else {
+                format!(
+                    "unable to resolve module '{}'; check php_modules",
+                    specifier
+                )
+            };
+            return Err(JsErrorBox::generic(message));
         }
 
         if specifier.to_ascii_lowercase().ends_with(".phpx") {
@@ -248,6 +278,10 @@ const __dekaMain = await import(\"__ENTRY__\");\n\
 globalThis.__dekaStaticRender =\n\
   typeof __dekaMain.StaticRender === \"function\"\n\
     ? __dekaMain.StaticRender\n\
+    : undefined;\n\
+globalThis.__dekaBuild =\n\
+  typeof __dekaMain.default === \"function\"\n\
+    ? __dekaMain.default\n\
     : undefined;\n\
 const __candidate = typeof __dekaMain.default !== \"undefined\"\n\
   ? __dekaMain.default\n\

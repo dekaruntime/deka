@@ -1231,25 +1231,28 @@ impl WorkerThread {
             HashMap::new()
         };
 
-        if let Err(err) = set_request_globals(
-            &mut isolate.runtime,
-            &request.request_data.request_value,
-            request.request_data.request_parts.as_ref(),
-            &self.deka_args,
-            tenant_info.as_ref(),
-            &shop_secrets,
-        ) {
-            isolate.active_requests = 0;
-            isolate.state = IsolateState::Idle;
-            return (
-                ExecutionOutcome::Err(format!("Setup failed: {}", err)),
-                ExecutionProfile::empty(),
-            );
+        if request.request_data.mode != ExecutionMode::Build {
+            if let Err(err) = set_request_globals(
+                &mut isolate.runtime,
+                &request.request_data.request_value,
+                request.request_data.request_parts.as_ref(),
+                &self.deka_args,
+                tenant_info.as_ref(),
+                &shop_secrets,
+            ) {
+                isolate.active_requests = 0;
+                isolate.state = IsolateState::Idle;
+                return (
+                    ExecutionOutcome::Err(format!("Setup failed: {}", err)),
+                    ExecutionProfile::empty(),
+                );
+            }
         }
 
         let exec_mode = match request.request_data.mode {
             ExecutionMode::Module => "module",
             ExecutionMode::StaticRender => "static-render",
+            ExecutionMode::Build => "build",
             _ => "request",
         };
         if let Err(err) = isolate.runtime.execute_script(
@@ -1433,6 +1436,16 @@ impl WorkerThread {
                     ModuleCodeString::from("globalThis.__dekaStaticRender()".to_string()),
                 )
                 .map_err(|err| err.to_string())
+        } else if request.request_data.mode == ExecutionMode::Build {
+            isolate
+                .runtime
+                .execute_script(
+                    "handler.js",
+                    ModuleCodeString::from(
+                        "(async () => { if (typeof globalThis.__dekaBuild !== 'function') { throw new Error('build entry must export a default async function'); } const value = await globalThis.__dekaBuild(); return JSON.stringify(value, (_key, item) => item instanceof Uint8Array ? { __deka_bytes: Array.from(item) } : item); })()".to_string(),
+                    ),
+                )
+                .map_err(|err| err.to_string())
         } else {
             // Execute the handler fetch using the globals
             const EXEC_CALL: &str = r#"globalThis.__dekaExecuteRequest()"#;
@@ -1476,7 +1489,10 @@ impl WorkerThread {
 
         if matches!(
             request.request_data.mode,
-            ExecutionMode::Request | ExecutionMode::StaticRender | ExecutionMode::Module
+            ExecutionMode::Request
+                | ExecutionMode::StaticRender
+                | ExecutionMode::Build
+                | ExecutionMode::Module
         ) {
             // Run event loop to complete async operations
             {

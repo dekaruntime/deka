@@ -19,6 +19,9 @@ impl HandlerKey {
 pub struct RequestData {
     pub handler_code: String,
     pub handler_entry: Option<String>,
+    /// Project root used for ESM resolution. Generated entries may be staged
+    /// outside the project while their imports still resolve against it.
+    pub module_root: Option<String>,
     pub request_value: serde_json::Value,
     pub request_parts: Option<RequestParts>,
     pub mode: ExecutionMode,
@@ -51,6 +54,8 @@ pub enum ExecutionMode {
     Request,
     /// Executes a generated static-render entry without request globals.
     StaticRender,
+    /// Executes a compiler-generated build entry without request globals.
+    Build,
     Module,
 }
 

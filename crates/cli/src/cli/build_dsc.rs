@@ -11,7 +11,36 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use serde::Deserialize;
+
 const MISSING_DSC: &str = "dsc is required for deka build. Install dsc (https://deka.gg/install), set DEKA_DSC, or put dsc next to deka / on PATH.";
+const BUILD_PLAN_VERSION: u32 = 1;
+
+/// Compiler-owned, build-only contract. Its descriptor is intentionally
+/// opaque here: Deka validates returned values against it but does not infer
+/// DekaScript types independently.
+#[derive(Debug, Deserialize)]
+pub struct BuildPlan {
+    pub version: u32,
+    pub slots: Vec<BuildPlanSlot>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BuildPlanSlot {
+    pub id: String,
+    pub binding: String,
+    pub file: String,
+    pub span: serde_json::Value,
+    pub descriptor: serde_json::Value,
+    pub entry: String,
+}
+
+/// A compiler-generated entry written beside the staged JS module it imports.
+#[derive(Debug)]
+pub struct StagedBuildEntry {
+    pub slot: BuildPlanSlot,
+    pub path: PathBuf,
+}
 
 fn dsc_bin() -> Result<PathBuf, String> {
     crate::dsc::find_dsc()?.ok_or_else(|| MISSING_DSC.to_string())
@@ -49,6 +78,123 @@ pub fn transpile_file(path: &Path) -> Result<String, String> {
 
 pub fn transpile_bundle(project_root: &Path, entry: &Path) -> Result<String, String> {
     run_transpile(entry, Some(project_root), &["transpile", "--bundle"])
+}
+
+/// Ask the released compiler for a build plan. A plan is data, never an
+/// instruction to execute arbitrary code: Deka validates its version and
+/// shape before it writes or evaluates an entry.
+pub fn build_plan(project_root: &Path, input: &Path) -> Result<BuildPlan, String> {
+    let dsc = dsc_bin()?;
+    let input = path_utf8(input)?;
+    let output = Command::new(&dsc)
+        .current_dir(project_root)
+        .env("DEKA_MODULE_ROOT", project_root)
+        .args(["plan", input])
+        .output()
+        .map_err(|err| format!("failed to exec {}: {err}", dsc.display()))?;
+    if !output.status.success() {
+        return Err(emit_failure_message(
+            &dsc,
+            &format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ),
+        ));
+    }
+    let plan: BuildPlan = serde_json::from_slice(&output.stdout)
+        .map_err(|err| format!("dsc emitted an invalid build plan: {err}"))?;
+    if plan.version != BUILD_PLAN_VERSION {
+        return Err(format!(
+            "unsupported dsc build plan version {}; deka requires version {BUILD_PLAN_VERSION}",
+            plan.version
+        ));
+    }
+    for slot in &plan.slots {
+        if slot.id.is_empty() || slot.binding.is_empty() || slot.entry.is_empty() {
+            return Err(
+                "dsc emitted a build plan slot with a missing id, binding, or entry".to_string(),
+            );
+        }
+    }
+    Ok(plan)
+}
+
+/// Collect every build slot declared in the project source trees. Dsc does
+/// the language analysis; this host only aggregates its versioned artifacts.
+pub fn collect_build_plans(
+    project_root: &Path,
+    source_roots: &[&Path],
+) -> Result<Vec<BuildPlanSlot>, String> {
+    let mut slots = Vec::new();
+    for source_root in source_roots {
+        for source in collect_deka_source_files(source_root)? {
+            slots.extend(build_plan(project_root, &source)?.slots);
+        }
+    }
+    slots.sort_by(|left, right| left.id.cmp(&right.id));
+    if slots.windows(2).any(|pair| pair[0].id == pair[1].id) {
+        return Err("dsc emitted duplicate build slot identifiers".to_string());
+    }
+    Ok(slots)
+}
+
+/// Place a generated entry next to its staged peer module. Relative imports
+/// in Dsc's entry then resolve against the already-compiled JS tree, never
+/// against the original DekaScript source tree.
+pub fn stage_build_entries(
+    project_root: &Path,
+    staging_root: &Path,
+    slots: Vec<BuildPlanSlot>,
+) -> Result<Vec<StagedBuildEntry>, String> {
+    let mut entries = Vec::with_capacity(slots.len());
+    for slot in slots {
+        let source = PathBuf::from(&slot.file);
+        let source = if source.is_absolute() {
+            source
+        } else {
+            project_root.join(source)
+        };
+        let relative = source.strip_prefix(project_root).map_err(|_| {
+            format!(
+                "dsc build plan source {} is outside project {}",
+                source.display(),
+                project_root.display()
+            )
+        })?;
+        let peer = staging_root.join(relative).with_extension("js");
+        if !peer.is_file() {
+            return Err(format!(
+                "dsc build plan source {} has no staged peer module at {}",
+                source.display(),
+                peer.display()
+            ));
+        }
+        let parent = peer
+            .parent()
+            .ok_or_else(|| format!("staged module has no parent: {}", peer.display()))?;
+        let path = parent.join(format!(".__deka_build_{}.js", slot.id));
+        fs::write(&path, &slot.entry)
+            .map_err(|err| format!("failed to write build entry {}: {err}", path.display()))?;
+        entries.push(StagedBuildEntry { slot, path });
+    }
+    Ok(entries)
+}
+
+/// Generated entries are staging-only implementation details. Once the host
+/// has materialized their values they must not be promoted into `dist/`.
+pub fn remove_staged_build_entries(entries: &[StagedBuildEntry]) -> Result<(), String> {
+    for entry in entries {
+        if entry.path.exists() {
+            fs::remove_file(&entry.path).map_err(|err| {
+                format!(
+                    "failed to remove staged build entry {}: {err}",
+                    entry.path.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
 }
 
 /// Prefer tsc-like default emit: `dsc --outdir <outdir>` from the project root

@@ -397,6 +397,7 @@ impl WorkerThread {
                 &key,
                 source_hash,
                 request.request_data.handler_entry.as_deref(),
+                request.request_data.module_root.as_deref(),
             )
             .await
         {
@@ -670,6 +671,7 @@ impl WorkerThread {
         key: &HandlerKey,
         source_hash: u64,
         handler_entry: Option<&str>,
+        module_root: Option<&str>,
     ) -> Result<(bool, std::time::Duration), String> {
         let start = Instant::now();
 
@@ -715,7 +717,7 @@ impl WorkerThread {
             }
 
             // Create new warm isolate
-            match self.create_warm_isolate(source_hash, handler_entry) {
+            match self.create_warm_isolate(source_hash, handler_entry, module_root) {
                 Ok(isolate) => {
                     self.isolates.insert(key.clone(), isolate);
                     self.lru_order.push(key.clone());
@@ -735,6 +737,7 @@ impl WorkerThread {
         &self,
         source_hash: u64,
         handler_entry: Option<&str>,
+        module_root: Option<&str>,
     ) -> Result<WarmIsolate, String> {
         let extensions = (self.extensions_provider)();
         let isolate_id = format!("isolate_{}", nanoid!(10, &ID_ALPHABET));
@@ -746,7 +749,13 @@ impl WorkerThread {
         };
         let (module_loader, entry_specifier) = if let Some(entry) = handler_entry {
             let entry_path = Path::new(entry).to_path_buf();
-            let project_root = resolve_project_root(&entry_path)?;
+            let project_root = match module_root {
+                Some(root) => Path::new(root).to_path_buf(),
+                None => resolve_project_root(&entry_path)?,
+            };
+            if !project_root.is_dir() {
+                return Err(format!("invalid module root: {}", project_root.display()));
+            }
             let wrapper_path = entry_wrapper_path(&project_root);
             let wrapper_specifier = ModuleSpecifier::from_file_path(&wrapper_path)
                 .map_err(|_| "invalid entry wrapper path".to_string())?;

@@ -6,6 +6,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::OnceLock;
 
+mod build_values;
 mod css;
 mod dev;
 mod dsc_transpile;
@@ -33,6 +34,15 @@ pub fn prerender_static_pages(
 ) -> Result<(), String> {
     prerender::prerender_static_pages(project_root, dist_client)
 }
+
+pub fn materialize_build_values(
+    project_root: &std::path::Path,
+    entries: Vec<build_values::BuildEntry>,
+) -> Result<(), String> {
+    build_values::materialize_build_values(project_root, entries)
+}
+
+pub use build_values::BuildEntry;
 
 pub fn write_island_client_assets(
     assets_dir: &std::path::Path,
