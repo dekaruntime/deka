@@ -372,7 +372,36 @@ pub(super) fn path_condition(route: &str) -> Result<String, String> {
     Ok(format!("one_segment_after(path, {})", json_str(&prefix)?))
 }
 pub(super) fn wrap_layouts(entries: &[FrameworkEntry], route: &str, page_alias: &str) -> String {
-    let mut expr = page_call(route, page_alias);
+    let expr = page_call(route, page_alias);
+    wrap_ancestors(entries, route, expr)
+}
+
+/// Static-render variant of [`wrap_layouts`]: the page call receives literal
+/// parameter values (`name={"value"}`) instead of the request-derived
+/// `last_segment(path)` used on the request path.
+pub(super) fn wrap_layouts_with_params(
+    entries: &[FrameworkEntry],
+    route: &str,
+    page_alias: &str,
+    params: &std::collections::BTreeMap<String, String>,
+) -> Result<String, String> {
+    let expr = if params.is_empty() {
+        format!("<{page_alias} />")
+    } else {
+        let attrs = params
+            .iter()
+            .map(|(name, value)| {
+                let literal = json_str(value)?;
+                Ok(format!("{name}={{{literal}}}"))
+            })
+            .collect::<Result<Vec<_>, String>>()?
+            .join(" ");
+        format!("<{page_alias} {attrs} />")
+    };
+    Ok(wrap_ancestors(entries, route, expr))
+}
+
+fn wrap_ancestors(entries: &[FrameworkEntry], route: &str, mut expr: String) -> String {
     for seg in ancestor_routes(route) {
         if let Some(loading) = loading_at(entries, &seg) {
             expr = suspense_wrap(&alias("Loading", &loading.route), &expr);

@@ -1,5 +1,6 @@
 //! One-shot App() execution for `deka build` static HTML.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -8,21 +9,36 @@ use crate::extensions::extensions_for_mode;
 use engine::{config as runtime_config, RuntimeEngine};
 use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData};
 use runtime_core::env::set_handler_path_with;
-use runtime_core::framework::{self, static_page_routes};
+use runtime_core::framework;
 use runtime_core::modules::ensure_deka_module_root_env_with;
 use runtime_core::storefront_envelope::StorefrontResponse;
 
-pub fn prerender_static_pages(project_root: &Path, dist_client: &Path) -> Result<(), String> {
+/// One static render the build must produce: the page's route template, the
+/// CONCRETE route to write HTML for, and the literal params for the template's
+/// `[param]` segments (empty for plain static pages).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StaticRenderTask {
+    pub template: String,
+    pub route: String,
+    pub params: BTreeMap<String, String>,
+}
+
+pub fn prerender_static_pages(
+    project_root: &Path,
+    dist_client: &Path,
+    tasks: &[StaticRenderTask],
+) -> Result<(), String> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|err| format!("prerender runtime: {err}"))?;
-    rt.block_on(prerender_static_pages_async(project_root, dist_client))
+    rt.block_on(prerender_static_pages_async(project_root, dist_client, tasks))
 }
 
 async fn prerender_static_pages_async(
     project_root: &Path,
     dist_client: &Path,
+    tasks: &[StaticRenderTask],
 ) -> Result<(), String> {
     init_env();
     unsafe {
@@ -30,6 +46,18 @@ async fn prerender_static_pages_async(
     }
     crate::islands::write_island_client_assets_for_project(project_root)?;
     crate::css::write_route_css_assets_for_project(project_root)?;
+
+    // Explicit render plan: every static route and staticParams instance the
+    // build manifest planned. Empty means no app-router pages were planned;
+    // render `/` for minimal projects as before.
+    let mut planned: Vec<StaticRenderTask> = tasks.to_vec();
+    if planned.is_empty() {
+        planned.push(StaticRenderTask {
+            template: "/".to_string(),
+            route: "/".to_string(),
+            params: BTreeMap::new(),
+        });
+    }
 
     let mut pool_config = PoolConfig::default();
     pool_config.num_workers = 1;
@@ -43,15 +71,11 @@ async fn prerender_static_pages_async(
         &runtime_cfg,
         extensions_provider,
     ));
-    let app_dir = project_root.join("app");
-    let manifest = framework::scan_app_dir(&app_dir);
-    let mut routes = static_page_routes(&manifest);
-    if routes.is_empty() {
-        routes.push("/".to_string());
-    }
 
-    for route in routes {
-        let entry = framework::write_static_render_entry(project_root, &route)?;
+    for task in &planned {
+        let route = &task.route;
+        let entry =
+            framework::write_static_render_entry(project_root, &task.template, &task.params)?;
         let handler_path = entry.to_string_lossy().to_string();
         let mut env_set = |key: &str, value: &str| unsafe { std::env::set_var(key, value) };
         let env_get = |key: &str| std::env::var(key).ok();
@@ -94,7 +118,7 @@ async fn prerender_static_pages_async(
                 envelope.status
             ));
         }
-        let dest = dist_path_for_route(dist_client, &route);
+        let dest = dist_path_for_route(dist_client, route);
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;

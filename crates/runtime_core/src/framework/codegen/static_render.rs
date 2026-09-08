@@ -1,6 +1,7 @@
 //! Per-route static render entries. Unlike the serve entry, these entries
 //! import one page tree and expose StaticRender() with no Request argument.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use super::super::compiler_cache_dir;
@@ -11,19 +12,19 @@ use super::super::islands::{ClientIsland, island_script_tags, scan_client_island
 use super::super::manifest::{FrameworkEntry, FrameworkEntryKind, FrameworkManifest, scan_app_dir};
 use super::super::routes::{layout_chain, route_css_slug};
 use super::defer::write_defer_router_entry;
-use super::serve::{head_concat, split_document, with_css_links, wrap_layouts};
+use super::serve::{head_concat, split_document, with_css_links, wrap_layouts, wrap_layouts_with_params};
 use super::{alias, exports_head, json_str, pathdiff_dsx};
 
-/// Write a static entry for one concrete route. Dynamic parameter expansion is
-/// intentionally owned by the later route-plan work; this entry only accepts
-/// the concrete pages selected by the current build.
-pub fn write_static_render_entry(project_root: &Path, route: &str) -> Result<PathBuf, String> {
-    if route.contains('[') {
-        return Err(format!(
-            "static renderer requires a concrete route, got {route}"
-        ));
-    }
-
+/// Write a static entry for one route. `route` is the page's route TEMPLATE
+/// (used to locate the page and its layout chain); `params` carries literal
+/// values for the template's `[param]` segments. When params is non-empty the
+/// entry is for one CONCRETE instance: the page call embeds the literal values
+/// and the entry file is named after the concrete route.
+pub fn write_static_render_entry(
+    project_root: &Path,
+    route: &str,
+    params: &BTreeMap<String, String>,
+) -> Result<PathBuf, String> {
     let app_dir = project_root.join("app");
     let manifest = scan_app_dir(&app_dir);
     validate_app_router(project_root, &manifest)?;
@@ -45,14 +46,37 @@ pub fn write_static_render_entry(project_root: &Path, route: &str) -> Result<Pat
     let styles = collect_route_styles(&manifest);
     let css_plan = css_plan_from_styles(&styles);
 
+    let concrete_route = concrete_route(route, params);
     let cache_dir = compiler_cache_dir(project_root);
     std::fs::create_dir_all(&cache_dir)
         .map_err(|err| format!("failed to create {}: {err}", cache_dir.display()))?;
-    let entry = cache_dir.join(format!("static-{}-entry.dsx", route_css_slug(route)));
-    let source = generate_static_entry(&entry, &manifest, page, &index_html, &scripts, &css_plan)?;
+    let entry = cache_dir.join(format!(
+        "static-{}-entry.dsx",
+        route_css_slug(&concrete_route)
+    ));
+    let source = generate_static_entry(
+        &entry,
+        &manifest,
+        page,
+        &index_html,
+        &scripts,
+        &css_plan,
+        params,
+    )?;
     std::fs::write(&entry, source.as_bytes())
         .map_err(|err| format!("failed to write {}: {err}", entry.display()))?;
     Ok(entry)
+}
+
+/// Substitute literal params into the template's `[param]` segments. The
+/// manifest guarantees one value per bracket segment for staticParams
+/// instances, so any leftover bracket means the caller passed a partial map.
+fn concrete_route(template: &str, params: &BTreeMap<String, String>) -> String {
+    let mut route = template.to_string();
+    for (name, value) in params {
+        route = route.replace(&format!("[{name}]"), value);
+    }
+    route
 }
 
 fn validate_app_router(project_root: &Path, manifest: &FrameworkManifest) -> Result<(), String> {
@@ -106,6 +130,7 @@ fn generate_static_entry(
     index_html: &str,
     scripts: &str,
     css_plan: &CssPlan,
+    params: &BTreeMap<String, String>,
 ) -> Result<String, String> {
     let (doc_head, doc_mid, doc_tail) = split_document(index_html, scripts);
     let doc_head = json_str(&doc_head)?;
@@ -151,7 +176,11 @@ fn generate_static_entry(
         "import { Suspense } from \"ui/suspense\"\n"
     };
 
-    let tree = wrap_layouts(&manifest.entries, &page.route, &page_alias);
+    let tree = if params.is_empty() {
+        wrap_layouts(&manifest.entries, &page.route, &page_alias)
+    } else {
+        wrap_layouts_with_params(&manifest.entries, &page.route, &page_alias, params)?
+    };
     let head = with_css_links(
         css_plan,
         &page.route,
