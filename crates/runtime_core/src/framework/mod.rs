@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use crate::env::env_truthy_with;
 use crate::modules::MODULES_DIR;
 
+mod build_invalidation;
 mod build_manifest;
 mod codegen;
 mod css;
@@ -31,6 +32,7 @@ mod manifest;
 mod routes;
 mod source;
 
+pub use build_invalidation::{SlotInvalidation, affected_slots};
 pub use build_manifest::{
     BuildManifest, BuildPlan, BuildPlanSlot, FsObservation, FsObservationKind, ManifestArtifact,
     ManifestRoute, ManifestSlot, PlannedSource, RouteMode, SUPPORTED_PLAN_VERSIONS,
