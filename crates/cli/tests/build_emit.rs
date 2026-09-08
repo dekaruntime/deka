@@ -223,8 +223,9 @@ export fn Page() {
     let (success, combined) = run_build(project.path());
     assert!(!success, "Result.Err must stop deka build: {combined}");
     assert!(
-        combined.contains("build `title` failed: content source is unavailable"),
-        "build error must preserve Result.Err text: {combined}"
+        combined.contains("build `title` (at ")
+            && combined.contains("page.dsx:1:23) failed: content source is unavailable"),
+        "build error must link the source location and preserve Result.Err text: {combined}"
     );
     assert!(
         !project.path().join("dist").exists(),
