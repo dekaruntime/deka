@@ -608,6 +608,71 @@ pub(super) fn fs_proto_response_to_json(resp: &proto::bridge_v1::FsResponse) -> 
     serde_json::Value::Object(out)
 }
 
+/// deka#725: record a build-slot observation for read-only fs actions after
+/// enforcement passed and the outcome is known. Writes never record. A
+/// not-found outcome records an `absent` observation so that creating the
+/// path later invalidates the slot. No-op outside build execution.
+fn record_observation_for_action(
+    action: &str,
+    payload: &serde_json::Value,
+    response: Result<&serde_json::Value, &deno_core::error::CoreError>,
+) {
+    use runtime_core::framework::FsObservationKind;
+    let Some(path) = payload
+        .get("path")
+        .and_then(|v| v.as_str())
+        .filter(|path| !path.is_empty() && *path != "*")
+    else {
+        return;
+    };
+    let kind = match action {
+        "read_dir" => FsObservationKind::DirectoryListing,
+        "read_file" => FsObservationKind::Read,
+        "open" => {
+            let mode = payload.get("mode").and_then(|v| v.as_str()).unwrap_or("r");
+            if mode.contains('w')
+                || mode.contains('a')
+                || mode.contains('x')
+                || mode.contains('c')
+                || mode.contains('+')
+            {
+                return;
+            }
+            FsObservationKind::Read
+        }
+        _ => return,
+    };
+    let outcome = response
+        .map(|json| {
+            json.get("ok")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+                .then_some(kind)
+        })
+        .map_err(|err| err.to_string());
+    match outcome {
+        Ok(Some(kind)) => crate::build_observations::record_build_observation(path, kind),
+        Ok(None) => {
+            let not_found = response
+                .ok()
+                .and_then(|json| json.get("error").and_then(|v| v.as_str()))
+                .map(is_not_found_error)
+                .unwrap_or(false);
+            if not_found {
+                crate::build_observations::record_build_observation(path, FsObservationKind::Absent);
+            }
+        }
+        Err(message) if is_not_found_error(&message) => {
+            crate::build_observations::record_build_observation(path, FsObservationKind::Absent);
+        }
+        Err(_) => {}
+    }
+}
+
+fn is_not_found_error(message: &str) -> bool {
+    message.contains("No such file or directory") || message.contains("not found")
+}
+
 pub(super) fn fs_call_proto_impl(request: &[u8]) -> Result<Vec<u8>, deno_core::error::CoreError> {
     let started = Instant::now();
     let req = proto::bridge_v1::FsRequest::decode(request)
@@ -633,7 +698,16 @@ pub(super) fn fs_call_proto_impl(request: &[u8]) -> Result<Vec<u8>, deno_core::e
         }
         _ => {}
     }
-    let response_json = fs_call_impl(action, payload)?;
+    let response_json = match fs_call_impl(action.clone(), payload.clone()) {
+        Ok(response) => {
+            record_observation_for_action(&action, &payload, Ok(&response));
+            response
+        }
+        Err(err) => {
+            record_observation_for_action(&action, &payload, Err(&err));
+            return Err(err);
+        }
+    };
     let response = fs_json_response_to_proto(&response_json, kind);
     let out = response.encode_to_vec();
     record_bridge_proto_metric(

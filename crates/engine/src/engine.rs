@@ -43,6 +43,13 @@ impl RuntimeEngine {
         &self.user_pool
     }
 
+    /// The pool that serves `execute` requests. `pool()` above is the
+    /// user-code pool; the dev watch task needs this one to drop stale
+    /// isolates after rematerializing build values (deka#725).
+    pub fn request_pool(&self) -> &IsolatePool {
+        &self.server_pool
+    }
+
     pub fn archive(&self) -> Option<IntrospectArchive> {
         self.archive.clone()
     }

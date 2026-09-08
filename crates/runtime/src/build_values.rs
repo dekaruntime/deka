@@ -17,29 +17,58 @@ use crate::extensions::extensions_for_mode;
 pub struct BuildEntry {
     pub id: String,
     pub binding: String,
+    /// Source file the slot was planned from (diagnostics only).
+    pub file: String,
+    /// Compiler-owned source span of the `build { ... }` expression.
+    pub span: serde_json::Value,
     pub entry: PathBuf,
     pub descriptor: serde_json::Value,
 }
 
+/// Validated build output: the materialized `Ok(value)` JSON per slot id
+/// (input to the build manifest's staticParams expansion) plus the local
+/// filesystem observations recorded per slot while it executed (deka#725).
+#[derive(Debug, Default)]
+pub struct MaterializedBuild {
+    pub values: BTreeMap<String, serde_json::Value>,
+    pub observations: BTreeMap<String, Vec<runtime_core::framework::FsObservation>>,
+}
+
 /// Execute every generated build entry and atomically replace the project's
-/// virtual build-value modules only when every entry validates successfully.
-/// Returns the validated `Ok(value)` JSON per slot id (input to the build
-/// manifest's staticParams expansion).
+/// virtual build-value modules only when every executed entry validates
+/// successfully.
+///
+/// `policy_json` is the project's resolved security policy (the same
+/// `DEKA_SECURITY_POLICY` payload the serve/run paths export); build entries
+/// execute under it — the existing permission system decides which host
+/// capabilities the build phase gets, with no `build.*` namespace (rfd#48).
+///
+/// `only`, when `Some`, rematerializes just those slot ids (deka dev's
+/// targeted invalidation): unaffected slots keep their previously
+/// materialized modules.
 pub fn materialize_build_values(
     project_root: &Path,
     entries: Vec<BuildEntry>,
-) -> Result<BTreeMap<String, serde_json::Value>, String> {
+    policy_json: &str,
+    only: Option<&std::collections::BTreeSet<String>>,
+) -> Result<MaterializedBuild, String> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|err| format!("build runtime: {err}"))?;
-    rt.block_on(materialize_build_values_async(project_root, entries))
+    rt.block_on(materialize_build_values_async(
+        project_root, entries, policy_json, only,
+    ))
 }
 
 async fn materialize_build_values_async(
     project_root: &Path,
     entries: Vec<BuildEntry>,
-) -> Result<BTreeMap<String, serde_json::Value>, String> {
+    policy_json: &str,
+    only: Option<&std::collections::BTreeSet<String>>,
+) -> Result<MaterializedBuild, String> {
+    use runtime_core::framework::FsObservation;
+
     let cache_dir = compiler_cache_dir(project_root);
     std::fs::create_dir_all(&cache_dir)
         .map_err(|err| format!("failed to create {}: {err}", cache_dir.display()))?;
@@ -48,15 +77,29 @@ async fn materialize_build_values_async(
         .tempdir_in(&cache_dir)
         .map_err(|err| format!("failed to create build-value staging directory: {err}"))?;
 
-    if entries.is_empty() {
+    // Targeted rematerialization preserves the modules of slots that did not
+    // rerun by seeding the staging tree with the currently published set.
+    let existing_values = cache_dir.join("build-values");
+    if only.is_some() && existing_values.is_dir() {
+        copy_dir_contents(&existing_values, staging.path())?;
+    }
+
+    let executed: Vec<&BuildEntry> = entries
+        .iter()
+        .filter(|entry| only.is_none_or(|only| only.contains(entry.id.as_str())))
+        .collect();
+
+    if executed.is_empty() && only.is_none() {
         replace_build_value_dir(&cache_dir, staging.path())?;
-        return Ok(BTreeMap::new());
+        return Ok(MaterializedBuild::default());
     }
 
     init_env();
-    unsafe {
-        std::env::set_var("DEKA_SECURITY_NO_PROMPT", "1");
-    }
+    // Build-phase permissions resolve from the project's policy (deka.json +
+    // CLI overrides + dev defaults), exported exactly the way the serve/run
+    // paths export it. Prompts are always suppressed: a build must not block
+    // on interactive approval.
+    let _env_guard = BuildPhaseEnv::install(project_root, policy_json);
     let mut pool_config = PoolConfig::default();
     pool_config.num_workers = 1;
     pool_config.request_timeout_ms = 30_000;
@@ -70,11 +113,12 @@ async fn materialize_build_values_async(
         extensions_provider,
     );
     let module_root = project_root.to_string_lossy().into_owned();
-    let mut values: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+    let mut materialized = MaterializedBuild::default();
 
-    for entry in entries {
+    for entry in executed {
         validate_slot_id(&entry.id)?;
         let handler_entry = entry.entry.to_string_lossy().into_owned();
+        deka_host::build_observations::begin_build_slot(&entry.id);
         let response = engine
             .execute(
                 HandlerKey::new(format!("build:{}", entry.id)),
@@ -87,12 +131,17 @@ async fn materialize_build_values_async(
                     mode: ExecutionMode::Build,
                 },
             )
-            .await
-            .map_err(|err| format!("build `{}`: {err}", entry.binding))?;
+            .await;
+        // Drain observations even when execution failed so a failed slot
+        // cannot leak its collector into later host work.
+        let observations = deka_host::build_observations::end_build_slot();
+        let response = response
+            .map_err(|err| format!("build `{}` (at {}): {err}", entry.binding, slot_location(entry)))?;
         if !response.success {
             return Err(format!(
-                "build `{}`: {}",
+                "build `{}` (at {}): {}",
                 entry.binding,
+                slot_location(entry),
                 response
                     .error
                     .unwrap_or_else(|| "unknown execution error".to_string())
@@ -104,17 +153,120 @@ async fn materialize_build_values_async(
             .ok_or_else(|| format!("build `{}` returned no JSON result", entry.binding))?;
         let result: serde_json::Value = serde_json::from_str(&encoded)
             .map_err(|err| format!("build `{}` returned invalid JSON: {err}", entry.binding))?;
-        let value = unwrap_result(&result, &entry.binding)?;
+        let value = unwrap_result(&result, entry)?;
         validate_value(&entry.descriptor, value, "value")
             .map_err(|err| format!("build `{}` returned {err}", entry.binding))?;
-        values.insert(entry.id.clone(), value.clone());
+        materialized.values.insert(entry.id.clone(), value.clone());
+        if let Some((slot_id, observations)) = observations {
+            let mut observations: Vec<FsObservation> = observations
+                .iter()
+                .map(|observation| FsObservation {
+                    path: normalize_observation_path(project_root, &observation.path),
+                    kind: observation.kind,
+                })
+                .collect();
+            observations.sort_by(|a, b| a.path.cmp(&b.path).then_with(|| a.kind.cmp(&b.kind)));
+            observations.dedup();
+            materialized.observations.insert(slot_id, observations);
+        }
         let module = build_value_module(&entry.descriptor, value)?;
         std::fs::write(staging.path().join(format!("{}.js", entry.id)), module)
             .map_err(|err| format!("failed to materialize build `{}`: {err}", entry.binding))?;
     }
 
+    drop(engine);
     replace_build_value_dir(&cache_dir, staging.path())?;
-    Ok(values)
+    Ok(materialized)
+}
+
+/// Restores the process env vars the build phase exported, on success or
+/// error alike (cargo runs tests as threads in one process; see deka#537).
+struct BuildPhaseEnv {
+    policy: Option<String>,
+    no_prompt: Option<String>,
+    module_root: Option<String>,
+}
+
+impl BuildPhaseEnv {
+    fn install(project_root: &Path, policy_json: &str) -> Self {
+        let guard = Self {
+            policy: std::env::var("DEKA_SECURITY_POLICY").ok(),
+            no_prompt: std::env::var("DEKA_SECURITY_NO_PROMPT").ok(),
+            module_root: std::env::var("DEKA_MODULE_ROOT").ok(),
+        };
+        unsafe {
+            std::env::set_var("DEKA_SECURITY_POLICY", policy_json);
+            std::env::set_var("DEKA_SECURITY_NO_PROMPT", "1");
+            std::env::set_var(
+                "DEKA_MODULE_ROOT",
+                project_root.to_string_lossy().into_owned(),
+            );
+        }
+        guard
+    }
+}
+
+impl Drop for BuildPhaseEnv {
+    fn drop(&mut self) {
+        restore_env_var("DEKA_SECURITY_POLICY", self.policy.take());
+        restore_env_var("DEKA_SECURITY_NO_PROMPT", self.no_prompt.take());
+        restore_env_var("DEKA_MODULE_ROOT", self.module_root.take());
+    }
+}
+
+fn restore_env_var(key: &str, previous: Option<String>) {
+    unsafe {
+        match previous {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
+    }
+}
+
+fn copy_dir_contents(from: &Path, to: &Path) -> Result<(), String> {
+    for entry in std::fs::read_dir(from)
+        .map_err(|err| format!("failed to read {}: {err}", from.display()))?
+    {
+        let entry = entry.map_err(|err| format!("read_dir entry error: {err}"))?;
+        if entry.file_type().map_err(|err| err.to_string())?.is_file() {
+            std::fs::copy(entry.path(), to.join(entry.file_name()))
+                .map_err(|err| format!("failed to seed staged build value: {err}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// `file:line:column` of the slot's `build { ... }` expression, for
+/// source-linked diagnostics.
+fn slot_location(entry: &BuildEntry) -> String {
+    let start = entry.span.get("start");
+    let line = start
+        .and_then(|point| point.get("line"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let column = start
+        .and_then(|point| point.get("column"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    if line > 0 {
+        format!("{}:{line}:{column}", entry.file)
+    } else {
+        entry.file.clone()
+    }
+}
+
+/// Normalize an observed path for the manifest: project-relative with forward
+/// slashes when it sits under the root, absolute otherwise.
+fn normalize_observation_path(project_root: &Path, path: &str) -> String {
+    let cleaned = path.replace('\\', "/");
+    let as_path = Path::new(path);
+    if as_path.is_absolute() {
+        if let Ok(rel) = as_path.strip_prefix(project_root) {
+            return rel.to_string_lossy().replace('\\', "/");
+        }
+        return cleaned;
+    }
+    cleaned.trim_start_matches("./").to_string()
 }
 
 fn replace_build_value_dir(cache_dir: &Path, staged: &Path) -> Result<(), String> {
@@ -145,8 +297,9 @@ fn validate_slot_id(id: &str) -> Result<(), String> {
 
 fn unwrap_result<'a>(
     result: &'a serde_json::Value,
-    binding: &str,
+    entry: &BuildEntry,
 ) -> Result<&'a serde_json::Value, String> {
+    let binding = entry.binding.as_str();
     let object = result
         .as_object()
         .ok_or_else(|| format!("build `{binding}` must return Result<T, string>"))?;
@@ -162,7 +315,10 @@ fn unwrap_result<'a>(
                 .get("error")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("build entry returned Result.Err");
-            Err(format!("build `{binding}` failed: {message}"))
+            Err(format!(
+                "build `{binding}` (at {}) failed: {message}",
+                slot_location(entry)
+            ))
         }
         _ => Err(format!("build `{binding}` returned malformed Result")),
     }
@@ -440,15 +596,56 @@ mod tests {
 
     #[test]
     fn rejects_raw_values_and_surfaces_result_errors() {
-        assert!(unwrap_result(&serde_json::json!(["Ada"]), "labels").is_err());
+        let entry = BuildEntry {
+            id: "slot1".to_string(),
+            binding: "labels".to_string(),
+            file: "app/page.dsx".to_string(),
+            span: serde_json::json!({ "start": { "line": 3, "column": 47 } }),
+            entry: PathBuf::from("entry.js"),
+            descriptor: serde_json::Value::Null,
+        };
+        assert!(unwrap_result(&serde_json::json!(["Ada"]), &entry).is_err());
         assert_eq!(
             unwrap_result(
                 &serde_json::json!({ "__enum": "Result", "__case": "Err", "error": "missing file" }),
-                "labels"
+                &entry
             )
             .unwrap_err(),
-            "build `labels` failed: missing file"
+            "build `labels` (at app/page.dsx:3:47) failed: missing file"
         );
+    }
+
+    #[test]
+    fn slot_location_uses_the_compiler_span() {
+        let entry = BuildEntry {
+            id: "slot1".to_string(),
+            binding: "labels".to_string(),
+            file: "app/page.dsx".to_string(),
+            span: serde_json::json!({ "start": { "line": 3, "column": 47 } }),
+            entry: PathBuf::from("entry.js"),
+            descriptor: serde_json::Value::Null,
+        };
+        assert_eq!(slot_location(&entry), "app/page.dsx:3:47");
+        let no_span = BuildEntry {
+            span: serde_json::Value::Null,
+            ..entry
+        };
+        assert_eq!(slot_location(&no_span), "app/page.dsx");
+    }
+
+    #[test]
+    fn observation_paths_normalize_to_project_relative() {
+        let root = Path::new("/project");
+        assert_eq!(
+            normalize_observation_path(root, "/project/data/a.json"),
+            "data/a.json"
+        );
+        assert_eq!(normalize_observation_path(root, "./data/a.json"), "data/a.json");
+        assert_eq!(
+            normalize_observation_path(root, "/elsewhere/b.json"),
+            "/elsewhere/b.json"
+        );
+        assert_eq!(normalize_observation_path(root, "data/a.json"), "data/a.json");
     }
 
     #[test]
