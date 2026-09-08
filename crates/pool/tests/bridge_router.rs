@@ -67,6 +67,7 @@ fn test_request(handler_code: &str) -> RequestData {
     RequestData {
         handler_code: handler_code.to_string(),
         handler_entry: None,
+        module_root: None,
         request_value: serde_json::Value::Null,
         request_parts: None,
         mode: ExecutionMode::Request,
@@ -77,6 +78,7 @@ fn tenant_request(handler_code: &str, shop_id: &str) -> RequestData {
     RequestData {
         handler_code: handler_code.to_string(),
         handler_entry: None,
+        module_root: None,
         request_value: serde_json::Value::Null,
         request_parts: Some(RequestParts {
             url: "http://localhost/bridge".to_string(),

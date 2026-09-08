@@ -69,6 +69,7 @@ async fn prerender_static_pages_async(
                 RequestData {
                     handler_code: String::new(),
                     handler_entry: Some(handler_path.clone()),
+                    module_root: Some(project_root.to_string_lossy().into_owned()),
                     request_value: serde_json::Value::Null,
                     request_parts: None,
                     mode: ExecutionMode::StaticRender,

@@ -630,6 +630,7 @@ async fn handle_platform_request(
     let request_data = RequestData {
         handler_code,
         handler_entry,
+        module_root: None,
         request_value: serde_json::Value::Null,
         request_parts: Some(request_parts),
         mode: ExecutionMode::Request,

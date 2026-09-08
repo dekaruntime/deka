@@ -139,6 +139,29 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
         }
     }
 
+    // Dsc emits build-only entries separately from the runtime graph. Execute
+    // and validate all of them before promoting staged output; the runtime
+    // graph then imports only the materialized `deka:dev/<slot>` literals.
+    let build_slots = build_dsc::collect_build_plans(
+        &project_root,
+        &[app_dir.as_path(), src_dir.as_path(), api_dir.as_path()],
+    )?;
+    let build_entries = build_dsc::stage_build_entries(&project_root, staging_root, build_slots)?;
+    #[cfg(feature = "native")]
+    runtime::materialize_build_values(
+        &project_root,
+        build_entries
+            .iter()
+            .map(|entry| runtime::BuildEntry {
+                id: entry.slot.id.clone(),
+                binding: entry.slot.binding.clone(),
+                entry: entry.path.clone(),
+                descriptor: entry.slot.descriptor.clone(),
+            })
+            .collect(),
+    )?;
+    build_dsc::remove_staged_build_entries(&build_entries)?;
+
     let dist_root = project_root.join("dist");
     let dist_client = dist_root.join("client");
     let dist_server = dist_root.join("server");

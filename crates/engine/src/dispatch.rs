@@ -71,6 +71,7 @@ pub async fn execute_request(
     let request_data = RequestData {
         handler_code: state.handler_code.clone(),
         handler_entry: state.handler_entry.clone(),
+        module_root: None,
         request_value: serde_json::Value::Null,
         request_parts: Some(request_parts),
         mode: ExecutionMode::Request,
@@ -118,6 +119,7 @@ pub async fn execute_request_parts(
     let request_data = RequestData {
         handler_code: state.handler_code.clone(),
         handler_entry,
+        module_root: None,
         request_value: serde_json::Value::Null,
         request_parts: Some(request_parts),
         mode: ExecutionMode::Request,
@@ -190,6 +192,7 @@ pub async fn execute_request_value(
     let request_data = RequestData {
         handler_code: state.handler_code.clone(),
         handler_entry: state.handler_entry.clone(),
+        module_root: None,
         request_value,
         request_parts: None,
         mode: ExecutionMode::Request,

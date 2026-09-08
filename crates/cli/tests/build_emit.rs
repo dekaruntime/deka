@@ -111,3 +111,127 @@ fn build_missing_dsc_is_hard_error() {
         "missing dsc must not write dist/"
     );
 }
+
+#[test]
+fn build_materializes_build_block_values_before_prerendering() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    fs::write(
+        project.path().join("app/types.dsx"),
+        r#"struct User { name: string }
+
+fn (user User) greet() string {
+  return "Hello " + user.name
+}
+
+export { User }
+"#,
+    )
+    .expect("write build types");
+    fs::write(
+        project.path().join("app/page.dsx"),
+        r#"import { User } from "./types.dsx"
+
+enum Shape { Empty, Rect(number) }
+type Cents number
+
+const user: User = build {
+  return Ok(User { name: "Ada" })
+}
+const shape: Shape = build {
+  return Ok(Shape.Rect(3))
+}
+const note: Option<string> = build {
+  return Ok(Some("ready"))
+}
+const cents: Cents = build {
+  return Ok(Cents(12))
+}
+
+export fn Page() {
+  const kind = match (shape) {
+    Shape.Rect(size) => "rect " + string(size),
+    Shape.Empty => "empty",
+  }
+  const subtitle = match (note) {
+    Some(value) => value,
+    None => "missing",
+  }
+  return <section><h1>{user.greet()}</h1><p>{kind} {subtitle} {string(unboxNumber(cents))}</p></section>
+}
+"#,
+    )
+    .expect("write build page");
+
+    let (success, combined) = run_build(project.path());
+    assert!(
+        success,
+        "deka build should execute build blocks: {combined}"
+    );
+
+    let html = fs::read_to_string(project.path().join("dist/client/index.html"))
+        .expect("read prerendered HTML");
+    for expected in ["Hello Ada", "rect 3", "ready", "12"] {
+        assert!(
+            html.contains(expected),
+            "build value `{expected}` was not prerendered: {html}"
+        );
+    }
+
+    let values = project.path().join(".cache/dekascript/build-values");
+    let materialized = fs::read_dir(values)
+        .expect("read materialized values")
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "js"))
+        .count();
+    assert_eq!(materialized, 4, "one virtual module per build binding");
+
+    let runtime_js = fs::read_to_string(project.path().join("dist/app/page.js"))
+        .expect("read emitted runtime module");
+    assert!(
+        !runtime_js.contains("Ada") && !runtime_js.contains("build {"),
+        "runtime output must not retain the build body: {runtime_js}"
+    );
+    let generated_entries = fs::read_dir(project.path().join("dist/app"))
+        .expect("read emitted app")
+        .filter_map(Result::ok)
+        .any(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".__deka_build_")
+        });
+    assert!(
+        !generated_entries,
+        "generated build entries must not be promoted to dist"
+    );
+}
+
+#[test]
+fn build_stops_when_a_build_block_returns_err() {
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    fs::write(
+        project.path().join("app/page.dsx"),
+        r#"const title: string = build {
+  return Err("content source is unavailable")
+}
+
+export fn Page() {
+  return <section><h1>{title}</h1></section>
+}
+"#,
+    )
+    .expect("write failing build page");
+
+    let (success, combined) = run_build(project.path());
+    assert!(!success, "Result.Err must stop deka build: {combined}");
+    assert!(
+        combined.contains("build `title` failed: content source is unavailable"),
+        "build error must preserve Result.Err text: {combined}"
+    );
+    assert!(
+        !project.path().join("dist").exists(),
+        "failed build entries must not promote dist output"
+    );
+}

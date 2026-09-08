@@ -10,7 +10,6 @@ use tokio::sync::mpsc;
 
 use engine::{RuntimeState, execute_request_parts};
 use pool::{ExecutionMode, RequestData};
-
 static NEXT_WS_ID: AtomicU64 = AtomicU64::new(1);
 struct WsEntry {
     sender: mpsc::UnboundedSender<Message>,
@@ -731,6 +730,7 @@ async fn emit_event(
             RequestData {
                 handler_code,
                 handler_entry: None,
+                module_root: None,
                 request_value: payload,
                 request_parts: None,
                 mode: ExecutionMode::Request,
