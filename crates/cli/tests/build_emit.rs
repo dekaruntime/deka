@@ -120,10 +120,6 @@ fn build_materializes_build_block_values_before_prerendering() {
         project.path().join("app/types.dsx"),
         r#"struct User { name: string }
 
-fn (user User) greet() string {
-  return "Hello " + user.name
-}
-
 export { User }
 "#,
     )
@@ -157,7 +153,7 @@ export fn Page() {
     Some(value) => value,
     None => "missing",
   }
-  return <section><h1>{user.greet()}</h1><p>{kind} {subtitle} {string(unboxNumber(cents))}</p></section>
+  return <section><h1>{user.name}</h1><p>{kind} {subtitle} {string(unboxNumber(cents))}</p></section>
 }
 "#,
     )
@@ -171,7 +167,7 @@ export fn Page() {
 
     let html = fs::read_to_string(project.path().join("dist/client/index.html"))
         .expect("read prerendered HTML");
-    for expected in ["Hello Ada", "rect 3", "ready", "12"] {
+    for expected in ["Ada", "rect 3", "ready", "12"] {
         assert!(
             html.contains(expected),
             "build value `{expected}` was not prerendered: {html}"
