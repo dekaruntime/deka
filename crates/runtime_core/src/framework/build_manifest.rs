@@ -567,9 +567,18 @@ impl BuildManifest {
                                 route.template
                             )
                         })?;
-                    if raw.contains('/') || raw.contains('\\') || raw.is_empty() {
+                    // Dot segments are rejected explicitly: the filesystem
+                    // normalizes them, so "." and ".." would collide with
+                    // sibling routes or write OUTSIDE dist/client (deka#719
+                    // review, codex).
+                    if raw.contains('/')
+                        || raw.contains('\\')
+                        || raw.is_empty()
+                        || raw == "."
+                        || raw == ".."
+                    {
                         return Err(format!(
-                            "route {}: parameter `{param}` value `{raw}` is not a single path segment",
+                            "route {}: parameter `{param}` value `{raw}` is not a single safe path segment",
                             route.template
                         ));
                     }

@@ -436,6 +436,59 @@ fn prerender_request_time() {
 }
 
 #[test]
+fn dynamic_only_app_publishes_no_index() {
+    let version = dsc_plan_version();
+    eprintln!("dynamic_only_app_publishes_no_index: dsc emits plan version {version}");
+
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    // Every route is request-time: the build must succeed, publish no static
+    // HTML, and not fabricate a root render.
+    let root_page = project.path().join("app").join("page.dsx");
+    fs::write(
+        &root_page,
+        "export const prerender = false\nexport fn Page() {\n    return <main>dynamic</main>;\n}\n",
+    )
+    .expect("write dynamic root page");
+
+    let (success, combined) = run_build(project.path());
+    if version >= 2 {
+        assert!(success, "a dynamic-only app must build: {combined}");
+        assert!(
+            !project
+                .path()
+                .join("dist")
+                .join("client")
+                .join("index.html")
+                .exists(),
+            "an app whose routes are all request-time must not fabricate a root render: {combined}"
+        );
+        let rows = route_table_rows(&combined);
+        assert!(
+            rows.iter().any(|r| r == "ƒ /"),
+            "table should show the request-time root route: {combined}"
+        );
+    } else {
+        // v1 plans carry no disposition: the root route plans static and
+        // renders as before. Documents that skipping is gated on manifest
+        // disposition, not a blanket behavior change.
+        assert!(
+            success,
+            "v{version} projects keep their legacy static-root behavior: {combined}"
+        );
+        assert!(
+            project
+                .path()
+                .join("dist")
+                .join("client")
+                .join("index.html")
+                .exists(),
+            "v{version} renders the root route statically: {combined}"
+        );
+    }
+}
+
+#[test]
 fn stale_plan_rejected() {
     let project = tempfile::tempdir().expect("create temp project dir");
     init_project(project.path());

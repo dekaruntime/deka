@@ -235,8 +235,14 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
 
     let client_index = dist_client.join("index.html");
     if runtime_core::framework::is_app_router_project(&project_root) {
+        // With a manifest, an empty task list means every route is
+        // request-time (`prerender = false`): publish no static HTML rather
+        // than fabricating a root render. Without a manifest there is
+        // nothing to plan from, so keep the minimal-project `/` fallback.
         #[cfg(feature = "native")]
-        runtime::prerender_static_pages(&project_root, &dist_client, &render_tasks)?;
+        if manifest.is_none() || !render_tasks.is_empty() {
+            runtime::prerender_static_pages(&project_root, &dist_client, &render_tasks)?;
+        }
         #[cfg(not(feature = "native"))]
         {
             let index_src = project_root.join("index.html");

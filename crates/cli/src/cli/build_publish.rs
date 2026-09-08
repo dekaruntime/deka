@@ -2,10 +2,12 @@
 //!
 //! Every dist-writing step targets a fresh staging tree under
 //! `<project_root>/.deka-dist-stage/dist`; once all of them succeed, the
-//! staged tree atomically replaces `dist/`. A crash mid-publish leaves the
-//! previous output intact at `dist.prev-<pid>` and no `dist/` at all;
-//! [`recover_interrupted_publish`] rolls that forward at the start of the
-//! next build.
+//! staged tree atomically replaces `dist/`. A *returned* publish error
+//! restores the previous output from `dist.prev-<pid>` immediately, so
+//! `dist/` is never left absent by a build the CLI reported as failed; a
+//! *crash* mid-publish leaves it at `dist.prev-<pid>` with no `dist/` at
+//! all, and [`recover_interrupted_publish`] rolls that forward at the start
+//! of the next build.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -38,7 +40,9 @@ pub fn stage_dist(project_root: &Path) -> Result<StagedDist, String> {
 /// `staged.root`, where every dist-writing step wrote):
 /// 1. move the existing `dist` aside to `dist.prev-<pid>` (removing a stale
 ///    same-pid leftover and retrying once),
-/// 2. rename the staged `dist` into place,
+/// 2. rename the staged `dist` into place — on failure, restore the
+///    moved-aside backup immediately so a returned error never leaves
+///    `dist/` absent,
 /// 3. best-effort removal of the moved-aside tree (dead weight, not
 ///    correctness — a failure here is logged and ignored).
 pub fn publish(project_root: &Path, staged: &StagedDist) -> Result<(), String> {
@@ -63,13 +67,34 @@ pub fn publish(project_root: &Path, staged: &StagedDist) -> Result<(), String> {
             })?;
         }
     }
-    fs::rename(&staged_dist, &dist).map_err(|err| {
-        format!(
+    if let Err(err) = fs::rename(&staged_dist, &dist) {
+        // Promotion failed after dist/ was moved aside: restore the previous
+        // output immediately instead of leaving dist/ absent until the next
+        // build's recovery pass.
+        if backup.exists() {
+            if let Err(restore_err) = fs::rename(&backup, &dist) {
+                return Err(format!(
+                    "failed to publish staged dist {} -> {}: {err}; \
+                     and failed to restore the previous dist from {}: {restore_err}",
+                    staged_dist.display(),
+                    dist.display(),
+                    backup.display()
+                ));
+            }
+            stdio::warn(
+                "build",
+                &format!(
+                    "publish failed; restored the previous dist from {}",
+                    backup.display()
+                ),
+            );
+        }
+        return Err(format!(
             "failed to publish staged dist {} -> {}: {err}",
             staged_dist.display(),
             dist.display()
-        )
-    })?;
+        ));
+    }
     // The staged root is now an empty husk; remove it best-effort.
     let _ = fs::remove_dir_all(&staged.root);
     if backup.exists() {
@@ -320,6 +345,36 @@ mod tests {
 
         let after = tree_digest(&project.path().join("dist"));
         assert_eq!(before, after, "prior dist must remain byte-identical");
+    }
+
+    #[test]
+    fn failed_promotion_restores_prior_dist() {
+        let project = tempfile::tempdir().unwrap();
+        write(project.path(), "dist/marker.txt", "v1");
+
+        // Promotion fails when the staged tree has no `dist` child to rename
+        // into place (simulates a failure between staging writes and the
+        // final rename).
+        let staged = stage_dist(project.path()).unwrap();
+        let err = publish(project.path(), &staged).expect_err("publish must fail");
+        assert!(
+            err.contains("failed to publish staged dist"),
+            "error should name the promotion step: {err}"
+        );
+
+        let dist = project.path().join("dist");
+        assert_eq!(
+            fs::read(dist.join("marker.txt")).unwrap(),
+            b"v1",
+            "the previous dist must be restored immediately, not left at dist.prev-*"
+        );
+        assert!(
+            fs::read_dir(project.path())
+                .unwrap()
+                .flatten()
+                .all(|entry| !entry.file_name().to_string_lossy().starts_with("dist.prev-")),
+            "a restored backup must be consumed"
+        );
     }
 
     #[test]

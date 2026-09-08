@@ -351,13 +351,15 @@ fn unsafe_param_values_fail() {
         &[],
     )
     .expect("plan builds");
-    for raw in ["a/b", "a\\b", ""] {
+    // "." and ".." are the dangerous cases: the filesystem normalizes them,
+    // so they collide with sibling routes or escape dist/client entirely.
+    for raw in ["a/b", "a\\b", "", ".", ".."] {
         let values =
             BTreeMap::from([("s1".to_string(), serde_json::json!([{"slug": raw}]))]);
-        assert!(
-            manifest.expand_static_params(&values).is_err(),
-            "value `{raw}` must be rejected"
-        );
+        let err = manifest
+            .expand_static_params(&values)
+            .expect_err("value `{raw}` must be rejected");
+        assert!(err.contains("safe path segment"), "{err}");
     }
 }
 

@@ -118,7 +118,7 @@ async fn prerender_static_pages_async(
                 envelope.status
             ));
         }
-        let dest = dist_path_for_route(dist_client, route);
+        let dest = dist_path_for_route(dist_client, route)?;
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
@@ -129,12 +129,23 @@ async fn prerender_static_pages_async(
     Ok(())
 }
 
-fn dist_path_for_route(dist_client: &Path, route: &str) -> PathBuf {
+/// Map a concrete route to its published HTML path. Segment validation here
+/// is defense in depth (deka#719 review, codex): dot segments would be
+/// normalized by the filesystem and could write outside `dist_client`, so
+/// they are rejected at the boundary even though the build manifest already
+/// refuses them.
+fn dist_path_for_route(dist_client: &Path, route: &str) -> Result<PathBuf, String> {
     if route == "/" {
-        dist_client.join("index.html")
-    } else {
-        dist_client
-            .join(route.trim_start_matches('/'))
-            .join("index.html")
+        return Ok(dist_client.join("index.html"));
     }
+    let mut path = dist_client.to_path_buf();
+    for segment in route.trim_start_matches('/').split('/') {
+        if segment.is_empty() || segment == "." || segment == ".." {
+            return Err(format!(
+                "prerender {route}: unsafe path segment `{segment}`"
+            ));
+        }
+        path.push(segment);
+    }
+    Ok(path.join("index.html"))
 }
