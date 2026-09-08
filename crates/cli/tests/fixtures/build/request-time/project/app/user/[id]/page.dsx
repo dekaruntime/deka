@@ -1,0 +1,5 @@
+interface PageProps { id: string }
+export const prerender = false
+export fn Page(props: PageProps) {
+    return <article>{props.id}</article>;
+}

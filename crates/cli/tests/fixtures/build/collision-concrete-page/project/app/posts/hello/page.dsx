@@ -1,0 +1,3 @@
+export fn Page() {
+    return <article>concrete hello</article>;
+}
