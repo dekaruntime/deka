@@ -238,7 +238,8 @@ fn generated_static_entry_imports_only_its_page_tree() {
     )
     .unwrap();
 
-    let entry = write_static_render_entry(&tmp, "/").expect("generate static entry");
+    let entry = write_static_render_entry(&tmp, "/", &std::collections::BTreeMap::new())
+        .expect("generate static entry");
     let source = std::fs::read_to_string(&entry).expect("read static entry");
     assert!(source.contains("StaticRender"), "{source}");
     assert!(source.contains("app/page.dsx"), "{source}");

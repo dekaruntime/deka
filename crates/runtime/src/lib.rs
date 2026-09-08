@@ -31,14 +31,17 @@ pub fn serve(context: &Context) {
 pub fn prerender_static_pages(
     project_root: &std::path::Path,
     dist_client: &std::path::Path,
+    tasks: &[prerender::StaticRenderTask],
 ) -> Result<(), String> {
-    prerender::prerender_static_pages(project_root, dist_client)
+    prerender::prerender_static_pages(project_root, dist_client, tasks)
 }
+
+pub use prerender::StaticRenderTask;
 
 pub fn materialize_build_values(
     project_root: &std::path::Path,
     entries: Vec<build_values::BuildEntry>,
-) -> Result<(), String> {
+) -> Result<std::collections::BTreeMap<String, serde_json::Value>, String> {
     build_values::materialize_build_values(project_root, entries)
 }
 

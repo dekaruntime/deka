@@ -253,7 +253,7 @@ fn dynamic_routes_remain_in_the_request_router() {
     fs::create_dir_all(&slug_dir).expect("mkdir [slug]");
     fs::write(
         slug_dir.join("page.dsx"),
-        "interface PageProps { slug: string }\nexport fn Page(props: PageProps) {\n    return <article>{props.slug}</article>;\n}\n",
+        "interface PageProps { slug: string }\nstruct BlogParam { slug: string }\nexport const staticParams: Array<BlogParam> = build {\n    return Ok([BlogParam{slug:\"hello\"}])\n}\nexport fn Page(props: PageProps) {\n    return <article>{props.slug}</article>;\n}\n",
     )
     .expect("write slug page");
 
