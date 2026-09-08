@@ -1,15 +1,15 @@
-//! deka#738 F7: `dist/` must be deployable — no dev-scheme specifiers, and a
-//! deployment carrying the project without `.cache/` serves every
-//! build{}-backed route.
+//! deka#738 F7: `dist/` must be deployable — no dev-scheme specifiers, and
+//! the project serves every build{}-backed route with the compiler cache
+//! deleted.
 //!
 //! Before the fix, emitted app JS kept `import ... from "deka:dev/<id>"`
 //! verbatim while the backing module lived only at
-//! `.cache/dekascript/build-values/<id>.js`. Copying the project anywhere
-//! without `.cache/` and running `deka serve` 500'd on build-backed routes.
+//! `.cache/dekascript/build-values/<id>.js`, so deleting `.cache/` (or
+//! deploying without it) 500'd every build-backed route.
 //!
-//! The test MUST serve from the copy, not the project directory: serving in
-//! place cannot distinguish "resolves because correct" from "resolves because
-//! `.cache/` is adjacent" — that is exactly how the bug was missed.
+//! The test deletes `.cache/` IN PLACE after `deka build` and serves from the
+//! project directory: the route can only resolve through the modules shipped
+//! inside `dist/`.
 
 use std::fs;
 use std::net::TcpListener;
@@ -174,32 +174,10 @@ fn free_port() -> u16 {
         .port()
 }
 
-/// Copy the project into a fresh tree WITHOUT `.cache/` — the deployment
-/// unit. Serving the copy (never the original) is what proves the build
-/// value resolves from dist rather than from an adjacent cache.
-fn copy_without_cache(project: &Path, copy: &Path) {
-    fn copy_dir(src: &Path, dst: &Path) {
-        for entry in fs::read_dir(src).expect("read_dir").flatten() {
-            let path = entry.path();
-            let name = entry.file_name();
-            if name == ".cache" || name.to_string_lossy().starts_with("dist.prev-") {
-                continue;
-            }
-            let target = dst.join(&name);
-            if path.is_dir() {
-                copy_dir(&path, &target);
-            } else {
-                if let Some(parent) = target.parent() {
-                    fs::create_dir_all(parent).expect("mkdir");
-                }
-                fs::copy(&path, &target).expect("copy");
-            }
-        }
-    }
-    fs::create_dir_all(copy).expect("mkdir copy");
-    copy_dir(project, copy);
-}
-
+/// The reviewer-amended done-when (deka#738): build, delete the compiler
+/// cache IN PLACE, then serve from the project — every build{}-backed route
+/// must return 200 with the materialized content, resolving from dist
+/// because the cache no longer exists.
 #[test]
 fn dist_deploy_serves_build_backed_route_without_cache() {
     let dsc = real_dsc();
@@ -221,20 +199,19 @@ fn dist_deploy_serves_build_backed_route_without_cache() {
     assert_eq!(shipped.len(), 1, "exactly one slot module ships: {shipped:?}");
     assert_dist_self_contained(&dist);
 
-    let copy = tempfile::tempdir().expect("tempdir");
-    copy_without_cache(project.path(), copy.path());
+    // Delete the compiler cache in place; serve from the project directory.
+    fs::remove_dir_all(project.path().join(".cache")).expect("remove .cache");
     assert!(
-        !copy.path().join(".cache").exists(),
-        "the deployment copy must not carry .cache/"
+        !project.path().join(".cache").exists(),
+        "the compiler cache must be gone before serve"
     );
-    assert_dist_self_contained(&copy.path().join("dist"));
 
     let port = free_port();
-    let log_path = copy.path().join("serve.log");
+    let log_path = project.path().join("serve.log");
     let log = fs::File::create(&log_path).expect("serve.log");
     let child = Command::new(cli_bin())
         .args(["serve", ".", "--port", &port.to_string(), "--no-prompt"])
-        .current_dir(copy.path())
+        .current_dir(project.path())
         .env("DEKA_DSC", &dsc)
         .env("DEKA_RATE_LIMIT_DISABLED", "1")
         .stdout(Stdio::from(log.try_clone().expect("clone log")))
@@ -268,7 +245,7 @@ fn dist_deploy_serves_build_backed_route_without_cache() {
     }
     assert_eq!(
         status, "200 OK",
-        "the build-backed route must serve 200 from a cache-less copy\nserve.log:\n{}",
+        "the build-backed route must serve 200 with the cache deleted in place\nserve.log:\n{}",
         serve.log_text()
     );
     assert!(
