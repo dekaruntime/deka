@@ -1,4 +1,5 @@
 _redirects
+app/.build-values/104b1b1b321f9256.js
 app/layout.js
 app/not-found.js
 app/page.js
