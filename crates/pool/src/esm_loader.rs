@@ -245,6 +245,10 @@ globalThis.deka.ui = Object.freeze({\n\
   ...__router,\n\
 });\n\
 const __dekaMain = await import(\"__ENTRY__\");\n\
+globalThis.__dekaStaticRender =\n\
+  typeof __dekaMain.StaticRender === \"function\"\n\
+    ? __dekaMain.StaticRender\n\
+    : undefined;\n\
 const __candidate = typeof __dekaMain.default !== \"undefined\"\n\
   ? __dekaMain.default\n\
   : typeof __dekaMain.app !== \"undefined\"\n\

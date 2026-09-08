@@ -14,12 +14,14 @@ use super::source::{exports_fn_named, strip_ds_comments};
 mod api;
 mod defer;
 mod serve;
+mod static_render;
 #[cfg(test)]
 mod tests;
 
 pub use api::{write_api_router_entry, write_worker_router_entry};
 pub use defer::write_defer_router_entry;
 pub use serve::write_app_router_entry;
+pub use static_render::write_static_render_entry;
 /// Cookie whose value is AES-GCM AAD for deferred islands.
 /// `serve.sessionCookie` in deka.json; default `deka_sid`. Empty string
 /// disables session binding (anonymous AAD is just the component name).

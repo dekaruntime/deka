@@ -8,7 +8,7 @@ use super::super::css::{CssPlan, collect_route_styles, css_links_for_route, css_
 use super::super::defer::{defer_script_tag, enforce_defer_lints, scan_server_defer};
 use super::super::document::{
     CLIENT_IMPORTMAP_PLACEHOLDER_TAG, DEKA_APP_HOLE, DEKA_HEAD_HOLE, DEKA_SCRIPTS_HOLE,
-    FRAGMENT_ACCEPT, FRAGMENT_ACCEPT_LEGACY, STATIC_ACCEPT,
+    FRAGMENT_ACCEPT, FRAGMENT_ACCEPT_LEGACY,
 };
 use super::super::islands::{island_script_tags, scan_client_islands};
 use super::super::manifest::{
@@ -183,7 +183,7 @@ fn generate_serve_entry(
             head_concat(&manifest.entries, page, false),
         )?;
         branches.push_str(&format!(
-            "    if ({cond}) {{\n        return await respond({tree}, 200, fragment, staticBuild, {head})\n    }}\n"
+            "    if ({cond}) {{\n        return await respond({tree}, 200, fragment, {head})\n    }}\n"
         ));
     }
     let not_found_tree = if manifest.not_found.is_some() {
@@ -306,23 +306,7 @@ async fn stream_html(tree: Component) Promise<string> {{
     return await prom
 }}
 
-async fn static_html(tree: Component) Promise<string> {{
-    const boxed = unsafe {{ deka.ui.renderToStringAsync(tree) }}
-    const prom = match (boxed) {{
-        Ok(p) => p,
-        Err(_) => {{ html: "" }},
-        _ => {{ html: "" }},
-    }}
-    const rendered = await prom
-    const html = unsafe {{ rendered.html }}
-    return match (html) {{
-        Ok(h) => h,
-        Err(_) => "",
-        _ => "",
-    }}
-}}
-
-async fn respond(tree: Component, status: number, fragment: boolean, staticBuild: boolean, headHtml: string) Promise<Response> {{
+async fn respond(tree: Component, status: number, fragment: boolean, headHtml: string) Promise<Response> {{
     if (fragment) {{
         const result = unsafe {{ deka.ui.renderToString(tree) }}
         const appHtml = match (result) {{
@@ -335,10 +319,6 @@ async fn respond(tree: Component, status: number, fragment: boolean, staticBuild
             Err(_) => {{ status: 500, body: "Internal Server Error" }},
         }}
     }}
-    if (staticBuild) {{
-        const appHtml = await static_html(tree)
-        return {{ status: status, body: {doc_head} + headHtml + {doc_mid} + appHtml + {doc_tail} }}
-    }}
     const appHtml = await stream_html(tree)
     return {{ status: status, body: {doc_head} + headHtml + {doc_mid} + appHtml + {doc_tail} }}
 }}
@@ -347,14 +327,13 @@ async fn App(request: Request) Promise<Response> {{
 {defer_secret_js}    const path = request.pathname == "" ? "/" : request.pathname
     const accept = request.headers.accept
     const fragment = accept == "{FRAGMENT_ACCEPT}" || accept == "{FRAGMENT_ACCEPT_LEGACY}"
-    const staticBuild = accept == "{STATIC_ACCEPT}"
-{branches}    return await respond({not_found_tree}, 404, fragment, staticBuild, {not_found_head})
+{branches}    return await respond({not_found_tree}, 404, fragment, {not_found_head})
 }}
 export {{ App }}
 "#
     ))
 }
-fn split_document(index_html: &str, scripts: &str) -> (String, String, String) {
+pub(super) fn split_document(index_html: &str, scripts: &str) -> (String, String, String) {
     let no_scripts = index_html.replace(DEKA_SCRIPTS_HOLE, scripts);
     let (before_app, after_app) = match no_scripts.split_once(DEKA_APP_HOLE) {
         Some((a, b)) => (a, b),
@@ -370,7 +349,11 @@ fn split_document(index_html: &str, scripts: &str) -> (String, String, String) {
         (before_app.to_string(), String::new(), after_app.to_string())
     }
 }
-fn with_css_links(plan: &CssPlan, route: &str, head_js: String) -> Result<String, String> {
+pub(super) fn with_css_links(
+    plan: &CssPlan,
+    route: &str,
+    head_js: String,
+) -> Result<String, String> {
     let links = css_links_for_route(plan, route);
     if links.is_empty() {
         return Ok(head_js);
@@ -438,7 +421,11 @@ fn layout_head_aliases(entries: &[FrameworkEntry], route: &str) -> Vec<String> {
         .collect()
 }
 
-fn head_concat(entries: &[FrameworkEntry], page: &FrameworkEntry, not_found: bool) -> String {
+pub(super) fn head_concat(
+    entries: &[FrameworkEntry],
+    page: &FrameworkEntry,
+    not_found: bool,
+) -> String {
     let mut parts = layout_head_aliases(entries, &page.route);
     if !not_found && exports_head(Path::new(&page.file)) {
         parts.push(format!("{}()", alias("head", &page.route)));

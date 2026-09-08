@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::env::init_env;
 use crate::extensions::extensions_for_mode;
 use engine::{config as runtime_config, RuntimeEngine};
-use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData, RequestParts};
+use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData};
 use runtime_core::env::set_handler_path_with;
 use runtime_core::framework::{self, static_page_routes};
 use runtime_core::modules::ensure_deka_module_root_env_with;
@@ -28,23 +28,8 @@ async fn prerender_static_pages_async(
     unsafe {
         std::env::set_var("DEKA_SECURITY_NO_PROMPT", "1");
     }
-    let entry = framework::write_app_router_entry(project_root)?;
     crate::islands::write_island_client_assets_for_project(project_root)?;
     crate::css::write_route_css_assets_for_project(project_root)?;
-    let handler_path = entry.to_string_lossy().to_string();
-
-    let mut env_set = |key: &str, value: &str| {
-        unsafe { std::env::set_var(key, value) };
-    };
-    let env_get = |key: &str| std::env::var(key).ok();
-    set_handler_path_with(&handler_path, &env_get, &mut env_set);
-    ensure_deka_module_root_env_with(
-        &handler_path,
-        &|path| path.exists(),
-        &|| std::env::current_exe().ok(),
-        &env_get,
-        &mut env_set,
-    );
 
     let mut pool_config = PoolConfig::default();
     pool_config.num_workers = 1;
@@ -58,7 +43,6 @@ async fn prerender_static_pages_async(
         &runtime_cfg,
         extensions_provider,
     ));
-    let handler_key = HandlerKey::new("prerender");
     let app_dir = project_root.join("app");
     let manifest = framework::scan_app_dir(&app_dir);
     let mut routes = static_page_routes(&manifest);
@@ -67,30 +51,27 @@ async fn prerender_static_pages_async(
     }
 
     for route in routes {
-        let url = if route == "/" {
-            "http://localhost/".to_string()
-        } else {
-            format!("http://localhost{route}")
-        };
+        let entry = framework::write_static_render_entry(project_root, &route)?;
+        let handler_path = entry.to_string_lossy().to_string();
+        let mut env_set = |key: &str, value: &str| unsafe { std::env::set_var(key, value) };
+        let env_get = |key: &str| std::env::var(key).ok();
+        set_handler_path_with(&handler_path, &env_get, &mut env_set);
+        ensure_deka_module_root_env_with(
+            &handler_path,
+            &|path| path.exists(),
+            &|| std::env::current_exe().ok(),
+            &env_get,
+            &mut env_set,
+        );
         let response = engine
             .execute(
-                handler_key.clone(),
+                HandlerKey::new(format!("prerender:{route}")),
                 RequestData {
                     handler_code: String::new(),
                     handler_entry: Some(handler_path.clone()),
-                    request_value: serde_json::json!({
-                        "url": url,
-                        "method": "GET",
-                        "headers": { "accept": "text/x-deka-static" },
-                        "body": "",
-                    }),
-                    request_parts: Some(RequestParts {
-                        url,
-                        method: "GET".to_string(),
-                        headers: vec![("accept".to_string(), "text/x-deka-static".to_string())],
-                        body: None,
-                    }),
-                    mode: ExecutionMode::Request,
+                    request_value: serde_json::Value::Null,
+                    request_parts: None,
+                    mode: ExecutionMode::StaticRender,
                 },
             )
             .await

@@ -11,7 +11,8 @@ use super::serve::{path_condition, wrap_layouts};
 use super::{alias, exports_head, session_cookie_name};
 use crate::framework::manifest::{FrameworkEntry, FrameworkEntryKind};
 use crate::framework::{
-    write_app_router_entry, write_defer_router_entry, write_worker_router_entry,
+    write_app_router_entry, write_defer_router_entry, write_static_render_entry,
+    write_worker_router_entry,
 };
 
 fn tmp_dir(tag: &str) -> PathBuf {
@@ -201,6 +202,52 @@ fn generated_serve_entry_merges_head_and_passes_slug() {
     assert!(
         source.contains("slug={last_segment(path)}"),
         "generated [slug] page call should pass params: {source}"
+    );
+    assert!(
+        source.contains("renderToStreamHtml")
+            && source.contains("async fn App")
+            && !source.contains("renderToStringAsync")
+            && !source.contains("text/x-deka-static"),
+        "serve entry must retain request streaming without static-build behavior: {source}"
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn generated_static_entry_imports_only_its_page_tree() {
+    let tmp = tmp_dir("static_entry");
+    std::fs::create_dir_all(tmp.join("app/about")).unwrap();
+    std::fs::write(
+        tmp.join("index.html"),
+        "<!doctype html><html><head><!--deka-head--></head><body><div id=\"app\"><!--deka-app--></div><!--deka-scripts--></body></html>\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("app/layout.dsx"),
+        "interface LayoutProps { children: Component }\nexport fn Layout(props: LayoutProps) { return <main>{props.children}</main>; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("app/page.dsx"),
+        "export fn Page() { return <h1>Home</h1>; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("app/about/page.dsx"),
+        "export fn Page() { return <h1>About</h1>; }\n",
+    )
+    .unwrap();
+
+    let entry = write_static_render_entry(&tmp, "/").expect("generate static entry");
+    let source = std::fs::read_to_string(&entry).expect("read static entry");
+    assert!(source.contains("StaticRender"), "{source}");
+    assert!(source.contains("app/page.dsx"), "{source}");
+    assert!(!source.contains("app/about/page.dsx"), "{source}");
+    assert!(
+        !source.contains("App(request)")
+            && !source.contains("request.pathname")
+            && !source.contains("text/x-deka-static"),
+        "static entry must not contain request-router behavior: {source}"
     );
     let _ = std::fs::remove_dir_all(&tmp);
 }

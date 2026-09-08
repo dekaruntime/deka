@@ -49,6 +49,8 @@ impl RequestParts {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionMode {
     Request,
+    /// Executes a generated static-render entry without request globals.
+    StaticRender,
     Module,
 }
 
