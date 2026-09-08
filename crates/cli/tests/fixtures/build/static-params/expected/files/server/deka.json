@@ -1,0 +1,11 @@
+{
+  "name": "static-params",
+  "type": "serve",
+  "serve": { "mode": "ds" },
+  "tasks": { "dev": "deka serve --dev" },
+  "security": {
+    "allow": {},
+    "deny": {},
+    "prompt": true
+  }
+}
