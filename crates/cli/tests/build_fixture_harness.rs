@@ -26,6 +26,14 @@
 //! dsc PR #62, so no byte normalization exists anywhere in this harness;
 //! deka#728 / codex findings 5 and 6). The manifest's artifact digests are
 //! recomputed against the published bytes, not just its path list.
+//!
+//! Capability gate: committed bytes that embed `deka:dev/<id>` and the
+//! cross-root raw comparison are only valid on relative-id dsc (dsc PR #62).
+//! On older dsc (CI installs released 0.6.0) those checks skip with an
+//! eprintln; everything else — tree, non-slot bytes, digests, same-root
+//! rerun, coverage — still runs. Probed once per process by
+//! `dsc_relative_slot_ids`.
+//!
 //! `DEKA_BLESS=1` regenerates the expected files from actual output — the
 //! only way expected bytes may change.
 
@@ -91,6 +99,55 @@ fn dsc_plan_version() -> u32 {
             .and_then(|v| v.as_u64())
             .expect("probe plan has a version") as u32
     })
+}
+
+/// Whether the installed dsc derives build-slot ids relative to the project
+/// (dsc PR #62) instead of hashing the source file's absolute path. Only
+/// relative-id dsc supports the committed byte contract and the cross-root
+/// raw comparison for slot-bearing output; released dsc 0.6.0 predates it.
+/// Probed once per test process by planning the SAME file from two different
+/// roots with the same relative argument: identical slot ids mean relative
+/// derivation (absolute-path hashing makes them differ by root).
+fn dsc_relative_slot_ids() -> bool {
+    static RELATIVE: OnceLock<bool> = OnceLock::new();
+    *RELATIVE.get_or_init(|| {
+        const PROBE: &str = "interface PageProps { slug: string }\nstruct P { slug: string }\nexport const staticParams: Array<P> = build {\n    return Ok([P{slug:\"a\"}])\n}\nexport fn Page(props: PageProps) {\n    return <article>{props.slug}</article>;\n}\n";
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let root = tempfile::tempdir().expect("create probe root");
+            let page = root.path().join("app").join("posts").join("[slug]");
+            fs::create_dir_all(&page).expect("mkdir probe page");
+            fs::write(page.join("page.dsx"), PROBE).expect("write probe page");
+            let output = Command::new(real_dsc())
+                .arg("plan")
+                .arg("app/posts/[slug]/page.dsx")
+                .current_dir(root.path())
+                .output()
+                .expect("run dsc slot probe");
+            assert!(
+                output.status.success(),
+                "dsc slot probe failed: {}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let plan: serde_json::Value =
+                serde_json::from_slice(&output.stdout).expect("parse probe plan");
+            let slot = plan["slots"][0]["id"]
+                .as_str()
+                .expect("probe plan has a slot id");
+            ids.push(slot.to_string());
+        }
+        ids[0] == ids[1]
+    })
+}
+
+/// Whether emitted bytes embed a `deka:dev/<id>` slot import. Such bytes are
+/// only machine-portable (and cross-root stable) on relative-id dsc; see
+/// [`dsc_relative_slot_ids`].
+fn embeds_slot_ids(bytes: &[u8]) -> bool {
+    bytes
+        .windows(b"deka:dev/".len())
+        .any(|window| window == b"deka:dev/")
 }
 
 struct BuildRun {
@@ -539,6 +596,10 @@ fn check_published_output(
     }
 
     // 2. Exact bytes of every declared output, from the expected mirror.
+    //    Files embedding deka:dev/<id> are only portable on relative-id dsc
+    //    (dsc PR #62); released dsc hashes the absolute path, so the
+    //    committed id cannot match — skip those files, loudly, on old dsc.
+    let relative_ids = dsc_relative_slot_ids();
     let mirror = fixture.expected().join("files");
     for rel in &actual_paths {
         let expected_bytes = match fs::read(mirror.join(rel)) {
@@ -548,6 +609,12 @@ fn check_published_output(
                 continue;
             }
         };
+        if !relative_ids && embeds_slot_ids(&expected_bytes) {
+            eprintln!(
+                "skipping byte comparison of `{rel}`: installed dsc predates relative slot ids (dsc#62)"
+            );
+            continue;
+        }
         let actual_bytes = &tree[rel];
         if *actual_bytes != expected_bytes {
             let header = format!("[bytes] `{rel}` differs from expected mirror");
@@ -635,6 +702,15 @@ fn check_published_output(
             "[cross-root] stderr changed across roots\n{}",
             unified_diff(stderr, &cross_stderr)
         ));
+    }
+    // Slot-bearing output embeds absolute-path ids on old dsc, so raw
+    // cross-root bytes cannot match there; stderr (no ids) still compared.
+    if !relative_ids && tree.values().any(|bytes| embeds_slot_ids(bytes)) {
+        eprintln!(
+            "skipping cross-root byte comparison for `{}`: installed dsc predates relative slot ids (dsc#62)",
+            fixture.name
+        );
+        return;
     }
     let cross_tree = tree_snapshot(&project_b.join("dist"));
     if cross_tree != tree {

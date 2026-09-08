@@ -61,11 +61,34 @@ refuses to bless when the build's success/failure disagrees with the
 fixture's markers. A fixture with both `stderr.txt` and `stderr.v1.txt`
 must be blessed once per dsc plan generation (CI installs dsc 0.6.0 → v1).
 
-The mirror holds **raw** bytes. Since dsc PR #62 (deka#728) slot ids are
-project-relative, so raw bytes are stable across build roots; the fixtures
-were re-blessed with that dsc. An older dsc whose slot ids hash absolute
-paths will fail the `static-params` byte comparison and the cross-root
-check — that is the contract working, not flakiness.
+The mirror holds **raw** bytes, blessed with a relative-slot-id dsc
+(dsc PR #62): slot ids are project-relative, so raw bytes are stable across
+build roots.
+
+## dsc capability gate (deka#728)
+
+The checks that depend on relative slot ids are gated, so the suite stays
+green on released dsc 0.6.0 (CI installs it via `scripts/ci-install-dsc.sh`)
+while running in full wherever a newer dsc exists. The harness probes once
+per process (`dsc_relative_slot_ids`): it plans the same staticParams probe
+page from two different temporary roots with the same relative argument —
+identical slot ids prove relative derivation, since absolute-path hashing
+makes them differ by root.
+
+On a dsc that predates dsc PR #62:
+
+- the byte comparison of files whose blessed content embeds
+  `deka:dev/<id>` (today: `static-params`' emitted page.js) **skips** with
+  `skipping byte comparison of <path>: installed dsc predates relative slot
+  ids (dsc#62)` — the committed id can never match an absolute-path hash;
+- the **cross-root raw-byte comparison** for any fixture whose build output
+  embeds slot ids **skips** with a similar eprintln (its stderr comparison
+  still runs — stderr carries no ids).
+
+Everything else runs on every dsc: file tree, byte comparison of non-slot
+files, manifest digest verification, the same-root determinism rerun, and
+all coverage assertions. When CI moves to a dsc ≥ PR #62 the gated checks
+start running with no further change.
 
 ## Coverage
 
@@ -97,11 +120,12 @@ Deferred on purpose:
 - **dsc build-slot ids are project-relative since dsc PR #62** (deka#728);
   previously they hashed the source file's absolute path, which made the
   `deka:dev/<id>` import embedded in emitted JS a function of the build
-  root. The harness now compares **raw bytes** with no normalization: every
+  root. The harness compares **raw bytes** with no normalization: every
   successful fixture builds from a second temporary root and the dist trees
-  must match byte-for-byte. If that check ever fails, investigate which
-  bytes embed the root before considering any normalization — and if one is
-  truly unavoidable, narrow it to that specific case with a comment here.
+  must match byte-for-byte (gated to dsc ≥ PR #62, see "dsc capability
+  gate" above). If that check ever fails, investigate which bytes embed the
+  root before considering any normalization — and if one is truly
+  unavoidable, narrow it to that specific case with a comment here.
 - The build manifest embeds absolute paths (slot files, route sources), so
   it is byte-compared only across same-root rebuilds; across roots the
   artifacts' bytes are the contract, plus per-root manifest verification.
