@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 # Populate the shared Cloudflare R2 sccache buckets from a local machine.
 #
-# Run this on each build host (demon/rio for Linux, iMac for macOS) before
-# pushing release tags. It executes the same cargo invocations the Release
-# workflow uses, so compiled artifacts are cached in R2 and GitHub-hosted or
-# self-hosted runners get cache hits instead of rebuilding from scratch.
+# Run this on a build host before pushing release tags. It executes the same
+# cargo invocations the Release workflow uses, so compiled artifacts are cached
+# in R2 and later builds get cache hits instead of rebuilding from scratch.
 #
 # Required environment:
 #   R2_ACCESS_KEY_ID
 #   R2_SECRET_ACCESS_KEY
+#   R2_ENDPOINT
 #
 # Example:
+#   R2_ENDPOINT=https://<account>.r2.cloudflarestorage.com \
 #   R2_ACCESS_KEY_ID=xxx R2_SECRET_ACCESS_KEY=yyy scripts/populate-sccache.sh
 
 set -euo pipefail
@@ -18,8 +19,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-if [[ -z "${R2_ACCESS_KEY_ID:-}" || -z "${R2_SECRET_ACCESS_KEY:-}" ]]; then
-  echo "Error: R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY must be set." >&2
+if [[ -z "${R2_ENDPOINT:-}" || -z "${R2_ACCESS_KEY_ID:-}" || -z "${R2_SECRET_ACCESS_KEY:-}" ]]; then
+  echo "Error: R2_ENDPOINT, R2_ACCESS_KEY_ID, and R2_SECRET_ACCESS_KEY must be set." >&2
   exit 1
 fi
 
@@ -42,7 +43,7 @@ case "$OS-$ARCH" in
     ;;
 esac
 
-export SCCACHE_ENDPOINT="https://08b93c93f8b7adc43678e9afba31e4ee.r2.cloudflarestorage.com"
+export SCCACHE_ENDPOINT="$R2_ENDPOINT"
 export SCCACHE_REGION="auto"
 export SCCACHE_BUCKET
 export RUSTC_WRAPPER="sccache"

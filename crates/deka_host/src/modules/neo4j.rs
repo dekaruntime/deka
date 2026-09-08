@@ -23,7 +23,7 @@ fn connections() -> &'static Mutex<HashMap<u64, Arc<Graph>>> {
 /// Without this, a handler targeting an unreachable Bolt endpoint (e.g. a
 /// tenant hardcoded to `bolt://localhost:7688` that's been migrated to a
 /// shard whose docker stack only exposes 7687) will hang the request
-/// forever — the exact Phase 6 bugsy hang that blocked Noor's migration.
+/// forever — a startup hang that blocked an earlier migration.
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// Hard ceiling on a single Cypher query / execute.
 const QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -153,7 +153,7 @@ fn neo4j_connect(args: &Value) -> Value {
     // is a safety net for PHPX handlers that still hardcode
     // `bolt://localhost:7688` instead of calling the no-arg form.
     // Without this override, migrated tenants on non-router shards
-    // (e.g. bugsy) hang forever connecting to a port their docker
+    // can hang forever connecting to a port their docker
     // stack doesn't expose.
     let explicit = args
         .get("uri")
