@@ -188,7 +188,8 @@ fn static_params_end_to_end() {
     assert!(rows.iter().any(|r| r.contains("● /posts/world")), "table should show ● /posts/world: {combined}");
     assert!(rows.iter().any(|r| r.contains("○ /")), "table should show ○ /: {combined}");
 
-    // The manifest records one ● instance row per materialized value.
+    // The manifest records one ● route entry per template, carrying every
+    // materialized instance (deka#738 F6: no repeated template rows).
     let manifest: serde_json::Value = serde_json::from_str(
         &fs::read_to_string(manifest_path(project.path())).expect("read build manifest"),
     )
@@ -197,11 +198,25 @@ fn static_params_end_to_end() {
         .as_array()
         .expect("routes array")
         .iter()
-        .filter_map(|route| route["instance"].as_str())
+        .flat_map(|route| route["instances"].as_array().into_iter().flatten())
+        .filter_map(|instance| instance.as_str())
         .collect();
     assert!(
         instances.contains(&"/posts/hello") && instances.contains(&"/posts/world"),
         "manifest instances should include both posts: {manifest}"
+    );
+    let templates: Vec<&str> = manifest["routes"]
+        .as_array()
+        .expect("routes array")
+        .iter()
+        .filter_map(|route| route["template"].as_str())
+        .collect();
+    let mut unique = templates.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(
+        templates, unique,
+        "no duplicate route templates may appear in the manifest: {manifest}"
     );
 }
 
@@ -369,11 +384,25 @@ fn table_matches_manifest() {
             "api" => "λ",
             other => panic!("unknown route mode {other}"),
         };
-        let path = route["instance"]
-            .as_str()
-            .or_else(|| route["template"].as_str())
-            .expect("route path");
-        expected.insert(format!("{glyph} {path}"));
+        // One manifest entry per template (deka#738 F6): staticParams
+        // entries expand to one expected row per concrete instance.
+        let instances = route["instances"]
+            .as_array()
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(|value| value.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if instances.is_empty() {
+            let path = route["template"].as_str().expect("route template");
+            expected.insert(format!("{glyph} {path}"));
+        } else {
+            for instance in instances {
+                expected.insert(format!("{glyph} {instance}"));
+            }
+        }
     }
 
     let rows = route_table_rows(&combined);
@@ -529,4 +558,79 @@ fn stale_plan_rejected() {
         !project.path().join("dist").exists(),
         "a rejected plan must not publish dist/: {combined}"
     );
+}
+
+/// Recursively copy a directory tree (harness parity: building the SAME
+/// project from two roots means copying one source tree, not scaffolding
+/// twice — `deka init` names the project after its directory).
+fn copy_dir(src: &Path, dst: &Path) {
+    fs::create_dir_all(dst).expect("mkdir");
+    for entry in fs::read_dir(src).expect("read_dir").flatten() {
+        let path = entry.path();
+        let target = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir(&path, &target);
+        } else {
+            fs::copy(&path, &target).expect("copy");
+        }
+    }
+}
+
+#[test]
+fn manifest_is_byte_identical_across_roots() {
+    // deka#738 F2: the manifest must record project-root-relative paths so
+    // the same source built from two different roots produces identical
+    // build-manifest.json bytes, with no absolute path anywhere in it.
+    let seed = tempfile::tempdir().expect("create seed project dir");
+    init_project(seed.path());
+    let slug_dir = seed.path().join("app").join("posts").join("[slug]");
+    fs::create_dir_all(&slug_dir).expect("mkdir [slug]");
+    fs::write(
+        slug_dir.join("page.dsx"),
+        "interface PageProps { slug: string }\nstruct PostParam { slug: string }\nexport const staticParams: Array<PostParam> = build {\n    return Ok([PostParam{slug:\"hello\"}, PostParam{slug:\"world\"}])\n}\nexport fn Page(props: PageProps) {\n    return <article><h1>{props.slug}</h1></article>;\n}\n",
+    )
+    .expect("write slug page");
+
+    let manifests: Vec<(PathBuf, Vec<u8>)> = (0..2)
+        .map(|_| {
+            let tmp = tempfile::tempdir().expect("create temp project dir");
+            let project = tmp.path().join("project");
+            copy_dir(seed.path(), &project);
+            let (success, combined) = run_build(&project);
+            assert!(success, "build should succeed: {combined}");
+            let canonical = fs::canonicalize(&project).expect("canonicalize project");
+            let raw = fs::read(manifest_path(&project)).expect("read manifest");
+            (canonical, raw)
+        })
+        .collect();
+
+    assert_eq!(
+        manifests[0].1, manifests[1].1,
+        "build-manifest.json must be byte-identical across project roots"
+    );
+
+    // No absolute path — neither root's spelling — may appear anywhere.
+    let raw = String::from_utf8_lossy(&manifests[0].1);
+    for (root, _) in &manifests {
+        assert!(
+            !raw.contains(root.to_str().expect("utf8 root")),
+            "manifest embeds the project root {root:?}:\n{raw}"
+        );
+    }
+    // Every recorded file field is project-relative.
+    let manifest: serde_json::Value = serde_json::from_str(&raw).expect("parse manifest");
+    for slot in manifest["slots"].as_array().expect("slots array") {
+        let file = slot["file"].as_str().expect("slot file");
+        assert!(
+            !file.starts_with('/') && !file.starts_with("./"),
+            "slots[].file must be project-relative: {file}"
+        );
+    }
+    for route in manifest["routes"].as_array().expect("routes array") {
+        let file = route["source_file"].as_str().expect("route source_file");
+        assert!(
+            !file.starts_with('/') && !file.starts_with("./"),
+            "routes[].source_file must be project-relative: {file}"
+        );
+    }
 }

@@ -504,3 +504,149 @@ fn slot_records_carry_identity() {
     assert_eq!(slot.descriptor_digest, expected);
     assert_eq!(manifest.compiler.plan_version, 2);
 }
+
+#[test]
+fn plan_records_project_relative_paths() {
+    // Absolute inputs under the project root (what dsc and the app scan
+    // produce) must be stored project-relative: the serialized manifest is
+    // compared byte-for-byte across checkout roots (deka#738 F2), so no
+    // field may embed the root.
+    let p = plan(
+        2,
+        vec![slot(
+            "s1",
+            "staticParams",
+            "/project/app/posts/page.ds",
+            params_descriptor(&[("slug", "string")]),
+        )],
+    );
+    let mut manifest = plan_manifest(
+        &[planned("/project/app/posts/page.ds", p)],
+        &[
+            page("/", "/project/app/page.dsx"),
+            page("/posts/[slug]", "/project/app/posts/page.ds"),
+        ],
+        &[api("/api/hello", "/project/api/hello.ds")],
+    )
+    .expect("plan builds");
+    manifest
+        .expand_static_params(&BTreeMap::from([(
+            "s1".to_string(),
+            serde_json::json!([{"slug": "hello"}, {"slug": "world"}]),
+        )]))
+        .expect("expands");
+
+    let json = manifest.canonical_json().expect("json");
+    assert!(
+        !json.contains("/project/"),
+        "manifest must not embed the project root: {json}"
+    );
+    assert_eq!(manifest.slots[0].file, "app/posts/page.ds");
+    for route in &manifest.routes {
+        assert!(
+            !route.source_file.starts_with('/'),
+            "source_file must be relative: {}",
+            route.source_file
+        );
+        assert!(
+            !route.source_file.starts_with("./"),
+            "source_file must not carry a ./ prefix: {}",
+            route.source_file
+        );
+    }
+}
+
+#[test]
+fn verify_artifacts_matches_and_reports_problems() {
+    let project = tempfile::tempdir().expect("tempdir");
+    let dist = project.path().join("dist");
+    std::fs::create_dir_all(dist.join("client")).expect("mkdir");
+    std::fs::write(dist.join("client/index.html"), b"<html/>").expect("write");
+    std::fs::write(dist.join("_redirects"), b"/* / 301").expect("write");
+
+    let mut manifest = plan_manifest(&[], &[page("/", "app/page.dsx")], &[])
+        .expect("plan builds");
+    manifest.record_artifacts(&dist).expect("records");
+
+    // Clean tree: no problems.
+    assert!(
+        manifest.verify_artifacts(project.path()).is_empty(),
+        "a freshly recorded tree must verify"
+    );
+
+    // Tampered bytes: the mismatch names the dist-relative path.
+    std::fs::write(dist.join("client/index.html"), b"TAMPERED").expect("tamper");
+    let problems = manifest.verify_artifacts(project.path());
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(
+        problems[0].contains("dist/client/index.html"),
+        "the mismatch must name the path: {}",
+        problems[0]
+    );
+    assert!(problems[0].contains("digest mismatch"), "{problems:?}");
+
+    // Deleted file: reported, not silently skipped.
+    std::fs::remove_file(dist.join("_redirects")).expect("delete");
+    let problems = manifest.verify_artifacts(project.path());
+    assert_eq!(problems.len(), 2, "{problems:?}");
+    assert!(
+        problems.iter().any(|p| p.contains("dist/_redirects")),
+        "a missing artifact must be named: {problems:?}"
+    );
+}
+
+#[test]
+fn static_params_record_one_entry_per_template() {
+    // deka#738 F6: a multi-instance staticParams route must record ONE
+    // manifest entry (template + sorted instances), not one row per
+    // instance repeating the template.
+    let p = plan(
+        2,
+        vec![slot(
+            "s1",
+            "staticParams",
+            "app/posts/page.ds",
+            params_descriptor(&[("slug", "string")]),
+        )],
+    );
+    let mut manifest = plan_manifest(
+        &[planned("app/posts/page.ds", p)],
+        &[
+            page("/", "app/page.dsx"),
+            page("/posts/[slug]", "app/posts/page.ds"),
+        ],
+        &[],
+    )
+    .expect("plan builds");
+    manifest
+        .expand_static_params(&BTreeMap::from([(
+            "s1".to_string(),
+            serde_json::json!([{"slug": "world"}, {"slug": "hello"}]),
+        )]))
+        .expect("expands");
+
+    let params_routes: Vec<&ManifestRoute> = manifest
+        .routes
+        .iter()
+        .filter(|route| route.mode == RouteMode::StaticParams)
+        .collect();
+    assert_eq!(
+        params_routes.len(),
+        1,
+        "exactly one manifest entry per template: {:?}",
+        manifest.routes
+    );
+    assert_eq!(params_routes[0].template, "/posts/[slug]");
+    assert_eq!(
+        params_routes[0].instances,
+        vec!["/posts/hello".to_string(), "/posts/world".to_string()],
+        "instances are sorted: the table renders in this order"
+    );
+
+    // The table still prints one row per concrete path (● /posts/hello,
+    // ● /posts/world) — consumers expand instances, the display is unchanged.
+    let table = manifest.render_route_table();
+    assert!(table.contains("● /posts/hello"), "{table}");
+    assert!(table.contains("● /posts/world"), "{table}");
+    assert!(table.lines().filter(|line| line.starts_with('●')).count() == 2, "{table}");
+}

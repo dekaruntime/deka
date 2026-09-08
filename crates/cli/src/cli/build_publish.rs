@@ -212,14 +212,15 @@ pub fn render_tasks(manifest: &BuildManifest) -> Vec<runtime::StaticRenderTask> 
                 params: BTreeMap::new(),
             }),
             RouteMode::StaticParams => {
-                let Some(instance) = route.instance.as_ref() else {
-                    continue;
-                };
-                tasks.push(runtime::StaticRenderTask {
-                    template: route.template.clone(),
-                    route: instance.clone(),
-                    params: params_for_instance(&route.template, instance),
-                });
+                // The manifest stores one entry per template (deka#738 F6);
+                // each recorded instance is its own render task.
+                for instance in &route.instances {
+                    tasks.push(runtime::StaticRenderTask {
+                        template: route.template.clone(),
+                        route: instance.clone(),
+                        params: params_for_instance(&route.template, instance),
+                    });
+                }
             }
             RouteMode::RequestTime | RouteMode::Api => {}
         }
