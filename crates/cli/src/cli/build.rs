@@ -168,30 +168,27 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
         None
     };
 
-    let build_slots: Vec<build_dsc::BuildPlanSlot> = planned
-        .iter()
-        .flat_map(|source| source.plan.slots.clone())
-        .collect();
-    let build_entries = build_dsc::stage_build_entries(&project_root, staging_root, build_slots)?;
+    // The build phase runs under the project's resolved security policy
+    // (deka.json + CLI overrides); permitted local reads are recorded per
+    // slot for targeted `deka dev` invalidation (deka#725).
     #[cfg(feature = "native")]
-    let values = runtime::materialize_build_values(
+    let materialized = crate::cli::build_slots::materialize_planned_slots(
+        &context.args.flags,
+        &context.args.params,
         &project_root,
-        build_entries
-            .iter()
-            .map(|entry| runtime::BuildEntry {
-                id: entry.slot.id.clone(),
-                binding: entry.slot.binding.clone(),
-                entry: entry.path.clone(),
-                descriptor: entry.slot.descriptor.clone(),
-            })
-            .collect(),
+        staging_root,
+        &planned,
+        false,
+        None,
     )?;
-    build_dsc::remove_staged_build_entries(&build_entries)?;
+    #[cfg(feature = "native")]
+    let values = materialized.values.clone();
 
     // StaticParams routes become concrete instances from the materialized
     // values (post-execution, pre-render).
     #[cfg(feature = "native")]
     if let Some(manifest) = manifest.as_mut() {
+        crate::cli::build_slots::attach_observations(manifest, &materialized.observations);
         manifest.expand_static_params(&values)?;
     }
     #[cfg(feature = "native")]
