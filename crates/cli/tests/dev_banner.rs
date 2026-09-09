@@ -55,6 +55,49 @@ fn init_project(dir: &Path) {
     );
 }
 
+fn serve_source_project(command: &str, root: &Path) {
+    let port = free_port();
+    let log_path = root.join(format!("{command}.log"));
+    let log = fs::File::create(&log_path).expect("command log");
+    let mut server = Command::new(cli_bin());
+    server
+        .args([command, ".", "--port", &port.to_string(), "--no-prompt"])
+        .current_dir(root)
+        .env("DEKA_RATE_LIMIT_DISABLED", "1")
+        .stdout(Stdio::from(log.try_clone().expect("clone command log")))
+        .stderr(Stdio::from(log));
+    let dsc_beside_cli = Path::new(cli_bin()).with_file_name("dsc");
+    if dsc_beside_cli.is_file() {
+        server.env("DEKA_DSC", dsc_beside_cli);
+    }
+    let child = server.spawn().expect("spawn source-project server");
+    let mut child = KillOnDrop(Some(child));
+
+    let http = client();
+    let deadline = Instant::now() + Duration::from_secs(45);
+    let mut last = String::new();
+    while Instant::now() < deadline {
+        if let Ok(response) = http.get(format!("http://127.0.0.1:{port}/")).send() {
+            let status = response.status().as_u16();
+            let body = response.text().unwrap_or_default();
+            if status == 200 && body.contains("Deka App") {
+                if let Some(mut server) = child.0.take() {
+                    let _ = server.kill();
+                    let _ = server.wait();
+                }
+                return;
+            }
+            last = format!("status={status}, body={body}");
+        }
+        std::thread::sleep(Duration::from_millis(150));
+    }
+
+    let log = fs::read_to_string(&log_path).unwrap_or_default();
+    panic!(
+        "deka {command} did not serve the source app-router project on port {port}: {last}\nlog:\n{log}"
+    );
+}
+
 #[test]
 fn help_lists_dev_command() {
     let output = Command::new(cli_bin())
@@ -81,6 +124,18 @@ fn registry_exposes_dev_command() {
         .expect("dev command should be registered");
     assert_eq!(command.name, "dev");
     assert_eq!(command.category, "runtime");
+}
+
+#[test]
+fn source_app_router_project_serves_with_dev_and_serve() {
+    let root = TempDir::new().expect("temp project");
+    init_project(root.path());
+
+    // These commands are distinct postures in RFD 54, but before the later
+    // artifact work lands they must both continue serving this source tree.
+    for command in ["dev", "serve"] {
+        serve_source_project(command, root.path());
+    }
 }
 
 #[test]

@@ -846,7 +846,7 @@ fn start_watch(
                     }
 
                     if let Some(root) = project_root.as_ref() {
-                        if runtime_core::framework::is_app_router_project(root) {
+                        if runtime_core::framework::is_source_app_router_project(root) {
                             if crate::build_watch::on_watch_event(root, &changed, dev_mode) {
                                 let _ = engine.request_pool().evict_all().await;
                             }

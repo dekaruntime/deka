@@ -156,7 +156,7 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     // slot shape, route disposition, output collisions). Non-app-router
     // projects do not use the manifest.
     #[cfg(feature = "native")]
-    let mut manifest = if runtime_core::framework::is_app_router_project(&project_root) {
+    let mut manifest = if runtime_core::framework::is_source_app_router_project(&project_root) {
         let app_manifest = runtime_core::framework::scan_app_dir(&app_dir);
         let api_entries = runtime_core::framework::scan_api_dir(&api_dir);
         Some(runtime_core::framework::BuildManifest::plan(
@@ -233,7 +233,7 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     copy_dir_recursive(&public_dir, &dist_client)?;
 
     let client_index = dist_client.join("index.html");
-    if runtime_core::framework::is_app_router_project(&project_root) {
+    if runtime_core::framework::is_source_app_router_project(&project_root) {
         // With a manifest, an empty task list means every route is
         // request-time (`prerender = false`): publish no static HTML rather
         // than fabricating a root render. Without a manifest there is
@@ -713,7 +713,7 @@ fn ensure_web_project_layout(project_root: &Path) -> Result<(), String> {
 fn resolve_web_entry(project_root: &Path) -> Result<PathBuf, String> {
     let json = load_deka_json(project_root)?;
 
-    if runtime_core::framework::is_app_router_project(project_root) {
+    if runtime_core::framework::is_source_app_router_project(project_root) {
         let page = project_root.join("app").join("page.dsx");
         let page = if page.is_file() {
             page

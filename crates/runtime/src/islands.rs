@@ -593,7 +593,7 @@ pub fn find_app_router_root(start: &Path) -> Option<PathBuf> {
         start.parent()?.to_path_buf()
     };
     loop {
-        if runtime_core::framework::is_app_router_project(&cur) {
+        if runtime_core::framework::is_source_app_router_project(&cur) {
             return Some(cur);
         }
         if !cur.pop() {
@@ -606,7 +606,7 @@ pub fn write_island_client_assets_for_project(
     project_root: &Path,
     flavor: ClientAssetFlavor,
 ) -> Result<(), String> {
-    if !runtime_core::framework::is_app_router_project(project_root) {
+    if !runtime_core::framework::is_source_app_router_project(project_root) {
         return Ok(());
     }
     let app_dir = project_root.join("app");

@@ -186,7 +186,7 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
         });
     }
 
-    if runtime_core::framework::is_app_router_project(&handler_dir) {
+    if runtime_core::framework::is_source_app_router_project(&handler_dir) {
         let entry_path = runtime_core::framework::write_app_router_entry(&handler_dir)?;
         return Ok(ResolvedHandler {
             path: entry_path,
