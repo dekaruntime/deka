@@ -59,15 +59,28 @@ const expected = '<div title="&quot; onerror=">&lt;script&gt;alert(1)&lt;/script
 const rendered = renderToString(jsx(PoC, {{ text, attr }}));
 assertEqual(rendered.html, expected, 'component PoC HTML');
 const allCharacters = '& < > " ' + String.fromCharCode(39);
+// Per-context escaping (dekaruntime/dsc#79): text escapes & < >; the
+// double-quoted attribute value escapes & and " only. Apostrophes render
+// literally in both contexts — &#39; in visible prose is what a naive
+// escaper emits, and it costs 5 bytes where storefront copy uses 1.
 assertEqual(
   renderToString(jsx('p', {{ title: allCharacters }}, allCharacters)).html,
-  '<p title="&amp; &lt; &gt; &quot; &#39;">&amp; &lt; &gt; &quot; &#39;</p>',
+  `<p title="&amp; < > &quot; '">&amp; &lt; &gt; " '</p>`,
   'all HTML-sensitive characters',
+);
+
+// Storefront prose pins: apostrophes and double quotes stay literal in
+// text, apostrophes stay literal inside double-quoted attribute values.
+const copy = 'don' + String.fromCharCode(39) + 't miss it — we' + String.fromCharCode(39) + 'll say "hi"';
+assertEqual(
+  renderToString(jsx('p', {{ 'aria-label': copy }}, copy)).html,
+  `<p aria-label="don't miss it — we'll say &quot;hi&quot;">don't miss it — we'll say "hi"</p>`,
+  'storefront copy escapes per context',
 );
 
 assertEqual(
   renderToString(jsx(Fragment, {{}}, [text, attr])).html,
-  '&lt;script&gt;alert(1)&lt;/script&gt;&quot; onerror=',
+  '&lt;script&gt;alert(1)&lt;/script&gt;" onerror=',
   'fragment array HTML',
 );
 
