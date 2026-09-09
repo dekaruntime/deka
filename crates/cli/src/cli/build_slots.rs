@@ -241,7 +241,12 @@ fn update_dev_manifest(
                 manifest.slots.push(runtime_core::framework::ManifestSlot {
                     id: slot.id.clone(),
                     binding: slot.binding.clone(),
-                    file: slot.file.clone(),
+                    // Stored project-relative like plan() records them
+                    // (deka#738 F2).
+                    file: runtime_core::framework::project_relative_path(
+                        project_root,
+                        Path::new(&slot.file),
+                    ),
                     descriptor_digest: runtime_core::framework::sha256_hex(
                         slot.descriptor.to_string().as_bytes(),
                     ),

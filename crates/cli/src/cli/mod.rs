@@ -61,6 +61,8 @@ pub mod test;
 #[cfg(feature = "native")]
 pub mod transpile;
 pub mod user;
+#[cfg(feature = "native")]
+pub mod verify;
 
 pub fn register_global_flags(registry: &mut Registry) {
     registry.add_flag(FlagSpec {
