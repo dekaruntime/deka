@@ -133,7 +133,26 @@ export function nativeCliVersion(cliPath: string): string | undefined {
   return `${r.stdout ?? ''}${r.stderr ?? ''}`.match(/(\d+\.\d+\.\d+)/)?.[1]
 }
 
-function parseNativeDiagnostics(stderr: string): NativeRunResult['diagnostics'] {
+// Compact diagnostic line emitted by the CLI. Two shapes occur in one run and
+// BOTH must match: the first diagnostic of a file carries a `[transpile] `
+// prefix, subsequent ones do not. The previous pattern anchored on `\\d+:\\d+:`
+// with no optional prefix, so it silently dropped the *primary* diagnostic of
+// every failure — 388 of them across a release pack — while still matching the
+// follow-ons. That is what made the conformance report show 358 host
+// divergences where only 16 exist (deka#739).
+//
+// The file-path segment is optional because not every diagnostic carries one.
+//   [transpile] 6:1: /tmp/test.ds: async function must return Promise<T>
+//   10:6: /tmp/test.ds: `await` expected Promise<T>, found type `number`
+//   2:6: leading-zero octal-style integers are not allowed
+const COMPACT_DIAGNOSTIC = /^\s*(?:\[transpile\]\s+)?(\d+):(\d+):\s+(?:\S+?\.dsx?:\s+)?(.+)$/
+
+// A wrapper the runtime used to prepend ahead of dsc's real output. Kept as an
+// exclusion so old packs and any other caller that still wraps cannot have the
+// wrapper recorded as if it were the diagnostic.
+const NON_DIAGNOSTIC_PREAMBLE = /^dsc transpile failed\b/
+
+export function parseNativeDiagnostics(stderr: string): NativeRunResult['diagnostics'] {
   const diagnostics: NativeRunResult['diagnostics'] = []
   const lines = stderr.split('\n')
 
@@ -173,16 +192,27 @@ function parseNativeDiagnostics(stderr: string): NativeRunResult['diagnostics'] 
   if (diagnostics.length === 0) {
     let sawCompact = false
     for (const l of lines) {
-      const compactMatch = l.match(/^\s*\d+:\d+:\s+\S+:\s+(.+)$/)
+      const compactMatch = l.match(COMPACT_DIAGNOSTIC)
       if (compactMatch) {
         sawCompact = true
-        diagnostics.push({ severity: 'error', message: compactMatch[1].trim() })
+        diagnostics.push({
+          severity: 'error',
+          message: compactMatch[3].trim(),
+          line: Number(compactMatch[1]),
+          column: Number(compactMatch[2]),
+        })
       }
     }
     if (!sawCompact) {
       const firstLine = lines.find((l) => {
         const trimmed = l.trim()
-        return trimmed.length > 0 && !trimmed.startsWith('[') && !trimmed.startsWith('Validation') && !trimmed.startsWith('❌')
+        return (
+          trimmed.length > 0 &&
+          !trimmed.startsWith('[') &&
+          !trimmed.startsWith('Validation') &&
+          !trimmed.startsWith('❌') &&
+          !NON_DIAGNOSTIC_PREAMBLE.test(trimmed)
+        )
       })
       if (firstLine) {
         diagnostics.push({ severity: 'error', message: firstLine.trim() })
