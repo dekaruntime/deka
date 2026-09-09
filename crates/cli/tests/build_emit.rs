@@ -37,6 +37,30 @@ fn run_build(dir: &Path) -> (bool, String) {
 }
 
 #[test]
+fn build_help_does_not_build() {
+    // deka#750: `deka build --help` used to fall through to the build handler
+    // (which needs a project and would fail or write dist). Help must print
+    // and exit 0 without touching the filesystem.
+    let project = tempfile::tempdir().expect("create temp project dir");
+    let output = Command::new(cli_bin())
+        .args(["build", "--help"])
+        .current_dir(project.path())
+        .output()
+        .expect("run deka build --help");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "deka build --help must exit 0: {combined}");
+    assert!(combined.contains("build"), "help must mention build: {combined}");
+    assert!(
+        !project.path().join("dist").exists(),
+        "deka build --help must not write dist"
+    );
+}
+
+#[test]
 fn build_emits_src_one_to_one() {
     let project = tempfile::tempdir().expect("create temp project dir");
     init_project(project.path());

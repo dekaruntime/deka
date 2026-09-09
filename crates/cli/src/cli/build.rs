@@ -9,6 +9,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use runtime::ClientAssetFlavor;
+
 const COMMAND: CommandSpec = CommandSpec {
     name: "build",
     category: "project",
@@ -379,27 +381,22 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     if !islands.is_empty() {
         #[cfg(feature = "native")]
         {
-            runtime::write_island_client_assets(&dist_client.join("assets"), &islands)?;
             runtime::write_island_client_assets(
-                &project_root
-                    .join(".cache")
-                    .join("dekascript")
-                    .join("assets"),
+                &dist_client.join("assets"),
                 &islands,
+                ClientAssetFlavor::Dist,
             )?;
+            let cache_assets = project_root.join(".cache").join("dekascript").join("assets");
+            runtime::write_island_client_assets(&cache_assets, &islands, ClientAssetFlavor::Dev)?;
         }
         inject_island_scripts(&dist_client, &islands)?;
     }
     if !deferred.is_empty() {
         #[cfg(feature = "native")]
         {
-            runtime::write_defer_client_assets(&dist_client.join("assets"))?;
-            runtime::write_defer_client_assets(
-                &project_root
-                    .join(".cache")
-                    .join("dekascript")
-                    .join("assets"),
-            )?;
+            runtime::write_defer_client_assets(&dist_client.join("assets"), ClientAssetFlavor::Dist)?;
+            let cache_assets = project_root.join(".cache").join("dekascript").join("assets");
+            runtime::write_defer_client_assets(&cache_assets, ClientAssetFlavor::Dev)?;
         }
         inject_defer_script(&dist_client)?;
     }
