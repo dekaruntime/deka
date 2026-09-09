@@ -599,7 +599,7 @@ fn resolve_project_root(input_path: &Path) -> Result<PathBuf, String> {
         if dir.join("deka.json").is_file() {
             let dir = dir.to_path_buf();
             if dir.join("deka.lock").is_file() {
-                return Ok(dir);
+                return canonical_project_root(dir);
             }
             if nearest_manifest_root.is_none() {
                 nearest_manifest_root = Some(dir);
@@ -608,13 +608,22 @@ fn resolve_project_root(input_path: &Path) -> Result<PathBuf, String> {
     }
 
     if let Some(root) = nearest_manifest_root {
-        return Ok(root);
+        return canonical_project_root(root);
     }
 
     Err(format!(
         "deka build requires a deka.json project root (searched from {})",
         input_path.display()
     ))
+}
+
+/// Resolve the root once at the command boundary. Downstream build phases
+/// compare dsc-emitted source paths with scanned project paths, so preserving
+/// a caller spelling such as `.` would make one project appear to have two
+/// different roots.
+fn canonical_project_root(root: PathBuf) -> Result<PathBuf, String> {
+    fs::canonicalize(&root)
+        .map_err(|err| format!("failed to resolve project root {}: {err}", root.display()))
 }
 
 fn project_root_search_start(input_path: &Path) -> PathBuf {

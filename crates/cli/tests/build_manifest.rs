@@ -8,8 +8,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
 
 fn cli_bin() -> &'static str {
     env!("CARGO_BIN_EXE_cli")
@@ -53,6 +55,89 @@ fn run_build_with_env(dir: &Path, env: &[(&str, &str)]) -> (bool, String) {
         String::from_utf8_lossy(&output.stderr)
     );
     (output.status.success(), combined)
+}
+
+fn run_build_at(dir: &Path, root_hint: &str) -> (bool, String) {
+    let output = Command::new(cli_bin())
+        .args(["build", root_hint])
+        .current_dir(dir)
+        .output()
+        .expect("run deka build");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    (output.status.success(), combined)
+}
+
+struct KillOnDrop(Option<Child>);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+fn free_port() -> u16 {
+    TcpListener::bind(("127.0.0.1", 0))
+        .expect("bind ephemeral")
+        .local_addr()
+        .expect("local address")
+        .port()
+}
+
+fn dev_manifest_path(project: &Path) -> PathBuf {
+    project
+        .join("ds_modules")
+        .join(".cache")
+        .join("dev")
+        .join("build-manifest.json")
+}
+
+/// Start `deka dev` long enough to materialize slots and serve the bracket
+/// route. The manifest is the dev-side route output; dev does not print the
+/// production route table.
+fn run_dev_at(dir: &Path, root_hint: &str) -> (Vec<u8>, String) {
+    let port = free_port();
+    let log_path = dir.join("relative-root-dev.log");
+    let log = fs::File::create(&log_path).expect("create dev log");
+    let child = Command::new(cli_bin())
+        .args(["dev", root_hint, "--port", &port.to_string(), "--no-prompt"])
+        .current_dir(dir)
+        .env("DEKA_RATE_LIMIT_DISABLED", "1")
+        .stdout(Stdio::from(log.try_clone().expect("clone dev log")))
+        .stderr(Stdio::from(log))
+        .spawn()
+        .expect("spawn deka dev");
+    let mut child = KillOnDrop(Some(child));
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .expect("HTTP client");
+    let deadline = Instant::now() + Duration::from_secs(45);
+    let mut last = String::new();
+    while Instant::now() < deadline {
+        if let Ok(response) = client.get(format!("http://127.0.0.1:{port}/posts/hello")).send() {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            if status.is_success() && body.contains(">hello<") && dev_manifest_path(dir).is_file() {
+                let manifest = fs::read(dev_manifest_path(dir)).expect("read dev manifest");
+                if let Some(mut server) = child.0.take() {
+                    let _ = server.kill();
+                    let _ = server.wait();
+                }
+                return (manifest, body);
+            }
+            last = format!("status={status}, body={body}");
+        }
+        std::thread::sleep(Duration::from_millis(150));
+    }
+    let log = fs::read_to_string(&log_path).unwrap_or_default();
+    panic!("deka dev {root_hint} did not serve /posts/hello: {last}\nlog:\n{log}");
 }
 
 /// Route-table rows from build output (stdio emits to stderr by convention),
@@ -218,6 +303,87 @@ fn static_params_end_to_end() {
         templates, unique,
         "no duplicate route templates may appear in the manifest: {manifest}"
     );
+}
+
+#[test]
+fn relative_project_root_matches_absolute_build_and_dev() {
+    // deka#730: dsc preserves the spelling of source paths in its plans. A
+    // relative project root must therefore be canonicalized before those
+    // plans are paired with paths scanned from app/.
+    let workspace = tempfile::tempdir().expect("create workspace");
+    let project = workspace.path().join("project");
+    fs::create_dir_all(&project).expect("create project");
+    init_project(&project);
+    let slug_dir = project.join("app").join("posts").join("[slug]");
+    fs::create_dir_all(&slug_dir).expect("mkdir [slug]");
+    fs::write(
+        slug_dir.join("page.dsx"),
+        "interface PageProps { slug: string }\nstruct PostParam { slug: string }\nexport const staticParams: Array<PostParam> = build {\n    return Ok([PostParam{slug:\"hello\"}])\n}\nexport fn Page(props: PageProps) {\n    return <article><h1>{props.slug}</h1></article>;\n}\n",
+    )
+    .expect("write staticParams page");
+    let nested = workspace.path().join("nested");
+    fs::create_dir_all(&nested).expect("create sibling cwd");
+    let symlink = workspace.path().join("project-link");
+    create_dir_symlink(&project, &symlink);
+
+    let absolute_root = project.canonicalize().expect("canonical project");
+    let absolute_root_arg = absolute_root.to_str().expect("UTF-8 project root");
+    let (success, absolute_output) = run_build_at(&project, absolute_root_arg);
+    assert!(success, "absolute-root build must succeed: {absolute_output}");
+    let expected_routes = route_table_rows(&absolute_output);
+    assert!(
+        expected_routes.iter().any(|row| row == "● /posts/hello"),
+        "the staticParams route must be classified before parity is checked: {absolute_output}"
+    );
+    let expected_manifest = fs::read(manifest_path(&project)).expect("read absolute manifest");
+
+    for (label, cwd, root_hint) in [
+        ("dot", project.as_path(), "."),
+        ("dot slash", project.as_path(), "./"),
+        ("parent", nested.as_path(), "../project"),
+        ("trailing slash", workspace.path(), "project/"),
+        ("symlink", workspace.path(), "project-link"),
+    ] {
+        let (success, output) = run_build_at(cwd, root_hint);
+        assert!(success, "{label} root build must succeed: {output}");
+        assert_eq!(
+            route_table_rows(&output),
+            expected_routes,
+            "{label} root must print the same routes as an absolute root"
+        );
+        assert_eq!(
+            fs::read(manifest_path(&project)).expect("read relative manifest"),
+            expected_manifest,
+            "{label} root must write the same build manifest as an absolute root"
+        );
+    }
+
+    // `dev` persists its route output as the dev manifest rather than a
+    // production route table. Exercise the user-reported `deka dev .` form
+    // against the same dynamic staticParams page.
+    let dev_cache = project.join("ds_modules").join(".cache").join("dev");
+    let _ = fs::remove_dir_all(&dev_cache);
+    let (absolute_dev_manifest, absolute_dev_page) = run_dev_at(&project, absolute_root_arg);
+    let _ = fs::remove_dir_all(&dev_cache);
+    let (relative_dev_manifest, relative_dev_page) = run_dev_at(&project, ".");
+    assert_eq!(
+        relative_dev_manifest, absolute_dev_manifest,
+        "deka dev . must write the same route manifest as an absolute root"
+    );
+    assert_eq!(
+        relative_dev_page, absolute_dev_page,
+        "deka dev . must serve the same staticParams route as an absolute root"
+    );
+}
+
+#[cfg(unix)]
+fn create_dir_symlink(target: &Path, link: &Path) {
+    std::os::unix::fs::symlink(target, link).expect("create project symlink");
+}
+
+#[cfg(windows)]
+fn create_dir_symlink(target: &Path, link: &Path) {
+    std::os::windows::fs::symlink_dir(target, link).expect("create project symlink");
 }
 
 #[test]
