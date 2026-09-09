@@ -63,7 +63,7 @@ console.log(html) // abc
 
 ### Escaping
 
-All text and attribute values are escaped. User-provided values cannot inject raw HTML.
+Escaping is per context. Text content escapes `&`, `<`, and `>`; double-quoted attribute values escape `&` and `"` only. An apostrophe never needs escaping — the renderer does not emit single-quoted attribute values — so storefront prose like `don't` and `we'll` ships as one byte each, not `&#39;`. User-provided values cannot inject raw HTML: inside a double-quoted attribute value, `<` cannot start a tag, and the quote that could close the value is escaped.
 
 ```ds
 const html = globalThis.deka.ui.renderToString(
@@ -72,7 +72,7 @@ const html = globalThis.deka.ui.renderToString(
     children: "1 < 2 & 3 > 0"
   })
 )
-// <div title="&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;">1 &lt; 2 &amp; 3 &gt; 0</div>
+// <div title="<script>alert('x')</script>">1 &lt; 2 &amp; 3 &gt; 0</div>
 ```
 
 ### Boolean attributes

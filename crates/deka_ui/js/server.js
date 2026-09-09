@@ -6,13 +6,31 @@ import { isLive } from "./reactive.js";
 import { Suspense } from "./suspense.js";
 import { formatIslandStart, formatIslandEnd } from "./island-marker.js";
 
-function escapeHtml(text) {
+// Escaping is per-context, not one union set serving every sink
+// (dekaruntime/dsc#79). Text nodes and double-quoted attribute values have
+// different requirements; escaping more than a context needs costs payload
+// — an apostrophe is 5 bytes as &#39; but 1 byte literal, and storefront
+// copy is full of them (don't, we'll, Mother's Day).
+//
+//   escapeText      — text content: & and < are required by HTML; > is
+//                     conventional (and already pinned by the jsx_escape_*
+//                     fixtures), harmless, and keeps naive downstream
+//                     consumers that split on ">" honest.
+//   escapeAttribute — double-quoted attribute values: & and " only.
+//                     ' never needs escaping here: this renderer never
+//                     emits single-quoted attribute values. If such a path
+//                     is ever added it gets its own escaper.
+function escapeText(text) {
   return String(text)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+    .replace(/>/g, "&gt;");
+}
+
+function escapeAttribute(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;");
 }
 
 // Sandboxed runtimes wrap throwing host constructors in Result
@@ -413,7 +431,7 @@ function fallbackNodes(children) {
 function wrapDeferred(name, directive, props, cache, id, html) {
   const enc = encryptPropsSync(name, jsonSafe(props) ?? {}, deferRequest);
   const start = formatIslandStart({ name, directive, id, enc, cache });
-  return `<!--${start}--><span data-deka-defer="${escapeHtml(id)}">${html}</span><!--${formatIslandEnd(name)}-->`;
+  return `<!--${start}--><span data-deka-defer="${escapeAttribute(id)}">${html}</span><!--${formatIslandEnd(name)}-->`;
 }
 
 function renderAttributes(props) {
@@ -422,11 +440,11 @@ function renderAttributes(props) {
     if (typeof value === "function") continue;
     if (key.length > 2 && key.startsWith("on")) continue;
     if (value === true) {
-      attrs += ` ${escapeHtml(key)}`;
+      attrs += ` ${escapeAttribute(key)}`;
     } else if (value === false || value == null) {
       continue;
     } else {
-      attrs += ` ${escapeHtml(key)}="${escapeHtml(value)}"`;
+      attrs += ` ${escapeAttribute(key)}="${escapeAttribute(value)}"`;
     }
   }
   return attrs;
@@ -434,7 +452,7 @@ function renderAttributes(props) {
 
 function forwardClass(html, className) {
   if (!className || typeof html !== "string" || html[0] !== "<") return html;
-  const escaped = escapeHtml(className);
+  const escaped = escapeAttribute(className);
   return html.replace(/^<([^\s>\/]+)((?:\s[^>]*)?)(\/?>)/, (m, tag, attrs, close) => {
     if (/\sclass\s*=/.test(attrs)) return m;
     return `<${tag}${attrs} class="${escaped}"${close}`;
@@ -450,7 +468,7 @@ function isSuspenseTag(tag) {
 }
 
 function wrapFallback(id, fallbackHtml) {
-  return `<div id="${escapeHtml(id)}" data-deka-suspense="pending">${fallbackHtml}</div>`;
+  return `<div id="${escapeAttribute(id)}" data-deka-suspense="pending">${fallbackHtml}</div>`;
 }
 
 let deferSeq = 0;
@@ -488,10 +506,10 @@ function renderNode(node, ctx) {
     // (blank-then-fill was the silent default, deka#746 F3 / deka#744 F2).
     const value = node.read();
     if (isComponentNode(value) || Array.isArray(value)) return renderNode(value, ctx);
-    return escapeHtml(liveText(value));
+    return escapeText(liveText(value));
   }
   if (typeof node === "string" || typeof node === "number") {
-    return escapeHtml(String(node));
+    return escapeText(String(node));
   }
   if (Array.isArray(node)) {
     let out = "";
@@ -499,7 +517,7 @@ function renderNode(node, ctx) {
     return out;
   }
   if (!isComponentNode(node)) {
-    return escapeHtml(String(node));
+    return escapeText(String(node));
   }
 
   const { tag, props, children } = node;
@@ -532,7 +550,7 @@ function renderNode(node, ctx) {
     const attrs = renderAttributes(rest);
     let markerAttrs = "";
     for (const directive of directives) {
-      markerAttrs += ` data-client-${escapeHtml(directive)}`;
+      markerAttrs += ` data-client-${escapeAttribute(directive)}`;
     }
     const childHtml = renderNode(children, ctx);
     if (childHtml === "" && VOID.has(tag)) {
@@ -563,10 +581,10 @@ async function renderNodeAsync(node) {
     // See renderNode: a throwing live expression must surface, not blank.
     const value = node.read();
     if (isComponentNode(value) || Array.isArray(value)) return await renderNodeAsync(value);
-    return escapeHtml(liveText(value));
+    return escapeText(liveText(value));
   }
   if (typeof node === "string" || typeof node === "number") {
-    return escapeHtml(String(node));
+    return escapeText(String(node));
   }
   if (Array.isArray(node)) {
     let out = "";
@@ -574,7 +592,7 @@ async function renderNodeAsync(node) {
     return out;
   }
   if (!isComponentNode(node)) {
-    return escapeHtml(String(node));
+    return escapeText(String(node));
   }
 
   const { tag, props, children } = node;
@@ -607,7 +625,7 @@ async function renderNodeAsync(node) {
     const attrs = renderAttributes(rest);
     let markerAttrs = "";
     for (const directive of directives) {
-      markerAttrs += ` data-client-${escapeHtml(directive)}`;
+      markerAttrs += ` data-client-${escapeAttribute(directive)}`;
     }
     const childHtml = await renderNodeAsync(children);
     if (childHtml === "" && VOID.has(tag)) {
@@ -646,7 +664,7 @@ function swapChunk(id, html) {
   const templateId = "deka-swap-" + id;
   const tid = JSON.stringify(templateId);
   const sid = JSON.stringify(id);
-  return `<template id="${escapeHtml(templateId)}">${html}</template><script>(() => { const t = document.getElementById(${tid}); const slot = document.getElementById(${sid}); if (slot && t) slot.replaceWith(t.content.cloneNode(true)); t && t.remove(); document.currentScript && document.currentScript.remove(); })();</script>`;
+  return `<template id="${escapeAttribute(templateId)}">${html}</template><script>(() => { const t = document.getElementById(${tid}); const slot = document.getElementById(${sid}); if (slot && t) slot.replaceWith(t.content.cloneNode(true)); t && t.remove(); document.currentScript && document.currentScript.remove(); })();</script>`;
 }
 
 function encodeChunk(text) {
@@ -794,4 +812,4 @@ export async function renderToStreamHtml(node, request) {
   }
 }
 
-export { escapeHtml, liveText, Suspense };
+export { escapeText, escapeAttribute, liveText, Suspense };
