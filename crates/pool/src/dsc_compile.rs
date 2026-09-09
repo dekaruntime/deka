@@ -53,10 +53,22 @@ pub fn compile_graph(
         .output()
         .map_err(|err| format!("failed to exec {}: {err}", dsc.display()))?;
     if !output.status.success() {
+        // Surface dsc's diagnostics verbatim. An earlier version prefixed a
+        // "need dsc >= 0.5.0 for --self-contained" guess, which was stale (every
+        // supported dsc satisfies it) and — because it occupied the first line —
+        // was what downstream consumers parsed as *the* diagnostic, masking the
+        // real one. The conformance harness recorded that guess for 317 tests
+        // and dropped 388 genuine diagnostics as a result (deka#739). If a
+        // diagnosis is ever added back here it must go after dsc's own output,
+        // never in front of it.
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "{DEKA_VALIDATION_ERROR_MARKER}dsc transpile failed (need dsc >= 0.5.0 for --self-contained):\n{stderr}"
-        ));
+        let detail = stderr.trim();
+        let detail = if detail.is_empty() {
+            format!("dsc transpile exited {}", output.status)
+        } else {
+            detail.to_string()
+        };
+        return Err(format!("{DEKA_VALIDATION_ERROR_MARKER}{detail}"));
     }
 
     let mut modules = HashMap::new();
