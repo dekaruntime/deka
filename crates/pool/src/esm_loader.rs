@@ -25,6 +25,29 @@ use runtime_core::{
 };
 use runtime_core::modules::{read_linked_modules, MODULES_DIR};
 
+/// Write a ui cache file atomically, skipping the write when the content is
+/// already identical. deka#745: concurrent isolate loads read these files with
+/// plain `read_to_string`, so a truncate-then-write `fs::write` could be
+/// observed as an empty module (preamble still parses, exports vanish). Writes
+/// go to a temp file in the same directory followed by `rename`, so a reader
+/// sees either the old or the new complete file, never a truncation.
+/// Returns `true` when a write happened.
+fn write_ui_file_if_changed(path: &Path, source: &str) -> std::io::Result<bool> {
+    if let Ok(existing) = std::fs::read_to_string(path)
+        && existing == source
+    {
+        return Ok(false);
+    }
+    let tmp = path.with_file_name(format!(
+        ".{}.tmp.{}",
+        path.file_name().and_then(|name| name.to_str()).unwrap_or("ui"),
+        std::process::id()
+    ));
+    std::fs::write(&tmp, source)?;
+    std::fs::rename(&tmp, path)?;
+    Ok(true)
+}
+
 fn parse_module_imports(source: &str) -> Vec<String> {
     runtime_core::ds_imports::paths(source)
 }
@@ -143,7 +166,7 @@ impl PhpxEsmLoader {
             tracing::warn!("failed to create {}: {}", dir.display(), err);
             return None;
         }
-        if let Err(err) = std::fs::write(&path, source) {
+        if let Err(err) = write_ui_file_if_changed(&path, source) {
             tracing::warn!("failed to write {}: {}", path.display(), err);
             return None;
         }
@@ -151,7 +174,7 @@ impl PhpxEsmLoader {
         for spec in deka_ui::SPECIFIERS {
             if let (Some(src), Some(name)) = (deka_ui::source_for(spec), deka_ui::file_name_for(spec)) {
                 let sibling = dir.join(name);
-                let _ = std::fs::write(sibling, src);
+                let _ = write_ui_file_if_changed(&sibling, src);
             }
         }
         Some(path)
@@ -711,7 +734,7 @@ fn append_entry_footer(code: ModuleSourceCode) -> ModuleSourceCode {
 mod tests {
     use super::{
         PhpxEsmLoader, is_javascript_entry, resolve_import_path, resolve_phpx_module_spec,
-        resolve_project_root, resolve_public_source_candidates,
+        resolve_project_root, resolve_public_source_candidates, write_ui_file_if_changed,
     };
     use std::fs;
 
@@ -802,5 +825,53 @@ mod tests {
         fs::write(&entry, "export const app = 1;\n").expect("write ds");
         let err = resolve_project_root(&entry).expect_err("ds needs deka.json");
         assert!(err.contains("deka.json"), "{err}");
+    }
+
+    #[test]
+    fn materialize_ui_module_writes_embedded_sources() {
+        let root = tempfile::tempdir().expect("temp project");
+        let entry = root.path().join("handler.js");
+        fs::write(&entry, "export default {};\n").expect("write js handler");
+        let loader = PhpxEsmLoader::new(root.path().to_path_buf(), entry).expect("loader");
+
+        let path = loader
+            .materialize_ui_module("ui/jsx")
+            .expect("ui/jsx materializes");
+
+        // Primary file and every sibling match the embedded deka_ui sources.
+        for spec in deka_ui::SPECIFIERS {
+            let name = deka_ui::file_name_for(spec).expect("file name");
+            let source = deka_ui::source_for(spec).expect("source");
+            let on_disk = fs::read_to_string(path.parent().unwrap().join(name))
+                .expect("sibling materialized");
+            assert_eq!(on_disk, source, "{name} mismatch");
+        }
+    }
+
+    #[test]
+    fn write_ui_file_if_changed_skips_identical_content() {
+        let root = tempfile::tempdir().expect("temp project");
+        let path = root.path().join("reactive.js");
+        let source = deka_ui::source_for("ui/reactive").expect("source");
+
+        assert!(
+            write_ui_file_if_changed(&path, source).expect("first write"),
+            "first write should happen"
+        );
+        assert_eq!(fs::read_to_string(&path).expect("read"), source);
+
+        assert!(
+            !write_ui_file_if_changed(&path, source).expect("second write"),
+            "identical content must not be rewritten (deka#745)"
+        );
+        assert_eq!(fs::read_to_string(&path).expect("read"), source);
+
+        // No temp file left behind.
+        let leftovers: Vec<_> = fs::read_dir(root.path())
+            .expect("read dir")
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp."))
+            .collect();
+        assert!(leftovers.is_empty(), "temp files left behind: {leftovers:?}");
     }
 }
