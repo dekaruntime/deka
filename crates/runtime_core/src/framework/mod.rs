@@ -80,7 +80,8 @@ pub use document::{
 pub use islands::{ClientIsland, island_script_tags, scan_client_islands};
 pub use manifest::{
     FrameworkEntry, FrameworkEntryKind, FrameworkManifest, collect_public_rel_paths,
-    exported_http_methods, is_app_router_project, scan_api_dir, scan_app_dir,
+    exported_http_methods, is_built_app_router_project, is_source_app_router_project, scan_api_dir,
+    scan_app_dir,
 };
 pub use routes::{
     RouteMatch, cloudflare_redirects, layout_chain, match_path, normalize_request_path,

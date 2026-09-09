@@ -42,7 +42,7 @@ fn directory_with_app_subdir_without_index_html_falls_back_to_static() {
     // The legacy "app/ folder exists → PHP mode" convention was removed with
     // the PHPX runtime pocket (RFD 24 §12). A directory is only an app-router
     // project when it has index.html + app/page.ds(x) (see
-    // runtime_core::framework::is_app_router_project); anything else without
+    // runtime_core::framework::is_source_app_router_project); anything else without
     // an index file falls back to static directory serving.
     let dir = temp_dir("engine_test_app");
     fs::create_dir(dir.join("app")).unwrap();

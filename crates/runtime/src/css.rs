@@ -52,7 +52,7 @@ fn clean_stale_css(css_dir: &Path, keep: &BTreeSet<String>) -> Result<(), String
 }
 
 pub fn write_route_css_assets_for_project(project_root: &Path) -> Result<(), String> {
-    if !runtime_core::framework::is_app_router_project(project_root) {
+    if !runtime_core::framework::is_source_app_router_project(project_root) {
         return Ok(());
     }
     let manifest = scan_app_dir(&project_root.join("app"));

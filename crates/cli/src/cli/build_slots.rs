@@ -287,7 +287,7 @@ pub fn ensure_dev_build_slots(
     let Some(project_root) = dev_project_root(handler_input) else {
         return;
     };
-    if !runtime_core::framework::is_app_router_project(&project_root) {
+    if !runtime_core::framework::is_source_app_router_project(&project_root) {
         return;
     }
     if let Err(err) = refresh_dev_build_slots(

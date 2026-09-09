@@ -29,10 +29,27 @@ pub struct FrameworkManifest {
     pub entries: Vec<FrameworkEntry>,
     pub not_found: Option<FrameworkEntry>,
 }
-pub fn is_app_router_project(project_root: &Path) -> bool {
+/// Whether `project_root` is an app-router source tree whose entries can be
+/// generated.
+///
+/// This intentionally describes source inputs only. A built app-router
+/// project is detected separately by [`is_built_app_router_project`].
+pub fn is_source_app_router_project(project_root: &Path) -> bool {
     project_root.join("index.html").is_file()
         && (project_root.join("app/page.dsx").is_file()
             || project_root.join("app/page.ds").is_file())
+}
+
+/// Whether `project_root` contains the published output of an app-router
+/// build.
+///
+/// The current build contract emits the document to `dist/client/index.html`
+/// and compiles the root route to `dist/app/page.js`. This is deliberately not
+/// a source-tree check: later serving code can choose this predicate without
+/// accidentally regenerating entries from source.
+pub fn is_built_app_router_project(project_root: &Path) -> bool {
+    project_root.join("dist/client/index.html").is_file()
+        && project_root.join("dist/app/page.js").is_file()
 }
 pub fn scan_app_dir(app_dir: &Path) -> FrameworkManifest {
     let mut manifest = FrameworkManifest {
@@ -213,6 +230,38 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn app_router_project_detection_separates_source_from_built_output() {
+        let tmp = tmp_dir("project_detection");
+
+        // The source predicate keeps its original `index.html` + root page
+        // contract, including support for both public source extensions.
+        std::fs::create_dir_all(tmp.join("app")).unwrap();
+        std::fs::write(tmp.join("index.html"), "<!doctype html>").unwrap();
+        std::fs::write(tmp.join("app/page.dsx"), "export fn Page() {}").unwrap();
+        assert!(is_source_app_router_project(&tmp));
+        assert!(!is_built_app_router_project(&tmp));
+
+        std::fs::remove_file(tmp.join("app/page.dsx")).unwrap();
+        std::fs::write(tmp.join("app/page.ds"), "export fn Page() {}").unwrap();
+        assert!(is_source_app_router_project(&tmp));
+
+        // A built tree has compiled routes and a client document, even when
+        // the source tree is absent.
+        std::fs::create_dir_all(tmp.join("dist/client")).unwrap();
+        std::fs::create_dir_all(tmp.join("dist/app")).unwrap();
+        std::fs::write(tmp.join("dist/client/index.html"), "<!doctype html>").unwrap();
+        std::fs::write(tmp.join("dist/app/page.js"), "export function Page() {}").unwrap();
+        assert!(is_built_app_router_project(&tmp));
+
+        std::fs::remove_file(tmp.join("index.html")).unwrap();
+        std::fs::remove_file(tmp.join("app/page.ds")).unwrap();
+        assert!(!is_source_app_router_project(&tmp));
+        assert!(is_built_app_router_project(&tmp));
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
