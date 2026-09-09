@@ -243,6 +243,61 @@ mod security_rule_tests {
         assert!(rule_allows("read", &rule, Some(&target)));
     }
 
+    // deka#746 F1: out-of-project targets must not produce a project-relative
+    // patch that cannot grant them (the hint loop).
+    #[test]
+    fn outside_project_target_gets_no_patch_hint() {
+        let hint = super::outside_project_hint(
+            "read",
+            "/etc/passwd",
+            std::path::Path::new("/home/user/project"),
+        );
+        assert!(
+            hint.contains("outside the project directory"),
+            "hint must name the constraint: {hint}"
+        );
+        assert!(
+            hint.contains("/home/user/project"),
+            "hint must name the project root: {hint}"
+        );
+        assert!(
+            !hint.contains("patch:"),
+            "an unresolvable patch must not be proposed: {hint}"
+        );
+        assert!(
+            !hint.contains("rule: security.allow"),
+            "a project-relative rule must not be proposed: {hint}"
+        );
+        assert!(
+            hint.contains("security.allow.read = [\"/etc\"]"),
+            "the deliberate absolute-grant option must be shown: {hint}"
+        );
+    }
+
+    #[test]
+    fn target_resolution_matches_enforcement_semantics() {
+        let root = temp_dir();
+        let inside = root.join("data").join("picked.txt");
+        fs::create_dir_all(inside.parent().unwrap()).unwrap();
+        assert!(
+            !super::target_resolves_outside_project(&root, inside.to_str().unwrap()),
+            "a target beneath the root resolves inside"
+        );
+        let sibling = format!("{}-other/file.txt", root.to_string_lossy());
+        assert!(
+            super::target_resolves_outside_project(&root, &sibling),
+            "a name-prefix sibling is outside (component-wise, not string-wise)"
+        );
+        assert!(
+            super::target_resolves_outside_project(&root, "/etc/passwd"),
+            "an absolute system path is outside"
+        );
+        assert!(
+            !super::target_resolves_outside_project(&root, root.to_str().unwrap()),
+            "the root itself is inside"
+        );
+    }
+
     #[test]
     fn write_denies_prefix_path() {
         let root = temp_dir();
@@ -529,6 +584,17 @@ fn config_hint_for_request(capability: &str, target: Option<&str>) -> Option<Str
     if target.is_empty() {
         return None;
     }
+    // deka#746 F1: a target outside the project can never be granted by a
+    // project-relative rule, so proposing one sends the operator in a loop
+    // (apply patch -> identical denial -> identical hint). Say what the
+    // situation is and what must be decided instead.
+    if matches!(capability, "read" | "write") {
+        if let Some(root) = project_root() {
+            if target_resolves_outside_project(&root, target) {
+                return Some(outside_project_hint(capability, target, &root));
+            }
+        }
+    }
     let project_kind = project_kind();
     let suggestion = match capability {
         "read" => suggest_read_rule(target, project_kind),
@@ -553,6 +619,35 @@ fn config_hint_for_request(capability: &str, target: Option<&str>) -> Option<Str
         "deka.json path: {} rule: {}{} risk: {} patch:\n{}",
         path, suggestion, note, risk, patch
     ))
+}
+
+/// True when the target does not resolve beneath the project root. Both
+/// sides go through `normalize_path` — the same resolution `path_matches`
+/// applies to rules and targets — so the hint's verdict stays in lockstep
+/// with what enforcement will actually do, symlink components included.
+fn target_resolves_outside_project(root: &std::path::Path, target: &str) -> bool {
+    let root_resolved = normalize_path(&root.to_string_lossy());
+    let target_resolved = normalize_path(target);
+    !target_resolved.starts_with(&root_resolved)
+}
+
+/// Hint for a target enforcement can never grant with a project-relative
+/// rule. No `rule:` and no `patch:` — a suggestion that cannot resolve the
+/// case it is attached to is worse than none (deka#746 F1).
+fn outside_project_hint(capability: &str, target: &str, root: &std::path::Path) -> String {
+    let narrowest = std::path::Path::new(target)
+        .parent()
+        .map(|parent| parent.to_string_lossy().into_owned())
+        .filter(|parent| !parent.is_empty())
+        .unwrap_or_else(|| "/".to_string());
+    format!(
+        "deka.json path: $.security.allow.{}  note: target {} is outside the project directory ({}); project-relative grants cannot allow it. decide: copy the target into the project and grant a ./ path, or allow the absolute path deliberately, e.g. security.allow.{} = [\"{}\"] — an absolute grant exposes everything beneath that path, so prefer the narrowest directory that works.",
+        capability,
+        target,
+        root.display(),
+        capability,
+        narrowest
+    )
 }
 
 fn risk_note_for_request(capability: &str, suggestion: &str) -> &'static str {
