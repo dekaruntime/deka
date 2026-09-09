@@ -437,6 +437,13 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     // `src=` import map browsers reject (deka#624).
     rewrite_dist_html_asset_urls(&dist_client)?;
 
+    // dist/ must be deployable without .cache/ (deka#738 F7): ship the
+    // materialized build-value modules in dist and rewrite deka:dev/
+    // specifiers to relative paths (fails the build if one survives).
+    #[cfg(feature = "native")]
+    crate::cli::build_values_dist::publish_build_values(
+        &project_root, &dist_root, &dist_app, &planned)?;
+
     // The staged tree is complete: hash its artifacts into the manifest,
     // persist it, atomically replace dist/, then print the route table.
     #[cfg(feature = "native")]

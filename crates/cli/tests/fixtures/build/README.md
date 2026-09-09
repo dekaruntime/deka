@@ -77,10 +77,17 @@ makes them differ by root.
 
 On a dsc that predates dsc PR #62:
 
-- the byte comparison of files whose blessed content embeds
-  `deka:dev/<id>` (today: `static-params`' emitted page.js) **skips** with
+- the **file-tree comparison** normalizes `app/.build-values/<id>.js` to
+  `app/.build-values/<slot>.js` on both sides — the slot module's filename
+  IS the slot id, which an absolute-path hash can never match — and every
+  other path still compares exactly;
+- the byte comparison of files whose blessed content embeds a slot id (the
+  historical `deka:dev/<id>` specifier; since deka#738 F7 the rewritten
+  `.build-values/<id>.js` path) **skips** with
   `skipping byte comparison of <path>: installed dsc predates relative slot
-  ids (dsc#62)` — the committed id can never match an absolute-path hash;
+  ids (dsc#62)` — the committed id can never match an absolute-path hash.
+  The slot module itself skips too: its content is id-free, but its blessed
+  mirror path carries the id;
 - the **cross-root raw-byte comparison** for any fixture whose build output
   embeds slot ids **skips** with a similar eprintln (its stderr comparison
   still runs — stderr carries no ids).

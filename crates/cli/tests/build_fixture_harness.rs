@@ -27,8 +27,10 @@
 //! deka#728 / codex findings 5 and 6). The manifest's artifact digests are
 //! recomputed against the published bytes, not just its path list.
 //!
-//! Capability gate: committed bytes that embed `deka:dev/<id>` and the
-//! cross-root raw comparison are only valid on relative-id dsc (dsc PR #62).
+//! Capability gate: committed bytes that embed a build-slot id (the
+//! `deka:dev/<id>` specifier, or the `.build-values/<id>.js` path it is
+//! rewritten to since deka#738 F7) and the cross-root raw comparison are
+//! only valid on relative-id dsc (dsc PR #62).
 //! On older dsc (CI installs released 0.6.0) those checks skip with an
 //! eprintln; everything else — tree, non-slot bytes, digests, same-root
 //! rerun, coverage — still runs. Probed once per process by
@@ -141,13 +143,18 @@ fn dsc_relative_slot_ids() -> bool {
     })
 }
 
-/// Whether emitted bytes embed a `deka:dev/<id>` slot import. Such bytes are
-/// only machine-portable (and cross-root stable) on relative-id dsc; see
-/// [`dsc_relative_slot_ids`].
+/// Whether emitted bytes embed a build-slot identifier. Before deka#738 F7
+/// that was the `deka:dev/<id>` import; the fix rewrites the specifier to a
+/// relative `.build-values/<id>.js` path, so either spelling marks
+/// slot-bearing bytes. Such bytes are only machine-portable (and cross-root
+/// stable) on relative-id dsc; released dsc 0.6.0 predates it.
 fn embeds_slot_ids(bytes: &[u8]) -> bool {
     bytes
         .windows(b"deka:dev/".len())
         .any(|window| window == b"deka:dev/")
+        || bytes
+            .windows(b".build-values/".len())
+            .any(|window| window == b".build-values/")
 }
 
 struct BuildRun {
@@ -582,6 +589,25 @@ fn check_published_output(
     let name = &fixture.name;
     let dist = project.join("dist");
     let tree = tree_snapshot(&dist);
+    // The slot module's filename IS the slot id; on absolute-id dsc it is a
+    // hash of the source path, so id-bearing names cannot match the blessed
+    // tree. Everything else in the tree still compares exactly.
+    let relative_ids = dsc_relative_slot_ids();
+    let normalize_slot_paths = |paths: &std::collections::BTreeSet<String>| {
+        if relative_ids {
+            return paths.clone();
+        }
+        paths
+            .iter()
+            .map(|path| {
+                if path.starts_with("app/.build-values/") {
+                    "app/.build-values/<slot>.js".to_string()
+                } else {
+                    path.clone()
+                }
+            })
+            .collect::<std::collections::BTreeSet<String>>()
+    };
 
     // 1. File tree: canonical sorted relative paths, missing/unexpected
     //    spelled out.
@@ -594,10 +620,12 @@ fn check_published_output(
         .map(str::to_string)
         .collect();
     let actual_paths: std::collections::BTreeSet<String> = tree.keys().cloned().collect();
-    if expected_paths != actual_paths {
+    let expected_cmp = normalize_slot_paths(&expected_paths);
+    let actual_cmp = normalize_slot_paths(&actual_paths);
+    if expected_cmp != actual_cmp {
         let mut msg = String::from("[tree] dist/ file set mismatch");
-        let missing: Vec<String> = expected_paths.difference(&actual_paths).cloned().collect();
-        let unexpected: Vec<String> = actual_paths.difference(&expected_paths).cloned().collect();
+        let missing: Vec<String> = expected_cmp.difference(&actual_cmp).cloned().collect();
+        let unexpected: Vec<String> = actual_cmp.difference(&expected_cmp).cloned().collect();
         if !missing.is_empty() {
             let _ = write!(msg, "\nmissing (expected but not built):\n  {}", missing.join("\n  "));
         }
@@ -612,12 +640,20 @@ fn check_published_output(
     }
 
     // 2. Exact bytes of every declared output, from the expected mirror.
-    //    Files embedding deka:dev/<id> are only portable on relative-id dsc
-    //    (dsc PR #62); released dsc hashes the absolute path, so the
-    //    committed id cannot match — skip those files, loudly, on old dsc.
-    let relative_ids = dsc_relative_slot_ids();
+    //    Files embedding a slot id (the historical `deka:dev/<id>` import,
+    //    today the rewritten `.build-values/<id>.js` specifier) are only
+    //    portable on relative-id dsc (dsc PR #62); released dsc hashes the
+    //    absolute path, so the committed id cannot match — skip those
+    //    files, loudly, on old dsc. The slot module itself is content-stable
+    //    but its blessed mirror path carries the id, so it skips too.
     let mirror = fixture.expected().join("files");
     for rel in &actual_paths {
+        if !relative_ids && rel.starts_with("app/.build-values/") {
+            eprintln!(
+                "skipping byte comparison of `{rel}`: installed dsc predates relative slot ids (dsc#62)"
+            );
+            continue;
+        }
         let expected_bytes = match fs::read(mirror.join(rel)) {
             Ok(bytes) => bytes,
             Err(err) => {

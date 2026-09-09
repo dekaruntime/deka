@@ -140,6 +140,12 @@ impl PhpxEsmLoader {
     /// Build values are compiler-addressed virtual modules. The Deka host
     /// writes them only after a successful build phase, under the project
     /// cache rather than beside user sources or in the published output.
+    ///
+    /// Resolution is cache-first: `deka dev` materializes into the cache and
+    /// keeps working unchanged. Only when the cache module is absent does the
+    /// resolver fall back to `dist/app/.build-values/` — the copy `deka
+    /// build` ships inside the published tree so a deployment carrying only
+    /// `dist/` serves build-backed routes (deka#738 F7).
     fn resolve_build_value_module(&self, specifier: &str) -> Option<PathBuf> {
         let id = specifier.strip_prefix("deka:dev/")?;
         if id.is_empty()
@@ -152,7 +158,16 @@ impl PhpxEsmLoader {
         let path = runtime_core::framework::compiler_cache_dir(&self.project_root)
             .join("build-values")
             .join(format!("{id}.js"));
-        path.is_file().then_some(path)
+        if path.is_file() {
+            return Some(path);
+        }
+        let dist_path = self
+            .project_root
+            .join("dist")
+            .join("app")
+            .join(".build-values")
+            .join(format!("{id}.js"));
+        dist_path.is_file().then_some(dist_path)
     }
 
     /// Write compiler-provided `ui/*` modules into the cache so relative
