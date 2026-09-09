@@ -232,3 +232,78 @@ export fn Page() {
         "failed build entries must not promote dist output"
     );
 }
+
+
+#[test]
+fn build_prerenders_island_props_into_initial_html() {
+    // deka#746 F3: an island rendered during prerender receives its props
+    // in-process, so the prop values must land in the initial HTML — blank
+    // spans that only fill after hydration are the silent default this
+    // guards against.
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    fs::write(
+        project.path().join("app").join("page.dsx"),
+        "import { signal } from \"ui/reactive\"\n\nstruct User { name: string; age: number }\nstruct CardProps { user: User }\n\nexport fn Card(props: CardProps) {\n    const c = signal(0)\n    return <div><span id=\"nm\">{props.user.name}</span><span id=\"ag\">{props.user.age}</span><span id=\"c\">{c[0]()}</span></div>\n}\n\nexport fn Page() {\n    const u = User { name: \"Ada\", age: 36 }\n    return <section><Card user={u} client:load /></section>\n}\n",
+    )
+    .expect("write island props page");
+    let (success, combined) = run_build(project.path());
+    assert!(
+        success,
+        "deka build should succeed with the issue's Card fixture: {combined}"
+    );
+    let index = fs::read_to_string(
+        project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("index.html"),
+    )
+    .expect("read prerendered html");
+    assert!(
+        index.contains("<span data-deka-id=\"page:Card/i0/i0\" id=\"nm\">Ada</span>"),
+        "user.name must prerender into the initial HTML: {index}"
+    );
+    assert!(
+        index.contains("<span data-deka-id=\"page:Card/i0/i1\" id=\"ag\">36</span>"),
+        "user.age must prerender into the initial HTML: {index}"
+    );
+    assert!(
+        index.contains("id=\"c\">0</span>"),
+        "the island's local signal must still render: {index}"
+    );
+}
+
+#[test]
+fn build_fails_loudly_when_island_prop_is_absent_at_prerender() {
+    // deka#746 F3: reading a field of an absent prop throws inside the
+    // island's live() expression. That must fail the build with the actual
+    // error — not ship blank spans that only fill after hydration. (A
+    // typed prop can be absent at runtime here because the out-of-bounds
+    // index is typed Array<User> but yields undefined.)
+    let project = tempfile::tempdir().expect("create temp project dir");
+    init_project(project.path());
+    fs::write(
+        project.path().join("app").join("page.dsx"),
+        "struct User { name: string; age: number }\nstruct CardProps { user: User }\n\nexport fn Card(props: CardProps) {\n    return <div><span id=\"nm\">{props.user.name}</span></div>\n}\n\nexport fn Page() {\n    const users: Array<User> = []\n    return <section><Card user={users[0]} client:load /></section>\n}\n",
+    )
+    .expect("write absent-prop island page");
+    let (success, combined) = run_build(project.path());
+    assert!(
+        !success,
+        "deka build must fail when an island prop is absent at prerender, got success. output: {combined}"
+    );
+    assert!(
+        combined.contains("Cannot read properties of undefined"),
+        "the build error must name the actual failure, not a generic message: {combined}"
+    );
+    assert!(
+        !project
+            .path()
+            .join("dist")
+            .join("client")
+            .join("index.html")
+            .exists(),
+        "a failed prerender must not publish dist HTML: {combined}"
+    );
+}

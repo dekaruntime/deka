@@ -7,7 +7,6 @@ crates/cli/src/cli/self_cmd/update.rs 1113
 crates/deka_host/src/modules/http.rs 1141
 crates/deka_host/src/modules/php/db.rs 1320
 crates/deka_host/src/modules/php/net.rs 1712
-crates/deka_host/src/modules/php/security.rs 1007
 crates/deka_host/src/validation/modules.rs 2325
 crates/http/src/websocket.rs 1135
 crates/pm/src/install.rs 2315

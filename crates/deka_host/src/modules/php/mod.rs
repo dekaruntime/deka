@@ -37,6 +37,7 @@ mod fs_bridge;
 mod fs_ops;
 mod net;
 mod security;
+mod security_hint;
 #[cfg(test)]
 mod security_context_tests;
 mod wit;
@@ -135,7 +136,7 @@ mod tests {
         NetState, net_action_payload_to_proto_request, net_call_impl, net_call_proto_impl,
         net_proto_response_to_json,
     };
-    use super::security::default_allow_target_for_capability;
+    use super::security_hint::default_allow_target_for_capability;
     use super::*;
     use prost::Message;
     use std::net::TcpListener;
