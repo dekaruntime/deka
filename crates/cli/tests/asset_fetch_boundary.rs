@@ -386,10 +386,53 @@ fn serve_asset_references_all_resolve() {
     );
 }
 
+/// Content-hash stripper: `/assets/ui/client.<10-hex>.js` →
+/// `/assets/ui/client.js`. deka#750 emits dist (minified/tree-shaken) and dev
+/// (readable) flavors of the client assets whose content hashes differ by
+/// design, so dev/prod comparisons must run on hash-stripped stems.
+fn strip_asset_hash(url: &str) -> String {
+    let Some(base) = url.strip_suffix(".js") else {
+        return url.to_string();
+    };
+    let Some((stem, hash)) = base.rsplit_once('.') else {
+        return url.to_string();
+    };
+    let is_hash = hash.len() == 10
+        && hash
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    if is_hash {
+        format!("{stem}.js")
+    } else {
+        url.to_string()
+    }
+}
+
+fn strip_ref_set(refs: &BTreeSet<String>) -> BTreeSet<String> {
+    refs.iter().map(|url| strip_asset_hash(url)).collect()
+}
+
+fn strip_importmap_hashes(
+    map: &serde_json::Map<String, serde_json::Value>,
+) -> serde_json::Map<String, serde_json::Value> {
+    map.iter()
+        .map(|(key, value)| {
+            let stripped = value
+                .as_str()
+                .map(strip_asset_hash)
+                .map(|url| serde_json::Value::String(url))
+                .unwrap_or_else(|| value.clone());
+            (key.clone(), stripped)
+        })
+        .collect()
+}
+
 #[test]
 fn serve_and_build_resolve_identical_asset_urls() {
     // Same fixture source, two tempdirs: one served, one built. The resolved
-    // /assets URL sets must be identical — dev/prod parity by construction.
+    // /assets URL stems must be identical — dev/prod parity by construction.
+    // (deka#750: dist chunks are content-hashed *after* minification, so the
+    // hashes themselves differ from dev by design; only the stems must match.)
     let serve = spawn_serve();
     let http = client();
     let base = format!("http://127.0.0.1:{}", serve.port);
@@ -420,17 +463,18 @@ fn serve_and_build_resolve_identical_asset_urls() {
     let disk_refs = collect_disk_refs(&dist_client, &dist_html);
 
     // The map the browser consults (inline, not the on-disk copy) must be
-    // identical in dev and prod.
-    let live_imports = inline_importmap(&served_html, &live_context);
-    let dist_imports = inline_importmap(&dist_html, "dist index.html");
+    // identical in dev and prod, up to content hashes (deka#750).
+    let live_imports = strip_importmap_hashes(&inline_importmap(&served_html, &live_context));
+    let dist_imports = strip_importmap_hashes(&inline_importmap(&dist_html, "dist index.html"));
     assert_eq!(
         live_imports, dist_imports,
         "dev (serve) and prod (build) must inline the same import map.\n{live_context}"
     );
 
     assert_eq!(
-        live_refs, disk_refs,
-        "dev (serve) and prod (build) must resolve the same source to the same /assets URLs.\nlive: {live_refs:?}\ndist:  {disk_refs:?}\n{live_context}"
+        strip_ref_set(&live_refs),
+        strip_ref_set(&disk_refs),
+        "dev (serve) and prod (build) must resolve the same source to the same /assets URL stems.\nlive: {live_refs:?}\ndist:  {disk_refs:?}\n{live_context}"
     );
 }
 

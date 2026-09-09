@@ -331,9 +331,12 @@ pub fn execute(registry: &Registry) -> i32 {
     }
 
     let args = &parsed.args;
-    // `init` writes a project, so its help must return before handler dispatch.
-    // Compiler commands delegate their help to dsc for command-specific output.
-    if init_wants_help(args) {
+    // Single commands never reached --help before: `init` writes a project
+    // and every other handler ran unconditionally. Intercept help first so
+    // `deka build --help` prints usage and exits 0 even outside a project.
+    // Compiler commands delegate their help to dsc for command-specific
+    // output, so they keep passing through.
+    if single_command_wants_help(args) {
         help(registry);
         return 0;
     }
@@ -435,13 +438,16 @@ pub fn execute(registry: &Registry) -> i32 {
     }
 }
 
-pub(crate) fn init_wants_help(args: &core::Args) -> bool {
-    args.commands
-        .first()
-        .is_some_and(|command| command == "init")
-        && (args.flags.contains_key("--help")
-            || args.flags.contains_key("-H")
-            || args.flags.contains_key("help"))
+pub(crate) fn single_command_wants_help(args: &core::Args) -> bool {
+    if args.commands.len() != 1 {
+        return false;
+    }
+    if matches!(args.commands[0].as_str(), "check" | "fmt" | "transpile" | "lsp") {
+        return false;
+    }
+    args.flags.contains_key("--help")
+        || args.flags.contains_key("-H")
+        || args.flags.contains_key("help")
 }
 
 pub fn format_parse_errors(errors: &[ParseError]) -> String {

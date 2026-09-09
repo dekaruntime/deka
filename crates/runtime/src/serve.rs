@@ -79,7 +79,7 @@ async fn serve_async(context: &Context) -> Result<(), String> {
     let app_router_root = crate::islands::find_app_router_root(FsPath::new(&context.handler.input))
         .or_else(|| crate::islands::find_app_router_root(&resolved.path));
     if let Some(root) = app_router_root.as_deref() {
-        crate::islands::write_island_client_assets_for_project(&root)?;
+        crate::islands::write_island_client_assets_for_project(&root, crate::islands::ClientAssetFlavor::Dev)?;
         crate::css::write_route_css_assets_for_project(&root)?;
         // The serve-entry was generated inside resolve_handler_path, before
         // the hashed assets existed; swap its logical /assets URLs for the
@@ -852,9 +852,7 @@ fn start_watch(
                             }
                             match runtime_core::framework::write_app_router_entry(root) {
                                 Ok(_) => {
-                                    let _ = crate::islands::write_island_client_assets_for_project(
-                                        root,
-                                    );
+                                    let _ = crate::islands::write_island_client_assets_for_project(root, crate::islands::ClientAssetFlavor::Dev);
                                     // The entry was regenerated above with
                                     // logical /assets URLs; re-point them at
                                     // the freshly emitted hashed names.

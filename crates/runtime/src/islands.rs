@@ -3,20 +3,32 @@
 //! Never copies `ui/server`. Chunks register islands then call `hydrate()`.
 //!
 //! Every emitted file is content-addressed: `<stem>.<sha256-10>.js`, where
-//! `<sha256-10>` is the first 10 hex chars of the sha256 of the file bytes.
-//! `deka build` (dist) and `deka serve` (.cache) both call into these
-//! writers, so identical source yields identical names on both paths.
+//! `<sha256-10>` is the first 10 hex chars of the sha256 of the final file
+//! bytes. `deka build` (dist) and `deka serve` (.cache) both call into these
+//! writers; within one [`ClientAssetFlavor`] identical source yields identical
+//! names. The flavors differ by design since deka#750: dist output is
+//! tree-shaken and minified, dev output stays readable, and content
+//! addressing means their hashes differ.
 //!
 //! Alongside the chunks this module writes `importmap.json` (RFD 24 §10.7):
 //! the logical specifiers (`ui/jsx`, `ui/client`, `islands/load`, ...) map
 //! to the hashed `/assets/...` URLs. `write_defer_client_assets` merges into
 //! the same file, so it must run after `write_island_client_assets`.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use runtime_core::framework::ClientIsland;
+
+/// How browser-bound client assets are emitted (deka#750).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ClientAssetFlavor {
+    /// `deka serve` / dev cache: readable, unpruned sources.
+    Dev,
+    /// `deka build` dist: tree-shaken + minified (deka#750 payload budget).
+    Dist,
+}
 
 /// Number of hex chars of the sha256 digest appended into asset file names.
 pub const ASSET_HASH_LEN: usize = 10;
@@ -419,11 +431,143 @@ fn hash_ui_modules(modules: &mut [UiModule]) -> BTreeMap<String, String> {
     hashed
 }
 
-/// Write the shared `ui/*` chunks under hashed names; returns the names.
-fn write_ui_chunks(ui_dir: &Path) -> Result<UiChunkNames, String> {
+/// Per-module export pruning plan for dist: `named` maps a ui-specifier to
+/// the exported names its importers use; `keep_all` lists specifiers some
+/// importer observed without naming bindings (namespace/default/side-effect
+/// import, `export *`, dynamic `import()`), which must not be pruned at all.
+/// `None` means "no pruning": some importer used direct `eval`/`with`/dynamic
+/// scope, so any binding may be observed and everything must survive.
+type UiKeepSets = Option<UiPrunePlan>;
+
+struct UiPrunePlan {
+    named: BTreeMap<String, HashSet<String>>,
+    keep_all: HashSet<String>,
+}
+
+/// Synthetic import line every client entry issues: `hydrate` (and
+/// `registerIsland` for the island entries) come from `ui/client`.
+const CLIENT_ENTRY_IMPORTS: &str =
+    "import { hydrate, registerIsland } from \"ui/client\";";
+
+/// Optimize browser-bound source per flavor (deka#750): dist chunks are
+/// export-pruned + minified; dev chunks pass through byte-identical.
+fn optimize_client_chunk(
+    name: &str,
+    source: &str,
+    flavor: ClientAssetFlavor,
+) -> Result<String, String> {
+    match flavor {
+        ClientAssetFlavor::Dev => Ok(source.to_string()),
+        ClientAssetFlavor::Dist => bundler::optimize_emitted_module(source, Path::new(name)),
+    }
+}
+
+/// Map an import specifier (`"ui/jsx"` or the sibling form `"./jsx.js"`) to
+/// the `deka_ui` specifier it resolves to, or `None` when it is not a shipped
+/// client chunk (e.g. an island module import).
+fn resolve_ui_import_target(spec: &str) -> Option<String> {
+    for candidate in [spec.to_string(), format!("{spec}.js"), format!("{spec}.mjs")] {
+        if deka_ui::source_for(&candidate).is_some() {
+            return Some(candidate);
+        }
+    }
+    let file = spec.rsplit(['/', '\\']).next().unwrap_or(spec);
+    for known in deka_ui::SPECIFIERS {
+        if deka_ui::file_name_for(known) == Some(file) {
+            return Some((*known).to_string());
+        }
+    }
+    None
+}
+
+/// Compute per-module export keep-sets across the complete set of modules a
+/// browser can load: the given island-chunk sources (pre ui-rewrite), the
+/// synthetic client entry import, and every ui module's own relative imports.
+/// Returns `Ok(None)` when any importer uses dynamic scope — nothing is
+/// prunable then. Importers outside this set (a hand-written module reaching
+/// into a `ui/*` chunk) are unsupported: pruning assumes the keep-set here
+/// is complete.
+fn compute_ui_keep_sets(importer_sources: &[String]) -> Result<UiKeepSets, String> {
+    let mut plan = UiPrunePlan {
+        named: BTreeMap::new(),
+        keep_all: HashSet::new(),
+    };
+    let mut scan = |source: &str, file: &str| -> Result<bool, String> {
+        let scan = bundler::scan_module_imports(source, Path::new(file))?;
+        if scan.uses_dynamic_scope {
+            return Ok(true);
+        }
+        for (spec, use_) in scan.imports {
+            let Some(target) = resolve_ui_import_target(&spec) else {
+                continue;
+            };
+            match use_ {
+                bundler::ImportUse::KeepAll => {
+                    // Any binding may be observed: never prune this module.
+                    plan.named.remove(&target);
+                    plan.keep_all.insert(target);
+                }
+                bundler::ImportUse::Named(names) => {
+                    if !plan.keep_all.contains(&target) {
+                        plan.named.entry(target).or_default().extend(names);
+                    }
+                }
+            }
+        }
+        Ok(false)
+    };
+    for source in importer_sources {
+        if scan(source, "island.js")? {
+            return Ok(None);
+        }
+    }
+    if scan(CLIENT_ENTRY_IMPORTS, "client-entry.js")? {
+        return Ok(None);
+    }
+    for module in client_ui_modules() {
+        if scan(&module.source, &format!("{}.js", module.stem))? {
+            return Ok(None);
+        }
+    }
+    Ok(Some(plan))
+}
+
+/// Write the shared `ui/*` chunks under hashed names; returns the names. In
+/// the `Dist` flavor each module is export-pruned to its keep-set and
+/// minified before hashing; `Dev` writes the readable sources unchanged. A
+/// module that prunes to nothing is still written as `export {};`: under the
+/// complete-importer-set contract no known importer can reference it, and
+/// keeping a non-empty file + importmap entry preserves dev/prod parity.
+fn write_ui_chunks(
+    ui_dir: &Path,
+    flavor: ClientAssetFlavor,
+    keep: &UiKeepSets,
+) -> Result<UiChunkNames, String> {
     fs::create_dir_all(ui_dir)
         .map_err(|err| format!("failed to create {}: {err}", ui_dir.display()))?;
     let mut modules = client_ui_modules();
+    if flavor == ClientAssetFlavor::Dist {
+        for module in &mut modules {
+            let pruned = match keep {
+                Some(plan) if !plan.keep_all.contains(module.specifier) => {
+                    bundler::prune_unreferenced_exports(
+                        &module.source,
+                        &Path::new(&format!("{}.js", module.stem)),
+                        &plan.named.get(module.specifier).cloned().unwrap_or_default(),
+                    )?
+                }
+                _ => module.source.clone(),
+            };
+            module.source =
+                optimize_client_chunk(&format!("{}.js", module.stem), &pruned, flavor)?;
+            if module.source.trim().is_empty() {
+                // Pruned to nothing: still a valid, non-empty ES module so the
+                // written file + importmap entry survive dev/prod parity and
+                // the "assets are non-empty on disk" check.
+                module.source = "export {};\n".to_string();
+            }
+        }
+    }
     let hashed = hash_ui_modules(&mut modules);
     let keep: BTreeSet<String> = hashed.values().cloned().collect();
     for module in &modules {
@@ -458,7 +602,10 @@ pub fn find_app_router_root(start: &Path) -> Option<PathBuf> {
     }
 }
 
-pub fn write_island_client_assets_for_project(project_root: &Path) -> Result<(), String> {
+pub fn write_island_client_assets_for_project(
+    project_root: &Path,
+    flavor: ClientAssetFlavor,
+) -> Result<(), String> {
     if !runtime_core::framework::is_app_router_project(project_root) {
         return Ok(());
     }
@@ -469,21 +616,31 @@ pub fn write_island_client_assets_for_project(project_root: &Path) -> Result<(),
         return Ok(());
     }
     let assets_dir = runtime_core::framework::compiler_cache_dir(project_root).join("assets");
-    write_island_client_assets(&assets_dir, &islands)?;
+    write_island_client_assets(&assets_dir, &islands, flavor)?;
     if !deferred.is_empty() {
-        write_defer_client_assets(&assets_dir)?;
+        write_defer_client_assets(&assets_dir, flavor)?;
     }
     Ok(())
 }
 
-pub fn write_island_client_assets(
-    assets_dir: &Path,
-    islands: &[ClientIsland],
-) -> Result<(), String> {
-    let ui_names = write_ui_chunks(&assets_dir.join("ui"))?;
-    let mut importmap_entries = ui_names.importmap_entries();
-    let mut keep_root: BTreeSet<String> = BTreeSet::new();
+/// One compiled island module group (one per unique source file per
+/// directive), before its `ui/*` imports are rewritten to hashed names.
+struct IslandChunk {
+    directive: &'static str,
+    mod_stem: String,
+    file: String,
+    /// Compiled source with the `export { ... }` append already applied.
+    js: String,
+    /// Unique component names exported for this file's group.
+    names: Vec<String>,
+}
 
+/// Compile every island source file exactly once per directive, appending
+/// `export { ... }` for bound-but-unexported components. Keep-sets for dist
+/// pruning must be computed from these pre-rewrite sources, so compilation is
+/// a separate pass from writing.
+fn compile_island_chunks(islands: &[ClientIsland]) -> Result<Vec<IslandChunk>, String> {
+    let mut chunks = Vec::new();
     for directive in ["load", "idle", "visible"] {
         let group: Vec<&ClientIsland> = islands
             .iter()
@@ -492,8 +649,6 @@ pub fn write_island_client_assets(
         if group.is_empty() {
             continue;
         }
-        let mut imports = String::new();
-        let mut registers = String::new();
         let mut seen_files = BTreeSet::new();
         let mut idx = 0usize;
         for island in &group {
@@ -501,7 +656,6 @@ pub fn write_island_client_assets(
                 continue;
             }
             let mut js = crate::dsc_transpile::compile_file(&island.file)?;
-            js = rewrite_ui_imports(&js, &ui_names);
             let mod_stem = format!("island-{directive}-{idx}");
             idx += 1;
             let names: Vec<&str> = group
@@ -515,7 +669,6 @@ pub fn write_island_client_assets(
                     unique.push(name);
                 }
             }
-            let spec_list = unique.join(", ");
             let mut missing = Vec::new();
             let mut to_export = Vec::new();
             for name in &unique {
@@ -538,7 +691,50 @@ pub fn write_island_client_assets(
             if !to_export.is_empty() {
                 js.push_str(&format!("\nexport {{ {} }};\n", to_export.join(", ")));
             }
-            let mod_name = hashed_asset_name(&mod_stem, "js", js.as_bytes());
+            chunks.push(IslandChunk {
+                directive,
+                mod_stem,
+                file: island.file.clone(),
+                js,
+                names: unique.iter().map(|name| (*name).to_string()).collect(),
+            });
+        }
+    }
+    Ok(chunks)
+}
+
+pub fn write_island_client_assets(
+    assets_dir: &Path,
+    islands: &[ClientIsland],
+    flavor: ClientAssetFlavor,
+) -> Result<(), String> {
+    let chunks = compile_island_chunks(islands)?;
+    // Dist pruning needs the full importer set before any ui chunk is
+    // written; dev skips the analysis entirely.
+    let keep = if flavor == ClientAssetFlavor::Dist {
+        let sources: Vec<String> = chunks.iter().map(|chunk| chunk.js.clone()).collect();
+        compute_ui_keep_sets(&sources)?
+    } else {
+        None
+    };
+    let ui_names = write_ui_chunks(&assets_dir.join("ui"), flavor, &keep)?;
+    let mut importmap_entries = ui_names.importmap_entries();
+    let mut keep_root: BTreeSet<String> = BTreeSet::new();
+
+    for directive in ["load", "idle", "visible"] {
+        let group: Vec<&IslandChunk> = chunks
+            .iter()
+            .filter(|chunk| chunk.directive == directive)
+            .collect();
+        if group.is_empty() {
+            continue;
+        }
+        let mut imports = String::new();
+        let mut registers = String::new();
+        for chunk in &group {
+            let js = rewrite_ui_imports(&chunk.js, &ui_names);
+            let js = optimize_client_chunk(&format!("{}.js", chunk.mod_stem), &js, flavor)?;
+            let mod_name = hashed_asset_name(&chunk.mod_stem, "js", js.as_bytes());
             fs::write(assets_dir.join(&mod_name), js.as_bytes()).map_err(|err| {
                 format!(
                     "failed to write {}: {err}",
@@ -547,9 +743,10 @@ pub fn write_island_client_assets(
             })?;
             keep_root.insert(mod_name.clone());
             imports.push_str(&format!(
-                "import {{ {spec_list} }} from \"./{mod_name}\";\n"
+                "import {{ {} }} from \"./{mod_name}\";\n",
+                chunk.names.join(", ")
             ));
-            for name in unique {
+            for name in &chunk.names {
                 registers.push_str(&format!(
                     "registerIsland({name_json}, {name});\n",
                     name_json =
@@ -562,6 +759,7 @@ pub fn write_island_client_assets(
             "{imports}import {{ hydrate, registerIsland }} from \"./ui/{}\";\n{registers}hydrate();\n",
             ui_names.file("ui/client")
         );
+        let entry = optimize_client_chunk(&format!("islands-{directive}.js"), &entry, flavor)?;
         let entry_name = hashed_asset_name(&format!("islands-{directive}"), "js", entry.as_bytes());
         let dest = assets_dir.join(&entry_name);
         fs::write(&dest, entry.as_bytes())
@@ -588,12 +786,18 @@ pub fn write_island_client_assets(
     Ok(())
 }
 
-pub fn write_defer_client_assets(assets_dir: &Path) -> Result<(), String> {
-    let ui_names = write_ui_chunks(&assets_dir.join("ui"))?;
+pub fn write_defer_client_assets(assets_dir: &Path, flavor: ClientAssetFlavor) -> Result<(), String> {
+    let keep = if flavor == ClientAssetFlavor::Dist {
+        compute_ui_keep_sets(&[])?
+    } else {
+        None
+    };
+    let ui_names = write_ui_chunks(&assets_dir.join("ui"), flavor, &keep)?;
     let entry = format!(
         "import {{ hydrate }} from \"./ui/{}\";\nhydrate();\n",
         ui_names.file("ui/client")
     );
+    let entry = optimize_client_chunk("islands-defer.js", &entry, flavor)?;
     let entry_name = hashed_asset_name("islands-defer", "js", entry.as_bytes());
     let dest = assets_dir.join(&entry_name);
     fs::write(&dest, entry.as_bytes())
@@ -686,331 +890,5 @@ fn rewrite_ui_imports(js: &str, ui: &UiChunkNames) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn content_hash_is_stable_short_hex() {
-        let hash = content_hash_hex(b"deka");
-        assert_eq!(hash.len(), ASSET_HASH_LEN);
-        assert!(
-            hash.bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        );
-        assert_eq!(hash, content_hash_hex(b"deka"));
-        assert_ne!(hash, content_hash_hex(b"deka!"));
-    }
-
-    #[test]
-    fn hashed_name_round_trips() {
-        let name = hashed_asset_name("islands-load", "js", b"chunk");
-        assert!(is_hashed_asset_name(&name, "js"), "{name}");
-        assert!(!is_hashed_asset_name("islands-load.js", "js"));
-        assert!(!is_hashed_asset_name("islands-load.JS", "js"));
-        assert!(!is_hashed_asset_name(&name, "css"));
-    }
-
-    #[test]
-    fn rewrite_ui_imports_targets_hashed_chunks() {
-        let ui = UiChunkNames {
-            hashed: BTreeMap::from([
-                ("ui/jsx".to_string(), "jsx.a1b2c3d4e5.js".to_string()),
-                (
-                    "ui/server".to_string(),
-                    "server-stub.a1b2c3d4e5.js".to_string(),
-                ),
-            ]),
-        };
-        let js = rewrite_ui_imports(
-            "import { x } from \"ui/jsx\";\nimport { y } from \"ui/server\";\n",
-            &ui,
-        );
-        assert!(js.contains("from \"./ui/jsx.a1b2c3d4e5.js\""), "{js}");
-        assert!(
-            js.contains("from \"./ui/server-stub.a1b2c3d4e5.js\""),
-            "{js}"
-        );
-    }
-
-    // The client chunk 404s the moment it loads if any relative sibling
-    // import misses the hashed graph. Derive the import list from the source
-    // so a newly added sibling fails here until it is wired into the graph.
-    #[test]
-    fn ui_chunks_rewrite_every_client_sibling_import() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let names = write_ui_chunks(tmp.path()).expect("write ui chunks");
-        let client_src =
-            fs::read_to_string(tmp.path().join(names.file("ui/client"))).expect("read client");
-        let written: BTreeSet<String> = fs::read_dir(tmp.path())
-            .expect("read ui dir")
-            .flatten()
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .collect();
-        let mut checked = 0usize;
-        for (index, _) in deka_ui::CLIENT.match_indices("from \"./") {
-            let rest = &deka_ui::CLIENT[index + "from \"./".len()..];
-            let relative = rest.split('"').next().expect("quoted relative import");
-            checked += 1;
-            assert!(
-                !client_src.contains(&format!("./{relative}")),
-                "client chunk still imports unhashed ./{relative}"
-            );
-            let hashed = written
-                .iter()
-                .find(|name| name.starts_with(relative.trim_end_matches(".js")))
-                .unwrap_or_else(|| panic!("no hashed chunk written for ./{relative}"));
-            assert!(
-                client_src.contains(&format!("./{hashed}")),
-                "client chunk does not reference sibling {hashed}"
-            );
-        }
-        assert!(
-            checked >= 3,
-            "expected client.js sibling imports, found {checked}"
-        );
-    }
-
-    /// deka#622 finding E: the island rewrite used to list `ui/form`,
-    /// `ui/suspense`, and `ui/router` as unhashed `./ui/form.js` (etc.)
-    /// while `write_ui_chunks` never wrote those files. Form / Suspense
-    /// inside an island 404ed. The rewrite set is now the written set.
-    #[test]
-    fn rewrite_ui_imports_resolves_to_written_chunks() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let names = write_ui_chunks(tmp.path()).expect("write ui chunks");
-        assert_eq!(
-            names.hashed.len(),
-            deka_ui::SPECIFIERS.len(),
-            "every deka_ui specifier must be written (ui/server as the stub)"
-        );
-        let js = deka_ui::SPECIFIERS
-            .iter()
-            .map(|spec| format!("import {{ x }} from \"{spec}\";"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let rewritten = rewrite_ui_imports(&js, &names);
-        for spec in deka_ui::SPECIFIERS {
-            assert!(
-                !rewritten.contains(&format!("from \"{spec}\"")),
-                "bare {spec} must be rewritten to a hashed relative path: {rewritten}"
-            );
-        }
-        let mut rest = rewritten.as_str();
-        let mut checked = 0usize;
-        while let Some(at) = rest.find("from \"./ui/") {
-            let after = &rest[at + "from \"./ui/".len()..];
-            let file = after.split('"').next().expect("quoted path");
-            assert!(
-                is_hashed_asset_name(file, "js"),
-                "rewrite must target a hashed chunk, got {file}"
-            );
-            assert!(
-                tmp.path().join(file).is_file(),
-                "rewrite targets {file} which was never written; dir has {:?}",
-                fs::read_dir(tmp.path())
-                    .expect("read ui dir")
-                    .flatten()
-                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
-                    .collect::<Vec<_>>()
-            );
-            checked += 1;
-            rest = &after[file.len()..];
-        }
-        assert_eq!(
-            checked,
-            deka_ui::SPECIFIERS.len(),
-            "every specifier must produce a relative import: {rewritten}"
-        );
-
-        // Relative sibling imports inside the written chunks must also
-        // resolve (form.js → jsx.js, client.js → island-marker.js, …).
-        for name in names.hashed.values() {
-            let src = fs::read_to_string(tmp.path().join(name)).expect("read chunk");
-            let mut src_rest = src.as_str();
-            while let Some(at) = src_rest.find("from \"./") {
-                let after = &src_rest[at + "from \"./".len()..];
-                let relative = after.split('"').next().expect("quoted relative import");
-                assert!(
-                    is_hashed_asset_name(relative, "js"),
-                    "{name} still imports unhashed ./{relative}"
-                );
-                assert!(
-                    tmp.path().join(relative).is_file(),
-                    "{name} imports ./{relative} which was never written"
-                );
-                src_rest = &after[relative.len()..];
-            }
-        }
-    }
-
-    #[test]
-    fn island_assets_are_content_addressed() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let island_src = tmp.path().join("counter.dsx");
-        fs::write(
-            &island_src,
-            "export fn Counter() {\n    return <button>0</button>;\n}\n",
-        )
-        .expect("write island");
-        let island = ClientIsland {
-            component: "Counter".to_string(),
-            directive: "load".to_string(),
-            file: island_src.to_string_lossy().into_owned(),
-            props: vec![],
-        };
-        let first = tmp.path().join("first");
-        write_island_client_assets(&first, &[island.clone()]).expect("first write");
-        let second = tmp.path().join("second");
-        write_island_client_assets(&second, &[island.clone()]).expect("second write");
-        let names = |dir: &Path| -> BTreeSet<String> {
-            fs::read_dir(dir)
-                .expect("read dir")
-                .flatten()
-                .map(|e| e.file_name().to_string_lossy().into_owned())
-                .collect()
-        };
-        assert_eq!(names(&first), names(&second), "same input -> same names");
-
-        // Changing the island source changes its hash; ui/* chunks stay put.
-        fs::write(
-            &island_src,
-            "export fn Counter() {\n    return <button>1</button>;\n}\n",
-        )
-        .expect("rewrite island");
-        let third = tmp.path().join("third");
-        write_island_client_assets(&third, &[island]).expect("third write");
-        let before = names(&first);
-        let after = names(&third);
-        assert_ne!(before, after, "changed island -> changed names");
-        let ui_before: BTreeSet<String> = before
-            .iter()
-            .filter(|n| n.starts_with("jsx.") || n.starts_with("client."))
-            .cloned()
-            .collect();
-        let ui_after: BTreeSet<String> = after
-            .iter()
-            .filter(|n| n.starts_with("jsx.") || n.starts_with("client."))
-            .cloned()
-            .collect();
-        assert_eq!(ui_before, ui_after, "shared chunks must not rotate");
-
-        // The importmap tracks the hashed URLs for both runs.
-        let map: serde_json::Value = serde_json::from_str(
-            &fs::read_to_string(first.join(CLIENT_IMPORTMAP_FILE)).expect("read importmap"),
-        )
-        .expect("parse importmap");
-        let imports = map["imports"].as_object().expect("imports object");
-        let entry_url = imports["islands/load"].as_str().expect("islands/load url");
-        let entry_name = entry_url.trim_start_matches("/assets/");
-        assert!(
-            first.join(entry_name).is_file(),
-            "importmap url must exist: {entry_url}"
-        );
-        assert!(
-            entry_name.contains('.'),
-            "importmap url must be hashed: {entry_url}"
-        );
-    }
-
-    #[test]
-    fn importmap_tag_is_inlined_without_src() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        // No map on disk -> no tag.
-        assert!(
-            inline_importmap_tag(tmp.path())
-                .expect("read missing map")
-                .is_none()
-        );
-
-        write_importmap_entries(
-            tmp.path(),
-            &BTreeMap::from([(
-                "ui/client".to_string(),
-                "/assets/ui/client.a1b2c3d4e5.js".to_string(),
-            )]),
-        )
-        .expect("write importmap");
-        let tag = inline_importmap_tag(tmp.path())
-            .expect("build tag")
-            .expect("tag for existing map");
-        assert!(tag.starts_with(r#"<script type="importmap">"#), "{tag}");
-        assert!(tag.ends_with("</script>"), "{tag}");
-        assert!(
-            !tag.contains("src="),
-            "browsers reject the src form of <script type=\"importmap\">: {tag}"
-        );
-        let body = tag
-            .strip_prefix(r#"<script type="importmap">"#)
-            .and_then(|rest| rest.strip_suffix("</script>"))
-            .expect("tag body");
-        let map: serde_json::Value =
-            serde_json::from_str(body).expect("inline body parses as JSON");
-        let imports = map["imports"].as_object().expect("imports object");
-        assert_eq!(
-            imports["ui/client"].as_str().expect("ui/client url"),
-            "/assets/ui/client.a1b2c3d4e5.js"
-        );
-    }
-
-    #[test]
-    fn rewrite_swaps_placeholder_for_inline_map() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let cache = tmp.path().join(".cache").join("dekascript");
-        let assets = cache.join("assets");
-        fs::create_dir_all(&assets).expect("mkdir assets");
-        let island_src = assets.join("..").join("counter.dsx");
-        fs::write(
-            &island_src,
-            "export fn Counter() {\n    return <button>0</button>;\n}\n",
-        )
-        .expect("write island");
-        let island = ClientIsland {
-            component: "Counter".to_string(),
-            directive: "load".to_string(),
-            file: island_src.to_string_lossy().into_owned(),
-            props: vec![],
-        };
-        write_island_client_assets(&assets, &[island]).expect("write assets");
-
-        // The entry as generated: the document is embedded as JSON string
-        // literals (framework::json_str), so the placeholder appears
-        // quote-escaped, and the island script still has its logical URL.
-        let entry = cache.join("serve-entry.dsx");
-        let placeholder = runtime_core::framework::CLIENT_IMPORTMAP_PLACEHOLDER_TAG;
-        let doc = format!(
-            "<head>{placeholder}</head><script type=\"module\" src=\"/assets/islands-load.js\"></script>"
-        );
-        let doc_literal = serde_json::to_string(&doc).expect("encode doc literal");
-        fs::write(&entry, format!("const doc_head = {doc_literal};\n")).expect("write entry");
-
-        rewrite_serve_entry_asset_urls(tmp.path()).expect("rewrite");
-        let served = fs::read_to_string(&entry).expect("read rewritten entry");
-        assert!(
-            !served.contains(placeholder)
-                && !served.contains(r#"<script type=\"importmap\" src=\"#),
-            "placeholder src-reference must be swapped out: {served}"
-        );
-        // Unescape the JSON literal and assert on the document itself.
-        let served_doc = served.replace("\\\"", "\"");
-        assert!(
-            !served_doc.contains(r#"<script type="importmap" src="#),
-            "no external import map may survive: {served_doc}"
-        );
-        let tag_start = served_doc
-            .find(r#"<script type="importmap">"#)
-            .expect("inline tag present");
-        let body = &served_doc[tag_start + r#"<script type="importmap">"#.len()..];
-        let body = &body[..body.find("</script>").expect("tag closes")];
-        let map: serde_json::Value = serde_json::from_str(body).expect("inline body parses");
-        let imports = map["imports"].as_object().expect("imports object");
-        let ui_client = imports["ui/client"].as_str().expect("ui/client mapped");
-        assert!(
-            ui_client.starts_with("/assets/ui/client."),
-            "hashed: {ui_client}"
-        );
-        assert!(
-            !served_doc.contains("/assets/islands-load.js"),
-            "logical URL rewritten: {served_doc}"
-        );
-    }
-}
+#[path = "islands_tests.rs"]
+mod islands_tests;

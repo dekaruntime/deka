@@ -54,19 +54,26 @@ pub use build_values::{BuildEntry, MaterializedBuild};
 pub fn write_island_client_assets(
     assets_dir: &std::path::Path,
     islands: &[runtime_core::framework::ClientIsland],
+    flavor: islands::ClientAssetFlavor,
 ) -> Result<(), String> {
-    islands::write_island_client_assets(assets_dir, islands)
+    islands::write_island_client_assets(assets_dir, islands, flavor)
 }
 
 pub fn write_island_client_assets_for_project(
     project_root: &std::path::Path,
+    flavor: islands::ClientAssetFlavor,
 ) -> Result<(), String> {
-    islands::write_island_client_assets_for_project(project_root)
+    islands::write_island_client_assets_for_project(project_root, flavor)
 }
 
-pub fn write_defer_client_assets(assets_dir: &std::path::Path) -> Result<(), String> {
-    islands::write_defer_client_assets(assets_dir)
+pub fn write_defer_client_assets(
+    assets_dir: &std::path::Path,
+    flavor: islands::ClientAssetFlavor,
+) -> Result<(), String> {
+    islands::write_defer_client_assets(assets_dir, flavor)
 }
+
+pub use islands::ClientAssetFlavor;
 
 pub use islands::collect_hashed_asset_renames;
 pub use islands::inline_importmap_tag;

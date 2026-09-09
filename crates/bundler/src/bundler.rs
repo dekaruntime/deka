@@ -20,6 +20,7 @@ use swc_ecma_transforms_base::resolver;
 use swc_ecma_transforms_typescript::strip;
 
 use crate::css_bundler::{self, CssAsset};
+use crate::optimizer;
 
 const CLIENT_SERVER_IMPORT_ERROR: &str = "client bundle cannot import ui/server";
 
@@ -48,82 +49,6 @@ pub struct BundleOptions {
 
 pub type BuildOptions = BundleOptions;
 
-/// Optimize already-emitted ESM without resolving or bundling imports.
-///
-/// Contract: source and output are ESM; relative specifiers are preserved.
-/// This is the same safe SWC configuration used for `BundleOptions::minify`
-/// and exists for the CLI's module-preserving `--treeshake` mode.
-pub fn optimize_emitted_module(source: &str, path: &Path) -> Result<String, String> {
-    let cm: Lrc<SourceMap> = Default::default();
-    let fm = cm.new_source_file(
-        FileName::Real(path.to_path_buf()).into(),
-        source.to_string(),
-    );
-    let syntax = Syntax::Es(EsSyntax {
-        jsx: false,
-        export_default_from: true,
-        import_attributes: true,
-        ..Default::default()
-    });
-    let lexer = Lexer::new(syntax, EsVersion::Es2022, StringInput::from(&*fm), None);
-    let mut parser = Parser::new_from(lexer);
-    let module = parser
-        .parse_module()
-        .map_err(|err| format!("failed to parse emitted JavaScript: {err:?}"))?;
-    let globals = Globals::new();
-    let module = GLOBALS.set(&globals, || minify_module(module, cm.clone()));
-    emit_module(&module, cm)
-}
-
-fn minify_module(module: Module, cm: Lrc<SourceMap>) -> Module {
-    let top_level_mark = Mark::new();
-    let unresolved_mark = Mark::new();
-    // These restrictions guard known SWC output bugs: conditionals/bools can
-    // emit invalid assignment expressions, sequences can corrupt for-of heads,
-    // inline can merge module-local bindings, and if_return can lose ternary
-    // parentheses. Keep this shared configuration in sync for bundling and
-    // module-preserving transpile optimization.
-    let mut compress = CompressOptions::default();
-    compress.conditionals = false;
-    compress.bools = false;
-    compress.sequences = 0;
-    compress.inline = 0;
-    compress.if_return = false;
-    let minify_options = MinifyOptions {
-        compress: Some(compress),
-        mangle: None,
-        ..Default::default()
-    };
-    match optimize(
-        Program::Module(module),
-        cm,
-        None,
-        None,
-        &minify_options,
-        &swc_ecma_minifier::option::ExtraOptions {
-            unresolved_mark,
-            top_level_mark,
-            mangle_name_cache: Default::default(),
-        },
-    ) {
-        Program::Module(module) => module,
-        Program::Script(_) => unreachable!("module optimization returned a script"),
-    }
-}
-
-fn emit_module(module: &Module, cm: Lrc<SourceMap>) -> Result<String, String> {
-    let mut buf = Vec::new();
-    let mut emitter = Emitter {
-        cfg: swc_ecma_codegen::Config::default(),
-        comments: None,
-        cm: cm.clone(),
-        wr: JsWriter::new(cm, "\n", &mut buf, None),
-    };
-    emitter
-        .emit_module(module)
-        .map_err(|err| format!("failed to emit optimized JavaScript: {err}"))?;
-    String::from_utf8(buf).map_err(|err| format!("optimized JavaScript was not UTF-8: {err}"))
-}
 
 pub trait VirtualSource: Send + Sync {
     fn load_virtual(&self, path: &Path) -> Result<Option<String>, String>;
@@ -179,7 +104,9 @@ pub fn bundle_virtual_entry(
         .ok_or_else(|| "Failed to find bundled output".to_string())?;
 
     let module = if options.minify {
-        GLOBALS.set(&globals, || minify_module(bundle.module, cm.clone()))
+        GLOBALS.set(&globals, || {
+            optimizer::minify_module(bundle.module, cm.clone(), false, Mark::new(), Mark::new())
+        })
     } else {
         bundle.module
     };
@@ -209,7 +136,7 @@ fn attach_prelude(out: String, options: &BundleOptions) -> Result<String, String
         return Ok(out);
     };
     let prelude = if options.minify {
-        let minified = minify_source_text("__deka_prelude__.js", prelude)?;
+        let minified = optimizer::minify_source_text("__deka_prelude__.js", prelude)?;
         format!("{minified}\n")
     } else {
         prelude.clone()
@@ -250,27 +177,6 @@ fn attach_prelude(out: String, options: &BundleOptions) -> Result<String, String
     injected.push_str(&prelude);
     injected.push_str(&out[insert_at..]);
     Ok(injected)
-}
-
-/// Minify a standalone JS module source with the same restricted SWC
-/// configuration as bundle minification (see `minify_module`).
-fn minify_source_text(name: &str, source: &str) -> Result<String, String> {
-    let cm: Lrc<SourceMap> = Default::default();
-    let fm = cm.new_source_file(FileName::Real(PathBuf::from(name)).into(), source.to_string());
-    let syntax = Syntax::Es(EsSyntax {
-        jsx: false,
-        export_default_from: true,
-        import_attributes: true,
-        ..Default::default()
-    });
-    let lexer = Lexer::new(syntax, EsVersion::Es2022, StringInput::from(&*fm), None);
-    let mut parser = Parser::new_from(lexer);
-    let module = parser
-        .parse_module()
-        .map_err(|err| format!("failed to parse prelude for minification: {err:?}"))?;
-    let globals = Globals::new();
-    let module = GLOBALS.set(&globals, || minify_module(module, cm.clone()));
-    emit_module(&module, cm)
 }
 
 pub fn bundle_browser(entry: &str) -> Result<String, String> {

@@ -44,7 +44,10 @@ async fn prerender_static_pages_async(
     unsafe {
         std::env::set_var("DEKA_SECURITY_NO_PROMPT", "1");
     }
-    crate::islands::write_island_client_assets_for_project(project_root)?;
+    crate::islands::write_island_client_assets_for_project(
+        project_root,
+        crate::islands::ClientAssetFlavor::Dev,
+    )?;
     crate::css::write_route_css_assets_for_project(project_root)?;
 
     // Explicit render plan: every static route and staticParams instance the
