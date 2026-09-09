@@ -483,12 +483,10 @@ function handlePromiseSync(ctx, promise) {
 function renderNode(node, ctx) {
   if (node == null || typeof node === "boolean") return "";
   if (isLive(node)) {
-    let value;
-    try {
-      value = node.read();
-    } catch (_) {
-      return "";
-    }
+    // A throwing live expression is a render error, not an empty node:
+    // reading a field of an absent prop must fail the render loudly
+    // (blank-then-fill was the silent default, deka#746 F3 / deka#744 F2).
+    const value = node.read();
     if (isComponentNode(value) || Array.isArray(value)) return renderNode(value, ctx);
     return escapeHtml(liveText(value));
   }
@@ -562,12 +560,8 @@ function renderSuspenseSync(node, ctx) {
 async function renderNodeAsync(node) {
   if (node == null || typeof node === "boolean") return "";
   if (isLive(node)) {
-    let value;
-    try {
-      value = node.read();
-    } catch (_) {
-      return "";
-    }
+    // See renderNode: a throwing live expression must surface, not blank.
+    const value = node.read();
     if (isComponentNode(value) || Array.isArray(value)) return await renderNodeAsync(value);
     return escapeHtml(liveText(value));
   }
