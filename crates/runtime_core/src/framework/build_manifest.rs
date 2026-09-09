@@ -78,6 +78,9 @@ pub struct CompilerProvenance {
 pub struct ManifestSlot {
     pub id: String,
     pub binding: String,
+    /// Project-root-relative source file, forward-slash separated
+    /// (`app/posts/page.dsx`); never absolute (deka#738 F2 — the manifest
+    /// must be byte-identical across checkout roots).
     pub file: String,
     /// SHA-256 of the canonical descriptor JSON: identity for "the compiler
     /// approved this shape" without a second typechecker.
@@ -137,16 +140,22 @@ impl RouteMode {
     }
 }
 
-/// One row of the route plan. `instance` is set for `●` rows (one row per
-/// expanded concrete path); every other mode has exactly one row.
+/// One row of the route plan, keyed by template: exactly one entry per
+/// route, no matter how many `●` instances `staticParams` expands to
+/// (deka#738 F6 — a two-param route must not record its template twice).
+/// [`BuildManifest::render_route_table`] and the static render tasks expand
+/// `instances` back into one row/task per concrete path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManifestRoute {
     /// Normalized route template, e.g. `/posts/[slug]`.
     pub template: String,
-    /// Concrete path for `●` rows, e.g. `/posts/hello`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub instance: Option<String>,
+    /// Concrete paths for `●` rows, e.g. `["/posts/hello", "/posts/world"]`,
+    /// sorted. Empty for every other mode.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub instances: Vec<String>,
     pub mode: RouteMode,
+    /// Project-root-relative source file, forward-slash separated
+    /// (`app/page.dsx`); never absolute (deka#738 F2).
     pub source_file: String,
     /// `staticParams` provenance: the build slot id that supplied instances.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -348,7 +357,7 @@ impl BuildManifest {
             .map(|slot| ManifestSlot {
                 id: slot.id.clone(),
                 binding: slot.binding.clone(),
-                file: slot.file.clone(),
+                file: project_relative(project_root, &slot.file),
                 descriptor_digest: sha256_hex(slot.descriptor.to_string().as_bytes()),
                 value_module: format!("deka:dev/{}", slot.id),
                 observations: Vec::new(),
@@ -389,17 +398,17 @@ impl BuildManifest {
             let route = match (params.is_empty(), params_slot, prerender_false) {
                 (true, None, false) => ManifestRoute {
                     template,
-                    instance: None,
+                    instances: Vec::new(),
                     mode: RouteMode::Static,
-                    source_file: page.file.clone(),
+                    source_file: file.clone(),
                     slot: None,
                     deferred: Vec::new(),
                 },
                 (true, None, true) => ManifestRoute {
                     template,
-                    instance: None,
+                    instances: Vec::new(),
                     mode: RouteMode::RequestTime,
-                    source_file: page.file.clone(),
+                    source_file: file.clone(),
                     slot: None,
                     deferred: Vec::new(),
                 },
@@ -413,9 +422,9 @@ impl BuildManifest {
                     validate_params_descriptor(&template, slot, &params)?;
                     ManifestRoute {
                         template,
-                        instance: None,
+                        instances: Vec::new(),
                         mode: RouteMode::StaticParams,
-                        source_file: page.file.clone(),
+                        source_file: file.clone(),
                         slot: Some(slot.id.clone()),
                         deferred: Vec::new(),
                     }
@@ -428,9 +437,9 @@ impl BuildManifest {
                 }
                 (false, None, true) => ManifestRoute {
                     template,
-                    instance: None,
+                    instances: Vec::new(),
                     mode: RouteMode::RequestTime,
-                    source_file: page.file.clone(),
+                    source_file: file.clone(),
                     slot: None,
                     deferred: Vec::new(),
                 },
@@ -479,24 +488,17 @@ impl BuildManifest {
         for entry in api_entries {
             routes.push(ManifestRoute {
                 template: entry.route.clone(),
-                instance: None,
+                instances: Vec::new(),
                 mode: RouteMode::Api,
-                source_file: entry.file.clone(),
+                source_file: project_relative(project_root, &entry.file),
                 slot: None,
                 deferred: Vec::new(),
             });
         }
 
-        // Canonical route order: by concrete path when present (instance
-        // rows), else template; then template as tiebreak so ● rows of one
-        // route stay together.
-        routes.sort_by(|a, b| {
-            a.instance
-                .as_deref()
-                .unwrap_or(&a.template)
-                .cmp(b.instance.as_deref().unwrap_or(&b.template))
-                .then(a.template.cmp(&b.template))
-        });
+        // Canonical route order: templates are unique, so a plain template
+        // sort fully determines the row order.
+        routes.sort_by(|a, b| a.template.cmp(&b.template));
 
         Ok(BuildManifest {
             version: BUILD_MANIFEST_VERSION,
@@ -510,15 +512,16 @@ impl BuildManifest {
         })
     }
 
-    /// Phase 2: expand `●` routes into concrete instances from the
-    /// materialized build values (`slot id -> value JSON`). Must run after
-    /// build entries execute (values are validated against the compiler
-    /// descriptor there) and before rendering.
+    /// Phase 2: fill each `●` route's `instances` with the concrete paths
+    /// from the materialized build values (`slot id -> value JSON`) — one
+    /// manifest entry per template, however many instances it expands to
+    /// (deka#738 F6). Must run after build entries execute (values are
+    /// validated against the compiler descriptor there) and before
+    /// rendering.
     pub fn expand_static_params(
         &mut self,
         values: &BTreeMap<String, serde_json::Value>,
     ) -> Result<(), String> {
-        let mut expanded: Vec<ManifestRoute> = Vec::new();
         let mut output_claims: BTreeMap<String, String> = BTreeMap::new();
 
         // Static and request-time routes claim their own template path.
@@ -535,16 +538,16 @@ impl BuildManifest {
             }
         }
 
-        for route in &self.routes {
+        for route in &mut self.routes {
             if route.mode != RouteMode::StaticParams {
-                expanded.push(route.clone());
                 continue;
             }
             let slot_id = route
                 .slot
                 .as_ref()
-                .expect("StaticParams route recorded without its slot id");
-            let value = values.get(slot_id).ok_or_else(|| {
+                .expect("StaticParams route recorded without its slot id")
+                .clone();
+            let value = values.get(&slot_id).ok_or_else(|| {
                 format!(
                     "route {}: staticParams value for slot `{}` was not materialized",
                     route.template, slot_id
@@ -555,6 +558,7 @@ impl BuildManifest {
                 .ok_or_else(|| format!("route {}: materialized staticParams is not an array", route.template))?;
             let params = bracket_params(&route.template);
             let mut seen: BTreeSet<String> = BTreeSet::new();
+            let mut instances: Vec<String> = Vec::new();
             for element in elements {
                 let mut instance = route.template.clone();
                 for param in &params {
@@ -596,14 +600,7 @@ impl BuildManifest {
                         route.template
                     ));
                 }
-                expanded.push(ManifestRoute {
-                    template: route.template.clone(),
-                    instance: Some(instance),
-                    mode: RouteMode::StaticParams,
-                    source_file: route.source_file.clone(),
-                    slot: route.slot.clone(),
-                    deferred: route.deferred.clone(),
-                });
+                instances.push(instance);
             }
             if elements.is_empty() {
                 return Err(format!(
@@ -611,16 +608,13 @@ impl BuildManifest {
                     route.template
                 ));
             }
+            // Concrete paths print and render in sorted order — this is the
+            // canonical order the route table derives from.
+            instances.sort();
+            route.instances = instances;
         }
 
-        expanded.sort_by(|a, b| {
-            a.instance
-                .as_deref()
-                .unwrap_or(&a.template)
-                .cmp(b.instance.as_deref().unwrap_or(&b.template))
-                .then(a.template.cmp(&b.template))
-        });
-        self.routes = expanded;
+        self.routes.sort_by(|a, b| a.template.cmp(&b.template));
         Ok(())
     }
 
@@ -664,6 +658,41 @@ impl BuildManifest {
         Ok(())
     }
 
+    /// Verify the published `dist/` tree against the recorded artifact
+    /// digests (deka#738 F3): recompute sha256 for every recorded artifact
+    /// against the on-disk bytes under `<project_root>/dist`. Returns one
+    /// human-readable description per problem — a missing file or a digest
+    /// mismatch, each naming the `dist/`-relative path — in recorded
+    /// (path-sorted) order. An empty result means `dist/` matches the
+    /// manifest byte for byte. This is the shared check behind `deka verify`;
+    /// its semantics mirror the test harness's digest verification
+    /// (deka#728).
+    pub fn verify_artifacts(&self, project_root: &Path) -> Vec<String> {
+        let dist = project_root.join("dist");
+        let mut problems = Vec::new();
+        for artifact in &self.artifacts {
+            let on_disk = dist.join(&artifact.path);
+            let bytes = match std::fs::read(&on_disk) {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    problems.push(format!(
+                        "artifact `dist/{}` cannot be read: {err}",
+                        artifact.path
+                    ));
+                    continue;
+                }
+            };
+            let actual = sha256_hex(&bytes);
+            if actual != artifact.digest {
+                problems.push(format!(
+                    "artifact `dist/{}` digest mismatch: manifest declares {}, on-disk bytes hash to {}",
+                    artifact.path, artifact.digest, actual
+                ));
+            }
+        }
+        problems
+    }
+
     /// Deterministic serialization: identical manifests produce identical
     /// bytes (deka#720's repeated-build contract).
     pub fn canonical_json(&self) -> Result<String, String> {
@@ -684,22 +713,28 @@ impl BuildManifest {
     }
 
     /// The final build route table. Printed only after the staged tree has
-    /// replaced `dist/`; this is the only display source.
+    /// replaced `dist/`; this is the only display source. `●` routes print
+    /// one row per concrete instance (the manifest stores one entry per
+    /// template — deka#738 F6 — so the instances expand here).
     pub fn render_route_table(&self) -> String {
-        let rows: Vec<(&str, String, &str)> = self
-            .routes
-            .iter()
-            .map(|route| {
-                (
+        let mut rows: Vec<(&str, String, &str)> = Vec::new();
+        for route in &self.routes {
+            if route.instances.is_empty() {
+                rows.push((
                     route.mode.glyph(),
-                    route
-                        .instance
-                        .clone()
-                        .unwrap_or_else(|| route.template.clone()),
+                    route.template.clone(),
                     route.mode.detail(),
-                )
-            })
-            .collect();
+                ));
+            } else {
+                for instance in &route.instances {
+                    rows.push((
+                        route.mode.glyph(),
+                        instance.clone(),
+                        route.mode.detail(),
+                    ));
+                }
+            }
+        }
         let width = rows
             .iter()
             .map(|(_, path, _)| path.chars().count())

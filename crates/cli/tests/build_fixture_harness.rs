@@ -345,11 +345,27 @@ fn manifest_report(project: &Path, stderr: &str, tree: &BTreeMap<String, Vec<u8>
             Some("api") => "λ",
             other => return Err(format!("route has unknown mode {other:?}")),
         };
-        let path = route["instance"]
-            .as_str()
-            .or_else(|| route["template"].as_str())
-            .ok_or("route has neither instance nor template")?;
-        expected_rows.push(format!("{glyph} {path}"));
+        // The manifest stores one entry per template (deka#738 F6); a
+        // staticParams entry expands to one row per concrete instance.
+        let instances = route["instances"]
+            .as_array()
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(|value| value.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if instances.is_empty() {
+            let path = route["template"]
+                .as_str()
+                .ok_or("route has no template")?;
+            expected_rows.push(format!("{glyph} {path}"));
+        } else {
+            for instance in instances {
+                expected_rows.push(format!("{glyph} {instance}"));
+            }
+        }
     }
     let printed = route_table_rows(stderr);
     if printed != expected_rows {
@@ -640,8 +656,9 @@ fn check_published_output(
     }
 
     // 4. Same-root rerun: tree, route-table order (full stderr), and the
-    //    manifest must all be byte-identical. The manifest embeds absolute
-    //    paths, so byte-identity is only meaningful within one root.
+    //    manifest must all be byte-identical. The manifest is
+    //    project-root-relative throughout (deka#738 F2), so byte-identity
+    //    holds across roots as well (asserted in build_manifest.rs).
     let canonical = fs::canonicalize(project).expect("canonicalize project");
     let rerun = run_build(project);
     if !rerun.success {

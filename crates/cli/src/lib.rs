@@ -41,6 +41,7 @@ pub fn build_registry() -> Registry {
         cli::task::register(&mut registry);
         cli::test::register(&mut registry);
         cli::transpile::register(&mut registry);
+        cli::verify::register(&mut registry);
         introspect::register(&mut registry);
     }
     registry
