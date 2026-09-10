@@ -23,7 +23,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn runner() -> PathBuf {
-    repo_root().join("tests").join("testsuite").join("run.mjs")
+    repo_root().join("scripts").join("testsuite-run.mjs")
 }
 
 /// The runner executes fixtures with `target/release/cli` (or DEKA_NATIVE).

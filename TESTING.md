@@ -10,7 +10,7 @@ two different numbers for the same corpus.
 
 ## The one rule
 
-**One runner produces every number.** `tests/testsuite/run.mjs` is the single
+**One runner produces every number.** The pinned `dekaruntime/testsuite` corpus runner is the single
 source of verdicts for both hosts. Nothing else computes pass/fail. The dump
 pipeline *publishes* the runner's output; it does not decide anything.
 
@@ -132,8 +132,9 @@ Hard-won, each from a real wrong diagnosis:
 
 ```sh
 cargo build -p cli                                  # or --release
-DEKA_NATIVE=target/debug/cli bun tests/testsuite/run.mjs
-DEKA_NATIVE=target/debug/cli bun tests/testsuite/run.mjs --json   # machine-readable
+scripts/ci-fetch-testsuite-corpus.sh
+DEKA_NATIVE=target/debug/cli bun .cache/testsuite-corpus/run.mjs
+DEKA_NATIVE=target/debug/cli bun .cache/testsuite-corpus/run.mjs --json   # machine-readable
 scripts/typeck-published-stdlib.sh                  # smoke, one fn per package
 ```
 

@@ -35,7 +35,9 @@ export interface HatsCategory {
   tests: HatsTest[]
 }
 
-const TESTS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'testsuite')
+const TESTS_DIR = process.env.DEKA_TESTSUITE_ROOT
+  ? path.resolve(process.env.DEKA_TESTSUITE_ROOT)
+  : path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '.cache', 'testsuite-corpus')
 
 function parseStatusFromFilename(filename: string): HatsTestStatus | null {
   if (filename.endsWith('.pass.ds') || filename.endsWith('.pass.dsx')) return 'pass'

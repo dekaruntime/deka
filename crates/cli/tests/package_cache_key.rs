@@ -103,7 +103,7 @@ fn package_cache_key_uses_resolved_versions_not_names() {
     let (versioned, name_only) = seed_cache(&root);
 
     let output = Command::new(bun())
-        .arg(root.join("tests").join("testsuite").join("run.mjs"))
+        .arg(root.join("scripts").join("testsuite-run.mjs"))
         .arg("--root")
         .arg(fixtures().join("corpus"))
         .arg("--filter")

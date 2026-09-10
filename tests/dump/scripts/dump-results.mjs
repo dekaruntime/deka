@@ -2,7 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { loadAndRunAllTests } from '../lib/build-tests.ts'
-import { runAdhocScenarios, toHatsCategory } from '../../testsuite/adhoc/cases.mjs'
+import { runAdhocScenarios, toHatsCategory } from '../../adhoc/cases.mjs'
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 

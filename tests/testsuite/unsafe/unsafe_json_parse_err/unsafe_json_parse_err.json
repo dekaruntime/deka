@@ -1,5 +1,0 @@
-{
-  "title": "unsafe block catches invalid JSON parse error",
-  "stage": "run",
-  "notes": ""
-}

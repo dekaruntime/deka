@@ -537,7 +537,7 @@ mod tests {
     #[test]
     fn ignores_hats_and_tour() {
         assert!(!is_test_file(Path::new(
-            "tests/testsuite/functions/pipe_operator/pipe_operator.pass.ds"
+            "corpus/functions/pipe_operator/pipe_operator.pass.ds"
         )));
         assert!(!is_test_file(Path::new("tests/tour/pipe-operator.ds")));
         assert!(!is_test_file(Path::new("src/math.ds")));
