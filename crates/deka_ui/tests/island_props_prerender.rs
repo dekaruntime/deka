@@ -12,6 +12,24 @@ use std::rc::Rc;
 
 use deno_core::{JsRuntime, ModuleCodeString, ModuleSpecifier, RuntimeOptions};
 
+/// jsx/router/form/suspense are DekaScript ports; their pinned emit lives in
+/// emit/ (deka#771). Materialize every ui module into one sibling directory,
+/// the layout the runtime writes, because server.js imports "./jsx.js"
+/// relative to its own file.
+fn materialize_ui_modules() -> PathBuf {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let dir = std::env::temp_dir().join(format!("deka_ui_props_modules_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create ui module dir");
+    for name in ["server.js", "client.js", "island-marker.js", "reactive.js"] {
+        std::fs::copy(manifest.join("js").join(name), dir.join(name)).expect("copy ui js source");
+    }
+    for name in ["jsx.js", "router.js", "form.js", "suspense.js"] {
+        std::fs::copy(manifest.join("emit").join(name), dir.join(name)).expect("copy ui emit");
+    }
+    dir
+}
+
+#[allow(dead_code)]
 fn js_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("js")
 }
@@ -37,7 +55,7 @@ async fn run_driver(script: &str) {
 
 #[tokio::test(flavor = "current_thread")]
 async fn island_props_render_into_initial_html_sync_and_async() {
-    let base = deno_core::ModuleSpecifier::from_directory_path(js_dir())
+    let base = deno_core::ModuleSpecifier::from_directory_path(materialize_ui_modules())
         .expect("js dir file url")
         .to_string();
     let script = format!(
@@ -78,7 +96,7 @@ assertEqual(asyncResult.html, markerAndHtml, 'async island props HTML');
 
 #[tokio::test(flavor = "current_thread")]
 async fn throwing_live_expression_fails_render_instead_of_empty_node() {
-    let base = deno_core::ModuleSpecifier::from_directory_path(js_dir())
+    let base = deno_core::ModuleSpecifier::from_directory_path(materialize_ui_modules())
         .expect("js dir file url")
         .to_string();
     let script = format!(

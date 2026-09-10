@@ -106,13 +106,19 @@ type HarnessRun = {
 // Vendored stdlib shims served to the browser harness. Keep in sync with the
 // real packages; io's echo is the console.log shim by design. The ui/*
 // modules are served straight from the deka_ui crate so the harness never
-// drifts from the real UI runtime. Relative imports inside them (`./jsx.js`)
-// are rewritten to the flat `.mjs` names the shim route serves.
+// drifts from the real UI runtime: jsx/router/form/suspense ship as pinned
+// compiler emit in emit/, the rest are still hand-written js/. Relative
+// imports inside them (`./jsx.js`) are rewritten to the flat `.mjs` names the
+// shim route serves.
 function uiModuleSource(file: string): string {
-  const source = fs.readFileSync(
-    path.join(DUMP_ROOT, '..', '..', 'crates', 'deka_ui', 'js', file),
-    'utf8',
-  )
+  const crateDir = path.join(DUMP_ROOT, '..', '..', 'crates', 'deka_ui')
+  let source: string
+  try {
+    source = fs.readFileSync(path.join(crateDir, 'js', file), 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    source = fs.readFileSync(path.join(crateDir, 'emit', file), 'utf8')
+  }
   return source.replace(/from\s+['"]\.\/(\w+)\.js['"]/g, 'from "./$1.mjs"')
 }
 const MODULE_SHIMS: Record<string, string> = {

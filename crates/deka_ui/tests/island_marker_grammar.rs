@@ -16,8 +16,29 @@ fn js_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("js")
 }
 
+/// jsx/router/form/suspense are DekaScript ports; their pinned emit lives in
+/// emit/ (deka#771). The remaining modules are still hand-written JavaScript.
+fn emit_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("emit")
+}
+
 fn js_source(name: &str) -> String {
     std::fs::read_to_string(js_dir().join(name)).expect("read ui js source")
+}
+
+/// Materialize every ui module into one directory, the same sibling layout
+/// the runtime writes (pool's `materialize_ui_module`): server.js resolves
+/// its relative `./jsx.js` import against the directory it lives in.
+fn materialize_ui_modules() -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("deka_ui_modules_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create ui module dir");
+    for name in ["server.js", "client.js", "island-marker.js", "reactive.js"] {
+        std::fs::copy(js_dir().join(name), dir.join(name)).expect("copy ui js source");
+    }
+    for name in ["jsx.js", "router.js", "form.js", "suspense.js"] {
+        std::fs::copy(emit_dir().join(name), dir.join(name)).expect("copy ui emit");
+    }
+    dir
 }
 
 async fn run_driver(script: &str) {
@@ -45,8 +66,8 @@ async fn run_driver(script: &str) {
 /// real shared parser, field for field.
 #[tokio::test(flavor = "current_thread")]
 async fn server_emitted_markers_parse_field_for_field() {
-    let base = deno_core::ModuleSpecifier::from_directory_path(js_dir())
-        .expect("js dir file url")
+    let base = deno_core::ModuleSpecifier::from_directory_path(materialize_ui_modules())
+        .expect("ui modules file url")
         .to_string();
     let script = format!(
         r#"

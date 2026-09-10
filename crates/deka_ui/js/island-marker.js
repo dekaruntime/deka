@@ -28,16 +28,25 @@ export const ISLAND_MARKER_FIELDS = ["start", "directive", "props", "id", "enc",
 const B64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const B64_PATTERN = "[A-Za-z0-9+/=]+";
 
-const ISLAND_MARKER_RE = (() => {
-  // Fields after `directive` are optional; each optional group's leading
-  // space lives INSIDE the group so absent fields leave no dangling space.
-  const parts = ISLAND_MARKER_FIELDS.map((field, index) => {
-    if (index === 0) return `${field}:(${B64_PATTERN})`;
-    if (index === 1) return ` ${field}:(${B64_PATTERN})`;
-    return `(?: ${field}:(${B64_PATTERN}))?`;
-  });
-  return new RegExp(`^${ISLAND_MARKER_TAG} ${parts.join("")}$`);
-})();
+// Built lazily on first use: the dist minifier miscompiles the
+// module-level-IIFE form by hoisting the IIFE above the ISLAND_MARKER_FIELDS
+// declaration it closes over (TDZ ReferenceError in the emitted chunk,
+// deka#771 finding).
+let ISLAND_MARKER_RE = null;
+
+function islandMarkerRe() {
+  if (ISLAND_MARKER_RE === null) {
+    // Fields after `directive` are optional; each optional group's leading
+    // space lives INSIDE the group so absent fields leave no dangling space.
+    const parts = ISLAND_MARKER_FIELDS.map((field, index) => {
+      if (index === 0) return `${field}:(${B64_PATTERN})`;
+      if (index === 1) return ` ${field}:(${B64_PATTERN})`;
+      return `(?: ${field}:(${B64_PATTERN}))?`;
+    });
+    ISLAND_MARKER_RE = new RegExp(`^${ISLAND_MARKER_TAG} ${parts.join("")}$`);
+  }
+  return ISLAND_MARKER_RE;
+}
 
 function utf8Bytes(str) {
   const out = [];
@@ -158,7 +167,7 @@ export function formatIslandEnd(name) {
 /// `deka-island` marker — the caller must treat null as "not an island" and
 /// skip it, never as an error.
 export function parseIslandMarker(text) {
-  const match = String(text || "").trim().match(ISLAND_MARKER_RE);
+  const match = String(text || "").trim().match(islandMarkerRe());
   if (!match) return null;
   const fields = {};
   ISLAND_MARKER_FIELDS.forEach((field, index) => {

@@ -1,0 +1,190 @@
+// ui/jsx — ComponentNode factories. Must stay tiny and must never import
+// ui/server. Function tags are not invoked here; the renderer calls them.
+//
+// The children values normalized here are deliberately heterogeneous at
+// runtime: strings, numbers, booleans, nested arrays, nodes, and the raw
+// `null`/`undefined`/`false` sentinels compiler-emitted arrays carry.
+// DekaScript has no type that can hold that mix (no top type; unions cannot
+// contain Array or function members), so this module is generic over the
+// element type and the handful of host reflections the algorithm needs
+// (Array.isArray, key presence, the null/boolean sentinels) go through the
+// typed `unsafe` bridges below. deka#771 records these phase-1 findings.
+
+// -- host bridges ------------------------------------------------------
+//
+// Each bridge preserves the original JavaScript expression verbatim; the
+// explicit contract is the bridge's signature.
+
+// One discriminator instead of three predicates: the heterogeneous child
+// values only ever need their sentinel kind, and each `unsafe` bridge costs
+// emitted machinery (kept small for the dist client budget, deka#750).
+fn kindOf<V>(value: V) number {
+  return match (unsafe { value == null ? 0 : (value === true || value === false) ? 1 : (Array.isArray(value) ? 2 : 3) }) {
+    Ok(v) => v,
+    Err(_) => 3,
+  }
+}
+
+fn asArray<V>(value: V) Array<V> {
+  return match (unsafe { value }) {
+    Ok(v) => v,
+    Err(_) => [],
+  }
+}
+
+fn hasOwn<V>(value: V, key: string) boolean {
+  return match (unsafe { value != null && Object.hasOwn(value, key) }) {
+    Ok(b) => b,
+    Err(_) => false,
+  }
+}
+
+fn readKey<V>(value: V, key: string) V {
+  return match (unsafe { value[key] }) {
+    Ok(v) => v,
+    Err(_) => value,
+  }
+}
+
+fn stripKey<V>(value: V, key: string) V {
+  return match (unsafe { (() => { const { [key]: _omitted, ...rest } = value; return rest; })() }) {
+    Ok(v) => v,
+    Err(_) => value,
+  }
+}
+
+// `children === undefined` in the original contract covers compiler-emitted
+// calls that omit the third argument (and, for DekaScript callers, the
+// Option.None that `None` compiles to). An explicit `null` third argument is
+// NOT the legacy sentinel — the original algorithm maps it to [] like any
+// other non-array child.
+fn isNoneSlot<E>(children: Option<E>) boolean {
+  return match (unsafe { children === undefined || children.__case === "None" }) {
+    Ok(b) => b,
+    Err(_) => false,
+  }
+}
+
+// dsc 0.8.0 omits the Option/Result prelude when the only constructor use is
+// a `= None` parameter default (emission gap, recorded on deka#771); the
+// anchor below makes the prelude explicit so that default resolves.
+const optionPreludeAnchor: Option<boolean> = None
+
+fn someValue<E>(children: Option<E>) E {
+  return match (unsafe { children != null && children.__case === "Some" ? children.value : children }) {
+    Ok(v) => v,
+    Err(_) => someValue(children),
+  }
+}
+
+// -- Fragment ----------------------------------------------------------
+
+fn fragmentSymbol() {
+  return match (unsafe { Symbol.for("deka.ui.Fragment") }) {
+    Ok(v) => v,
+    Err(_) => fragmentSymbol(),
+  }
+}
+
+export const Fragment = fragmentSymbol()
+
+// -- nodes -------------------------------------------------------------
+
+export fn isComponentNode<V>(value: V) boolean {
+  return match (unsafe { value != null && typeof value === "object" && value.__componentNode === true }) {
+    Ok(b) => b,
+    Err(_) => false,
+  }
+}
+
+export fn normalizeJsxChildren<E>(children: E) Array<E> {
+  const kind = kindOf(children)
+  if (kind === 0 || kind === 1) {
+    return []
+  }
+  if (kind != 2) {
+    let single: Array<E> = []
+    single.push(children)
+    return single
+  }
+  let out: Array<E> = []
+  for (const child of asArray(children)) {
+    // No `if (a || b) { continue }` here: the dist minifier's continue
+    // inversion miscompiles `||` guards of calls (deka#771 finding), so the
+    // skip is written as a positive guard instead.
+    const childKind = kindOf(child)
+    if (childKind != 0 && childKind != 1) {
+      if (childKind === 2) {
+        for (const inner of normalizeJsxChildren(child)) {
+          out.push(inner)
+        }
+      } else {
+        out.push(child)
+      }
+    }
+  }
+  return out
+}
+
+// The `__componentNode` marker stays an enumerable literal field: hidden
+// properties force every node into dictionary mode, which measured
+// ~12us/render slower on a 49-node grid (deka#580). Nothing serializes or
+// spreads whole nodes, so enumerability is safe.
+//
+// The node is constructed through `unsafe` because the catalog `Component`
+// type is opaque to constructors: DekaScript can hold, pass, and return it,
+// but cannot (yet) build a value that checks against it structurally
+// (deka#771 phase-1 finding).
+export fn jsx<Tag, P, E>(tag: Tag, props: P, children: Option<E> = None) Component {
+  let nodeProps = props
+  let normalized: Array<E> = []
+  if (isNoneSlot(children)) {
+    // Legacy form: children carried inside props (userland jsx() calls such
+    // as ui/jsx consumers, or spread attributes). Strip them so props and
+    // children stay separate for the renderers. `hasOwn` is null-safe on its
+    // own; the null/undefined props itself is normalized to `{}` below (the
+    // original `props ?? {}`).
+    if (hasOwn(props, "children")) {
+      const nested = readKey(props, "children")
+      normalized = normalizeJsxChildren(nested)
+      nodeProps = stripKey(props, "children")
+    } else {
+      // The original `props ?? {}` feeds the node itself, not just the
+      // hasOwn triple: a null/undefined legacy props must surface as `{}`.
+      nodeProps = match (unsafe { props ?? {} }) {
+        Ok(v) => v,
+        Err(_) => props,
+      }
+    }
+  } else {
+    const value = someValue(children)
+    if (kindOf(value) == 2) {
+      // Compiler-emitted arrays are flat and hole-free unless a conditional
+      // or spread child produced null/boolean/nested values; only then copy.
+      let needsNormalize = false
+      for (const child of asArray(value)) {
+        if (kindOf(child) != 3) {
+          needsNormalize = true
+          break
+        }
+      }
+      if (needsNormalize) {
+        normalized = normalizeJsxChildren(value)
+      } else {
+        normalized = asArray(value)
+      }
+    } else if (kindOf(value) == 3) {
+      // Written as a single array literal on purpose: the two-statement
+      // `normalized = []; normalized.push(value)` form is miscompiled by the
+      // dist minifier's collapse_vars (push's length return is assigned,
+      // deka#771 finding).
+      normalized = [value]
+    }
+  }
+  return match (unsafe { ({ tag: tag, props: nodeProps, children: normalized, __componentNode: true }) }) {
+    Ok(v) => v,
+    Err(_) => jsx(tag, props, children),
+  }
+}
+
+export const jsxs = jsx
