@@ -106,6 +106,15 @@ the version on screen are one unit: whatever version is displayed, the metrics
 shown are that version's. Never render a figure computed at one commit beside a
 version string from another. If the pack is behind `main`, the site says so.
 
+### Shared-host diagnostics are ordered
+
+For shared fixtures, the dump compares the complete native and browser
+diagnostic arrays. Each entry must match in severity, message, line, and
+column, and entries are compared positionally. A different order is therefore
+reported deliberately as a host divergence; diagnostics are not normalized as
+an unordered set. The WASM adapter maps dsc's `start_line` and `start_column`
+to the same shape used by native diagnostics before this comparison.
+
 ## What proves what
 
 Hard-won, each from a real wrong diagnosis:
