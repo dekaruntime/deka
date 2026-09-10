@@ -173,32 +173,124 @@ globalThis.app = async function(req) {{
 /// a sibling worker serves an immediate request; the immediate one completes
 /// first. (Within one worker, requests are processed sequentially by design,
 /// so the two-request comparison needs two workers.)
+///
+/// The setup is deliberately deterministic so the result does not depend on
+/// runner load:
+/// - Both handler isolates are warmed before the measured round, so the
+///   measured latency is queue handoff + execution, not cold V8 isolate
+///   creation. On a contended CI runner cold isolate boot alone can exceed
+///   the latency bound, which is load noise, not the concurrency property.
+/// - A marker file written *inside* the slow handler proves the slow op is
+///   in flight before the fast request is submitted, so least-loaded routing
+///   deterministically sends it to the sibling worker — no sleep heuristic.
+/// - The overlap assertion checks the semantic property directly: the fast
+///   handler began executing before the slow async op resolved.
 #[cfg(unix)]
 #[tokio::test]
 async fn slow_async_op_does_not_block_sibling_worker_request() {
     let dir = tempfile::tempdir().expect("tempdir");
     let fifo = dir.path().join("slow.fifo");
     mkfifo(&fifo);
-    delayed_fifo_writer(fifo.clone(), Duration::from_millis(400), b"slow");
+    let medium_fifo = dir.path().join("medium.fifo");
+    mkfifo(&medium_fifo);
 
     let path_js = serde_json::to_string(&fifo.to_string_lossy()).expect("json path");
+    let medium_path_js = serde_json::to_string(&medium_fifo.to_string_lossy()).expect("json path");
+    let marker = dir.path().join("slow_op_started.marker");
+    let marker_js = serde_json::to_string(&marker.to_string_lossy()).expect("json marker");
+    let medium_marker = dir.path().join("medium_started.marker");
+    let medium_marker_js =
+        serde_json::to_string(&medium_marker.to_string_lossy()).expect("json marker");
+
+    // Slow handler: record that it reached the async op, then block on the
+    // fifo. The marker file is how the test observes "slow op in flight".
     let slow_code = format!(
         r#"
 globalThis.app = async function(req) {{
+  await __deka_host('fs', 'write_file', [{marker_js}, [1]], ['fs']);
   const r = await __deka_host('fs', 'read_file', [{path_js}], ['fs']);
-  return {{ status: 200, headers: {{}}, body: JSON.stringify({{ ok: r.ok === true }}) }};
+  return {{ status: 200, headers: {{}}, body: JSON.stringify({{ ok: r.ok === true, tEnd: Date.now() }}) }};
+}};
+"#
+    );
+    // Medium handler: occupies its worker (marker, then ~150 ms fifo read) so
+    // the fast-handler warm-up is routed to the sibling worker.
+    let medium_code = format!(
+        r#"
+globalThis.app = async function(req) {{
+  await __deka_host('fs', 'write_file', [{medium_marker_js}, [1]], ['fs']);
+  await __deka_host('fs', 'read_file', [{medium_path_js}], ['fs']);
+  return {{ status: 200, headers: {{}}, body: JSON.stringify({{ medium: true }}) }};
 }};
 "#
     );
     let fast_code = r#"
 globalThis.app = function(req) {
-  return { status: 200, headers: {}, body: JSON.stringify({ fast: true }) };
+  const r = __deka_host('crypto', 'random_bytes', [8], ['crypto']);
+  return { status: 200, headers: {}, body: JSON.stringify({ fast: true, host_ok: r.ok === true, handler_wall_ms: Date.now() }) };
 };
 "#;
 
     let pool = Arc::new(php_pool(2));
     let policy = allow_under(dir.path());
 
+    // 1. Warm the slow handler's isolate on worker 0 (idle pool: least-loaded
+    //    tie routes to the first worker) with a writer that unblocks at once.
+    delayed_fifo_writer(fifo.clone(), Duration::from_millis(1), b"warm");
+    let warm = pool
+        .execute(
+            HandlerKey::new("async_slow_worker_a"),
+            request_with_security(&slow_code, policy.clone()),
+        )
+        .await
+        .expect("warm execution");
+    assert!(warm.success, "warm request failed: {:?}", warm.error);
+    assert!(marker.exists(), "warm round must write the marker");
+
+    // 2. Occupy worker 0 with the medium request; its marker proves the
+    //    request is active, so the fast-handler warm-up routes to worker 1.
+    delayed_fifo_writer(medium_fifo.clone(), Duration::from_millis(150), b"medium");
+    let medium_pool = Arc::clone(&pool);
+    let medium_policy = policy.clone();
+    let medium = tokio::spawn(async move {
+        medium_pool
+            .execute(
+                HandlerKey::new("async_medium_occupier"),
+                request_with_security(&medium_code, medium_policy),
+            )
+            .await
+            .expect("medium execution")
+    });
+    wait_for_file(&medium_marker, Duration::from_secs(10)).await;
+
+    // 3. Warm the fast handler's isolate — worker 0 is busy, so this routes
+    //    to worker 1 and leaves a warm isolate there for the measured round.
+    let fast_warm = pool
+        .execute(
+            HandlerKey::new("async_fast_worker_b"),
+            request_with_security(fast_code, policy.clone()),
+        )
+        .await
+        .expect("fast warm execution");
+    assert!(
+        fast_warm.success,
+        "fast warm request failed: {:?}",
+        fast_warm.error
+    );
+
+    // 4. Let the occupier finish; both workers are idle again.
+    let medium = medium.await.expect("medium task");
+    assert!(
+        medium.success,
+        "medium request failed: {:?}",
+        medium.error
+    );
+
+    // 5. Measured round: reset the marker, then block the slow handler on a
+    //    fresh 400 ms writer. The marker reappearing proves the slow op is in
+    //    flight on worker 0 before the fast request is submitted.
+    std::fs::remove_file(&marker).expect("reset marker");
+    delayed_fifo_writer(fifo.clone(), Duration::from_millis(400), b"slow");
     let slow_pool = Arc::clone(&pool);
     let slow_policy = policy.clone();
     let slow = tokio::spawn(async move {
@@ -210,9 +302,8 @@ globalThis.app = function(req) {
             .await
             .expect("slow execution")
     });
-    // Give the slow request time to become active so least-loaded routing
-    // sends the fast one to the sibling worker.
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    wait_for_file(&marker, Duration::from_secs(10)).await;
+
     let fast_started = Instant::now();
     let fast = pool
         .execute(
@@ -228,8 +319,53 @@ globalThis.app = function(req) {
         fast_elapsed < Duration::from_millis(300),
         "fast request waited behind the slow async op: {fast_elapsed:?}"
     );
+
     let slow = slow.await.expect("slow task");
     assert!(slow.success, "slow request failed: {:?}", slow.error);
+    let fast_handler_wall = fast
+        .result
+        .as_ref()
+        .and_then(|r| r.get("body"))
+        .and_then(|b| serde_json::from_str::<serde_json::Value>(b.as_str().unwrap_or("")).ok())
+        .and_then(|v| v.get("handler_wall_ms").and_then(|x| x.as_u64()))
+        .expect("fast handler wall clock");
+    let slow_t_end = slow
+        .result
+        .as_ref()
+        .and_then(|r| r.get("body"))
+        .and_then(|b| serde_json::from_str::<serde_json::Value>(b.as_str().unwrap_or("")).ok())
+        .and_then(|v| v.get("tEnd").and_then(|x| x.as_u64()))
+        .expect("slow op end wall clock");
+    let fast_host_ok = fast
+        .result
+        .as_ref()
+        .and_then(|r| r.get("body"))
+        .and_then(|b| serde_json::from_str::<serde_json::Value>(b.as_str().unwrap_or("")).ok())
+        .and_then(|v| v.get("host_ok").and_then(|x| x.as_bool()))
+        .expect("fast host op result");
+    assert!(
+        fast_host_ok,
+        "fast request's own host op did not complete cleanly"
+    );
+    assert!(
+        fast_handler_wall < slow_t_end,
+        "fast handler started after the slow op resolved (serialized): fast={fast_handler_wall} slow_end={slow_t_end}"
+    );
+}
+
+/// Poll until `path` exists (the handlers signal in-flight state through
+/// marker files), failing after `timeout`.
+#[cfg(unix)]
+async fn wait_for_file(path: &Path, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while !path.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for {}",
+            path.display()
+        );
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
 }
 
 /// Case B2 — sync ops never return a Promise: the envelope comes back
