@@ -17,6 +17,16 @@ For `@deka/<name>`:
    `https://pub-6d81db17678348abba85f93fde4b4400.r2.dev/<name>/<version>/<name>-<version>.tgz`
 4. Extract into the consumer's `php_modules/` (legacy name; `ds_modules/`
    is equivalent) and record the digest in `deka.lock`.
+5. Derive the package's RFD 27 host grant — the catalog kinds the runtime
+   assigns to the `@deka/<name>` identity — and record
+   `{ name, version, digest, kinds }` in `deka.grants.json` next to
+   `deka.lock`, keyed by the fsGraph digest just pinned (deka#797).
+   Commit `deka.grants.json` with `deka.lock`: a fresh checkout's
+   `deka install` refuses to change it under `--locked`, and the runtime
+   loader reads it after the explicit `PoolConfig.host_grants` /
+   `DEKA_HOST_GRANTS` override channels. A package can hold only the kinds
+   the catalog binds to its identity, and only for the digest the
+   lockfile pins — never anything its own manifest declares.
 
 `deka.gg/api/registry/<name>.json` and `/packages` are built from **R2**.
 Website deploy runs `bun run probe:r2`, which HEADs candidate versions from
@@ -139,9 +149,10 @@ reality is:
   the field into a user package buys nothing. Dependency grants come only
   from the published **grant table** (`{ name, version, digest, kinds }`),
   looked up by the dependency's lockfile-pinned `fsGraph` digest in
-  `deka.lock`. Until the signed-index plumbing lands, the table is supplied
-  explicitly (`PoolConfig.host_grants` or the `DEKA_HOST_GRANTS` environment
-  variable).
+  `deka.lock`. The table is delivered by `deka add` / `deka install` into
+  `deka.grants.json` (deka#797); `PoolConfig.host_grants` and the
+  `DEKA_HOST_GRANTS` environment variable remain as explicit overrides for
+  tests and embedded hosts.
 - The runtime catalog is generated from
   `runtime_core::host_bridge` (`js_catalog_json()`) — the single source of
   truth (deka#620), injected into each isolate at bootstrap. The **CLI** must

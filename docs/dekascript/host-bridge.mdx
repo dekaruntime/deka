@@ -55,11 +55,19 @@ Which kinds a module may call is decided per **package**, not per call site:
 - **Workspace grant** — a project whose root `deka.json` is an official
   `@deka/*` package may self-declare kinds via `"host": { "kinds": [...] }`.
 - **Lockfile-digest grant table** — a dependency's `host.kinds` manifest field
-  is untrusted and ignored. Grants come only from a published grant table
-  (`{ name, version, digest, kinds }` records), looked up by the dependency's
-  lockfile-pinned `fsGraph` digest in `deka.lock`. Until the registry/index
-  plumbing lands, the table is supplied explicitly (`PoolConfig.host_grants`
-  or the `DEKA_HOST_GRANTS` environment variable).
+  is untrusted and ignored. Grants come only from the published grant-table
+  records (`{ name, version, digest, kinds }`), looked up by the dependency's
+  lockfile-pinned `fsGraph` digest in `deka.lock`. `deka add` / `deka
+  install` write these records to **`deka.grants.json`** next to `deka.lock`:
+  the kinds are the ones the authoritative runtime catalog assigns to the
+  registry identity (`@deka/fs` → `fs`), never anything the package's own
+  manifest asks for, and the digest is the installer's integrity-verified
+  fsGraph hash — a grant for one digest unlocks no other package and no
+  mutated lockfile pin. The loader resolves grants in this order: an explicit
+  `PoolConfig.host_grants` table, then the `DEKA_HOST_GRANTS` environment
+  variable (an override for tests and embedded hosts), then the
+  project-installed `deka.grants.json`. Commit `deka.grants.json` with
+  `deka.lock`.
 - **Compile error** — an *application* project root (any non-`@deka/*` name)
   that sets `host.kinds` fails to load. Apps acquire bridge authority only
   from the grant table, never from their own manifest.
