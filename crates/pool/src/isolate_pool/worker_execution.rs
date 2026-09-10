@@ -23,6 +23,10 @@ fn bootstrap_source(template: &str) -> String {
             &runtime_core::host_bridge::js_catalog_json(),
         )
         .replace(
+            "/*__DEKA_CATALOG__*/",
+            runtime_core::deka_catalog::CATALOG_HELPERS_JS,
+        )
+        .replace(
             "__DEKA_PERMISSION_DENIED_MARKER__",
             runtime_core::host_bridge::PERMISSION_DENIED_MARKER,
         )
@@ -39,6 +43,7 @@ fn bootstrap_source(template: &str) -> String {
         !source.contains("__DEKA_POOL_ENUM_PRELUDE__")
             && !source.contains("__DEKA_TO_RESULT__")
             && !source.contains("__DEKA_HOST_CATALOG__")
+            && !source.contains("__DEKA_CATALOG__")
             && !source.contains("__DEKA_PERMISSION_DENIED_MARKER__")
             && !source.contains("__DEKA_WINTERTC__"),
         "bootstrap prelude markers must all be injected"
@@ -952,10 +957,25 @@ impl WorkerThread {
                     // Deno.core.ops table is deliberately NOT exposed here — user
                     // code must go through `host` (catalog + grant gated) or
                     // `bridge` (PHPX compatibility).
+                    // RFD 21 (deka#754): the closed deka.* catalog — JavaScript
+                    // we shipped, built once per worker. Realm-private like the
+                    // bridge: reachable only through the per-module preamble
+                    // `deka` binding, which the loader injects for official
+                    // stdlib modules only. `moduleDeka(false)` deliberately
+                    // yields the plain ambient global (deka.ui) so user modules
+                    // observe no catalog.
+                    const __dekaCatalogBuilt = /*__DEKA_CATALOG__*/;
+                    const __dekaCatalogModule = (official) => {
+                        if (!official) return globalThis.deka;
+                        return Object.freeze(Object.create(__dekaCatalogBuilt, {
+                            ui: { get: () => globalThis.deka && globalThis.deka.ui },
+                        }));
+                    };
                     globalThis[Symbol.for('deka.host.internal')] = Object.freeze({
                         host: __deka_host,
                         bridge: __bridge,
                         toResult: __deka_to_result,
+                        moduleDeka: __dekaCatalogModule,
                     });
                     /*__DEKA_WINTERTC__*/
                     try {

@@ -61,6 +61,12 @@ objects/lists, property/index access, string methods, template strings, and
 `for (const item of items)`. PHP-derived syntax is rejected. The module and
 runtime contracts are not available from this slice.
 
+Stdlib packages (`@deka/*`) additionally reach the closed `deka.*` catalog
+through `safe { deka.kind.method(...) }` (non-throwing, declared type) and
+`unsafe { deka.kind.method(...) }` (`Result<T, string>`); application code
+may not. The catalog is validated and lowered by the loader before dsc
+compiles — see `docs/dekascript/runtime-bridge.mdx`.
+
 ## Service Ports (deka-cli defaults)
 - `postgres`: 5432
 - `redis`: 6379
