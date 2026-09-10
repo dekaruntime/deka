@@ -15,9 +15,9 @@ pub mod build_dsc;
 #[cfg(feature = "native")]
 pub mod build_publish;
 #[cfg(feature = "native")]
-pub mod build_slots;
+pub mod build_server_graph;
 #[cfg(feature = "native")]
-pub mod build_values_dist;
+pub mod build_slots;
 #[cfg(feature = "native")]
 pub mod check;
 #[cfg(feature = "native")]

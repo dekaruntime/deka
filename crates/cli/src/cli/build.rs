@@ -91,6 +91,13 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     // not created on a failed compile), then promote trees and copy host
     // static files (public/ → dist/client, prerender/worker/_redirects/…).
     build_dsc::require_dsc()?;
+    // The dist staging tree hosts the generated server entries while they
+    // compile: it sits inside the project root at the same relative depth as
+    // the serve-time compiler cache (`.cache/dekascript`), so the entries it
+    // generates import project sources by identical relative specifiers, and
+    // dsc resolves them against the real sources.
+    let staged = build_publish::stage_dist(&project_root)?;
+    let entries_dir = staged.root.join("entries");
     let staging =
         tempfile::tempdir().map_err(|err| format!("failed to create build staging dir: {err}"))?;
     let staging_root = staging.path();
@@ -175,35 +182,55 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
         .map(build_publish::render_tasks)
         .unwrap_or_default();
 
-    // Everything below writes into a staged tree that atomically replaces
-    // dist/ only after every step succeeds (deka#719).
-    let staged = build_publish::stage_dist(&project_root)?;
+    // Everything below writes into the staged dist tree that atomically
+    // replaces dist/ only after every step succeeds (deka#719).
     let dist_root = staged.root.join("dist");
     let dist_client = dist_root.join("client");
     let dist_server = dist_root.join("server");
-    let dist_app = dist_root.join("app");
 
     fs::create_dir_all(&dist_client)
         .map_err(|err| format!("failed to create {}: {}", dist_client.display(), err))?;
     fs::create_dir_all(&dist_server)
         .map_err(|err| format!("failed to create {}: {}", dist_server.display(), err))?;
 
-    replace_dir(&staging_root.join("app"), &dist_app)?;
-    if emitted_src {
-        replace_dir(&staging_root.join("src"), &dist_root.join("src"))?;
-    }
-    if emitted_api {
-        replace_dir(&staging_root.join("api"), &dist_root.join("api"))?;
-        let stale_api = dist_server.join("api");
-        if stale_api.exists() {
-            fs::remove_dir_all(&stale_api)
-                .map_err(|err| format!("failed to remove {}: {err}", stale_api.display()))?;
+    // Build-time server entries (deka#762): generate the page/api/defer
+    // router entries, compile them through dsc, and re-root the graph into
+    // dist/server as source-free, loader-ready modules. The compiled entries
+    // are what `deka serve` loads — serve no longer generates
+    // .cache/dekascript/serve-entry.dsx for built projects.
+    #[cfg(feature = "native")]
+    let mut emitted_entries = crate::cli::build_server_graph::EmittedEntries::default();
+    #[cfg(feature = "native")]
+    if manifest.is_some() {
+        emitted_entries = crate::cli::build_server_graph::compile_and_reroot_entries(
+            &project_root,
+            &entries_dir,
+            &dist_server,
+        )?;
+        // Fill in modules no entry imports (dynamic-import targets, non-DS
+        // assets) from the emitted trees; graph modules already in place win.
+        build_dsc::copy_non_ds_tree(
+            &staging_root.join("app"),
+            &dist_server.join("app"),
+            true,
+        )?;
+        if emitted_api {
+            build_dsc::copy_non_ds_tree(
+                &staging_root.join("api"),
+                &dist_server.join("api"),
+                true,
+            )?;
         }
     }
-    let stale_app = dist_server.join("app");
-    if stale_app.exists() {
-        fs::remove_dir_all(&stale_app)
-            .map_err(|err| format!("failed to remove {}: {err}", stale_app.display()))?;
+    #[cfg(feature = "native")]
+    if manifest.is_none() {
+        replace_dir(&staging_root.join("app"), &dist_server.join("app"))?;
+    }
+    if emitted_src {
+        replace_dir(&staging_root.join("src"), &dist_server.join("src"))?;
+    }
+    if emitted_api && manifest.is_none() {
+        replace_dir(&staging_root.join("api"), &dist_server.join("api"))?;
     }
 
     copy_dir_recursive(&public_dir, &dist_client)?;
@@ -329,6 +356,7 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     })?;
 
     let needs_worker = runtime_core::framework::project_needs_worker(&project_root);
+    let mut worker_emitted = false;
     match read_serve_kind(&project_root)? {
         Some(ServeKind::Static) if needs_worker => {
             return Err(
@@ -336,8 +364,14 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
                     .to_string(),
             );
         }
-        Some(ServeKind::Worker) => write_cloudflare_worker(&project_root, &dist_root)?,
-        None if needs_worker => write_cloudflare_worker(&project_root, &dist_root)?,
+        Some(ServeKind::Worker) => {
+            write_cloudflare_worker(&project_root, &dist_root)?;
+            worker_emitted = true;
+        }
+        None if needs_worker => {
+            write_cloudflare_worker(&project_root, &dist_root)?;
+            worker_emitted = true;
+        }
         _ => {}
     }
 
@@ -418,36 +452,56 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     // Inlining is not app-router-only: the web-bootstrap path used to inject a
     // `src=` import map browsers reject (deka#624).
     rewrite_dist_html_asset_urls(&dist_client)?;
+    // The compiled server entries carry the same logical /assets URLs and the
+    // generation-time importmap placeholder; bake the final hashed names and
+    // the built import map in (the built entry is what serves production —
+    // there is no serve-time rewrite pass for it).
+    rewrite_server_entry_asset_urls(&dist_server, &dist_client)?;
 
     // dist/ must be deployable without .cache/ (deka#738 F7): ship the
     // materialized build-value modules in dist and rewrite deka:dev/
-    // specifiers to relative paths (fails the build if one survives).
+    // specifiers to relative paths (fails the build if one survives). Also
+    // rewrites bare ui/* specifiers to the vendored server/.ui modules and
+    // verifies every server-module specifier resolves inside dist/server.
     #[cfg(feature = "native")]
-    crate::cli::build_values_dist::publish_build_values(
+    crate::cli::build_server_graph::publish_build_values(
         &project_root,
         &dist_root,
-        &dist_app,
+        &dist_server,
         &planned,
     )?;
 
-    // The staged tree is complete: hash its artifacts into the manifest,
-    // persist it, atomically replace dist/, then print the route table.
+    // The deployment descriptor (manifest v2): routes, server entries, slots,
+    // and every payload with its digest, anchored by the sha256 sidecar.
     #[cfg(feature = "native")]
-    build_publish::finalize(&project_root, &staged, manifest.as_mut())?;
+    let artifact = match manifest.as_ref() {
+        Some(plan) => Some(build_publish::build_artifact_manifest(
+            plan,
+            &project_root,
+            &dist_root,
+            &emitted_entries,
+            worker_emitted,
+            want_trailing,
+        )?),
+        None => None,
+    };
+
+    // The staged tree is complete: hash its artifacts into the manifests,
+    // persist them, atomically replace dist/, then print the route table.
+    #[cfg(feature = "native")]
+    build_publish::finalize(&project_root, &staged, manifest.as_mut(), artifact)?;
     #[cfg(not(feature = "native"))]
     build_publish::publish(&project_root, &staged)?;
 
     // publish renamed the staged tree into place; report the real dist paths.
     let dist_root = project_root.join("dist");
     let dist_client = dist_root.join("client");
-    let dist_app = dist_root.join("app");
     let dist_server = dist_root.join("server");
 
     let mut report = format!(
-        "built web project {}\n  client: {}\n  app: {}\n  server: {}\n  hydration: {}",
+        "built web project {}\n  client: {}\n  server: {}\n  hydration: {}",
         project_root.display(),
         dist_client.display(),
-        dist_app.display(),
         dist_server.display(),
         if hydration_enabled || !islands.is_empty() {
             "enabled"
@@ -849,6 +903,49 @@ fn rewrite_dist_html_asset_urls(dist_client: &Path) -> Result<(), String> {
         None
     };
     rewrite_html_asset_urls(dist_client, &renames, importmap_tag.as_deref())?;
+    Ok(())
+}
+
+/// Bake the final content-hashed asset names (and the built import map, in
+/// place of the generation-time placeholder) into the compiled server
+/// entries. The renames and the inline tag come from the same collector the
+/// dist-HTML and serve-entry rewrites use, so dev and prod agree by
+/// construction.
+fn rewrite_server_entry_asset_urls(dist_server: &Path, dist_client: &Path) -> Result<(), String> {
+    let assets_dir = dist_client.join("assets");
+    let mut renames: Vec<(String, String)> = Vec::new();
+    runtime::collect_hashed_asset_renames(&assets_dir, &assets_dir, &mut renames)?;
+    let importmap_tag = if assets_dir.join("importmap.json").is_file() {
+        runtime::inline_importmap_tag(&assets_dir)?
+    } else {
+        None
+    };
+    for name in ["serve-entry.js", "api-entry.js", "defer-entry.js"] {
+        let path = dist_server.join(name);
+        if !path.is_file() {
+            continue;
+        }
+        let mut js = fs::read_to_string(&path)
+            .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+        let mut changed = false;
+        for (logical, hashed) in &renames {
+            if js.contains(logical.as_str()) {
+                js = js.replace(logical.as_str(), hashed.as_str());
+                changed = true;
+            }
+        }
+        if let Some(tag) = &importmap_tag {
+            let placeholder = runtime_core::framework::CLIENT_IMPORTMAP_PLACEHOLDER_TAG;
+            if js.contains(placeholder) {
+                js = js.replace(placeholder, tag);
+                changed = true;
+            }
+        }
+        if changed {
+            fs::write(&path, js.as_bytes())
+                .map_err(|err| format!("failed to write {}: {err}", path.display()))?;
+        }
+    }
     Ok(())
 }
 

@@ -22,7 +22,7 @@ pub enum ServeKind {
     Worker,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct ServeConfig {
     pub mode: Option<ServeMode>,
     pub entry: Option<String>,
@@ -186,6 +186,10 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
         });
     }
 
+    if let Some(built) = built_artifact_handler(&handler_dir, &serve_config)? {
+        return Ok(built);
+    }
+
     if runtime_core::framework::is_source_app_router_project(&handler_dir) {
         let entry_path = runtime_core::framework::write_app_router_entry(&handler_dir)?;
         return Ok(ResolvedHandler {
@@ -219,6 +223,66 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
         mode: serve_config.mode.clone().unwrap_or(ServeMode::Static),
         config: serve_config,
     })
+}
+
+/// Resolve a built artifact instead of source: when `<dir>/dist/` (or `<dir>/`
+/// itself, the unambiguous `deka serve dist/` form) carries a v2
+/// `build-manifest.json`, production serves the compiled server entries —
+/// the artifact is what runs, never a serve-time recompile (deka#743/#762).
+///
+/// Phase 2 resolves on the manifest's presence and format; the §3.4
+/// verification order before bind lands with the artifact-only loader
+/// (deka#763). A manifest that does not parse or carries an unknown format
+/// is a hard failure (spec §5.2: `incomplete`/`incompatible` fail before
+/// bind), never a silent fallback to source.
+fn built_artifact_handler(
+    handler_dir: &std::path::Path,
+    serve_config: &ServeConfig,
+) -> Result<Option<ResolvedHandler>, String> {
+    use std::path::PathBuf;
+    let candidates: [PathBuf; 2] = [
+        handler_dir.join("dist/build-manifest.json"),
+        handler_dir.join("build-manifest.json"),
+    ];
+    let manifest_path = match candidates.iter().find(|path| path.is_file()) {
+        Some(path) => path.clone(),
+        None => return Ok(None),
+    };
+    let artifact_root = manifest_path
+        .parent()
+        .expect("manifest path has a parent")
+        .to_path_buf();
+    let raw = std::fs::read_to_string(&manifest_path).map_err(|err| {
+        format!(
+            "failed to read built artifact manifest {}: {err}",
+            manifest_path.display()
+        )
+    })?;
+    let value: serde_json::Value = serde_json::from_str(&raw).map_err(|err| {
+        format!(
+            "invalid built artifact manifest {}: {err}; rebuild with `deka build`",
+            manifest_path.display()
+        )
+    })?;
+    if value.get("format").and_then(|v| v.as_str()) != Some("deka.artifact@2") {
+        return Err(format!(
+            "incompatible artifact: {} is not a deka.artifact@2 manifest; rebuild with `deka build`",
+            manifest_path.display()
+        ));
+    }
+    let entry = artifact_root.join("server").join("serve-entry.js");
+    if !entry.is_file() {
+        return Err(format!(
+            "incomplete artifact: {} declares a built project but {} does not exist; rebuild with `deka build`",
+            manifest_path.display(),
+            entry.display()
+        ));
+    }
+    Ok(Some(ResolvedHandler {
+        path: entry,
+        mode: ServeMode::Php,
+        config: serve_config.clone(),
+    }))
 }
 
 fn detect_mode(path: &std::path::Path) -> ServeMode {

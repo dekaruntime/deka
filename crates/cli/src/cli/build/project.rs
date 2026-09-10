@@ -100,15 +100,10 @@ pub(super) fn ensure_web_project_layout(project_root: &Path) -> Result<(), Strin
         }
     }
 
-    if project_root.join("public").join("index.html").is_file() {
+    if project_root.join("index.html").is_file()
+        && project_root.join("public").join("index.html").is_file()
+    {
         return Err("public/index.html collides with the root index.html document".to_string());
-    }
-
-    if !project_root.join("index.html").is_file() {
-        return Err(format!(
-            "missing required file: {}",
-            project_root.join("index.html").display()
-        ));
     }
 
     let json = load_deka_json(project_root)?;

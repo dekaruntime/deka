@@ -1,0 +1,665 @@
+//! Build-time server-entry emission into `dist/server/` (deka#762, phase 2 of
+//! deka#743).
+//!
+//! `deka serve` used to generate `serve-entry.dsx` into the compiler cache at
+//! startup and recompile the whole app graph from `.ds`/`.dsx` source — the
+//! built artifact was not what ran (deka#743). This module moves that work to
+//! `deka build`:
+//!
+//! 1. Generate the same router entries serve-time generation produces
+//!    (pages, api, defer) into an entries dir inside the project tree, two
+//!    levels deep, so their relative imports resolve against project sources
+//!    exactly as the cache entries do.
+//! 2. Compile each entry through dsc's self-contained graph dump.
+//! 3. Re-root the dumped graph under `dist/server/`: every module lands at
+//!    its source-tree-relative `.js` path, and every relative specifier is
+//!    recomputed between the new locations so the graph stays closed (§4.2:
+//!    extension-explicit relative specifiers resolving inside the server
+//!    root — the emitted artifact carries no `.ds`/`.dsx` and no absolute
+//!    path).
+//! 4. Make build values ordinary modules at `server/.values/<id>.js` (the
+//!    `deka:dev/<id>` virtual scheme is rewritten away everywhere, client
+//!    bundles included, and any survivor fails the build) and vendor the ui
+//!    runtime modules the graph imports at `server/.ui/` so no bare `ui/*`
+//!    specifier leaves the artifact depending on the serving binary's
+//!    embedded copies.
+//!
+//! The output is the manifest-v2 layout (§1): every executable module under
+//! `dist/server/`, described with digests in `dist/build-manifest.json`.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::{Component, Path, PathBuf};
+
+use runtime_core::framework::{
+    PlannedSource, generate_api_entry_source, generate_app_router_entry_source,
+    generate_defer_entry_source, resolve_app_router_index_html, scan_api_dir, scan_server_defer,
+};
+
+/// Where materialized build-value modules live inside the server tree.
+pub const VALUES_DIR: &str = ".values";
+/// Where the vendored ui runtime modules live inside the server tree.
+pub const UI_DIR: &str = ".ui";
+
+/// The compiled router entries, as `dist/`-relative module paths.
+#[derive(Debug, Default)]
+pub struct EmittedEntries {
+    pub serve: Option<String>,
+    pub api: Option<String>,
+    pub defer: Option<String>,
+}
+
+/// Generate the app-router router entries into `entries_dir`, compile each
+/// through dsc, and re-root the merged module graph into `dist_server`.
+///
+/// `entries_dir` must sit two levels below the project root (e.g.
+/// `.deka-dist-stage/entries`): the generated entries import project sources
+/// by `../../app/...`-style relative paths, so the entry's on-disk location
+/// determines what dsc resolves. Returns the dist-relative paths of the
+/// compiled router entries for the manifest's server entry table.
+#[cfg(feature = "native")]
+pub fn compile_and_reroot_entries(
+    project_root: &Path,
+    entries_dir: &Path,
+    dist_server: &Path,
+) -> Result<EmittedEntries, String> {
+    let sources = generate_entry_sources(project_root, entries_dir)?;
+
+    let mut modules: BTreeMap<PathBuf, String> = BTreeMap::new();
+    let mut emitted = EmittedEntries::default();
+    for (name, source_path) in &sources {
+        let graph = pool::dsc_compile::compile_graph(project_root, source_path)
+            .map_err(|err| format!("failed to compile server entry {name}: {err}"))?;
+        for (path, js) in graph {
+            match modules.entry(path.clone()) {
+                std::collections::btree_map::Entry::Vacant(slot) => {
+                    slot.insert(js);
+                }
+                std::collections::btree_map::Entry::Occupied(slot) => {
+                    if slot.get() != &js {
+                        return Err(format!(
+                            "dsc emitted differing bytes for {} across entry compiles",
+                            path.display()
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    // Map every dumped module (keyed by canonical source path) to its new
+    // home inside dist/server.
+    let entries_dir = fs::canonicalize(entries_dir).unwrap_or_else(|_| entries_dir.to_path_buf());
+    let project_root =
+        fs::canonicalize(project_root).unwrap_or_else(|_| project_root.to_path_buf());
+    let mut targets: BTreeMap<PathBuf, String> = BTreeMap::new();
+    for source in modules.keys() {
+        let target = reroot_target(&project_root, &entries_dir, source).ok_or_else(|| {
+            format!(
+                "dsc graph module {} is outside the project; cannot re-root into dist/server",
+                source.display()
+            )
+        })?;
+        targets.insert(source.clone(), target);
+    }
+    for (name, _) in &sources {
+        emitted_set(&mut emitted, name, &targets, &entries_dir)?;
+    }
+
+    // Rewrite every specifier between the new locations and write the files.
+    let mut ui_vendored: BTreeSet<String> = BTreeSet::new();
+    for (source, js) in &modules {
+        let importer_target = targets.get(source).expect("target computed above");
+        let rewritten = rewrite_module_specifiers(
+            js,
+            source,
+            &targets,
+            &project_root,
+            importer_target,
+            &mut ui_vendored,
+        )?;
+        let dest = dist_server.join(importer_target);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
+        }
+        fs::write(&dest, rewritten.as_bytes())
+            .map_err(|err| format!("failed to write {}: {err}", dest.display()))?;
+    }
+
+    vendor_ui_modules(dist_server, &ui_vendored)?;
+    Ok(emitted)
+}
+
+fn emitted_set(
+    emitted: &mut EmittedEntries,
+    name: &str,
+    targets: &BTreeMap<PathBuf, String>,
+    entries_dir: &Path,
+) -> Result<(), String> {
+    let source = fs::canonicalize(entries_dir.join(name)).unwrap_or_else(|_| entries_dir.join(name));
+    let target = targets.get(&source).ok_or_else(|| {
+        format!(
+            "compiled server entry {name} is missing from the dsc graph dump"
+        )
+    })?;
+    let module = format!("server/{target}");
+    match name {
+        "serve-entry.dsx" => emitted.serve = Some(module),
+        "api-entry.ds" => emitted.api = Some(module),
+        "defer-entry.dsx" => emitted.defer = Some(module),
+        other => return Err(format!("unknown server entry {other}")),
+    }
+    Ok(())
+}
+
+/// Generate the router entry sources (without compiling). Shared with
+/// [`compile_and_reroot_entries`] so tests can exercise generation alone.
+#[cfg(feature = "native")]
+fn generate_entry_sources(
+    project_root: &Path,
+    entries_dir: &Path,
+) -> Result<Vec<(String, PathBuf)>, String> {
+    let index_html = resolve_app_router_index_html(project_root)?;
+    fs::create_dir_all(entries_dir)
+        .map_err(|err| format!("failed to create {}: {err}", entries_dir.display()))?;
+
+    let serve_path = entries_dir.join("serve-entry.dsx");
+    let serve = generate_app_router_entry_source(&serve_path, project_root, &index_html)?;
+    let mut sources = vec![("serve-entry.dsx".to_string(), serve_path.clone())];
+    fs::write(&serve_path, serve.as_bytes())
+        .map_err(|err| format!("failed to write {}: {err}", serve_path.display()))?;
+
+    let api_entries = scan_api_dir(&project_root.join("api"));
+    if !api_entries.is_empty() {
+        let path = entries_dir.join("api-entry.ds");
+        let source = generate_api_entry_source(&path, &api_entries)?;
+        fs::write(&path, source.as_bytes())
+            .map_err(|err| format!("failed to write {}: {err}", path.display()))?;
+        sources.push(("api-entry.ds".to_string(), path));
+    }
+
+    let deferred = scan_server_defer(&project_root.join("app"));
+    if !deferred.is_empty() {
+        let path = entries_dir.join("defer-entry.dsx");
+        let source = generate_defer_entry_source(&path, project_root, &deferred)?;
+        fs::write(&path, source.as_bytes())
+            .map_err(|err| format!("failed to write {}: {err}", path.display()))?;
+        sources.push(("defer-entry.dsx".to_string(), path));
+    }
+    Ok(sources)
+}
+
+/// Where a dumped graph module lives inside `dist/server`: generated entries
+/// keep their file name (extension swapped), project sources keep their
+/// tree-relative path with `.ds`/`.dsx` swapped for `.js`.
+fn reroot_target(project_root: &Path, entries_dir: &Path, source: &Path) -> Option<String> {
+    if let Ok(rel) = source.strip_prefix(entries_dir) {
+        return Some(swap_source_ext(rel));
+    }
+    let rel = source.strip_prefix(project_root).ok()?;
+    Some(swap_source_ext(rel))
+}
+
+fn swap_source_ext(rel: &Path) -> String {
+    let text = rel.to_string_lossy().replace('\\', "/");
+    let stem = text
+        .strip_suffix(".dsx")
+        .or_else(|| text.strip_suffix(".ds"))
+        .unwrap_or(&text);
+    format!("{stem}.js")
+}
+
+/// Rewrite every import/export specifier in one dumped module so it resolves
+/// between the module's new location and its targets':
+///
+/// - relative specifiers are recomputed against the re-rooted target paths
+///   (the dumped graph may still spell peer sources `.ds`/`.dsx`; the
+///   artifact only ever spells `.js`);
+/// - `deka:dev/<id>` becomes a relative path into `server/.values/<id>.js`;
+/// - bare `ui/<name>` becomes a relative path into `server/.ui/` and the
+///   module is recorded for vendoring;
+/// - any other bare specifier is left for the loader's module resolution
+///   (the artifact ships `server/ds_modules`, which resolves them).
+#[allow(clippy::too_many_arguments)]
+fn rewrite_module_specifiers(
+    js: &str,
+    source: &Path,
+    targets: &BTreeMap<PathBuf, String>,
+    project_root: &Path,
+    importer_target: &str,
+    ui_vendored: &mut BTreeSet<String>,
+) -> Result<String, String> {
+    let mut out = js.to_string();
+    let specs = runtime_core::ds_imports::paths(js);
+    for spec in specs {
+        let replacement = match classify_specifier(&spec) {
+            SpecKind::Relative => {
+                let resolved = normalize_path(
+                    &source
+                        .parent()
+                        .unwrap_or_else(|| Path::new("."))
+                        .join(&spec),
+                );
+                let target = find_target(&resolved, targets).ok_or_else(|| {
+                    format!(
+                        "server graph module {} imports `{}`, which is not part of the \
+                         compiled graph; the artifact would ship a dangling specifier",
+                        source.display(),
+                        spec
+                    )
+                })?;
+                let importer_dir = Path::new(importer_target)
+                    .parent()
+                    .unwrap_or_else(|| Path::new(""));
+                Some(relative_specifier(
+                    importer_dir,
+                    Path::new(&target),
+                ))
+            }
+            SpecKind::BuildValue(id) => {
+                let values_target = format!("{VALUES_DIR}/{id}.js");
+                let importer_dir = Path::new(importer_target)
+                    .parent()
+                    .unwrap_or_else(|| Path::new(""));
+                Some(relative_specifier(importer_dir, Path::new(&values_target)))
+            }
+            SpecKind::Ui(file_name) => {
+                ui_vendored.insert(file_name.clone());
+                let ui_target = format!("{UI_DIR}/{file_name}");
+                let importer_dir = Path::new(importer_target)
+                    .parent()
+                    .unwrap_or_else(|| Path::new(""));
+                Some(relative_specifier(importer_dir, Path::new(&ui_target)))
+            }
+            SpecKind::Bare => {
+                let _ = project_root;
+                None
+            }
+        };
+        if let Some(replacement) = replacement {
+            out = replace_quoted(&out, &spec, &replacement);
+        }
+    }
+    Ok(out)
+}
+
+enum SpecKind {
+    Relative,
+    BuildValue(String),
+    Ui(String),
+    Bare,
+}
+
+fn classify_specifier(spec: &str) -> SpecKind {
+    if spec.starts_with("./") || spec.starts_with("../") {
+        return SpecKind::Relative;
+    }
+    if let Some(id) = spec.strip_prefix("deka:dev/") {
+        if !id.is_empty()
+            && id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        {
+            return SpecKind::BuildValue(id.to_string());
+        }
+        return SpecKind::Bare;
+    }
+    if spec.starts_with("ui/") {
+        if let Some(file) = deka_ui::file_name_for(spec) {
+            return SpecKind::Ui(file.to_string());
+        }
+    }
+    SpecKind::Bare
+}
+
+/// Find the re-rooted target for a resolved (normalized) source path the
+/// importer referenced. The dumped graph is keyed by source paths; dsc may
+/// spell the specifier with the original `.ds`/`.dsx` extension or the
+/// compiled `.js` one, so try the neighbours.
+fn find_target(resolved: &Path, targets: &BTreeMap<PathBuf, String>) -> Option<String> {
+    let text = resolved.to_string_lossy();
+    let mut candidates: Vec<PathBuf> = vec![resolved.to_path_buf()];
+    if let Some(stem) = text.strip_suffix(".js") {
+        candidates.push(PathBuf::from(format!("{stem}.dsx")));
+        candidates.push(PathBuf::from(format!("{stem}.ds")));
+    }
+    for candidate in &candidates {
+        if let Some(target) = targets.get(candidate) {
+            return Some(target.clone());
+        }
+    }
+    None
+}
+
+/// Lexically normalize `.` / `..` segments (no filesystem access; the paths
+/// come from dsc's own dump keys, which are already canonical).
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// `./`-prefixed forward-slash relative path from `from_dir` (relative to
+/// the server root) to `to` (also relative to the server root).
+pub fn relative_specifier(from_dir: &Path, to: &Path) -> String {
+    let from: Vec<_> = from_dir.components().collect();
+    let to: Vec<_> = to.components().collect();
+    let mut shared = 0;
+    while shared < from.len() && shared < to.len() && from[shared] == to[shared] {
+        shared += 1;
+    }
+    let mut parts: Vec<String> = (shared..from.len()).map(|_| "..".to_string()).collect();
+    parts.extend(to[shared..].iter().map(|component| {
+        component.as_os_str().to_string_lossy().into_owned()
+    }));
+    let spec = if parts.is_empty() {
+        "./".to_string()
+    } else {
+        parts.join("/")
+    };
+    // ESM relative specifiers must start with `./` or `../`; anything else
+    // (including dot-directory names like `.ui/x.js`) would be re-read as a
+    // package specifier.
+    if spec.starts_with("./") || spec.starts_with("../") {
+        spec
+    } else {
+        format!("./{spec}")
+    }
+}
+
+/// Replace both quoted spellings of `from` with `to`. `ds_imports::paths`
+/// already established these are real import/export specifiers, so the
+/// quoted-needle swap (the same approach the build-value rewrite has always
+/// used) cannot touch unrelated code.
+fn replace_quoted(source: &str, from: &str, to: &str) -> String {
+    let mut out = source.replace(&format!("\"{from}\""), &format!("\"{to}\""));
+    out = out.replace(&format!("'{from}'"), &format!("'{to}'"));
+    out
+}
+
+/// Vendor the ui runtime modules the server graph references (plus the
+/// relative siblings they import) out of the embedded `deka_ui` sources, so
+/// the artifact's `ui/*` imports resolve to ordinary payload files.
+fn vendor_ui_modules(dist_server: &Path, referenced: &BTreeSet<String>) -> Result<(), String> {
+    let mut wanted: BTreeSet<String> = referenced.clone();
+    // deka_ui modules import each other relatively; close the set over those
+    // siblings so no vendored file dangles.
+    let mut queue: Vec<String> = wanted.iter().cloned().collect();
+    while let Some(file) = queue.pop() {
+        let source = ui_source_for_file(&file).ok_or_else(|| {
+            format!("embedded deka_ui source for {file} is missing")
+        })?;
+        for spec in runtime_core::ds_imports::paths(source) {
+            let Some(rel) = spec.strip_prefix("./") else { continue };
+            if wanted.insert(rel.to_string()) {
+                queue.push(rel.to_string());
+            }
+        }
+    }
+    if wanted.is_empty() {
+        return Ok(());
+    }
+    let dir = dist_server.join(UI_DIR);
+    fs::create_dir_all(&dir).map_err(|err| format!("failed to create {}: {err}", dir.display()))?;
+    for file in &wanted {
+        let source = ui_source_for_file(file).expect("closure computed above");
+        fs::write(dir.join(file), source.as_bytes())
+            .map_err(|err| format!("failed to write {}: {err}", dir.join(file).display()))?;
+    }
+    Ok(())
+}
+
+fn ui_source_for_file(file: &str) -> Option<&'static str> {
+    deka_ui::SPECIFIERS
+        .iter()
+        .find(|spec| deka_ui::file_name_for(spec) == Some(file))
+        .and_then(|spec| deka_ui::source_for(spec))
+}
+
+/// Copy this build's materialized build-value modules into
+/// `server/.values/`, rewrite every `deka:dev/<id>` specifier across the
+/// whole dist tree (client bundles included) to a relative path into them,
+/// vendor nothing here — ui vendoring happened during entry re-rooting — and
+/// fail the build loudly if any dev-scheme specifier survives: the staged
+/// tree is then not deployable and must not publish.
+#[cfg(feature = "native")]
+pub fn publish_build_values(
+    project_root: &Path,
+    dist_root: &Path,
+    dist_server: &Path,
+    planned: &[PlannedSource],
+) -> Result<(), String> {
+    let ids: BTreeSet<String> = planned
+        .iter()
+        .flat_map(|source| source.plan.slots.iter().map(|slot| slot.id.clone()))
+        .collect();
+    if !ids.is_empty() {
+        copy_build_value_modules(
+            &runtime_core::framework::compiler_cache_dir(project_root).join("build-values"),
+            dist_server,
+            &ids,
+        )?;
+    }
+    rewrite_build_value_specifiers(dist_root, dist_server, &ids)?;
+    rewrite_ui_specifiers(dist_server)?;
+    assert_server_jail(dist_server)?;
+    Ok(())
+}
+
+/// Copy the materialized build-value modules for `ids` from the project
+/// cache into `<dist_server>/.values/`.
+pub fn copy_build_value_modules(
+    cache_values_dir: &Path,
+    dist_server: &Path,
+    ids: &BTreeSet<String>,
+) -> Result<(), String> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let target_dir = dist_server.join(VALUES_DIR);
+    fs::create_dir_all(&target_dir)
+        .map_err(|err| format!("failed to create {}: {err}", target_dir.display()))?;
+    for id in ids {
+        let source = cache_values_dir.join(format!("{id}.js"));
+        if !source.is_file() {
+            return Err(format!(
+                "build value `{}` was not materialized at {}",
+                id,
+                source.display()
+            ));
+        }
+        fs::copy(&source, target_dir.join(format!("{id}.js"))).map_err(|err| {
+            format!(
+                "failed to copy {} -> {}: {err}",
+                source.display(),
+                target_dir.join(format!("{id}.js")).display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+/// Rewrite every `"deka:dev/<id>"` literal (quotes included) in all `.js`
+/// files under `dist_root` to the relative path from the importing file to
+/// `<dist_server>/.values/<id>.js`. Fails the build loudly if any
+/// `deka:dev/` specifier survives.
+fn rewrite_build_value_specifiers(
+    dist_root: &Path,
+    dist_server: &Path,
+    ids: &BTreeSet<String>,
+) -> Result<(), String> {
+    let mut js_files = Vec::new();
+    collect_js_files(dist_root, &mut js_files)?;
+    for file in &js_files {
+        let mut source = fs::read_to_string(file)
+            .map_err(|err| format!("failed to read {}: {err}", file.display()))?;
+        if !source.contains("deka:dev/") {
+            continue;
+        }
+        let importer_dir = file.parent().unwrap_or(dist_root);
+        for id in ids {
+            for quote in ['"', '\''] {
+                let needle = format!("{quote}deka:dev/{id}{quote}");
+                if !source.contains(&needle) {
+                    continue;
+                }
+                let target = dist_server.join(VALUES_DIR).join(format!("{id}.js"));
+                let rewritten = format!("{quote}{}{quote}", relative_path(importer_dir, &target));
+                source = source.replace(&needle, &rewritten);
+            }
+        }
+        fs::write(file, source)
+            .map_err(|err| format!("failed to write {}: {err}", file.display()))?;
+    }
+    assert_no_dev_specifiers(dist_root)
+}
+
+/// Rewrite bare `ui/<name>` specifiers in every server-tree module to a
+/// relative path into `server/.ui/`. The referenced modules were vendored by
+/// [`compile_and_reroot_entries`]; for graphs that arrived via the plain
+/// staging-tree copy (non-app-router builds) they are vendored on demand.
+fn rewrite_ui_specifiers(dist_server: &Path) -> Result<(), String> {
+    let mut js_files = Vec::new();
+    collect_js_files(dist_server, &mut js_files)?;
+    let mut referenced: BTreeSet<String> = BTreeSet::new();
+    for file in &js_files {
+        let source = fs::read_to_string(file)
+            .map_err(|err| format!("failed to read {}: {err}", file.display()))?;
+        let specs = runtime_core::ds_imports::paths(&source);
+        let mut changed = source.clone();
+        let mut touched = false;
+        for spec in specs {
+            if !spec.starts_with("ui/") {
+                continue;
+            }
+            let Some(file_name) = deka_ui::file_name_for(&spec) else {
+                continue;
+            };
+            referenced.insert(file_name.to_string());
+            let importer_dir = file.parent().unwrap_or(dist_server);
+            let target = dist_server.join(UI_DIR).join(file_name);
+            let rewritten = relative_path(importer_dir, &target);
+            changed = replace_quoted(&changed, &spec, &rewritten);
+            touched = true;
+        }
+        if touched {
+            fs::write(file, changed)
+                .map_err(|err| format!("failed to write {}: {err}", file.display()))?;
+        }
+    }
+    vendor_ui_modules(dist_server, &referenced)
+}
+
+/// §4.2 jail: every relative specifier in every server module must resolve,
+/// lexically, to a file inside `dist_server`. Anything else is a build error —
+/// the artifact must not carry a path that escapes its execution root.
+fn assert_server_jail(dist_server: &Path) -> Result<(), String> {
+    let mut js_files = Vec::new();
+    collect_js_files(dist_server, &mut js_files)?;
+    for file in &js_files {
+        let source = fs::read_to_string(file)
+            .map_err(|err| format!("failed to read {}: {err}", file.display()))?;
+        for spec in runtime_core::ds_imports::paths(&source) {
+            if !(spec.starts_with("./") || spec.starts_with("../")) {
+                continue;
+            }
+            let resolved = normalize_path(&file.parent().unwrap_or(dist_server).join(&spec));
+            if !resolved.starts_with(dist_server) {
+                return Err(format!(
+                    "server module {} imports `{}`, which resolves outside dist/server",
+                    file.display(),
+                    spec
+                ));
+            }
+            if !resolved.is_file() {
+                return Err(format!(
+                    "server module {} imports `{}`, which does not resolve to a file \
+                     inside dist/server",
+                    file.display(),
+                    spec
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A dev-scheme specifier left anywhere in the staged dist tree means the
+/// output is not deployable — fail the build instead of publishing it.
+fn assert_no_dev_specifiers(dist_root: &Path) -> Result<(), String> {
+    let mut files = Vec::new();
+    collect_files(dist_root, &mut files)?;
+    for file in files {
+        let bytes =
+            fs::read(&file).map_err(|err| format!("failed to read {}: {err}", file.display()))?;
+        if bytes.windows(b"deka:dev/".len()).any(|w| w == b"deka:dev/") {
+            return Err(format!(
+                "build output is not self-contained: `{}` still references a deka:dev/ specifier",
+                file.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn collect_js_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    collect_files(dir, out)?;
+    out.retain(|path| {
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("js"))
+    });
+    Ok(())
+}
+
+fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    for entry in
+        fs::read_dir(dir).map_err(|err| format!("failed to read {}: {err}", dir.display()))?
+    {
+        let entry = entry.map_err(|err| err.to_string())?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files(&path, out)?;
+        } else {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// Forward-slash relative path from `from_dir` to `to_file`, `./`-prefixed
+/// when the file sits in the same directory. Both must sit under the same
+/// tree (the staged dist root and its files do).
+pub fn relative_path(from_dir: &Path, to_file: &Path) -> String {
+    let from: Vec<_> = from_dir.components().collect();
+    let to: Vec<_> = to_file.components().collect();
+    let mut shared = 0;
+    while shared < from.len() && shared < to.len() && from[shared] == to[shared] {
+        shared += 1;
+    }
+    let mut parts: Vec<String> = (shared..from.len()).map(|_| "..".to_string()).collect();
+    parts.extend(to[shared..].iter().map(|component| {
+        component.as_os_str().to_string_lossy().into_owned()
+    }));
+    if parts.is_empty() {
+        ".".to_string()
+    } else {
+        parts.join("/")
+    }
+}
+
+#[cfg(test)]
+#[path = "build_server_graph_tests.rs"]
+mod tests;

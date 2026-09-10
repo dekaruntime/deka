@@ -181,7 +181,8 @@ fn prefer_dist_js(project_root: &Path, path: &Path) -> Option<PathBuf> {
         return None;
     }
     let rel = path.strip_prefix(project_root).ok()?;
-    let mut dist = project_root.join("dist").join(rel);
+    // Everything executable lives under dist/server/ (manifest v2 §1).
+    let mut dist = project_root.join("dist").join("server").join(rel);
     dist.set_extension("js");
     dist.is_file().then_some(dist)
 }
