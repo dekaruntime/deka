@@ -59,7 +59,8 @@ Blessing rewrites `stderr.txt` (or `stderr.v1.txt`, matching the installed
 dsc) and, for successful fixtures, `tree.txt` and the `files/` mirror. It
 refuses to bless when the build's success/failure disagrees with the
 fixture's markers. A fixture with both `stderr.txt` and `stderr.v1.txt`
-must be blessed once per dsc plan generation (CI installs dsc 0.6.0 → v1).
+must be blessed once per dsc plan generation (the pinned dsc in
+`scripts/dsc-version` currently emits v2; 0.6.x emitted v1).
 
 The mirror holds **raw** bytes, blessed with a relative-slot-id dsc
 (dsc PR #62): slot ids are project-relative, so raw bytes are stable across
@@ -68,12 +69,14 @@ build roots.
 ## dsc capability gate (deka#728)
 
 The checks that depend on relative slot ids are gated, so the suite stays
-green on released dsc 0.6.0 (CI installs it via `scripts/ci-install-dsc.sh`)
-while running in full wherever a newer dsc exists. The harness probes once
-per process (`dsc_relative_slot_ids`): it plans the same staticParams probe
-page from two different temporary roots with the same relative argument —
-identical slot ids prove relative derivation, since absolute-path hashing
-makes them differ by root.
+green on any dsc while running in full wherever a dsc ≥ PR #62 exists. CI
+installs the pinned dsc (`scripts/dsc-version` via
+`scripts/ci-install-dsc.sh`, currently 0.8.0), which is ≥ PR #62, so the
+gated checks run in full in CI. The harness probes once per process
+(`dsc_relative_slot_ids`): it plans the same staticParams probe page from
+two different temporary roots with the same relative argument — identical
+slot ids prove relative derivation, since absolute-path hashing makes them
+differ by root.
 
 On a dsc that predates dsc PR #62:
 
@@ -94,8 +97,8 @@ On a dsc that predates dsc PR #62:
 
 Everything else runs on every dsc: file tree, byte comparison of non-slot
 files, manifest digest verification, the same-root determinism rerun, and
-all coverage assertions. When CI moves to a dsc ≥ PR #62 the gated checks
-start running with no further change.
+all coverage assertions. CI's pinned dsc (see `scripts/dsc-version`) is ≥
+PR #62, so the gated checks run in full there with no further change.
 
 ## Coverage
 
