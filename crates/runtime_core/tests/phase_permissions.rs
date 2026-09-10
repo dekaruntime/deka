@@ -5,9 +5,7 @@
 
 use std::path::Path;
 
-use runtime_core::permissions::{
-    ExecutionPhase, FsGrant, parse_permissions,
-};
+use runtime_core::permissions::{ExecutionPhase, FsGrant, parse_permissions};
 use runtime_core::security_policy::RuleList;
 
 fn parse(json: serde_json::Value) -> runtime_core::permissions::PermissionsParseOutcome {
@@ -241,7 +239,10 @@ fn dev_build_object_is_independent_from_request_time_dev_authority() {
         matches!(&build.allow.read, RuleList::List(paths) if paths == &vec!["/work/project".to_string()]),
         "build read:true means the working directory"
     );
-    assert!(!build.prompt, "a denied build operation fails, never prompts");
+    assert!(
+        !build.prompt,
+        "a denied build operation fails, never prompts"
+    );
     assert!(dev.prompt);
 }
 
@@ -269,7 +270,9 @@ fn locked_example_resolves_per_phase() {
     let cwd = Path::new("/work/project");
 
     let dev = perms.resolve(ExecutionPhase::DevRequest, cwd);
-    assert!(matches!(&dev.allow.read, RuleList::List(paths) if paths == &vec!["/work/project".to_string()]));
+    assert!(
+        matches!(&dev.allow.read, RuleList::List(paths) if paths == &vec!["/work/project".to_string()])
+    );
     assert!(matches!(dev.allow.write, RuleList::None));
     assert!(
         matches!(&dev.allow.net, RuleList::List(hosts) if hosts == &vec!["api.github.com".to_string(), "deka.gg".to_string()])
@@ -287,7 +290,9 @@ fn locked_example_resolves_per_phase() {
     );
 
     let build = perms.resolve(ExecutionPhase::DevBuild, cwd);
-    assert!(matches!(&build.allow.read, RuleList::List(paths) if paths == &vec!["/work/project".to_string()]));
+    assert!(
+        matches!(&build.allow.read, RuleList::List(paths) if paths == &vec!["/work/project".to_string()])
+    );
     assert!(matches!(build.allow.write, RuleList::None));
     assert!(matches!(build.allow.net, RuleList::None));
 }
@@ -395,7 +400,10 @@ fn fs_grant_shapes_parse() {
         "permissions": { "dev": { "read": true, "write": ["./out"] } }
     }));
     assert_eq!(perms.dev.caps.read, FsGrant::WorkingDir);
-    assert_eq!(perms.dev.caps.write, FsGrant::Paths(vec!["./out".to_string()]));
+    assert_eq!(
+        perms.dev.caps.write,
+        FsGrant::Paths(vec!["./out".to_string()])
+    );
 }
 
 /// The whole point of the model: permission state is not influenceable by

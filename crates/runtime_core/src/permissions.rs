@@ -125,7 +125,11 @@ impl Permissions {
                 env: list_rule(&caps.env),
                 run: RuleList::None,
                 db: list_rule(&caps.db),
-                wasm: if caps.wasm { RuleList::All } else { RuleList::None },
+                wasm: if caps.wasm {
+                    RuleList::All
+                } else {
+                    RuleList::None
+                },
                 dynamic: false,
             },
             deny: SecurityScope::default(),
@@ -183,7 +187,9 @@ fn error(code: &'static str, path: &str, message: String) -> PolicyDiagnostic {
 }
 
 const PROFILE_KEYS: [&str; 2] = ["dev", "prod"];
-const CAPABILITY_KEYS: [&str; 8] = ["read", "write", "net", "env", "db", "wasm", "import", "build"];
+const CAPABILITY_KEYS: [&str; 8] = [
+    "read", "write", "net", "env", "db", "wasm", "import", "build",
+];
 const BUILD_CAPABILITY_KEYS: [&str; 7] = ["read", "write", "net", "env", "db", "wasm", "import"];
 
 /// Parse the `permissions` block of a `deka.json` document.
@@ -240,8 +246,16 @@ pub fn parse_permissions(document: &Value) -> PermissionsParseOutcome {
         }
     }
 
-    let dev = parse_profile("$.permissions.dev", permissions_obj.get("dev"), &mut diagnostics);
-    let prod = parse_profile("$.permissions.prod", permissions_obj.get("prod"), &mut diagnostics);
+    let dev = parse_profile(
+        "$.permissions.dev",
+        permissions_obj.get("dev"),
+        &mut diagnostics,
+    );
+    let prod = parse_profile(
+        "$.permissions.prod",
+        permissions_obj.get("prod"),
+        &mut diagnostics,
+    );
 
     PermissionsParseOutcome {
         permissions: Some(Permissions {
@@ -562,10 +576,7 @@ fn validate_hostname(raw: &str) -> Result<String, String> {
     }
     for label in labels {
         if label.len() > 63 {
-            return Err(format!(
-                "\"{}\" has a DNS label over 63 characters",
-                raw
-            ));
+            return Err(format!("\"{}\" has a DNS label over 63 characters", raw));
         }
         if label.starts_with('-') || label.ends_with('-') {
             return Err(format!(
@@ -573,7 +584,10 @@ fn validate_hostname(raw: &str) -> Result<String, String> {
                 raw
             ));
         }
-        if !label.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-') {
+        if !label
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+        {
             return Err(format!(
                 "\"{}\" has characters outside a-z, 0-9, and '-'",
                 raw
@@ -626,7 +640,9 @@ fn parse_env_list(
                 .chars()
                 .next()
                 .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
-            && name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+            && name
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
         if valid {
             names.push(name.to_string());
         } else {

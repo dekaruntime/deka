@@ -437,41 +437,42 @@ mod tests {
         assert!(dev.policy_json.contains("\"API_KEY\""));
         assert!(!dev.policy_json.contains("\"PROD_API_KEY\""));
 
-        let prod =
-            resolve_security_policy_for_root(&root, &flags, &params, ProjectKind::Js, false)
-                .expect("prod resolution");
+        let prod = resolve_security_policy_for_root(&root, &flags, &params, ProjectKind::Js, false)
+            .expect("prod resolution");
         assert!(prod.summary.contains("profile=prod"), "{}", prod.summary);
         assert!(prod.policy_json.contains("\"PROD_API_KEY\""));
         assert!(!prod.policy_json.contains("\"API_KEY\""));
         // Deny by default: prod read is not granted.
         let parsed: serde_json::Value = serde_json::from_str(&prod.policy_json).unwrap();
-        assert_eq!(parsed["security"]["allow"]["read"], serde_json::json!(false));
+        assert_eq!(
+            parsed["security"]["allow"]["read"],
+            serde_json::json!(false)
+        );
     }
 
     #[test]
     fn phase_aware_prod_build_is_a_manifest_error() {
-        let root = temp_project(
-            r#"{ "permissions": { "prod": { "build": true } } }"#,
-        );
+        let root = temp_project(r#"{ "permissions": { "prod": { "build": true } } }"#);
         let (flags, params) = no_flags();
         let err = resolve_security_policy_for_root(&root, &flags, &params, ProjectKind::Js, false)
-            .err().expect("prod.build=true must fail validation");
+            .err()
+            .expect("prod.build=true must fail validation");
         assert!(
             err.contains("PERMISSIONS_PROD_BUILD_MUST_BE_FALSE"),
             "{err}"
         );
         let err = resolve_build_policy_for_root(&root, &flags, &params, false)
-            .err().expect("prod.build=true must fail build resolution too");
+            .err()
+            .expect("prod.build=true must fail build resolution too");
         assert!(
             err.contains("PERMISSIONS_PROD_BUILD_MUST_BE_FALSE"),
             "{err}"
         );
 
-        let root = temp_project(
-            r#"{ "permissions": { "prod": { "build": { "read": true } } } }"#,
-        );
+        let root = temp_project(r#"{ "permissions": { "prod": { "build": { "read": true } } } }"#);
         let err = resolve_security_policy_for_root(&root, &flags, &params, ProjectKind::Js, false)
-            .err().expect("prod.build object must fail validation");
+            .err()
+            .expect("prod.build object must fail validation");
         assert!(
             err.contains("PERMISSIONS_PROD_BUILD_MUST_BE_FALSE"),
             "{err}"
@@ -482,8 +483,8 @@ mod tests {
     fn phase_aware_build_slots_use_dev_build_only() {
         let root = temp_project(PHASE_AWARE);
         let (flags, params) = no_flags();
-        let build = resolve_build_policy_for_root(&root, &flags, &params, true)
-            .expect("build resolution");
+        let build =
+            resolve_build_policy_for_root(&root, &flags, &params, true).expect("build resolution");
         assert!(
             build.summary.contains("profile=dev.build"),
             "{}",
@@ -492,7 +493,10 @@ mod tests {
         assert!(!build.prompt_enabled, "build slots never prompt");
         let parsed: serde_json::Value = serde_json::from_str(&build.policy_json).unwrap();
         // dev.build allows read within the working directory...
-        assert_ne!(parsed["security"]["allow"]["read"], serde_json::json!(false));
+        assert_ne!(
+            parsed["security"]["allow"]["read"],
+            serde_json::json!(false)
+        );
         // ...but not net, even though request-time dev allows api.github.com.
         assert_eq!(parsed["security"]["allow"]["net"], serde_json::json!(false));
     }
@@ -533,9 +537,7 @@ mod tests {
 
     #[test]
     fn legacy_security_manifest_keeps_the_legacy_path() {
-        let root = temp_project(
-            r#"{ "security": { "allow": { "env": ["LEGACY_KEY"] } } }"#,
-        );
+        let root = temp_project(r#"{ "security": { "allow": { "env": ["LEGACY_KEY"] } } }"#);
         let (flags, params) = no_flags();
         let resolved =
             resolve_security_policy_for_root(&root, &flags, &params, ProjectKind::Js, false)
