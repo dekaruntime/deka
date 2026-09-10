@@ -42,7 +42,6 @@ sha2 = "0.10"
 postgres = { version = "0.19", features = ["with-chrono-0_4"], optional = true }
 mysql = { version = "26", optional = true }
 rusqlite = { version = "0.32", features = ["bundled"], optional = true }
-wit-parser = "0.219.2"
 deka-validation = { path = "../deka-validation", default-features = false }
 runtime_core = { path = "../runtime_core" }
 stdio = { path = "../stdio", optional = true }

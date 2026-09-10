@@ -1,15 +1,5 @@
-use super::security::{enforce_env, set_security_privileged};
+use super::security::enforce_env;
 use super::*;
-
-#[op2(fast)]
-pub(super) fn op_php_set_privileged(#[number] enabled: i64, #[string] label: String) {
-    let label = if label.trim().is_empty() {
-        None
-    } else {
-        Some(label)
-    };
-    set_security_privileged(enabled != 0, label);
-}
 
 #[op2]
 #[string]

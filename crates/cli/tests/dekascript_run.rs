@@ -55,13 +55,25 @@ fn run_dekascript_with_manifest_args(
 }
 
 #[test]
+fn run_executes_wintertc_web_globals() {
+    run_dekascript(
+        "wintertc_web_globals",
+        r#"
+unsafe {
+  const params = new URLSearchParams("name=deka")
+  const bytes = new TextEncoder().encode("hello")
+  const text = new TextDecoder().decode(bytes)
+  console.log(params.get("name") + ":" + text)
+}
+"#,
+        "deka:hello",
+    );
+}
+
+#[test]
 #[ignore = "v1-only syntax (impl/trait/bridge/print/mixed/console); revisit after v2 feature parity (see dekaruntime/deka#330)"]
 fn run_executes_console_log_without_deno() {
-    run_dekascript(
-        "console_log",
-        "console.log(\"ok\")\n",
-        "ok",
-    );
+    run_dekascript("console_log", "console.log(\"ok\")\n", "ok");
 }
 
 #[test]

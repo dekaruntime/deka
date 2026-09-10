@@ -147,11 +147,6 @@ pub const OPERATION_CAPABILITY_MATRIX: &[OperationCapability] = &[
         capability: Capability::Read,
         notes: "List directory entries",
     },
-    OperationCapability {
-        op_id: "php.op_php_parse_wit",
-        capability: Capability::Wasm,
-        notes: "Parse WIT schema for wasm module interop",
-    },
     // Filesystem bridge ops.
     OperationCapability {
         op_id: "bridge.fs.open",
@@ -346,7 +341,6 @@ pub const KNOWN_RUNTIME_OPERATION_IDS: &[&str] = &[
     "php.op_php_file_exists",
     "php.op_php_path_resolve",
     "php.op_php_read_dir",
-    "php.op_php_parse_wit",
     // Bridge action ops.
     "bridge.fs.open",
     "bridge.fs.read",
