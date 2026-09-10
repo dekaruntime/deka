@@ -437,10 +437,10 @@ impl WorkerThread {
                         if (kind === 'redis') {
                             const redisAction = String(action || '').toLowerCase();
                             if (redisAction === 'flush' || redisAction === 'flushdb' || redisAction === 'flushall') {
-                                return { ok: false, error: 'redis admin action blocked in user pool' };
+                                return { ok: false, error: 'redis admin action blocked for tenant code' };
                             }
                             if (redisAction === 'scan' || redisAction === 'config' || redisAction === 'randomkey') {
-                                return { ok: false, error: 'redis unscoped action blocked in user pool' };
+                                return { ok: false, error: 'redis unscoped action blocked for tenant code' };
                             }
                             const shopId = globalThis.__shopId;
                             if (shopId && typeof ops.op_zega_backend === 'function' && ops.op_zega_backend(shopId) === 'zega') {
@@ -1018,9 +1018,7 @@ impl WorkerThread {
         // (runtime/src/run.rs, runtime/src/serve.rs), so the guard below is
         // false for them; those are gated by the module-graph validator in
         // #425. The multi-tenant storefronts are the case this protects.
-        if !request.request_data.handler_code.trim().is_empty()
-            && !isolate.dynamic_code_validated
-        {
+        if !request.request_data.handler_code.trim().is_empty() && !isolate.dynamic_code_validated {
             if let Err(err) = validation::validate_dynamic_code_from_process_env(
                 &request.request_data.handler_code,
                 &key.name,

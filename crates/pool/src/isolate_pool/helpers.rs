@@ -294,7 +294,7 @@ pub(super) fn set_request_globals(
         // SHOP_NEO4J_USER, SHOP_NEO4J_PASSWORD into $_SERVER so PHPX
         // storefront code can connect without hardcoding localhost. The
         // values are sourced from the host process env and are only
-        // injected into user-pool isolates.
+        // injected into tenant-code isolates.
         {
             let neo4j_url = std::env::var("DEKA_NEO4J_URI")
                 .unwrap_or_else(|_| "bolt://127.0.0.1:7687".to_string());

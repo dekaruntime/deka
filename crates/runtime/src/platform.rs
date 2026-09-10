@@ -291,12 +291,8 @@ async fn platform_async(context: &Context) {
         ),
     );
 
-    // Build pool config
+    // Build the shared execution pool config.
     let pool_config = PoolConfig::from_env();
-    let user_pool_config = PoolConfig {
-        num_workers: 1,
-        ..PoolConfig::default()
-    };
 
     let serve_mode = runtime_config::ServeMode::Php;
     let extensions_provider = Arc::new(move || crate::extensions::extensions_for_mode(&serve_mode));
@@ -304,7 +300,6 @@ async fn platform_async(context: &Context) {
     let runtime_cfg = runtime_config::RuntimeConfig::load();
     let engine = Arc::new(RuntimeEngine::new(
         pool_config,
-        user_pool_config,
         &runtime_cfg,
         extensions_provider,
     ));

@@ -4,7 +4,7 @@ use pool::{HandlerKey, PoolConfig};
 use std::sync::Arc;
 
 fn test_state(handler_code: &str) -> Arc<RuntimeState> {
-    let server_pool_config = PoolConfig {
+    let pool_config = PoolConfig {
         num_workers: 1,
         max_isolates_per_worker: 2,
         idle_timeout_secs: 30,
@@ -14,11 +14,9 @@ fn test_state(handler_code: &str) -> Arc<RuntimeState> {
         queue_timeout_ms: 10_000,
         ..PoolConfig::default()
     };
-    let user_pool_config = server_pool_config.clone();
     let runtime_config = RuntimeConfig::default();
     let engine = Arc::new(RuntimeEngine::new(
-        server_pool_config,
-        user_pool_config,
+        pool_config,
         &runtime_config,
         Arc::new(Vec::new),
     ));
@@ -53,6 +51,34 @@ globalThis.app = function(req) {
     let envelope = res.expect("should return envelope");
     assert_eq!(envelope.status, 200);
     assert_eq!(envelope.body, "handled by correct handler");
+}
+
+#[tokio::test]
+async fn pool_evicts_the_isolate_that_served_a_request() {
+    let state = test_state(
+        r#"
+globalThis.app = function(req) {
+  return { status: 200, headers: {}, body: "cached request isolate" };
+};
+"#,
+    );
+
+    let response = execute_request_parts(
+        Arc::clone(&state),
+        "http://localhost/".to_string(),
+        "GET".to_string(),
+        vec![],
+        None,
+    )
+    .await
+    .expect("request should populate the serving pool");
+    assert_eq!(response.body, "cached request isolate");
+
+    let evicted = state.engine.pool().evict_all().await;
+    assert!(
+        evicted > 0,
+        "eviction must target the pool that served the request; evicted {evicted}"
+    );
 }
 
 #[tokio::test]
@@ -97,7 +123,11 @@ globalThis.app = function(req) {
     )
     .await
     .expect("POST should not 301");
-    assert_ne!(envelope.status, 301, "POST must keep its body: {:?}", envelope.headers);
+    assert_ne!(
+        envelope.status, 301,
+        "POST must keep its body: {:?}",
+        envelope.headers
+    );
 }
 
 #[tokio::test]

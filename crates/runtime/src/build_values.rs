@@ -57,7 +57,10 @@ pub fn materialize_build_values(
         .build()
         .map_err(|err| format!("build runtime: {err}"))?;
     rt.block_on(materialize_build_values_async(
-        project_root, entries, policy_json, only,
+        project_root,
+        entries,
+        policy_json,
+        only,
     ))
 }
 
@@ -109,12 +112,7 @@ async fn materialize_build_values_async(
     let runtime_cfg = runtime_config::RuntimeConfig::load();
     let serve_mode = runtime_config::ServeMode::Php;
     let extensions_provider = Arc::new(move || extensions_for_mode(&serve_mode));
-    let engine = RuntimeEngine::new(
-        pool_config.clone(),
-        pool_config,
-        &runtime_cfg,
-        extensions_provider,
-    );
+    let engine = RuntimeEngine::new(pool_config, &runtime_cfg, extensions_provider);
     let module_root = project_root.to_string_lossy().into_owned();
     let mut materialized = MaterializedBuild::default();
 
@@ -142,8 +140,13 @@ async fn materialize_build_values_async(
         // Drain observations even when execution failed so a failed slot
         // cannot leak its collector into later host work.
         let observations = deka_host::build_observations::end_build_slot();
-        let response = response
-            .map_err(|err| format!("build `{}` (at {}): {err}", entry.binding, slot_location(entry)))?;
+        let response = response.map_err(|err| {
+            format!(
+                "build `{}` (at {}): {err}",
+                entry.binding,
+                slot_location(entry)
+            )
+        })?;
         if !response.success {
             return Err(format!(
                 "build `{}` (at {}): {}",
@@ -646,12 +649,18 @@ mod tests {
             normalize_observation_path(root, "/project/data/a.json"),
             "data/a.json"
         );
-        assert_eq!(normalize_observation_path(root, "./data/a.json"), "data/a.json");
+        assert_eq!(
+            normalize_observation_path(root, "./data/a.json"),
+            "data/a.json"
+        );
         assert_eq!(
             normalize_observation_path(root, "/elsewhere/b.json"),
             "/elsewhere/b.json"
         );
-        assert_eq!(normalize_observation_path(root, "data/a.json"), "data/a.json");
+        assert_eq!(
+            normalize_observation_path(root, "data/a.json"),
+            "data/a.json"
+        );
     }
 
     #[test]

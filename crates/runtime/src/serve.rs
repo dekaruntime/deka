@@ -8,12 +8,12 @@ use crate::env::init_env;
 use crate::extensions::extensions_for_mode;
 use crate::security::resolve_security_policy;
 use core::Context;
-use engine::{RuntimeEngine, RuntimeState, config as runtime_config, set_engine};
 use deka_host::validation::{format_validation_error, modules::validate_module_resolution};
+use engine::{RuntimeEngine, RuntimeState, config as runtime_config, set_engine};
 use notify::Watcher;
 use platform::Platform;
 use platform_server::ServerPlatform;
-use pool::validation::{PoolWorkers, extract_pool_options};
+use pool::validation::PoolWorkers;
 use pool::{HandlerKey, PoolConfig};
 use runtime_core::env::{flag_or_env_truthy_with, set_dev_flag_with, set_handler_path_with};
 use runtime_core::modules::ensure_deka_module_root_env_with;
@@ -79,7 +79,10 @@ async fn serve_async(context: &Context) -> Result<(), String> {
     let app_router_root = crate::islands::find_app_router_root(FsPath::new(&context.handler.input))
         .or_else(|| crate::islands::find_app_router_root(&resolved.path));
     if let Some(root) = app_router_root.as_deref() {
-        crate::islands::write_island_client_assets_for_project(&root, crate::islands::ClientAssetFlavor::Dev)?;
+        crate::islands::write_island_client_assets_for_project(
+            &root,
+            crate::islands::ClientAssetFlavor::Dev,
+        )?;
         crate::css::write_route_css_assets_for_project(&root)?;
         // The serve-entry was generated inside resolve_handler_path, before
         // the hashed assets existed; swap its logical /assets URLs for the
@@ -123,8 +126,6 @@ async fn serve_async(context: &Context) -> Result<(), String> {
     };
     set_handler_path_with(&handler_path, &env_get, &mut env_set);
 
-    let handler_source = load_handler_source(&handler_path, &resolved.mode)?;
-
     stdio_log::log("handler", &format!("loaded {}", handler_path));
     if dev_mode {
         stdio_log::log("dev", "enabled");
@@ -133,21 +134,15 @@ async fn serve_async(context: &Context) -> Result<(), String> {
     let mut serve_options = pool::validation::ServeOptions::default();
     apply_cli_serve_overrides(context, &mut serve_options);
 
-    let (server_pool_config, user_pool_config) = configure_pools(
-        &handler_source,
-        &handler_path,
-        &serve_options,
-        watch_enabled,
-    );
-    let server_pool_workers = server_pool_config.num_workers;
+    let pool_config = configure_pool(&serve_options, watch_enabled);
+    let pool_workers = pool_config.num_workers;
 
     let serve_mode = resolved.mode.clone();
     let extensions_provider = Arc::new(move || extensions_for_mode(&serve_mode));
 
     let runtime_cfg = runtime_config::RuntimeConfig::load();
     let engine = Arc::new(RuntimeEngine::new(
-        server_pool_config,
-        user_pool_config,
+        pool_config,
         &runtime_cfg,
         extensions_provider,
     ));
@@ -198,7 +193,7 @@ async fn serve_async(context: &Context) -> Result<(), String> {
 
     spawn_archive_task(&state, engine.archive());
 
-    serve_listeners(state, &serve_options, perf_mode, server_pool_workers).await
+    serve_listeners(state, &serve_options, perf_mode, pool_workers).await
 }
 
 fn apply_cli_serve_overrides(
@@ -246,44 +241,15 @@ fn perf_mode_enabled() -> bool {
         .unwrap_or(false)
 }
 
-fn load_handler_source(
-    _handler_path: &str,
-    _mode: &runtime_config::ServeMode,
-) -> Result<String, String> {
-    Ok(String::new())
-}
-
-fn configure_pools(
-    handler_source: &str,
-    handler_path: &str,
+fn configure_pool(
     serve_options: &pool::validation::ServeOptions,
     watch_enabled: bool,
-) -> (PoolConfig, PoolConfig) {
+) -> PoolConfig {
     let runtime_cfg = runtime_config::RuntimeConfig::load();
-    let mut server_pool_config = PoolConfig::from_env();
-    let mut user_pool_config = server_pool_config.clone();
-
-    if !handler_source.is_empty() {
-        let pool_options = extract_pool_options(handler_source, handler_path);
-        if let Some(workers) = pool_options.workers {
-            user_pool_config.num_workers = match workers {
-                PoolWorkers::Fixed(value) => {
-                    if value < 1 {
-                        1
-                    } else {
-                        value
-                    }
-                }
-                PoolWorkers::Max => num_cpus::get(),
-            };
-        }
-        if let Some(max) = pool_options.isolates_per_worker {
-            user_pool_config.max_isolates_per_worker = max;
-        }
-    }
+    let mut pool_config = PoolConfig::from_env();
 
     if let Some(workers) = serve_options.workers.clone() {
-        server_pool_config.num_workers = match workers {
+        pool_config.num_workers = match workers {
             PoolWorkers::Fixed(value) => {
                 if value < 1 {
                     1
@@ -295,32 +261,26 @@ fn configure_pools(
         };
     }
     if let Some(max) = serve_options.isolates_per_worker {
-        server_pool_config.max_isolates_per_worker = max;
+        pool_config.max_isolates_per_worker = max;
     }
 
     if let Some(enabled) = runtime_cfg.code_cache_enabled() {
-        server_pool_config.enable_code_cache = enabled;
-        user_pool_config.enable_code_cache = enabled;
+        pool_config.enable_code_cache = enabled;
     }
 
     if watch_enabled {
-        server_pool_config.enable_code_cache = false;
-        user_pool_config.enable_code_cache = false;
-        server_pool_config.introspect_profiling = true;
-        user_pool_config.introspect_profiling = true;
+        pool_config.enable_code_cache = false;
+        pool_config.introspect_profiling = true;
     }
 
-    server_pool_config.introspect_profiling = runtime_cfg.introspect_profiling_enabled();
-    user_pool_config.introspect_profiling = runtime_cfg.introspect_profiling_enabled();
+    pool_config.introspect_profiling = runtime_cfg.introspect_profiling_enabled();
 
     if perf_mode_enabled() {
-        server_pool_config.enable_metrics = false;
-        user_pool_config.enable_metrics = false;
-        server_pool_config.introspect_profiling = false;
-        user_pool_config.introspect_profiling = false;
+        pool_config.enable_metrics = false;
+        pool_config.introspect_profiling = false;
     }
 
-    (server_pool_config, user_pool_config)
+    pool_config
 }
 
 fn build_handler_code(
@@ -665,7 +625,7 @@ async fn serve_listeners(
     state: Arc<RuntimeState>,
     serve_options: &pool::validation::ServeOptions,
     perf_mode: bool,
-    server_pool_workers: usize,
+    pool_workers: usize,
 ) -> Result<(), String> {
     if let Some(unix) = serve_options
         .unix
@@ -736,7 +696,7 @@ async fn serve_listeners(
         .or_else(|| std::env::var("PORT").ok().and_then(|p| p.parse().ok()))
         .unwrap_or(8530);
     ensure_http_port_available(port)?;
-    let listeners = server_pool_workers.max(1);
+    let listeners = pool_workers.max(1);
 
     crate::dev::announce_listen(state.dev_mode, port);
     transport::serve(
@@ -848,11 +808,14 @@ fn start_watch(
                     if let Some(root) = project_root.as_ref() {
                         if runtime_core::framework::is_source_app_router_project(root) {
                             if crate::build_watch::on_watch_event(root, &changed, dev_mode) {
-                                let _ = engine.request_pool().evict_all().await;
+                                let _ = engine.pool().evict_all().await;
                             }
                             match runtime_core::framework::write_app_router_entry(root) {
                                 Ok(_) => {
-                                    let _ = crate::islands::write_island_client_assets_for_project(root, crate::islands::ClientAssetFlavor::Dev);
+                                    let _ = crate::islands::write_island_client_assets_for_project(
+                                        root,
+                                        crate::islands::ClientAssetFlavor::Dev,
+                                    );
                                     // The entry was regenerated above with
                                     // logical /assets URLs; re-point them at
                                     // the freshly emitted hashed names.
@@ -908,9 +871,10 @@ fn should_ignore_watch_path(path: &FsPath) -> bool {
     }
 
     // Generated/transient paths that should not trigger HMR loops.
-    if normalized.split('/').any(|seg| {
-        matches!(seg, ".cache" | "node_modules" | "target" | ".git")
-    }) || normalized.ends_with("/ds_modules")
+    if normalized
+        .split('/')
+        .any(|seg| matches!(seg, ".cache" | "node_modules" | "target" | ".git"))
+        || normalized.ends_with("/ds_modules")
         || normalized.ends_with("/php_modules")
     {
         return true;
@@ -1103,5 +1067,4 @@ mod tests {
         let _ = fs::remove_dir_all(&root_a);
         let _ = fs::remove_dir_all(&root_b);
     }
-
 }

@@ -503,7 +503,7 @@ fn redis_keys(args: &Value) -> Value {
 }
 
 fn redis_admin_blocked() -> Value {
-    json!({ "ok": false, "error": "redis admin action blocked in user pool" })
+    json!({ "ok": false, "error": "redis admin action blocked for tenant code" })
 }
 
 fn redis_close(args: &Value) -> Value {
@@ -526,7 +526,7 @@ mod tests {
         for action in ["flush", "FLUSHDB", "flushall"] {
             assert_eq!(
                 redis_call(action, &json!({ "handle": 1 })),
-                json!({ "ok": false, "error": "redis admin action blocked in user pool" }),
+                json!({ "ok": false, "error": "redis admin action blocked for tenant code" }),
                 "{action} must never issue FLUSHDB/FLUSHALL"
             );
         }
