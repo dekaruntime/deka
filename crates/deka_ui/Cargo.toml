@@ -10,4 +10,5 @@ path = "src/lib.rs"
 
 [dev-dependencies]
 deno_core = { workspace = true }
+tempfile = "3.0"
 tokio = { workspace = true }

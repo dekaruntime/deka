@@ -1,0 +1,159 @@
+// ui/router — App() dispatch for generated api/worker entries.
+// Hosts materialize this file; generated .ds imports it rather than inlining
+// path/method/Option lowering as source text.
+
+// The request/response shapes the generated api/worker entries declare their
+// own copies of (dsc 0.8.0 cannot export interfaces, so the module keeps
+// these module-local; literals check structurally against them at call
+// sites). Fields mirror the generated entries exactly.
+interface RequestHeaders {
+  accept: string
+}
+
+interface RouterRequest {
+  url: string
+  pathname: string
+  method: string
+  headers: RequestHeaders
+  body: string
+}
+
+interface ResponseHeaders {
+  location: string
+}
+
+interface RouterResponse {
+  status: number
+  body: string
+  headers: ResponseHeaders
+}
+
+const OPAQUE_500: RouterResponse = { status: 500, body: "Internal Server Error", headers: { location: "" } }
+
+fn notFound() RouterResponse {
+  return { status: 404, body: "Not found", headers: { location: "" } }
+}
+
+// Host bridges for the few expressions DekaScript cannot form (deka#771
+// phase-1 findings): request nullish folding, regexp replace, dynamic key
+// reads over the route table, and the function check. Each preserves the
+// original JavaScript expression verbatim.
+
+fn requestPath(request: RouterRequest) string {
+  return match (unsafe { request && request.pathname === "" ? "/" : (request && request.pathname) || "/" }) {
+    Ok(v) => v,
+    Err(_) => "/",
+  }
+}
+
+fn requestMethod(request: RouterRequest) string {
+  return match (unsafe { String((request && request.method) || "GET") }) {
+    Ok(v) => v,
+    Err(_) => "GET",
+  }
+}
+
+fn trimSlashes(s: string) string {
+  return match (unsafe { s.replace(/^\/+|\/+$/g, "") }) {
+    Ok(v) => v,
+    Err(_) => s,
+  }
+}
+
+fn routeKeys<R>(routes: R) Array<string> {
+  return match (unsafe { Object.keys(routes) }) {
+    Ok(v) => v,
+    Err(_) => [],
+  }
+}
+
+fn routeHandlers<R>(routes: R, route: string) R {
+  return match (unsafe { routes[route] }) {
+    Ok(v) => v,
+    Err(_) => routes,
+  }
+}
+
+fn methodHandler<H>(handlers: H, method: string) H {
+  return match (unsafe { handlers[method] }) {
+    Ok(v) => v,
+    Err(_) => handlers,
+  }
+}
+
+fn isFunction<V>(value: V) boolean {
+  return match (unsafe { typeof value === "function" }) {
+    Ok(b) => b,
+    Err(_) => false,
+  }
+}
+
+fn staticPrefix(route: string) string {
+  let parts: Array<string> = []
+  for (const part of trimSlashes(route).split("/")) {
+    if (part === "") {
+      continue
+    }
+    if (part.startsWith("[")) {
+      break
+    }
+    parts.push(part)
+  }
+  if (parts.length === 0) {
+    return "/"
+  }
+  return "/" + parts.join("/") + "/"
+}
+
+fn oneSegmentAfter(path: string, prefix: string) boolean {
+  if (!path.startsWith(prefix)) {
+    return false
+  }
+  const rest = path.slice(prefix.length, path.length)
+  if (rest === "" || rest.includes("/")) {
+    return false
+  }
+  return true
+}
+
+fn routeMatches(route: string, path: string) boolean {
+  if (route === path) {
+    return true
+  }
+  if (!route.includes("[")) {
+    return false
+  }
+  return oneSegmentAfter(path, staticPrefix(route))
+}
+
+fn callHandler<H>(handler: H, request: RouterRequest) RouterResponse {
+  return match (unsafe { handler(request) }) {
+    Ok(r) => r,
+    Err(_) => OPAQUE_500,
+  }
+}
+
+export fn runApiRouter<R>(request: RouterRequest, routes: R) RouterResponse {
+  const path = requestPath(request)
+  const method = requestMethod(request)
+  let handlers: R = routes
+  let matched = false
+  for (const route of routeKeys(routes)) {
+    if (routeMatches(route, path)) {
+      handlers = routeHandlers(routes, route)
+      matched = true
+      break
+    }
+  }
+  if (!matched) {
+    return notFound()
+  }
+  let handler = methodHandler(handlers, method)
+  if (!isFunction(handler) && method === "HEAD" && isFunction(methodHandler(handlers, "GET"))) {
+    handler = methodHandler(handlers, "GET")
+  }
+  if (!isFunction(handler)) {
+    return { status: 405, body: "Method not allowed", headers: { location: "" } }
+  }
+  return callHandler(handler, request)
+}

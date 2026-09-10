@@ -1,0 +1,58 @@
+// ui/form — progressive enhancement. Renders a plain HTML <form>. Zero JS.
+
+import { jsx } from "./jsx.ds"
+
+// The attributes a form may carry. `children` is read through the host
+// bridge below because the renderer merges children into props before
+// invoking the component, and DekaScript props interfaces cannot name the
+// node type (deka#771 phase-1 finding).
+interface FormProps {
+  action?: string
+  method?: string
+  enctype?: string
+  class?: string
+  id?: string
+  target?: string
+  children?: Array<Component>
+}
+
+// `const { children, ...attributes } = props` — rest destructuring is not
+// DekaScript syntax, so the strip is a host bridge. Same semantics: own
+// enumerable fields except `children`.
+fn withoutChildren(props: FormProps) FormProps {
+  return match (unsafe { (() => { const { children, ...attributes } = props; return attributes; })() }) {
+    Ok(v) => v,
+    Err(_) => props,
+  }
+}
+
+fn propsChildren(props: FormProps) Option<Array<Component>> {
+  return match (unsafe { Object.hasOwn(props, "children") ? props.children : undefined }) {
+    Ok(v) => v,
+    Err(_) => None,
+  }
+}
+
+// The original rest-destructure threw on null props. DekaScript has no
+// `throw`; unbounded recursion is the only construct whose error propagates
+// out of an emitted function (deka#771 phase-1 finding). The renderer always
+// passes real props, so this arm is unreachable in practice.
+fn propsRequired() Component {
+  return propsRequired()
+}
+
+fn isNullProps(props: FormProps) boolean {
+  return match (unsafe { props == null }) {
+    Ok(b) => b,
+    Err(_) => false,
+  }
+}
+
+export fn Form(props: FormProps = {}) Component {
+  if (isNullProps(props)) {
+    return propsRequired()
+  }
+  const children = propsChildren(props)
+  const attributes = withoutChildren(props)
+  return jsx("form", attributes, children)
+}

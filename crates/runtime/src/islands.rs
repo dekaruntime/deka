@@ -548,6 +548,13 @@ fn write_ui_chunks(
     let mut modules = client_ui_modules();
     if flavor == ClientAssetFlavor::Dist {
         for module in &mut modules {
+            // Rewrite dsc-emitted match machinery first so pruning sees the
+            // simplified bindings (the Result prelude half becomes unreachable
+            // and drops; deka#771).
+            module.source = bundler::simplify_emitted_module(
+                &module.source,
+                &Path::new(&format!("{}.js", module.stem)),
+            )?;
             let pruned = match keep {
                 Some(plan) if !plan.keep_all.contains(module.specifier) => {
                     bundler::prune_unreferenced_exports(

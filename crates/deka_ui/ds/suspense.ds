@@ -1,0 +1,21 @@
+// ui/suspense — boundary marker shared by server and (later) client.
+// The renderer intercepts this tag before invoking it.
+
+interface SuspenseProps {
+  children?: Array<Component>
+}
+
+// The renderer reads `Suspense.__dekaSuspense` off the tag and, when it does
+// invoke the tag, expects the raw children value or JS `null` back — not an
+// Option enum. DekaScript has no `null` and cannot attach a field to a
+// function value, so both host escapes go through `unsafe` (deka#771).
+export fn Suspense(props: SuspenseProps) Option<Array<Component>> {
+  return match (unsafe { props ? props.children : null }) {
+    Ok(v) => v,
+    // The unsafe scrutinee either returns the value or throws; the Err arm is
+    // unreachable, so fall back into a re-entrant call instead of materializing
+    // the Option prelude.
+    Err(_) => Suspense(props),
+  }
+}
+unsafe { Suspense.__dekaSuspense = true }
