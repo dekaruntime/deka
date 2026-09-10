@@ -36,12 +36,14 @@ The harness (`crates/cli/tests/build_fixture_harness.rs`, driven by
 3. **bytes** — every path in `tree.txt` is compared against the `files/`
    mirror; text files get a unified diff, binary files a size note.
 
-For successful fixtures it additionally asserts, from
-`.cache/dekascript/build-manifest.json`: the manifest parses, its routes
-match the printed table exactly (glyph + path, in order), its artifact list
-covers exactly the published tree, **and every artifact digest is recomputed
-from the published bytes** — a manifest with correct paths but wrong digests
-fails, naming the mismatched path. Then the fixture builds twice more: a
+For successful fixtures it additionally asserts, from the published v2
+`dist/build-manifest.json`: the manifest parses, its routes match the printed
+table exactly (glyph + path, in order), its payload table covers exactly the
+published tree, and **every payload digest and byte count is recomputed from
+the published bytes**. It also verifies the canonical `payload_root`, the
+`build-manifest.sha256` anchor, and invokes the production v2 verifier. A
+manifest with correct paths but wrong digests fails, naming the mismatched
+path. Then the fixture builds twice more: a
 **same-root rerun** (dist tree, full stderr, and the manifest must be
 byte-identical across runs) and a **cross-root build** (the same project
 from a second temporary root must produce RAW, byte-identical dist
@@ -55,10 +57,11 @@ Expected files are committed and change only intentionally:
 DEKA_BLESS=1 cargo test -p cli --test build_artifacts
 ```
 
-Blessing rewrites `stderr.txt` (or `stderr.v1.txt`, matching the installed
-dsc) and, for successful fixtures, `tree.txt` and the `files/` mirror. It
-refuses to bless when the build's success/failure disagrees with the
-fixture's markers. A fixture with both `stderr.txt` and `stderr.v1.txt`
+Blessing is an explicit local refresh step; normal test runs never rewrite
+expectations. It rewrites `stderr.txt` (or `stderr.v1.txt`, matching the
+installed dsc) and, for successful fixtures, `tree.txt` and the `files/`
+mirror. It refuses to bless when the build's success/failure disagrees with
+the fixture's markers. A fixture with both `stderr.txt` and `stderr.v1.txt`
 must be blessed once per dsc plan generation (the pinned dsc in
 `scripts/dsc-version` currently emits v2; 0.6.x emitted v1).
 
