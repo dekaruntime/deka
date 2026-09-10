@@ -1,0 +1,68 @@
+---
+title: Running a file
+description: Run a .ds file from anywhere — loose files materialize into a user-global cache and never write into your directory.
+---
+
+`deka run app.ds` executes a DekaScript module. The file does not need to
+belong to a project: a language should not require a scaffolding ritual
+before it will run a file.
+
+## Loose files
+
+When the file is not part of a deka project (no `deka.json` anywhere above
+it), the compile output materializes into a user-global cache and the
+artifact — never the source — is what executes. Nothing is written into the
+directory you ran from: no `ds_modules/`, no `.cache/`, no `deka.json`. This
+also means a loose file runs from a read-only directory.
+
+After the run, deka tells you how to get project behavior, as the last line
+of output:
+
+```text
+[note] not a deka project — initialize one with: deka init
+```
+
+This is a note, not a warning: running a loose file is a supported path that
+works correctly. Declaring more authority — dependencies, permissions,
+build output — is what `deka init` and a manifest are for.
+
+## Where the cache lives
+
+1. `$XDG_CACHE_HOME/deka` when `XDG_CACHE_HOME` is set
+2. `~/.deka/cache` otherwise
+
+There is no environment-variable override for the cache location;
+configuration comes from `deka.json`, and deka/dsc carry zero environment
+overrides. An environment without a usable home directory is a defined
+error, not a crash.
+
+## How entries are keyed
+
+Cache entries are content-addressed: the key is a hash of the file's bytes,
+so one shared directory holds artifacts for unrelated files across the
+machine. Each entry also records the compiler identity (the `dsc` version
+and the `deka` version that produced it). When the compiler changes, the old
+entry is rejected and regenerated — stale output is never reused.
+
+A second run of an unchanged file with an unchanged compiler reuses the
+cached artifact and prints no compile chatter.
+
+## Eviction
+
+The cache is bounded (128 entries / 256 MiB, oldest entries evicted first)
+and regenerating an evicted entry is ordinary. To empty it by hand:
+
+```sh
+deka cache clear
+```
+
+The cache is runtime-owned scratch space: it is never a deployment unit, and
+it is unrelated to a project's authored `dist/` output, which `deka serve`
+and `deka run` treat very differently (built artifacts are verified, never
+regenerated).
+
+## Files inside a project
+
+A file that has a `deka.json` anywhere above it keeps the project behavior:
+the compile happens inside the project's own cache, no advisory is printed,
+and the user cache is not involved.
