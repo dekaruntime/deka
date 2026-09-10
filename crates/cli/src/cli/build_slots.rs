@@ -13,25 +13,21 @@ use runtime_core::framework::{BuildManifest, FsObservation, PlannedSource};
 
 use crate::cli::build_dsc;
 
-/// Resolve the security policy the build phase executes under: the project's
-/// deka.json policy plus CLI overrides, with the existing dev defaults when
-/// dev. There is no `build.*` namespace — the existing permission system
-/// decides what the build phase may do (rfd#48), and nested bridge calls
-/// cannot widen a denied capability because enforcement stays host-side per
-/// call.
+/// Resolve the security policy the build phase executes under. Phase-aware
+/// manifests (deka#757, RFD 53) execute build slots through
+/// `permissions.dev.build` alone — the policy is independent from
+/// request-time dev authority, so static materialization stays narrowly
+/// constrained. Legacy manifests keep the project-policy-plus-dev-defaults
+/// behavior. There is no `build.*` namespace and no production build phase:
+/// nested bridge calls cannot widen a denied capability because enforcement
+/// stays host-side per call.
 pub fn resolve_build_policy(
     flags: &std::collections::HashMap<String, bool>,
     params: &std::collections::HashMap<String, String>,
     project_root: &Path,
     dev: bool,
 ) -> Result<runtime::security::ResolvedSecurityPolicy, String> {
-    runtime::security::resolve_security_policy_for_root(
-        project_root,
-        flags,
-        params,
-        runtime::security::ProjectKind::Php,
-        dev,
-    )
+    runtime::security::resolve_build_policy_for_root(project_root, flags, params, dev)
 }
 
 /// Stage and materialize the planned build slots, returning the validated
