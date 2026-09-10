@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -128,5 +128,44 @@ pub fn update_lock_entry_at(
     let entry = (descriptor, resolved, metadata, integrity);
     lock.packages.insert(name.to_string(), entry);
     write_lockfile_at(path, &lock)?;
+    Ok(())
+}
+
+/// Snapshot one project file for install-transaction recovery: returns the
+/// path and, when the file exists, a durable backup copy beside it. Shared by
+/// the lockfile and the grant table (`deka.grants.json`), which the installer
+/// rewrites together inside one transaction (deka#797).
+pub(crate) fn snapshot_file(path: PathBuf) -> Result<(PathBuf, Option<PathBuf>)> {
+    if !path.exists() {
+        return Ok((path, None));
+    }
+    let backup = path.with_file_name(format!(
+        ".{}-backup-{}-{}",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("deka-file"),
+        std::process::id(),
+        unique_suffix()
+    ));
+    fs::copy(&path, &backup).with_context(|| format!("failed to snapshot {}", path.display()))?;
+    fs::File::open(&backup)?.sync_all()?;
+    if let Some(parent) = path.parent() {
+        sync_directory(parent)?;
+    }
+    Ok((path, Some(backup)))
+}
+
+pub(crate) fn unique_suffix() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default()
+}
+
+pub(crate) fn sync_directory(path: &Path) -> Result<()> {
+    fs::File::open(path)
+        .with_context(|| format!("failed to open directory {} for sync", path.display()))?
+        .sync_all()
+        .with_context(|| format!("failed to sync directory {}", path.display()))?;
     Ok(())
 }

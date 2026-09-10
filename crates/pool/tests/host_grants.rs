@@ -78,8 +78,10 @@ fn grant_pool(table: GrantTable) -> IsolatePool {
     IsolatePool::new(config, Arc::new(platform_server::extensions_for_php_server))
 }
 
-/// Pool without any grant table (no explicit config; the loader still falls
-/// back to `DEKA_HOST_GRANTS`, which the caller must ensure is unset).
+/// Pool without any grant table (no explicit config; the loader resolves
+/// grants from the `DEKA_HOST_GRANTS` env override and then the
+/// project-installed `deka.grants.json` — the caller controls which of those
+/// is present).
 fn no_grant_pool() -> IsolatePool {
     let config = PoolConfig {
         num_workers: 1,
@@ -477,6 +479,13 @@ fn cryptofix_grant_table_safe_empty() -> GrantTable {
     .expect("grant table")
 }
 
+/// Serialize mutations of the DEKA_HOST_GRANTS env var across the tests in
+/// this binary (they may run on separate worker threads).
+fn host_grants_env_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    &LOCK
+}
+
 /// Case 6 — defense in depth: with no grant table at all (no PoolConfig
 /// table, no DEKA_HOST_GRANTS env), a dependency with bridge calls is denied
 /// at load time.
@@ -501,6 +510,7 @@ export fn app(req: string) {
 
     // The loader falls back to DEKA_HOST_GRANTS when no explicit table is
     // configured; make sure this test observes the truly unpublished state.
+    let _env_guard = host_grants_env_lock().lock().expect("env lock");
     let previous = std::env::var("DEKA_HOST_GRANTS").ok();
     // SAFETY: single-process test binary; no other test in this file touches
     // DEKA_HOST_GRANTS, and the previous value is restored below.
@@ -525,6 +535,119 @@ export fn app(req: string) {
     assert!(
         error.contains("not granted any host kinds"),
         "expected the no-grants load error, got: {error}"
+    );
+}
+
+/// Case 7 (deka#797) — the project-installed grant table is the production
+/// source: with `deka.grants.json` next to `deka.lock` (exactly what
+/// `deka add` writes), no PoolConfig table, and no DEKA_HOST_GRANTS env,
+/// the dependency's granted kinds work and its ungranted kinds resolve to
+/// HostGrantDenied per call. A DEKA_HOST_GRANTS env table then overrides
+/// the project file, documented override semantics.
+#[tokio::test]
+async fn project_grant_table_file_drives_grants_without_env_or_config() {
+    if !ensure_dsc() {
+        println!(
+            "SKIP project_grant_table_file_drives_grants_without_env_or_config: dsc unavailable"
+        );
+        return;
+    }
+    let project = cryptofix_project();
+    write(
+        project.path(),
+        "main.ds",
+        r#"import { rand4, list_dir } from "@deka/cryptofix"
+
+export async fn app(req: string) Promise<string> {
+  const dep = rand4()
+  const fs = await list_dir()
+  return dep + "|" + fs
+}
+"#,
+    );
+    let entry = project.path().join("main.ds");
+
+    // Write the table `deka add` would deliver: keyed by the lockfile-pinned
+    // fsGraph digest, granting only crypto.
+    let lock = std::fs::read_to_string(project.path().join("deka.lock")).expect("read lock");
+    let value: serde_json::Value = serde_json::from_str(&lock).expect("parse lock");
+    let digest = value["packages"]["@deka/cryptofix"][2]["fsGraph"]["hash"]
+        .as_str()
+        .expect("lockfile fsGraph hash");
+    write(
+        project.path(),
+        "deka.grants.json",
+        &serde_json::to_string(&serde_json::json!([
+            {
+                "name": "@deka/cryptofix",
+                "version": "1.0.0",
+                "digest": digest,
+                "kinds": ["crypto"]
+            }
+        ]))
+        .expect("grant file json"),
+    );
+
+    let _env_guard = host_grants_env_lock().lock().expect("env lock");
+    let previous = std::env::var("DEKA_HOST_GRANTS").ok();
+    // SAFETY: serialized by host_grants_env_lock; restored below.
+    unsafe { std::env::remove_var("DEKA_HOST_GRANTS") };
+
+    let pool = no_grant_pool();
+    let response = pool
+        .execute(
+            HandlerKey::new("grant_project_file"),
+            module_request(&entry, project.path()),
+        )
+        .await
+        .expect("pool execution");
+    assert_eq!(
+        body_of(&response),
+        "dep-ok|fs-grant-denied",
+        "project grant table alone must drive both the grant and the boundary"
+    );
+
+    // Override precedence: DEKA_HOST_GRANTS wins over the project file. The
+    // env table also grants fs, so the fs call clears the grant gate and is
+    // stopped one layer down by the read permission instead (denied-other,
+    // not HostGrantDenied).
+    let env_table = GrantTable::from_json(
+        r#"[{"name":"@deka/cryptofix","version":"1.0.0","digest":"OVERRIDE","kinds":["crypto","fs"]}]"#,
+    )
+    .expect("env grant table");
+    // Point the env table at the real digest so the grant lookup hits.
+    let env_table = GrantTable {
+        grants: vec![runtime_core::host_bridge::HostGrant {
+            digest: digest.to_string(),
+            ..env_table.grants[0].clone()
+        }],
+    };
+    // SAFETY: serialized by host_grants_env_lock; restored below.
+    unsafe {
+        std::env::set_var(
+            "DEKA_HOST_GRANTS",
+            serde_json::to_string(&env_table).expect("env table json"),
+        )
+    };
+
+    let pool = no_grant_pool();
+    let response = pool
+        .execute(
+            HandlerKey::new("grant_env_overrides_project_file"),
+            module_request(&entry, project.path()),
+        )
+        .await
+        .expect("pool execution");
+
+    match previous {
+        Some(value) => unsafe { std::env::set_var("DEKA_HOST_GRANTS", value) },
+        None => unsafe { std::env::remove_var("DEKA_HOST_GRANTS") },
+    }
+
+    assert_eq!(
+        body_of(&response),
+        "dep-ok|fs-denied-other",
+        "the env override must widen the grant and shift the fs denial to the permission layer"
     );
 }
 

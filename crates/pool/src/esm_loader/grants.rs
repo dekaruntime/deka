@@ -10,6 +10,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use runtime_core::host_bridge::GrantTable;
+
 /// Read `<root>/deka.json` and return its `(host.kinds, name)`. Both absent
 /// manifest and absent fields yield empty values.
 pub(crate) fn read_manifest_host_kinds(root: &Path) -> (Option<Vec<String>>, String) {
@@ -83,6 +85,23 @@ pub(crate) fn read_lock_digests(project_root: &Path) -> HashMap<String, String> 
         }
     }
     digests
+}
+
+/// Read the project-installed grant table (`<project_root>/deka.grants.json`),
+/// written by `deka add` / `deka install` (deka#797). Same schema as
+/// `GrantTable::from_json` — an array of `{name, version, digest, kinds}`.
+/// Absent or malformed yields `None` (no project grants); the explicit
+/// override channels are checked before this fallback by the loader.
+pub(crate) fn read_project_grant_table(project_root: &Path) -> Option<GrantTable> {
+    let path = project_root.join("deka.grants.json");
+    let text = std::fs::read_to_string(&path).ok()?;
+    match GrantTable::from_json(&text) {
+        Ok(table) => Some(table),
+        Err(err) => {
+            tracing::warn!("ignoring invalid {}: {err}", path.display());
+            None
+        }
+    }
 }
 
 /// Package name from a dependency package root: the path relative to the

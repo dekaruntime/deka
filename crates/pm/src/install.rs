@@ -1,4 +1,4 @@
-use crate::{lock, payload::InstallPayload, spec::parse_package_spec};
+use crate::{grants, lock, payload::InstallPayload, registry, spec::parse_package_spec};
 use anyhow::{Context, Result, anyhow, bail};
 use deka_host::integrity::compute_package_integrity;
 use runtime_core::module_spec::canonical_php_package_spec;
@@ -252,6 +252,9 @@ fn run_php_install_in_transaction(
             packages: installed.clone(),
         },
     )?;
+
+    // RFD 27 grant-table delivery (deka#797): rewrite the grant table with the lockfile.
+    grants::deliver_grant_table(cwd, &installed, locked)?;
     if explicit_add {
         record_root_dependencies(cwd, &specs, &installed)?;
     }
@@ -478,8 +481,6 @@ struct LockedPackage {
 }
 
 const GITHUB_STDLIB_ORG: &str = "dekaruntime";
-const DEKA_REGISTRY_URL: &str = "https://deka.gg";
-const DEKA_STDLIB_CDN: &str = "https://pub-6d81db17678348abba85f93fde4b4400.r2.dev";
 
 #[derive(Debug, Deserialize)]
 struct RegistryPackage {
@@ -514,6 +515,7 @@ fn select_registry_version(registry: &RegistryPackage, requested: &str) -> Resul
 }
 
 /// Install a @deka stdlib package from the deka.gg registry + R2 tarball CDN.
+/// Endpoint URLs (incl. test-only env overrides) live in `crate::registry`.
 ///
 /// Registry metadata is fetched over HTTPS from deka.gg, and the release bytes
 /// come from a public Cloudflare R2 bucket. This removes the git/Linkhash
@@ -531,7 +533,11 @@ fn install_from_registry(
         )
     })?;
 
-    let registry_url = format!("{}/api/registry/{}.json", DEKA_REGISTRY_URL, package_name);
+    let registry_url = format!(
+        "{}/api/registry/{}.json",
+        registry::base_url(),
+        package_name
+    );
     let registry_resp = reqwest::blocking::get(&registry_url)
         .with_context(|| format!("failed to contact deka.gg registry for {}", name))?;
     if !registry_resp.status().is_success() {
@@ -558,7 +564,11 @@ fn install_from_registry(
     let tag = format!("v{}", version);
     let tarball_url = format!(
         "{}/{}/{}/{}-{}.tgz",
-        DEKA_STDLIB_CDN, package_name, version, package_name, version
+        registry::stdlib_cdn_url(),
+        package_name,
+        version,
+        package_name,
+        version
     );
 
     let temp_dir = tempfile::tempdir()
@@ -687,6 +697,9 @@ fn install_staging_path(destination: &Path) -> Result<PathBuf> {
 struct InstallJournal {
     lock_path: PathBuf,
     lock_backup: Option<PathBuf>,
+    /// deka#797: grant table snapshot, restored on recovery (see `crate::grants`).
+    #[serde(default)]
+    grant: grants::GrantTableSnapshot,
     packages: Vec<InstallJournalPackage>,
 }
 
@@ -698,33 +711,22 @@ struct InstallJournalPackage {
     swapped: bool,
 }
 
-struct InstallTransaction {
+pub(crate) struct InstallTransaction {
     journal_path: PathBuf,
     journal: InstallJournal,
 }
 
 impl InstallTransaction {
-    fn begin(project_dir: &Path, lock_path: &Path) -> Result<Self> {
+    pub(crate) fn begin(project_dir: &Path, lock_path: &Path) -> Result<Self> {
         let journal_path = project_dir.join(".deka-install-transaction.json");
-        let lock_backup = if lock_path.exists() {
-            let backup = project_dir.join(format!(
-                ".deka-lock-backup-{}-{}",
-                std::process::id(),
-                unique_suffix()
-            ));
-            fs::copy(lock_path, &backup)
-                .with_context(|| format!("failed to snapshot {}", lock_path.display()))?;
-            fs::File::open(&backup)?.sync_all()?;
-            sync_directory(project_dir)?;
-            Some(backup)
-        } else {
-            None
-        };
+        let (lock_path, lock_backup) = lock::snapshot_file(lock_path.to_path_buf())?;
+        let grant = grants::GrantTableSnapshot::snapshot(project_dir)?;
         let transaction = Self {
             journal_path,
             journal: InstallJournal {
-                lock_path: lock_path.to_path_buf(),
+                lock_path,
                 lock_backup,
+                grant,
                 packages: Vec::new(),
             },
         };
@@ -737,13 +739,16 @@ impl InstallTransaction {
             .journal_path
             .parent()
             .ok_or_else(|| anyhow!("transaction journal has no parent"))?;
-        let temp = parent.join(format!(".deka-install-journal-tmp-{}", unique_suffix()));
+        let temp = parent.join(format!(
+            ".deka-install-journal-tmp-{}",
+            lock::unique_suffix()
+        ));
         let bytes = serde_json::to_vec_pretty(&self.journal)?;
         fs::write(&temp, bytes)?;
         let file = fs::OpenOptions::new().read(true).open(&temp)?;
         file.sync_all()?;
         fs::rename(temp, &self.journal_path)?;
-        sync_directory(parent)?;
+        lock::sync_directory(parent)?;
         Ok(())
     }
 
@@ -771,7 +776,7 @@ impl InstallTransaction {
         // Clearing the journal is the commit point. Cleanup after this point
         // is best-effort and cannot make the live package/lock inconsistent.
         fs::remove_file(&self.journal_path)?;
-        sync_directory(
+        lock::sync_directory(
             self.journal_path
                 .parent()
                 .ok_or_else(|| anyhow!("transaction journal has no parent"))?,
@@ -779,6 +784,7 @@ impl InstallTransaction {
         if let Some(backup) = self.journal.lock_backup {
             let _ = fs::remove_file(backup);
         }
+        self.journal.grant.discard();
         for package in self.journal.packages {
             let _ = fs::remove_file(package.destination.join(STAGED_MARKER));
             if package.had_destination {
@@ -827,21 +833,14 @@ fn pause_for_kill_test(point: &str) {
 
 fn mark_staging_tree(staging: &Path) -> Result<()> {
     fs::write(staging.join(STAGED_MARKER), b"staged\n")?;
-    sync_directory(
+    lock::sync_directory(
         staging
             .parent()
             .ok_or_else(|| anyhow!("staging path has no parent"))?,
     )
 }
 
-fn unique_suffix() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default()
-}
-
-fn recover_install_transaction(project_dir: &Path) -> Result<()> {
+pub(crate) fn recover_install_transaction(project_dir: &Path) -> Result<()> {
     let journal_path = project_dir.join(".deka-install-transaction.json");
     if !journal_path.exists() {
         return Ok(());
@@ -862,7 +861,7 @@ fn recover_install_transaction(project_dir: &Path) -> Result<()> {
             fs::remove_dir_all(&package.destination)?;
         }
         if let Some(parent) = package.destination.parent() {
-            sync_directory(parent)?;
+            lock::sync_directory(parent)?;
         }
     }
     if let Some(backup) = journal.lock_backup {
@@ -872,14 +871,15 @@ fn recover_install_transaction(project_dir: &Path) -> Result<()> {
             }
             fs::rename(backup, &journal.lock_path)?;
             if let Some(parent) = journal.lock_path.parent() {
-                sync_directory(parent)?;
+                lock::sync_directory(parent)?;
             }
         }
     } else if journal.lock_path.exists() {
-        fs::remove_file(journal.lock_path)?;
+        fs::remove_file(&journal.lock_path)?;
     }
+    journal.grant.restore()?; // deka#797: mirrors the lockfile recovery above.
     fs::remove_file(journal_path)?;
-    sync_directory(project_dir)?;
+    lock::sync_directory(project_dir)?;
     Ok(())
 }
 
@@ -895,7 +895,7 @@ fn replace_installed_package(staging: &Path, destination: &Path) -> Result<()> {
             .with_context(|| format!("failed to install {}", destination.display()))?;
     }
     if let Some(parent) = destination.parent() {
-        sync_directory(parent)?;
+        lock::sync_directory(parent)?;
     }
     Ok(())
 }
@@ -948,14 +948,6 @@ fn swap_directories(first: &Path, second: &Path) -> Result<()> {
         #[cfg(not(target_os = "linux"))]
         compile_error!("directory replacement must use an atomic platform primitive");
     }
-}
-
-fn sync_directory(path: &Path) -> Result<()> {
-    fs::File::open(path)
-        .with_context(|| format!("failed to open directory {} for sync", path.display()))?
-        .sync_all()
-        .with_context(|| format!("failed to sync directory {}", path.display()))?;
-    Ok(())
 }
 
 fn cleanup_install_staging(staging: &Path) {
@@ -1160,7 +1152,10 @@ async fn rehash_php_packages(payload: &InstallPayload) -> Result<()> {
     rehash_php_packages_in(payload, &cwd).await
 }
 
-async fn rehash_php_packages_in(payload: &InstallPayload, project_dir: &Path) -> Result<()> {
+pub(crate) async fn rehash_php_packages_in(
+    payload: &InstallPayload,
+    project_dir: &Path,
+) -> Result<()> {
     let lock_path = project_dir.join(lock::LOCKFILE_NAME);
     let lock = lock::read_lockfile_at(&lock_path);
     let mut specs = payload.specs.clone();
@@ -1205,6 +1200,11 @@ async fn rehash_php_packages_in(payload: &InstallPayload, project_dir: &Path) ->
             integrity_field,
         )?;
     }
+
+    // deka#797: re-key the grant table with the recomputed digests; the lock
+    // writes above went through to disk, so re-read it before deriving.
+    let refreshed = lock::read_lockfile_at(&lock_path);
+    grants::rewrite_grant_table(project_dir, &refreshed.packages)?;
 
     Ok(())
 }
