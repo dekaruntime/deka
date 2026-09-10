@@ -21,9 +21,10 @@ pub struct PoolConfig {
     pub scheduler_strategy: SchedulerStrategy,
     /// Enable per-request profiling data (op timings)
     pub introspect_profiling: bool,
-    /// RFD 27 host grant table for DekaScript-from-disk modules. `None` falls
-    /// back to the `DEKA_HOST_GRANTS` env var in the ESM loader until the
-    /// registry/index plumbing lands.
+    /// RFD 27 host grant table for DekaScript-from-disk modules. `None` lets
+    /// the ESM loader resolve the table: the `DEKA_HOST_GRANTS` env override
+    /// first, then the project-installed `deka.grants.json` written by
+    /// `deka add` / `deka install` (deka#797).
     pub host_grants: Option<runtime_core::host_bridge::GrantTable>,
 }
 

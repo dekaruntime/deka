@@ -44,7 +44,10 @@ pub use graph_hash::hash_module_graph;
 pub use policy::ensure_project_layout;
 pub use resolver::{entry_wrapper_path, is_javascript_entry, resolve_project_root};
 
-use grants::{dependency_package_name, read_manifest_host_kinds, read_manifest_name, read_lock_digests};
+use grants::{
+    dependency_package_name, read_manifest_host_kinds, read_manifest_name, read_lock_digests,
+    read_project_grant_table,
+};
 use resolver::{parse_module_imports, resolve_phpx_module_spec};
 use transforms::{append_entry_footer, entry_wrapper_source, prepend_host_bindings};
 
@@ -81,7 +84,8 @@ pub struct PhpxEsmLoader {
     /// Pre-compiled module graph for compiler v2. When present, `.ds` files
     /// are served from this map instead of compiled on demand.
     v2_modules: Option<HashMap<PathBuf, String>>,
-    /// RFD 27 grant table (explicit config or `DEKA_HOST_GRANTS` env).
+    /// RFD 27 grant table: explicit config, else the `DEKA_HOST_GRANTS`
+    /// override, else the project-installed `deka.grants.json` (deka#797).
     grant_table: Option<GrantTable>,
     /// Bridge kinds granted to the project root (cached at construction).
     root_kinds: Vec<String>,
@@ -115,9 +119,14 @@ impl PhpxEsmLoader {
         let wrapper_specifier = ModuleSpecifier::from_file_path(entry_wrapper_path(&project_root))
             .map_err(|_| JsErrorBox::generic("invalid entry wrapper path"))?;
 
-        // RFD 27: resolve the host grant table. An explicit table wins; until
-        // the registry/index plumbing lands, production falls back to the
-        // DEKA_HOST_GRANTS env var (a grant-table JSON document).
+        // RFD 27 (deka#797): resolve the host grant table. Precedence:
+        // 1. an explicit table (`PoolConfig.host_grants`) wins outright;
+        // 2. the `DEKA_HOST_GRANTS` env var is an explicit override, kept for
+        //    tests and embedded hosts;
+        // 3. the project-installed table (`<project_root>/deka.grants.json`,
+        //    written by `deka add` / `deka install`) is the production
+        //    source — a fresh install needs no programmatic config and no
+        //    environment variable.
         let grant_table = match host_grants {
             Some(table) => Some(table),
             None => std::env::var("DEKA_HOST_GRANTS")
@@ -128,7 +137,8 @@ impl PhpxEsmLoader {
                         tracing::warn!("ignoring invalid DEKA_HOST_GRANTS: {err}");
                         None
                     }
-                }),
+                })
+                .or_else(|| read_project_grant_table(&project_root)),
         };
 
         // Eager project-root check: only official `@deka/*` packages may
@@ -668,5 +678,109 @@ mod tests {
         assert_eq!(loader.kinds_for_path(&module), vec!["crypto".to_string()]);
         // Root-owned sources get no kinds (this fixture root declares none).
         assert!(loader.kinds_for_path(&root.path().join("src").join("main.ds")).is_empty());
+    }
+
+    /// RFD 27 (deka#797): with no explicit table and no DEKA_HOST_GRANTS
+    /// override, the loader falls back to the project-installed grant table
+    /// (`deka.grants.json`, written by `deka add` / `deka install`).
+    #[test]
+    fn dependency_module_kinds_come_from_project_grant_table_file() {
+        use runtime_core::host_bridge::GrantTable;
+
+        let root = tempfile::tempdir().expect("temp project");
+        let entry = root.path().join("handler.js");
+        fs::write(&entry, "export default {};\n").expect("write js handler");
+
+        let package_dir = root.path().join("ds_modules").join("@deka").join("fs");
+        fs::create_dir_all(&package_dir).expect("package dir");
+        let module = package_dir.join("index.ds");
+        fs::write(&module, "export const x = 1;\n").expect("package module");
+
+        fs::write(
+            root.path().join("deka.lock"),
+            r#"{
+                "lockfileVersion": 1,
+                "packages": {
+                    "@deka/fs": {
+                        "metadata": { "fsGraph": { "algo": "sha256", "hash": "sha256:bbb" } }
+                    }
+                }
+            }"#,
+        )
+        .expect("deka.lock");
+
+        // The production source: written by the installer, keyed by the
+        // lockfile-pinned digest. The env override must be absent for this
+        // fallback to be observed.
+        let previous = std::env::var("DEKA_HOST_GRANTS").ok();
+        // SAFETY: this test binary serializes env access through the test
+        // harness; the value is restored below and no other test in this
+        // binary reads DEKA_HOST_GRANTS concurrently by name.
+        unsafe { std::env::remove_var("DEKA_HOST_GRANTS") };
+        fs::write(
+            root.path().join("deka.grants.json"),
+            r#"[{"name":"@deka/fs","version":"1.0.0","digest":"sha256:bbb","kinds":["fs"]}]"#,
+        )
+        .expect("deka.grants.json");
+
+        let loader = PhpxEsmLoader::new(root.path().to_path_buf(), entry, None).expect("loader");
+
+        match previous {
+            Some(value) => unsafe { std::env::set_var("DEKA_HOST_GRANTS", value) },
+            None => unsafe { std::env::remove_var("DEKA_HOST_GRANTS") },
+        }
+
+        assert_eq!(loader.kinds_for_path(&module), vec!["fs".to_string()]);
+    }
+
+    /// The digest-keyed lookup stays the trust root: a project grant table
+    /// whose digest does not match the lockfile pin unlocks nothing.
+    #[test]
+    fn project_grant_table_with_mismatched_digest_grants_nothing() {
+        use runtime_core::host_bridge::GrantTable;
+
+        let root = tempfile::tempdir().expect("temp project");
+        let entry = root.path().join("handler.js");
+        fs::write(&entry, "export default {};\n").expect("write js handler");
+
+        let package_dir = root.path().join("ds_modules").join("@deka").join("fs");
+        fs::create_dir_all(&package_dir).expect("package dir");
+        let module = package_dir.join("index.ds");
+        fs::write(&module, "export const x = 1;\n").expect("package module");
+
+        fs::write(
+            root.path().join("deka.lock"),
+            r#"{
+                "lockfileVersion": 1,
+                "packages": {
+                    "@deka/fs": {
+                        "metadata": { "fsGraph": { "algo": "sha256", "hash": "sha256:pin" } }
+                    }
+                }
+            }"#,
+        )
+        .expect("deka.lock");
+        // Grant keyed by a *different* digest (e.g. a tampered lockfile pin):
+        // the lookup must miss.
+        let previous = std::env::var("DEKA_HOST_GRANTS").ok();
+        // SAFETY: see the sibling test above.
+        unsafe { std::env::remove_var("DEKA_HOST_GRANTS") };
+        fs::write(
+            root.path().join("deka.grants.json"),
+            r#"[{"name":"@deka/fs","version":"1.0.0","digest":"sha256:other","kinds":["fs"]}]"#,
+        )
+        .expect("deka.grants.json");
+
+        let loader = PhpxEsmLoader::new(root.path().to_path_buf(), entry, None).expect("loader");
+
+        match previous {
+            Some(value) => unsafe { std::env::set_var("DEKA_HOST_GRANTS", value) },
+            None => unsafe { std::env::remove_var("DEKA_HOST_GRANTS") },
+        }
+
+        assert!(
+            loader.kinds_for_path(&module).is_empty(),
+            "a grant for another digest must not unlock this package"
+        );
     }
 }
