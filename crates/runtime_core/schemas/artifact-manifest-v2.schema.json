@@ -1,0 +1,238 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Deka built-artifact manifest v2",
+  "description": "Normative schema for dist/build-manifest.json, the deployment descriptor emitted by `deka build` and consumed by `deka serve` / `deka run` and the Worker adapter. Spec: docs/architecture/built-artifact-manifest-v2.md. Strict by design: adding a field is a format-version bump (`format` carries the version).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "origin",
+    "producer",
+    "compat",
+    "client",
+    "server",
+    "routes",
+    "slots",
+    "payloads",
+    "payload_root"
+  ],
+  "properties": {
+    "format": {
+      "const": "deka.artifact@2"
+    },
+    "origin": {
+      "enum": ["authored", "materialized"],
+      "description": "authored: in-project dist/, never regenerated implicitly, invalid means fail. materialized: runtime-owned user-global cache, invalid means discard and re-materialize."
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deka", "dsc", "plan_version"],
+      "properties": {
+        "deka": { "type": "string", "minLength": 1 },
+        "dsc": { "type": "string", "minLength": 1 },
+        "plan_version": { "type": "integer", "minimum": 1 }
+      },
+      "description": "Informational. Never gates serving; see compat.runtime_abi for the load-bearing version."
+    },
+    "compat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtime_abi", "module_format", "targets", "host_imports"],
+      "properties": {
+        "runtime_abi": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Exact integer the serving binary must implement. Bumps only when the host-module contract changes, not per deka release."
+        },
+        "module_format": { "const": "esm2022" },
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "enum": ["native", "worker"] },
+          "uniqueItems": true,
+          "description": "Must include the target being served."
+        },
+        "host_imports": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^deka:host/"
+          },
+          "uniqueItems": true,
+          "description": "The ONLY legal bare specifiers in server modules. deka:dev/* is never legal."
+        }
+      }
+    },
+    "client": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "trailing_slash"],
+      "properties": {
+        "root": { "const": "client" },
+        "index": {
+          "type": "string",
+          "pattern": "^client/",
+          "description": "The client harness document. Omitted only when the build emits no harness."
+        },
+        "trailing_slash": { "type": "boolean" }
+      }
+    },
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "entries"],
+      "properties": {
+        "root": { "const": "server" },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "kind", "module", "export", "methods"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "kind": { "enum": ["page", "api", "defer", "not_found"] },
+              "module": {
+                "type": "string",
+                "pattern": "^server/",
+                "description": "dist-relative path. Must resolve inside dist/server/ (the resolution jail) and be listed in payloads."
+              },
+              "export": { "type": "string", "minLength": 1 },
+              "methods": {
+                "type": "array",
+                "items": { "type": "string", "pattern": "^[A-Z]+$" },
+                "uniqueItems": true,
+                "description": "api kind only; uppercase HTTP methods, sorted. Empty for other kinds."
+              }
+            }
+          }
+        }
+      }
+    },
+    "worker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entry"],
+      "properties": {
+        "entry": {
+          "type": "string",
+          "pattern": "^[^/]+$",
+          "description": "dist-root-relative shim filename (_worker.js). Present only when a worker shim was emitted."
+        }
+      }
+    },
+    "routes": {
+      "type": "array",
+      "description": "Sorted by template. The route->entry mapping; how request-time and api routes dispatch.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["template", "mode", "outputs", "entry", "source_file"],
+        "properties": {
+          "template": { "type": "string", "pattern": "^/" },
+          "mode": { "enum": ["static", "static_params", "request_time", "api"] },
+          "instances": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "static_params only; sorted."
+          },
+          "outputs": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^client/" },
+            "description": "Static and static_params routes only; prerendered HTML under client/."
+          },
+          "entry": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "description": "server.entries[].id. Required (non-null) for request_time and api; null otherwise."
+          },
+          "slot": { "type": "string", "minLength": 1 },
+          "deferred": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "source_file": {
+            "type": "string",
+            "minLength": 1,
+            "description": "DIAGNOSTIC ONLY. No consumer may resolve, read, stat, or fall back to this path."
+          }
+        },
+        "if": {
+          "properties": { "mode": { "enum": ["request_time", "api"] } },
+          "required": ["mode"]
+        },
+        "then": {
+          "properties": { "entry": { "type": "string", "minLength": 1 } },
+          "required": ["entry"]
+        },
+        "else": {
+          "properties": { "entry": { "type": "null" } },
+          "if": {
+            "properties": { "mode": { "const": "static_params" } },
+            "required": ["mode"]
+          },
+          "then": { "required": ["instances"] }
+        }
+      }
+    },
+    "slots": {
+      "type": "array",
+      "description": "Build-value slots. Sorted by id.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "binding", "file", "descriptor_digest", "module", "observations"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "binding": { "type": "string", "minLength": 1 },
+          "file": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Source path. DIAGNOSTIC ONLY, like routes[].source_file."
+          },
+          "descriptor_digest": { "$ref": "#/$defs/digest" },
+          "module": {
+            "type": "string",
+            "pattern": "^server/\\.values/",
+            "description": "Ordinary artifact module replacing v1's deka:dev/<id> virtual import."
+          },
+          "observations": {
+            "type": "array",
+            "description": "Filesystem observations for deka dev invalidation (deka#725). Dev metadata only; always [] in an authored manifest."
+          }
+        }
+      }
+    },
+    "payloads": {
+      "type": "array",
+      "description": "Every regular file under dist/ except the three descriptor files (build-manifest.json, build-manifest.sha256, build-manifest.sig). Sorted by path; forward-slash, dist-relative.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "role", "bytes", "digest"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "pattern": "^((client|server)/.+|_[^/]+)$",
+            "description": "client/ and server/ trees, plus the dist-root worker shim (_worker.js). The three descriptor files are never payloads."
+          },
+          "role": { "enum": ["client", "server"] },
+          "bytes": { "type": "integer", "minimum": 0 },
+          "digest": { "$ref": "#/$defs/digest" }
+        }
+      }
+    },
+    "payload_root": {
+      "$ref": "#/$defs/digest",
+      "description": "sha256 over, for each payloads entry in path order, the bytes \"<path>\\0<digest>\\n\". Summarises the payload set; hashes the payload table, never the manifest."
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Every digest is \"<alg>:<lowercase-hex>\"; alg is sha256 for format v2."
+    }
+  }
+}
