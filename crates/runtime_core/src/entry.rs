@@ -565,10 +565,10 @@ mod tests {
         let tmp = project();
         let root = tmp.path();
         write(root, "src/main.ds", "");
-        write(root, "dist/src/main.js", "console.log('dist')");
+        write(root, "dist/server/src/main.js", "console.log('dist')");
         let got = resolve(root, None);
         assert_eq!(got.kind, EntryKind::Src);
-        assert_path(&got.path, root, "dist/src/main.js");
+        assert_path(&got.path, root, "dist/server/src/main.js");
     }
 
     #[test]
