@@ -479,7 +479,6 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
             plan,
             &project_root,
             &dist_root,
-            &emitted_entries,
             worker_emitted,
             want_trailing,
         )?),

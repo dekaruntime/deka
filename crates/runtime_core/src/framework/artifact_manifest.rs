@@ -424,16 +424,22 @@ fn payload_role(rel: &str) -> PayloadRole {
     }
 }
 
-/// Build the `server.entries[]` table from the app/api scans plus the emitted
-/// entry module names. `serve_entry_module` etc. are the dist-relative paths
-/// the build emitted the compiled router entries to (`None` when not emitted).
-#[allow(clippy::too_many_arguments)]
+/// Build the `server.entries[]` table from the app/api scans. `file` fields
+/// on the scans are absolute; they are relativized against `project_root` so
+/// the manifest carries artifact paths (`server/app/page.js`), never host
+/// paths (§2: the descriptor must be host-independent).
+///
+/// The native loader's compiled dispatch shims (`serve-entry.js`,
+/// `api-entry.js`, `defer-entry.js`) are payload files like any other but are
+/// deliberately NOT declared here: the schema's `kind` enum (page | api |
+/// defer | not_found) and §4.7's entry contract (page/defer/not_found →
+/// default export) cannot describe a router shim, and §4.7 makes a declared
+/// export with no matching module export a verification failure. See the
+/// deka#762 discussion on the spec gap.
 pub fn server_entries(
+    project_root: &Path,
     app: &FrameworkManifest,
     api: &[FrameworkEntry],
-    serve_entry_module: Option<&str>,
-    api_entry_module: Option<&str>,
-    defer_entry_module: Option<&str>,
 ) -> Result<Vec<ServerEntry>, String> {
     let mut entries: Vec<ServerEntry> = Vec::new();
 
@@ -447,7 +453,7 @@ pub fn server_entries(
         entries.push(ServerEntry {
             id: format!("page:{}", page.route),
             kind: ServerEntryKind::Page,
-            module: source_to_server_module(&page.file)?,
+            module: source_to_server_module(&relativize(project_root, &page.file))?,
             export: "default".to_string(),
             methods: Vec::new(),
         });
@@ -456,7 +462,7 @@ pub fn server_entries(
         entries.push(ServerEntry {
             id: "not_found:/".to_string(),
             kind: ServerEntryKind::NotFound,
-            module: source_to_server_module(&not_found.file)?,
+            module: source_to_server_module(&relativize(project_root, &not_found.file))?,
             export: "default".to_string(),
             methods: Vec::new(),
         });
@@ -479,45 +485,23 @@ pub fn server_entries(
         entries.push(ServerEntry {
             id: format!("api:{}", api_entry.route),
             kind: ServerEntryKind::Api,
-            module: source_to_server_module(&api_entry.file)?,
+            module: source_to_server_module(&relativize(project_root, &api_entry.file))?,
             export,
             methods,
         });
     }
 
-    // The compiled router entries the native loader dispatches through. They
-    // are payload files like any other; declaring them here keeps the entry
-    // table the one place that names every executable module.
-    if let Some(module) = serve_entry_module {
-        entries.push(ServerEntry {
-            id: "router:pages".to_string(),
-            kind: ServerEntryKind::Page,
-            module: module.to_string(),
-            export: "App".to_string(),
-            methods: Vec::new(),
-        });
-    }
-    if let Some(module) = api_entry_module {
-        entries.push(ServerEntry {
-            id: "router:api".to_string(),
-            kind: ServerEntryKind::Api,
-            module: module.to_string(),
-            export: "App".to_string(),
-            methods: Vec::new(),
-        });
-    }
-    if let Some(module) = defer_entry_module {
-        entries.push(ServerEntry {
-            id: "router:defer".to_string(),
-            kind: ServerEntryKind::Defer,
-            module: module.to_string(),
-            export: "App".to_string(),
-            methods: Vec::new(),
-        });
-    }
-
     entries.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(entries)
+}
+
+/// `/abs/app/page.dsx` → `app/page.dsx` when under `project_root`; already
+/// relative paths pass through.
+fn relativize(project_root: &Path, file: &str) -> String {
+    let path = Path::new(file);
+    path.strip_prefix(project_root)
+        .map(|rel| rel.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| file.replace('\\', "/"))
 }
 
 /// Map a project source file (`app/posts/page.dsx`) to its compiled artifact

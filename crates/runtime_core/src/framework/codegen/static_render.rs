@@ -95,23 +95,22 @@ fn validate_app_router(project_root: &Path, manifest: &FrameworkManifest) -> Res
         return Err("app router requires app/layout.dsx (root layout)".to_string());
     }
     let index_path = project_root.join("index.html");
-    if !index_path.is_file() {
-        return Err("app router requires index.html at the project root".to_string());
-    }
-    if project_root.join("public/index.html").is_file() {
+    if index_path.is_file() && project_root.join("public/index.html").is_file() {
         return Err("public/index.html collides with the root index.html document".to_string());
     }
     Ok(())
 }
 
+/// The document the static render fills: the project's root `index.html`
+/// when present, otherwise the default harness (same posture as the serve
+/// entry — `dist/client/index.html` is a build output, never a source
+/// requirement).
 fn document_with_importmap(
     project_root: &Path,
     islands: &[ClientIsland],
     has_deferred: bool,
 ) -> Result<String, String> {
-    let index_path = project_root.join("index.html");
-    let index_html = std::fs::read_to_string(&index_path)
-        .map_err(|err| format!("failed to read {}: {err}", index_path.display()))?;
+    let index_html = super::serve::resolve_app_router_index_html(project_root)?;
     if (islands.is_empty() && !has_deferred) || index_html.contains("type=\"importmap\"") {
         return Ok(index_html);
     }

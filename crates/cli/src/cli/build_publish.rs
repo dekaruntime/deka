@@ -152,7 +152,6 @@ pub fn build_artifact_manifest(
     manifest: &BuildManifest,
     project_root: &Path,
     dist_root: &Path,
-    emitted: &crate::cli::build_server_graph::EmittedEntries,
     worker_emitted: bool,
     trailing_slash: bool,
 ) -> Result<runtime_core::framework::ArtifactManifestV2, String> {
@@ -197,13 +196,7 @@ pub fn build_artifact_manifest(
         })
         .collect();
 
-    let entries = server_entries(
-        &app,
-        &api,
-        emitted.serve.as_deref(),
-        emitted.api.as_deref(),
-        emitted.defer.as_deref(),
-    )?;
+    let entries = server_entries(project_root, &app, &api)?;
 
     let slots: Vec<ArtifactSlot> = manifest
         .slots
@@ -230,6 +223,7 @@ pub fn build_artifact_manifest(
                 .dsc
                 .clone()
                 .filter(|dsc| !dsc.is_empty())
+                .or_else(crate::cli::build_dsc::dsc_identity)
                 .unwrap_or_else(|| "unknown".to_string()),
             plan_version: manifest.compiler.plan_version,
         },
