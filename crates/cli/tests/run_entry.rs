@@ -107,7 +107,7 @@ fn run_prefers_dist_js_over_src_main_ds() {
     write(project.path(), "src/main.ds", "export const from = \"ds\"\n");
     write(
         project.path(),
-        "dist/src/main.js",
+        "dist/server/src/main.js",
         "console.log(\"from-dist\")\n",
     );
     let stub = write_dsc_stub(project.path());
@@ -115,7 +115,7 @@ fn run_prefers_dist_js_over_src_main_ds() {
     let (code, text) = run_in(project.path(), &["run"], Some(&stub));
     let args = read_dsc_args(project.path());
     assert!(
-        text.contains("from-dist") || args.contains("dist/src/main.js"),
+        text.contains("from-dist") || args.contains("dist/server/src/main.js"),
         "expected dist JS to run (or be the compile input); dsc args={args:?} output={text}"
     );
     assert!(
