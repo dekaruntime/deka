@@ -953,6 +953,9 @@ dependencies = [
  "runtime",
  "runtime_core",
  "rusqlite",
+ "seam_diff",
+ "seam_ir",
+ "seam_ts",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -6548,6 +6551,7 @@ dependencies = [
 name = "runtime_core"
 version = "0.46.0"
 dependencies = [
+ "seam_ir",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -6851,6 +6855,32 @@ name = "seahash"
 version = "4.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
+
+[[package]]
+name = "seam_diff"
+version = "0.1.0"
+dependencies = [
+ "seam_ir",
+]
+
+[[package]]
+name = "seam_ir"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "seam_ts"
+version = "0.1.0"
+dependencies = [
+ "seam_ir",
+ "serde_json",
+ "swc_common 18.0.1",
+ "swc_ecma_ast 19.0.0",
+ "swc_ecma_parser 31.0.0",
+]
 
 [[package]]
 name = "sec1"

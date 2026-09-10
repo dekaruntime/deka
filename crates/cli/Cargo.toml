@@ -21,6 +21,9 @@ lsp = ["dep:dekascript_lsp"]
 [dependencies]
 runtime = { path = "../runtime", optional = true }
 runtime_core = { path = "../runtime_core" }
+seam_ir = { path = "../seam_ir" }
+seam_diff = { path = "../seam_diff" }
+seam_ts = { path = "../seam_ts" }
 compile = { path = "../compile", optional = true }
 core = { path ="../core" }
 stdio = { path = "../stdio" }

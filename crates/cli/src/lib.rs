@@ -25,6 +25,8 @@ pub fn build_registry() -> Registry {
         cli::deploy::register(&mut registry);
         cli::fmt::register(&mut registry);
         cli::compile::register(&mut registry);
+        cli::contract_check::register(&mut registry);
+        cli::contract_extract::register(&mut registry);
         cli::db::register(&mut registry);
         cli::install::register(&mut registry);
         cli::link::register(&mut registry);

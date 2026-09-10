@@ -22,6 +22,10 @@ pub mod build_values_dist;
 pub mod check;
 #[cfg(feature = "native")]
 pub mod compile;
+#[cfg(feature = "native")]
+pub mod contract_check;
+#[cfg(feature = "native")]
+pub mod contract_extract;
 
 #[cfg(feature = "native")]
 pub mod db;

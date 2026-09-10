@@ -38,7 +38,7 @@ jobs:
           lockfile=false
           utility_css=false
 
-          if echo "$files" | grep -qE '^(crates/.+\.rs|crates/.+\.js|crates/.+\.ts|crates/.+/build\.rs|assets/.+|scripts/.+|tests/.+|\.github/workflows/(ci|release)\.yml)$'; then
+          if echo "$files" | grep -qE '^(crates/.+\.rs|crates/.+\.js|crates/.+\.ts|crates/.+/build\.rs|assets/.+|contracts/.+|scripts/.+|tests/.+|\.github/workflows/(ci|release)\.yml)$'; then
             rust=true
           fi
 
@@ -253,6 +253,16 @@ jobs:
       # target/release/cli (deka#521).
       - name: Build CLI for runtime execution tests
         run: cargo build --release -p cli
+
+      # The seam gate (deka#789, tana#454). CLAUDE.md requires every boundary
+      # that crosses a service, process or VM to be modelled as a seam contract
+      # and gate-blocks PRs that skip it — but the tooling never reached this
+      # repo when the repos moved, so for months the rule depended entirely on a
+      # reviewer noticing. That is the same unwired state that produced the five
+      # stacked linkhash<->gild<->runner boundary bugs. This step is the wire:
+      # any consumer that drifts from its producer exits non-zero here.
+      - name: Seam contract gate
+        run: ./target/release/cli contract-check --manifest contracts/seams.json
 
       # rfd#38: language compile is dsc. Fetch the published CLI + browser
       # wasm; do not rebuild deka_compiler_wasm from this tree.

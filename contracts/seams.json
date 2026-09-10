@@ -1,0 +1,9 @@
+{
+  "_doc": "Seam manifest (tana #454, recovered in deka #789). The declared cross-boundary contracts; `deka contract-check --manifest contracts/seams.json` checks every one and exits non-zero on drift. Producer = source of truth (rust:NAME or ts:PATH), consumer = the reading side. Paths are relative to the repo root.",
+  "_retired": "The pre-migration manifest declared 15 seams whose consumers were PHPX fixtures (storefront, data_backend x5, harar_auth x4, platform.env_policy, linkhash.* x4). The PHPX extractor lived in `modules_php` on top of the `php_rs` typechecker and both crates were deleted by the DekaScript cutover; the `harar_client` and `linkhash` producers are likewise no longer in this repo. Those entries are retired, not stubbed. What is kept is every seam whose producer still exists here, re-expressed with a TypeScript consumer.",
+  "seams": [
+    { "name": "storefront",          "producer": "rust:storefront",          "consumer": "ts:contracts/fixtures/storefront_consumer.ts" },
+    { "name": "data_backend",        "producer": "rust:data_backend",        "consumer": "ts:contracts/fixtures/data_backend_consumer.ts" },
+    { "name": "platform.env_policy", "producer": "rust:platform_env_policy", "consumer": "ts:contracts/fixtures/platform_env_policy_consumer.ts" }
+  ]
+}
