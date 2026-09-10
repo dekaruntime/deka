@@ -270,9 +270,7 @@ Cache files are JSON and typically 1-5MB per entry depending on bundle size.
 | Build after touching entry file | ~3s | Cache invalidated |
 | Build after changing imported file | ~10ms | **Warning:** Won't detect change (Phase 1 limitation) |
 | Bun (uncached) | ~269ms | For comparison |
-| Parallel bundler (mid-size) | ~188ms | Beats Bun, but has overhead at scale |
 
 ## See Also
 
 - [OPTIMIZE.md](./OPTIMIZE.md) - Bundler optimization roadmap and benchmarks
-- [PARALLEL_BUNDLER_ROADMAP.md](./PARALLEL_BUNDLER_ROADMAP.md) - Parallel bundler implementation notes

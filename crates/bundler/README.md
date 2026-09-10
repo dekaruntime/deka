@@ -1,6 +1,6 @@
 # Deka Bundler
 
-A high-performance JavaScript/TypeScript bundler built on SWC with parallel processing and module-level caching.
+A JavaScript/TypeScript bundler built on SWC with module-level caching.
 
 ## What is This?
 
@@ -15,7 +15,6 @@ A high-performance JavaScript/TypeScript bundler built on SWC with parallel proc
 - Minify code
 
 ### What Deka Does
-- Parallel module discovery (10 concurrent workers)
 - Dependency resolution and graph building
 - Module-level caching (328x speedup on warm builds)
 - External module support (3x faster for server builds)
@@ -65,14 +64,12 @@ deka build ./src/index.jsx --minify
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed architecture documentation including:
 - SWC integration details
-- Parallel processing design
 - Caching strategy
 - Module resolution algorithm
 - Performance optimization opportunities
 
 ## Current Features
 
-- ✅ **Parallel bundling** - 10 concurrent workers with tokio
 - ✅ **Module caching** - Persistent disk cache + in-memory cache
 - ✅ **External modules** - Optional node_modules bundling
 - ✅ **Fast-path optimization** - Skip SWC for plain JS files
@@ -120,7 +117,6 @@ To switch to oxc (like Rolldown) would require:
 
 ```bash
 DEKA_BUNDLER_CACHE=0          # Disable cache (default: enabled)
-DEKA_PARALLEL_BUNDLER=0       # Use standard bundler (default: parallel)
 DEKA_EXTERNAL_NODE_MODULES=1  # Mark node_modules external (legacy, use --target)
 ```
 
@@ -132,7 +128,7 @@ When contributing to the bundler:
 2. **Test on large codebases** - 10K+ modules reveal issues
 3. **Profile before optimizing** - use `cargo flamegraph`
 4. **Consider cache invalidation** - ensure changes invalidate correctly
-5. **Think about parallelism** - avoid shared mutable state
+5. **Keep error handling explicit** - malformed modules must fail the bundle
 
 ## Benchmarks
 
