@@ -23,7 +23,7 @@ await __deka_main();
         let result = bundle_virtual_entry(
             &entry,
             BundleOptions {
-                project_root: tmp.clone(),
+                project_root: tmp.path_buf(),
                 minify,
                 iife: true,
                 client: false,
@@ -73,5 +73,4 @@ await __deka_main();
             result
         );
     }
-    let _ = std::fs::remove_dir_all(&tmp);
 }
