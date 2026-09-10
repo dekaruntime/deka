@@ -115,11 +115,19 @@ pub fn materialize_loose(source: &Path) -> Result<MaterializedLoose, String> {
     materialize_with(source, &cache_root, &compiler, compile_with_dsc)
 }
 
+fn require_dsc_for_loose_run() -> Result<PathBuf, String> {
+    build_dsc::require_dsc().map_err(|_| {
+        "dsc is required to run a .ds/.dsx file outside a deka project. \
+         Install dsc (https://deka.gg/install), or run `deka init` and use a project"
+            .to_string()
+    })
+}
+
 /// Identity of the compiler that will produce the artifact: the resolved dsc
 /// version line plus this CLI's version. Recorded in every cache entry; an
 /// entry that disagrees is stale by definition.
 fn current_compiler_identity() -> Result<String, String> {
-    let dsc = build_dsc::require_dsc()?;
+    let dsc = require_dsc_for_loose_run()?;
     let identity = build_dsc::dsc_identity()
         .unwrap_or_else(|| format!("{} (version unknown)", dsc.display()));
     Ok(format!("{identity} / deka {}", env!("CARGO_PKG_VERSION")))
@@ -130,7 +138,7 @@ fn current_compiler_identity() -> Result<String, String> {
 /// to `--out`, so a read-only source directory is fine. Returns the entry
 /// artifact within the output tree.
 fn compile_with_dsc(source: &Path, out_dir: &Path) -> Result<PathBuf, String> {
-    let dsc = build_dsc::require_dsc()?;
+    let dsc = require_dsc_for_loose_run()?;
     let source_parent = source
         .parent()
         .ok_or_else(|| format!("loose source has no parent: {}", source.display()))?;
