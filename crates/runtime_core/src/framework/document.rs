@@ -14,6 +14,25 @@ pub const CLIENT_IMPORTMAP_PLACEHOLDER_TAG: &str =
     r#"<script type="importmap" src="/assets/importmap.json"></script>"#;
 pub const FRAGMENT_ACCEPT: &str = "text/x-deka-fragment";
 pub const FRAGMENT_ACCEPT_LEGACY: &str = "text/x-phpx-fragment";
+
+/// The document `deka build` emits when a source project has no root
+/// `index.html`: `dist/client/index.html` is a build output (RFD 54
+/// amendment 1), and the generated server entry splits this harness into its
+/// head/mid/tail parts. Carries the three hole markers so head, app HTML,
+/// and scripts each land in their slot.
+pub const DEFAULT_INDEX_HARNESS: &str = r#"<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--deka-head-->
+  </head>
+  <body>
+    <div id="app"><!--deka-app--></div>
+    <!--deka-scripts-->
+  </body>
+</html>
+"#;
 /// Fill the three document holes. Missing holes are left unchanged.
 pub fn fill_document(index_html: &str, head: &str, app: &str, scripts: &str) -> String {
     // Replace holes in template order, each once. App HTML is escaped by

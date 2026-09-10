@@ -33,9 +33,13 @@ pub struct FrameworkManifest {
 /// generated.
 ///
 /// This intentionally describes source inputs only. A built app-router
-/// project is detected separately by [`is_built_app_router_project`].
+/// project is detected separately by [`is_built_app_router_project`]. Per RFD
+/// 54 amendment 1 (manifest v2 spec §5.1) a root `index.html` is NOT part of
+/// this predicate: the harness is a build output, so a project without one
+/// still develops and builds — `deka build` emits
+/// [`DEFAULT_INDEX_HARNESS`](super::DEFAULT_INDEX_HARNESS) in that case.
 pub fn is_source_app_router_project(project_root: &Path) -> bool {
-    project_root.join("index.html").is_file()
+    project_root.join("deka.json").is_file()
         && (project_root.join("app/page.dsx").is_file()
             || project_root.join("app/page.ds").is_file())
 }
@@ -43,13 +47,13 @@ pub fn is_source_app_router_project(project_root: &Path) -> bool {
 /// Whether `project_root` contains the published output of an app-router
 /// build.
 ///
-/// The current build contract emits the document to `dist/client/index.html`
-/// and compiles the root route to `dist/app/page.js`. This is deliberately not
-/// a source-tree check: later serving code can choose this predicate without
-/// accidentally regenerating entries from source.
+/// The deployment descriptor is the evidence: a project with
+/// `dist/build-manifest.json` is a built artifact, whatever source markers
+/// may or may not exist alongside it. (The predicate's body becomes "the
+/// manifest verifies" with the artifact-only loader — deka#763; file-level
+/// probing must never regress to source markers.)
 pub fn is_built_app_router_project(project_root: &Path) -> bool {
-    project_root.join("dist/client/index.html").is_file()
-        && project_root.join("dist/app/page.js").is_file()
+    project_root.join("dist/build-manifest.json").is_file()
 }
 pub fn scan_app_dir(app_dir: &Path) -> FrameworkManifest {
     let mut manifest = FrameworkManifest {
@@ -236,10 +240,11 @@ mod tests {
     fn app_router_project_detection_separates_source_from_built_output() {
         let tmp = tmp_dir("project_detection");
 
-        // The source predicate keeps its original `index.html` + root page
-        // contract, including support for both public source extensions.
+        // The source predicate is `deka.json` + a root page, both public
+        // source extensions; a root index.html is NOT required (RFD 54
+        // amendment 1 — the harness is a build output).
+        std::fs::write(tmp.join("deka.json"), "{}").unwrap();
         std::fs::create_dir_all(tmp.join("app")).unwrap();
-        std::fs::write(tmp.join("index.html"), "<!doctype html>").unwrap();
         std::fs::write(tmp.join("app/page.dsx"), "export fn Page() {}").unwrap();
         assert!(is_source_app_router_project(&tmp));
         assert!(!is_built_app_router_project(&tmp));
@@ -248,15 +253,12 @@ mod tests {
         std::fs::write(tmp.join("app/page.ds"), "export fn Page() {}").unwrap();
         assert!(is_source_app_router_project(&tmp));
 
-        // A built tree has compiled routes and a client document, even when
-        // the source tree is absent.
-        std::fs::create_dir_all(tmp.join("dist/client")).unwrap();
-        std::fs::create_dir_all(tmp.join("dist/app")).unwrap();
-        std::fs::write(tmp.join("dist/client/index.html"), "<!doctype html>").unwrap();
-        std::fs::write(tmp.join("dist/app/page.js"), "export function Page() {}").unwrap();
+        // A built tree is evidence by manifest, even when the source tree
+        // and harness are absent.
+        std::fs::create_dir_all(tmp.join("dist")).unwrap();
+        std::fs::write(tmp.join("dist/build-manifest.json"), "{}").unwrap();
         assert!(is_built_app_router_project(&tmp));
 
-        std::fs::remove_file(tmp.join("index.html")).unwrap();
         std::fs::remove_file(tmp.join("app/page.ds")).unwrap();
         assert!(!is_source_app_router_project(&tmp));
         assert!(is_built_app_router_project(&tmp));

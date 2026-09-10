@@ -27,6 +27,50 @@ use super::{
 /// Write a generated App() entry that routes `request.pathname` through the
 /// `app/` matcher (nested layouts, not-found, fragment Accept).
 pub fn write_app_router_entry(project_root: &Path) -> Result<PathBuf, String> {
+    let index_html = resolve_app_router_index_html(project_root)?;
+    let deferred = scan_server_defer(&project_root.join("app"));
+    if !deferred.is_empty() {
+        write_defer_router_entry(project_root)?;
+    }
+    let cache_dir = compiler_cache_dir(project_root);
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|err| format!("failed to create {}: {err}", cache_dir.display()))?;
+    let entry = cache_dir.join("serve-entry.dsx");
+    let source = generate_app_router_entry_source(&entry, project_root, &index_html)?;
+    std::fs::write(&entry, source.as_bytes())
+        .map_err(|err| format!("failed to write {}: {err}", entry.display()))?;
+    if !scan_api_dir(&project_root.join("api")).is_empty() {
+        write_api_router_entry(project_root)?;
+    }
+    Ok(entry)
+}
+
+/// The document the app-router entries render into: the project's root
+/// `index.html` when present, otherwise the default harness (RFD 54 amendment
+/// 1 — `dist/client/index.html` is a build output, never a source
+/// requirement).
+pub fn resolve_app_router_index_html(project_root: &Path) -> Result<String, String> {
+    let index_path = project_root.join("index.html");
+    if !index_path.is_file() {
+        return Ok(super::super::document::DEFAULT_INDEX_HARNESS.to_string());
+    }
+    if project_root.join("public/index.html").is_file() {
+        return Err("public/index.html collides with the root index.html document".to_string());
+    }
+    std::fs::read_to_string(&index_path)
+        .map_err(|err| format!("failed to read {}: {err}", index_path.display()))
+}
+
+/// Build the `serve-entry.dsx` source for `entry` without writing anything.
+/// Shared by serve-time generation (into the compiler cache) and `deka
+/// build`'s server-entry emission (into the dist staging tree, where the same
+/// relative depth makes the generated imports resolve against project
+/// sources).
+pub fn generate_app_router_entry_source(
+    entry: &Path,
+    project_root: &Path,
+    index_html: &str,
+) -> Result<String, String> {
     let app_dir = project_root.join("app");
     let manifest = scan_app_dir(&app_dir);
     if !manifest
@@ -43,15 +87,6 @@ pub fn write_app_router_entry(project_root: &Path) -> Result<PathBuf, String> {
     {
         return Err("app router requires app/layout.dsx (root layout)".to_string());
     }
-    let index_path = project_root.join("index.html");
-    if !index_path.is_file() {
-        return Err("app router requires index.html at the project root".to_string());
-    }
-    if project_root.join("public/index.html").is_file() {
-        return Err("public/index.html collides with the root index.html document".to_string());
-    }
-    let index_html = std::fs::read_to_string(&index_path)
-        .map_err(|err| format!("failed to read {}: {err}", index_path.display()))?;
     let islands = scan_client_islands(&app_dir);
     enforce_defer_lints(&app_dir)?;
     let deferred = scan_server_defer(&app_dir);
@@ -59,9 +94,9 @@ pub fn write_app_router_entry(project_root: &Path) -> Result<PathBuf, String> {
     // specifiers through an inline import map. The map does not exist yet at
     // generation time — the hashes are assigned when the client assets are
     // written, after this entry is generated — so bake the placeholder tag and
-    // let `runtime::islands::rewrite_serve_entry_asset_urls` swap in the
-    // inlined JSON once the assets exist. `deka build` inlines the same map
-    // into dist HTML only when the prerendered document lacks one.
+    // let `runtime::islands::rewrite_serve_entry_asset_urls` (serve) / the
+    // dist-HTML rewrite and server-entry rewrite (build) swap in the inlined
+    // JSON once the assets exist.
     let index_html = if (!islands.is_empty() || !deferred.is_empty())
         && !index_html.contains("type=\"importmap\"")
     {
@@ -72,19 +107,12 @@ pub fn write_app_router_entry(project_root: &Path) -> Result<PathBuf, String> {
             format!("{tag}\n{index_html}")
         }
     } else {
-        index_html
+        index_html.to_string()
     };
     let mut scripts = island_script_tags(&islands);
     scripts.push_str(&defer_script_tag(!deferred.is_empty()));
-    if !deferred.is_empty() {
-        write_defer_router_entry(project_root)?;
-    }
     let styles = collect_route_styles(&manifest);
     let css_plan = css_plan_from_styles(&styles);
-    let cache_dir = compiler_cache_dir(project_root);
-    std::fs::create_dir_all(&cache_dir)
-        .map_err(|err| format!("failed to create {}: {err}", cache_dir.display()))?;
-    let entry = cache_dir.join("serve-entry.dsx");
     let defer_secret_js = if deferred.is_empty() {
         String::new()
     } else {
@@ -92,20 +120,14 @@ pub fn write_app_router_entry(project_root: &Path) -> Result<PathBuf, String> {
         let cookie = json_str(&session_cookie_name(project_root))?;
         format!("    unsafe {{ deka.ui.bindDefer(request, {secret}, {cookie}) }}\n")
     };
-    let source = generate_serve_entry(
-        &entry,
+    generate_serve_entry(
+        entry,
         &manifest,
         &index_html,
         &scripts,
         &css_plan,
         &defer_secret_js,
-    )?;
-    std::fs::write(&entry, source.as_bytes())
-        .map_err(|err| format!("failed to write {}: {err}", entry.display()))?;
-    if !scan_api_dir(&project_root.join("api")).is_empty() {
-        write_api_router_entry(project_root)?;
-    }
-    Ok(entry)
+    )
 }
 fn generate_serve_entry(
     entry: &Path,

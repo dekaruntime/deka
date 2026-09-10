@@ -18,9 +18,11 @@ mod static_render;
 #[cfg(test)]
 mod tests;
 
-pub use api::{write_api_router_entry, write_worker_router_entry};
-pub use defer::write_defer_router_entry;
-pub use serve::write_app_router_entry;
+pub use api::{generate_api_entry_source, write_api_router_entry, write_worker_router_entry};
+pub use defer::{generate_defer_entry_source, write_defer_router_entry};
+pub use serve::{
+    generate_app_router_entry_source, resolve_app_router_index_html, write_app_router_entry,
+};
 pub use static_render::write_static_render_entry;
 /// Cookie whose value is AES-GCM AAD for deferred islands.
 /// `serve.sessionCookie` in deka.json; default `deka_sid`. Empty string
