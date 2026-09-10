@@ -432,6 +432,15 @@ fn scan_block(
         if clean_shape {
             if deka_catalog::is_catalog_kind(kind) {
                 claimed.push((kw_start, block_end));
+                if contains_block_keyword(src, body_trimmed.0, body_trimmed.1) {
+                    result.diagnostics.push((
+                        body_trimmed.0,
+                        "nested `safe` / `unsafe` blocks are not supported in a catalog call; \
+                         bind the inner result to a `const` first (RFD 21)"
+                            .to_string(),
+                    ));
+                    return block_end;
+                }
                 validate_call(
                     source,
                     body_trimmed.0,
@@ -502,6 +511,15 @@ fn finish_safe_block(
         return block_end;
     }
     claimed.push((kw_start, block_end));
+    if contains_block_keyword(src, head_start, call_end) {
+        result.diagnostics.push((
+            head_start,
+            "nested `safe` / `unsafe` blocks are not supported in a catalog call; \
+             bind the inner result to a `const` first (RFD 21)"
+                .to_string(),
+        ));
+        return block_end;
+    }
     let valid = validate_call(source, body.0, head.0, head.1, head.2, stdlib, "safe", result);
     if valid {
         // Lower `safe { deka.k.m(args) }` to `deka.k.m(args)`: dsc types the
@@ -634,6 +652,35 @@ fn trim_span(source: &str, start: usize, end: usize) -> (usize, usize) {
         e -= 1;
     }
     (s, e)
+}
+
+/// Whether the span contains a `safe` / `unsafe` keyword (word-delimited,
+/// outside strings/comments/templates). Used to reject nested blocks, which
+/// the single-pass lowering cannot reach.
+fn contains_block_keyword(src: &[u8], start: usize, end: usize) -> bool {
+    let cur = Cursor { src, pos: 0 };
+    let mut pos = start;
+    while pos < end && pos < src.len() {
+        match src[pos] {
+            b'"' | b'\'' => pos = cur.skip_string(pos),
+            b'`' => pos = cur.skip_template(pos),
+            b'/' if cur.at(pos + 1) == Some(b'/') => pos = cur.skip_insignificant(pos),
+            b if is_ident_byte(b) && (pos == 0 || !is_ident_byte(src[pos - 1])) => {
+                let word_start = pos;
+                let mut word_end = pos;
+                while word_end < end && src.get(word_end).is_some_and(|&c| is_ident_byte(c)) {
+                    word_end += 1;
+                }
+                let word = &src[word_start..word_end];
+                if word == b"safe" || word == b"unsafe" {
+                    return true;
+                }
+                pos = word_end;
+            }
+            _ => pos += 1,
+        }
+    }
+    false
 }
 
 // ---- Compile-root preparation (scan + optional staging) ---------------------
@@ -1018,6 +1065,15 @@ mod tests {
     fn unsafe_raw_platform_js_is_untouched() {
         let result = scan("const r = unsafe { JSON.parse(s) }\nconst v = unsafe { console.log(1) }\n");
         assert!(result.diagnostics.is_empty(), "{:?}", messages(&result));
+        assert!(result.rewritten.is_none());
+    }
+
+    #[test]
+    fn nested_safe_blocks_are_rejected_with_guidance() {
+        let result = scan("const h = safe { deka.bytes.to_hex(safe { deka.bytes.slice(b, 1) }) }\n");
+        let msgs = messages(&result);
+        assert_eq!(msgs.len(), 1, "{msgs:?}");
+        assert!(msgs[0].contains("nested"), "{msgs:?}");
         assert!(result.rewritten.is_none());
     }
 
