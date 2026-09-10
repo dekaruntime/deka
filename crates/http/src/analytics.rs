@@ -33,7 +33,6 @@
 //! JSON APIs, redirects, and error responses are skipped entirely.
 
 use std::collections::HashMap;
-use std::env;
 use std::sync::OnceLock;
 use std::sync::mpsc;
 use std::thread;
@@ -72,9 +71,11 @@ static SENDER: OnceLock<mpsc::SyncSender<PageviewEvent>> = OnceLock::new();
 fn ensure_worker() -> &'static mpsc::SyncSender<PageviewEvent> {
     SENDER.get_or_init(|| {
         let (tx, rx) = mpsc::sync_channel::<PageviewEvent>(CHANNEL_CAPACITY);
+        let redis_url = std::env::var("DEKA_REDIS_URL")
+            .unwrap_or_else(|_| "redis://localhost:6379".to_string());
         thread::Builder::new()
             .name("deka-pageviews".to_string())
-            .spawn(move || run_worker(rx))
+            .spawn(move || run_worker(rx, redis_url))
             .expect("spawn pageview worker thread");
         tx
     })
@@ -136,6 +137,16 @@ pub fn track_pageview(
     status: u16,
     response_headers: &HashMap<String, String>,
 ) -> bool {
+    let sender = ensure_worker();
+    track_pageview_with_sender(sender, request_headers, status, response_headers)
+}
+
+fn track_pageview_with_sender(
+    sender: &mpsc::SyncSender<PageviewEvent>,
+    request_headers: &[(String, String)],
+    status: u16,
+    response_headers: &HashMap<String, String>,
+) -> bool {
     if !should_track(status, response_headers) {
         return false;
     }
@@ -143,7 +154,10 @@ pub fn track_pageview(
         headers: request_headers.to_vec(),
         day: today_utc(),
     };
-    let sender = ensure_worker();
+    enqueue_pageview(sender, event)
+}
+
+fn enqueue_pageview(sender: &mpsc::SyncSender<PageviewEvent>, event: PageviewEvent) -> bool {
     match sender.try_send(event) {
         Ok(()) => true,
         Err(mpsc::TrySendError::Full(_)) => {
@@ -158,9 +172,7 @@ pub fn track_pageview(
 }
 
 /// The background thread body: drains the channel and writes to Redis.
-fn run_worker(rx: mpsc::Receiver<PageviewEvent>) {
-    let redis_url =
-        env::var("DEKA_REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
+fn run_worker(rx: mpsc::Receiver<PageviewEvent>, redis_url: String) {
     tracing::info!("pageview tracker online, redis={}", redis_url);
 
     let mut conn: Option<redis::Connection> = None;
@@ -169,13 +181,15 @@ fn run_worker(rx: mpsc::Receiver<PageviewEvent>) {
         // Resolve subdomain → shop_id. The pool's tenant resolver keeps a
         // thread-local Redis connection cache — on this dedicated worker
         // thread the first call establishes it and subsequent calls reuse.
-        let shop_id = match pool::tenant::resolve_tenant_from_host(&event.headers) {
-            Some(id) if !id.is_empty() => id,
-            _ => {
-                // No tenant — not a storefront request. Drop silently.
-                continue;
-            }
-        };
+        let shop_id =
+            match pool::tenant::resolve_tenant_from_host_with_redis_url(&event.headers, &redis_url)
+            {
+                Some(id) if !id.is_empty() => id,
+                _ => {
+                    // No tenant — not a storefront request. Drop silently.
+                    continue;
+                }
+            };
 
         if conn.is_none() {
             conn = connect(&redis_url);
@@ -244,31 +258,6 @@ fn apply_event(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Restores an env var on drop. The process env is globally shared
-    /// even though tests run on separate threads, so a test that sets a
-    /// var must put the previous value back (deka#537 hygiene).
-    struct EnvGuard {
-        key: &'static str,
-        previous: Option<String>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: String) -> Self {
-            let previous = std::env::var(key).ok();
-            unsafe { std::env::set_var(key, &value) };
-            Self { key, previous }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match &self.previous {
-                Some(value) => unsafe { std::env::set_var(self.key, value) },
-                None => unsafe { std::env::remove_var(self.key) },
-            }
-        }
-    }
 
     fn header_map(pairs: &[(&str, &str)]) -> HashMap<String, String> {
         pairs
@@ -405,10 +394,6 @@ mod tests {
             Err(_) => return,
         };
 
-        // Point both the pageview worker *and* the tenant resolver at the
-        // test Redis; the guard restores the previous value when the test
-        // ends (the var leaked past this test before, deka#537).
-        let _env = EnvGuard::set("DEKA_REDIS_URL", url.clone());
         let pid = std::process::id();
         let subdomain = format!("pvtest{}", pid);
         let shop = format!("shop_pvtest_{}", pid);
@@ -428,15 +413,24 @@ mod tests {
             .query(&mut probe)
             .unwrap();
 
-        let response_headers = header_map(&[("Content-Type", "text/html; charset=utf-8")]);
         let request_headers: Vec<(String, String)> =
             vec![("Host".to_string(), format!("{}.tana.gg", subdomain))];
-        assert!(track_pageview(&request_headers, 200, &response_headers));
-        assert!(track_pageview(&request_headers, 200, &response_headers));
-        assert!(track_pageview(&request_headers, 200, &response_headers));
-
-        // Give the worker a moment to drain the channel.
-        std::thread::sleep(Duration::from_millis(300));
+        let (sender, receiver) = mpsc::sync_channel(CHANNEL_CAPACITY);
+        let worker = std::thread::spawn({
+            let url = url.clone();
+            move || run_worker(receiver, url)
+        });
+        let response_headers = header_map(&[("Content-Type", "text/html; charset=utf-8")]);
+        for _ in 0..3 {
+            assert!(track_pageview_with_sender(
+                &sender,
+                &request_headers,
+                200,
+                &response_headers,
+            ));
+        }
+        drop(sender);
+        worker.join().expect("pageview worker should finish");
 
         let total_count: i64 = redis::cmd("GET").arg(&total).query(&mut probe).unwrap();
         let daily_count: i64 = redis::cmd("GET").arg(&daily).query(&mut probe).unwrap();

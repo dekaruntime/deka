@@ -121,11 +121,17 @@ pub fn is_shop_id_subdomain(subdomain: &str) -> bool {
 pub fn resolve_tenant_record(subdomain: &str) -> Option<SubdomainRecord> {
     let redis_url =
         std::env::var("DEKA_REDIS_URL").unwrap_or_else(|_| "redis://localhost:6380".to_string());
+    resolve_tenant_record_with_redis_url(subdomain, &redis_url)
+}
 
+fn resolve_tenant_record_with_redis_url(
+    subdomain: &str,
+    redis_url: &str,
+) -> Option<SubdomainRecord> {
     let raw: Option<String> = TENANT_REDIS.with(|cell: &RefCell<Option<Connection>>| {
         let mut conn = cell.borrow_mut();
         if conn.is_none() {
-            if let Ok(client) = Client::open(redis_url.as_str()) {
+            if let Ok(client) = Client::open(redis_url) {
                 // Use a short timeout to avoid blocking the worker thread
                 if let Ok(c) =
                     client.get_connection_with_timeout(std::time::Duration::from_millis(500))
@@ -185,6 +191,18 @@ pub fn resolve_tenant_from_host(headers: &[(String, String)]) -> Option<String> 
     resolve_tenant_info_from_host(headers).map(|info| info.shop_id)
 }
 
+/// Resolve a tenant from the Host header using an explicit Redis URL.
+///
+/// This variant is useful for callers that already own their configuration,
+/// such as isolated workers and tests, and therefore must not read process
+/// environment state.
+pub fn resolve_tenant_from_host_with_redis_url(
+    headers: &[(String, String)],
+    redis_url: &str,
+) -> Option<String> {
+    resolve_tenant_info_from_host_strict_with_redis_url(headers, redis_url).map(|info| info.shop_id)
+}
+
 /// Like `resolve_tenant_from_host` but also returns preview ref info.
 /// Falls back to `DEKA_SHOP_ID` env var for local single-tenant dev/testing.
 pub fn resolve_tenant_info_from_host(headers: &[(String, String)]) -> Option<TenantInfo> {
@@ -204,6 +222,16 @@ pub fn resolve_tenant_info_from_host(headers: &[(String, String)]) -> Option<Ten
 /// not fall back to process env. Use it in platform multi-tenant request paths
 /// before injecting `SHOP_ID`, `$_ENV`, or vault-backed secrets.
 pub fn resolve_tenant_info_from_host_strict(headers: &[(String, String)]) -> Option<TenantInfo> {
+    let redis_url =
+        std::env::var("DEKA_REDIS_URL").unwrap_or_else(|_| "redis://localhost:6380".to_string());
+    resolve_tenant_info_from_host_strict_with_redis_url(headers, &redis_url)
+}
+
+/// Resolve tenant info from the Host header using an explicit Redis URL.
+pub fn resolve_tenant_info_from_host_strict_with_redis_url(
+    headers: &[(String, String)],
+    redis_url: &str,
+) -> Option<TenantInfo> {
     let host = headers
         .iter()
         .find(|(k, _)| k.eq_ignore_ascii_case("host"))
@@ -219,7 +247,7 @@ pub fn resolve_tenant_info_from_host_strict(headers: &[(String, String)]) -> Opt
             });
         }
 
-        if let Some(rec) = resolve_tenant_record(&shop_subdomain) {
+        if let Some(rec) = resolve_tenant_record_with_redis_url(&shop_subdomain, redis_url) {
             return Some(TenantInfo {
                 shop_id: rec.shop_id,
                 preview_ref: Some(hash),
@@ -236,7 +264,7 @@ pub fn resolve_tenant_info_from_host_strict(headers: &[(String, String)]) -> Opt
             });
         }
 
-        if let Some(rec) = resolve_tenant_record(&subdomain) {
+        if let Some(rec) = resolve_tenant_record_with_redis_url(&subdomain, redis_url) {
             return Some(TenantInfo {
                 shop_id: rec.shop_id,
                 preview_ref: None,
