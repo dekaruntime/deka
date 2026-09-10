@@ -113,11 +113,11 @@ fn denied_fs_read_in_build_fails_with_source_linked_diagnostic() {
         "deka build must fail when the build body reads a file the policy denies: {combined}"
     );
     assert!(
-        combined.contains("SECURITY_CAPABILITY_DENIED"),
-        "failure must carry the permission diagnostic: {combined}"
+        combined.contains(runtime_core::host_bridge::PERMISSION_DENIED_MARKER),
+        "failure must carry the machine-readable permission diagnostic (RFD 27): {combined}"
     );
     assert!(
-        combined.contains("capability=read"),
+        combined.contains(r#""capability":"read""#),
         "diagnostic must name the read capability: {combined}"
     );
     assert!(
@@ -196,8 +196,8 @@ fn network_and_db_inputs_record_no_filesystem_observations() {
         "deka build must fail when the policy denies the build body's read: {combined}"
     );
     assert!(
-        combined.contains("SECURITY_CAPABILITY_DENIED"),
-        "failure must carry the permission diagnostic: {combined}"
+        combined.contains(runtime_core::host_bridge::PERMISSION_DENIED_MARKER),
+        "failure must carry the machine-readable permission diagnostic (RFD 27): {combined}"
     );
     assert!(
         !manifest_path(project.path()).exists(),
