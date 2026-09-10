@@ -81,6 +81,13 @@ async fn serve_async(context: &Context) -> Result<(), String> {
     // source-posture asset generation, no cache rewrites, and static files
     // come from the artifact's client root.
     let artifact_root = built_artifact_root(&resolved.path);
+    // `resolve_handler_path` has already completed the same verification
+    // before the listener is constructed. Keep the parsed descriptor with the
+    // dispatcher so every lazy client read can authenticate its bytes too.
+    let artifact_manifest = artifact_root
+        .as_deref()
+        .map(runtime_core::framework::ArtifactManifestV2::load_verified)
+        .transpose()?;
     let app_router_root = if artifact_root.is_some() {
         None
     } else {
@@ -200,6 +207,7 @@ async fn serve_async(context: &Context) -> Result<(), String> {
                     .map(|root| root.join("public"))
                     .filter(|path| path.is_dir())
             }),
+        artifact_manifest,
         handler_key,
         dev_mode,
         perf_mode,

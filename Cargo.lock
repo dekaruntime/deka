@@ -1586,6 +1586,7 @@ dependencies = [
  "neo4rs",
  "pool",
  "redis",
+ "runtime_core",
  "serde_json",
  "socket2 0.6.5",
  "tokio",

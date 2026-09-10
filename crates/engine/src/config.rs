@@ -139,6 +139,15 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
     // Check if it's a directory
     let is_dir = abs_path.is_dir();
 
+    // Resolve an authored artifact before reading source configuration. This
+    // is the actual precedence boundary: `deka serve project/` with dist/
+    // must not even consult project-root source files on the artifact path.
+    if is_dir {
+        if let Some(built) = built_artifact_handler(&abs_path, &ServeConfig::default())? {
+            return Ok(built);
+        }
+    }
+
     let (handler_dir, serve_config) = if is_dir {
         let config = ServeConfig::load(&abs_path);
         load_database_config(&abs_path);
@@ -186,10 +195,6 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
         });
     }
 
-    if let Some(built) = built_artifact_handler(&handler_dir, &serve_config)? {
-        return Ok(built);
-    }
-
     if runtime_core::framework::is_source_app_router_project(&handler_dir) {
         let entry_path = runtime_core::framework::write_app_router_entry(&handler_dir)?;
         return Ok(ResolvedHandler {
@@ -200,7 +205,14 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
     }
 
     // JS is a WinterTC worker; HTML stays static.
-    let index_files = ["index.ds", "index.dsx", "index.js", "index.mjs", "index.cjs", "index.html"];
+    let index_files = [
+        "index.ds",
+        "index.dsx",
+        "index.js",
+        "index.mjs",
+        "index.cjs",
+        "index.html",
+    ];
 
     for index_file in &index_files {
         let index_path = abs_path.join(index_file);
@@ -230,59 +242,50 @@ pub fn resolve_handler_path(path: &str) -> Result<ResolvedHandler, String> {
 /// `build-manifest.json`, production serves the compiled server entries —
 /// the artifact is what runs, never a serve-time recompile (deka#743/#762).
 ///
-/// Phase 2 resolves on the manifest's presence and format; the §3.4
-/// verification order before bind lands with the artifact-only loader
-/// (deka#763). A manifest that does not parse or carries an unknown format
-/// is a hard failure (spec §5.2: `incomplete`/`incompatible` fail before
-/// bind), never a silent fallback to source.
+/// Resolution is deliberately whole-subject and terminal: a valid artifact
+/// wins before any source configuration, and a present-but-invalid `dist/`
+/// returns an error rather than falling through to source compilation.
 fn built_artifact_handler(
     handler_dir: &std::path::Path,
     serve_config: &ServeConfig,
 ) -> Result<Option<ResolvedHandler>, String> {
-    use std::path::PathBuf;
-    let candidates: [PathBuf; 2] = [
-        handler_dir.join("dist/build-manifest.json"),
-        handler_dir.join("build-manifest.json"),
-    ];
-    let manifest_path = match candidates.iter().find(|path| path.is_file()) {
-        Some(path) => path.clone(),
-        None => return Ok(None),
+    let Some(artifact_root) = runtime_core::framework::resolve_authored_artifact_root(handler_dir)
+        .map_err(artifact_remedy)?
+    else {
+        return Ok(None);
     };
-    let artifact_root = manifest_path
-        .parent()
-        .expect("manifest path has a parent")
-        .to_path_buf();
-    let raw = std::fs::read_to_string(&manifest_path).map_err(|err| {
-        format!(
-            "failed to read built artifact manifest {}: {err}",
-            manifest_path.display()
-        )
-    })?;
-    let value: serde_json::Value = serde_json::from_str(&raw).map_err(|err| {
-        format!(
-            "invalid built artifact manifest {}: {err}; rebuild with `deka build`",
-            manifest_path.display()
-        )
-    })?;
-    if value.get("format").and_then(|v| v.as_str()) != Some("deka.artifact@2") {
-        return Err(format!(
-            "incompatible artifact: {} is not a deka.artifact@2 manifest; rebuild with `deka build`",
-            manifest_path.display()
+    let manifest_path = artifact_root.join("build-manifest.json");
+    let manifest = runtime_core::framework::ArtifactManifestV2::load_verified(&artifact_root)
+        .map_err(artifact_remedy)?;
+    manifest.ensure_native_compat().map_err(artifact_remedy)?;
+    let entry = artifact_root.join("server").join("serve-entry.js");
+    if !manifest.payloads.iter().any(|payload| {
+        payload.path == "server/serve-entry.js"
+            && payload.role == runtime_core::framework::PayloadRole::Server
+    }) {
+        return Err(artifact_remedy(
+            "incomplete artifact: server/serve-entry.js is not declared in build-manifest.json"
+                .to_string(),
         ));
     }
-    let entry = artifact_root.join("server").join("serve-entry.js");
     if !entry.is_file() {
-        return Err(format!(
-            "incomplete artifact: {} declares a built project but {} does not exist; rebuild with `deka build`",
+        return Err(artifact_remedy(format!(
+            "incomplete artifact: {} declares a built project but {} does not exist",
             manifest_path.display(),
             entry.display()
-        ));
+        )));
     }
     Ok(Some(ResolvedHandler {
         path: entry,
         mode: ServeMode::Php,
         config: serve_config.clone(),
     }))
+}
+
+fn artifact_remedy(problem: String) -> String {
+    format!(
+        "{problem}. Repair the deployable artifact with `deka build`, or use `deka dev` for source-first development"
+    )
 }
 
 fn detect_mode(path: &std::path::Path) -> ServeMode {
@@ -433,10 +436,16 @@ mod tests {
         let dir = temp_dir("deka_engine_app_over_entry");
         let app_dir = dir.join("app");
         fs::create_dir_all(&app_dir).expect("mkdir app");
-        fs::write(app_dir.join("page.ds"), "export function page() { return 'ok'; }")
-            .expect("write page");
-        fs::write(dir.join("main.ds"), "export function main() { return 'main'; }")
-            .expect("write configured");
+        fs::write(
+            app_dir.join("page.ds"),
+            "export function page() { return 'ok'; }",
+        )
+        .expect("write page");
+        fs::write(
+            dir.join("main.ds"),
+            "export function main() { return 'main'; }",
+        )
+        .expect("write configured");
         fs::write(dir.join("serve.json"), r#"{"entry":"main.ds"}"#).expect("write config");
 
         let resolved = resolve_handler_path(dir.to_str().expect("path")).expect("resolve");

@@ -45,7 +45,7 @@ pub use policy::ensure_project_layout;
 pub use resolver::{entry_wrapper_path, is_javascript_entry, resolve_project_root};
 
 use grants::{
-    dependency_package_name, read_manifest_host_kinds, read_manifest_name, read_lock_digests,
+    dependency_package_name, read_lock_digests, read_manifest_host_kinds, read_manifest_name,
     read_project_grant_table,
 };
 use resolver::{parse_module_imports, resolve_phpx_module_spec};
@@ -66,7 +66,9 @@ fn write_ui_file_if_changed(path: &Path, source: &str) -> std::io::Result<bool> 
     }
     let tmp = path.with_file_name(format!(
         ".{}.tmp.{}",
-        path.file_name().and_then(|name| name.to_str()).unwrap_or("ui"),
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("ui"),
         std::process::id()
     ));
     std::fs::write(&tmp, source)?;
@@ -94,6 +96,11 @@ pub struct PhpxEsmLoader {
     lock_digests: HashMap<String, String>,
     /// Per-package-root resolved kind cache (shared across loader clones).
     package_kinds: Rc<RefCell<HashMap<PathBuf, Vec<String>>>>,
+    /// Set only for a manifest-verified `dist/server` entry. Artifact
+    /// posture has a deliberately smaller resolver than source posture: no
+    /// compiler input, no extension guessing, no package/cache fallback, and
+    /// no path outside this root (deka#743/#763).
+    artifact_server_root: Option<PathBuf>,
 }
 
 impl PhpxEsmLoader {
@@ -110,10 +117,13 @@ impl PhpxEsmLoader {
         // bridge call would report "not granted any host kinds".
         let project_root = project_root.canonicalize().unwrap_or(project_root);
         let entry_path = entry_path.canonicalize().unwrap_or(entry_path);
+        let artifact_server_root = artifact_server_root(&entry_path)?;
         let cache_dir = runtime_core::framework::compiler_cache_dir(&project_root);
-        std::fs::create_dir_all(&cache_dir).map_err(|err| {
-            JsErrorBox::generic(format!("failed to create {}: {}", cache_dir.display(), err))
-        })?;
+        if artifact_server_root.is_none() {
+            std::fs::create_dir_all(&cache_dir).map_err(|err| {
+                JsErrorBox::generic(format!("failed to create {}: {}", cache_dir.display(), err))
+            })?;
+        }
         let entry_specifier = ModuleSpecifier::from_file_path(&entry_path)
             .map_err(|_| JsErrorBox::generic("invalid entry module path"))?;
         let wrapper_specifier = ModuleSpecifier::from_file_path(entry_wrapper_path(&project_root))
@@ -171,8 +181,7 @@ impl PhpxEsmLoader {
                 .filter_map(|path| std::fs::read_to_string(path).ok())
                 .flat_map(|source| parse_module_imports(&source))
                 .collect();
-            policy::ensure_project_layout(&project_root, &imports)
-                .map_err(JsErrorBox::generic)?;
+            policy::ensure_project_layout(&project_root, &imports).map_err(JsErrorBox::generic)?;
             policy::enforce_dynamic_policy(&modules)?;
             Some(modules)
         } else {
@@ -190,6 +199,7 @@ impl PhpxEsmLoader {
             root_kinds,
             lock_digests,
             package_kinds: Rc::new(RefCell::new(HashMap::new())),
+            artifact_server_root,
         };
 
         // Static pre-check: any compiled module that references `__deka_host(`
@@ -407,7 +417,9 @@ impl PhpxEsmLoader {
         }
         // Ensure siblings exist so `import from "./jsx.js"` works.
         for spec in deka_ui::SPECIFIERS {
-            if let (Some(src), Some(name)) = (deka_ui::source_for(spec), deka_ui::file_name_for(spec)) {
+            if let (Some(src), Some(name)) =
+                (deka_ui::source_for(spec), deka_ui::file_name_for(spec))
+            {
                 let sibling = dir.join(name);
                 let _ = write_ui_file_if_changed(&sibling, src);
             }
@@ -416,6 +428,9 @@ impl PhpxEsmLoader {
     }
 
     fn resolve_path(&self, specifier: &str, referrer: &str) -> Result<ModuleSpecifier, JsErrorBox> {
+        if let Some(server_root) = &self.artifact_server_root {
+            return self.resolve_artifact_path(server_root, specifier, referrer);
+        }
         if resolver::is_bare_specifier(specifier) {
             if let Some(path) = self.resolve_build_value_module(specifier) {
                 return ModuleSpecifier::from_file_path(path)
@@ -460,6 +475,57 @@ impl PhpxEsmLoader {
         )))
     }
 
+    fn resolve_artifact_path(
+        &self,
+        server_root: &Path,
+        specifier: &str,
+        referrer: &str,
+    ) -> Result<ModuleSpecifier, JsErrorBox> {
+        if resolver::is_bare_specifier(specifier) {
+            if specifier.starts_with("deka:dev/") {
+                return Err(JsErrorBox::generic(format!(
+                    "artifact module imports `{specifier}`, but deka:dev/* is a dev-only scheme; rebuild with `deka build`"
+                )));
+            }
+            return Err(JsErrorBox::generic(format!(
+                "artifact module imports unsupported bare specifier `{specifier}`; artifact server modules may resolve only explicit relative .js files"
+            )));
+        }
+        let wrapper_import =
+            referrer == self.wrapper_specifier.as_str() && specifier.starts_with("file:");
+        if !wrapper_import && !specifier.starts_with("./") && !specifier.starts_with("../") {
+            return Err(JsErrorBox::generic(format!(
+                "artifact module specifier `{specifier}` must be an explicit relative .js path"
+            )));
+        }
+        if !specifier.ends_with(".js") {
+            return Err(JsErrorBox::generic(format!(
+                "artifact module specifier `{specifier}` must name an explicit .js file"
+            )));
+        }
+        let resolved = resolve_import(specifier, referrer).map_err(JsErrorBox::from_err)?;
+        let path = resolved.to_file_path().map_err(|_| {
+            JsErrorBox::generic(format!(
+                "artifact module specifier `{specifier}` is not a file path"
+            ))
+        })?;
+        let root = server_root
+            .canonicalize()
+            .unwrap_or_else(|_| server_root.to_path_buf());
+        let path = path.canonicalize().map_err(|err| {
+            JsErrorBox::generic(format!(
+                "artifact module specifier `{specifier}` does not resolve inside dist/server: {err}"
+            ))
+        })?;
+        if !path.starts_with(&root) || !path.is_file() {
+            return Err(JsErrorBox::generic(format!(
+                "artifact module specifier `{specifier}` resolves outside dist/server"
+            )));
+        }
+        ModuleSpecifier::from_file_path(path)
+            .map_err(|_| JsErrorBox::generic("invalid artifact module path"))
+    }
+
     fn load_source(&self, specifier: &ModuleSpecifier) -> Result<ModuleSource, JsErrorBox> {
         if specifier == &self.wrapper_specifier {
             let wrapper = self.wrapper_source();
@@ -473,6 +539,35 @@ impl PhpxEsmLoader {
         let raw_path = specifier
             .to_file_path()
             .map_err(|_| JsErrorBox::generic("Only file:// URLs are supported"))?;
+        if let Some(server_root) = &self.artifact_server_root {
+            let root = server_root
+                .canonicalize()
+                .unwrap_or_else(|_| server_root.to_path_buf());
+            let path = raw_path.canonicalize().map_err(JsErrorBox::from_err)?;
+            if !path.starts_with(&root) || !path.is_file() {
+                return Err(JsErrorBox::generic(format!(
+                    "artifact module {} is outside dist/server",
+                    raw_path.display()
+                )));
+            }
+            if !matches!(path.extension().and_then(|ext| ext.to_str()), Some("js")) {
+                return Err(JsErrorBox::generic(format!(
+                    "artifact module {} is not an ES2022 .js file",
+                    path.display()
+                )));
+            }
+            let mut code = self.load_js_source(&path)?;
+            code = prepend_host_bindings(code, &self.kinds_for_path(&path));
+            if specifier == &self.entry_specifier {
+                code = append_entry_footer(code);
+            }
+            return Ok(ModuleSource::new(
+                ModuleType::JavaScript,
+                code,
+                specifier,
+                None,
+            ));
+        }
         // If the specifier has no extension, try DekaScript and JS candidates.
         let path = if raw_path.extension().is_none() {
             let ds = raw_path.with_extension("ds");
@@ -517,8 +612,49 @@ impl PhpxEsmLoader {
     }
 
     fn wrapper_source(&self) -> String {
-        entry_wrapper_source(&self.entry_specifier.to_string())
+        let mut source = entry_wrapper_source(&self.entry_specifier.to_string());
+        if let Some(server_root) = &self.artifact_server_root {
+            // The normal wrapper imports embedded `ui/*` modules. An artifact
+            // must use its vendored copies instead, otherwise a binary update
+            // could silently change the served graph.
+            for (specifier, file) in [
+                ("ui/jsx", "jsx.js"),
+                ("ui/server", "server.js"),
+                ("ui/reactive", "reactive.js"),
+                ("ui/suspense", "suspense.js"),
+                ("ui/router", "router.js"),
+            ] {
+                let path = server_root.join(".ui").join(file);
+                let url = ModuleSpecifier::from_file_path(path)
+                    .expect("artifact ui path is a valid file URL");
+                source = source.replace(&format!("\"{specifier}\""), &format!("\"{url}\""));
+            }
+        }
+        source
     }
+}
+
+/// Detect the artifact posture from the entry itself, independently of the
+/// source-project root used for grants. `engine::config` has already verified
+/// the descriptor before binding; doing the inexpensive structural check here
+/// keeps direct pool users from accidentally treating dist/server as source.
+fn artifact_server_root(entry_path: &Path) -> Result<Option<PathBuf>, JsErrorBox> {
+    let Some(server_root) = entry_path.ancestors().find(|candidate| {
+        candidate.file_name().and_then(|name| name.to_str()) == Some("server")
+            && candidate
+                .parent()
+                .is_some_and(|dist| dist.join("build-manifest.json").is_file())
+    }) else {
+        return Ok(None);
+    };
+    let dist_root = server_root.parent().expect("server root has dist parent");
+    runtime_core::framework::ArtifactManifestV2::load_verified(dist_root)
+        .and_then(|manifest| {
+            manifest.ensure_native_compat()?;
+            Ok(manifest)
+        })
+        .map_err(JsErrorBox::generic)?;
+    Ok(Some(server_root.to_path_buf()))
 }
 
 impl ModuleLoader for PhpxEsmLoader {
@@ -578,12 +714,9 @@ mod tests {
     #[test]
     fn source_extensions_have_distinct_cache_paths() {
         let root = tempfile::tempdir().expect("temp project");
-        let loader = PhpxEsmLoader::new(
-            root.path().to_path_buf(),
-            root.path().join("main.ds"),
-            None,
-        )
-        .expect("loader");
+        let loader =
+            PhpxEsmLoader::new(root.path().to_path_buf(), root.path().join("main.ds"), None)
+                .expect("loader");
 
         let ds = loader.cache_path_for(&root.path().join("main.ds"));
         let js = loader.cache_path_for(&root.path().join("main.js"));
@@ -637,7 +770,10 @@ mod tests {
             .filter_map(|entry| entry.ok())
             .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp."))
             .collect();
-        assert!(leftovers.is_empty(), "temp files left behind: {leftovers:?}");
+        assert!(
+            leftovers.is_empty(),
+            "temp files left behind: {leftovers:?}"
+        );
     }
 
     /// RFD 27: a ds_modules package module resolves its bridge kinds from the
@@ -677,7 +813,11 @@ mod tests {
 
         assert_eq!(loader.kinds_for_path(&module), vec!["crypto".to_string()]);
         // Root-owned sources get no kinds (this fixture root declares none).
-        assert!(loader.kinds_for_path(&root.path().join("src").join("main.ds")).is_empty());
+        assert!(
+            loader
+                .kinds_for_path(&root.path().join("src").join("main.ds"))
+                .is_empty()
+        );
     }
 
     /// RFD 27 (deka#797): with no explicit table and no DEKA_HOST_GRANTS

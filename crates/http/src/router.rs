@@ -265,6 +265,9 @@ fn try_asset_response(state: &Arc<RuntimeState>, path: &str) -> Option<Response>
 /// The root is set only for an app-router project by `runtime::serve`.
 fn try_public_response(state: &Arc<RuntimeState>, path: &str) -> Option<Response> {
     let root = state.public_dir.as_ref()?;
+    if let Some(manifest) = &state.artifact_manifest {
+        return try_artifact_client_response(manifest, root, path);
+    }
     let rel = path.strip_prefix('/')?;
     let (bytes, ctype) = read_static_file(root, std::path::Path::new(rel))?;
     Response::builder()
@@ -272,6 +275,57 @@ fn try_public_response(state: &Arc<RuntimeState>, path: &str) -> Option<Response
         .header("content-type", ctype)
         .body(axum::body::Body::from(bytes))
         .ok()
+}
+
+/// Serve a built client's manifest-described bytes. Static routes are routed
+/// to their emitted `index.html` before the V8 handler is considered; regular
+/// files (public/ and generated assets) retain their direct paths. An
+/// undeclared client file is never served: the build descriptor is the
+/// authority, and `read_client_payload` verifies the digest on every read.
+fn try_artifact_client_response(
+    manifest: &runtime_core::framework::ArtifactManifestV2,
+    root: &std::path::Path,
+    path: &str,
+) -> Option<Response> {
+    let rel = path.strip_prefix('/')?;
+    if rel.contains('\0')
+        || std::path::Path::new(rel).is_absolute()
+        || std::path::Path::new(rel)
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return None;
+    }
+
+    let mut candidates = Vec::new();
+    if rel.is_empty() {
+        if let Some(index) = &manifest.client.index {
+            candidates.push(index.clone());
+        }
+    } else {
+        candidates.push(format!("client/{rel}"));
+        // `/about` is the request spelling for the prerendered
+        // `client/about/index.html`; paths that already look like files do
+        // not receive a directory-index fallback.
+        if std::path::Path::new(rel).extension().is_none() {
+            candidates.push(format!("client/{rel}/index.html"));
+        }
+    }
+    for payload_path in candidates {
+        let Ok(bytes) = manifest.read_client_payload(root.parent()?, &payload_path) else {
+            continue;
+        };
+        let rel_path = payload_path
+            .strip_prefix("client/")
+            .unwrap_or(&payload_path);
+        let ctype = content_type(std::path::Path::new(rel_path));
+        return Response::builder()
+            .status(200)
+            .header("content-type", ctype)
+            .body(axum::body::Body::from(bytes))
+            .ok();
+    }
+    None
 }
 
 fn read_static_file(
@@ -292,7 +346,12 @@ fn read_static_file(
         return None;
     }
     let bytes = std::fs::read(&file).ok()?;
-    let ctype = match file.extension().and_then(|extension| extension.to_str()) {
+    let ctype = content_type(&file);
+    Some((bytes, ctype))
+}
+
+fn content_type(file: &std::path::Path) -> &'static str {
+    match file.extension().and_then(|extension| extension.to_str()) {
         Some("html" | "htm") => "text/html; charset=utf-8",
         Some("js" | "mjs") => "text/javascript; charset=utf-8",
         Some("css") => "text/css; charset=utf-8",
@@ -303,8 +362,7 @@ fn read_static_file(
         Some("gif") => "image/gif",
         Some("wasm") => "application/wasm",
         _ => "application/octet-stream",
-    };
-    Some((bytes, ctype))
+    }
 }
 
 fn is_html_response(headers: &std::collections::HashMap<String, String>) -> bool {

@@ -102,9 +102,13 @@ fn run_without_entry_lists_what_was_looked_for() {
 }
 
 #[test]
-fn run_prefers_dist_js_over_src_main_ds() {
+fn run_rejects_an_incomplete_dist_instead_of_falling_back_to_src_main_ds() {
     let project = project();
-    write(project.path(), "src/main.ds", "export const from = \"ds\"\n");
+    write(
+        project.path(),
+        "src/main.ds",
+        "export const from = \"ds\"\n",
+    );
     write(
         project.path(),
         "dist/server/src/main.js",
@@ -114,17 +118,15 @@ fn run_prefers_dist_js_over_src_main_ds() {
 
     let (code, text) = run_in(project.path(), &["run"], Some(&stub));
     let args = read_dsc_args(project.path());
+    assert_ne!(code, 0, "incomplete dist/ must fail closed: {text}");
+    assert!(text.contains("incomplete artifact"), "{text}");
     assert!(
-        text.contains("from-dist") || args.contains("dist/server/src/main.js"),
-        "expected dist JS to run (or be the compile input); dsc args={args:?} output={text}"
+        text.contains("deka build") && text.contains("deka dev"),
+        "{text}"
     );
     assert!(
         !args.contains("src/main.ds"),
-        "must not compile src/main.ds when dist JS exists; dsc args={args:?}"
-    );
-    assert_eq!(
-        code, 0,
-        "preferred dist JS should run without dsc: {text}"
+        "run must not compile src/main.ds around an incomplete artifact; dsc args={args:?}"
     );
 }
 
@@ -165,7 +167,11 @@ fn run_missing_cli_file_does_not_fall_through() {
 #[test]
 fn run_app_directory_without_module_points_at_serve() {
     let project = project();
-    write(project.path(), "app/layout.dsx", "export const layout = true\n");
+    write(
+        project.path(),
+        "app/layout.dsx",
+        "export const layout = true\n",
+    );
 
     let (code, text) = run_in(project.path(), &["run"], None);
     assert_ne!(code, 0, "directory app/ is not a run module: {text}");
