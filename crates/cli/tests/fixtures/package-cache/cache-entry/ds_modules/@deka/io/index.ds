@@ -1,8 +1,10 @@
 // Program output. User DekaScript imports `echo`; it must not name `console`.
 //
-// No `bridge`. Native is V8 (isolate rebinds `console.log` to stdout);
-// the browser already has `console.log`. Same call on both hosts.
-// This package is the only place that may name it (RFD 21 / RFD 32).
+// No `bridge`, no `unsafe`: the closed `deka.*` catalog is the one door for
+// platform operations the runtime owns (RFD 21). `deka.io.echo` is classified
+// Safe — it cannot throw — so there is no failure path to catch and no
+// fallback value to fabricate. This package is the only place that may name
+// the operation (RFD 21 / RFD 32).
 
 /// docid: phpx/io/echo()
 /// <Function name="echo">
@@ -13,8 +15,5 @@
 ///   <ReturnType type="void" />
 /// </Function>
 export fn echo(message: string) {
-  match (unsafe { console.log(message) }) {
-    Ok(v) => v,
-    Err(e) => e,
-  }
+  safe { deka.io.echo(message) }
 }

@@ -934,9 +934,11 @@ fn reconcile_staged_lock(
 
     for (modules_dir, name) in &packages {
         let real_pkg = root.join(modules_dir).join(name);
-        // The lock's hashes pin the published sources. Verify them before
+        // The lock's fsGraph pins the published sources. Verify it before
         // anything compiles the lowered form; a mismatch fails closed with
-        // the same remedy dsc's own check would print.
+        // the same remedy dsc's own check prints. Like dsc (compile_helper's
+        // package_lock_error), only fsGraph is verified — legacy moduleGraph
+        // entries self-heal and are never compared.
         let real = deka_host::integrity::compute_package_integrity(&real_pkg)
             .map_err(|err| format!("{DEKA_VALIDATION_ERROR_MARKER}{err}"))?;
         let mismatched = lock
@@ -945,7 +947,6 @@ fn reconcile_staged_lock(
             .and_then(|entry| entry.get(2))
             .map(|hashes| {
                 hashes.pointer("/fsGraph/hash").and_then(|v| v.as_str()) != Some(real.fs_graph.as_str())
-                    || hashes.pointer("/moduleGraph/hash").and_then(|v| v.as_str()) != Some(real.module_graph.as_str())
             })
             .unwrap_or(true);
         if mismatched {
@@ -954,19 +955,18 @@ fn reconcile_staged_lock(
             ));
         }
 
-        // Lowering is semantics-preserving, so the mirror's hashes describe
-        // the same package after a deterministic transform. Patching the
-        // mirror lock keeps dsc's check meaningful: it still compares what
-        // it compiles against the staged tree, and anything that rewrites a
-        // package without passing the real-lock verification above cannot
-        // reach this point.
+        // Lowering is semantics-preserving, so the mirror's fsGraph describes
+        // the same package after a deterministic transform. Patching only
+        // the mirror's fsGraph keeps dsc's check meaningful: it still
+        // compares what it compiles against the staged tree, and anything
+        // that rewrites a package without passing the real-lock verification
+        // above cannot reach this point.
         let staged = deka_host::integrity::compute_package_integrity(&stage.join(modules_dir).join(name))
             .map_err(|err| format!("{DEKA_VALIDATION_ERROR_MARKER}{err}"))?;
         let entry = lock
             .pointer_mut(&format!("/packages/{}/2", name.replace('/', "~1")))
             .expect("lock entry verified above");
         entry["fsGraph"]["hash"] = serde_json::Value::String(staged.fs_graph);
-        entry["moduleGraph"]["hash"] = serde_json::Value::String(staged.module_graph);
     }
 
     // The mirror hardlinked the real lock; replace (never edit through the

@@ -1,0 +1,143 @@
+---
+title: Runtime bridge
+description: safe { deka.kind.method(...) } / unsafe { ... } — the closed deka.* catalog. One table, two doors, failures as values.
+---
+
+The `deka.*` catalog is the closed set of platform operations Deka owns that
+std**lib** packages may call from DekaScript. There is one table, it is
+validated at load time, and every failure is a value the caller must handle —
+never a fabricated fallback.
+
+```ts
+const len: number = safe { deka.bytes.len(b) }
+const text: Result<string, string> = unsafe { deka.bytes.to_string(b) }
+```
+
+## The two doors
+
+A catalog call must appear as the entire body of `safe { }` or `unsafe { }`:
+
+- **`safe { deka.kind.method(args...) }`** — the helper cannot throw for
+  arguments of its declared types, and the expression yields its declared
+  type directly. A partial helper returns `Option<T>` (`None` on failure), so
+  the failure is still a value. There is no try/catch around a `safe` call to
+  paper over: if a `safe` helper threw, the exception would escape raw.
+- **`unsafe { deka.kind.method(args...) }`** — the helper may throw; the call
+  is compiled under dsc's `unsafe` try/catch and yields `Result<T, string>`,
+  where the `Err` payload is the thrown message. The caller must `match` it.
+
+Anything else is a source diagnostic before any user code runs: an unknown
+kind, an unknown method, the wrong arity, a throwing helper under `safe`, a
+bare `deka.*` call outside the two doors, or a nested `safe`/`unsafe` block
+(bind the result to a `const` first). Diagnostics carry `file:line:column`.
+
+## Who may call it
+
+Catalog calls are **stdlib-only**. A package qualifies when its registry
+identity is an official `@deka/*` name — the project root whose `deka.json`
+declares one, or a dependency under `ds_modules/` whose directory is `@deka/*`.
+Application code and unofficial packages calling `deka.*` are refused with a
+source diagnostic, and the loader additionally rejects compiled JS from
+non-official modules that mentions `deka.<kind>.` at all.
+
+The catalog is not an ambient global: `globalThis.deka` carries no catalog
+kinds, and the internal surface (`Symbol.for('deka.host.internal')`) is
+frozen. Official modules receive their `deka` binding from the per-module
+preamble; `deka.ui` remains a live lookup into the UI channel and is not part
+of the catalog.
+
+## The catalog
+
+Classification is the return type: a helper that can throw is `Unsafe`, and
+only `Unsafe` helpers yield `Result`. Every entry below is genuinely
+implemented — zero stubs. The pinned `dsc` compiler types the ambient `deka`
+global as `Infer`, so bind results to annotated `const`s (as above) before
+matching or converting them.
+
+### `deka.bytes`
+
+| Method | Safety | Returns | Notes |
+|---|---|---|---|
+| `len(b)` | safe | `number` | byte length |
+| `get(b, index)` | safe | `Option<number>` | out of range is `None`, not a throw |
+| `slice(b, start, end?)` | safe | `bytes` | **copies** — never a view |
+| `concat(a, b)` | safe | `bytes` | fresh buffer |
+| `from_array(items)` | safe | `bytes` | from `Array<number>` |
+| `from_string(s)` | safe | `bytes` | UTF-8 encode, total |
+| `to_hex(b)` | safe | `string` | lowercase hex |
+| `from_hex(s)` | safe | `Option<bytes>` | invalid input is `None` |
+| `to_base64(b)` | safe | `string` | standard base64 |
+| `from_base64(s)` | safe | `Option<bytes>` | invalid input is `None` |
+| `to_string(b)` | unsafe | `Result<string, string>` | **strict** UTF-8 decode; invalid input is `Err`, never lossy |
+
+Bytes follow RFD 15's stricter shape rather than RFD 21's original table
+(see below): immutable, decoding is fallible, and there is no lossy variant.
+
+### `deka.json`
+
+| Method | Safety | Returns | Notes |
+|---|---|---|---|
+| `parse(s)` | unsafe | `Result<unknown, string>` | throws on malformed input |
+| `stringify(v)` | unsafe | `Result<string, string>` | throws on cycles / bigint |
+| `validate(s)` | safe | `boolean` | true iff the input parses; never throws |
+
+### `deka.io`
+
+| Method | Safety | Returns | Notes |
+|---|---|---|---|
+| `echo(message)` | safe | `void` | one line of program output |
+
+### `deka.time`
+
+| Method | Safety | Returns | Notes |
+|---|---|---|---|
+| `now()` | safe | `number` | milliseconds since the Unix epoch |
+
+## Failures are values
+
+No helper in the catalog fabricates a fallback. Decoders return `Option.None`
+on invalid input; `unsafe` helpers surface throws as `Result.Err`; `validate`
+maps failure to `false`. A stdlib package therefore cannot silently return a
+wrong answer when an operation fails — it must return the failure to its
+caller. This is the shape RFD 21 exists to enforce: the old pattern of
+catching an error and substituting a made-up value is a source diagnostic
+now, not a runtime habit.
+
+## Integrity under staging
+
+`safe` blocks are lowered before the pinned `dsc` compiles, in a hardlinked
+mirror under `.cache` — the user's tree is never modified. Because dsc
+verifies every locked dependency by hashing the sources it reads, staging
+first verifies each rewritten dependency package against the real `deka.lock`
+(failing closed on any mismatch) and then re-pins only the mirror's lock copy
+to the lowered content. The user's `deka.lock` is never touched.
+
+## RFD 15 over RFD 21 on bytes
+
+RFD 21's original catalog typed `to_string` / `to_string_lossy` as lossy
+`safe` helpers and listed `set` and `subarray`. This catalog follows RFD 15's
+stricter contract instead, which the bytes work (deka#756) will inherit:
+
+- `deka.bytes.to_string` is **strict and fallible** (`Unsafe`): invalid UTF-8
+  is an `Err` value, never a replacement-character substitution. There is no
+  lossy variant.
+- Bytes are **immutable**: there is no `set`.
+- `slice` **copies**: there is no `subarray` view that could alias a mutable
+  buffer and escape as immutable bytes.
+
+## No environment influence
+
+The catalog is a compile-time constant table
+(`runtime_core::deka_catalog::DEKA_CATALOG`). Nothing in it — kinds, methods,
+classification, or helper implementations — is influenced by the process
+environment or by `deka.json` (deka#801). The loader may read `deka.json`
+only to decide whether a *package* is an official `@deka/*` package; it can
+never change what the catalog contains.
+
+## What is not in the catalog
+
+RFD 21's `deka.math`, `deka.string`, and `deka.cookies` families are
+deliberately absent until their owning migrations land them — the catalog
+lists no stubs. Native capabilities that require host involvement
+(cryptography, filesystem, TCP/TLS, databases, clocks with grants) stay on
+the [host bridge](host-bridge), which is a separate, grant-gated surface.
