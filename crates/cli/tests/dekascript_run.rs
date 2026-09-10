@@ -5,7 +5,7 @@ fn cli_bin() -> &'static str {
     env!("CARGO_BIN_EXE_cli")
 }
 
-/// Minimal valid lockfile content. `ensure_project_layout` (crates/pool/src/esm_loader.rs)
+/// Minimal valid lockfile content. `ensure_project_layout` (crates/pool/src/esm_loader/policy.rs)
 /// only checks that `deka.lock` exists at the project root — it does not require any
 /// specific packages — but a project root with a `deka.json` and no `deka.lock` is
 /// rejected before the program ever executes ("deka runtime requires deka.lock at
