@@ -1,1 +1,10 @@
-<script id="__deka_hmr_client" type="module">var __dekaHydrate=null;import("ui/client").then(function(m){if(m&&typeof m.hydrate==="function"){__dekaHydrate=m.hydrate;}}).catch(function(){});
+<script id="__deka_hmr_client" type="module">
+  // Imports the client hydrator for HMR; this file is an injected HTML script fragment.
+  var hmrHydrate = null;
+  import("ui/client")
+    .then(function (hydrateModule) {
+      if (hydrateModule && typeof hydrateModule.hydrate === "function") {
+        hmrHydrate = hydrateModule.hydrate;
+      }
+    })
+    .catch(function () {});

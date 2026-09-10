@@ -390,7 +390,7 @@ mod tests {
         let out = inject_hmr_client(html);
         assert!(out.contains("selectionStart"));
         assert!(out.contains("window.scrollTo"));
-        assert!(out.contains("querySelectorAll('input,textarea,select')"));
+        assert!(out.contains("querySelectorAll(\"input,textarea,select\")"));
         assert!(out.contains("data-deka-id"));
         assert!(out.contains("setSelectionRange"));
     }
@@ -430,7 +430,7 @@ mod tests {
             !out.contains("/assets/ui/client"),
             "dev client must not hardcode an asset path that content hashing rotates"
         );
-        assert!(out.contains("__dekaHydrate(n)"));
+        assert!(out.contains("hmrHydrate(targetNode)"));
         assert!(!out.contains("window.deka"));
         // Never defined anywhere in the tree; the guarded call was dead code.
         assert!(!out.contains("__dekaMountDeclarativeShadows"));
