@@ -4079,6 +4079,7 @@ dependencies = [
  "runtime",
  "serde_json",
  "stdio",
+ "tempfile",
 ]
 
 [[package]]
