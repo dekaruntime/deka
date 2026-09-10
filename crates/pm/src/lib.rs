@@ -1,6 +1,7 @@
 #![allow(clippy::all)]
 
 pub mod cache;
+pub mod grants;
 pub mod install;
 pub mod links;
 pub mod lock;

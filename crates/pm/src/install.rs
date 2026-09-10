@@ -1,4 +1,4 @@
-use crate::{lock, payload::InstallPayload, spec::parse_package_spec};
+use crate::{grants, lock, payload::InstallPayload, spec::parse_package_spec};
 use anyhow::{Context, Result, anyhow, bail};
 use deka_host::integrity::compute_package_integrity;
 use runtime_core::module_spec::canonical_php_package_spec;
@@ -252,6 +252,17 @@ fn run_php_install_in_transaction(
             packages: installed.clone(),
         },
     )?;
+
+    // RFD 27 grant-table delivery (deka#797): record the bridge kinds each
+    // locked release unlocks, derived from the authoritative catalog and
+    // keyed by the lockfile-pinned fsGraph digest just written. The table is
+    // rewritten with the lockfile (same exact-graph semantics: stale grants
+    // for removed packages are dropped), inside the install transaction so
+    // an interrupted install restores the snapshot.
+    let grant_plan =
+        grants::plan_grant_table_write(cwd, &grants::derive_grant_table(&installed))?;
+    ensure_locked_grant_plan(locked, &grant_plan)?;
+    grants::apply_grant_table_plan(cwd, &grant_plan)?;
     if explicit_add {
         record_root_dependencies(cwd, &specs, &installed)?;
     }
@@ -264,6 +275,19 @@ fn run_php_install_in_transaction(
 
     let duration = Instant::now().duration_since(start);
     emit_summary(installed.len(), duration.as_millis() as u64, quiet)?;
+    Ok(())
+}
+
+/// --locked freshness check for the grant table (deka#797): the on-disk
+/// `deka.grants.json` must already equal what this install would write,
+/// with the same strictness `lock_diff` applies to `deka.lock`.
+fn ensure_locked_grant_plan(locked: bool, plan: &grants::GrantTablePlan) -> Result<()> {
+    if locked && !matches!(plan, grants::GrantTablePlan::Unchanged) {
+        bail!(
+            "--locked install would change {} (run a normal install to refresh the grant table)",
+            grants::GRANT_TABLE_FILE
+        );
+    }
     Ok(())
 }
 
@@ -518,6 +542,26 @@ fn select_registry_version(registry: &RegistryPackage, requested: &str) -> Resul
 /// Registry metadata is fetched over HTTPS from deka.gg, and the release bytes
 /// come from a public Cloudflare R2 bucket. This removes the git/Linkhash
 /// dependency for stdlib installs.
+///
+/// `DEKA_PM_REGISTRY_URL` / `DEKA_PM_STDLIB_CDN` exist solely so tests and CI
+/// can serve the deka.gg registry + CDN shape from a local fixture server
+/// (deka#797 grant-table tests run the real installer hermetically). They are
+/// not a configuration channel — production installs always use deka.gg
+/// (deka#801).
+fn registry_base_url() -> String {
+    std::env::var("DEKA_PM_REGISTRY_URL")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEKA_REGISTRY_URL.to_string())
+}
+
+fn stdlib_cdn_base_url() -> String {
+    std::env::var("DEKA_PM_STDLIB_CDN")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEKA_STDLIB_CDN.to_string())
+}
+
 fn install_from_registry(
     name: &str,
     locked: Option<&LockedPackage>,
@@ -531,7 +575,11 @@ fn install_from_registry(
         )
     })?;
 
-    let registry_url = format!("{}/api/registry/{}.json", DEKA_REGISTRY_URL, package_name);
+    let registry_url = format!(
+        "{}/api/registry/{}.json",
+        registry_base_url(),
+        package_name
+    );
     let registry_resp = reqwest::blocking::get(&registry_url)
         .with_context(|| format!("failed to contact deka.gg registry for {}", name))?;
     if !registry_resp.status().is_success() {
@@ -558,7 +606,11 @@ fn install_from_registry(
     let tag = format!("v{}", version);
     let tarball_url = format!(
         "{}/{}/{}/{}-{}.tgz",
-        DEKA_STDLIB_CDN, package_name, version, package_name, version
+        stdlib_cdn_base_url(),
+        package_name,
+        version,
+        package_name,
+        version
     );
 
     let temp_dir = tempfile::tempdir()
@@ -687,6 +739,15 @@ fn install_staging_path(destination: &Path) -> Result<PathBuf> {
 struct InstallJournal {
     lock_path: PathBuf,
     lock_backup: Option<PathBuf>,
+    /// deka#797: the project grant table (`deka.grants.json`) is rewritten
+    /// together with the lockfile, so the journal snapshots and restores it
+    /// on recovery with the same atomic-swap discipline. `None` in journals
+    /// written before grant plumbing means "no grant table" — recovery then
+    /// removes the table iff it exists.
+    #[serde(default)]
+    grant_path: Option<PathBuf>,
+    #[serde(default)]
+    grant_backup: Option<PathBuf>,
     packages: Vec<InstallJournalPackage>,
 }
 
@@ -706,25 +767,15 @@ struct InstallTransaction {
 impl InstallTransaction {
     fn begin(project_dir: &Path, lock_path: &Path) -> Result<Self> {
         let journal_path = project_dir.join(".deka-install-transaction.json");
-        let lock_backup = if lock_path.exists() {
-            let backup = project_dir.join(format!(
-                ".deka-lock-backup-{}-{}",
-                std::process::id(),
-                unique_suffix()
-            ));
-            fs::copy(lock_path, &backup)
-                .with_context(|| format!("failed to snapshot {}", lock_path.display()))?;
-            fs::File::open(&backup)?.sync_all()?;
-            sync_directory(project_dir)?;
-            Some(backup)
-        } else {
-            None
-        };
+        let (lock_path, lock_backup) = snapshot_file(lock_path.to_path_buf())?;
+        let (grant_path, grant_backup) = snapshot_file(project_dir.join(grants::GRANT_TABLE_FILE))?;
         let transaction = Self {
             journal_path,
             journal: InstallJournal {
-                lock_path: lock_path.to_path_buf(),
+                lock_path,
                 lock_backup,
+                grant_path: Some(grant_path),
+                grant_backup,
                 packages: Vec::new(),
             },
         };
@@ -777,6 +828,9 @@ impl InstallTransaction {
                 .ok_or_else(|| anyhow!("transaction journal has no parent"))?,
         )?;
         if let Some(backup) = self.journal.lock_backup {
+            let _ = fs::remove_file(backup);
+        }
+        if let Some(backup) = self.journal.grant_backup {
             let _ = fs::remove_file(backup);
         }
         for package in self.journal.packages {
@@ -841,6 +895,30 @@ fn unique_suffix() -> u128 {
         .unwrap_or_default()
 }
 
+/// Snapshot one project file for transaction recovery: returns the path and,
+/// when the file exists, a durable backup copy beside it. Factored out of
+/// the lockfile snapshot so the grant table gets identical treatment.
+fn snapshot_file(path: PathBuf) -> Result<(PathBuf, Option<PathBuf>)> {
+    if !path.exists() {
+        return Ok((path, None));
+    }
+    let backup = path.with_file_name(format!(
+        ".{}-backup-{}-{}",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("deka-file"),
+        std::process::id(),
+        unique_suffix()
+    ));
+    fs::copy(&path, &backup)
+        .with_context(|| format!("failed to snapshot {}", path.display()))?;
+    fs::File::open(&backup)?.sync_all()?;
+    if let Some(parent) = path.parent() {
+        sync_directory(parent)?;
+    }
+    Ok((path, Some(backup)))
+}
+
 fn recover_install_transaction(project_dir: &Path) -> Result<()> {
     let journal_path = project_dir.join(".deka-install-transaction.json");
     if !journal_path.exists() {
@@ -876,7 +954,25 @@ fn recover_install_transaction(project_dir: &Path) -> Result<()> {
             }
         }
     } else if journal.lock_path.exists() {
-        fs::remove_file(journal.lock_path)?;
+        fs::remove_file(&journal.lock_path)?;
+    }
+    // Grant table recovery mirrors the lockfile: restore the snapshot when
+    // one was taken, otherwise remove the table a pre-crash install may have
+    // created (deka#797).
+    if let (Some(grant_path), Some(backup)) = (&journal.grant_path, &journal.grant_backup) {
+        if backup.exists() {
+            if grant_path.exists() {
+                fs::remove_file(grant_path)?;
+            }
+            fs::rename(backup, grant_path)?;
+            if let Some(parent) = grant_path.parent() {
+                sync_directory(parent)?;
+            }
+        }
+    } else if let Some(grant_path) = &journal.grant_path {
+        if grant_path.exists() {
+            fs::remove_file(grant_path)?;
+        }
     }
     fs::remove_file(journal_path)?;
     sync_directory(project_dir)?;
@@ -1206,6 +1302,17 @@ async fn rehash_php_packages_in(payload: &InstallPayload, project_dir: &Path) ->
         )?;
     }
 
+    // deka#797: re-key the grant table with the recomputed digests so a
+    // rehashed package keeps (only) the grants its refreshed lock entry
+    // pins. `update_lock_entry_at` writes through to disk, so re-read the
+    // lock before deriving.
+    let refreshed = lock::read_lockfile_at(&lock_path);
+    let grant_plan = grants::plan_grant_table_write(
+        project_dir,
+        &grants::derive_grant_table(&refreshed.packages),
+    )?;
+    grants::apply_grant_table_plan(project_dir, &grant_plan)?;
+
     Ok(())
 }
 
@@ -1337,15 +1444,148 @@ mod tests {
     use super::{
         InstallTransaction, InstalledSource, LockedPackage, MODULES_DIR, RegistryPackage,
         collect_project_install_specs, copy_github_package_files, enqueue_package_spec,
-        locked_package, package_dependencies, pause_for_kill_test, php_modules_path_for,
-        record_root_dependencies, recover_install_transaction, rehash_php_packages_in,
-        reject_source_less_package, reject_vendored_php_modules, run_php_install_in,
-        select_registry_version, verify_locked_integrity,
+        ensure_locked_grant_plan, locked_package, package_dependencies, pause_for_kill_test,
+        php_modules_path_for, record_root_dependencies, recover_install_transaction,
+        rehash_php_packages_in, reject_source_less_package, reject_vendored_php_modules,
+        run_php_install_in, select_registry_version, verify_locked_integrity,
     };
-    use crate::{lock, payload::InstallPayload};
+    use crate::{grants, lock, payload::InstallPayload};
     use deka_host::integrity::{PackageIntegrity, compute_package_integrity};
     use serde_json::json;
     use std::{collections::BTreeMap, fs};
+
+    #[test]
+    fn locked_install_rejects_any_grant_table_drift() {
+        let derived = grants::derive_grant_table(&BTreeMap::from([(
+            "@deka/fs".to_string(),
+            (
+                "@deka/fs@1.0.0".to_string(),
+                "deka.gg:@deka/fs".to_string(),
+                json!({ "fsGraph": { "algo": "sha256", "hash": "sha256:abc" } }),
+                String::new(),
+            ),
+        )]));
+        // Unchanged plan passes under --locked...
+        ensure_locked_grant_plan(true, &grants::GrantTablePlan::Unchanged).expect("unchanged");
+        // ...any write or removal is a lockfile-style freshness failure.
+        for plan in [
+            grants::GrantTablePlan::Write(derived.clone()),
+            grants::GrantTablePlan::Remove,
+        ] {
+            let err = ensure_locked_grant_plan(true, &plan).expect_err("must bail");
+            assert!(
+                err.to_string().contains("--locked install would change deka.grants.json"),
+                "unexpected error: {err}"
+            );
+        }
+        // Non-locked installs never fail the check.
+        ensure_locked_grant_plan(false, &grants::GrantTablePlan::Remove).expect("not locked");
+    }
+
+    #[test]
+    fn interrupted_transaction_restores_grant_table_snapshot() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let grant_path = tmp.path().join(grants::GRANT_TABLE_FILE);
+        let old_grants = "[{\"name\":\"@deka/fs\",\"version\":\"1.0.0\",\"digest\":\"sha256:old\",\"kinds\":[\"fs\"]}]\n";
+        fs::write(&grant_path, old_grants).expect("old grant table");
+
+        let transaction =
+            InstallTransaction::begin(tmp.path(), &tmp.path().join("deka.lock")).expect("begin");
+        // The install overwrites the table, then "crashes" before finish.
+        fs::write(
+            &grant_path,
+            "[{\"name\":\"@deka/fs\",\"version\":\"2.0.0\",\"digest\":\"sha256:new\",\"kinds\":[\"fs\"]}]\n",
+        )
+        .expect("new grant table");
+        drop(transaction);
+
+        recover_install_transaction(tmp.path()).expect("recover");
+        assert_eq!(
+            fs::read_to_string(&grant_path).expect("restored grant table"),
+            old_grants
+        );
+    }
+
+    #[test]
+    fn interrupted_transaction_removes_grant_table_created_mid_install() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let transaction =
+            InstallTransaction::begin(tmp.path(), &tmp.path().join("deka.lock")).expect("begin");
+        // No grant table existed at begin(); the crashed install created one.
+        fs::write(
+            tmp.path().join(grants::GRANT_TABLE_FILE),
+            "[{\"name\":\"@deka/fs\",\"version\":\"1.0.0\",\"digest\":\"sha256:new\",\"kinds\":[\"fs\"]}]\n",
+        )
+        .expect("created grant table");
+        drop(transaction);
+
+        recover_install_transaction(tmp.path()).expect("recover");
+        assert!(
+            !tmp.path().join(grants::GRANT_TABLE_FILE).exists(),
+            "recovery must remove a grant table the crashed install created"
+        );
+    }
+
+    #[tokio::test]
+    async fn rehash_rekeys_grant_table_with_recomputed_digest() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let package_root = tmp.path().join(MODULES_DIR).join("@deka").join("fs");
+        fs::create_dir_all(&package_root).expect("mkdir package");
+        fs::write(package_root.join("index.ds"), "export const fixture = true;\n")
+            .expect("module");
+        fs::write(
+            tmp.path().join("deka.lock"),
+            json!({
+                "lockfileVersion": 1,
+                "packages": {
+                    "@deka/fs": [
+                        "@deka/fs@1.0.0",
+                        "deka.gg:@deka/fs",
+                        {
+                            "moduleGraph": { "algo": "sha256", "hash": "stale-module" },
+                            "fsGraph": { "algo": "sha256", "hash": "stale-fs" }
+                        },
+                        ""
+                    ]
+                }
+            })
+            .to_string(),
+        )
+        .expect("write lock");
+        // Stale grant keyed by the stale digest, as written before the tree
+        // was edited on disk.
+        fs::write(
+            tmp.path().join(grants::GRANT_TABLE_FILE),
+            json!([{
+                "name": "@deka/fs",
+                "version": "1.0.0",
+                "digest": "stale-fs",
+                "kinds": ["fs"]
+            }])
+            .to_string(),
+        )
+        .expect("write stale grant table");
+
+        let payload = InstallPayload {
+            specs: Vec::new(),
+            yes: true,
+            prompt: false,
+            quiet: true,
+            rehash: true,
+            locked: false,
+        };
+        rehash_php_packages_in(&payload, tmp.path())
+            .await
+            .expect("rehash");
+
+        let integrity = compute_package_integrity(&package_root).expect("integrity");
+        let table = grants::read_grant_table_at(&tmp.path().join(grants::GRANT_TABLE_FILE))
+            .expect("re-keyed grant table");
+        assert_eq!(table.grants.len(), 1);
+        assert_eq!(table.grants[0].name, "@deka/fs");
+        assert_eq!(table.grants[0].digest, integrity.fs_graph);
+        assert_eq!(table.grants[0].kinds, vec!["fs"]);
+    }
 
     #[test]
     fn copy_github_package_files_skips_appledouble_entries() {
