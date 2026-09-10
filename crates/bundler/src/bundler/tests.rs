@@ -1,5 +1,6 @@
 use super::*;
 use runtime_core::modules::{write_links_at, LinkEntry, LinkManifest, MODULES_DIR};
+use std::ops::Deref;
 
 #[test]
 fn test_is_valid_identifier() {
@@ -52,11 +53,36 @@ impl VirtualSource for SimpleVirtualSource {
     }
 }
 
-pub(super) fn make_tmp_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("deka_bundler_test_{}", name));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create test dir");
-    dir
+#[derive(Debug)]
+pub(super) struct TestTempDir(tempfile::TempDir);
+
+impl TestTempDir {
+    pub(super) fn path_buf(&self) -> PathBuf {
+        self.0.path().to_path_buf()
+    }
+}
+
+impl AsRef<Path> for TestTempDir {
+    fn as_ref(&self) -> &Path {
+        self.0.path()
+    }
+}
+
+impl Deref for TestTempDir {
+    type Target = Path;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.path()
+    }
+}
+
+pub(super) fn make_tmp_dir(name: &str) -> TestTempDir {
+    TestTempDir(
+        tempfile::Builder::new()
+            .prefix(&format!("deka_bundler_test_{name}_"))
+            .tempdir()
+            .expect("create unique test dir"),
+    )
 }
 
 #[test]
@@ -71,7 +97,7 @@ fn bundle_produces_valid_js() {
     let result = bundle_virtual_entry(
         &entry,
         BundleOptions {
-            project_root: tmp.clone(),
+            project_root: tmp.path_buf(),
             minify: false,
             iife: false,
             client: false,
@@ -85,7 +111,6 @@ fn bundle_produces_valid_js() {
         "expected value in bundle: {}",
         result
     );
-    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 #[test]
@@ -108,7 +133,7 @@ fn bundle_allows_parent_relative_ds_import_from_subdirectory() {
     let result = bundle_virtual_entry(
         &entry,
         BundleOptions {
-            project_root: tmp.clone(),
+            project_root: tmp.path_buf(),
             minify: false,
             iife: false,
             client: false,
@@ -124,7 +149,6 @@ fn bundle_allows_parent_relative_ds_import_from_subdirectory() {
         result
     );
 
-    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 #[test]
@@ -139,7 +163,7 @@ fn bundle_with_iife_wrapping() {
     let result = bundle_virtual_entry(
         &entry,
         BundleOptions {
-            project_root: tmp.clone(),
+            project_root: tmp.path_buf(),
             minify: false,
             iife: true,
             client: false,
@@ -153,7 +177,6 @@ fn bundle_with_iife_wrapping() {
         "expected IIFE or content in bundle: {}",
         result
     );
-    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 #[test]
@@ -178,7 +201,7 @@ await __deka_main();
     let result = bundle_virtual_entry(
         &entry,
         BundleOptions {
-            project_root: tmp.clone(),
+            project_root: tmp.path_buf(),
             minify: true,
             iife: true,
             client: false,
@@ -200,7 +223,6 @@ await __deka_main();
         "IIFE bundle should start with (async function: starts with {:?}",
         &trimmed[..60.min(trimmed.len())]
     );
-    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 #[test]
@@ -215,7 +237,7 @@ fn bundle_minified_output_is_valid() {
     let result = bundle_virtual_entry(
         &entry,
         BundleOptions {
-            project_root: tmp.clone(),
+            project_root: tmp.path_buf(),
             minify: true,
             iife: false,
             client: false,
@@ -229,7 +251,6 @@ fn bundle_minified_output_is_valid() {
         "expected string in minified bundle: {}",
         result
     );
-    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 /// Regression: `if (cond) x = y;` must not be rewritten into
@@ -258,7 +279,7 @@ fn bundle_minified_preserves_if_assignment() {
     let result = bundle_virtual_entry(
         &entry,
         BundleOptions {
-            project_root: tmp.clone(),
+            project_root: tmp.path_buf(),
             minify: true,
             iife: false,
             client: false,
@@ -272,7 +293,6 @@ fn bundle_minified_preserves_if_assignment() {
         "minifier broke `if (cond) x = y` into `cond && x = y`: {}",
         result
     );
-    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 /// Regression: compress must not fold adjacent statements into a
@@ -300,7 +320,7 @@ fn bundle_minified_preserves_for_of_head() {
     let result = bundle_virtual_entry(
         &entry,
         BundleOptions {
-            project_root: tmp.clone(),
+            project_root: tmp.path_buf(),
             minify: true,
             iife: false,
             client: false,
@@ -314,7 +334,6 @@ fn bundle_minified_preserves_for_of_head() {
         "minifier folded a statement into the for-of head: {}",
         result
     );
-    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 #[test]
@@ -330,7 +349,7 @@ fn client_bundle_rejects_ui_server_import() {
     let err = bundle_virtual_entry(
         &entry,
         BundleOptions {
-            project_root: tmp.clone(),
+            project_root: tmp.path_buf(),
             minify: false,
             iife: false,
             client: true,
@@ -343,7 +362,6 @@ fn client_bundle_rejects_ui_server_import() {
         err.contains("ui/server"),
         "{err}"
     );
-    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 #[test]
@@ -359,7 +377,7 @@ fn client_bundle_allows_ui_jsx() {
     let result = bundle_virtual_entry(
         &entry,
         BundleOptions {
-            project_root: tmp.clone(),
+            project_root: tmp.path_buf(),
             minify: false,
             iife: false,
             client: true,
@@ -376,7 +394,6 @@ fn client_bundle_allows_ui_jsx() {
         !result.contains("renderToString"),
         "ui/server leaked into client bundle: {result}"
     );
-    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 #[test]
@@ -395,7 +412,7 @@ fn resolver_only_uses_project_local_php_modules() {
     )
     .unwrap();
 
-    let resolver = DekaResolver::new(project.clone(), false).unwrap();
+    let resolver = DekaResolver::new(project.path_buf(), false).unwrap();
     assert!(
         resolver.resolve_php_module("crypto").unwrap().is_none(),
         "stdlib fallback is disabled: resolver must return None for missing packages"
@@ -410,7 +427,7 @@ fn resolver_only_uses_project_local_php_modules() {
     )
     .unwrap();
 
-    let resolver2 = DekaResolver::new(project.clone(), false).unwrap();
+    let resolver2 = DekaResolver::new(project.path_buf(), false).unwrap();
     let result2 = resolver2.resolve_php_module("crypto").unwrap();
     assert!(result2.is_some(), "expected local resolution");
     assert!(
@@ -418,8 +435,6 @@ fn resolver_only_uses_project_local_php_modules() {
         "local php_modules should resolve"
     );
 
-    let _ = std::fs::remove_dir_all(&project);
-    let _ = std::fs::remove_dir_all(&stdlib);
 }
 
 #[test]
@@ -459,7 +474,7 @@ fn resolver_prefers_local_link_over_installed_package_and_aliases() {
     )
     .unwrap();
 
-    let resolver = DekaResolver::new(project.clone(), false).unwrap();
+    let resolver = DekaResolver::new(project.path_buf(), false).unwrap();
     for specifier in ["@deka/example", "example"] {
         let resolved = resolver
             .resolve_php_module(specifier)
@@ -468,8 +483,6 @@ fn resolver_prefers_local_link_over_installed_package_and_aliases() {
         assert!(resolved.starts_with(&package_root));
     }
 
-    let _ = std::fs::remove_dir_all(project);
-    let _ = std::fs::remove_dir_all(package);
 }
 
 #[test]
@@ -507,14 +520,12 @@ fn resolver_does_not_fall_back_when_linked_subpath_is_missing() {
     )
     .unwrap();
 
-    let resolver = DekaResolver::new(project.clone(), false).unwrap();
+    let resolver = DekaResolver::new(project.path_buf(), false).unwrap();
     let error = resolver
         .resolve_php_module("@deka/example/missing")
         .expect_err("missing linked subpath must not use installed bytes");
     assert!(error.contains("unable to resolve linked module"), "{error}");
 
-    let _ = std::fs::remove_dir_all(project);
-    let _ = std::fs::remove_dir_all(package);
 }
 
 #[test]
@@ -533,12 +544,11 @@ fn resolver_rejects_stale_local_link_instead_of_falling_back() {
     )
     .unwrap();
 
-    let error = match DekaResolver::new(project.clone(), false) {
+    let error = match DekaResolver::new(project.path_buf(), false) {
         Ok(_) => panic!("stale link must fail"),
         Err(error) => error,
     };
     assert!(error.contains("missing target"));
-    let _ = std::fs::remove_dir_all(project);
 }
 
 #[test]
@@ -555,7 +565,7 @@ fn resolver_rejects_path_traversal() {
     // Also create a file outside php_modules to be the traversal target
     std::fs::write(project.join("secret.js"), "export const secret = 'oops';\n").unwrap();
 
-    let resolver = DekaResolver::new(project.clone(), false).unwrap();
+    let resolver = DekaResolver::new(project.path_buf(), false).unwrap();
 
     // Normal resolution should work
     let normal = resolver.resolve_php_module("component/button").unwrap();
@@ -571,7 +581,6 @@ fn resolver_rejects_path_traversal() {
         traversal
     );
 
-    let _ = std::fs::remove_dir_all(&project);
 }
 
 // Regression for issue #36: a file in api/ must be able to import from
@@ -597,7 +606,7 @@ fn resolver_allows_parent_relative_import_within_project() {
     )
     .unwrap();
 
-    let resolver = DekaResolver::new(project.clone(), false).unwrap();
+    let resolver = DekaResolver::new(project.path_buf(), false).unwrap();
 
     // Resolve `../helpers` from `api/checkout.js`
     let base = FileName::Real(api_dir.join("checkout.js"));
@@ -618,7 +627,6 @@ fn resolver_allows_parent_relative_import_within_project() {
         project
     );
 
-    let _ = std::fs::remove_dir_all(&project);
 }
 
 // Ensure that `../../..` traversal that exits the project root is blocked.
@@ -668,7 +676,6 @@ fn resolver_parent_relative_import_stays_within_project() {
         "expected path-traversal message, got: {err_msg}"
     );
 
-    let _ = std::fs::remove_dir_all(&workspace);
 }
 
 // Confirm that going all-the-way out (many ../ hops) is also rejected.
@@ -679,7 +686,7 @@ fn resolver_deep_traversal_to_system_path_is_rejected() {
     std::fs::create_dir_all(&src_dir).unwrap();
     std::fs::write(src_dir.join("index.js"), "// entry\n").unwrap();
 
-    let resolver = DekaResolver::new(project.clone(), false).unwrap();
+    let resolver = DekaResolver::new(project.path_buf(), false).unwrap();
     let base = FileName::Real(src_dir.join("index.js"));
 
     // This specifier attempts to climb to /etc/passwd (or an analogous
@@ -697,7 +704,6 @@ fn resolver_deep_traversal_to_system_path_is_rejected() {
     }
     // Err is the expected outcome (traversal rejected or file not found).
 
-    let _ = std::fs::remove_dir_all(&project);
 }
 
 // Positive test: a within-project cross-package `../` import is allowed.
@@ -719,7 +725,7 @@ fn resolver_allows_parent_relative_import_two_levels_within_project() {
     )
     .unwrap();
 
-    let resolver = DekaResolver::new(project.clone(), false).unwrap();
+    let resolver = DekaResolver::new(project.path_buf(), false).unwrap();
     let base = FileName::Real(deep_dir.join("button.js"));
     let result = resolver.resolve(&base, "../../utils");
     assert!(
@@ -738,5 +744,4 @@ fn resolver_allows_parent_relative_import_two_levels_within_project() {
         project
     );
 
-    let _ = std::fs::remove_dir_all(&project);
 }
