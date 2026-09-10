@@ -67,23 +67,19 @@ pub fn compile_and_reroot_entries(
 
     let mut modules: BTreeMap<PathBuf, String> = BTreeMap::new();
     let mut emitted = EmittedEntries::default();
+    // Sources are ordered serve, api, defer: the FIRST compile to emit a
+    // module wins. The graphs legitimately differ per entry — dsc tree-shakes
+    // each graph to what the entry imports (e.g. under the defer entry a page
+    // module loses its `Page` export and keeps only the deferred component),
+    // so byte-identical merging is wrong. The serve graph is the superset for
+    // route modules; correctness of whichever variant won is enforced after
+    // the write by `assert_entry_linkage` — every named import of every
+    // emitted entry must resolve in the merged graph.
     for (name, source_path) in &sources {
         let graph = pool::dsc_compile::compile_graph(project_root, source_path)
             .map_err(|err| format!("failed to compile server entry {name}: {err}"))?;
         for (path, js) in graph {
-            match modules.entry(path.clone()) {
-                std::collections::btree_map::Entry::Vacant(slot) => {
-                    slot.insert(js);
-                }
-                std::collections::btree_map::Entry::Occupied(slot) => {
-                    if slot.get() != &js {
-                        return Err(format!(
-                            "dsc emitted differing bytes for {} across entry compiles",
-                            path.display()
-                        ));
-                    }
-                }
-            }
+            modules.entry(path).or_insert(js);
         }
     }
 
@@ -128,7 +124,157 @@ pub fn compile_and_reroot_entries(
     }
 
     vendor_ui_modules(dist_server, &ui_vendored)?;
+    assert_entry_linkage(dist_server, &emitted)?;
     Ok(emitted)
+}
+
+/// Every named import of every emitted router entry must resolve in the
+/// merged graph. Per-entry graphs are tree-shaken, so when two entries emit
+/// differing bytes for one source module the first (serve) variant wins; this
+/// check is the guard that the winning variant still satisfies the other
+/// entries — a dangling or unexported binding is a build error, never a
+/// silently broken artifact.
+fn assert_entry_linkage(dist_server: &Path, emitted: &EmittedEntries) -> Result<(), String> {
+    for module in [&emitted.serve, &emitted.api, &emitted.defer]
+        .into_iter()
+        .flatten()
+    {
+        let rel = module
+            .strip_prefix("server/")
+            .unwrap_or(module);
+        let entry_path = dist_server.join(rel);
+        let js = fs::read_to_string(&entry_path)
+            .map_err(|err| format!("failed to read {}: {err}", entry_path.display()))?;
+        for (specifier, names) in named_imports(&js) {
+            let resolved = normalize_path(
+                &entry_path
+                    .parent()
+                    .unwrap_or(dist_server)
+                    .join(&specifier),
+            );
+            if !resolved.starts_with(dist_server) {
+                return Err(format!(
+                    "server entry {rel} imports `{specifier}`, which escapes dist/server"
+                ));
+            }
+            let target = fs::read_to_string(&resolved).map_err(|err| {
+                format!(
+                    "server entry {rel} imports `{specifier}` -> {}: {err}",
+                    resolved.display()
+                )
+            })?;
+            for name in names {
+                if !has_export(&target, &name) {
+                    return Err(format!(
+                        "server entry {rel} imports `{name}` from `{specifier}`, but the \
+                         merged module {} does not export it — the per-entry compile \
+                         variants could not be reconciled",
+                        resolved.display()
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `(specifier, imported names)` for each `import { .. } from ".."` statement
+/// in dsc-emitted JS (single statements, possibly multiline brace lists).
+fn named_imports(js: &str) -> Vec<(String, Vec<String>)> {
+    let mut out = Vec::new();
+    let bytes = js.as_bytes();
+    let mut cursor = 0;
+    while let Some(found) = js[cursor..].find("import") {
+        let start = cursor + found;
+        // Only statement-position `import` (start of line or after `;`/`}` +
+        // whitespace) — skip substrings inside identifiers like
+        // "important".
+        let before_ok = start == 0
+            || matches!(bytes[start - 1], b';' | b'\n' | b'}' | b' ');
+        let after = start + "import".len();
+        let after_ok = bytes
+            .get(after)
+            .is_some_and(|byte| byte.is_ascii_whitespace());
+        if !(before_ok && after_ok) {
+            cursor = after;
+            continue;
+        }
+        let Some(open) = js[after..].find('{') else {
+            cursor = after;
+            continue;
+        };
+        let open = after + open;
+        let Some(close) = js[open..].find('}') else {
+            cursor = after;
+            continue;
+        };
+        let close = open + close;
+        let Some(from_at) = js[close..].find("from") else {
+            cursor = close + 1;
+            continue;
+        };
+        let from_at = close + from_at;
+        let quote_at = from_at + "from".len();
+        let quote = match js.as_bytes().get(quote_at + 1) {
+            Some(b'"') | Some(b'\'') => quote_at + 1,
+            _ => {
+                cursor = close + 1;
+                continue;
+            }
+        };
+        let Some(end) = js[quote + 1..].find(js.as_bytes()[quote] as char) else {
+            cursor = close + 1;
+            continue;
+        };
+        let specifier = js[quote + 1..quote + 1 + end].to_string();
+        let names = js[open + 1..close]
+            .split(',')
+            .filter_map(|part| {
+                let part = part.trim();
+                // `X as Y` binds the module's export `X` locally as `Y`; the
+                // export the target module must provide is the LEFT side.
+                part.split(" as ").next().map(str::trim).filter(|name| {
+                    !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+                }).map(str::to_string)
+            })
+            .collect();
+        out.push((specifier, names));
+        cursor = quote + 1 + end;
+    }
+    out
+}
+
+/// Does this module export `name`? Covers the emission shapes dsc produces:
+/// `export function/const/class/let/var/async function NAME` and
+/// `export { A, B as C }` lists (plus `export default` for `default`).
+fn has_export(js: &str, name: &str) -> bool {
+    if name == "default" {
+        return js.contains("export default");
+    }
+    for kw in ["function", "const", "class", "let", "var"] {
+        if js.contains(&format!("export {kw} {name}")
+            ) || js.contains(&format!("export async {kw} {name}"))
+        {
+            return true;
+        }
+    }
+    let mut cursor = 0;
+    while let Some(found) = js[cursor..].find("export {") {
+        let at = cursor + found;
+        let open = at + js[at..].find('{').expect("brace follows `export `");
+        let Some(close) = js[open..].find('}') else { break };
+        let close = open + close;
+        for item in js[open + 1..close].split(',') {
+            // In an export list the RIGHT side of `as` is the exported name
+            // (opposite of an import list).
+            let exported = item.trim().rsplit(" as ").next().unwrap_or("").trim();
+            if exported == name {
+                return true;
+            }
+        }
+        cursor = close + 1;
+    }
+    false
 }
 
 fn emitted_set(

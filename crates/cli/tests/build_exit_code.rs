@@ -160,24 +160,17 @@ fn build_exits_zero_on_valid_source() {
         !index.contains("<script"),
         "a page with no client:* must not emit a script tag: {index}"
     );
-    let dist_app = project.path().join("dist").join("app");
+    let dist_app = project.path().join("dist").join("server").join("app");
     assert!(
         dist_app.join("page.js").is_file()
             && dist_app.join("layout.js").is_file()
             && dist_app.join("not-found.js").is_file(),
-        "successful build should emit app/ as .js via dsc into dist/app: {combined}"
+        "successful build should emit app/ as .js via dsc into dist/server/app: {combined}"
     );
     assert!(
         !dist_app.join("page.dsx").exists()
             && !dist_app.join("layout.dsx").exists()
-            && !dist_app.join("not-found.dsx").exists()
-            && !project
-                .path()
-                .join("dist")
-                .join("server")
-                .join("app")
-                .join("page.dsx")
-                .exists(),
+            && !dist_app.join("not-found.dsx").exists(),
         "must not copy raw app/ .ds/.dsx as the server product: {combined}"
     );
     assert!(

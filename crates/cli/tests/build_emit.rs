@@ -77,7 +77,7 @@ fn build_emits_src_one_to_one() {
         "deka build should succeed with a no-magic src/ tree: {combined}"
     );
 
-    let dist_src = project.path().join("dist").join("src");
+    let dist_src = project.path().join("dist").join("server").join("src");
     let util_js = fs::read_to_string(dist_src.join("util.js")).expect("read dist/src/util.js");
     assert!(
         util_js.contains("export const n") || util_js.contains("n = 1"),
@@ -206,13 +206,13 @@ export fn Page() {
         .count();
     assert_eq!(materialized, 4, "one virtual module per build binding");
 
-    let runtime_js = fs::read_to_string(project.path().join("dist/app/page.js"))
+    let runtime_js = fs::read_to_string(project.path().join("dist/server/app/page.js"))
         .expect("read emitted runtime module");
     assert!(
         !runtime_js.contains("Ada") && !runtime_js.contains("build {"),
         "runtime output must not retain the build body: {runtime_js}"
     );
-    let generated_entries = fs::read_dir(project.path().join("dist/app"))
+    let generated_entries = fs::read_dir(project.path().join("dist/server/app"))
         .expect("read emitted app")
         .filter_map(Result::ok)
         .any(|entry| {

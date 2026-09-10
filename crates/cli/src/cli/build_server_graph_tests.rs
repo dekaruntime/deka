@@ -209,3 +209,59 @@ fn server_jail_rejects_escaping_and_dangling_relative_specifiers() {
     write(&dist_server, "b.js", "import { a } from \"./a.js\";\n");
     assert_server_jail(&dist_server).unwrap();
 }
+
+#[test]
+fn named_imports_reads_exported_side_of_as_aliases() {
+    // `Page as Page_root` requires the module's export `Page`; the local
+    // alias must not leak into the linkage check.
+    let js = "import { Page as Page_root, Layout } from \"./app/page.js\";\nimport \"./side.js\";\n";
+    let imports = named_imports(js);
+    assert_eq!(imports.len(), 1, "side-effect imports carry no names: {imports:?}");
+    let (spec, names) = &imports[0];
+    assert_eq!(spec, "./app/page.js");
+    assert_eq!(names, &vec!["Page".to_string(), "Layout".to_string()]);
+}
+
+#[test]
+fn has_export_covers_declaration_shapes_and_brace_lists() {
+    let js = concat!(
+        "export function Page() {}\n",
+        "export const ready = 1;\n",
+        "export class Thing {}\n",
+        "export { User, make as buildUser };\n",
+    );
+    for name in ["Page", "ready", "Thing", "User", "buildUser"] {
+        assert!(has_export(js, name), "expected export {name}");
+    }
+    assert!(!has_export(js, "make"), "the left side of `as` is not exported");
+    assert!(!has_export(js, "Page_root"));
+    assert!(has_export("export default function() {}", "default"));
+}
+
+#[test]
+fn entry_linkage_fails_when_the_winning_variant_lacks_an_export() {
+    // The defer-first merge variant of a page module keeps only the deferred
+    // component; the serve entry still imports Page — that must fail loudly.
+    let project = tempfile::tempdir().unwrap();
+    let dist_server = project.path().join("dist").join("server");
+    write(&dist_server.join("app"), "page.js", "export function Badge() {}\n");
+    write(
+        &dist_server,
+        "serve-entry.js",
+        "import { Page as Page_root } from \"./app/page.js\";\n",
+    );
+    let emitted = EmittedEntries {
+        serve: Some("server/serve-entry.js".to_string()),
+        api: None,
+        defer: None,
+    };
+    let err = assert_entry_linkage(&dist_server, &emitted).unwrap_err();
+    assert!(err.contains("does not export"), "{err}");
+
+    write(
+        &dist_server.join("app"),
+        "page.js",
+        "export function Badge() {}\nexport function Page() {}\n",
+    );
+    assert_entry_linkage(&dist_server, &emitted).unwrap();
+}
