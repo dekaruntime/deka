@@ -43,13 +43,14 @@ mod transforms;
 pub use graph_hash::hash_module_graph;
 pub use policy::ensure_project_layout;
 pub use resolver::{entry_wrapper_path, is_javascript_entry, resolve_project_root};
+pub use transforms::entry_wrapper_source;
 
 use grants::{
     dependency_package_name, read_manifest_host_kinds, read_manifest_name, read_lock_digests,
     read_project_grant_table,
 };
 use resolver::{parse_module_imports, resolve_phpx_module_spec};
-use transforms::{append_entry_footer, entry_wrapper_source, prepend_host_bindings};
+use transforms::{append_entry_footer, prepend_host_bindings};
 
 /// Write a ui cache file atomically, skipping the write when the content is
 /// already identical. deka#745: concurrent isolate loads read these files with
