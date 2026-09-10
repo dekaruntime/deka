@@ -20,6 +20,7 @@ data-types-enum-duplicate-case-fail
 data-types-struct-embed-missing-field-fail
 data-types-struct-missing-field-fail
 error-globals-array-splice-frozen-fail
+error-globals-crypto-random-uuid
 error-globals-object-field-reassign-fail
 error-globals-reassign-const-fail
 error-globals-type-mismatch-fail
@@ -41,7 +42,6 @@ interfaces-interface-method-param-type-mismatch-fail
 interfaces-interface-optional-field-type-mismatch-fail
 interfaces-interface-readonly-field-assign-fail
 interfaces-interface-return-wrong-interface-fail
-parser-template-interpolation-arbitrary-js-fail
 types-array-literal-type-mismatch
 types-array-returned-as-number
 types-assign-wrong-type
@@ -61,9 +61,8 @@ types-string-arg-to-number-param
 functions-exported-const-in-function-body
 modules-import-parse-error-001
 
-# Same count, but the messages are not the same. Most are host/runtime wrapper
-# text or module-resolution wording; unsafe-unsafe-struct-literal-ok is a real
-# parser-behaviour divergence requiring compiler triage.
+# Same count, but the messages are not the same. These are host/runtime wrapper
+# text or module-resolution wording rather than a compiler answer mismatch.
 basics-redeclare-const-fail
 basics-redeclare-let-as-const-fail
 data-types-array-reduce-empty-no-initial-fail
@@ -74,9 +73,7 @@ error-globals-string-index-assign-fail
 functions-duplicate-module-const-in-body-fail
 functions-duplicate-parameter-fail
 functions-method-name-conflicts-with-field-fail
-modules-aliased-import-union-type-pattern-001
 modules-import-non-relative-001
 modules-import-syntax-no-braces-001
 modules-relative-import-missing-export-001
 modules-relative-import-missing-module-001
-unsafe-unsafe-struct-literal-ok
