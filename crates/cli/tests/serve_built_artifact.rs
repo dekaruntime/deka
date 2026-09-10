@@ -208,6 +208,8 @@ fn built_then_sabotaged_project() -> tempfile::TempDir {
 /// artifact, so the response can prove which bytes the loader executed.
 fn mutate_built_server_artifact(project: &Path) {
     let dist = project.join("dist");
+    let mut manifest = runtime_core::framework::ArtifactManifestV2::load_verified(&dist)
+        .expect("load original artifact manifest");
     let server = dist.join("server");
     let mut js_files = Vec::new();
     collect_js_files(&server, &mut js_files);
@@ -223,8 +225,6 @@ fn mutate_built_server_artifact(project: &Path) {
     fs::write(&page, original.replace(BUILT_MARKER, ARTIFACT_MARKER))
         .expect("mutate built page module");
 
-    let mut manifest = runtime_core::framework::ArtifactManifestV2::load_verified(&dist)
-        .expect("load original artifact manifest");
     manifest
         .record_payloads(&dist)
         .expect("rehash changed artifact");
