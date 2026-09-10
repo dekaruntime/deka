@@ -38,10 +38,3 @@ tls-upgrade-string-handle
 
 # Cluster: stdlib packages declare banned user generics (http, json, jwt) --
 
-# Cluster: `bytes` has no member catalog, so `.length` is rejected at check
-# time. Genuine dsc bug, filed as dsc#92 (open). Both fixtures are correct as
-# written -- string and array expose `.length`, `bytes` indexes fine, only
-# `bytes.length` is rejected. Remove each line once dsc#92 ships and the
-# scripts/dsc-version pin has been bumped to the fix (deka#784).
-unsafe-textencoder-encode
-unsafe-uint8array-literal
