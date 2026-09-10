@@ -1,15 +1,15 @@
-use bundler::{bundle_virtual_entry, BuildOptions, VirtualSource};
 use core::{CommandSpec, Context, ParamSpec, Registry};
 use runtime_core::modules::MODULES_DIR;
 
 use crate::cli::build_dsc;
 use crate::cli::build_publish;
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use runtime::ClientAssetFlavor;
+
+mod project;
+mod single_file;
 
 const COMMAND: CommandSpec = CommandSpec {
     name: "build",
@@ -57,36 +57,12 @@ fn run(context: &Context) -> Result<(), String> {
                 first
             ));
         }
-        if is_deka_source_path(Path::new(first)) {
-            return run_single_file_build(context, first);
+        if project::is_deka_source_path(Path::new(first)) {
+            return single_file::run(context, first);
         }
     }
 
     run_web_project_build(context)
-}
-
-fn run_single_file_build(context: &Context, input: &str) -> Result<(), String> {
-    if !is_deka_source_path(Path::new(input)) {
-        return Err(format!(
-            "DekaScript uses .ds only; migrate '{}' before building it",
-            input
-        ));
-    }
-
-    let input_path = PathBuf::from(input);
-    let output_path = resolve_output_path(output_arg(context), &input_path)?;
-    if bundle_enabled(context) {
-        build_single_file_bundle_to_path(&input_path, &output_path, minify_enabled(context))?;
-    } else {
-        build_single_file_to_path(&input_path, &output_path)?;
-    }
-
-    stdio::success(&format!(
-        "built {} -> {}",
-        input_path.display(),
-        output_path.display()
-    ));
-    Ok(())
 }
 
 fn run_web_project_build(context: &Context) -> Result<(), String> {
@@ -97,13 +73,13 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
         .map(PathBuf::from)
         .unwrap_or(std::env::current_dir().map_err(|err| err.to_string())?);
 
-    let project_root = resolve_project_root(&root_hint)?;
+    let project_root = project::resolve_project_root(&root_hint)?;
     build_publish::recover_interrupted_publish(&project_root);
-    ensure_web_project_layout(&project_root)?;
+    project::ensure_web_project_layout(&project_root)?;
 
     let app_dir = project_root.join("app");
     let public_dir = project_root.join("public");
-    let entry_path = resolve_web_entry(&project_root)?;
+    let entry_path = project::resolve_web_entry(&project_root)?;
     let entry_source = fs::read_to_string(&entry_path)
         .map_err(|err| format!("failed to read {}: {}", entry_path.display(), err))?;
     let hydration_enabled = has_hydration_component(&entry_source);
@@ -280,9 +256,9 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
 
             let client_js = dist_assets.join("main.js");
             if bundle {
-                build_single_file_bundle_to_path(&entry_path, &client_js, minify)?;
+                single_file::build_bundle_to_path(&entry_path, &client_js, minify)?;
             } else {
-                build_single_file_to_path(&entry_path, &client_js)?;
+                single_file::build_to_path(&entry_path, &client_js)?;
             }
 
             if !bundle {
@@ -386,7 +362,10 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
                 &islands,
                 ClientAssetFlavor::Dist,
             )?;
-            let cache_assets = project_root.join(".cache").join("dekascript").join("assets");
+            let cache_assets = project_root
+                .join(".cache")
+                .join("dekascript")
+                .join("assets");
             runtime::write_island_client_assets(&cache_assets, &islands, ClientAssetFlavor::Dev)?;
         }
         inject_island_scripts(&dist_client, &islands)?;
@@ -394,8 +373,14 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     if !deferred.is_empty() {
         #[cfg(feature = "native")]
         {
-            runtime::write_defer_client_assets(&dist_client.join("assets"), ClientAssetFlavor::Dist)?;
-            let cache_assets = project_root.join(".cache").join("dekascript").join("assets");
+            runtime::write_defer_client_assets(
+                &dist_client.join("assets"),
+                ClientAssetFlavor::Dist,
+            )?;
+            let cache_assets = project_root
+                .join(".cache")
+                .join("dekascript")
+                .join("assets");
             runtime::write_defer_client_assets(&cache_assets, ClientAssetFlavor::Dev)?;
         }
         inject_defer_script(&dist_client)?;
@@ -439,7 +424,11 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     // specifiers to relative paths (fails the build if one survives).
     #[cfg(feature = "native")]
     crate::cli::build_values_dist::publish_build_values(
-        &project_root, &dist_root, &dist_app, &planned)?;
+        &project_root,
+        &dist_root,
+        &dist_app,
+        &planned,
+    )?;
 
     // The staged tree is complete: hash its artifacts into the manifest,
     // persist it, atomically replace dist/, then print the route table.
@@ -474,291 +463,12 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     Ok(())
 }
 
-fn output_arg(context: &Context) -> Option<String> {
-    context
-        .args
-        .params
-        .get("--out")
-        .or_else(|| context.args.params.get("-o"))
-        .or_else(|| context.args.params.get("--outdir"))
-        .cloned()
-}
-
 fn bundle_enabled(context: &Context) -> bool {
     context.args.flags.get("--bundle").copied().unwrap_or(false)
 }
 
 fn minify_enabled(context: &Context) -> bool {
     context.args.flags.get("--minify").copied().unwrap_or(false)
-}
-
-fn resolve_output_path(out: Option<String>, input_path: &Path) -> Result<PathBuf, String> {
-    if let Some(out) = out {
-        return Ok(PathBuf::from(out));
-    }
-
-    let stem = input_path
-        .file_stem()
-        .and_then(|v| v.to_str())
-        .ok_or_else(|| format!("invalid input filename: {}", input_path.display()))?;
-
-    Ok(PathBuf::from("dist").join(format!("{}.js", stem)))
-}
-
-fn resolve_import_map_path(output_path: &Path) -> PathBuf {
-    output_path
-        .parent()
-        .unwrap_or(Path::new("."))
-        .join("importmap.json")
-}
-
-fn emit_import_map_json(import_paths: &[String], output_path: &Path) -> String {
-    let mut imports = default_import_map();
-
-    for spec in import_paths {
-        let spec = spec.trim();
-        if !is_bare_specifier(spec) {
-            continue;
-        }
-
-        if !imports.contains_key(spec) && !is_covered_by_prefix_map(&imports, spec) {
-            imports.insert(
-                spec.to_string(),
-                default_import_target_for(spec, output_path),
-            );
-        }
-    }
-
-    serde_json::to_string_pretty(&serde_json::json!({ "imports": imports }))
-        .unwrap_or_else(|_| "{\n  \"imports\": {}\n}".to_string())
-}
-
-fn default_import_map() -> BTreeMap<String, String> {
-    let mut imports = BTreeMap::from([("@/".to_string(), "/".to_string())]);
-    for prefix in runtime_core::module_spec::STDLIB_SPEC_PREFIXES {
-        imports.insert((*prefix).to_string(), stdlib_prefix_target(prefix));
-    }
-    imports
-}
-
-/// Import-map target for a stdlib prefix. `deka install` writes every stdlib
-/// package under the `@deka` scope (`ds_modules/@deka/<pkg>/`), and the server
-/// resolvers know it — they try the scoped alias for every prefixed specifier.
-/// The browser has only this map, so the prefix target must be the scoped
-/// layout too. Derive it from `module_spec_aliases`, the same helper the
-/// server resolvers use to compute the alias, rather than repeating a second
-/// literal list that can drift away from where packages actually land
-/// (deka#622 finding D).
-fn stdlib_prefix_target(prefix: &str) -> String {
-    let scoped = runtime_core::module_spec::module_spec_aliases(prefix)
-        .into_iter()
-        .find(|alias| alias.starts_with("@deka/"))
-        .expect("bare stdlib prefixes must carry a @deka alias");
-    format!("/{MODULES_DIR}/{scoped}")
-}
-
-fn is_bare_specifier(spec: &str) -> bool {
-    !spec.is_empty()
-        && !spec.starts_with("./")
-        && !spec.starts_with("../")
-        && !spec.starts_with('/')
-        && !spec.starts_with("http://")
-        && !spec.starts_with("https://")
-}
-
-fn is_covered_by_prefix_map(map: &BTreeMap<String, String>, spec: &str) -> bool {
-    map.keys()
-        .any(|key| key.ends_with('/') && spec.starts_with(key))
-}
-
-fn default_import_target_for(spec: &str, output_path: &Path) -> String {
-    let mut rel = String::new();
-    let depth = output_path
-        .parent()
-        .map(|parent| parent.components().count().saturating_sub(1))
-        .unwrap_or(0);
-
-    for _ in 0..depth {
-        rel.push_str("../");
-    }
-    rel.push_str("ds_modules/");
-    rel.push_str(spec.trim_start_matches('/'));
-
-    if !rel.ends_with(".js") && !rel.ends_with('/') {
-        rel.push_str(".js");
-    }
-
-    rel
-}
-
-fn resolve_project_root(input_path: &Path) -> Result<PathBuf, String> {
-    let start = project_root_search_start(input_path);
-
-    let mut nearest_manifest_root = None;
-    for dir in start.ancestors() {
-        if dir.join("deka.json").is_file() {
-            let dir = dir.to_path_buf();
-            if dir.join("deka.lock").is_file() {
-                return Ok(dir);
-            }
-            if nearest_manifest_root.is_none() {
-                nearest_manifest_root = Some(dir);
-            }
-        }
-    }
-
-    if let Some(root) = nearest_manifest_root {
-        return Ok(root);
-    }
-
-    Err(format!(
-        "deka build requires a deka.json project root (searched from {})",
-        input_path.display()
-    ))
-}
-
-fn project_root_search_start(input_path: &Path) -> PathBuf {
-    if input_path.is_dir() {
-        return input_path.to_path_buf();
-    }
-
-    input_path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or(Path::new("."))
-        .to_path_buf()
-}
-
-fn ensure_project_layout(
-    project_root: &Path,
-    module_root: Option<&Path>,
-    imports: &[String],
-) -> Result<(), String> {
-    runtime_core::project_gate::validate_project(
-        project_root,
-        imports,
-        &runtime_core::project_gate::GateOptions {
-            module_root: module_root.map(|p| p.to_path_buf()),
-            require_lockfile: true,
-            context: "deka build",
-        },
-    )
-}
-
-fn load_deka_json(project_root: &Path) -> Result<serde_json::Value, String> {
-    let deka_path = project_root.join("deka.json");
-    let raw = fs::read_to_string(&deka_path).map_err(|err| {
-        format!(
-            "failed to read {}: {}",
-            project_root.join("deka.json").display(),
-            err
-        )
-    })?;
-    serde_json::from_str(&raw).map_err(|err| {
-        format!(
-            "invalid {}: {}",
-            project_root.join("deka.json").display(),
-            err
-        )
-    })
-}
-
-fn ensure_web_project_layout(project_root: &Path) -> Result<(), String> {
-    let required_files = [
-        project_root.join("deka.json"),
-        project_root.join("deka.lock"),
-    ];
-    for file in &required_files {
-        if !file.is_file() {
-            return Err(format!("missing required file: {}", file.display()));
-        }
-    }
-
-    let required_dirs = [project_root.join("app"), project_root.join("public")];
-    for dir in &required_dirs {
-        if !dir.is_dir() {
-            return Err(format!("missing required directory: {}", dir.display()));
-        }
-    }
-
-    if project_root.join("public").join("index.html").is_file() {
-        return Err("public/index.html collides with the root index.html document".to_string());
-    }
-
-    if !project_root.join("index.html").is_file() {
-        return Err(format!(
-            "missing required file: {}",
-            project_root.join("index.html").display()
-        ));
-    }
-
-    let json = load_deka_json(project_root)?;
-    let project_type = json
-        .get("type")
-        .and_then(|v| v.as_str())
-        .map(|v| v.trim().to_ascii_lowercase());
-
-    if project_type.as_deref() != Some("serve") {
-        let got = project_type.unwrap_or_else(|| "<missing>".to_string());
-        return Err(format!(
-            "web build requires deka.json type=\"serve\" (got: {}) at {}",
-            got,
-            project_root.join("deka.json").display()
-        ));
-    }
-
-    Ok(())
-}
-
-fn resolve_web_entry(project_root: &Path) -> Result<PathBuf, String> {
-    let json = load_deka_json(project_root)?;
-
-    if runtime_core::framework::is_source_app_router_project(project_root) {
-        let page = project_root.join("app").join("page.dsx");
-        let page = if page.is_file() {
-            page
-        } else {
-            project_root.join("app").join("page.ds")
-        };
-        return Ok(page);
-    }
-
-    let entry = json
-        .get("serve")
-        .and_then(|v| v.get("entry"))
-        .and_then(|v| v.as_str())
-        .filter(|v| !v.trim().is_empty())
-        .ok_or_else(|| {
-            format!(
-                "web build requires index.html + app/page.dsx, or deka.json serve.entry, in {}",
-                project_root.join("deka.json").display()
-            )
-        })?;
-
-    let entry_path = project_root.join(entry);
-    if !entry_path.is_file() {
-        return Err(format!(
-            "serve.entry points to missing file: {}",
-            entry_path.display()
-        ));
-    }
-
-    let app_dir = project_root.join("app");
-    if !entry_path.starts_with(&app_dir) {
-        return Err(format!(
-            "serve.entry must point inside app/: {}",
-            entry_path.display()
-        ));
-    }
-
-    if !is_deka_source_path(&entry_path) {
-        return Err(format!(
-            "serve.entry must be a .ds file: {}",
-            entry_path.display()
-        ));
-    }
-
-    Ok(entry_path)
 }
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
@@ -887,121 +597,6 @@ fn inject_app_html(index_html: &str, app_html: &str) -> String {
     out
 }
 
-struct JsBuildOutput {
-    js: String,
-    import_paths: Vec<String>,
-    project_root: PathBuf,
-}
-
-fn build_single_file_to_path(input_path: &Path, output_path: &Path) -> Result<(), String> {
-    let output = build_single_file_to_string(input_path)?;
-    let js = output.js;
-
-    if let Some(parent) = output_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|err| format!("failed to create {}: {}", parent.display(), err))?;
-    }
-
-    fs::write(output_path, js)
-        .map_err(|err| format!("failed to write {}: {}", output_path.display(), err))?;
-
-    let import_map_path = resolve_import_map_path(output_path);
-    let import_map = emit_import_map_json(&output.import_paths, output_path);
-    fs::write(&import_map_path, import_map)
-        .map_err(|err| format!("failed to write {}: {}", import_map_path.display(), err))?;
-
-    Ok(())
-}
-
-fn build_single_file_bundle_to_path(
-    input_path: &Path,
-    output_path: &Path,
-    minify: bool,
-) -> Result<(), String> {
-    let output = build_single_file_to_string(input_path)?;
-    let entry_js = output.js.clone();
-    let entry_path = fs::canonicalize(input_path)
-        .map_err(|err| format!("failed to resolve {}: {}", input_path.display(), err))?;
-    let provider = Arc::new(PhpxProvider::new(entry_path.clone(), entry_js));
-    let bundle = bundle_virtual_entry(
-        &entry_path,
-        BuildOptions {
-            project_root: output.project_root,
-            minify,
-            iife: false,
-            client: false,
-            // Single-file compilation inlines the prelude per module; only
-            // module-graph bundles carry a detached program prelude.
-            prelude: None,
-        },
-        provider,
-    )?;
-
-    if let Some(parent) = output_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|err| format!("failed to create {}: {}", parent.display(), err))?;
-    }
-
-    fs::write(output_path, bundle)
-        .map_err(|err| format!("failed to write {}: {}", output_path.display(), err))?;
-
-    Ok(())
-}
-
-fn build_single_file_to_string(input_path: &Path) -> Result<JsBuildOutput, String> {
-    let source = fs::read_to_string(input_path)
-        .map_err(|err| format!("failed to read {}: {}", input_path.display(), err))?;
-    let import_paths = runtime_core::ds_imports::paths(&source);
-
-    // Validate the source before checking project layout so that syntax/type
-    // errors are surfaced immediately instead of being blocked by a missing
-    // deka.lock or php_modules/ directory (dekaruntime/deka#117).
-    let js = build_dsc::transpile_file(input_path)?;
-
-    let project_root = resolve_project_root(input_path)?;
-    ensure_project_layout(&project_root, None, &import_paths)?;
-
-    Ok(JsBuildOutput {
-        js,
-        import_paths,
-        project_root,
-    })
-}
-
-struct PhpxProvider {
-    entry_path: PathBuf,
-    entry_source: String,
-}
-
-impl PhpxProvider {
-    fn new(entry_path: PathBuf, entry_source: String) -> Self {
-        Self {
-            entry_path,
-            entry_source,
-        }
-    }
-}
-
-impl VirtualSource for PhpxProvider {
-    fn load_virtual(&self, path: &Path) -> Result<Option<String>, String> {
-        if path == self.entry_path {
-            return Ok(Some(self.entry_source.clone()));
-        }
-
-        if !is_deka_source_path(path) {
-            return Ok(None);
-        }
-
-        let input = path
-            .to_str()
-            .ok_or_else(|| format!("invalid utf-8 path: {}", path.display()))?;
-        let source =
-            fs::read_to_string(path).map_err(|err| format!("failed to read {}: {}", input, err))?;
-        let js = build_dsc::transpile_file(path)?;
-        Ok(Some(js))
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ServeKind {
     Static,
@@ -1073,7 +668,7 @@ fn write_cloudflare_worker(project_root: &Path, dist_root: &Path) -> Result<(), 
     let entry_source = fs::read_to_string(&entry)
         .map_err(|err| format!("failed to read {}: {err}", entry.display()))?;
     let graph_imports = runtime_core::ds_imports::paths(&entry_source);
-    ensure_project_layout(project_root, None, &graph_imports)?;
+    project::ensure_project_layout(project_root, None, &graph_imports)?;
     let bundled = build_dsc::transpile_bundle(project_root, &entry)?;
     let mut defer_bundle = String::new();
     let has_defer =
@@ -1326,11 +921,4 @@ fn island_report_lines(islands: &[runtime_core::framework::ClientIsland]) -> Vec
             )
         })
         .collect()
-}
-
-fn is_deka_source_path(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|ext| ext.to_str()),
-        Some("ds") | Some("dsx")
-    )
 }
