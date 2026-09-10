@@ -319,6 +319,15 @@ jobs:
           DEKA_WASM: ${{ github.workspace }}/.ci/wasm/deka_compiler.wasm
         run: bun tests/dump/scripts/smoke.mjs
 
+      # A fresh HTTP request can observe an edit even when the injected HMR
+      # client fails to parse. Keep a real browser page loaded and require the
+      # source edit to update that page (deka#779).
+      - name: Browser HMR source-edit regression
+        env:
+          DEKA_DSC: ${{ github.workspace }}/.ci/dsc
+          DEKA_NATIVE: ${{ github.workspace }}/target/release/cli
+        run: bun tests/dump/scripts/hmr-dev-e2e.mjs
+
       - name: Report sccache usage
         if: ${{ always() && env.AWS_ACCESS_KEY_ID != '' && env.AWS_SECRET_ACCESS_KEY != '' && env.SCCACHE_ENDPOINT != '' }}
         run: |

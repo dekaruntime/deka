@@ -323,7 +323,7 @@ fn inject_hmr_client(html: &str) -> String {
     if html.contains(MARKER) {
         return html.to_string();
     }
-    // The dev HMR client ships as real .js fragments (compile-time
+    // The dev HMR client ships as JavaScript-only fragments (compile-time
     // include_str!, zero runtime cost), split by concern: the hydrate import
     // specifier, the focus/form preservation helpers, and the patch
     // dispatcher (island comment-marker walker). The specifier stays the
@@ -438,6 +438,18 @@ mod tests {
         // top-level await here would hold HMR hostage to client.js loading.
         // Early patches degrade to no re-hydration via the typeof guard.
         assert!(!out.contains("await "));
+    }
+
+    #[test]
+    fn hmr_client_has_one_module_script_opening() {
+        let html = "<html><body><div id=\"app\"></div></body></html>";
+        let out = inject_hmr_client(html);
+        assert_eq!(
+            out.matches("<script").count(),
+            1,
+            "the injector owns the one module script wrapper; its JavaScript fragments must not add HTML"
+        );
+        assert_eq!(out.matches("</script>").count(), 1);
     }
 
     #[test]
