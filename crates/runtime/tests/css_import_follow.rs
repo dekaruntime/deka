@@ -17,6 +17,9 @@ fn extensionless_component_import_emits_utility_class_in_route_css() {
     let tmp = tempfile::tempdir().expect("temp project");
     let root = tmp.path();
     fs::create_dir_all(root.join("app")).expect("mkdir app");
+    // The source-project predicate is deka.json + app/page.ds(x) (the root
+    // index.html is a build output, never a source requirement — deka#762).
+    fs::write(root.join("deka.json"), "{}\n").expect("write deka.json");
     fs::write(
         root.join("index.html"),
         "<!doctype html><html><head><!--deka-head--></head><body><div id=\"app\"><!--deka-app--></div><!--deka-scripts--></body></html>\n",

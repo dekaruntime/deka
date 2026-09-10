@@ -186,10 +186,10 @@ fn dist_deploy_serves_build_backed_route_without_cache() {
     run_build(project.path(), &dsc);
 
     let dist = project.path().join("dist");
-    let build_values = dist.join("app").join(".build-values");
+    let build_values = dist.join("server").join(".values");
     assert!(
         build_values.is_dir(),
-        "deka build must ship materialized build-value modules in dist/app/.build-values"
+        "deka build must ship materialized build-value modules in dist/server/.values"
     );
     let shipped: Vec<String> = fs::read_dir(&build_values)
         .expect("read .build-values")

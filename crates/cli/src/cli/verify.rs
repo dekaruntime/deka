@@ -1,9 +1,12 @@
-//! `deka verify` (deka#738 F3): verify the published `dist/` tree against the
-//! build manifest's recorded artifact digests. This is the check to run
-//! before a deploy — `dist/client` is what a static host serves, so a CDN
-//! would serve tampered bytes without it. Thin wrapper over
-//! [`runtime_core::framework::BuildManifest::verify_artifacts`]; exits
-//! non-zero and names every mismatched path when anything disagrees.
+//! `deka verify` (deka#738 F3, retargeted by deka#762): verify the published
+//! `dist/` tree against the artifact manifest v2 (`dist/build-manifest.json` +
+//! its `.sha256` sidecar). This is the check to run before a deploy —
+//! `dist/client` is what a static host serves, so a CDN would serve tampered
+//! bytes without it. Thin wrapper over
+//! [`runtime_core::framework::ArtifactManifestV2::load_verified`] and
+//! [`runtime_core::framework::ArtifactManifestV2::verify`]; exits non-zero and
+//! names every mismatched path when anything disagrees. Source `.ds(x)` files
+//! are never read — the artifact is the unit of verification (deka#743).
 
 use std::path::{Path, PathBuf};
 
@@ -12,7 +15,7 @@ use core::{CommandSpec, Context, Registry};
 const COMMAND: CommandSpec = CommandSpec {
     name: "verify",
     category: "project",
-    summary: "verify dist/ against the build manifest's artifact digests",
+    summary: "verify dist/ against the artifact manifest's payload digests",
     aliases: &[],
     subcommands: &[],
     handler: cmd,
@@ -38,15 +41,14 @@ fn run(context: &Context) -> Result<(), String> {
         .unwrap_or(std::env::current_dir().map_err(|err| err.to_string())?);
     let project_root = resolve_project_root(&root_hint)?;
 
-    let manifest_path =
-        runtime_core::framework::compiler_cache_dir(&project_root).join("build-manifest.json");
+    let dist = project_root.join("dist");
+    let manifest_path = dist.join("build-manifest.json");
     if !manifest_path.is_file() {
         return Err(format!(
-            "no build manifest at {}; run `deka build` first",
+            "no artifact manifest at {}; run `deka build` first",
             manifest_path.display()
         ));
     }
-    let dist = project_root.join("dist");
     if !dist.is_dir() {
         return Err(format!(
             "no dist/ directory at {}; run `deka build` first",
@@ -54,26 +56,23 @@ fn run(context: &Context) -> Result<(), String> {
         ));
     }
 
-    let raw = std::fs::read_to_string(&manifest_path)
-        .map_err(|err| format!("failed to read {}: {err}", manifest_path.display()))?;
-    let manifest: runtime_core::framework::BuildManifest = serde_json::from_str(&raw)
-        .map_err(|err| format!("invalid {}: {err}", manifest_path.display()))?;
+    let manifest = runtime_core::framework::ArtifactManifestV2::load_verified(&dist)?;
 
-    let problems = manifest.verify_artifacts(&project_root);
+    let problems = manifest.verify(&dist);
     if !problems.is_empty() {
         for problem in &problems {
             stdio::error("verify", problem);
         }
         return Err(format!(
-            "{} artifact{} failed verification",
+            "{} payload{} failed verification",
             problems.len(),
             if problems.len() == 1 { "" } else { "s" }
         ));
     }
 
     stdio::success(&format!(
-        "verified {} artifacts against {}",
-        manifest.artifacts.len(),
+        "verified {} payloads against {}",
+        manifest.payloads.len(),
         manifest_path.display()
     ));
     Ok(())

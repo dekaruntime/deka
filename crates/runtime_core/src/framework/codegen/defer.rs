@@ -27,13 +27,15 @@ pub fn write_defer_router_entry(project_root: &Path) -> Result<PathBuf, String> 
     std::fs::create_dir_all(&cache_dir)
         .map_err(|err| format!("failed to create {}: {err}", cache_dir.display()))?;
     let entry = cache_dir.join("defer-entry.dsx");
-    let source = generate_defer_entry(&entry, project_root, &deferred)?;
+    let source = generate_defer_entry_source(&entry, project_root, &deferred)?;
     std::fs::write(&entry, source.as_bytes())
         .map_err(|err| format!("failed to write {}: {err}", entry.display()))?;
     Ok(entry)
 }
 
-pub(super) fn generate_defer_entry(
+/// Build the `defer-entry.dsx` source for `entry` without writing anything;
+/// `deka build` reuses this for build-time server-entry emission.
+pub fn generate_defer_entry_source(
     entry: &Path,
     project_root: &Path,
     deferred: &[DeferredIsland],

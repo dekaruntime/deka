@@ -358,19 +358,19 @@ fn dev_and_prod_emit_the_same_modules() {
         tree_listing(&dist)
     );
 
-    // Module-boundary parity for the route tree: dist/app receives the
+    // Module-boundary parity for the route tree: dist/server/app receives the
     // compiled modules one-for-one — same boundaries, same paths, .js from dsc.
-    let dist_app = dist.join("app");
+    let dist_app = dist.join("server").join("app");
     for rel in ["layout.js", "page.js", "about/page.js", "not-found.js"] {
         assert!(
             dist_app.join(rel).is_file(),
-            "dist/app must contain the compiled app module {rel}:\n{}",
+            "dist/server/app must contain the compiled app module {rel}:\n{}",
             tree_listing(&dist_app)
         );
     }
     for rel in ["layout.dsx", "page.dsx", "about/page.dsx", "not-found.dsx"] {
         assert!(
-            !dist.join("server").join("app").join(rel).exists() && !dist_app.join(rel).exists(),
+            !dist_app.join(rel).exists(),
             "must not copy raw app/ .ds as the server product ({rel})"
         );
     }

@@ -40,10 +40,9 @@ fn run_verify(project: &Path) -> (bool, String) {
 }
 
 fn manifest_path(project: &Path) -> PathBuf {
-    project
-        .join(".cache")
-        .join("dekascript")
-        .join("build-manifest.json")
+    // deka#762: verify is anchored on the v2 artifact manifest in dist/, not
+    // the dev-cache v1 manifest.
+    project.join("dist").join("build-manifest.json")
 }
 
 fn built_project() -> tempfile::TempDir {

@@ -167,9 +167,12 @@ fn api_entry_override(page_entry: Option<String>, url: &str) -> Option<String> {
         let Some(page_entry) = page_entry else {
             return None;
         };
-        let defer_entry = std::path::Path::new(&page_entry).with_file_name("defer-entry.dsx");
-        if defer_entry.is_file() {
-            return Some(defer_entry.to_string_lossy().into_owned());
+        // Built artifacts compile the defer router next to the page router as
+        // `defer-entry.js` (deka#762); the source posture keeps generating
+        // `defer-entry.dsx` in the compiler cache.
+        let defer_entry = sibling_entry(&page_entry, &["defer-entry.dsx", "defer-entry.js"]);
+        if let Some(defer_entry) = defer_entry {
+            return Some(defer_entry);
         }
         return Some(page_entry);
     }
@@ -179,12 +182,23 @@ fn api_entry_override(page_entry: Option<String>, url: &str) -> Option<String> {
     let Some(page_entry) = page_entry else {
         return None;
     };
-    let api_entry = std::path::Path::new(&page_entry).with_file_name("api-entry.ds");
-    if api_entry.is_file() {
-        Some(api_entry.to_string_lossy().into_owned())
+    let api_entry = sibling_entry(&page_entry, &["api-entry.ds", "api-entry.js"]);
+    if let Some(api_entry) = api_entry {
+        Some(api_entry)
     } else {
         Some(page_entry)
     }
+}
+
+/// First existing sibling of `page_entry` among `names` (ordered preference).
+fn sibling_entry(page_entry: &str, names: &[&str]) -> Option<String> {
+    let page = std::path::Path::new(page_entry);
+    names.iter().find_map(|name| {
+        let candidate = page.with_file_name(name);
+        candidate
+            .is_file()
+            .then(|| candidate.to_string_lossy().into_owned())
+    })
 }
 
 pub async fn execute_request_value(

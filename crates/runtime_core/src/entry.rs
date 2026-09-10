@@ -181,7 +181,8 @@ fn prefer_dist_js(project_root: &Path, path: &Path) -> Option<PathBuf> {
         return None;
     }
     let rel = path.strip_prefix(project_root).ok()?;
-    let mut dist = project_root.join("dist").join(rel);
+    // Everything executable lives under dist/server/ (manifest v2 §1).
+    let mut dist = project_root.join("dist").join("server").join(rel);
     dist.set_extension("js");
     dist.is_file().then_some(dist)
 }
@@ -564,10 +565,10 @@ mod tests {
         let tmp = project();
         let root = tmp.path();
         write(root, "src/main.ds", "");
-        write(root, "dist/src/main.js", "console.log('dist')");
+        write(root, "dist/server/src/main.js", "console.log('dist')");
         let got = resolve(root, None);
         assert_eq!(got.kind, EntryKind::Src);
-        assert_path(&got.path, root, "dist/src/main.js");
+        assert_path(&got.path, root, "dist/server/src/main.js");
     }
 
     #[test]

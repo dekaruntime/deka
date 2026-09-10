@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use crate::env::env_truthy_with;
 use crate::modules::MODULES_DIR;
 
+mod artifact_manifest;
 mod build_invalidation;
 mod build_manifest;
 mod codegen;
@@ -34,13 +35,14 @@ mod source;
 
 pub use build_invalidation::{SlotInvalidation, affected_slots, project_relative_path};
 pub use build_manifest::{
-    BuildManifest, BuildPlan, BuildPlanSlot, FsObservation, FsObservationKind, ManifestArtifact,
-    ManifestRoute, ManifestSlot, PlannedSource, RouteMode, SUPPORTED_PLAN_VERSIONS,
+    BuildManifest, BuildPlan, BuildPlanSlot, CompilerProvenance, FsObservation, FsObservationKind,
+    ManifestArtifact, ManifestRoute, ManifestSlot, PlannedSource, RouteMode, SUPPORTED_PLAN_VERSIONS,
     sha256_hex, validate_plans,
 };
 pub use codegen::{
-    write_api_router_entry, write_app_router_entry, write_defer_router_entry,
-    write_static_render_entry, write_worker_router_entry,
+    generate_api_entry_source, generate_app_router_entry_source, generate_defer_entry_source,
+    resolve_app_router_index_html, write_api_router_entry, write_app_router_entry,
+    write_defer_router_entry, write_static_render_entry, write_worker_router_entry,
 };
 
 /// Serve/dev compiler artifact directory.
@@ -65,6 +67,12 @@ pub fn compiler_cache_dir_with(project_root: &Path, dev_mode: bool) -> PathBuf {
         project_root.join(".cache").join("dekascript")
     }
 }
+pub use artifact_manifest::{
+    ARTIFACT_FORMAT, ArtifactClient, ArtifactCompat, ArtifactManifestV2, ArtifactPayload,
+    ArtifactProducer, ArtifactRoute, ArtifactServer, ArtifactSlot, ArtifactWorker, MODULE_FORMAT,
+    PayloadRole, RUNTIME_ABI, ServerEntry, ServerEntryKind, artifact_digest, client_output_path,
+    compute_payload_root, server_entries, source_to_server_module,
+};
 pub use css::{
     CssPlan, RouteStyle, ScopedStyleFile, collect_class_literals, collect_route_styles,
     css_links_for_route, css_plan_from_styles, css_scope_hash,
@@ -75,7 +83,7 @@ pub use defer::{
 };
 pub use document::{
     CLIENT_IMPORTMAP_PLACEHOLDER_TAG, DEKA_APP_HOLE, DEKA_HEAD_HOLE, DEKA_SCRIPTS_HOLE,
-    FRAGMENT_ACCEPT, FRAGMENT_ACCEPT_LEGACY, fill_document,
+    DEFAULT_INDEX_HARNESS, FRAGMENT_ACCEPT, FRAGMENT_ACCEPT_LEGACY, fill_document,
 };
 pub use islands::{ClientIsland, island_script_tags, scan_client_islands};
 pub use manifest::{

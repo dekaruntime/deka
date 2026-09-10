@@ -17,7 +17,7 @@ pub fn write_api_router_entry(project_root: &Path) -> Result<PathBuf, String> {
     std::fs::create_dir_all(&cache_dir)
         .map_err(|err| format!("failed to create {}: {err}", cache_dir.display()))?;
     let entry = cache_dir.join("api-entry.ds");
-    let source = generate_api_entry(&entry, &api_entries)?;
+    let source = generate_api_entry_source(&entry, &api_entries)?;
     std::fs::write(&entry, source.as_bytes())
         .map_err(|err| format!("failed to write {}: {err}", entry.display()))?;
     Ok(entry)
@@ -33,7 +33,12 @@ pub fn write_worker_router_entry(project_root: &Path) -> Result<PathBuf, String>
         .map_err(|err| format!("failed to write {}: {err}", entry.display()))?;
     Ok(entry)
 }
-fn generate_api_entry(entry: &Path, api_entries: &[FrameworkEntry]) -> Result<String, String> {
+/// Build the `api-entry.ds` source for `entry` without writing anything;
+/// `deka build` reuses this for build-time server-entry emission.
+pub fn generate_api_entry_source(
+    entry: &Path,
+    api_entries: &[FrameworkEntry],
+) -> Result<String, String> {
     let (imports, registry) = api_imports_and_registry(entry, api_entries)?;
     Ok(format!(
         r#"{imports}import {{ runApiRouter }} from "ui/router"

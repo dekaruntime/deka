@@ -76,8 +76,17 @@ async fn serve_async(context: &Context) -> Result<(), String> {
         resolved.path.parent().unwrap_or(&resolved.path)
     };
     runtime_config::load_database_config(config_dir);
-    let app_router_root = crate::islands::find_app_router_root(FsPath::new(&context.handler.input))
-        .or_else(|| crate::islands::find_app_router_root(&resolved.path));
+    // Built-artifact posture (deka#762): when the resolved handler is a
+    // compiled dist/server entry, production serves the artifact — no
+    // source-posture asset generation, no cache rewrites, and static files
+    // come from the artifact's client root.
+    let artifact_root = built_artifact_root(&resolved.path);
+    let app_router_root = if artifact_root.is_some() {
+        None
+    } else {
+        crate::islands::find_app_router_root(FsPath::new(&context.handler.input))
+            .or_else(|| crate::islands::find_app_router_root(&resolved.path))
+    };
     if let Some(root) = app_router_root.as_deref() {
         crate::islands::write_island_client_assets_for_project(
             &root,
@@ -182,9 +191,15 @@ async fn serve_async(context: &Context) -> Result<(), String> {
         engine: Arc::clone(&engine),
         handler_code,
         handler_entry,
-        public_dir: app_router_root
-            .map(|root| root.join("public"))
-            .filter(|path| path.is_dir()),
+        public_dir: artifact_root
+            .map(|root| root.join("client"))
+            .filter(|path| path.is_dir())
+            .or_else(|| {
+                app_router_root
+                    .as_ref()
+                    .map(|root| root.join("public"))
+                    .filter(|path| path.is_dir())
+            }),
         handler_key,
         dev_mode,
         perf_mode,
@@ -194,6 +209,30 @@ async fn serve_async(context: &Context) -> Result<(), String> {
     spawn_archive_task(&state, engine.archive());
 
     serve_listeners(state, &serve_options, perf_mode, pool_workers).await
+}
+
+/// The artifact root when the resolved handler is a compiled
+/// `dist/server/serve-entry.js`: an ancestor directory that carries
+/// `build-manifest.json` and owns the `server/` tree the entry lives in.
+/// Source-posture handlers (`.cache/dekascript/serve-entry.dsx`) never match
+/// — their path is not under any `<root>/server` — so the source posture is
+/// untouched.
+fn built_artifact_root(resolved_path: &FsPath) -> Option<std::path::PathBuf> {
+    let start = if resolved_path.is_dir() {
+        resolved_path.to_path_buf()
+    } else {
+        resolved_path.parent()?.to_path_buf()
+    };
+    let mut probe = Some(start.as_path());
+    while let Some(dir) = probe {
+        if dir.join("build-manifest.json").is_file()
+            && resolved_path.starts_with(dir.join("server"))
+        {
+            return Some(dir.to_path_buf());
+        }
+        probe = dir.parent();
+    }
+    None
 }
 
 fn apply_cli_serve_overrides(

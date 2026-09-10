@@ -111,21 +111,28 @@ pub fn publish(project_root: &Path, staged: &StagedDist) -> Result<(), String> {
     Ok(())
 }
 
-/// The staged tree is complete: hash its artifacts into the manifest, persist
-/// it beside the compiler cache, atomically replace `dist/`, then print the
-/// route table. The table prints only after a successful publish; a failed
+/// The staged tree is complete: hash its artifacts into the manifests, persist
+/// them (v1 beside the compiler cache for `deka dev`, v2 inside the staged
+/// dist as the deployment descriptor), atomically replace `dist/`, then print
+/// the route table. The table prints only after a successful publish; a failed
 /// build prints nothing.
 pub fn finalize(
     project_root: &Path,
     staged: &StagedDist,
     manifest: Option<&mut BuildManifest>,
+    artifact: Option<runtime_core::framework::ArtifactManifestV2>,
 ) -> Result<(), String> {
     let mut manifest = manifest;
+    let staged_dist = staged.root.join("dist");
     if let Some(manifest) = manifest.as_deref_mut() {
-        manifest.record_artifacts(&staged.root.join("dist"))?;
+        manifest.record_artifacts(&staged_dist)?;
         manifest.write(
             &runtime_core::framework::compiler_cache_dir(project_root).join("build-manifest.json"),
         )?;
+    }
+    if let Some(mut artifact) = artifact {
+        artifact.record_payloads(&staged_dist)?;
+        artifact.write_into(&staged_dist)?;
     }
     publish(project_root, staged)?;
     if let Some(manifest) = manifest {
@@ -135,6 +142,116 @@ pub fn finalize(
         }
     }
     Ok(())
+}
+
+/// Build the v2 deployment descriptor from the planned v1 manifest and the
+/// emitted server entries (deka#762). Payloads are recorded later, in
+/// [`finalize`], once the staged tree is final.
+#[allow(clippy::too_many_arguments)]
+pub fn build_artifact_manifest(
+    manifest: &BuildManifest,
+    project_root: &Path,
+    dist_root: &Path,
+    worker_emitted: bool,
+    trailing_slash: bool,
+) -> Result<runtime_core::framework::ArtifactManifestV2, String> {
+    use runtime_core::framework::{
+        ARTIFACT_FORMAT, ArtifactClient, ArtifactCompat, ArtifactManifestV2, ArtifactProducer,
+        ArtifactRoute, ArtifactServer, ArtifactSlot, ArtifactWorker, MODULE_FORMAT, RUNTIME_ABI,
+        RouteMode, client_output_path, scan_api_dir, scan_server_defer, server_entries,
+    };
+
+    let app = runtime_core::framework::scan_app_dir(&project_root.join("app"));
+    let api = scan_api_dir(&project_root.join("api"));
+    let _deferred = scan_server_defer(&project_root.join("app"));
+
+    let routes: Vec<ArtifactRoute> = manifest
+        .routes
+        .iter()
+        .map(|route| {
+            let entry = match route.mode {
+                RouteMode::RequestTime => Some(format!("page:{}", route.template)),
+                RouteMode::Api => Some(format!("api:{}", route.template)),
+                RouteMode::Static | RouteMode::StaticParams => None,
+            };
+            let outputs = match route.mode {
+                RouteMode::Static => vec![client_output_path(&route.template)],
+                RouteMode::StaticParams => route
+                    .instances
+                    .iter()
+                    .map(|instance| client_output_path(instance))
+                    .collect(),
+                RouteMode::RequestTime | RouteMode::Api => Vec::new(),
+            };
+            ArtifactRoute {
+                template: route.template.clone(),
+                mode: route.mode,
+                instances: route.instances.clone(),
+                outputs,
+                entry,
+                slot: route.slot.clone(),
+                deferred: route.deferred.clone(),
+                source_file: route.source_file.clone(),
+            }
+        })
+        .collect();
+
+    let entries = server_entries(project_root, &app, &api)?;
+
+    let slots: Vec<ArtifactSlot> = manifest
+        .slots
+        .iter()
+        .map(|slot| ArtifactSlot {
+            id: slot.id.clone(),
+            binding: slot.binding.clone(),
+            file: slot.file.clone(),
+            descriptor_digest: format!("sha256:{}", slot.descriptor_digest),
+            module: format!("server/.values/{}.js", slot.id),
+            observations: Vec::new(),
+        })
+        .collect();
+
+    let client_index = dist_root.join("client/index.html");
+
+    Ok(ArtifactManifestV2 {
+        format: ARTIFACT_FORMAT.to_string(),
+        origin: "authored".to_string(),
+        producer: ArtifactProducer {
+            deka: env!("CARGO_PKG_VERSION").to_string(),
+            dsc: manifest
+                .compiler
+                .dsc
+                .clone()
+                .filter(|dsc| !dsc.is_empty())
+                .or_else(crate::cli::build_dsc::dsc_identity)
+                .unwrap_or_else(|| "unknown".to_string()),
+            plan_version: manifest.compiler.plan_version,
+        },
+        compat: ArtifactCompat {
+            runtime_abi: RUNTIME_ABI,
+            module_format: MODULE_FORMAT.to_string(),
+            targets: vec!["native".to_string(), "worker".to_string()],
+            host_imports: Vec::new(),
+        },
+        client: ArtifactClient {
+            root: "client".to_string(),
+            index: client_index
+                .is_file()
+                .then(|| "client/index.html".to_string()),
+            trailing_slash,
+        },
+        server: ArtifactServer {
+            root: "server".to_string(),
+            entries,
+        },
+        worker: worker_emitted.then(|| ArtifactWorker {
+            entry: "_worker.js".to_string(),
+        }),
+        routes,
+        slots,
+        payloads: Vec::new(),
+        payload_root: String::new(),
+    })
 }
 
 /// Roll forward a publish that crashed between "move aside" and "rename into

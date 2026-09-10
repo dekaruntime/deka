@@ -9,6 +9,7 @@ native = [
   "dep:compile",
   "dep:pm",
   "dep:runtime",
+  "dep:pool",
   "dep:introspect",
   "dep:tokio",
   "dep:postgres",
@@ -20,6 +21,7 @@ lsp = ["dep:dekascript_lsp"]
 
 [dependencies]
 runtime = { path = "../runtime", optional = true }
+pool = { path = "../pool", optional = true }
 runtime_core = { path = "../runtime_core" }
 compile = { path = "../compile", optional = true }
 core = { path ="../core" }

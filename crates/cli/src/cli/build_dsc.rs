@@ -116,7 +116,14 @@ pub fn dsc_identity() -> Option<String> {
     if !output.status.success() {
         return None;
     }
-    String::from_utf8_lossy(&output.stdout)
+    // dsc prints its version line to stderr (observed 0.8.x); fall back to
+    // stderr when stdout is empty rather than recording no provenance.
+    let text = if output.stdout.is_empty() {
+        output.stderr
+    } else {
+        output.stdout
+    };
+    String::from_utf8_lossy(&text)
         .lines()
         .next()
         .map(str::trim)

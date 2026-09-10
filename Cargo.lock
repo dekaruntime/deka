@@ -946,6 +946,7 @@ dependencies = [
  "introspect",
  "libc",
  "pm",
+ "pool",
  "postgres",
  "reqwest",
  "runtime",
