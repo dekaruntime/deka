@@ -144,7 +144,17 @@ export function readCompilerMetadata(compiler: WasmCompiler): WasmCompilerMetada
   }
 }
 
-function normalizeDiagnostics(value: unknown): BuildCompileResult['diagnostics'] {
+function diagnosticPosition(
+  raw: Record<string, unknown>,
+  shortName: 'line' | 'column',
+  longName: 'start_line' | 'start_column',
+): number | undefined {
+  if (typeof raw[shortName] === 'number') return raw[shortName]
+  if (typeof raw[longName] === 'number') return raw[longName]
+  return undefined
+}
+
+export function normalizeDiagnostics(value: unknown): BuildCompileResult['diagnostics'] {
   if (!Array.isArray(value)) return []
   return value.flatMap((diagnostic) => {
     if (!diagnostic || typeof diagnostic !== 'object') return []
@@ -158,8 +168,10 @@ function normalizeDiagnostics(value: unknown): BuildCompileResult['diagnostics']
       {
         severity,
         message: raw.message,
-        line: typeof raw.line === 'number' ? raw.line : undefined,
-        column: typeof raw.column === 'number' ? raw.column : undefined,
+        // dsc's compiler ABI names these fields start_line/start_column;
+        // accept the short names too so the harness keeps one stable shape.
+        line: diagnosticPosition(raw, 'line', 'start_line'),
+        column: diagnosticPosition(raw, 'column', 'start_column'),
       },
     ]
   })

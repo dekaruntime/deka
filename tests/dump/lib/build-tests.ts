@@ -51,6 +51,8 @@ export interface HatsTestWithBuildResult extends HatsTest {
   nativeResult: RuntimeResult
   wasmMatches: boolean | null
   nativeMatches: boolean | null
+  /** True when both hosts emitted the same ordered diagnostic list. */
+  diagnosticsAgree?: boolean
   /// True when both hosts formatted the source and produced byte-identical
   /// output; false on disagreement; undefined when a host did not format
   /// (deka#477).
@@ -82,6 +84,22 @@ function determineStage(
 
 function exactMatch(actual: string, expected: string): boolean {
   return actual === expected
+}
+
+export function diagnosticsAgree(
+  native: RuntimeResult['diagnostics'],
+  wasm: RuntimeResult['diagnostics'],
+): boolean {
+  if (native.length !== wasm.length) return false
+  return native.every((diagnostic, index) => {
+    const other = wasm[index]
+    return (
+      diagnostic.severity === other.severity &&
+      diagnostic.message === other.message &&
+      diagnostic.line === other.line &&
+      diagnostic.column === other.column
+    )
+  })
 }
 
 function expectedStdoutForHost(test: HatsTest, host: HatsHost): string | undefined {
@@ -334,6 +352,14 @@ async function runAllTestsOnce(): Promise<HatsBuildResults> {
         const wasmMatchState = wasmResult.skipped ? null : wasmMatches
         const nativeMatchState = nativeResult.skipped ? null : nativeMatches
 
+        // Compare the complete ordered diagnostic stream. Comparing only the
+        // first entry makes two failures look equivalent when one host emits
+        // an additional cascade or orders the same diagnostics differently.
+        const diagnosticListsAgree =
+          !wasmResult.skipped &&
+          !nativeResult.skipped &&
+          diagnosticsAgree(nativeResult.diagnostics, wasmResult.diagnostics)
+
         // deka#477: the native and wasm formatters must produce byte-
         // identical output. Only defined when both hosts actually formatted.
         const fmtHostsAgree =
@@ -351,6 +377,7 @@ async function runAllTestsOnce(): Promise<HatsBuildResults> {
             nativeSkipped: Boolean(nativeResult.skipped),
             browserSkipped: Boolean(wasmResult.skipped),
             fmtHostsAgree,
+            diagnosticsAgree: diagnosticListsAgree,
           })
 
         tests.push({
@@ -366,6 +393,8 @@ async function runAllTestsOnce(): Promise<HatsBuildResults> {
           nativeResult,
           wasmMatches: wasmMatchState,
           nativeMatches: nativeMatchState,
+          diagnosticsAgree:
+            wasmResult.skipped || nativeResult.skipped ? undefined : diagnosticListsAgree,
           fmtHostsAgree,
           overallStatus: verdict,
           verdict,
