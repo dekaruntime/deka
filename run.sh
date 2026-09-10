@@ -88,21 +88,22 @@ say "bun $(bun --version)"
 [[ -f tests/tour/manifest.json ]] \
   || die "tests/tour/manifest.json is missing" \
          "this is a deka checkout; tour lessons live in tests/tour/"
-[[ -d tests/testsuite ]] \
-  || die "tests/testsuite is missing" \
-         "Hats fixtures live in tests/testsuite/<category>/<name>/"
+TESTSUITE_ROOT="${DEKA_TESTSUITE_ROOT:-$REPO_ROOT/.cache/testsuite-corpus}"
+[[ -d "$TESTSUITE_ROOT" ]] \
+  || die "testsuite corpus is missing: $TESTSUITE_ROOT" \
+         "run scripts/ci-fetch-testsuite-corpus.sh or set DEKA_TESTSUITE_ROOT"
 
 tour_count=$(find tests/tour -maxdepth 1 -name '*.ds' | wc -l | tr -d ' ')
 [[ "$tour_count" -gt 0 ]] \
   || die "tests/tour has no .ds lessons" \
          "add tests/tour/<id>.ds and a row in tests/tour/manifest.json"
 
-suite_cats=$(find tests/testsuite -mindepth 1 -maxdepth 1 -type d ! -name '.*' | wc -l | tr -d ' ')
+suite_cats=$(find "$TESTSUITE_ROOT" -mindepth 1 -maxdepth 1 -type d ! -name '.*' | wc -l | tr -d ' ')
 [[ "$suite_cats" -gt 0 ]] \
-  || die "tests/testsuite has no category folders" \
-         "Hats layout is tests/testsuite/<category>/<name>/"
+  || die "testsuite corpus has no category folders" \
+         "Hats layout is corpus/<category>/<name>/"
 
-say "fixtures: tests/tour ($tour_count lessons)  tests/testsuite ($suite_cats categories)"
+say "fixtures: tests/tour ($tour_count lessons)  testsuite ($suite_cats categories)"
 
 # ----------------------------------------------------------------- native ---
 if [[ -n "${DEKA_NATIVE:-}" ]]; then
@@ -137,8 +138,8 @@ REPORT="$REPO_ROOT/.cache/report.txt"
 : > "$REPORT"
 
 tour_cmd=(bun tests/tour/run.mjs)
-suite_cmd=(bun tests/testsuite/run.mjs)
-adhoc_cmd=(bun tests/testsuite/adhoc/run.mjs)
+suite_cmd=(bun "$TESTSUITE_ROOT/run.mjs")
+adhoc_cmd=(bun tests/adhoc/run.mjs)
 if [[ -n "$FILTER" ]]; then
   tour_cmd+=(--filter "$FILTER")
   suite_cmd+=(--filter "$FILTER")
@@ -189,7 +190,7 @@ set -e
 
 echo
 if [[ "$tour_status" -eq 0 && "$suite_status" -eq 0 && "$adhoc_status" -eq 0 ]]; then
-  say "suite ran -- tour + tests/testsuite + ADHOC  (full log: .cache/report.txt)"
+  say "suite ran -- tour + testsuite + ADHOC  (full log: .cache/report.txt)"
   exit 0
 fi
 

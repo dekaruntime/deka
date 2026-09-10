@@ -41,7 +41,7 @@ Run the language suite:
 ```
 
 That builds the CLI, compiles every `tests/tour` lesson, and runs
-`tests/testsuite` on the native isolate. See [`TESTING.md`](./TESTING.md).
+the pinned `dekaruntime/testsuite` corpus on the native isolate. See [`TESTING.md`](./TESTING.md).
 
 ## Local package development
 

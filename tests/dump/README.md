@@ -20,4 +20,4 @@ DEKA_WASM=../../target/wasm32-unknown-unknown/release/deka_compiler_wasm.wasm \
 ```
 
 Writes `dist/conformance/hats-results.json`. `scripts/pack-conformance.sh`
-bundles that with `tests/tour` and `tests/testsuite` for R2.
+bundles that with `tests/tour` and the pinned testsuite corpus for R2.

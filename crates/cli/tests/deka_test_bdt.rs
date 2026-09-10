@@ -220,7 +220,7 @@ fn deka_test_ignores_hats_fixtures() {
     fs::write(project.path().join("deka.lock"), EMPTY_DEKA_LOCK).expect("lock");
     let hats = project
         .path()
-        .join("tests/testsuite/functions/pipe_operator");
+        .join("corpus/functions/pipe_operator");
     fs::create_dir_all(&hats).expect("hats dir");
     fs::write(hats.join("pipe_operator.pass.ds"), "console.log(1)\n").expect("hats file");
 

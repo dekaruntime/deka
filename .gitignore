@@ -10,7 +10,7 @@ linkhash/**/.cache/
 .cache/
 .cache/deka_js/
 .ci/
-tests/testsuite/.run-tmp/
+scripts/.run-tmp/
 tests/tour/.run-tmp/
 tests/dump/.cache/
 .php_modules/.cache

@@ -96,7 +96,7 @@ function expectedStdoutForHost(test: HatsTest, host: HatsHost): string | undefin
 
 function stageMatchesExpectation(expected: string, actual: string): boolean {
   if (expected === actual) return true
-  // Same equivalence as the native gate (tests/testsuite/run.mjs): a compile
+  // Same equivalence as the native corpus gate: a compile
   // failure does not distinguish typecheck from parse, so a manifest asking
   // for either accepts either.
   return (
