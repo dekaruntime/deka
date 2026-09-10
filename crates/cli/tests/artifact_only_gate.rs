@@ -42,6 +42,7 @@
 //! green while that cleanup lands in its owning phase.
 
 use reqwest::blocking::Client;
+use sha2::Digest;
 use std::fs;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -302,6 +303,21 @@ fn asset_refs(html: &str) -> Vec<String> {
     refs
 }
 
+/// The client tree can contain a valid, export-pruned ESM module that is
+/// smaller than an arbitrary size threshold. Verify the response against the
+/// artifact descriptor instead: it proves the served bytes are exactly the
+/// bytes `deka build` published.
+fn payload_digest(manifest: &serde_json::Value, path: &str) -> String {
+    manifest["payloads"]
+        .as_array()
+        .expect("v2 manifest payloads")
+        .iter()
+        .find(|payload| payload["path"].as_str() == Some(path))
+        .and_then(|payload| payload["digest"].as_str())
+        .unwrap_or_else(|| panic!("v2 manifest has no payload for `{path}`"))
+        .to_string()
+}
+
 #[test]
 fn artifact_only_gate_serves_real_routes_without_source_cache_or_dsc() {
     // Build the gate project in a temp tree with the suite's pinned dsc.
@@ -453,10 +469,12 @@ fn artifact_only_gate_serves_real_routes_without_source_cache_or_dsc() {
             log_text()
         );
         let bytes = res.bytes().expect("asset bytes");
+        let path = format!("client/{}", url.trim_start_matches('/'));
+        let expected_digest = payload_digest(&manifest, &path);
+        let actual_digest = format!("sha256:{:x}", sha2::Sha256::digest(&bytes));
         assert!(
-            bytes.len() > 64,
-            "asset {url} must carry real payload, got {} bytes",
-            bytes.len()
+            actual_digest == expected_digest,
+            "asset {url} bytes disagree with dist/build-manifest.json: expected {expected_digest}, got {actual_digest}"
         );
     }
 
