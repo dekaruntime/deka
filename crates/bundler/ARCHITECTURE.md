@@ -2,7 +2,7 @@
 
 ## Overview
 
-Deka's bundler is a **high-performance JavaScript/TypeScript bundler built on SWC**, featuring parallel processing, module-level caching, and optional external module support.
+Deka's bundler is a **JavaScript/TypeScript bundler built on SWC**, featuring module-level caching and optional external module support.
 
 ## What We Are (Be Honest!)
 
@@ -26,7 +26,6 @@ Deka's bundler is a **high-performance JavaScript/TypeScript bundler built on SW
 
 ### What We Built (The Bundler Logic)
 
-- ✅ **Parallel worker architecture** - tokio-based concurrent module processing
 - ✅ **Module discovery** - recursive dependency crawling with deduplication
 - ✅ **Dependency resolution** - path resolution, node_modules lookup, externals
 - ✅ **Dependency graph** - topological sorting with Kahn's algorithm
@@ -38,11 +37,9 @@ Deka's bundler is a **high-performance JavaScript/TypeScript bundler built on SW
 ## Performance Characteristics
 
 Our performance comes from:
-1. **Parallel processing** - 10 worker threads processing modules concurrently
-2. **Efficient module resolution** - canonicalized paths, deduplication
-3. **Smart caching** - 328x speedup on unchanged builds
-4. **Channel-based architecture** - no lock contention, work stealing
-5. **External modules** - 3x faster for server-side builds
+1. **Efficient module resolution** - canonicalized paths, deduplication
+2. **Smart caching** - 328x speedup on unchanged builds
+3. **External modules** - 3x faster for server-side builds
 
 ### Current Benchmark (M4 MacBook, 16GB RAM)
 
@@ -59,73 +56,20 @@ Our performance comes from:
 - Better lock-free concurrency primitives
 
 **Why we're faster than esbuild/rspack:**
-- Better parallel processing (our custom worker pool)
 - Module-level caching
 - Less overhead in bundling orchestration
 
 ## Architecture Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Entry Point (build.rs)                    │
-│                                                               │
-│  1. Create ParallelBundler                                   │
-│  2. Call bundler.bundle(entry_path)                          │
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│              Phase 1: Parallel Module Discovery              │
-│                                                               │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  Coordinator (main async task)                       │   │
-│  │  - Manages work queue (mpsc channel)                 │   │
-│  │  - Collects results                                  │   │
-│  │  - Detects completion                                │   │
-│  └──────────────┬──────────────────────────────────────┘   │
-│                 │                                             │
-│                 ├──> Work Queue (tokio::mpsc)                │
-│                 │                                             │
-│  ┌──────────────┴──────────────────────────────────────┐   │
-│  │  Worker Pool (10 workers)                            │   │
-│  │                                                       │   │
-│  │  Each worker:                                        │   │
-│  │  1. Pulls work from channel                          │   │
-│  │  2. Reads file from disk                             │   │
-│  │  3. Checks cache (ModuleCache::get)                  │   │
-│  │  4. If cache miss:                                   │   │
-│  │     - Parse with SWC (spawn_blocking)                │   │
-│  │     - Transform (TypeScript, JSX)                    │   │
-│  │     - Extract dependencies                           │   │
-│  │     - Store in cache                                 │   │
-│  │  5. Resolve dependencies                             │   │
-│  │  6. Send new work to queue                           │   │
-│  │  7. Send result to coordinator                       │   │
-│  └──────────────────────────────────────────────────────┘   │
-│                                                               │
-│  Output: HashMap<PathBuf, ParsedModule>                      │
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│              Phase 2: Topological Sort                       │
-│                                                               │
-│  Kahn's Algorithm:                                           │
-│  1. Build in-degree map (how many deps point to each module) │
-│  2. Start with modules that have no dependencies             │
-│  3. Process modules in dependency order                      │
-│  4. Result: Vec<PathBuf> (modules in bundle order)           │
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│              Phase 3: Code Generation                        │
-│                                                               │
-│  For each module in sorted order:                            │
-│  1. Get ParsedModule from hashmap                            │
-│  2. Use SWC Emitter to generate code                         │
-│  3. Wrap in IIFE with module.exports                         │
-│  4. Concatenate to output buffer                             │
-│                                                               │
-│  Output: String (bundled JavaScript)                         │
-└─────────────────────────────────────────────────────────────┘
+Entry point
+    │
+    ▼
+SWC bundler ──► loader reads source and resolver finds dependencies
+    │
+    ├──► parse and transform JavaScript, TypeScript, and JSX
+    ├──► resolve the dependency graph
+    └──► emit the bundled JavaScript
 ```
 
 ## Module Resolution
@@ -188,23 +132,6 @@ struct CachedModule {
 - **Cold build**: ~900ms (no cache)
 - **Warm build**: ~900ms (OS filesystem cache)
 - **Cache hit**: **10ms** (328x speedup!)
-
-## Fast-Path Optimization
-
-Plain JavaScript files in node_modules skip SWC transformation:
-
-```rust
-let is_plain_js = matches!(path.extension(), Some("js"));
-let is_node_module = path.contains("node_modules");
-
-if is_plain_js && is_node_module {
-    // Fast path: simple regex-based import extraction
-    let dependencies = extract_dependencies_fast(&source);
-    // Skip SWC parsing/transformation
-}
-```
-
-**Benefit**: ~50% of node_modules are plain JS files that don't need transformation.
 
 ## SWC Integration Details
 
@@ -273,11 +200,9 @@ let code = String::from_utf8(buf)?;
 
 ### Already Implemented ✅
 
-- [x] Parallel processing (10 workers)
 - [x] Module-level caching
 - [x] External modules support
 - [x] Fast-path for plain JS
-- [x] Channel-based architecture (no locks)
 
 ### TODO / Future Work
 
@@ -321,7 +246,6 @@ deka build --clear-cache
 ### Environment Variables
 ```bash
 DEKA_BUNDLER_CACHE=0          # Disable cache
-DEKA_PARALLEL_BUNDLER=0       # Use standard bundler (not parallel)
 DEKA_EXTERNAL_NODE_MODULES=1  # Mark node_modules as external (legacy)
 ```
 
@@ -333,7 +257,7 @@ When contributing to the bundler:
 2. **Test on large codebases** - 10K+ modules reveal performance issues
 3. **Profile before optimizing** - use `cargo flamegraph` to find bottlenecks
 4. **Consider cache invalidation** - every change must properly invalidate cache
-5. **Think about parallelism** - avoid shared mutable state
+5. **Keep error handling explicit** - malformed modules must fail the bundle
 
 ## References
 

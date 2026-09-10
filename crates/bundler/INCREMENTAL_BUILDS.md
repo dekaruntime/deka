@@ -5,7 +5,7 @@
 Incremental builds allow fast partial rebuilds by only recompiling changed modules and their dependents, while reusing cached modules for everything else.
 
 **Target Performance:**
-- First build: ~680ms (parallel bundler)
+- First build: ~680ms
 - Single file change: **50-200ms** (only rebuild changed + dependents)
 - No changes: **10ms** (full cache hit)
 
@@ -204,13 +204,13 @@ impl ChangeDetector {
 1. DISCOVERY
    ┌────────────────────────────────────┐
    │ Discover all modules from entry    │
-   │ (using parallel bundler)           │
+   │ (using the SWC bundler)            │
    └────────────────┬───────────────────┘
                     │
                     ▼
 2. TRANSFORM
    ┌────────────────────────────────────┐
-   │ Transform all modules in parallel  │
+   │ Transform all modules              │
    │ (parse, transpile, extract deps)   │
    └────────────────┬───────────────────┘
                     │
@@ -229,7 +229,7 @@ impl ChangeDetector {
    │ Generate final output              │
    └────────────────────────────────────┘
 
-Time: ~680ms (same as current parallel bundler)
+Time: ~680ms
 ```
 
 ### Incremental Build (Warm)
@@ -344,7 +344,7 @@ Rebuild set: [index.jsx]
 - Compute transitive rebuild set
 
 ### Phase 4: Selective Rebuild
-- Modify parallel bundler to accept "rebuild set"
+- Modify the bundler to accept a "rebuild set"
 - Skip transformation for cached modules
 - Mix cached + new transformed code
 
@@ -424,7 +424,7 @@ build complete [60ms]
 1. Implement `DependencyGraph` struct
 2. Modify `ModuleCache` for module-level storage
 3. Add `ChangeDetector` logic
-4. Update parallel bundler to support selective rebuild
+4. Update the bundler to support selective rebuild
 5. Integrate with build command
 6. Add metrics and logging
 7. Test on 10K module benchmark
