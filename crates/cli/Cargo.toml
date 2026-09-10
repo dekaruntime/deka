@@ -53,3 +53,6 @@ base64 = "0.22"
 # deka#755/RFD 27: grant fixtures need the fsGraph digest the lockfile pins,
 # exactly as `deka install` computes it.
 deka_host = { path = "../deka_host", default-features = false, features = ["runtime"] }
+# deka#797: the grant-table plumbing e2e serves the deka.gg registry + R2 CDN
+# shape from a local fixture server and runs the real `deka add` against it.
+axum = "0.7"
