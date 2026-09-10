@@ -182,7 +182,18 @@ const nested = readKey(props, "children");
 normalized = normalizeJsxChildren(nested);
 nodeProps = stripKey(props, "children");
 } else {
-nodeProps = props;
+nodeProps = ((__deka_scrutinee) => {
+  if (__deka_scrutinee.__case === "Ok") {
+    const v = __deka_scrutinee.value;
+    return v;
+  }
+  if (__deka_scrutinee.__case === "Err") {
+    return props;
+  }
+  throw new Error("non-exhaustive match");
+})(((function() { try { return ((value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value }))((function() { return (
+props ?? {}
+); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))(err instanceof Error ? err : new Error(String(err))); } })()));
 }
 } else {
 const value = someValue(children);

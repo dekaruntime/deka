@@ -142,14 +142,19 @@ export fn jsx<Tag, P, E>(tag: Tag, props: P, children: Option<E> = None) Compone
     // Legacy form: children carried inside props (userland jsx() calls such
     // as ui/jsx consumers, or spread attributes). Strip them so props and
     // children stay separate for the renderers. `hasOwn` is null-safe on its
-    // own, so a null/undefined props flows through untouched (the original
-    // `props ?? {}` only ever fed the hasOwn/readKey/stripKey triple).
+    // own; the null/undefined props itself is normalized to `{}` below (the
+    // original `props ?? {}`).
     if (hasOwn(props, "children")) {
       const nested = readKey(props, "children")
       normalized = normalizeJsxChildren(nested)
       nodeProps = stripKey(props, "children")
     } else {
-      nodeProps = props
+      // The original `props ?? {}` feeds the node itself, not just the
+      // hasOwn triple: a null/undefined legacy props must surface as `{}`.
+      nodeProps = match (unsafe { props ?? {} }) {
+        Ok(v) => v,
+        Err(_) => props,
+      }
     }
   } else {
     const value = someValue(children)
