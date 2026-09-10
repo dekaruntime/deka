@@ -388,7 +388,15 @@ fn manifest_report(project: &Path, stderr: &str, tree: &BTreeMap<String, Vec<u8>
         .iter()
         .filter_map(|artifact| artifact["path"].as_str().map(str::to_string))
         .collect();
-    let tree_paths: std::collections::BTreeSet<String> = tree.keys().cloned().collect();
+    let tree_paths: std::collections::BTreeSet<String> = tree
+        .keys()
+        .filter(|path| {
+            // Deployment descriptors are excluded from the v1 artifact table
+            // (deka#762); they live in dist/ but are not artifacts.
+            path.as_str() != "build-manifest.json" && path.as_str() != "build-manifest.sha256"
+        })
+        .cloned()
+        .collect();
     if artifact_paths != tree_paths {
         return Err(format!(
             "manifest artifacts disagree with the dist tree:\n  only in manifest: {:?}\n  only in dist: {:?}",

@@ -1,9 +1,14 @@
 _redirects
-app/layout.js
-app/not-found.js
-app/page.js
+build-manifest.json
+build-manifest.sha256
 client/_redirects
 client/index.html
 client/style.css
+server/.ui/jsx.js
+server/.ui/reactive.js
+server/app/layout.js
+server/app/not-found.js
+server/app/page.js
 server/deka.json
 server/deka.lock
+server/serve-entry.js

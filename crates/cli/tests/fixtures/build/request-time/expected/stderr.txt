@@ -3,6 +3,5 @@
 ƒ /user/[id]  prerender = false
 [ok] built web project <project>
   client: <project>/dist/client
-  app: <project>/dist/app
   server: <project>/dist/server
   hydration: disabled
