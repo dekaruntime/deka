@@ -170,12 +170,7 @@ fn built_then_sabotaged_project() -> tempfile::TempDir {
         "manifest must describe the / page entry with a module: {manifest}"
     );
     assert!(
-        manifest_path.with_extension("json.sha256").is_file()
-            || project
-                .path()
-                .join("dist")
-                .join("build-manifest.json.sha256")
-                .is_file(),
+        project.path().join("dist").join("build-manifest.sha256").is_file(),
         "manifest sidecar missing next to {manifest_path:?}"
     );
     assert!(
