@@ -6,7 +6,7 @@ function withoutChildren(props) {
 let __deka_match_result_1;
 const __deka_match_scrutinee_1 = ((function() { try { return ((value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value }))((function() { return (
 (() => { const { children, ...attributes } = props; return attributes; })()
-); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))(err instanceof Error ? err : new Error(String(err))); } })());
+); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))((err instanceof Error ? (err.message || String(err)) : String(err))); } })());
 if (__deka_match_scrutinee_1.__case === "Ok") {
  const v = __deka_match_scrutinee_1.value;
  __deka_match_result_1 = v;
@@ -21,7 +21,7 @@ function propsChildren(props) {
 let __deka_match_result_2;
 const __deka_match_scrutinee_2 = ((function() { try { return ((value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value }))((function() { return (
 Object.hasOwn(props, "children") ? props.children : undefined
-); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))(err instanceof Error ? err : new Error(String(err))); } })());
+); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))((err instanceof Error ? (err.message || String(err)) : String(err))); } })());
 if (__deka_match_scrutinee_2.__case === "Ok") {
  const v = __deka_match_scrutinee_2.value;
  __deka_match_result_2 = v;
@@ -39,7 +39,7 @@ function isNullProps(props) {
 let __deka_match_result_3;
 const __deka_match_scrutinee_3 = ((function() { try { return ((value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value }))((function() { return (
 props == null
-); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))(err instanceof Error ? err : new Error(String(err))); } })());
+); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))((err instanceof Error ? (err.message || String(err)) : String(err))); } })());
 if (__deka_match_scrutinee_3.__case === "Ok") {
  const b = __deka_match_scrutinee_3.value;
  __deka_match_result_3 = b;

@@ -5,7 +5,7 @@ export function Suspense(props) {
 let __deka_match_result_1;
 const __deka_match_scrutinee_1 = ((function() { try { return ((value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value }))((function() { return (
 props ? props.children : null
-); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))(err instanceof Error ? err : new Error(String(err))); } })());
+); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))((err instanceof Error ? (err.message || String(err)) : String(err))); } })());
 if (__deka_match_scrutinee_1.__case === "Ok") {
  const v = __deka_match_scrutinee_1.value;
  __deka_match_result_1 = v;
@@ -18,4 +18,4 @@ return __deka_match_result_1;
 }
 (function() { try { return ((value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value }))((function() { return (
 Suspense.__dekaSuspense = true
-); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))(err instanceof Error ? err : new Error(String(err))); } })();
+); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))((err instanceof Error ? (err.message || String(err)) : String(err))); } })();

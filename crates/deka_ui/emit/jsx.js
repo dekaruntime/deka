@@ -16,7 +16,7 @@ function kindOf(value) {
 let __deka_match_result_1;
 const __deka_match_scrutinee_1 = ((function() { try { return ((value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value }))((function() { return (
 value == null ? 0 : (value === true || value === false) ? 1 : (Array.isArray(value) ? 2 : 3)
-); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))(err instanceof Error ? err : new Error(String(err))); } })());
+); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))((err instanceof Error ? (err.message || String(err)) : String(err))); } })());
 if (__deka_match_scrutinee_1.__case === "Ok") {
  const v = __deka_match_scrutinee_1.value;
  __deka_match_result_1 = v;
@@ -31,7 +31,7 @@ function asArray(value) {
 let __deka_match_result_2;
 const __deka_match_scrutinee_2 = ((function() { try { return ((value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value }))((function() { return (
 value
-); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))(err instanceof Error ? err : new Error(String(err))); } })());
+); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))((err instanceof Error ? (err.message || String(err)) : String(err))); } })());
 if (__deka_match_scrutinee_2.__case === "Ok") {
  const v = __deka_match_scrutinee_2.value;
  __deka_match_result_2 = v;
@@ -46,7 +46,7 @@ function hasOwn(value, key) {
 let __deka_match_result_3;
 const __deka_match_scrutinee_3 = ((function() { try { return ((value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value }))((function() { return (
 value != null && Object.hasOwn(value, key)
-); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))(err instanceof Error ? err : new Error(String(err))); } })());
+); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))((err instanceof Error ? (err.message || String(err)) : String(err))); } })());
 if (__deka_match_scrutinee_3.__case === "Ok") {
  const b = __deka_match_scrutinee_3.value;
  __deka_match_result_3 = b;
@@ -61,7 +61,7 @@ function readKey(value, key) {
 let __deka_match_result_4;
 const __deka_match_scrutinee_4 = ((function() { try { return ((value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value }))((function() { return (
 value[key]
-); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))(err instanceof Error ? err : new Error(String(err))); } })());
+); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))((err instanceof Error ? (err.message || String(err)) : String(err))); } })());
 if (__deka_match_scrutinee_4.__case === "Ok") {
  const v = __deka_match_scrutinee_4.value;
  __deka_match_result_4 = v;
@@ -76,7 +76,7 @@ function stripKey(value, key) {
 let __deka_match_result_5;
 const __deka_match_scrutinee_5 = ((function() { try { return ((value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value }))((function() { return (
 (() => { const { [key]: _omitted, ...rest } = value; return rest; })()
-); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))(err instanceof Error ? err : new Error(String(err))); } })());
+); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))((err instanceof Error ? (err.message || String(err)) : String(err))); } })());
 if (__deka_match_scrutinee_5.__case === "Ok") {
  const v = __deka_match_scrutinee_5.value;
  __deka_match_result_5 = v;
@@ -91,7 +91,7 @@ function isNoneSlot(children) {
 let __deka_match_result_6;
 const __deka_match_scrutinee_6 = ((function() { try { return ((value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value }))((function() { return (
 children === undefined || children.__case === "None"
-); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))(err instanceof Error ? err : new Error(String(err))); } })());
+); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))((err instanceof Error ? (err.message || String(err)) : String(err))); } })());
 if (__deka_match_scrutinee_6.__case === "Ok") {
  const b = __deka_match_scrutinee_6.value;
  __deka_match_result_6 = b;
@@ -106,7 +106,7 @@ function someValue(children) {
 let __deka_match_result_7;
 const __deka_match_scrutinee_7 = ((function() { try { return ((value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value }))((function() { return (
 children != null && children.__case === "Some" ? children.value : children
-); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))(err instanceof Error ? err : new Error(String(err))); } })());
+); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))((err instanceof Error ? (err.message || String(err)) : String(err))); } })());
 if (__deka_match_scrutinee_7.__case === "Ok") {
  const v = __deka_match_scrutinee_7.value;
  __deka_match_result_7 = v;
@@ -121,7 +121,7 @@ function fragmentSymbol() {
 let __deka_match_result_8;
 const __deka_match_scrutinee_8 = ((function() { try { return ((value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value }))((function() { return (
 Symbol.for("deka.ui.Fragment")
-); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))(err instanceof Error ? err : new Error(String(err))); } })());
+); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))((err instanceof Error ? (err.message || String(err)) : String(err))); } })());
 if (__deka_match_scrutinee_8.__case === "Ok") {
  const v = __deka_match_scrutinee_8.value;
  __deka_match_result_8 = v;
@@ -137,7 +137,7 @@ export function isComponentNode(value) {
 let __deka_match_result_9;
 const __deka_match_scrutinee_9 = ((function() { try { return ((value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value }))((function() { return (
 value != null && typeof value === "object" && value.__componentNode === true
-); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))(err instanceof Error ? err : new Error(String(err))); } })());
+); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))((err instanceof Error ? (err.message || String(err)) : String(err))); } })());
 if (__deka_match_scrutinee_9.__case === "Ok") {
  const b = __deka_match_scrutinee_9.value;
  __deka_match_result_9 = b;
@@ -193,7 +193,7 @@ nodeProps = ((__deka_scrutinee) => {
   throw new Error("non-exhaustive match");
 })(((function() { try { return ((value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value }))((function() { return (
 props ?? {}
-); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))(err instanceof Error ? err : new Error(String(err))); } })()));
+); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))((err instanceof Error ? (err.message || String(err)) : String(err))); } })()));
 }
 } else {
 const value = someValue(children);
@@ -219,7 +219,7 @@ normalized = [value];
 let __deka_match_result_10;
 const __deka_match_scrutinee_10 = ((function() { try { return ((value) => ({ __enum: "Result", __case: "Ok", name: "Ok", value }))((function() { return (
 ({ tag: tag, props: nodeProps, children: normalized, __componentNode: true })
-); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))(err instanceof Error ? err : new Error(String(err))); } })());
+); })()); } catch (err) { return ((error) => ({ __enum: "Result", __case: "Err", name: "Err", error }))((err instanceof Error ? (err.message || String(err)) : String(err))); } })());
 if (__deka_match_scrutinee_10.__case === "Ok") {
  const v = __deka_match_scrutinee_10.value;
  __deka_match_result_10 = v;
