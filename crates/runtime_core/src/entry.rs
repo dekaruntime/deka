@@ -48,9 +48,34 @@ pub fn looks_like_file_arg(path: &str) -> bool {
 }
 
 pub fn resolve_entry(project_root: &Path, cli_arg: Option<&str>) -> Result<ResolvedEntry, String> {
-    // An authored artifact is a whole-subject decision. Do this before even
-    // looking at a CLI/source entry so `deka run` cannot route around a stale
-    // or malformed dist/ and recompile `.ds(x)` behind the user's back.
+    // An explicit run target is a command subject of its own: test harnesses
+    // and other JS tools can live beside a deployable app without being
+    // redirected to that app's server entry. `deka serve` still resolves the
+    // authored artifact before considering source configuration.
+    if let Some(arg) = cli_arg {
+        if has_run_source_ext(arg) {
+            let path = join_project(project_root, arg);
+            if path.is_file() {
+                return Ok(finalize(project_root, path, EntryKind::CliArg));
+            }
+            return Err(format!("entry file not found: {}", path.display()));
+        }
+        if looks_like_file_arg(arg) {
+            let path = join_project(project_root, arg);
+            if path.is_file() {
+                return Err(format!(
+                    "Run mode supports .ds/.dsx/.js entrypoints: {}",
+                    path.display()
+                ));
+            }
+            return Err(format!("entry file not found: {}", path.display()));
+        }
+    }
+
+    // Without an explicit target, an authored artifact is a whole-subject
+    // decision. Do this before source configuration so `deka run` cannot
+    // route around a stale or malformed dist/ and recompile `.ds(x)` behind
+    // the user's back.
     if let Some(artifact_root) = crate::framework::resolve_authored_artifact_root(project_root)
         .map_err(run_artifact_remedy)?
     {
@@ -74,26 +99,6 @@ pub fn resolve_entry(project_root: &Path, cli_arg: Option<&str>) -> Result<Resol
             path: entry,
             kind: EntryKind::App,
         });
-    }
-
-    if let Some(arg) = cli_arg {
-        if has_run_source_ext(arg) {
-            let path = join_project(project_root, arg);
-            if path.is_file() {
-                return Ok(finalize(project_root, path, EntryKind::CliArg));
-            }
-            return Err(format!("entry file not found: {}", path.display()));
-        }
-        if looks_like_file_arg(arg) {
-            let path = join_project(project_root, arg);
-            if path.is_file() {
-                return Err(format!(
-                    "Run mode supports .ds/.dsx/.js entrypoints: {}",
-                    path.display()
-                ));
-            }
-            return Err(format!("entry file not found: {}", path.display()));
-        }
     }
 
     let manifest = load_deka_json(project_root);
@@ -604,6 +609,18 @@ mod tests {
             err.contains("deka build") && err.contains("deka dev"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn explicit_cli_js_entry_is_not_shadowed_by_an_incomplete_dist() {
+        let tmp = project();
+        let root = tmp.path();
+        write(root, "dist/server/serve-entry.js", "export {};");
+        write(root, "hydration-harness.js", "console.log('harness');");
+
+        let got = resolve(root, Some("hydration-harness.js"));
+        assert_eq!(got.kind, EntryKind::CliArg);
+        assert_path(&got.path, root, "hydration-harness.js");
     }
 
     #[test]
