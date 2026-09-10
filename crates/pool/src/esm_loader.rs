@@ -92,6 +92,9 @@ pub struct PhpxEsmLoader {
     grant_table: Option<GrantTable>,
     /// Bridge kinds granted to the project root (cached at construction).
     root_kinds: Vec<String>,
+    /// Whether the project root manifest names an official `@deka/*` package
+    /// (RFD 21: only official stdlib sources may call the `deka.*` catalog).
+    root_official: bool,
     /// Lockfile-pinned fsGraph digests by package name, read once from
     /// `<project_root>/deka.lock` (defensive inline JSON parse).
     lock_digests: HashMap<String, String>,
@@ -171,6 +174,7 @@ impl PhpxEsmLoader {
         };
 
         let lock_digests = read_lock_digests(&project_root);
+        let root_official = host_bridge::is_official_package_name(&root_name);
 
         // JS/MJS/CJS entries are WinterTC workers: load as-is, do not send
         // them through dsc (dsc only compiles .ds/.dsx).
@@ -198,6 +202,7 @@ impl PhpxEsmLoader {
             v2_modules,
             grant_table,
             root_kinds,
+            root_official,
             lock_digests,
             package_kinds: Rc::new(RefCell::new(HashMap::new())),
             artifact_server_root,
@@ -210,8 +215,8 @@ impl PhpxEsmLoader {
         if let Some(modules) = &loader.v2_modules {
             let mut paths: Vec<&PathBuf> = modules.keys().collect();
             paths.sort();
-            for path in paths {
-                if !modules[path].contains("__deka_host(") {
+            for path in &paths {
+                if !modules[*path].contains("__deka_host(") {
                     continue;
                 }
                 let kinds = loader.kinds_for_path(path);
@@ -220,6 +225,29 @@ impl PhpxEsmLoader {
                     return Err(JsErrorBox::generic(format!(
                         "package '{}' is not granted any host kinds but contains bridge calls ({})",
                         name,
+                        path.display()
+                    )));
+                }
+            }
+            // RFD 21 (deka#754): the closed deka.* catalog is stdlib-only. A
+            // compiled module from a non-official package that references a
+            // catalog kind can never resolve its helpers — refuse to boot.
+            // Official packages were validated at the source boundary before
+            // dsc ran (unknown helpers, arity, classification).
+            for path in paths {
+                if loader.catalog_eligible_for_path(path) {
+                    continue;
+                }
+                let js = &modules[path];
+                let referenced = runtime_core::deka_catalog::DEKA_CATALOG
+                    .iter()
+                    .find(|kind| js.contains(&format!("deka.{}.", kind.name)));
+                if let Some(kind) = referenced {
+                    let name = loader.package_name_for_path(path);
+                    return Err(JsErrorBox::generic(format!(
+                        "package '{}' references the closed deka.* catalog (deka.{}) but is not an official @deka/* stdlib package ({})",
+                        name,
+                        kind.name,
                         path.display()
                     )));
                 }
@@ -312,6 +340,43 @@ impl PhpxEsmLoader {
         }
 
         Vec::new()
+    }
+
+    /// RFD 21 (deka#754): whether a module may bind the closed `deka.*`
+    /// catalog through the per-module preamble. Same classification the
+    /// source scan used before compile: official `@deka/*` dependencies, an
+    /// official project root, the runtime-distribution `ui/*` modules, or a
+    /// linked package whose nearest manifest is official. Application code
+    /// never qualifies.
+    fn catalog_eligible_for_path(&self, path: &Path) -> bool {
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let path: &Path = &canonical;
+        // Materialized `ui/*` toolchain modules are part of the deka
+        // distribution like the prelude.
+        if path.starts_with(self.cache_dir.join("ui")) {
+            return true;
+        }
+        if let Some(package_root) = self.dependency_package_root(path) {
+            let name = dependency_package_name(&package_root, &self.project_root);
+            return host_bridge::is_official_package_name(&name);
+        }
+        if path.starts_with(&self.project_root) {
+            return self.root_official;
+        }
+        // Linked packages outside the project root: nearest manifest decides.
+        path.ancestors()
+            .find(|ancestor| ancestor.join("deka.json").is_file())
+            .and_then(|root| {
+                std::fs::read_to_string(root.join("deka.json"))
+                    .ok()
+                    .and_then(|text| {
+                        serde_json::from_str::<serde_json::Value>(&text)
+                            .ok()
+                            .and_then(|value| value.get("name")?.as_str().map(str::to_string))
+                    })
+            })
+            .map(|name| host_bridge::is_official_package_name(&name))
+            .unwrap_or(false)
     }
 
     /// If `path` lives under `<project_root>/{ds_modules,php_modules}/<name>`,
@@ -566,7 +631,11 @@ impl PhpxEsmLoader {
                 )));
             }
             let mut code = self.load_js_source(&path)?;
-            code = prepend_host_bindings(code, &self.kinds_for_path(&path));
+            code = prepend_host_bindings(
+                code,
+                &self.kinds_for_path(&path),
+                self.catalog_eligible_for_path(&path),
+            );
             if specifier == &self.entry_specifier {
                 code = append_entry_footer(code);
             }
@@ -608,7 +677,11 @@ impl PhpxEsmLoader {
             "ds" | "dsx" => self.load_ds_source(&path)?,
             _ => self.load_js_source(&path)?,
         };
-        code = prepend_host_bindings(code, &self.kinds_for_path(&path));
+        code = prepend_host_bindings(
+            code,
+            &self.kinds_for_path(&path),
+            self.catalog_eligible_for_path(&path),
+        );
         if specifier == &self.entry_specifier {
             code = append_entry_footer(code);
         }
