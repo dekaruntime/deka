@@ -94,8 +94,8 @@ impl PoolConfig {
             introspect_profiling: std::env::var("INTROSPECT_PROFILING")
                 .map(|value| value != "false" && value != "0")
                 .unwrap_or(false),
-            // Grant tables are not env-scalar config; the ESM loader already
-            // falls back to DEKA_HOST_GRANTS when this is None.
+            // Grant tables are not env-scalar config; the ESM loader resolves
+            // them (env override, then project-installed table) when None.
             host_grants: None,
         }
     }
