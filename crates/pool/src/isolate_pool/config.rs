@@ -21,6 +21,10 @@ pub struct PoolConfig {
     pub scheduler_strategy: SchedulerStrategy,
     /// Enable per-request profiling data (op timings)
     pub introspect_profiling: bool,
+    /// RFD 27 host grant table for DekaScript-from-disk modules. `None` falls
+    /// back to the `DEKA_HOST_GRANTS` env var in the ESM loader until the
+    /// registry/index plumbing lands.
+    pub host_grants: Option<runtime_core::host_bridge::GrantTable>,
 }
 
 impl Default for PoolConfig {
@@ -36,6 +40,7 @@ impl Default for PoolConfig {
             queue_timeout_ms: 10_000,
             scheduler_strategy: SchedulerStrategy::LeastLoaded,
             introspect_profiling: false,
+            host_grants: None,
         }
     }
 }
@@ -88,6 +93,9 @@ impl PoolConfig {
             introspect_profiling: std::env::var("INTROSPECT_PROFILING")
                 .map(|value| value != "false" && value != "0")
                 .unwrap_or(false),
+            // Grant tables are not env-scalar config; the ESM loader already
+            // falls back to DEKA_HOST_GRANTS when this is None.
+            host_grants: None,
         }
     }
 }

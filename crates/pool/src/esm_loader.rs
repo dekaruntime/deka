@@ -16,6 +16,7 @@ use deno_core::ResolutionKind;
 use deno_core::resolve_import;
 use deno_error::JsErrorBox;
 
+use runtime_core::host_bridge::{self, GrantTable};
 use runtime_core::{
     module_spec::{
         ds_source_candidates, is_bare_module_specifier, module_spec_aliases,
@@ -62,10 +63,23 @@ pub struct PhpxEsmLoader {
     /// Pre-compiled module graph for compiler v2. When present, `.ds` files
     /// are served from this map instead of compiled on demand.
     v2_modules: Option<HashMap<PathBuf, String>>,
+    /// RFD 27 grant table (explicit config or `DEKA_HOST_GRANTS` env).
+    grant_table: Option<GrantTable>,
+    /// Bridge kinds granted to the project root (cached at construction).
+    root_kinds: Vec<String>,
+    /// Lockfile-pinned fsGraph digests by package name, read once from
+    /// `<project_root>/deka.lock` (defensive inline JSON parse).
+    lock_digests: HashMap<String, String>,
+    /// Per-package-root resolved kind cache (shared across loader clones).
+    package_kinds: Rc<RefCell<HashMap<PathBuf, Vec<String>>>>,
 }
 
 impl PhpxEsmLoader {
-    pub fn new(project_root: PathBuf, entry_path: PathBuf) -> Result<Self, JsErrorBox> {
+    pub fn new(
+        project_root: PathBuf,
+        entry_path: PathBuf,
+        host_grants: Option<GrantTable>,
+    ) -> Result<Self, JsErrorBox> {
         let cache_dir = runtime_core::framework::compiler_cache_dir(&project_root);
         std::fs::create_dir_all(&cache_dir).map_err(|err| {
             JsErrorBox::generic(format!("failed to create {}: {}", cache_dir.display(), err))
@@ -74,6 +88,42 @@ impl PhpxEsmLoader {
             .map_err(|_| JsErrorBox::generic("invalid entry module path"))?;
         let wrapper_specifier = ModuleSpecifier::from_file_path(entry_wrapper_path(&project_root))
             .map_err(|_| JsErrorBox::generic("invalid entry wrapper path"))?;
+
+        // RFD 27: resolve the host grant table. An explicit table wins; until
+        // the registry/index plumbing lands, production falls back to the
+        // DEKA_HOST_GRANTS env var (a grant-table JSON document).
+        let grant_table = match host_grants {
+            Some(table) => Some(table),
+            None => std::env::var("DEKA_HOST_GRANTS")
+                .ok()
+                .and_then(|json| match GrantTable::from_json(&json) {
+                    Ok(table) => Some(table),
+                    Err(err) => {
+                        tracing::warn!("ignoring invalid DEKA_HOST_GRANTS: {err}");
+                        None
+                    }
+                }),
+        };
+
+        // Eager project-root check: only official `@deka/*` packages may
+        // self-declare `host.kinds` in deka.json; an application root doing so
+        // is a compile error, not a silent grant.
+        let (root_kinds, root_name) = read_manifest_host_kinds(&project_root);
+        let root_kinds = match host_bridge::resolve_project_root_grants(
+            &root_name,
+            &project_root.join("deka.json"),
+            root_kinds.as_deref(),
+        ) {
+            Ok(kinds) => kinds,
+            Err(err) => {
+                return Err(JsErrorBox::generic(format!(
+                    "{err}; deka.json 'host.kinds' is reserved for official @deka stdlib packages; \
+                     apps acquire bridge authority only via the published grant table"
+                )));
+            }
+        };
+
+        let lock_digests = read_lock_digests(&project_root);
 
         // JS/MJS/CJS entries are WinterTC workers: load as-is, do not send
         // them through dsc (dsc only compiles .ds/.dsx).
@@ -93,14 +143,43 @@ impl PhpxEsmLoader {
             None
         };
 
-        Ok(Self {
+        let loader = Self {
             project_root,
             cache_dir,
             entry_specifier,
             wrapper_specifier,
             sources: Rc::new(RefCell::new(HashMap::new())),
             v2_modules,
-        })
+            grant_table,
+            root_kinds,
+            lock_digests,
+            package_kinds: Rc::new(RefCell::new(HashMap::new())),
+        };
+
+        // Static pre-check: any compiled module that references `__deka_host(`
+        // must belong to a package with at least one granted kind. Per-kind
+        // precision is the per-call gate's job; this just refuses to boot a
+        // graph whose bridge caller can never succeed.
+        if let Some(modules) = &loader.v2_modules {
+            let mut paths: Vec<&PathBuf> = modules.keys().collect();
+            paths.sort();
+            for path in paths {
+                if !modules[path].contains("__deka_host(") {
+                    continue;
+                }
+                let kinds = loader.kinds_for_path(path);
+                if kinds.is_empty() {
+                    let name = loader.package_name_for_path(path);
+                    return Err(JsErrorBox::generic(format!(
+                        "package '{}' is not granted any host kinds but contains bridge calls ({})",
+                        name,
+                        path.display()
+                    )));
+                }
+            }
+        }
+
+        Ok(loader)
     }
 
     fn cache_path_for(&self, path: &Path) -> PathBuf {
@@ -114,6 +193,105 @@ impl PhpxEsmLoader {
             .unwrap_or_else(|| "module.js".to_string());
         out.set_file_name(filename);
         out
+    }
+
+    /// Classify a module path for RFD 27 grant purposes and return the bridge
+    /// kinds it may call. Order matters: the compiler-cache `ui/` dir and
+    /// `ds_modules|php_modules` trees are checked before the generic
+    /// "under project root" rule.
+    fn kinds_for_path(&self, path: &Path) -> Vec<String> {
+        // Materialized `ui/*` toolchain modules (crates/deka_ui/js): part of
+        // the deka distribution like the prelude, not userland. deka_ui's
+        // embedded server calls crypto.random_bytes (defer nonces) and the
+        // AES-GCM helpers — crypto is all that's needed (grep deka_ui/js for
+        // `host(`). Grant exactly that.
+        if path.starts_with(self.cache_dir.join("ui")) {
+            return vec!["crypto".to_string()];
+        }
+
+        if let Some(package_root) = self.dependency_package_root(path) {
+            if let Some(kinds) = self.package_kinds.borrow().get(&package_root) {
+                return kinds.clone();
+            }
+            let name = dependency_package_name(&package_root, &self.project_root);
+            let digest = self.lock_digests.get(&name);
+            let kinds = match &self.grant_table {
+                Some(table) => {
+                    host_bridge::resolve_dependency_grants(table, digest.map(String::as_str))
+                }
+                None => Vec::new(),
+            };
+            self.package_kinds
+                .borrow_mut()
+                .insert(package_root, kinds.clone());
+            return kinds;
+        }
+
+        if path.starts_with(&self.project_root) {
+            return self.root_kinds.clone();
+        }
+
+        // Linked packages outside the project root (lazily compiled via
+        // `load_ds_source`): read their own deka.json for the name and treat
+        // them as a dependency of this project.
+        let package_root = path
+            .ancestors()
+            .find(|ancestor| ancestor.join("deka.json").is_file())
+            .map(Path::to_path_buf);
+        if let Some(package_root) = package_root {
+            if let Some(kinds) = self.package_kinds.borrow().get(&package_root) {
+                return kinds.clone();
+            }
+            let name = read_manifest_name(&package_root).unwrap_or_default();
+            let digest = self.lock_digests.get(&name);
+            // Dependency manifests' host.kinds are untrusted per RFD 27 — only
+            // the grant table via the lockfile digest grants kinds.
+            let kinds = match &self.grant_table {
+                Some(table) => {
+                    host_bridge::resolve_dependency_grants(table, digest.map(String::as_str))
+                }
+                None => Vec::new(),
+            };
+            self.package_kinds
+                .borrow_mut()
+                .insert(package_root, kinds.clone());
+            return kinds;
+        }
+
+        Vec::new()
+    }
+
+    /// If `path` lives under `<project_root>/{ds_modules,php_modules}/<name>`,
+    /// return the package root directory. Scoped names (`@deka/crypto`) take
+    /// two path segments.
+    fn dependency_package_root(&self, path: &Path) -> Option<PathBuf> {
+        for dir in ["ds_modules", "php_modules"] {
+            let modules_dir = self.project_root.join(dir);
+            if let Ok(rel) = path.strip_prefix(&modules_dir) {
+                let mut components = rel.components();
+                let first = components.next()?;
+                let mut root = modules_dir.join(first.as_os_str());
+                let file_name = first.as_os_str().to_string_lossy();
+                if file_name.starts_with('@') {
+                    let second = components.next()?;
+                    root = root.join(second.as_os_str());
+                }
+                return Some(root);
+            }
+        }
+        None
+    }
+
+    /// Best-effort package name for diagnostics: the dependency segment when
+    /// under a modules dir, else the nearest manifest name, else the path.
+    fn package_name_for_path(&self, path: &Path) -> String {
+        if let Some(root) = self.dependency_package_root(path) {
+            return dependency_package_name(&root, &self.project_root);
+        }
+        path.ancestors()
+            .find(|ancestor| ancestor.join("deka.json").is_file())
+            .and_then(|root| read_manifest_name(root))
+            .unwrap_or_else(|| path.display().to_string())
     }
 
     fn load_js_source(&self, path: &Path) -> Result<ModuleSourceCode, JsErrorBox> {
@@ -284,7 +462,7 @@ impl PhpxEsmLoader {
             "ds" | "dsx" => self.load_ds_source(&path)?,
             _ => self.load_js_source(&path)?,
         };
-        code = prepend_host_bindings(code);
+        code = prepend_host_bindings(code, &self.kinds_for_path(&path));
         if specifier == &self.entry_specifier {
             code = append_entry_footer(code);
         }
@@ -700,20 +878,105 @@ fn is_bare_specifier(spec: &str) -> bool {
     is_bare_module_specifier(spec)
 }
 
-const HOST_BINDINGS_PREAMBLE: &str = "const __dekaHostBindings = globalThis[Symbol.for('deka.host.internal')];
-const __deka_host = __dekaHostBindings && __dekaHostBindings.host;
-const __bridge = __dekaHostBindings && __dekaHostBindings.bridge;
-const __bridge_async = __dekaHostBindings && __dekaHostBindings.bridgeAsync;
-const __deka_wasm_call = __dekaHostBindings && __dekaHostBindings.wasmCall;
-const __deka_wasm_call_async = __dekaHostBindings && __dekaHostBindings.wasmCallAsync;
-const __deka_to_result = __dekaHostBindings && __dekaHostBindings.toResult;
-";
+/// Read `<root>/deka.json` and return its `(host.kinds, name)`. Both absent
+/// manifest and absent fields yield empty values.
+fn read_manifest_host_kinds(root: &Path) -> (Option<Vec<String>>, String) {
+    let path = root.join("deka.json");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return (None, String::new());
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return (None, String::new());
+    };
+    let name = value
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let kinds = value
+        .get("host")
+        .and_then(|host| host.get("kinds"))
+        .and_then(serde_json::Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<String>>()
+        });
+    (kinds, name)
+}
 
-fn prepend_host_bindings(code: ModuleSourceCode) -> ModuleSourceCode {
+fn read_manifest_name(root: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(root.join("deka.json")).ok()?;
+    let value = serde_json::from_str::<serde_json::Value>(&text).ok()?;
+    value
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
+/// Read `<project_root>/deka.lock` once and extract each package's
+/// lockfile-pinned `metadata.fsGraph.hash` digest. Defensive inline JSON
+/// parse: anything missing or malformed yields no digest for that package
+/// (which simply means no table lookup later, i.e. no grants).
+fn read_lock_digests(project_root: &Path) -> HashMap<String, String> {
+    let mut digests = HashMap::new();
+    let Ok(text) = std::fs::read_to_string(project_root.join("deka.lock")) else {
+        return digests;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return digests;
+    };
+    let Some(packages) = value.get("packages").and_then(serde_json::Value::as_object) else {
+        return digests;
+    };
+    for (name, entry) in packages {
+        let digest = entry
+            .get("metadata")
+            .and_then(|metadata| metadata.get("fsGraph"))
+            .and_then(|fs_graph| fs_graph.get("hash"))
+            .and_then(serde_json::Value::as_str);
+        if let Some(digest) = digest {
+            digests.insert(name.clone(), digest.to_string());
+        }
+    }
+    digests
+}
+
+/// Package name from a dependency package root: the path relative to the
+/// modules dir, with scoped names (`@deka/crypto`) kept as two segments.
+fn dependency_package_name(package_root: &Path, project_root: &Path) -> String {
+    for dir in ["ds_modules", "php_modules"] {
+        let modules_dir = project_root.join(dir);
+        if let Ok(rel) = package_root.strip_prefix(&modules_dir) {
+            return rel.to_string_lossy().replace('\\', "/");
+        }
+    }
+    package_root.to_string_lossy().replace('\\', "/")
+}
+
+/// Generate the per-module host-bindings preamble. Every DekaScript module
+/// gets a `__deka_host` closure that carries only its package's granted kinds
+/// — this is the "every bridge site" RFD 27 gate. Local names `__deka_host`
+/// and `__deka_to_result` are part of the dsc emit contract (and the deka_ui
+/// fallback references them), so they must not be renamed.
+fn host_bindings_preamble(kinds: &[String]) -> String {
+    let grants_json = serde_json::to_string(kinds).unwrap_or_else(|_| "[]".to_string());
+    format!(
+        "const __dekaHostBindings = globalThis[Symbol.for('deka.host.internal')];\n\
+         const __dekaModuleGrants = Object.freeze({grants_json});\n\
+         const __deka_host = __dekaHostBindings && ((k, a, args) => __dekaHostBindings.host(k, a, args, __dekaModuleGrants));\n\
+         const __deka_to_result = __dekaHostBindings && __dekaHostBindings.toResult;\n"
+    )
+}
+
+fn prepend_host_bindings(code: ModuleSourceCode, kinds: &[String]) -> ModuleSourceCode {
     match code {
         ModuleSourceCode::String(source) => {
-            let mut text = String::with_capacity(HOST_BINDINGS_PREAMBLE.len() + source.len());
-            text.push_str(HOST_BINDINGS_PREAMBLE);
+            let preamble = host_bindings_preamble(kinds);
+            let mut text = String::with_capacity(preamble.len() + source.len());
+            text.push_str(&preamble);
             text.push_str(&source);
             ModuleSourceCode::String(text.into())
         }
@@ -756,8 +1019,12 @@ mod tests {
     #[test]
     fn source_extensions_have_distinct_cache_paths() {
         let root = tempfile::tempdir().expect("temp project");
-        let loader = PhpxEsmLoader::new(root.path().to_path_buf(), root.path().join("main.ds"))
-            .expect("loader");
+        let loader = PhpxEsmLoader::new(
+            root.path().to_path_buf(),
+            root.path().join("main.ds"),
+            None,
+        )
+        .expect("loader");
 
         let ds = loader.cache_path_for(&root.path().join("main.ds"));
         let js = loader.cache_path_for(&root.path().join("main.js"));
@@ -810,8 +1077,12 @@ mod tests {
     #[test]
     fn wrapper_accepts_exported_dekascript_app() {
         let root = tempfile::tempdir().expect("temp project");
-        let loader = PhpxEsmLoader::new(root.path().to_path_buf(), root.path().join("main.ds"))
-            .expect("loader");
+        let loader = PhpxEsmLoader::new(
+            root.path().to_path_buf(),
+            root.path().join("main.ds"),
+            None,
+        )
+        .expect("loader");
         assert!(loader.wrapper_source().contains("__dekaMain.App"));
         assert!(loader.wrapper_source().contains("ui/router"));
     }
@@ -830,7 +1101,7 @@ mod tests {
         let resolved = resolve_project_root(&entry).expect("js handler has a project root");
         assert_eq!(resolved, root.path());
 
-        PhpxEsmLoader::new(root.path().to_path_buf(), entry).expect("js loader skips dsc");
+        PhpxEsmLoader::new(root.path().to_path_buf(), entry, None).expect("js loader skips dsc");
     }
 
     #[test]
@@ -847,7 +1118,7 @@ mod tests {
         let root = tempfile::tempdir().expect("temp project");
         let entry = root.path().join("handler.js");
         fs::write(&entry, "export default {};\n").expect("write js handler");
-        let loader = PhpxEsmLoader::new(root.path().to_path_buf(), entry).expect("loader");
+        let loader = PhpxEsmLoader::new(root.path().to_path_buf(), entry, None).expect("loader");
 
         let path = loader
             .materialize_ui_module("ui/jsx")
@@ -888,5 +1159,45 @@ mod tests {
             .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp."))
             .collect();
         assert!(leftovers.is_empty(), "temp files left behind: {leftovers:?}");
+    }
+
+    /// RFD 27: a ds_modules package module resolves its bridge kinds from the
+    /// grant table via the lockfile-pinned fsGraph digest.
+    #[test]
+    fn dependency_module_kinds_come_from_grant_table_via_lock_digest() {
+        use runtime_core::host_bridge::GrantTable;
+
+        let root = tempfile::tempdir().expect("temp project");
+        let entry = root.path().join("handler.js");
+        fs::write(&entry, "export default {};\n").expect("write js handler");
+
+        let package_dir = root.path().join("ds_modules").join("@deka").join("crypto");
+        fs::create_dir_all(&package_dir).expect("package dir");
+        let module = package_dir.join("index.ds");
+        fs::write(&module, "export const x = 1;\n").expect("package module");
+
+        fs::write(
+            root.path().join("deka.lock"),
+            r#"{
+                "lockfileVersion": 1,
+                "packages": {
+                    "@deka/crypto": {
+                        "metadata": { "fsGraph": { "algo": "sha256", "hash": "sha256:aaa" } }
+                    }
+                }
+            }"#,
+        )
+        .expect("deka.lock");
+
+        let table = GrantTable::from_json(
+            r#"[{"name":"@deka/crypto","version":"1.0.0","digest":"sha256:aaa","kinds":["crypto"]}]"#,
+        )
+        .expect("grant table");
+        let loader =
+            PhpxEsmLoader::new(root.path().to_path_buf(), entry, Some(table)).expect("loader");
+
+        assert_eq!(loader.kinds_for_path(&module), vec!["crypto".to_string()]);
+        // Root-owned sources get no kinds (this fixture root declares none).
+        assert!(loader.kinds_for_path(&root.path().join("src").join("main.ds")).is_empty());
     }
 }

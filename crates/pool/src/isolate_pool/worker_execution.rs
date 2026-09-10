@@ -4,7 +4,7 @@ use super::*;
 /// `__deka_host` without those identifiers living on user `globalThis`.
 fn wrap_with_host_bindings(body: &str) -> String {
     format!(
-        "(function() {{\nconst __h = globalThis[Symbol.for('deka.host.internal')];\n(function(__deka_host, __bridge, __bridge_async, __deka_wasm_call, __deka_wasm_call_async, __deka_to_result) {{\n{body}\n}})(__h && __h.host, __h && __h.bridge, __h && __h.bridgeAsync, __h && __h.wasmCall, __h && __h.wasmCallAsync, __h && __h.toResult);\n}})();"
+        "(function() {{\nconst __h = globalThis[Symbol.for('deka.host.internal')];\n(function(__deka_host, __bridge, __deka_to_result) {{\n{body}\n}})(__h && __h.host, __h && __h.bridge, __h && __h.toResult);\n}})();"
     )
 }
 
@@ -18,6 +18,14 @@ fn bootstrap_source(template: &str) -> String {
             &crate::prelude::pool_prelude(),
         )
         .replace("__DEKA_TO_RESULT__", &crate::prelude::to_result_helper())
+        .replace(
+            "/*__DEKA_HOST_CATALOG__*/",
+            &runtime_core::host_bridge::js_catalog_json(),
+        )
+        .replace(
+            "__DEKA_PERMISSION_DENIED_MARKER__",
+            runtime_core::host_bridge::PERMISSION_DENIED_MARKER,
+        )
         .replace("/*__DEKA_WINTERTC__*/", include_str!("../wintertc.js"));
     // assert!, not debug_assert!: release is what ships, and a marker that
     // fails to substitute there fails silently. The prelude marker sits inside
@@ -30,6 +38,8 @@ fn bootstrap_source(template: &str) -> String {
     assert!(
         !source.contains("__DEKA_POOL_ENUM_PRELUDE__")
             && !source.contains("__DEKA_TO_RESULT__")
+            && !source.contains("__DEKA_HOST_CATALOG__")
+            && !source.contains("__DEKA_PERMISSION_DENIED_MARKER__")
             && !source.contains("__DEKA_WINTERTC__"),
         "bootstrap prelude markers must all be injected"
     );
@@ -262,7 +272,7 @@ impl WorkerThread {
                 if (typeof globalThis.function_exists !== 'function') {
                     globalThis.function_exists = function(name) {
                         const n = String(name || '');
-                        if (n === '__bridge' || n === '__bridge_async' || n === '__deka_wasm_call' || n === '__deka_wasm_call_async') {
+                        if (n === '__bridge') {
                             return true;
                         }
                         return typeof globalThis[n] === 'function';
@@ -732,47 +742,59 @@ impl WorkerThread {
                             return { ok: false, error: err && err.message ? String(err.message) : String(err) };
                         }
                     };
-                    const __bridge_async = async (kind, action, payload) => {
-                        try {
-                            return __dekaFixProto(await routeHostCall(String(kind || ''), String(action || ''), payload || {}));
-                        } catch (err) {
-                            return { ok: false, error: err && err.message ? String(err.message) : String(err) };
-                        }
-                    };
-                    const __deka_wasm_call = (moduleId, exportName, payload) => {
-                        const name = String(moduleId || '');
-                        if (name.startsWith('__deka_')) {
-                            const kind = name.replace(/^__deka_/, '');
-                            return __dekaFixProto(routeHostCall(kind, exportName, payload || {}));
-                        }
-                        return { ok: false, error: `unknown host bridge module '${name}'` };
-                    };
-                    const __deka_wasm_call_async = async (moduleId, exportName, payload) => {
-                        const name = String(moduleId || '');
-                        if (name.startsWith('__deka_')) {
-                            const kind = name.replace(/^__deka_/, '');
-                            return __dekaFixProto(routeHostCall(kind, exportName, payload || {}));
-                        }
-                        return { ok: false, error: `unknown host bridge module '${name}'` };
-                    };
                     // DS `bridge kind.action(args)` emit (RFD 27). Positional args;
                     // PHPX __bridge still takes a payload object.
-                    // Catalog allowlist is the runtime gate: a leaked global cannot
-                    // reach PHPX-only kinds (db/redis/vault/json/...). Keep in sync
-                    // with `host_bridge.rs` CATALOG.
-                    const DS_HOST_CATALOG = {
-                        crypto: ['random_bytes', 'digest', 'hmac', 'secure_compare', 'aes_256_gcm_encrypt', 'aes_256_gcm_decrypt', 'bcrypt_verify'],
-                        fs: ['read_file', 'write_file', 'read_dir', 'mkdirs'],
-                        net: ['connect', 'listen', 'accept', 'read', 'write', 'close', 'set_deadline'],
-                        tls: ['upgrade'],
-                        time: ['sleep_ms'],
+                    // The catalog allowlist is injected at bootstrap from
+                    // runtime_core::host_bridge::js_catalog_json() — the
+                    // authoritative Rust catalog, never a hand-maintained JS
+                    // list (deka#620 drift). The `async` flags in it MUST match
+                    // the pinned dsc emit (dsc 0.8.1): catalog-async actions
+                    // are awaited by DS code with `.then(__deka_to_result)` and
+                    // every other action is called synchronously, so
+                    // `__deka_host` returns the {ok, value|error} envelope
+                    // synchronously for those and the async op's Promise for
+                    // the fs four (which never rejects).
+                    const DS_HOST_CATALOG = /*__DEKA_HOST_CATALOG__*/;
+                    // Single source of truth for the structured-denial wire
+                    // marker: injected from the Rust PERMISSION_DENIED_MARKER
+                    // constant so the two sides can never drift.
+                    const DEKA_PERMISSION_DENIED_MARKER = "__DEKA_PERMISSION_DENIED_MARKER__";
+                    const __dekaDenyFromMessage = (message) => {
+                        const text = String(message);
+                        if (text.indexOf(DEKA_PERMISSION_DENIED_MARKER) !== 0) return null;
+                        try {
+                            const parsed = JSON.parse(text.slice(DEKA_PERMISSION_DENIED_MARKER.length));
+                            if (parsed && typeof parsed === 'object') {
+                                return { ok: false, error: { name: 'PermissionDenied', capability: parsed.capability, target: parsed.target } };
+                            }
+                        } catch (_err) {}
+                        return null;
                     };
-                    const __deka_host = (kind, action, args) => {
+                    const __dekaErrorEnvelope = (err) => {
+                        const message = err && err.message ? String(err.message) : String(err);
+                        const denial = __dekaDenyFromMessage(message);
+                        if (denial) return denial;
+                        return { ok: false, error: message };
+                    };
+                    const __deka_host = (kind, action, args, grants) => {
                         try {
                             const k = String(kind || '');
                             const a = String(action || '');
-                            if (!DS_HOST_CATALOG[k] || DS_HOST_CATALOG[k].indexOf(a) < 0) {
+                            const cat = DS_HOST_CATALOG[k];
+                            if (!cat || typeof cat[a] === 'undefined') {
                                 return { ok: false, error: `unknown bridge action '${k}.${a}'` };
+                            }
+                            // RFD 27 grant gate. An Array `grants` is the frozen
+                            // kind list the ESM loader preamble injects per
+                            // DekaScript module: the module may only touch
+                            // kinds its package was granted. undefined/null is
+                            // the platform inline-handler path
+                            // (wrap_with_host_bindings), which is not
+                            // DekaScript-from-disk and carries no per-module
+                            // grants yet — the catalog gate above is the only
+                            // check there.
+                            if (Array.isArray(grants) && grants.indexOf(k) < 0) {
+                                return { ok: false, error: { name: 'HostGrantDenied', kind: k, action: a } };
                             }
                             const list = Array.isArray(args) ? args : [];
                             const toByteArray = (v) => {
@@ -782,6 +804,26 @@ impl WorkerThread {
                                     return Array.from(new TextEncoder().encode(v));
                                 }
                                 return [];
+                            };
+                            // db_call_impl (crates/deka_host/src/modules/php/db.rs)
+                            // opens with {driver, config}, not a URL string; the
+                            // catalog's db.open arg is a connection URL, parsed
+                            // here into the driver/config shape the host expects.
+                            const dbOpenPayload = (url) => {
+                                const text = String(url || '');
+                                const schemeEnd = text.indexOf('://');
+                                const driver = schemeEnd > 0 ? text.slice(0, schemeEnd).toLowerCase() : '';
+                                if (driver.startsWith('sqlite')) {
+                                    return { driver, config: { path: text.slice(schemeEnd + 3) } };
+                                }
+                                const match = text.match(/^[a-z][a-z0-9+.-]*:\/\/(?:([^:@/?#]*)(?::([^@/?#]*))?@)?([^/:?#]+)(?::(\d+))?(?:\/([^?#]*))?/i);
+                                if (!match) return { driver, config: {} };
+                                const config = { host: match[4] };
+                                if (typeof match[5] !== 'undefined') config.port = Number(match[5]);
+                                if (typeof match[2] !== 'undefined') config.user = decodeURIComponent(match[2]);
+                                if (typeof match[3] !== 'undefined') config.password = decodeURIComponent(match[3]);
+                                if (match[6]) config.database = decodeURIComponent(match[6]);
+                                return { driver, config };
                             };
                             const payload = (() => {
                                 if (k === 'crypto' && a === 'random_bytes') return { length: list[0] };
@@ -795,6 +837,20 @@ impl WorkerThread {
                                 if (k === 'fs' && a === 'write_file') return { path: list[0], data: toByteArray(list[1]) };
                                 if (k === 'fs' && a === 'read_dir') return { path: list[0] };
                                 if (k === 'fs' && a === 'mkdirs') return { path: list[0] };
+                                // fs.open's second catalog arg is a write bool;
+                                // both the JSON impl and the proto encoder key
+                                // the mode string ("r"/"w" style) off `mode`.
+                                if (k === 'fs' && a === 'open') return { path: list[0], mode: list[1] ? 'w' : 'r' };
+                                if (k === 'fs' && a === 'read') return { handle: list[0], max_bytes: list[1] };
+                                if (k === 'fs' && a === 'write') return { handle: list[0], data: toByteArray(list[1]) };
+                                if (k === 'fs' && a === 'close') return { handle: list[0] };
+                                if (k === 'db' && a === 'open') return dbOpenPayload(list[0]);
+                                if (k === 'db' && a === 'query') return { handle: list[0], sql: list[1], params: Array.isArray(list[2]) ? list[2] : [] };
+                                if (k === 'db' && a === 'exec') return { handle: list[0], sql: list[1], params: Array.isArray(list[2]) ? list[2] : [] };
+                                if (k === 'db' && a === 'close') return { handle: list[0] };
+                                if (k === 'db' && a === 'stats') return { handle: list[0] };
+                                if (k === 'concurrency' && a === 'lock_acquire') return { name: list[0], timeout_ms: list[1] };
+                                if (k === 'concurrency' && a === 'lock_release') return { token: list[0] };
                                 if (k === 'time' && a === 'sleep_ms') return { milliseconds: list[0] };
                                 if (k === 'net' && a === 'connect') return { host: list[0], port: list[1] };
                                 if (k === 'net' && a === 'listen') return { host: list[0], port: list[1] };
@@ -821,9 +877,26 @@ impl WorkerThread {
                                     else if (typeof assoc.valid === 'boolean') assoc.data = assoc.valid;
                                     else if (a === 'read_dir' && Array.isArray(assoc.entries)) assoc.data = assoc.entries;
                                     else if (typeof assoc.slept_ms === 'number') assoc.data = assoc.slept_ms;
+                                    // db query/exec decode shapes (op_php_db_proto_decode →
+                                    // db_proto_response_to_json): rows / affected_rows.
+                                    else if (a === 'query' && Array.isArray(assoc.rows)) assoc.data = assoc.rows;
+                                    else if (a === 'exec' && typeof assoc.affected_rows === 'number') assoc.data = assoc.affected_rows;
+                                    // db stats decodes to a flat stats object; surface it as one value.
+                                    else if (k === 'db' && a === 'stats' && typeof assoc.active_handles === 'number') assoc.data = {
+                                        active_handles: assoc.active_handles,
+                                        handles_by_driver: assoc.handles_by_driver,
+                                        statement_cache_entries: assoc.statement_cache_entries,
+                                        statement_cache_hits: assoc.statement_cache_hits,
+                                        statement_cache_misses: assoc.statement_cache_misses,
+                                        metrics: assoc.metrics,
+                                    };
+                                    // concurrency lock ops return {ok, token} (the
+                                    // lock_release unit path falls to data=true).
+                                    else if (a === 'lock_acquire' && typeof assoc.token === 'number') assoc.data = assoc.token;
                                     else assoc.data = true;
                                 }
                                 if (assoc && assoc.ok === true && a !== 'read_dir' && Array.isArray(assoc.data)
+                                    && assoc.data.every((v) => typeof v === 'number')
                                     && typeof Uint8Array !== 'undefined') {
                                     assoc.data = new Uint8Array(assoc.data);
                                 }
@@ -833,35 +906,49 @@ impl WorkerThread {
                                 }
                                 return assoc;
                             };
-                            // Async catalog entries (deka#578): fs ops run
-                            // std::fs IO on the tokio blocking pool via
-                            // op_php_fs_call_proto_async, so a read or write
-                            // no longer stalls the isolate. The Promise is
-                            // handed back to the caller; DS emit chains
+                            // Catalog-async entries (exactly fs.{read_file,
+                            // write_file, read_dir, mkdirs} in dsc 0.8.1): the fs
+                            // bridge runs std::fs IO on the tokio blocking pool
+                            // via op_php_fs_call_proto_async, so a read or write
+                            // no longer stalls the isolate. The Promise is handed
+                            // back to the caller; DS emit chains
                             // `.then(__deka_to_result)` and the source-level
-                            // `await` resolves it. Keep the flag in sync with
-                            // the compiler-side catalog in dsc.
-                            if (k === 'fs' && typeof ops.op_php_fs_call_proto_async === 'function') {
+                            // `await` resolves it. The Promise must NEVER reject
+                            // (dsc does not catch): the .catch below folds every
+                            // failure — including structured permission denials —
+                            // into the envelope. When the async op is
+                            // unavailable we fall back to the sync
+                            // routeHostCall path below: correctness over speed.
+                            if (cat[a].async === true && typeof ops.op_php_fs_call_proto_async === 'function') {
                                 const request = ops.op_php_fs_proto_encode(routeAction, payload);
                                 return Promise.resolve(ops.op_php_fs_call_proto_async(request))
                                     .then((response) => finish(Object.entries(ops.op_php_fs_proto_decode(response) || {})))
-                                    .catch((err) => ({ ok: false, error: err && err.message ? String(err.message) : String(err) }));
+                                    .catch((err) => __dekaErrorEnvelope(err));
                             }
-                            return finish(__dekaFixProto(routeHostCall(routeKind, routeAction, payload)));
+                            const raw = __dekaFixProto(routeHostCall(routeKind, routeAction, payload));
+                            if (raw && typeof raw.then === 'function') {
+                                // Catalog-sync actions must return the envelope
+                                // synchronously — dsc 0.8.1 sync emit has no
+                                // await. The concurrency host ops are async-only
+                                // Rust ops, so they cannot be served on the sync
+                                // bridge contract; report honestly instead of
+                                // leaking a Promise into DekaScript.
+                                return { ok: false, error: `bridge action '${k}.${a}' resolved asynchronously but is catalogued as sync` };
+                            }
+                            return finish(raw);
                         } catch (err) {
-                            return { ok: false, error: err && err.message ? String(err.message) : String(err) };
+                            return __dekaErrorEnvelope(err);
                         }
                     };
                     // RFD 27: these names are not user globals. Handlers get them
-                    // as IIFE parameters. unsafe hides the symbol key.
+                    // as IIFE parameters. unsafe hides the symbol key. The raw
+                    // Deno.core.ops table is deliberately NOT exposed here — user
+                    // code must go through `host` (catalog + grant gated) or
+                    // `bridge` (PHPX compatibility).
                     globalThis[Symbol.for('deka.host.internal')] = Object.freeze({
                         host: __deka_host,
                         bridge: __bridge,
-                        bridgeAsync: __bridge_async,
-                        wasmCall: __deka_wasm_call,
-                        wasmCallAsync: __deka_wasm_call_async,
                         toResult: __deka_to_result,
-                        ops: __ops,
                     });
                     /*__DEKA_WINTERTC__*/
                     try {
