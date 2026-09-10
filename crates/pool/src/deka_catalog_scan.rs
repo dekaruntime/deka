@@ -867,7 +867,115 @@ pub fn prepare_compile_root(root: &Path) -> Result<PreparedRoot, String> {
     let stage = root.join(".cache").join(format!("dsc-stage-{}-{nonce}", std::process::id()));
     let _ = fs::remove_dir_all(&stage);
     mirror_tree(&root, &stage, &rewritten.iter().cloned().collect())?;
+    // dsc verifies every locked dependency by hashing the sources it reads.
+    // Inside the mirror those are the lowered sources, which cannot match the
+    // lock's published-content hashes — so verify the real tree against the
+    // real lock here (failing closed on any mismatch), then rewrite the
+    // mirror's lock copy to describe the lowered mirror truthfully. The
+    // user's deka.lock is never modified: the mirror holds a real copy.
+    if let Err(err) = reconcile_staged_lock(&root, &stage, &rewritten) {
+        let _ = fs::remove_dir_all(&stage);
+        return Err(err);
+    }
     Ok(PreparedRoot::Staged(StageGuard { dir: stage, source_root: root }))
+}
+
+/// Package directories under `ds_modules`/`php_modules` that contain at least
+/// one rewritten source, as `(modules_dir, package_name)`.
+fn rewritten_packages(
+    root: &Path,
+    rewritten: &[(PathBuf, String)],
+) -> Vec<(String, String)> {
+    let mut packages = Vec::new();
+    for (path, _) in rewritten {
+        for modules_dir in ["ds_modules", "php_modules"] {
+            let Ok(rel) = path.strip_prefix(root.join(modules_dir)) else {
+                continue;
+            };
+            let mut components = rel.components();
+            let Some(first) = components.next() else { break };
+            let first = first.as_os_str().to_string_lossy();
+            let name = if first.starts_with('@') {
+                let Some(second) = components.next() else { break };
+                format!("{first}/{}", second.as_os_str().to_string_lossy())
+            } else {
+                first.into_owned()
+            };
+            let entry = (modules_dir.to_string(), name);
+            if !packages.contains(&entry) {
+                packages.push(entry);
+            }
+            break;
+        }
+    }
+    packages
+}
+
+/// Verify rewritten dependency packages against the real lock and patch the
+/// staged mirror's lock copy so dsc's own integrity check sees the lowered
+/// content it actually compiles.
+fn reconcile_staged_lock(
+    root: &Path,
+    stage: &Path,
+    rewritten: &[(PathBuf, String)],
+) -> Result<(), String> {
+    let packages = rewritten_packages(root, rewritten);
+    if packages.is_empty() {
+        return Ok(());
+    }
+    let real_lock_path = root.join("deka.lock");
+    let lock_text = fs::read_to_string(&real_lock_path).map_err(|err| {
+        format!("{DEKA_VALIDATION_ERROR_MARKER}failed to read {}: {err}", real_lock_path.display())
+    })?;
+    let mut lock: serde_json::Value =
+        serde_json::from_str(&lock_text).map_err(|err| {
+            format!("{DEKA_VALIDATION_ERROR_MARKER}failed to parse {}: {err}", real_lock_path.display())
+        })?;
+
+    for (modules_dir, name) in &packages {
+        let real_pkg = root.join(modules_dir).join(name);
+        // The lock's hashes pin the published sources. Verify them before
+        // anything compiles the lowered form; a mismatch fails closed with
+        // the same remedy dsc's own check would print.
+        let real = deka_host::integrity::compute_package_integrity(&real_pkg)
+            .map_err(|err| format!("{DEKA_VALIDATION_ERROR_MARKER}{err}"))?;
+        let mismatched = lock
+            .get("packages")
+            .and_then(|packages| packages.get(name))
+            .and_then(|entry| entry.get(2))
+            .map(|hashes| {
+                hashes.pointer("/fsGraph/hash").and_then(|v| v.as_str()) != Some(real.fs_graph.as_str())
+                    || hashes.pointer("/moduleGraph/hash").and_then(|v| v.as_str()) != Some(real.module_graph.as_str())
+            })
+            .unwrap_or(true);
+        if mismatched {
+            return Err(format!(
+                "{DEKA_VALIDATION_ERROR_MARKER}❌ Integrity Mismatch\n\n    module '{name}' in {modules_dir}/ does not match deka.lock\n\n    = help: run `deka install` or `deka add {name}`. dsc does not fetch packages or write deka.lock."
+            ));
+        }
+
+        // Lowering is semantics-preserving, so the mirror's hashes describe
+        // the same package after a deterministic transform. Patching the
+        // mirror lock keeps dsc's check meaningful: it still compares what
+        // it compiles against the staged tree, and anything that rewrites a
+        // package without passing the real-lock verification above cannot
+        // reach this point.
+        let staged = deka_host::integrity::compute_package_integrity(&stage.join(modules_dir).join(name))
+            .map_err(|err| format!("{DEKA_VALIDATION_ERROR_MARKER}{err}"))?;
+        let entry = lock
+            .pointer_mut(&format!("/packages/{}/2", name.replace('/', "~1")))
+            .expect("lock entry verified above");
+        entry["fsGraph"]["hash"] = serde_json::Value::String(staged.fs_graph);
+        entry["moduleGraph"]["hash"] = serde_json::Value::String(staged.module_graph);
+    }
+
+    // The mirror hardlinked the real lock; replace (never edit through the
+    // link) so the user's lock file is untouched.
+    let staged_lock = stage.join("deka.lock");
+    let _ = fs::remove_file(&staged_lock);
+    fs::write(&staged_lock, serde_json::to_string_pretty(&lock).map_err(|err| err.to_string())?)
+        .map_err(|err| format!("failed to write {}: {err}", staged_lock.display()))?;
+    Ok(())
 }
 
 /// Hardlink-copy `from` into `to`, replacing rewritten sources with their
@@ -1116,6 +1224,31 @@ mod tests {
         fs::write(pkg.join("deka.json"), r#"{"name":"@deka/demo","version":"1.0.0"}"#).unwrap();
         fs::write(pkg.join("index.ds"), "export const n = safe { deka.time.now() }\n").unwrap();
         fs::write(tmp.join("main.ds"), "import { n } from \"demo\"\nexport const total = n\n").unwrap();
+        // dsc verifies locked dependencies against deka.lock; staging rewrites
+        // the package's sources, so the mirror's lock copy is re-pinned to the
+        // lowered content after the real tree verified against the real lock.
+        let integrity =
+            deka_host::integrity::compute_package_integrity(&pkg).expect("package integrity");
+        let lock = serde_json::json!({
+            "lockfileVersion": 1,
+            "packages": {
+                "@deka/demo": [
+                    "@deka/demo@1.0.0",
+                    "linkhash:@deka/demo",
+                    {
+                        "repo": "https://github.com/dekaruntime/deka.git",
+                        "gitRef": "v1.0.0",
+                        "source": "deka.gg",
+                        "dependencies": [],
+                        "moduleGraph": { "algo": "sha256", "hash": integrity.module_graph },
+                        "fsGraph": { "algo": "sha256", "hash": integrity.fs_graph }
+                    },
+                    ""
+                ]
+            }
+        });
+        let real_lock = serde_json::to_string_pretty(&lock).unwrap();
+        fs::write(tmp.join("deka.lock"), &real_lock).unwrap();
 
         let prepared = prepare_compile_root(&tmp).expect("prepare");
         let PreparedRoot::Staged(guard) = prepared else {
@@ -1127,9 +1260,75 @@ mod tests {
         let lowered = fs::read_to_string(guard.map_path(&pkg.join("index.ds"))).unwrap();
         assert_eq!(lowered, "export const n = deka.time.now()\n");
         assert!(guard.root().join("main.ds").is_file(), "entry mirrored");
+        // The user's lock is byte-identical after staging — the mirror holds
+        // a real copy, never an edit through the hardlink.
+        assert_eq!(fs::read_to_string(tmp.join("deka.lock")).unwrap(), real_lock);
+        // The mirror's lock copy is re-pinned to the lowered content, which
+        // is exactly what dsc will hash when it verifies the package.
+        let staged_lock: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(guard.root().join("deka.lock")).unwrap(),
+        )
+        .unwrap();
+        let staged_hash = staged_lock["packages"]["@deka/demo"][2]["fsGraph"]["hash"]
+            .as_str()
+            .unwrap();
+        let staged_pkg = guard.map_path(&pkg);
+        let staged_integrity =
+            deka_host::integrity::compute_package_integrity(&staged_pkg).unwrap();
+        assert_eq!(staged_hash, staged_integrity.fs_graph);
+        assert_ne!(staged_hash, integrity.fs_graph, "lowered content hashes differently");
         let stage_dir = guard.root().to_path_buf();
         drop(guard);
         assert!(!stage_dir.exists(), "stage mirror removed on drop");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn prepare_compile_root_rejects_rewritten_package_that_does_not_match_lock() {
+        let tmp = std::env::temp_dir().join(format!("deka-lockneg-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let pkg = tmp.join("ds_modules").join("@deka").join("demo");
+        fs::create_dir_all(&pkg).unwrap();
+        fs::write(tmp.join("deka.json"), r#"{"name":"app"}"#).unwrap();
+        fs::write(pkg.join("deka.json"), r#"{"name":"@deka/demo","version":"1.0.0"}"#).unwrap();
+        fs::write(pkg.join("index.ds"), "export const n = safe { deka.time.now() }\n").unwrap();
+        fs::write(tmp.join("main.ds"), "import { n } from \"demo\"\nexport const total = n\n").unwrap();
+        // Pin the lock against different (published) content, then let the
+        // on-disk package drift: staging must fail closed, not re-pin a
+        // tampered package.
+        let integrity =
+            deka_host::integrity::compute_package_integrity(&pkg).expect("package integrity");
+        fs::write(
+            tmp.join("deka.lock"),
+            serde_json::to_string(&serde_json::json!({
+                "lockfileVersion": 1,
+                "packages": {
+                    "@deka/demo": [
+                        "@deka/demo@1.0.0",
+                        "linkhash:@deka/demo",
+                        {
+                            "moduleGraph": { "algo": "sha256", "hash": integrity.module_graph },
+                            "fsGraph": { "algo": "sha256", "hash": integrity.fs_graph }
+                        },
+                        ""
+                    ]
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(pkg.join("index.ds"), "export const n = safe { deka.time.now() }\nexport const drift = 1\n").unwrap();
+
+        let err = prepare_compile_root(&tmp).expect_err("tampered package must not stage");
+        assert!(
+            err.contains("Integrity Mismatch") && err.contains("@deka/demo"),
+            "{err}"
+        );
+        // A failed staging must not leave a mirror behind.
+        let leftover = fs::read_dir(tmp.join(".cache"))
+            .map(|entries| entries.flatten().count())
+            .unwrap_or(0);
+        assert_eq!(leftover, 0, "failed staging must clean up its mirror: {err}");
         let _ = fs::remove_dir_all(&tmp);
     }
 

@@ -341,7 +341,7 @@ pub const CATALOG_HELPERS_JS: &str = r#"
 (function () {
   "use strict";
   const some = (value) => Option.Some(value);
-  const none = /* @__PURE__ */ Option.None();
+  const none = Option.None;
   const BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
   const bytes = {
@@ -389,11 +389,12 @@ pub const CATALOG_HELPERS_JS: &str = r#"
     },
     from_base64(s) {
       if (s.length % 4 !== 0) return none;
-      const clean = s.replace(/=+$/, "");
-      let length = (clean.length * 3) / 4;
-      if (clean.length % 4 === 2) length -= 2;
-      else if (clean.length % 4 === 3) length -= 1;
-      else if (clean.length % 4 !== 0) return none;
+      const pad = s.endsWith("==") ? 2 : s.endsWith("=") ? 1 : 0;
+      const clean = pad ? s.slice(0, s.length - pad) : s;
+      // A residual group of one sextet carries no whole bytes.
+      if (clean.length % 4 === 1) return none;
+      const rem = clean.length % 4;
+      const length = (clean.length >> 2) * 3 + (rem === 2 ? 1 : rem === 3 ? 2 : 0);
       const out = new Uint8Array(length);
       let o = 0;
       for (let i = 0; i < clean.length; i += 4) {
@@ -412,8 +413,54 @@ pub const CATALOG_HELPERS_JS: &str = r#"
     },
     to_string(b) {
       // Strict UTF-8 (RFD 15): throws on invalid input so the failure is an
-      // Err value under `unsafe` — never a lossy substitution.
-      return new TextDecoder("utf-8", { fatal: true }).decode(b);
+      // Err value under `unsafe` — never a lossy substitution. Decoded by
+      // hand because the realm's TextDecoder polyfill (wintertc.js) ignores
+      // `fatal` and never throws: the catalog cannot delegate its safety
+      // property to a mutable ambient global.
+      const arr = b instanceof Uint8Array ? b : new Uint8Array(b);
+      let out = "";
+      let i = 0;
+      while (i < arr.length) {
+        const lead = arr[i];
+        let cp;
+        let need;
+        let min;
+        if (lead < 0x80) {
+          out += String.fromCharCode(lead);
+          i++;
+          continue;
+        } else if (lead >= 0xc2 && lead < 0xe0) {
+          cp = lead & 0x1f;
+          need = 1;
+          min = 0x80;
+        } else if (lead >= 0xe0 && lead < 0xf0) {
+          cp = lead & 0x0f;
+          need = 2;
+          min = 0x800;
+        } else if (lead >= 0xf0 && lead < 0xf5) {
+          cp = lead & 0x07;
+          need = 3;
+          min = 0x10000;
+        } else {
+          throw new Error("invalid UTF-8 lead byte");
+        }
+        if (i + need >= arr.length) throw new Error("truncated UTF-8 sequence");
+        for (let k = 1; k <= need; k++) {
+          const cont = arr[i + k];
+          if ((cont & 0xc0) !== 0x80) throw new Error("invalid UTF-8 continuation byte");
+          cp = (cp << 6) | (cont & 0x3f);
+        }
+        if (cp < min) throw new Error("overlong UTF-8 sequence");
+        if (cp >= 0xd800 && cp < 0xe000) throw new Error("UTF-8 encodes a surrogate");
+        if (cp > 0x10ffff) throw new Error("UTF-8 code point out of range");
+        if (cp < 0x10000) {
+          out += String.fromCharCode(cp);
+        } else {
+          out += String.fromCharCode(0xd800 + ((cp - 0x10000) >> 10), 0xdc00 + ((cp - 0x10000) & 0x3ff));
+        }
+        i += need + 1;
+      }
+      return out;
     },
   };
 
@@ -645,7 +692,7 @@ mod tests {
             r#"
 const Option = {{
   Some: (value) => ({{ __enum: "Option", __case: "Some", name: "Some", value }}),
-  None: () => ({{ __enum: "Option", __case: "None", name: "None" }}),
+  None: {{ __enum: "Option", __case: "None", name: "None" }},
 }};
 const c = {CATALOG_HELPERS_JS};
 const assert = require("node:assert/strict");
