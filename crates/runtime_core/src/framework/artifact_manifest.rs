@@ -21,9 +21,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::build_manifest::{FsObservation, RouteMode, sha256_hex};
+use super::build_manifest::{sha256_hex, FsObservation, RouteMode};
 use super::manifest::{
-    FrameworkEntry, FrameworkEntryKind, FrameworkManifest, exported_http_methods,
+    exported_http_methods, FrameworkEntry, FrameworkEntryKind, FrameworkManifest,
 };
 
 /// The `format` value every v2 manifest carries; unknown formats are
@@ -443,8 +443,9 @@ impl ArtifactManifestV2 {
             .iter()
             .find(|payload| payload.path == path && payload.role == PayloadRole::Client)
             .ok_or_else(|| format!("artifact client payload `{path}` is not declared"))?;
-        let bytes = std::fs::read(dist_root.join(path))
-            .map_err(|err| format!("artifact client payload `{path}` cannot be read: {err}"))?;
+        let bytes = std::fs::read(dist_root.join(path)).map_err(|err| {
+            format!("artifact client payload `dist/{path}` cannot be read: {err}")
+        })?;
         verify_payload_bytes(payload, &bytes)?;
         Ok(bytes)
     }
@@ -452,7 +453,7 @@ impl ArtifactManifestV2 {
     fn verify_payload(&self, dist_root: &Path, payload: &ArtifactPayload) -> Result<(), String> {
         let bytes = std::fs::read(dist_root.join(&payload.path)).map_err(|err| {
             format!(
-                "incomplete artifact: payload `{}` cannot be read: {err}",
+                "incomplete artifact: payload `dist/{}` cannot be read: {err}",
                 payload.path
             )
         })?;
@@ -588,7 +589,7 @@ impl ArtifactManifestV2 {
 fn verify_payload_bytes(payload: &ArtifactPayload, bytes: &[u8]) -> Result<(), String> {
     if bytes.len() as u64 != payload.bytes {
         return Err(format!(
-            "tampered artifact: payload `{}` size mismatch (manifest declares {} bytes, on-disk file has {})",
+            "tampered artifact: payload `dist/{}` size mismatch (manifest declares {} bytes, on-disk file has {})",
             payload.path,
             payload.bytes,
             bytes.len()
@@ -597,7 +598,7 @@ fn verify_payload_bytes(payload: &ArtifactPayload, bytes: &[u8]) -> Result<(), S
     let actual = artifact_digest(bytes);
     if actual != payload.digest {
         return Err(format!(
-            "tampered artifact: payload `{}` digest mismatch (manifest declares {}, on-disk bytes hash to {})",
+            "tampered artifact: payload `dist/{}` digest mismatch (manifest declares {}, on-disk bytes hash to {})",
             payload.path, payload.digest, actual
         ));
     }
