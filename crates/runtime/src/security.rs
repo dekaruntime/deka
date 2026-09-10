@@ -411,12 +411,14 @@ mod tests {
     }"#;
 
     fn temp_project(manifest: &str) -> std::path::PathBuf {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let mut dir = std::env::temp_dir();
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        dir.push(format!("deka-phase-perms-test-{stamp}"));
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        dir.push(format!("deka-phase-perms-test-{stamp}-{seq}"));
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("deka.json"), manifest).unwrap();
         dir
