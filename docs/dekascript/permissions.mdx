@@ -1,0 +1,124 @@
+---
+title: Phase-aware permissions
+description: The single authoritative permissions model — dev and prod profiles in deka.json, deny by default, and the pinned-false production build capability.
+---
+
+Deka has exactly two permission profiles, `dev` and `prod`, declared in
+`deka.json` and enforced at the host-operation boundary. Both deny by
+default. This page is the authoritative specification; enforcement paths
+defer to it rather than re-interpreting the manifest (deka#757, RFD 53).
+
+## The shape
+
+```json
+{
+  "permissions": {
+    "dev": {
+      "read": true,
+      "write": false,
+      "net": ["api.github.com", "deka.gg"],
+      "env": ["API_KEY"],
+      "db": false,
+      "wasm": true,
+      "import": false,
+      "build": { "read": true, "write": false }
+    },
+    "prod": {
+      "read": false,
+      "write": false,
+      "net": ["api.github.com", "deka.gg"],
+      "env": ["PROD_API_KEY"],
+      "db": false,
+      "wasm": true,
+      "import": false,
+      "build": false
+    }
+  }
+}
+```
+
+## Profile selection
+
+| Command | Phase | Profile |
+|---|---|---|
+| `deka dev` requests | `DevRequest` | `permissions.dev` |
+| `deka build` / `deka dev` build slots | `DevBuild` | `permissions.dev.build` only |
+| `deka serve`, `deka run` | `ProdRequest` | `permissions.prod` |
+
+There is no flag that puts `deka serve` or `deka run` under the dev profile,
+and there is no production build phase. The build artifact materialized by
+`deka build` later executes under `permissions.prod` when served.
+
+Profile selection comes from the command being run, never from the process
+environment: no environment variable can switch a run into another profile
+or widen what a profile grants.
+
+## Capability semantics
+
+- `read` / `write`: `true` permits access within the **current working
+  directory** only — never the machine filesystem, in any mode. A list
+  permits only the listed paths, relative to the working directory;
+  absolute paths and `..` escapes are manifest validation errors. Omitted
+  means denied.
+- `net`: an allowlist of normalized hostnames. `true` is rejected — list
+  explicit hosts. Only https is ever permitted; every redirect hop and the
+  resolved address are checked per connection, so a permitted name cannot
+  resolve to a private or link-local target.
+- `env`: an allowlist of exact environment-variable names. The runtime
+  exposes only the named values, never a general process-environment object.
+- `db`: `false` or an allowlist of declared database connection names.
+- `wasm`: permits execution of otherwise valid WebAssembly modules. It
+  gates execution only; a module reaches nothing the profile has not
+  already granted.
+- `import`: gates acquisition from sources other than the Deka package
+  index (GitHub, URLs, third-party origins). `@deka/*` stdlib and
+  first-party `deka.gg` packages are never gated. It is `false` at MVP
+  because those other sources are not yet supported.
+- `build`: `false` or a capability object with the same keys (minus
+  `build`). It is independent from request-time dev authority — it does not
+  inherit omitted capabilities from `permissions.dev`, so a dev server may
+  call `fetch` while a `build {}` block in the same project cannot, unless
+  `permissions.dev.build.net` explicitly allows it. A denied build
+  operation fails the build with a diagnostic tied to the originating
+  `build {}` slot; it never prompts.
+
+`run` and `dynamic` are removed. They are legacy PHPX-era controls, not
+DekaScript capabilities; DekaScript has no `eval` or `Function` escape
+hatch.
+
+## `permissions.prod.build` is permanently false
+
+`permissions.prod.build` exists solely for manifest symmetry between the
+two profiles. It must be exactly `false` (or omitted). `true` or an object
+is a manifest validation error:
+
+```
+PERMISSIONS_PROD_BUILD_MUST_BE_FALSE at $.permissions.prod.build:
+permissions.prod.build is `true` here; it must be exactly false.
+Deka has no production build environment — `build {}` executes only
+through permissions.dev.build (RFD 53).
+```
+
+No command, flag, prompt, or environment variable can enable it; the
+rejection is enforced by manifest validation, before anything compiles or
+executes.
+
+## Validation
+
+`deka.json` is schema-validated before compilation or execution. Unknown
+profile or capability keys, malformed paths, invalid hostnames
+(schemes, ports, empty labels), invalid environment-variable names, invalid
+profile values, and any non-false `permissions.prod.build` fail with a
+source-located manifest diagnostic (`$.permissions.dev.net[0]`, …).
+
+Manifests still carrying only the legacy `security` block continue through
+the legacy policy path; a manifest whose `permissions` object names `dev`
+or `prod` is phase-aware and is validated exactly as specified here.
+
+## Grants stay separate
+
+Host grants (may this package *name* this operation, from
+`deka.grants.json`) and permissions (may this execution *perform* this
+operation in this phase) are different axes. A grant never implies
+permission and a permission never implies a grant; tenant isolation applies
+regardless of both.

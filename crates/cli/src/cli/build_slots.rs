@@ -13,25 +13,21 @@ use runtime_core::framework::{BuildManifest, FsObservation, PlannedSource};
 
 use crate::cli::build_dsc;
 
-/// Resolve the security policy the build phase executes under: the project's
-/// deka.json policy plus CLI overrides, with the existing dev defaults when
-/// dev. There is no `build.*` namespace — the existing permission system
-/// decides what the build phase may do (rfd#48), and nested bridge calls
-/// cannot widen a denied capability because enforcement stays host-side per
-/// call.
+/// Resolve the security policy the build phase executes under. Phase-aware
+/// manifests (deka#757, RFD 53) execute build slots through
+/// `permissions.dev.build` alone — the policy is independent from
+/// request-time dev authority, so static materialization stays narrowly
+/// constrained. Legacy manifests keep the project-policy-plus-dev-defaults
+/// behavior. There is no `build.*` namespace and no production build phase:
+/// nested bridge calls cannot widen a denied capability because enforcement
+/// stays host-side per call.
 pub fn resolve_build_policy(
     flags: &std::collections::HashMap<String, bool>,
     params: &std::collections::HashMap<String, String>,
     project_root: &Path,
     dev: bool,
 ) -> Result<runtime::security::ResolvedSecurityPolicy, String> {
-    runtime::security::resolve_security_policy_for_root(
-        project_root,
-        flags,
-        params,
-        runtime::security::ProjectKind::Php,
-        dev,
-    )
+    runtime::security::resolve_build_policy_for_root(project_root, flags, params, dev)
 }
 
 /// Stage and materialize the planned build slots, returning the validated
@@ -125,15 +121,15 @@ pub fn refresh_dev_build_slots(
         project_root,
         &[app_dir.as_path(), src_dir.as_path(), api_dir.as_path()],
     )?;
-    let manifest_path = runtime_core::framework::compiler_cache_dir(project_root)
-        .join("build-manifest.json");
-    let existing_manifest = match std::fs::read_to_string(&manifest_path) {
-        Ok(raw) => Some(
-            serde_json::from_str::<BuildManifest>(&raw)
-                .map_err(|err| format!("invalid build manifest {}: {err}", manifest_path.display()))?,
-        ),
-        Err(_) => None,
-    };
+    let manifest_path =
+        runtime_core::framework::compiler_cache_dir(project_root).join("build-manifest.json");
+    let existing_manifest =
+        match std::fs::read_to_string(&manifest_path) {
+            Ok(raw) => Some(serde_json::from_str::<BuildManifest>(&raw).map_err(|err| {
+                format!("invalid build manifest {}: {err}", manifest_path.display())
+            })?),
+            Err(_) => None,
+        };
 
     let coarse = request.is_coarse();
     let replan: BTreeSet<String> = request.replan_files.into_iter().collect();
@@ -143,16 +139,21 @@ pub fn refresh_dev_build_slots(
     // - observation-matched old ids whose source file was NOT replanned
     //   (their spans are untouched, so their ids still match the plan).
     let mut only: BTreeSet<String> = request.slots.into_iter().collect();
-    only.extend(planned.iter().filter(|source| {
-        replan.contains(&runtime_core::framework::project_relative_path(
-            project_root,
-            Path::new(&source.file),
-        ))
-    }).flat_map(|source| source.plan.slots.iter().map(|slot| slot.id.clone())));
+    only.extend(
+        planned
+            .iter()
+            .filter(|source| {
+                replan.contains(&runtime_core::framework::project_relative_path(
+                    project_root,
+                    Path::new(&source.file),
+                ))
+            })
+            .flat_map(|source| source.plan.slots.iter().map(|slot| slot.id.clone())),
+    );
     let only = if coarse { None } else { Some(only) };
 
-    let staging = tempfile::tempdir()
-        .map_err(|err| format!("failed to create build staging dir: {err}"))?;
+    let staging =
+        tempfile::tempdir().map_err(|err| format!("failed to create build staging dir: {err}"))?;
     match build_dsc::emit_project(project_root, staging.path())? {
         build_dsc::ProjectEmit::Default => {
             if src_dir.is_dir() {
@@ -171,8 +172,15 @@ pub fn refresh_dev_build_slots(
             }
         }
     }
-    let materialized =
-        materialize_planned_slots(flags, params, project_root, staging.path(), &planned, true, only.as_ref())?;
+    let materialized = materialize_planned_slots(
+        flags,
+        params,
+        project_root,
+        staging.path(),
+        &planned,
+        true,
+        only.as_ref(),
+    )?;
     update_dev_manifest(
         project_root,
         &planned,
@@ -269,7 +277,10 @@ fn update_dev_manifest(
     // republished.
     let live: BTreeSet<&str> = manifest.slots.iter().map(|slot| slot.id.as_str()).collect();
     let published = runtime_core::framework::compiler_cache_dir(project_root).join("build-values");
-    for id in dropped_ids.into_iter().filter(|id| !live.contains(id.as_str())) {
+    for id in dropped_ids
+        .into_iter()
+        .filter(|id| !live.contains(id.as_str()))
+    {
         let _ = std::fs::remove_file(published.join(format!("{id}.js")));
     }
     Ok(())
@@ -311,7 +322,9 @@ fn dev_project_root(handler_input: &str) -> Option<PathBuf> {
         if dir.join("deka.json").is_file() {
             // Canonical: dsc echoes `./`-spelled inputs back into plan slot
             // paths, which then fail the manifest's project-relative match.
-            return std::fs::canonicalize(dir).ok().or_else(|| Some(dir.to_path_buf()));
+            return std::fs::canonicalize(dir)
+                .ok()
+                .or_else(|| Some(dir.to_path_buf()));
         }
     }
     None

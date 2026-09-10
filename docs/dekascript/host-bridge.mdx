@@ -80,13 +80,15 @@ never a throw, never a crash.
 
 ## Permission model
 
-Grants decide *whether a package may touch a kind at all*; the security
-policy decides *what the process may do*; tenancy decides *whose request this
-is*. They compose:
+Grants decide *whether a package may touch a kind at all*; the phase-aware
+permissions policy decides *what this execution may do in its phase*;
+tenancy decides *whose request this is*. They compose:
 
 1. **Grant** (RFD 27): package ↔ kind. No grant → `HostGrantDenied`.
-2. **Permission**: policy-allowed read/write/net/db scope. A granted call can
-   still be denied — e.g. `fs.read_file` outside an allowed read path —
+2. **Permission**: profile-allowed read/write/net/db scope for the
+   execution's phase (`dev`, `dev.build`, or `prod` — see
+   [Phase-aware permissions](permissions)). A granted call
+   can still be denied — e.g. `fs.read_file` outside an allowed read path —
    resolving to `Result.Err(PermissionDenied { capability, target })`. This is
    a value in DekaScript, not an exception: the error carries the `capability`
    (`"read"`, `"write"`, `"net"`, `"db"`) and the concrete `target` that was

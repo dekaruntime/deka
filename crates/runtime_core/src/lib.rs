@@ -9,6 +9,7 @@ pub mod handler;
 pub mod host_bridge;
 pub mod module_spec;
 pub mod modules;
+pub mod permissions;
 pub mod platform_env;
 pub mod project_gate;
 pub mod process;
