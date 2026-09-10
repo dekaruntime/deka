@@ -88,22 +88,25 @@ impl WorkerThread {
                     : function() {};
                 const __ops = (Deno && Deno.core && Deno.core.ops) ? Deno.core.ops : {};
 
-                // Basic console implementation
-                if (typeof globalThis.console === 'undefined') {
-                    globalThis.console = {
-                        log(...args) { __print(args.join(' ') + '\n'); },
-                        error(...args) { __print('[ERROR] ' + args.join(' ') + '\n'); },
-                        warn(...args) { __print('[WARN] ' + args.join(' ') + '\n'); },
-                        info(...args) { __print('[INFO] ' + args.join(' ') + '\n'); },
-                        debug(...args) { __print('[DEBUG] ' + args.join(' ') + '\n'); },
-                    };
-                }
-
                 if (typeof globalThis.__dekaPrint !== 'function') {
                     globalThis.__dekaPrint = (value, isErr = false) => {
                         const text = value == null ? '' : String(value);
                         __print(text, !!isErr);
                     };
+                }
+
+                // `process` is a capability-gated host bridge, not a web
+                // standard. Keep it in the host bootstrap rather than the
+                // WinterTC surface.
+                if (typeof __ops.op_php_env_capability_granted === 'function'
+                    && __ops.op_php_env_capability_granted()) {
+                    if (!globalThis.process) globalThis.process = {};
+                    if (!globalThis.process.env) globalThis.process.env = {};
+                    if (!globalThis.process.cwd) {
+                        globalThis.process.cwd = () => __ops.op_php_cwd();
+                    }
+                } else if (globalThis.process) {
+                    delete globalThis.process;
                 }
 
                 // Enum prelude is injected below from crate::prelude (deka#582).
@@ -203,68 +206,6 @@ impl WorkerThread {
                     createEffect: __dekaCreateEffect,
                     createMemo: __dekaCreateMemo,
                 });
-
-                if (!globalThis.TextEncoder) {
-                    globalThis.TextEncoder = class TextEncoder {
-                        encode(input) {
-                            const str = String(input);
-                            const utf8 = [];
-                            for (let i = 0; i < str.length; i++) {
-                                let charCode = str.charCodeAt(i);
-                                if (charCode < 0x80) {
-                                    utf8.push(charCode);
-                                } else if (charCode < 0x800) {
-                                    utf8.push(0xc0 | (charCode >> 6), 0x80 | (charCode & 0x3f));
-                                } else if (charCode < 0xd800 || charCode >= 0xe000) {
-                                    utf8.push(0xe0 | (charCode >> 12), 0x80 | ((charCode >> 6) & 0x3f), 0x80 | (charCode & 0x3f));
-                                } else {
-                                    i++;
-                                    charCode = 0x10000 + (((charCode & 0x3ff) << 10) | (str.charCodeAt(i) & 0x3ff));
-                                    utf8.push(
-                                        0xf0 | (charCode >> 18),
-                                        0x80 | ((charCode >> 12) & 0x3f),
-                                        0x80 | ((charCode >> 6) & 0x3f),
-                                        0x80 | (charCode & 0x3f)
-                                    );
-                                }
-                            }
-                            return new Uint8Array(utf8);
-                        }
-                    };
-                }
-
-                if (!globalThis.TextDecoder) {
-                    globalThis.TextDecoder = class TextDecoder {
-                        decode(bytes) {
-                            if (!bytes) return '';
-                            const arr = new Uint8Array(bytes);
-                            let str = '';
-                            let i = 0;
-                            while (i < arr.length) {
-                                let byte = arr[i++];
-                                if (byte < 0x80) {
-                                    str += String.fromCharCode(byte);
-                                } else if (byte < 0xe0) {
-                                    str += String.fromCharCode(((byte & 0x1f) << 6) | (arr[i++] & 0x3f));
-                                } else if (byte < 0xf0) {
-                                    str += String.fromCharCode(
-                                        ((byte & 0x0f) << 12) | ((arr[i++] & 0x3f) << 6) | (arr[i++] & 0x3f)
-                                    );
-                                } else {
-                                    const code =
-                                        ((byte & 0x07) << 18) |
-                                        ((arr[i++] & 0x3f) << 12) |
-                                        ((arr[i++] & 0x3f) << 6) |
-                                        (arr[i++] & 0x3f);
-                                    const high = ((code - 0x10000) >> 10) | 0xd800;
-                                    const low = ((code - 0x10000) & 0x3ff) | 0xdc00;
-                                    str += String.fromCharCode(high, low);
-                                }
-                            }
-                            return str;
-                        }
-                    };
-                }
 
                 // Performance API polyfill
                 if (typeof globalThis.performance === 'undefined') {
@@ -922,6 +863,7 @@ impl WorkerThread {
                         toResult: __deka_to_result,
                         ops: __ops,
                     });
+                    /*__DEKA_WINTERTC__*/
                     try {
                         Object.defineProperty(globalThis, 'Deno', {
                             value: undefined,
@@ -931,16 +873,6 @@ impl WorkerThread {
                     } catch (_err) {
                         try { globalThis.Deno = undefined; } catch (_err2) {}
                     }
-                    // php.js console methods close over the name `Deno` and
-                    // call Deno.core.print on every log. Rebind after hiding
-                    // Deno so `console.log` (testsuite fixtures) still prints.
-                    globalThis.console = {
-                        log(...args) { __print(args.map(String).join(' ') + '\n', false); },
-                        error(...args) { __print(args.map(String).join(' ') + '\n', true); },
-                        warn(...args) { __print('[WARN] ' + args.map(String).join(' ') + '\n', true); },
-                        info(...args) { __print('[INFO] ' + args.map(String).join(' ') + '\n', false); },
-                        debug(...args) { __print('[DEBUG] ' + args.map(String).join(' ') + '\n', false); },
-                    };
                     globalThis.__dekaPrint = (value, isErr = false) => {
                         const text = value == null ? '' : String(value);
                         __print(text, !!isErr);
@@ -969,8 +901,6 @@ impl WorkerThread {
                         }
                     };
                 }
-
-                /*__DEKA_WINTERTC__*/
 
                 // The deka/router module is already loaded as an extension
                 // and exposes itself as globalThis.__dekaRouter automatically

@@ -10,15 +10,12 @@ use runtime_core::security_policy::{RuleList, SecurityPolicy, parse_deka_securit
 use rusqlite::types::ValueRef as SqliteValueRef;
 use rusqlite::{Connection as SqliteConnection, params_from_iter as sqlite_params_from_iter};
 use serde_json::{Map, Value};
-use std::borrow::Cow;
-use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::fs::{File as StdFile, OpenOptions};
 use std::io::{IsTerminal, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use wit_parser::{Resolve, Results, Type, TypeDefKind, TypeId, WorldItem, WorldKey};
 
 /// Embedded PHP WASM binary produced by the `php-rs` crate.
 mod proto {
@@ -40,7 +37,6 @@ mod security;
 mod security_hint;
 #[cfg(test)]
 mod security_context_tests;
-mod wit;
 
 pub use security::{enforce_net_public, enforce_net_public_with, security_policy_from_env};
 
@@ -54,7 +50,6 @@ deno_core::extension!(
         fs_ops::op_php_read_file_sync,
         fs_ops::op_php_write_file_sync,
         fs_ops::op_php_mkdirs,
-        crypto_env::op_php_set_privileged,
         security::op_php_env_capability_granted,
         crypto_env::op_php_sha256,
         crypto_env::op_php_random_bytes,
@@ -81,7 +76,6 @@ deno_core::extension!(
         fs_ops::op_php_file_exists,
         fs_ops::op_php_path_resolve,
         fs_ops::op_php_read_dir,
-        wit::op_php_parse_wit,
         compat::op_neo4j_call,
         compat::op_redis_call,
         compat::op_shard_for,
@@ -89,19 +83,11 @@ deno_core::extension!(
         concurrency::op_php_concurrency_lock_acquire,
         concurrency::op_php_concurrency_lock_release,
     ],
-    esm_entry_point = "ext:php_core/php.js",
     state = |state| state.put(net::NetState::new()),
 );
 
 pub fn init() -> deno_core::Extension {
-    let mut extension = php_core::init();
-    // `extension!` file entries are snapshot-only by default. Deka creates
-    // runtimes directly, so the host module must travel with the CLI binary.
-    extension.esm_files = Cow::Owned(vec![deno_core::ExtensionFileSource::new(
-        "ext:php_core/php.js",
-        deno_core::ascii_str_include!("php.js"),
-    )]);
-    extension
+    php_core::init()
 }
 
 /// Same as [`init`], but the net bridge enforces the given policy instead
@@ -143,11 +129,10 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn php_runtime_module_is_embedded_for_installed_clis() {
+    fn php_extension_has_no_legacy_esm_runtime_module() {
         let extension = init();
 
-        assert_eq!(extension.esm_files.len(), 1);
-        assert!(extension.esm_files[0].is_runtime_loadable());
+        assert!(extension.esm_files.is_empty());
     }
 
     fn unique_suffix() -> String {

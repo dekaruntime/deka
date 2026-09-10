@@ -3,6 +3,142 @@
 // Host HTTP still serializes to { status, headers, body }. This file only
 // gives user JS Request/Response/Headers and a fetch dispatch.
 
+// Close over print while Deno is still an internal bootstrap global. RFD 27
+// hides globalThis.Deno before user code runs, but user-visible logging must
+// continue to work afterwards.
+const __wintertc_print = Deno.core.print.bind(Deno.core);
+globalThis.console = {
+  log: (...args) => {
+    __wintertc_print(args.map(String).join(" ") + "\n", false);
+  },
+  error: (...args) => {
+    __wintertc_print(args.map(String).join(" ") + "\n", true);
+  },
+  warn: (...args) => {
+    __wintertc_print("[WARN] " + args.map(String).join(" ") + "\n", true);
+  },
+  info: (...args) => {
+    __wintertc_print("[INFO] " + args.map(String).join(" ") + "\n", false);
+  },
+  debug: (...args) => {
+    __wintertc_print("[DEBUG] " + args.map(String).join(" ") + "\n", false);
+  },
+};
+
+if (!globalThis.TextEncoder) {
+  globalThis.TextEncoder = class TextEncoder {
+    encode(input) {
+      const str = String(input);
+      const utf8 = [];
+      for (let i = 0; i < str.length; i++) {
+        let charCode = str.charCodeAt(i);
+        if (charCode < 0x80) {
+          utf8.push(charCode);
+        } else if (charCode < 0x800) {
+          utf8.push(0xc0 | (charCode >> 6), 0x80 | (charCode & 0x3f));
+        } else if (charCode < 0xd800 || charCode >= 0xe000) {
+          utf8.push(
+            0xe0 | (charCode >> 12),
+            0x80 | ((charCode >> 6) & 0x3f),
+            0x80 | (charCode & 0x3f)
+          );
+        } else {
+          i++;
+          charCode =
+            0x10000 +
+            (((charCode & 0x3ff) << 10) | (str.charCodeAt(i) & 0x3ff));
+          utf8.push(
+            0xf0 | (charCode >> 18),
+            0x80 | ((charCode >> 12) & 0x3f),
+            0x80 | ((charCode >> 6) & 0x3f),
+            0x80 | (charCode & 0x3f)
+          );
+        }
+      }
+      return new Uint8Array(utf8);
+    }
+  };
+}
+
+if (!globalThis.TextDecoder) {
+  globalThis.TextDecoder = class TextDecoder {
+    decode(bytes) {
+      if (!bytes) return "";
+      const arr = new Uint8Array(bytes);
+      let str = "";
+      let i = 0;
+      while (i < arr.length) {
+        const byte = arr[i++];
+        if (byte < 0x80) {
+          str += String.fromCharCode(byte);
+        } else if (byte < 0xe0) {
+          str += String.fromCharCode(
+            ((byte & 0x1f) << 6) | (arr[i++] & 0x3f)
+          );
+        } else if (byte < 0xf0) {
+          str += String.fromCharCode(
+            ((byte & 0x0f) << 12) |
+              ((arr[i++] & 0x3f) << 6) |
+              (arr[i++] & 0x3f)
+          );
+        } else {
+          const code =
+            ((byte & 0x07) << 18) |
+            ((arr[i++] & 0x3f) << 12) |
+            ((arr[i++] & 0x3f) << 6) |
+            (arr[i++] & 0x3f);
+          const high = ((code - 0x10000) >> 10) | 0xd800;
+          const low = ((code - 0x10000) & 0x3ff) | 0xdc00;
+          str += String.fromCharCode(high, low);
+        }
+      }
+      return str;
+    }
+  };
+}
+
+globalThis.URLSearchParams = class URLSearchParams {
+  constructor(init) {
+    this.params = [];
+    if (typeof init === "string") {
+      const pairs = init.replace(/^\?/, "").split("&");
+      for (const pair of pairs) {
+        if (!pair) continue;
+        const idx = pair.indexOf("=");
+        if (idx === -1) {
+          this.params.push([decodeURIComponent(pair), ""]);
+        } else {
+          this.params.push([
+            decodeURIComponent(pair.slice(0, idx)),
+            decodeURIComponent(pair.slice(idx + 1)),
+          ]);
+        }
+      }
+    }
+  }
+
+  append(name, value) {
+    this.params.push([String(name), String(value)]);
+  }
+
+  get(name) {
+    const entry = this.params.find(([key]) => key === name);
+    return entry ? entry[1] : null;
+  }
+
+  *entries() {
+    for (const param of this.params) {
+      yield param;
+    }
+  }
+
+  toString() {
+    return this.params
+      .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+      .join("&");
+  }
+};
+
 if (typeof globalThis.Headers !== "function") {
   class Headers {
     constructor(init) {

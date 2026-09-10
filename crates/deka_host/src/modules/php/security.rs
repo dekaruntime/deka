@@ -1,8 +1,8 @@
-use super::*;
 use super::security_hint::{
-    config_hint_for_request, normalize_rel_like, project_kind, project_root, rule_items_for_request,
-    update_deka_json_allow,
+    config_hint_for_request, normalize_rel_like, project_kind, project_root,
+    rule_items_for_request, update_deka_json_allow,
 };
+use super::*;
 
 /// Reads the effective security policy for the current call: a per-execution
 /// [`runtime_core::security_context`] wins over `DEKA_SECURITY_POLICY`, so a
@@ -29,6 +29,23 @@ fn security_policy_from_json_str(raw: &str) -> SecurityPolicy {
     } else {
         parsed.policy
     }
+}
+
+fn is_internal_security_target(target: &str) -> bool {
+    let mut normalized = target.replace('\\', "/");
+    if normalized.ends_with('/') {
+        normalized = normalized.trim_end_matches('/').to_string();
+    }
+    normalized == "deka.lock"
+        || normalized.ends_with("/deka.lock")
+        || normalized == "php_modules/.cache"
+        || normalized.starts_with("php_modules/.cache/")
+        || normalized.contains("/php_modules/.cache/")
+        || normalized.ends_with("/php_modules/.cache")
+        || normalized == ".cache"
+        || normalized.starts_with(".cache/")
+        || normalized.contains("/.cache/")
+        || normalized.ends_with("/.cache")
 }
 
 fn rule_allows(capability: &str, rule: &RuleList, target: Option<&str>) -> bool {
@@ -157,61 +174,6 @@ pub(super) fn normalize_path(value: &str) -> std::path::PathBuf {
             None => return resolved,
         }
     }
-}
-
-thread_local! {
-    static SECURITY_PRIVILEGED: Cell<bool> = Cell::new(false);
-    static SECURITY_PRIVILEGED_LABEL: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
-}
-
-pub(super) fn set_security_privileged(enabled: bool, label: Option<String>) {
-    SECURITY_PRIVILEGED.with(|flag| flag.set(enabled));
-    SECURITY_PRIVILEGED_LABEL.with(|slot| {
-        let mut guard = slot.borrow_mut();
-        *guard = label;
-    });
-    let context = SECURITY_PRIVILEGED_LABEL.with(|slot| slot.borrow().clone());
-    let context = context.as_deref().unwrap_or("unknown");
-    if enabled {
-        stdio::debug(
-            "security",
-            &format!("privileged context enabled ({})", context),
-        );
-    } else {
-        stdio::debug(
-            "security",
-            &format!("privileged context disabled ({})", context),
-        );
-    }
-}
-
-fn security_privileged_enabled() -> bool {
-    SECURITY_PRIVILEGED.with(|flag| flag.get())
-}
-
-fn is_internal_security_target(target: &str) -> bool {
-    let mut normalized = target.replace('\\', "/");
-    if normalized.ends_with('/') {
-        normalized = normalized.trim_end_matches('/').to_string();
-    }
-    if normalized == "deka.lock" || normalized.ends_with("/deka.lock") {
-        return true;
-    }
-    if normalized == "php_modules/.cache"
-        || normalized.starts_with("php_modules/.cache/")
-        || normalized.contains("/php_modules/.cache/")
-        || normalized.ends_with("/php_modules/.cache")
-    {
-        return true;
-    }
-    if normalized == ".cache"
-        || normalized.starts_with(".cache/")
-        || normalized.contains("/.cache/")
-        || normalized.ends_with("/.cache")
-    {
-        return true;
-    }
-    false
 }
 
 #[cfg(test)]
@@ -521,25 +483,11 @@ fn classify_security_origin(capability: &str, target: Option<&str>) -> &'static 
 
 pub(super) fn enforce_read(target: Option<&str>) -> Result<(), deno_core::error::CoreError> {
     let policy = security_policy_from_env();
-    if security_privileged_enabled() {
-        match target {
-            None => return Ok(()),
-            Some(target) if is_internal_security_target(target) => return Ok(()),
-            _ => {}
-        }
-    }
     enforce_scope("read", &policy.allow.read, &policy.deny.read, target)
 }
 
 pub(super) fn enforce_write(target: Option<&str>) -> Result<(), deno_core::error::CoreError> {
     let policy = security_policy_from_env();
-    if security_privileged_enabled() {
-        match target {
-            None => return Ok(()),
-            Some(target) if is_internal_security_target(target) => return Ok(()),
-            _ => {}
-        }
-    }
     enforce_scope("write", &policy.allow.write, &policy.deny.write, target)
 }
 

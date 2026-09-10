@@ -1565,7 +1565,6 @@ dependencies = [
  "tokio-tungstenite 0.21.0",
  "url",
  "webpki-roots 0.25.4",
- "wit-parser",
 ]
 
 [[package]]
