@@ -1,1 +1,156 @@
-(function(){try{var p=location.protocol==='https:'?'wss':'ws';var ws=new WebSocket(p+'://'+location.host+'/_deka/hmr');function c(s){return document.querySelector(s||'#app');}function e(v){return String(v||'').replace(/\\/g,'\\\\').replace(/"/g,'\\"');}function sf(){var a=document.activeElement;if(!a||!a.closest||!a.closest('#app')){return null;}return{id:a.id||'',name:a.getAttribute('name')||'',deka:a.getAttribute('data-deka-id')||'',start:typeof a.selectionStart==='number'?a.selectionStart:null,end:typeof a.selectionEnd==='number'?a.selectionEnd:null};}function rf(state){if(!state){return;}var el=null;if(state.id){el=document.getElementById(state.id);}if(!el&&state.deka){el=document.querySelector('#app [data-deka-id="'+e(state.deka)+'"]');}if(!el&&state.name){el=document.querySelector('#app [name="'+e(state.name)+'"]');}if(!el||typeof el.focus!=='function'){return;}el.focus();if(state.start!==null&&state.end!==null&&typeof el.setSelectionRange==='function'){try{el.setSelectionRange(state.start,state.end);}catch(_){}}}function fv(){var root=c('#app');if(!root){return [];}var out=[];var fields=root.querySelectorAll('input,textarea,select');for(var i=0;i<fields.length;i++){var f=fields[i];var id=f.id||'';var name=f.getAttribute('name')||'';var deka=f.getAttribute('data-deka-id')||'';if(!id&&!name&&!deka){continue;}var type=(f.getAttribute('type')||'').toLowerCase();var entry={id:id,name:name,deka:deka,type:type};if(type==='checkbox'||type==='radio'){entry.checked=!!f.checked;}else if(f.tagName==='SELECT'){entry.value=f.value;}else{entry.value=f.value;}out.push(entry);}return out;}function fr(list){if(!Array.isArray(list)||list.length===0){return;}for(var i=0;i<list.length;i++){var s=list[i]||{};var el=null;if(s.id){el=document.getElementById(s.id);}if(!el&&s.deka){el=document.querySelector('#app [data-deka-id="'+e(s.deka)+'"]');}if(!el&&s.name){el=document.querySelector('#app [name="'+e(s.name)+'"]');}if(!el){continue;}if((s.type==='checkbox'||s.type==='radio')&&typeof s.checked==='boolean'){el.checked=s.checked;continue;}if(typeof s.value!=='undefined'){el.value=s.value;}}}
+// Opens the development HMR socket and preserves focus and form state across patches.
+(function () {
+  try {
+    var socketProtocol = location.protocol === "https:" ? "wss" : "ws";
+    var hmrSocket = new WebSocket(
+      socketProtocol + "://" + location.host + "/_deka/hmr"
+    );
+
+    function queryElement(selector) {
+      return document.querySelector(selector || "#app");
+    }
+
+    function escapeAttributeSelectorValue(value) {
+      return String(value || "")
+        .replace(/\\/g, "\\\\")
+        .replace(/"/g, '\\"');
+    }
+
+    function captureFocusedFieldState() {
+      var activeElement = document.activeElement;
+      if (
+        !activeElement ||
+        !activeElement.closest ||
+        !activeElement.closest("#app")
+      ) {
+        return null;
+      }
+
+      return {
+        id: activeElement.id || "",
+        name: activeElement.getAttribute("name") || "",
+        deka: activeElement.getAttribute("data-deka-id") || "",
+        start:
+          typeof activeElement.selectionStart === "number"
+            ? activeElement.selectionStart
+            : null,
+        end:
+          typeof activeElement.selectionEnd === "number"
+            ? activeElement.selectionEnd
+            : null,
+      };
+    }
+
+    function restoreFocusedFieldState(focusedFieldState) {
+      if (!focusedFieldState) {
+        return;
+      }
+
+      var field = null;
+      if (focusedFieldState.id) {
+        field = document.getElementById(focusedFieldState.id);
+      }
+      if (!field && focusedFieldState.deka) {
+        field = document.querySelector(
+          '#app [data-deka-id="' +
+            escapeAttributeSelectorValue(focusedFieldState.deka) +
+            '"]'
+        );
+      }
+      if (!field && focusedFieldState.name) {
+        field = document.querySelector(
+          '#app [name="' +
+            escapeAttributeSelectorValue(focusedFieldState.name) +
+            '"]'
+        );
+      }
+      if (!field || typeof field.focus !== "function") {
+        return;
+      }
+
+      field.focus();
+      if (
+        focusedFieldState.start !== null &&
+        focusedFieldState.end !== null &&
+        typeof field.setSelectionRange === "function"
+      ) {
+        try {
+          field.setSelectionRange(
+            focusedFieldState.start,
+            focusedFieldState.end
+          );
+        } catch (_) {}
+      }
+    }
+
+    function captureFormFieldValues() {
+      var appRoot = queryElement("#app");
+      if (!appRoot) {
+        return [];
+      }
+
+      var fieldStates = [];
+      var fields = appRoot.querySelectorAll("input,textarea,select");
+      for (var index = 0; index < fields.length; index++) {
+        var field = fields[index];
+        var id = field.id || "";
+        var name = field.getAttribute("name") || "";
+        var deka = field.getAttribute("data-deka-id") || "";
+        if (!id && !name && !deka) {
+          continue;
+        }
+
+        var type = (field.getAttribute("type") || "").toLowerCase();
+        var fieldState = { id: id, name: name, deka: deka, type: type };
+        if (type === "checkbox" || type === "radio") {
+          fieldState.checked = !!field.checked;
+        } else if (field.tagName === "SELECT") {
+          fieldState.value = field.value;
+        } else {
+          fieldState.value = field.value;
+        }
+        fieldStates.push(fieldState);
+      }
+      return fieldStates;
+    }
+
+    function restoreFormFieldValues(fieldStates) {
+      if (!Array.isArray(fieldStates) || fieldStates.length === 0) {
+        return;
+      }
+
+      for (var index = 0; index < fieldStates.length; index++) {
+        var fieldState = fieldStates[index] || {};
+        var field = null;
+        if (fieldState.id) {
+          field = document.getElementById(fieldState.id);
+        }
+        if (!field && fieldState.deka) {
+          field = document.querySelector(
+            '#app [data-deka-id="' +
+              escapeAttributeSelectorValue(fieldState.deka) +
+              '"]'
+          );
+        }
+        if (!field && fieldState.name) {
+          field = document.querySelector(
+            '#app [name="' +
+              escapeAttributeSelectorValue(fieldState.name) +
+              '"]'
+          );
+        }
+        if (!field) {
+          continue;
+        }
+        if (
+          (fieldState.type === "checkbox" || fieldState.type === "radio") &&
+          typeof fieldState.checked === "boolean"
+        ) {
+          field.checked = fieldState.checked;
+          continue;
+        }
+        if (typeof fieldState.value !== "undefined") {
+          field.value = fieldState.value;
+        }
+      }
+    }

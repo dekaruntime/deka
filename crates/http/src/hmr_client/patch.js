@@ -1,1 +1,122 @@
-function nh(h){return String(h||'').replace(/shadowrootmode=/gi,'data-shadowrootmode=');}function ap(selector,html){var n=c(selector||'#app');if(!n){location.reload();return;}var y=window.scrollY||window.pageYOffset||0;var f=sf();var v=fv();var h=nh(html);if(n.matches&&n.matches('[data-deka-island-id],deka-island')&&n.shadowRoot){n.shadowRoot.innerHTML=h;}else{n.innerHTML=h;}if(typeof __dekaHydrate==='function'){__dekaHydrate(n);}window.scrollTo(0,y);fr(v);rf(f);}function ai(name,occ,h){var b='';try{b=btoa(unescape(encodeURIComponent(String(name||''))));}catch(_){}if(!b){location.reload();return;}if(typeof document.createTreeWalker!=='function'){location.reload();return;}var w=document.createTreeWalker(document.body,128);var s=null,n,seen=0;while((n=w.nextNode())){var d=String(n.data||'');if(d.indexOf('deka-island start:')!==0){continue;}var nb=d.substring(18,d.indexOf(' ',18));if(nb!==b){continue;}seen++;if(seen===(occ||1)){s=n;break;}}if(!s){location.reload();return;}var depth=1,end=null,c=s.nextSibling;while(c){if(c.nodeType===8){var cd=String(c.data||'');if(cd.indexOf('deka-island start:')===0){depth++;}else if(cd.indexOf('deka-island end:')===0){depth--;if(!depth){end=c;break;}}}c=c.nextSibling;}if(!end){location.reload();return;}var y=window.scrollY||window.pageYOffset||0;var f=sf();var v=fv();var t=document.createElement('template');t.innerHTML=nh(h);var parent=s.parentNode;var cur=s.nextSibling;while(cur&&cur!==end){var nx=cur.nextSibling;parent.removeChild(cur);cur=nx;}parent.insertBefore(t.content,end);if(typeof __dekaHydrate==='function'){__dekaHydrate(parent);}window.scrollTo(0,y);fr(v);rf(f);}
+// Applies HMR fragment operations while preserving scroll, focus, and form state.
+function normalizeShadowRootMode(html) {
+  return String(html || "").replace(
+    /shadowrootmode=/gi,
+    "data-shadowrootmode="
+  );
+}
+
+function patchElementHtml(selector, html) {
+  var targetNode = queryElement(selector || "#app");
+  if (!targetNode) {
+    location.reload();
+    return;
+  }
+
+  var scrollY = window.scrollY || window.pageYOffset || 0;
+  var focusedFieldState = captureFocusedFieldState();
+  var fieldStates = captureFormFieldValues();
+  var normalizedHtml = normalizeShadowRootMode(html);
+  if (
+    targetNode.matches &&
+    targetNode.matches("[data-deka-island-id],deka-island") &&
+    targetNode.shadowRoot
+  ) {
+    targetNode.shadowRoot.innerHTML = normalizedHtml;
+  } else {
+    targetNode.innerHTML = normalizedHtml;
+  }
+  if (typeof hmrHydrate === "function") {
+    hmrHydrate(targetNode);
+  }
+  window.scrollTo(0, scrollY);
+  restoreFormFieldValues(fieldStates);
+  restoreFocusedFieldState(focusedFieldState);
+}
+
+function patchIslandHtml(islandName, occurrence, html) {
+  var encodedIslandName = "";
+  try {
+    encodedIslandName = btoa(
+      unescape(encodeURIComponent(String(islandName || "")))
+    );
+  } catch (_) {}
+  if (!encodedIslandName) {
+    location.reload();
+    return;
+  }
+  if (typeof document.createTreeWalker !== "function") {
+    location.reload();
+    return;
+  }
+
+  var commentWalker = document.createTreeWalker(document.body, 128);
+  var startComment = null;
+  var comment;
+  var occurrenceCount = 0;
+  while ((comment = commentWalker.nextNode())) {
+    var commentData = String(comment.data || "");
+    if (commentData.indexOf("deka-island start:") !== 0) {
+      continue;
+    }
+    var encodedCommentName = commentData.substring(
+      18,
+      commentData.indexOf(" ", 18)
+    );
+    if (encodedCommentName !== encodedIslandName) {
+      continue;
+    }
+    occurrenceCount++;
+    if (occurrenceCount === (occurrence || 1)) {
+      startComment = comment;
+      break;
+    }
+  }
+  if (!startComment) {
+    location.reload();
+    return;
+  }
+
+  var depth = 1;
+  var endComment = null;
+  var sibling = startComment.nextSibling;
+  while (sibling) {
+    if (sibling.nodeType === 8) {
+      var siblingData = String(sibling.data || "");
+      if (siblingData.indexOf("deka-island start:") === 0) {
+        depth++;
+      } else if (siblingData.indexOf("deka-island end:") === 0) {
+        depth--;
+        if (!depth) {
+          endComment = sibling;
+          break;
+        }
+      }
+    }
+    sibling = sibling.nextSibling;
+  }
+  if (!endComment) {
+    location.reload();
+    return;
+  }
+
+  var scrollY = window.scrollY || window.pageYOffset || 0;
+  var focusedFieldState = captureFocusedFieldState();
+  var fieldStates = captureFormFieldValues();
+  var template = document.createElement("template");
+  template.innerHTML = normalizeShadowRootMode(html);
+  var parentNode = startComment.parentNode;
+  var currentNode = startComment.nextSibling;
+  while (currentNode && currentNode !== endComment) {
+    var nextNode = currentNode.nextSibling;
+    parentNode.removeChild(currentNode);
+    currentNode = nextNode;
+  }
+  parentNode.insertBefore(template.content, endComment);
+  if (typeof hmrHydrate === "function") {
+    hmrHydrate(parentNode);
+  }
+  window.scrollTo(0, scrollY);
+  restoreFormFieldValues(fieldStates);
+  restoreFocusedFieldState(focusedFieldState);
+}

@@ -1,1 +1,90 @@
-function sr(){var u=location.pathname+location.search;fetch(u,{headers:{Accept:'text/x-deka-fragment'},credentials:'same-origin'}).then(function(r){if(!r.ok){return null;}return r.json();}).then(function(p){if(p&&typeof p.html==='string'){ap('#app',p.html);if(typeof p.title==='string'&&p.title!==''){document.title=p.title;}if(typeof p.head==='string'&&p.head!==''){document.head.insertAdjacentHTML('beforeend',p.head);}return;}location.reload();}).catch(function(){location.reload();});}function sub(){try{ws.send(JSON.stringify({type:'subscribe',path:location.pathname+location.search}));}catch(_){}}function a(m){if(!m||!Array.isArray(m.ops)||m.ops.length===0){sr();return;}for(var i=0;i<m.ops.length;i++){var op=m.ops[i]||{};if(op.op==='set_html'){if(op.island){ai(op.island,op.occurrence||1,op.html||'');}else{ap(op.selector||'#app',op.html||'');}continue;}sr();return;}}ws.onopen=function(){sub();};ws.onmessage=function(ev){try{var m=JSON.parse(ev.data||'{}');if(m.type==='patch'){a(m);return;}if(m.type==='reload'){sr();return;}}catch(_){sr();}};window.addEventListener('popstate',function(){sub();});ws.onclose=function(){};}catch(_){}})();
+// Receives HMR messages and fetches the current page fragment when needed.
+function refetchCurrentFragment() {
+  var currentPath = location.pathname + location.search;
+  fetch(currentPath, {
+    headers: { Accept: "text/x-deka-fragment" },
+    credentials: "same-origin",
+  })
+    .then(function (response) {
+      if (!response.ok) {
+        return null;
+      }
+      return response.json();
+    })
+    .then(function (fragment) {
+      if (fragment && typeof fragment.html === "string") {
+        patchElementHtml("#app", fragment.html);
+        if (typeof fragment.title === "string" && fragment.title !== "") {
+          document.title = fragment.title;
+        }
+        if (typeof fragment.head === "string" && fragment.head !== "") {
+          document.head.insertAdjacentHTML("beforeend", fragment.head);
+        }
+        return;
+      }
+      location.reload();
+    })
+    .catch(function () {
+      location.reload();
+    });
+}
+
+function subscribeToCurrentPath() {
+  try {
+    hmrSocket.send(
+      JSON.stringify({
+        type: "subscribe",
+        path: location.pathname + location.search,
+      })
+    );
+  } catch (_) {}
+}
+
+function applyPatchMessage(message) {
+  if (!message || !Array.isArray(message.ops) || message.ops.length === 0) {
+    refetchCurrentFragment();
+    return;
+  }
+  for (var index = 0; index < message.ops.length; index++) {
+    var operation = message.ops[index] || {};
+    if (operation.op === "set_html") {
+      if (operation.island) {
+        patchIslandHtml(
+          operation.island,
+          operation.occurrence || 1,
+          operation.html || ""
+        );
+      } else {
+        patchElementHtml(operation.selector || "#app", operation.html || "");
+      }
+      continue;
+    }
+    refetchCurrentFragment();
+    return;
+  }
+}
+
+hmrSocket.onopen = function () {
+  subscribeToCurrentPath();
+};
+hmrSocket.onmessage = function (event) {
+  try {
+    var message = JSON.parse(event.data || "{}");
+    if (message.type === "patch") {
+      applyPatchMessage(message);
+      return;
+    }
+    if (message.type === "reload") {
+      refetchCurrentFragment();
+      return;
+    }
+  } catch (_) {
+    refetchCurrentFragment();
+  }
+};
+window.addEventListener("popstate", function () {
+  subscribeToCurrentPath();
+});
+hmrSocket.onclose = function () {};
+  } catch (_) {}
+})();
