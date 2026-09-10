@@ -190,48 +190,23 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
 
     fs::create_dir_all(&dist_client)
         .map_err(|err| format!("failed to create {}: {}", dist_client.display(), err))?;
-    fs::create_dir_all(&dist_server)
-        .map_err(|err| format!("failed to create {}: {}", dist_server.display(), err))?;
 
     // Build-time server entries (deka#762): generate the page/api/defer
     // router entries, compile them through dsc, and re-root the graph into
     // dist/server as source-free, loader-ready modules. The compiled entries
     // are what `deka serve` loads — serve no longer generates
     // .cache/dekascript/serve-entry.dsx for built projects.
-    #[cfg(feature = "native")]
-    let mut emitted_entries = crate::cli::build_server_graph::EmittedEntries::default();
-    #[cfg(feature = "native")]
-    if manifest.is_some() {
-        emitted_entries = crate::cli::build_server_graph::compile_and_reroot_entries(
-            &project_root,
-            &entries_dir,
-            &dist_server,
-        )?;
-        // Fill in modules no entry imports (dynamic-import targets, non-DS
-        // assets) from the emitted trees; graph modules already in place win.
-        build_dsc::copy_non_ds_tree(
-            &staging_root.join("app"),
-            &dist_server.join("app"),
-            true,
-        )?;
-        if emitted_api {
-            build_dsc::copy_non_ds_tree(
-                &staging_root.join("api"),
-                &dist_server.join("api"),
-                true,
-            )?;
-        }
-    }
-    #[cfg(feature = "native")]
-    if manifest.is_none() {
-        replace_dir(&staging_root.join("app"), &dist_server.join("app"))?;
-    }
-    if emitted_src {
-        replace_dir(&staging_root.join("src"), &dist_server.join("src"))?;
-    }
-    if emitted_api && manifest.is_none() {
-        replace_dir(&staging_root.join("api"), &dist_server.join("api"))?;
-    }
+    crate::cli::build_server_entries::emit_server_entries(
+        &crate::cli::build_server_entries::ServerEntriesPlan {
+            project_root: &project_root,
+            staging_root,
+            entries_dir: &entries_dir,
+            dist_server: &dist_server,
+            has_manifest: manifest.is_some(),
+            emitted_src,
+            emitted_api,
+        },
+    )?;
 
     copy_dir_recursive(&public_dir, &dist_client)?;
 
@@ -456,7 +431,7 @@ fn run_web_project_build(context: &Context) -> Result<(), String> {
     // generation-time importmap placeholder; bake the final hashed names and
     // the built import map in (the built entry is what serves production —
     // there is no serve-time rewrite pass for it).
-    rewrite_server_entry_asset_urls(&dist_server, &dist_client)?;
+    crate::cli::build_server_entries::rewrite_server_entry_asset_urls(&dist_server, &dist_client)?;
 
     // dist/ must be deployable without .cache/ (deka#738 F7): ship the
     // materialized build-value modules in dist and rewrite deka:dev/
@@ -524,7 +499,7 @@ fn minify_enabled(context: &Context) -> bool {
     context.args.flags.get("--minify").copied().unwrap_or(false)
 }
 
-fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
     if fs::read_dir(src)
         .map_err(|err| format!("failed to read {}: {}", src.display(), err))?
         .next()
@@ -564,17 +539,6 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
     }
 
     Ok(())
-}
-
-fn replace_dir(src: &Path, dst: &Path) -> Result<(), String> {
-    if dst.exists() {
-        fs::remove_dir_all(dst)
-            .map_err(|err| format!("failed to remove {}: {err}", dst.display()))?;
-    }
-    if !src.is_dir() {
-        return Ok(());
-    }
-    copy_dir_recursive(src, dst)
 }
 
 fn inject_web_bootstrap_tags(
@@ -902,49 +866,6 @@ fn rewrite_dist_html_asset_urls(dist_client: &Path) -> Result<(), String> {
         None
     };
     rewrite_html_asset_urls(dist_client, &renames, importmap_tag.as_deref())?;
-    Ok(())
-}
-
-/// Bake the final content-hashed asset names (and the built import map, in
-/// place of the generation-time placeholder) into the compiled server
-/// entries. The renames and the inline tag come from the same collector the
-/// dist-HTML and serve-entry rewrites use, so dev and prod agree by
-/// construction.
-fn rewrite_server_entry_asset_urls(dist_server: &Path, dist_client: &Path) -> Result<(), String> {
-    let assets_dir = dist_client.join("assets");
-    let mut renames: Vec<(String, String)> = Vec::new();
-    runtime::collect_hashed_asset_renames(&assets_dir, &assets_dir, &mut renames)?;
-    let importmap_tag = if assets_dir.join("importmap.json").is_file() {
-        runtime::inline_importmap_tag(&assets_dir)?
-    } else {
-        None
-    };
-    for name in ["serve-entry.js", "api-entry.js", "defer-entry.js"] {
-        let path = dist_server.join(name);
-        if !path.is_file() {
-            continue;
-        }
-        let mut js = fs::read_to_string(&path)
-            .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
-        let mut changed = false;
-        for (logical, hashed) in &renames {
-            if js.contains(logical.as_str()) {
-                js = js.replace(logical.as_str(), hashed.as_str());
-                changed = true;
-            }
-        }
-        if let Some(tag) = &importmap_tag {
-            let placeholder = runtime_core::framework::CLIENT_IMPORTMAP_PLACEHOLDER_TAG;
-            if js.contains(placeholder) {
-                js = js.replace(placeholder, tag);
-                changed = true;
-            }
-        }
-        if changed {
-            fs::write(&path, js.as_bytes())
-                .map_err(|err| format!("failed to write {}: {err}", path.display()))?;
-        }
-    }
     Ok(())
 }
 
