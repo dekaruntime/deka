@@ -12,6 +12,9 @@ export function computeOverallStatus(args: {
   /// Byte-identity of the two hosts' formatter output (deka#477). Only
   /// defined when both hosts formatted the source.
   fmtHostsAgree?: boolean
+  /// Equality of the complete ordered diagnostic lists. Only defined when
+  /// both hosts ran.
+  diagnosticsAgree?: boolean
 }): HatsOverallStatus {
   const nativeRan = args.wantNative && args.nativeAvailable && !args.nativeSkipped
   const browserRan = args.wantBrowser && args.browserAvailable && !args.browserSkipped
@@ -25,6 +28,7 @@ export function computeOverallStatus(args: {
   // behave identically — the user gets different bytes depending on where
   // they edit (deka#477).
   if (nativeRan && browserRan && args.fmtHostsAgree === false) return 'divergent'
+  if (nativeRan && browserRan && args.diagnosticsAgree === false) return 'divergent'
 
   const nativeOk = !nativeRan || args.nativeMatches
   const browserOk = !browserRan || args.browserMatches

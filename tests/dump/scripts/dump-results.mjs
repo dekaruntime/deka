@@ -25,6 +25,53 @@ const webIdeKitVersion = resolveWebIdeKitVersion();
 const { nativeAvailable, browserAvailable, version, wasmSourceCommit, categories } =
   await loadAndRunAllTests()
 
+function loadExpectedDiagnosticDivergences() {
+  const file = path.join(repoRoot, 'tests', 'dump', 'expected-failures.txt')
+  if (!fs.existsSync(file)) return new Set()
+  return new Set(
+    fs
+      .readFileSync(file, 'utf8')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('#')),
+  )
+}
+
+const expectedDiagnosticDivergences = loadExpectedDiagnosticDivergences()
+const actualDiagnosticDivergences = new Set(
+  categories
+    .flatMap((category) => category.tests)
+    .filter(
+      (test) =>
+        test.hosts.includes('native') &&
+        test.hosts.includes('browser') &&
+        test.diagnosticsAgree === false,
+    )
+    .map((test) => test.slug),
+)
+const unexpectedDiagnosticDivergences = [...actualDiagnosticDivergences].filter(
+  (slug) => !expectedDiagnosticDivergences.has(slug),
+)
+const staleDiagnosticDivergences = [...expectedDiagnosticDivergences].filter(
+  (slug) => !actualDiagnosticDivergences.has(slug),
+)
+
+// Keep the diagnostic ratchet separate from the per-host fixture expectation:
+// a known divergence remains a divergent cell in the published result, but it
+// does not make the dump unreviewably red. Both directions are enforced so a
+// listed case that starts agreeing cannot hide a repaired compiler path.
+if (unexpectedDiagnosticDivergences.length > 0 || staleDiagnosticDivergences.length > 0) {
+  if (unexpectedDiagnosticDivergences.length > 0) {
+    console.error('Unlisted full-diagnostic divergences:')
+    for (const slug of unexpectedDiagnosticDivergences) console.error(`  ${slug}`)
+  }
+  if (staleDiagnosticDivergences.length > 0) {
+    console.error('Listed diagnostic divergences that now agree (remove them):')
+    for (const slug of staleDiagnosticDivergences) console.error(`  ${slug}`)
+  }
+  process.exitCode = 1
+}
+
 const adhoc = await runAdhocScenarios({
   cli: process.env.DEKA_NATIVE || undefined,
   wasmPath: process.env.DEKA_WASM || undefined,
