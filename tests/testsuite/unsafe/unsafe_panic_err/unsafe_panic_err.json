@@ -1,5 +1,0 @@
-{
-  "title": "unsafe block returns Result.Err on thrown error",
-  "stage": "run",
-  "notes": ""
-}

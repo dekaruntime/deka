@@ -11,7 +11,7 @@ Downstream repos you will touch regularly:
 | Repo | Purpose | When you change the runtime here |
 |---|---|---|
 | `dekaruntime/website` | `deka.gg` homepage + tour | Update WASM artifacts and redeploy |
-| `dekaruntime/testsuite` | `testsuite.deka.gg` diagnostic grid (live browser playground) | Fixtures live in `tests/testsuite/` here. Until deka#292 step 3, the site still dumps both hosts itself. |
+| `dekaruntime/testsuite` | `testsuite.deka.gg` diagnostic grid (live browser playground) | Owns the pinned `corpus/` consumed here in CI. |
 | `dekaruntime/web-ide-kit` | Shared editor/runtime components used by both sites | Publish to npm, bump consumers |
 
 ## Quick start
@@ -119,7 +119,7 @@ deka fmt path/to/file.ds
    ```
 4. **Bump crate versions** and open a PR if the change is user-facing.
 5. **After merge**, cut a release tag to push artifacts to R2 and trigger downstream site rebuilds (see `PUBLISH.md`). `@deka/*` packages are a different pipeline (`STDLIB.md`): merge does not publish them.
-6. **Language fixtures** are in `tests/testsuite/` and `tests/tour/` in this repo. The dual-host dump is `tests/dump`; a release uploads it. Testsuite and website ingest that pack.
+6. **Language fixtures** are owned by `dekaruntime/testsuite/corpus/`; this repo fetches a checksummed pin in CI. `tests/tour/` remains local. The dual-host dump is `tests/dump`; a release uploads it.
 
 ## How downstream sites consume the runtime
 
