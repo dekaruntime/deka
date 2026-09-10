@@ -676,7 +676,14 @@ fn rewrite_build_value_specifiers(
 fn rewrite_ui_specifiers(dist_server: &Path) -> Result<(), String> {
     let mut js_files = Vec::new();
     collect_js_files(dist_server, &mut js_files)?;
-    let mut referenced: BTreeSet<String> = BTreeSet::new();
+    // The loader wraps every emitted entry before it executes. Seed the UI
+    // graph from that actual wrapper source, not a copy of its imports: adding
+    // a new `ui/*` import to the wrapper (or to one of its UI dependencies)
+    // automatically changes the vendored closure. The artifact must stand on
+    // its own even when .cache/ has been removed.
+    let mut referenced = ui_files_referenced_by(&pool::entry_wrapper_source(
+        "file:///deka-artifact-entry.js",
+    ));
     for file in &js_files {
         let source = fs::read_to_string(file)
             .map_err(|err| format!("failed to read {}: {err}", file.display()))?;
@@ -703,6 +710,16 @@ fn rewrite_ui_specifiers(dist_server: &Path) -> Result<(), String> {
         }
     }
     vendor_ui_modules(dist_server, &referenced)
+}
+
+/// Map the `ui/*` edges in a module source to their artifact file names.
+/// Callers provide module source, so this stays tied to the emitted module
+/// graph rather than a second list of UI files to keep in sync.
+fn ui_files_referenced_by(source: &str) -> BTreeSet<String> {
+    runtime_core::ds_imports::paths(source)
+        .into_iter()
+        .filter_map(|specifier| deka_ui::file_name_for(&specifier).map(str::to_string))
+        .collect()
 }
 
 /// §4.2 jail: every relative specifier in every server module must resolve,

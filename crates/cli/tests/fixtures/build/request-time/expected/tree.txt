@@ -4,8 +4,12 @@ build-manifest.sha256
 client/_redirects
 client/index.html
 client/style.css
+server/.ui/island-marker.js
 server/.ui/jsx.js
 server/.ui/reactive.js
+server/.ui/router.js
+server/.ui/server.js
+server/.ui/suspense.js
 server/app/layout.js
 server/app/not-found.js
 server/app/page.js

@@ -183,6 +183,41 @@ fn ui_rewrite_vendors_embedded_modules_and_updates_specifiers() {
         let Some(rel) = spec.strip_prefix("./") else { continue };
         assert!(ui_dir.join(rel).is_file(), "{spec} not vendored");
     }
+
+    // The loader wrapper is an emitted entry too. Its UI imports seed the
+    // same graph, so a wrapper dependency cannot be accidentally omitted just
+    // because no application module imports it directly.
+    for file in [
+        "server.js",
+        "suspense.js",
+        "island-marker.js",
+        "router.js",
+    ] {
+        assert!(ui_dir.join(file).is_file(), "wrapper dependency {file} not vendored");
+    }
+}
+
+#[test]
+fn artifact_completeness_rejects_a_missing_wrapper_ui_dependency() {
+    let project = tempfile::tempdir().unwrap();
+    let dist_server = project.path().join("dist").join("server");
+    // This is the artifact-facing shape of the loader wrapper: it imports the
+    // server UI entry, whose own graph must be present in dist/server/.ui.
+    write(
+        &dist_server,
+        "serve-entry.js",
+        "import * as server from \"./.ui/server.js\";\nvoid server;\n",
+    );
+    write(
+        &dist_server.join(UI_DIR),
+        "server.js",
+        "import { Suspense } from \"./suspense.js\";\nexport { Suspense };\n",
+    );
+
+    let err = assert_server_jail(&dist_server)
+        .expect_err("a missing UI dependency of an emitted entry must fail the build");
+    assert!(err.contains(".ui/server.js"), "{err}");
+    assert!(err.contains("./suspense.js"), "{err}");
 }
 
 #[test]
