@@ -97,6 +97,7 @@ async fn host_dispatchers_are_not_on_user_globalthis() {
     let pool = test_pool();
     let code = r#"
 globalThis.app = function(req) {
+  const internal = globalThis[Symbol.for('deka.host.internal')] || {};
   return {
     status: 200,
     headers: {},
@@ -108,7 +109,15 @@ globalThis.app = function(req) {
       host: typeof globalThis.__deka_host,
       deno: typeof globalThis.Deno,
       closedHost: typeof __deka_host,
-      closedBridge: typeof __bridge
+      closedBridge: typeof __bridge,
+      internalFrozen: Object.isFrozen(internal),
+      internalHost: typeof internal.host,
+      internalBridge: typeof internal.bridge,
+      internalToResult: typeof internal.toResult,
+      internalOps: typeof internal.ops,
+      internalBridgeAsync: typeof internal.bridgeAsync,
+      internalWasmCall: typeof internal.wasmCall,
+      internalWasmCallAsync: typeof internal.wasmCallAsync
     })
   };
 };
@@ -129,6 +138,14 @@ globalThis.app = function(req) {
     assert_eq!(parsed["deno"], "undefined");
     assert_eq!(parsed["closedHost"], "function");
     assert_eq!(parsed["closedBridge"], "function");
+    assert_eq!(parsed["internalFrozen"], true);
+    assert_eq!(parsed["internalHost"], "function");
+    assert_eq!(parsed["internalBridge"], "function");
+    assert_eq!(parsed["internalToResult"], "function");
+    assert_eq!(parsed["internalOps"], "undefined");
+    assert_eq!(parsed["internalBridgeAsync"], "undefined");
+    assert_eq!(parsed["internalWasmCall"], "undefined");
+    assert_eq!(parsed["internalWasmCallAsync"], "undefined");
 }
 
 #[tokio::test]
@@ -441,85 +458,6 @@ globalThis.app = function(req) {
 }
 
 #[tokio::test]
-async fn bridge_redis_keys_missing_pattern_is_tenant_scoped_before_native_dispatch() {
-    let pool = test_pool();
-    let code = r#"
-globalThis.app = function(req) {
-  const ops = globalThis[Symbol.for('deka.host.internal')].ops;
-  ops.op_zega_backend = function(shopId) { return 'neo4j'; };
-  ops.op_redis_call = function(action, payload) {
-    return { ok: true, action, payload: { ...payload } };
-  };
-  const result = __bridge('redis', 'keys', { handle: 1 });
-  return { status: 200, headers: {}, body: JSON.stringify(result) };
-};
-"#;
-    let res = pool
-        .execute(
-            HandlerKey::new("bridge_redis_keys_missing_pattern_scoped"),
-            tenant_request(code, "shop_keys_guard"),
-        )
-        .await;
-    let response = res.expect("pool execution should succeed");
-    assert!(response.success, "execution failed: {:?}", response.error);
-    let result = response.result.expect("should have result");
-    let body = result.get("body").and_then(|v| v.as_str()).expect("body");
-    let parsed: serde_json::Value = serde_json::from_str(body).unwrap();
-    assert_eq!(parsed["ok"], serde_json::json!(true), "body: {body}");
-    assert_eq!(parsed["action"], serde_json::json!("keys"));
-    assert_eq!(parsed["payload"]["handle"], serde_json::json!(1));
-    assert_eq!(
-        parsed["payload"]["pattern"],
-        serde_json::json!("shop_keys_guard:*"),
-        "raw tenant keys bridge must not dispatch native Redis KEYS *"
-    );
-}
-
-#[tokio::test]
-async fn bridge_redis_prefixed_key_ops_still_dispatch() {
-    let pool = test_pool();
-    let code = r#"
-globalThis.app = function(req) {
-  const ops = globalThis[Symbol.for('deka.host.internal')].ops;
-  ops.op_zega_backend = function(shopId) { return 'neo4j'; };
-  ops.op_redis_call = function(action, payload) {
-    return { ok: true, action, payload: { ...payload } };
-  };
-  const set = __bridge('redis', 'set', { handle: 1, key: 'cart', value: 'sku-1' });
-  const keys = __bridge('redis', 'keys', { handle: 1, pattern: 'cart:*' });
-  return { status: 200, headers: {}, body: JSON.stringify({ set, keys }) };
-};
-"#;
-    let res = pool
-        .execute(
-            HandlerKey::new("bridge_redis_prefixed_ops"),
-            tenant_request(code, "shop_prefixed_ops"),
-        )
-        .await;
-    let response = res.expect("pool execution should succeed");
-    assert!(response.success, "execution failed: {:?}", response.error);
-    let result = response.result.expect("should have result");
-    let body = result.get("body").and_then(|v| v.as_str()).expect("body");
-    let parsed: serde_json::Value = serde_json::from_str(body).unwrap();
-    assert_eq!(parsed["set"]["ok"], serde_json::json!(true), "body: {body}");
-    assert_eq!(parsed["set"]["action"], serde_json::json!("set"));
-    assert_eq!(
-        parsed["set"]["payload"]["key"],
-        serde_json::json!("shop_prefixed_ops:cart")
-    );
-    assert_eq!(
-        parsed["keys"]["ok"],
-        serde_json::json!(true),
-        "body: {body}"
-    );
-    assert_eq!(parsed["keys"]["action"], serde_json::json!("keys"));
-    assert_eq!(
-        parsed["keys"]["payload"]["pattern"],
-        serde_json::json!("shop_prefixed_ops:cart:*")
-    );
-}
-
-#[tokio::test]
 async fn bridge_redis_unscoped_enumeration_verbs_are_blocked() {
     let pool = test_pool();
     let code = r#"
@@ -580,7 +518,7 @@ async fn deka_host_digest_sha256_empty_known_vector() {
     let pool = php_pool();
     let code = r#"
 globalThis.app = function(req) {
-  const result = __deka_host('crypto', 'digest', ['sha256', new Uint8Array()]);
+  const result = __deka_host('crypto', 'digest', ['sha256', new Uint8Array()], ['crypto']);
   const data = result && result.data ? Array.from(result.data) : [];
   return { status: 200, headers: {}, body: JSON.stringify({ ok: result.ok, error: result.error, len: data.length, b0: data[0], b1: data[1] }) };
 };
@@ -600,31 +538,79 @@ globalThis.app = function(req) {
 }
 
 #[tokio::test]
-async fn deka_host_catalog_denies_php_only_kinds() {
+async fn deka_host_catalog_denies_unknown_kinds_and_actions() {
     let pool = php_pool();
     let code = r#"
 globalThis.app = function(req) {
-  const result = __deka_host('db', 'query', []);
-  return { status: 200, headers: {}, body: JSON.stringify(result) };
+  // redis is a PHPX-only kind: absent from the injected host catalog.
+  const redis = __deka_host('redis', 'get', []);
+  // db is catalogued, but 'bogus' is not a db action.
+  const bogus = __deka_host('db', 'bogus', []);
+  return { status: 200, headers: {}, body: JSON.stringify({ redis, bogus }) };
 };
 "#;
     let res = pool
-        .execute(HandlerKey::new("deka_host_deny_db"), test_request(code))
+        .execute(
+            HandlerKey::new("deka_host_deny_unknown"),
+            test_request(code),
+        )
         .await;
     let response = res.expect("pool execution should succeed");
     assert!(response.success, "execution failed: {:?}", response.error);
     let result = response.result.expect("should have result");
     let body = result.get("body").and_then(|v| v.as_str()).expect("body");
     let parsed: serde_json::Value = serde_json::from_str(body).unwrap();
-    assert_eq!(parsed.get("ok").and_then(|v| v.as_bool()), Some(false));
-    assert!(
-        parsed
-            .get("error")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .contains("unknown bridge action"),
-        "unexpected error: {body}"
-    );
+    for key in ["redis", "bogus"] {
+        assert_eq!(
+            parsed[key].get("ok").and_then(|v| v.as_bool()),
+            Some(false),
+            "{key}: unexpected envelope: {body}"
+        );
+        assert!(
+            parsed[key]
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .contains("unknown bridge action"),
+            "{key}: unexpected error: {body}"
+        );
+    }
+}
+
+/// RFD 27 grant gate: an explicit grants array that does not include the
+/// kind denies the call with a structured HostGrantDenied envelope.
+#[tokio::test]
+async fn deka_host_grant_gate_denies_ungranted_kinds() {
+    let pool = php_pool();
+    let code = r#"
+globalThis.app = function(req) {
+  const denied = __deka_host('crypto', 'digest', ['sha256', new Uint8Array()], ['fs']);
+  const granted = __deka_host('crypto', 'digest', ['sha256', new Uint8Array()], ['crypto']);
+  return { status: 200, headers: {}, body: JSON.stringify({
+    deniedOk: denied.ok,
+    deniedName: denied.error && denied.error.name,
+    deniedKind: denied.error && denied.error.kind,
+    grantedOk: granted.ok,
+    grantedLen: granted.data ? granted.data.length : 0
+  }) };
+};
+"#;
+    let res = pool
+        .execute(
+            HandlerKey::new("deka_host_grant_gate"),
+            test_request(code),
+        )
+        .await;
+    let response = res.expect("pool execution should succeed");
+    assert!(response.success, "execution failed: {:?}", response.error);
+    let result = response.result.expect("should have result");
+    let body = result.get("body").and_then(|v| v.as_str()).expect("body");
+    let parsed: serde_json::Value = serde_json::from_str(body).unwrap();
+    assert_eq!(parsed["deniedOk"], false, "body={body}");
+    assert_eq!(parsed["deniedName"], "HostGrantDenied", "body={body}");
+    assert_eq!(parsed["deniedKind"], "crypto", "body={body}");
+    assert_eq!(parsed["grantedOk"], true, "body={body}");
+    assert_eq!(parsed["grantedLen"], 32, "body={body}");
 }
 
 #[tokio::test]
@@ -635,9 +621,9 @@ globalThis.app = function(req) {
   const a = new Uint8Array([1, 2, 3]);
   const b = new Uint8Array([1, 2, 3]);
   const c = new Uint8Array([1, 2, 4]);
-  const same = __deka_host('crypto', 'secure_compare', [a, b]);
-  const diff = __deka_host('crypto', 'secure_compare', [a, c]);
-  const mac = __deka_host('crypto', 'hmac', ['sha256', a, b]);
+  const same = __deka_host('crypto', 'secure_compare', [a, b], ['crypto']);
+  const diff = __deka_host('crypto', 'secure_compare', [a, c], ['crypto']);
+  const mac = __deka_host('crypto', 'hmac', ['sha256', a, b], ['crypto']);
   return { status: 200, headers: {}, body: JSON.stringify({
     same: same.data === true,
     diff: diff.data === false,

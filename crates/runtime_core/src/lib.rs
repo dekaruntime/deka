@@ -6,6 +6,7 @@ pub mod entry;
 pub mod env;
 pub mod framework;
 pub mod handler;
+pub mod host_bridge;
 pub mod module_spec;
 pub mod modules;
 pub mod platform_env;

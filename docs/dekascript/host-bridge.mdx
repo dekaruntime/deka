@@ -1,0 +1,121 @@
+---
+title: Host bridge
+description: bridge kind.action(args) — the gated native capability surface. Catalog, grants, permissions, and the bytes-on-the-wire contract.
+---
+
+`bridge kind.action(args)` is how DekaScript reaches native capabilities:
+cryptography, the filesystem, TCP/TLS, clocks, and databases. Every call goes
+through one enforcement boundary; there is no global dispatcher and no other
+way in.
+
+## The catalog
+
+The runtime ships a single authoritative catalog of kinds and actions
+(`runtime_core::host_bridge`). The pinned `dsc` compiler (0.8.1) performs no
+catalog validation — it typechecks unknown kinds/actions as
+`Result<infer, infer>` and emits the host call — so every gate decision at
+runtime comes from this one catalog, never from a hand-maintained list.
+
+| Kind | Grant owner | Capability | Notes |
+|---|---|---|---|
+| `crypto` | `@deka/crypto` | — | random_bytes, digest, hmac, secure_compare, aes_256_gcm_encrypt, aes_256_gcm_decrypt, bcrypt_verify |
+| `fs` | `@deka/fs` | read / write | read_file, write_file, read_dir, mkdirs are async; open/read/write/close are sync |
+| `net` | `@deka/tcp` | net | connect, listen, accept, read, write, close, set_deadline |
+| `tls` | `@deka/tls` | net | upgrade (handle → TLS handle) |
+| `time` | `@deka/time` | — | sleep_ms |
+| `db` | `@deka/db` | db | open, query, exec, close, stats |
+
+Kinds with no host implementation yet (redis, neo4j, vault) are deliberately
+absent — the catalog lists only genuinely host-implemented actions, zero
+stubs.
+
+## Sync vs async
+
+Exactly `fs.read_file`, `fs.write_file`, `fs.read_dir`, and `fs.mkdirs` are
+async — the compiler emits `await` plus a `.then` for them, because the pinned
+dsc catalog says so. **Every other action is sync: it returns its `Result`
+envelope directly and never a Promise.**
+
+- Async ops genuinely yield the isolate: the filesystem work runs on the
+  host's blocking pool, so a slow read does not stall other requests being
+  served.
+- An async bridge Promise **never rejects**. Every failure — including
+  permission denials — resolves to `Result.Err`, because the compiler does not
+  wrap bridge calls in a catch.
+
+```ds
+const bytes = bridge crypto.random_bytes(32) // sync: Result<bytes, error>
+const text = await bridge fs.read_file("app.log") // async: awaited Result
+```
+
+## Host grants
+
+Which kinds a module may call is decided per **package**, not per call site:
+
+- **Workspace grant** — a project whose root `deka.json` is an official
+  `@deka/*` package may self-declare kinds via `"host": { "kinds": [...] }`.
+- **Lockfile-digest grant table** — a dependency's `host.kinds` manifest field
+  is untrusted and ignored. Grants come only from a published grant table
+  (`{ name, version, digest, kinds }` records), looked up by the dependency's
+  lockfile-pinned `fsGraph` digest in `deka.lock`. Until the registry/index
+  plumbing lands, the table is supplied explicitly (`PoolConfig.host_grants`
+  or the `DEKA_HOST_GRANTS` environment variable).
+- **Compile error** — an *application* project root (any non-`@deka/*` name)
+  that sets `host.kinds` fails to load. Apps acquire bridge authority only
+  from the grant table, never from their own manifest.
+
+Grant checks happen twice: once at load time (a module that references the
+bridge but belongs to a package with no granted kinds refuses to boot), and
+once per call. A per-call denial resolves to
+`Result.Err(PermissionDenied { name: "HostGrantDenied", kind, action })` —
+never a throw, never a crash.
+
+## Permission model
+
+Grants decide *whether a package may touch a kind at all*; the security
+policy decides *what the process may do*; tenancy decides *whose request this
+is*. They compose:
+
+1. **Grant** (RFD 27): package ↔ kind. No grant → `HostGrantDenied`.
+2. **Permission**: policy-allowed read/write/net/db scope. A granted call can
+   still be denied — e.g. `fs.read_file` outside an allowed read path —
+   resolving to `Result.Err(PermissionDenied { capability, target })`. This is
+   a value in DekaScript, not an exception: the error carries the `capability`
+   (`"read"`, `"write"`, `"net"`, `"db"`) and the concrete `target` that was
+   denied.
+3. **Tenant**: request-scoped routing; unrelated to either gate.
+
+## Bytes on the wire
+
+Byte payloads are a `Uint8Array` on the DekaScript surface and a zero-copy
+`#[buffer]` value at the Rust op boundary — never `Array<number>`.
+`bridge crypto.random_bytes(8)` hands you a `Uint8Array` of length 8 inside
+`Result.Ok`:
+
+```ds
+const r = bridge crypto.random_bytes(8)
+match r {
+  Ok(bytes) => bytes.length == 8 // true
+  Err(e) => false
+}
+```
+
+## What is not reachable
+
+- There is **no global dispatcher**: `__deka_host` is not on `globalThis`.
+  Each module receives a preamble closure carrying exactly its package's
+  granted kinds; the internal surface (`Symbol.for('deka.host.internal')`) is
+  frozen and hidden from `unsafe`.
+- **`unsafe` cannot name the bridge** — the capability is realm-private.
+
+## Deferred surface
+
+- **redis / neo4j / vault DS actions** — no host implementation exists yet;
+  the catalog lists no stubs.
+- **`from "host"`** — no module import surface for the bridge; `bridge`
+  syntax is the only entry point.
+- **Concurrency locks** (`lock_acquire` / `lock_release`) — the Rust ops are
+  genuinely async but the pinned dsc types every action it does not know as
+  sync; serving them on the sync emit contract would mis-tag a Promise as
+  `Ok`. They remain on the PHPX compatibility path until a dsc catalog entry
+  types them async.

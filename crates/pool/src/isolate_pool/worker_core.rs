@@ -768,11 +768,16 @@ impl WorkerThread {
             if !project_root.is_dir() {
                 return Err(format!("invalid module root: {}", project_root.display()));
             }
+            // Canonicalize for the wrapper specifier: the loader canonicalizes
+            // its own root (macOS /var vs /private/var), and the wrapper
+            // specifier computed here must spell the identical path or
+            // load_source never recognizes it.
+            let project_root = project_root.canonicalize().unwrap_or(project_root);
             let wrapper_path = entry_wrapper_path(&project_root);
             let wrapper_specifier = ModuleSpecifier::from_file_path(&wrapper_path)
                 .map_err(|_| "invalid entry wrapper path".to_string())?;
-            let loader =
-                PhpxEsmLoader::new(project_root, entry_path).map_err(|err| err.to_string())?;
+            let loader = PhpxEsmLoader::new(project_root, entry_path, self.config.host_grants.clone())
+                .map_err(|err| err.to_string())?;
             let loader: Rc<dyn deno_core::ModuleLoader> = Rc::new(loader);
             (Some(loader), Some(wrapper_specifier))
         } else {

@@ -320,10 +320,30 @@ fn unwrap_result<'a>(
             .get("value")
             .ok_or_else(|| format!("build `{binding}` returned malformed Result.Ok")),
         Some("Err") => {
-            let message = object
-                .get("error")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("build entry returned Result.Err");
+            // RFD 27: a permission denial crosses the DS boundary as the
+            // structured `PermissionDenied { name, capability, target }`
+            // object; re-encode it into the marker wire format so the build
+            // diagnostic stays machine-readable (deka#725). Plain string
+            // errors pass through unchanged.
+            let message = object.get("error").map(|error| {
+                if let Some(text) = error.as_str() {
+                    return text.to_string();
+                }
+                if let Some(denial) = error.as_object().and_then(|map| {
+                    if map.get("name").and_then(serde_json::Value::as_str) != Some("PermissionDenied")
+                    {
+                        return None;
+                    }
+                    Some(runtime_core::host_bridge::PermissionDenied {
+                        capability: map.get("capability")?.as_str()?.to_string(),
+                        target: map.get("target")?.as_str()?.to_string(),
+                    })
+                }) {
+                    return denial.encode();
+                }
+                "build entry returned Result.Err".to_string()
+            });
+            let message = message.unwrap_or_else(|| "build entry returned Result.Err".to_string());
             Err(format!(
                 "build `{binding}` (at {}) failed: {message}",
                 slot_location(entry)
@@ -621,6 +641,45 @@ mod tests {
             )
             .unwrap_err(),
             "build `labels` (at app/page.dsx:3:47) failed: missing file"
+        );
+    }
+
+    #[test]
+    fn structured_permission_denial_reencodes_with_the_marker() {
+        let entry = BuildEntry {
+            id: "slot1".to_string(),
+            binding: "labels".to_string(),
+            file: "app/page.dsx".to_string(),
+            span: serde_json::json!({ "start": { "line": 3, "column": 47 } }),
+            entry: PathBuf::from("entry.js"),
+            descriptor: serde_json::Value::Null,
+        };
+        // RFD 27 wire shape: the DS-level Err carries the structured
+        // PermissionDenied object, and the build diagnostic must re-encode it
+        // with the machine-readable marker.
+        let denial = serde_json::json!({
+            "__enum": "Result",
+            "__case": "Err",
+            "error": { "name": "PermissionDenied", "capability": "read", "target": "data/x.json" }
+        });
+        let message = unwrap_result(&denial, &entry).unwrap_err();
+        assert!(
+            message.contains(runtime_core::host_bridge::PERMISSION_DENIED_MARKER),
+            "marker missing: {message}"
+        );
+        assert!(
+            message.contains(r#""capability":"read""#) && message.contains(r#""target":"data/x.json""#),
+            "structured denial missing: {message}"
+        );
+        // Non-denial objects keep the generic message.
+        let other = serde_json::json!({
+            "__enum": "Result",
+            "__case": "Err",
+            "error": { "name": "HostGrantDenied", "kind": "fs" }
+        });
+        assert_eq!(
+            unwrap_result(&other, &entry).unwrap_err(),
+            "build `labels` (at app/page.dsx:3:47) failed: build entry returned Result.Err"
         );
     }
 

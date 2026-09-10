@@ -281,6 +281,21 @@ mod security_rule_tests {
     }
 }
 
+/// Builds the wire-form denial error: [`runtime_core::host_bridge`]'s marker +
+/// compact JSON payload, exactly what `PermissionDenied::decode` reads back on
+/// the JS side (RFD 27). The payload is exactly capability+target; origin and
+/// config-hint detail stay on stderr so the wire format round-trips.
+fn permission_denied_err(
+    capability: &str,
+    target: Option<&str>,
+) -> deno_core::error::CoreError {
+    let denial = runtime_core::host_bridge::PermissionDenied {
+        capability: capability.to_string(),
+        target: target.unwrap_or("*").to_string(),
+    };
+    core_err(denial.encode())
+}
+
 fn enforce_scope(
     capability: &str,
     allow_rule: &RuleList,
@@ -291,28 +306,23 @@ fn enforce_scope(
         return Ok(());
     }
     if rule_denies(capability, deny_rule, target) {
-        return Err(core_err(format!(
-            "SECURITY_POLICY_DENY_PRECEDENCE: capability={} target={} denied by policy",
-            capability,
-            target.unwrap_or("*")
-        )));
+        return Err(permission_denied_err(capability, target));
     }
     if !rule_allows(capability, allow_rule, target) {
         if prompt_enabled() && prompt_grant(capability, target)? {
             return Ok(());
         }
         let origin = classify_security_origin(capability, target);
-        let mut message = format!(
-            "SECURITY_CAPABILITY_DENIED: capability={} target={} origin={} not allowed (re-run with explicit allow flag or configure security)",
+        eprintln!(
+            "[security] denied: capability={} target={} origin={} not allowed (re-run with explicit allow flag or configure security)",
             capability,
             target.unwrap_or("*"),
             origin
         );
         if let Some(hint) = config_hint_for_request(capability, target) {
-            message.push_str(" Hint: ");
-            message.push_str(&hint);
+            eprintln!("[security] hint: {}", hint);
         }
-        return Err(core_err(message));
+        return Err(permission_denied_err(capability, target));
     }
     Ok(())
 }
@@ -589,5 +599,103 @@ mod path_normalization_tests {
             granted.to_str().expect("utf-8"),
             adjacent.join("new.txt").to_str().expect("utf-8")
         ));
+    }
+}
+
+#[cfg(test)]
+mod permission_denied_tests {
+    use super::enforce_scope;
+    use runtime_core::host_bridge::{PERMISSION_DENIED_MARKER, PermissionDenied};
+    use runtime_core::security_policy::{RuleList, SecurityScope};
+
+    fn scope(read: RuleList) -> SecurityScope {
+        SecurityScope {
+            read,
+            write: RuleList::None,
+            net: RuleList::None,
+            env: RuleList::None,
+            run: RuleList::None,
+            db: RuleList::None,
+            wasm: RuleList::None,
+            dynamic: false,
+        }
+    }
+
+    /// Never let a denial reach the interactive prompt: a developer running
+    /// `cargo test` from a terminal would otherwise block on read_line.
+    fn no_prompt_guard() -> runtime_core::security_context::SecurityContextGuard {
+        runtime_core::security_context::set_security_context(
+            runtime_core::security_context::SecurityContext {
+                policy_json: None,
+                no_prompt: true,
+            },
+        )
+    }
+
+    #[test]
+    fn denied_enforce_scope_message_decodes_to_permission_denied() {
+        let _guard = no_prompt_guard();
+        let allow = scope(RuleList::List(vec!["/tmp/allowed".to_string()]));
+        let deny = scope(RuleList::None);
+        let err = enforce_scope("read", &allow.read, &deny.read, Some("/tmp/denied/x.txt"))
+            .expect_err("a target outside the allow list must be denied");
+        let message = err.to_string();
+        assert!(
+            message.starts_with(PERMISSION_DENIED_MARKER),
+            "wire message must start with the denial marker: {message}"
+        );
+        assert_eq!(
+            PermissionDenied::decode(&message),
+            Some(PermissionDenied {
+                capability: "read".to_string(),
+                target: "/tmp/denied/x.txt".to_string(),
+            }),
+            "the real enforcement message must round-trip through decode: {message}"
+        );
+    }
+
+    #[test]
+    fn allowed_scope_returns_ok() {
+        let _guard = no_prompt_guard();
+        let allow = scope(RuleList::All);
+        let deny = scope(RuleList::None);
+        assert!(
+            enforce_scope("read", &allow.read, &deny.read, Some("/any/path")).is_ok(),
+            "an allow-all grant must permit the read"
+        );
+    }
+
+    #[test]
+    fn deny_wins_over_allow_and_still_decodes() {
+        let _guard = no_prompt_guard();
+        let allow = scope(RuleList::All);
+        let deny = scope(RuleList::List(vec!["/tmp/secret".to_string()]));
+        let err = enforce_scope("read", &allow.read, &deny.read, Some("/tmp/secret/key"))
+            .expect_err("an explicit deny must beat an allow-all");
+        assert_eq!(
+            PermissionDenied::decode(&err.to_string()),
+            Some(PermissionDenied {
+                capability: "read".to_string(),
+                target: "/tmp/secret/key".to_string(),
+            }),
+            "deny-precedence message must round-trip too: {err}"
+        );
+    }
+
+    #[test]
+    fn unnamed_target_encodes_as_wildcard_and_roundtrips() {
+        let _guard = no_prompt_guard();
+        let allow = scope(RuleList::All);
+        let deny = scope(RuleList::All);
+        let err = enforce_scope("read", &allow.read, &deny.read, None)
+            .expect_err("deny-all must deny even an unnamed target");
+        assert_eq!(
+            PermissionDenied::decode(&err.to_string()),
+            Some(PermissionDenied {
+                capability: "read".to_string(),
+                target: "*".to_string(),
+            }),
+            "unnamed-target message must round-trip: {err}"
+        );
     }
 }
