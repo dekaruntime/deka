@@ -1,0 +1,5 @@
+{
+  "title": "Generic type parameters on interfaces are legal (RFD 56)",
+  "stage": "run",
+  "notes": "Replaces the deka#561-era expectation this fixture used to pin ('user code cannot declare type parameters'). dsc#93 (RFD 56 phase 1, dsc 0.8.0) deliberately removed the parse gates on user-declared type parameters for all six declaration kinds, so `interface Box<T> { value: T }` declares and checks clean. What an unbounded T may then do (assign, return, store in a field, pass through -- nothing else) is normative RFD 56 text and is pinned by dsc's own generics/ corpus (field_on_type_param_fail, arithmetic_on_type_param_fail, compare_type_params_fail). Referencing a generic interface concretely (Box<number>) is still 'unsupported generic type' in dsc 0.8.0 -- dsc-side gap, not pinned here."
+}

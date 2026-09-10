@@ -1,5 +1,6 @@
 {
-  "title": "Bracket access with missing key returns undefined and fails on property access",
-  "stage": "run",
-  "notes": ""
+  "title": "Bracket access with a string key on a closed object type fails at check time",
+  "stage": "parse",
+  "notes": "dsc 0.8.0 (dsc#88, bug 3) made a non-numeric index a check-time error and indexing a non-collection a check-time error, so obj[\"b\"] is rejected before the isolate runs. The failure this fixture pins -- missing-key bracket access must not silently succeed -- still happens; it happens earlier, and it is now rejected at compile time instead of returning undefined and blowing up on `.length`. The remaining half (numeric bracket access still types as T instead of Option<T>) is dsc#98.",
+  "expectedDiagnosticContains": "index must be a number"
 }
