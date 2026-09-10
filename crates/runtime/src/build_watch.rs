@@ -66,7 +66,7 @@ pub fn set_build_slot_refresh(refresh: BuildSlotRefresh) {
 /// watcher's normalized (forward-slash) paths. Returns true when a refresh
 /// hook ran and rematerialized at least one slot, so the caller can drop
 /// caches that key on the module graph (which does not cover build values);
-/// the caller is expected to evict the engine's request pool — those
+/// the caller is expected to evict the engine's shared pool — those
 /// isolates back the `deka:dev/*` value modules.
 pub fn on_watch_event(project_root: &Path, changed: &[String], dev_mode: bool) -> bool {
     if !dev_mode {
@@ -175,11 +175,17 @@ pub fn on_watch_event(project_root: &Path, changed: &[String], dev_mode: bool) -
     });
     match outcome {
         Ok(Ok(())) => {
-            stdio::log("watch", "rematerialized build slots; re-render on next request");
+            stdio::log(
+                "watch",
+                "rematerialized build slots; re-render on next request",
+            );
             true
         }
         Ok(Err(err)) => {
-            stdio::log("watch", &format!("failed to rematerialize build slots: {err}"));
+            stdio::log(
+                "watch",
+                &format!("failed to rematerialize build slots: {err}"),
+            );
             false
         }
         Err(err) => {

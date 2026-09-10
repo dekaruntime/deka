@@ -49,7 +49,7 @@ fn allow_net_policy(target: &str) -> runtime_core::security_policy::SecurityPoli
 
 /// Pool backed by the platform-server (php) extensions with default
 /// env-driven policy. For tests that never touch the net bridge.
-fn php_server_pool() -> IsolatePool {
+fn php_pool() -> IsolatePool {
     let config = PoolConfig {
         num_workers: 1,
         max_isolates_per_worker: 2,
@@ -433,7 +433,7 @@ globalThis.app = function(req) {
             parsed[action],
             serde_json::json!({
                 "ok": false,
-                "error": "redis admin action blocked in user pool"
+                "error": "redis admin action blocked for tenant code"
             }),
             "{action} should be rejected before FLUSHDB/FLUSHALL can reach Redis"
         );
@@ -546,7 +546,7 @@ globalThis.app = function(req) {
             parsed[action],
             serde_json::json!({
                 "ok": false,
-                "error": "redis unscoped action blocked in user pool"
+                "error": "redis unscoped action blocked for tenant code"
             }),
             "{action} should be rejected before native Redis dispatch"
         );
@@ -555,7 +555,7 @@ globalThis.app = function(req) {
 
 #[tokio::test]
 async fn bridge_crypto_bcrypt_verify_resolves_to_op() {
-    let pool = php_server_pool();
+    let pool = php_pool();
     let code = r#"
 globalThis.app = function(req) {
   const hash = "$2b$10$DqpfeHg1RhyMilY/GTQvgeahRja6yf5aL8dYoH6EwABQY.CZ.pnNu";
@@ -577,7 +577,7 @@ globalThis.app = function(req) {
 
 #[tokio::test]
 async fn deka_host_digest_sha256_empty_known_vector() {
-    let pool = php_server_pool();
+    let pool = php_pool();
     let code = r#"
 globalThis.app = function(req) {
   const result = __deka_host('crypto', 'digest', ['sha256', new Uint8Array()]);
@@ -601,7 +601,7 @@ globalThis.app = function(req) {
 
 #[tokio::test]
 async fn deka_host_catalog_denies_php_only_kinds() {
-    let pool = php_server_pool();
+    let pool = php_pool();
     let code = r#"
 globalThis.app = function(req) {
   const result = __deka_host('db', 'query', []);
@@ -629,7 +629,7 @@ globalThis.app = function(req) {
 
 #[tokio::test]
 async fn deka_host_secure_compare_and_hmac() {
-    let pool = php_server_pool();
+    let pool = php_pool();
     let code = r#"
 globalThis.app = function(req) {
   const a = new Uint8Array([1, 2, 3]);
@@ -713,7 +713,7 @@ async fn deka_host_fs_ops_dispatch_async_and_resolve() {
     let _policy_guard = EnvGuard::set("DEKA_SECURITY_POLICY", policy);
 
     let path_js = serde_json::to_string(&target.to_string_lossy()).expect("json path");
-    let pool = php_server_pool();
+    let pool = php_pool();
     let code = format!(
         r#"
 globalThis.app = async function(req) {{
@@ -735,10 +735,7 @@ globalThis.app = async function(req) {{
 "#
     );
     let res = pool
-        .execute(
-            HandlerKey::new("deka_host_fs_async"),
-            test_request(&code),
-        )
+        .execute(HandlerKey::new("deka_host_fs_async"), test_request(&code))
         .await;
     let response = res.expect("pool execution should succeed");
     assert!(response.success, "execution failed: {:?}", response.error);

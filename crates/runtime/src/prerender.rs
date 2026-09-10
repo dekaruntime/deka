@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::env::init_env;
 use crate::extensions::extensions_for_mode;
-use engine::{config as runtime_config, RuntimeEngine};
+use engine::{RuntimeEngine, config as runtime_config};
 use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData};
 use runtime_core::env::set_handler_path_with;
 use runtime_core::framework;
@@ -32,7 +32,11 @@ pub fn prerender_static_pages(
         .enable_all()
         .build()
         .map_err(|err| format!("prerender runtime: {err}"))?;
-    rt.block_on(prerender_static_pages_async(project_root, dist_client, tasks))
+    rt.block_on(prerender_static_pages_async(
+        project_root,
+        dist_client,
+        tasks,
+    ))
 }
 
 async fn prerender_static_pages_async(
@@ -69,7 +73,6 @@ async fn prerender_static_pages_async(
     let serve_mode = runtime_config::ServeMode::Php;
     let extensions_provider = Arc::new(move || extensions_for_mode(&serve_mode));
     let engine = Arc::new(RuntimeEngine::new(
-        pool_config.clone(),
         pool_config,
         &runtime_cfg,
         extensions_provider,
@@ -108,7 +111,9 @@ async fn prerender_static_pages_async(
         if !response.success {
             return Err(format!(
                 "prerender {route}: {}",
-                response.error.unwrap_or_else(|| "unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "unknown error".to_string())
             ));
         }
         let result = response
@@ -117,10 +122,7 @@ async fn prerender_static_pages_async(
         let envelope = StorefrontResponse::from_value(result)
             .map_err(|err| format!("prerender {route}: {err}"))?;
         if envelope.status >= 400 {
-            return Err(format!(
-                "prerender {route}: status {}",
-                envelope.status
-            ));
+            return Err(format!("prerender {route}: status {}", envelope.status));
         }
         let dest = dist_path_for_route(dist_client, route)?;
         if let Some(parent) = dest.parent() {

@@ -6,10 +6,11 @@ use crate::extensions::extensions_for_mode;
 use crate::security::resolve_security_policy;
 use core::Context;
 use deka_host::validation::{format_validation_error, modules::validate_module_resolution};
-use engine::{config as runtime_config, set_engine, RuntimeEngine};
+use engine::{RuntimeEngine, config as runtime_config, set_engine};
 use platform::Platform;
 use platform_server::ServerPlatform;
 use pool::{ExecutionMode, HandlerKey, PoolConfig, RequestData, RequestParts};
+use runtime_core::DEKA_VALIDATION_ERROR_MARKER;
 use runtime_core::env::{set_default_log_level_with, set_handler_path_with, set_runtime_args_with};
 use runtime_core::handler::{
     handler_input_with, is_deka_entry, is_html_entry, is_js_entry, normalize_handler_path_with,
@@ -17,7 +18,6 @@ use runtime_core::handler::{
 use runtime_core::modules::ensure_deka_module_root_env_with;
 use runtime_core::process::parse_exit_code;
 use runtime_core::validation::validate_deka_handler_with;
-use runtime_core::DEKA_VALIDATION_ERROR_MARKER;
 
 pub fn run(context: &Context) {
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -118,7 +118,6 @@ async fn run_async(context: &Context) -> Result<(), String> {
     let extensions_provider = Arc::new(move || extensions_for_mode(&serve_mode_for_extensions));
 
     let engine = Arc::new(RuntimeEngine::new(
-        pool_config.clone(),
         pool_config,
         &runtime_cfg,
         extensions_provider,
